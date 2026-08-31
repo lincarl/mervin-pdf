@@ -1,0 +1,53 @@
+# Local credentials
+.env.local
+
+# Build output
+/build/
+/out/
+/deploy/
+*.user
+
+# Local and third-party PDF test fixtures are not redistributed.
+/examples/*.pdf
+/examples/**/*.pdf
+/docs/drawing.pdf
+
+# CMake
+CMakeUserPresets.json
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+
+# vcpkg (manifest mode: never commit the installed tree)
+/vcpkg_installed/
+**/vcpkg_installed/
+.vcpkg-root
+
+# Qt generated artifacts
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+*.qm
+
+# MSVC intermediates
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+
+# IDE
+/.vs/
+/.idea/
+*.vcxproj*
+
+# Tooling logs
+aqtinstall.log
+/.codex-tmp/
+__pycache__/
+*.pyc
+
+# CTest run artifacts
+/Testing/

@@ -1,0 +1,16 @@
+# Keep Linux/CI text assets LF so shell scripts and packaging metadata work on
+# Linux regardless of a contributor's core.autocrlf setting. (Windows sources are
+# fine either way and use the platform default.)
+*.sh            text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.desktop       text eol=lf
+*.metainfo.xml  text eol=lf
+packaging/linux/postinst  text eol=lf
+packaging/linux/postrm    text eol=lf
+
+# Binary assets - never normalize.
+*.png          binary
+*.ico          binary
+*.pdf          binary
+*.traineddata  binary

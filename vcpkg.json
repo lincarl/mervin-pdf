@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "mervin-pdf",
+  "version-string": "0.1.0",
+  "description": "A lightweight, trustworthy PDF reader for Windows.",
+  "builtin-baseline": "cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3",
+  "dependencies": [
+    "tomlplusplus",
+    "qpdf"
+  ],
+  "$comment": "MuPDF is not in the vcpkg registry; it is built from source (see cmake/FindMuPDF.cmake). qpdf uses its native crypto for AES-256, so no external crypto dependency is required."
+}

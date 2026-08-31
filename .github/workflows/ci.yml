@@ -1,0 +1,146 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Validate metadata and scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import re
+          import subprocess
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          json.loads(Path("CMakePresets.json").read_text())
+          json.loads(Path("vcpkg.json").read_text())
+
+          metadata_text = Path("packaging/linux/mervin-pdf.metainfo.xml").read_text()
+          root = ET.fromstring(metadata_text.replace("@MERVIN_VERSION@", "0.0.0"))
+          if root.findtext("project_license") != "AGPL-3.0-only":
+              raise SystemExit("AppStream project license must be AGPL-3.0-only")
+          release = root.find("./releases/release")
+          if release is None or "@MERVIN_VERSION@" not in metadata_text:
+              raise SystemExit("AppStream release version must come from MERVIN_VERSION")
+
+          expected = "https://github.com/lincarl/mervin-pdf"
+          files = [
+              Path("README.md"),
+              Path("CMakeLists.txt"),
+              Path("packaging/linux/mervin-pdf.metainfo.xml"),
+          ]
+          for path in files:
+              text = path.read_text()
+              if expected not in text:
+                  raise SystemExit(f"{path} does not reference {expected}")
+              if "luciro-pdf" in text or "github.com/OrlacLeic/" in text:
+                  raise SystemExit(f"{path} contains a stale repository URL")
+
+          tracked = [
+              Path(raw.decode())
+              for raw in subprocess.check_output(["git", "ls-files", "-z"]).split(b"\0")
+              if raw
+          ]
+          pdfs = sorted(path for path in tracked if path.suffix.lower() == ".pdf")
+          if pdfs:
+              raise SystemExit(f"PDF fixtures must not be committed: {pdfs}")
+          generated = sorted(
+              path for path in tracked
+              if path.suffix.lower() == ".pyc" or "__pycache__" in path.parts
+          )
+          if generated:
+              raise SystemExit(f"Generated Python artifacts must not be committed: {generated}")
+
+          expected_release_api = '"https://api.github.com/repos/lincarl/mervin-pdf/releases/latest"'
+          macros = subprocess.check_output(
+              ["c++", "-dM", "-E", "-include", "src/update/ReleaseConfig.h", "-x", "c++", "/dev/null"],
+              text=True,
+          )
+          release_api = re.search(r"^#define MERVIN_RELEASE_API_URL (.+)$", macros, re.MULTILINE)
+          if release_api is None or release_api.group(1) != expected_release_api:
+              raise SystemExit("ReleaseConfig does not define the public mervin-pdf release API")
+          updater = Path("src/update/UpdateChecker.cpp").read_text()
+          if (
+              updater.count("MERVIN_RELEASE_API_URL") != 1
+              or "QStringLiteral(MERVIN_RELEASE_API_URL)" not in updater
+              or "http://" in updater
+              or "https://" in updater
+          ):
+              raise SystemExit("UpdateChecker must consume only MERVIN_RELEASE_API_URL")
+
+          required_licenses = (
+              "MuPDF-AGPL-3.0.txt",
+              "Qt-LGPL-3.0-only.txt",
+              "qpdf-LICENSE.txt",
+              "tesseract-LICENSE.txt",
+              "leptonica-LICENSE.txt",
+              "tomlplusplus-LICENSE.txt",
+          )
+          for name in required_licenses:
+              path = Path("licenses") / name
+              if not path.is_file() or path.stat().st_size == 0:
+                  raise SystemExit(f"Required license text is missing: {path}")
+
+          blocked = (
+              "OrlacLeic/" + "mervin-pdf",
+              "lincarl/" + "luciro-pdf",
+              "ref." + "elysics.se",
+          )
+          for path in tracked:
+              if path == Path(".github/workflows/ci.yml"):
+                  continue
+              try:
+                  text = path.read_text()
+              except UnicodeDecodeError:
+                  continue
+              for value in blocked:
+                  if value in text:
+                      raise SystemExit(f"{path} contains blocked private/stale data: {value}")
+          PY
+          ruby <<'RUBY'
+          require "yaml"
+
+          walk = lambda do |node, path|
+            case node
+            when Hash
+              node.each do |key, value|
+                if key.to_s == "uses"
+                  ref = value.to_s
+                  local = ref.match?(/\A\.\/[^\0]+\z/)
+                  pinned = ref.match?(/\A[^@\s]+@[0-9a-f]{40}\z/)
+                  unless local || pinned
+                    abort "#{path} uses a mutable or invalid action ref: #{ref}"
+                  end
+                end
+                walk.call(value, path)
+              end
+            when Array
+              node.each { |value| walk.call(value, path) }
+            end
+          end
+
+          Dir.glob(".github/workflows/*.{yml,yaml}").sort.each do |path|
+            walk.call(YAML.safe_load(File.read(path), aliases: false), path)
+          end
+          RUBY
+          bash -n scripts/*.sh \
+            packaging/linux/postinst packaging/linux/postrm \
+            packaging/linux/rpm-post.sh packaging/linux/rpm-postun.sh
