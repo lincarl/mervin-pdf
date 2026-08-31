@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>mervin-pdf</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-only</project_license>
+  <name>Mervin PDF</name>
+  <summary>A lightweight, trustworthy PDF reader</summary>
+  <developer id="se.elysics">
+    <name>Elysics</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <description>
+    <p>
+      Mervin PDF is a fast, lightweight PDF reader with text search, OCR,
+      measurement tools, page operations, and printing.
+    </p>
+  </description>
+  <launchable type="desktop-id">mervin-pdf.desktop</launchable>
+  <provides>
+    <binary>MervinPDF</binary>
+  </provides>
+  <categories>
+    <category>Office</category>
+    <category>Viewer</category>
+  </categories>
+  <url type="homepage">https://github.com/lincarl/mervin-pdf</url>
+  <releases>
+    <release version="@MERVIN_VERSION@" date="2026-08-31"/>
+  </releases>
+</component>

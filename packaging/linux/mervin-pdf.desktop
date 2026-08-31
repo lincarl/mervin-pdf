@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Mervin PDF
+GenericName=PDF Viewer
+Comment=A lightweight, trustworthy PDF reader
+Exec=MervinPDF %F
+Icon=mervin-pdf
+Terminal=false
+Categories=Office;Viewer;Graphics;
+MimeType=application/pdf;
+Keywords=pdf;viewer;reader;ocr;measure;
+StartupNotify=true
+StartupWMClass=MervinPDF

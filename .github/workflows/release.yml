@@ -1,0 +1,393 @@
+name: release
+
+# Build every release artifact from one stable vMAJOR.MINOR.PATCH tag. The tag is
+# the release version source; pushing it builds and publishes the artifacts.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MUPDF_VERSION: "1.28.0"
+  MUPDF_SHA256: "21c7f064903154f1c3a7458bee81f130fc36f9b5147ea13328f9980e02d2dea2"
+
+jobs:
+  # ---------------------------------------------------------------- Windows ---
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Derive version from tag
+        shell: pwsh
+        run: |
+          $version = python scripts/version-from-tag.py $env:GITHUB_REF_NAME
+          if ($LASTEXITCODE -ne 0) { throw "Invalid release tag" }
+          "MERVIN_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Set up MSVC (x64)
+        # Maintained, Node-24 vcvars action (fork of the now-unmaintained
+        # ilammy/msvc-dev-cmd). Exports the MSVC dev env to later steps via
+        # $GITHUB_ENV/$GITHUB_PATH, so Configure/Build inherit cl/INCLUDE/LIB.
+        uses: TheMrMilchmann/setup-msvc-dev@368ef7d1ee4d1171b31d4a7f67f4d954f903f5a9 # v4.1.0
+        with:
+          arch: x64
+
+      - name: Install Ninja
+        run: choco install ninja -y
+
+      - name: Install Qt 6.8.3
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4
+        with:
+          version: "6.8.3"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Cache MuPDF
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          # Must match build-mupdf-windows.ps1's default -Dest (invoked below with
+          # no arguments): C:\dev is the project's tool root on Windows.
+          path: C:\dev\src\mupdf-${{ env.MUPDF_VERSION }}-source
+          key: mupdf-${{ env.MUPDF_VERSION }}-${{ env.MUPDF_SHA256 }}-windows-msvc2022-v143
+
+      - name: Build MuPDF
+        shell: pwsh
+        run: |
+          $dir = & scripts\build-mupdf-windows.ps1 | Select-Object -Last 1
+          "MUPDF_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Cache vcpkg binaries
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~\AppData\Local\vcpkg\archives
+          key: vcpkg-windows-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-windows-
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          # Read these in-shell ($env:) rather than via GitHub Actions expression
+          # interpolation: QT_ROOT_DIR (exported by install-qt-action) and the
+          # VCPKG_INSTALLATION_ROOT. The windows-base preset reads $env:QT6_DIR ->
+          # CMAKE_PREFIX_PATH and $env:VCPKG_ROOT -> the vcpkg toolchainFile.
+          $env:QT6_DIR = $env:QT_ROOT_DIR
+          $vcpkg = $env:VCPKG_INSTALLATION_ROOT
+          if (-not $vcpkg) { $vcpkg = 'C:\vcpkg' }
+          $env:VCPKG_ROOT = $vcpkg
+          # The runner's bundled vcpkg often lacks our vcpkg.json builtin-baseline
+          # commit, so manifest resolution dies with `git show <baseline>:versions/
+          # baseline.json` exit 128. Fetch that exact commit into the runner's vcpkg.
+          $baseline = (Get-Content vcpkg.json | ConvertFrom-Json).'builtin-baseline'
+          if ($baseline) { git -C $env:VCPKG_ROOT fetch --depth 1 origin $baseline }
+          # MERVIN_BUILD_TESTS=OFF, same as every Linux job. The release pipeline
+          # never runs ctest - the tests (and the tst_perf_* guardrails) are a local
+          # check made BEFORE a change ships, not a release artifact. Building them
+          # here cost 109 of the build step's 125 minutes: MervinPDF.exe links 15
+          # minutes in, then 33 tst_/dump_ executables each statically re-link
+          # MuPDF+Tesseract with PDBs, only to be thrown away unrun.
+          cmake --preset x64-release "-DMERVIN_VERSION=$env:MERVIN_VERSION" -DMERVIN_WIN32_SUBSYSTEM=ON -DMERVIN_BUILD_TESTS=OFF "-DMUPDF_DIR=$env:MUPDF_DIR"
+
+      - name: Build
+        run: cmake --build --preset x64-release
+
+      - name: Install packaging tools (NSIS + WiX)
+        shell: pwsh
+        run: |
+          choco install nsis -y
+          dotnet tool install --global wix
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Stage + build installers
+        shell: pwsh
+        run: |
+          $env:QT6_DIR = $env:QT_ROOT_DIR
+          scripts\deploy.ps1 -Installer
+
+      - name: Upload installers
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-installers
+          path: |
+            build/x64-release/MervinPDF-Setup-*.exe
+            build/x64-release/MervinPDF-*.msi
+          if-no-files-found: error
+
+  # --------------------------------------------------------------- AppImage ---
+  # Built on Ubuntu 26.04 - the only supported release - against that release's
+  # system Qt 6.10, exactly like the .deb. Building on the older 24.04 and leaning
+  # on glibc forward-compatibility did NOT hold up in practice, so the bundle is
+  # now made on the release it targets. linuxdeploy still copies Qt into the
+  # AppDir, so the AppImage stays self-contained; it is just no longer portable
+  # to releases older than the one it was built on.
+  appimage:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install build deps
+        # qt6-base-dev pulls in libqt6gui6, which is what actually ships the xcb
+        # platform plugin (qt6/plugins/platforms/libqxcb.so) that linuxdeploy has to
+        # bundle - so --no-install-recommends is safe here. qt6-base-dev-tools
+        # provides qmake6, which linuxdeploy-plugin-qt uses to locate that plugin dir.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build curl ca-certificates file wget \
+            qt6-base-dev qt6-base-dev-tools libqpdf-dev libtomlplusplus-dev \
+            libgl1-mesa-dev libxkbcommon-dev libxcb-cursor0
+
+      - name: Derive version from tag
+        run: echo "MERVIN_VERSION=$(python3 scripts/version-from-tag.py "$GITHUB_REF_NAME")" >> "$GITHUB_ENV"
+
+      - name: Cache MuPDF
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/src/mupdf-${{ env.MUPDF_VERSION }}-source
+          key: mupdf-${{ env.MUPDF_VERSION }}-${{ env.MUPDF_SHA256 }}-ubuntu2604
+
+      - name: Build MuPDF
+        run: echo "MUPDF_DIR=$(bash scripts/build-mupdf-linux.sh)" >> "$GITHUB_ENV"
+
+      - name: Configure + build
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DMERVIN_VERSION="$MERVIN_VERSION" \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DMERVIN_BUILD_TESTS=OFF \
+            -DMUPDF_DIR="$MUPDF_DIR"
+          cmake --build build
+
+      - name: Install into AppDir
+        run: DESTDIR="$PWD/AppDir" cmake --install build
+
+      - name: Build AppImage
+        run: bash scripts/make-appimage.sh "$MERVIN_VERSION" AppDir
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: linux-appimage
+          path: MervinPDF-*-x86_64.AppImage
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------- .deb ---
+  # Native .deb built against the distro's system Qt. Only Ubuntu 26.04 (Qt 6.10):
+  # 24.04 ships Qt 6.4, which lacks the 6.6/6.8 APIs Mervin uses (accent colour,
+  # color-scheme control), and the AppImage no longer covers 24.04 either - 26.04
+  # is the minimum supported release. (Matrix kept for easy re-add of later ones.)
+  deb:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: "ubuntu:26.04", release: "26.04" }
+    container: ${{ matrix.image }}
+    steps:
+      - name: Install build deps
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build curl ca-certificates file git dpkg-dev python3 \
+            qt6-base-dev qt6-base-dev-tools libqpdf-dev libtomlplusplus-dev
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Derive version from tag
+        run: echo "MERVIN_VERSION=$(python3 scripts/version-from-tag.py "$GITHUB_REF_NAME")" >> "$GITHUB_ENV"
+
+      - name: Build MuPDF
+        run: echo "MUPDF_DIR=$(bash scripts/build-mupdf-linux.sh)" >> "$GITHUB_ENV"
+
+      - name: Configure + build
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DMERVIN_VERSION="$MERVIN_VERSION" \
+            -DMERVIN_BUILD_TESTS=OFF \
+            -DMUPDF_DIR="$MUPDF_DIR"
+          cmake --build build
+
+      - name: Package .deb
+        run: |
+          cd build && cpack -G DEB
+          REL="${{ matrix.release }}"
+          src=$(ls mervin-pdf_*.deb | head -1)
+          mv "$src" "mervin-pdf_${MERVIN_VERSION}_ubuntu${REL}_amd64.deb"
+          dpkg-deb -I "mervin-pdf_${MERVIN_VERSION}_ubuntu${REL}_amd64.deb"
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: linux-deb-ubuntu-${{ matrix.release }}
+          path: build/mervin-pdf_*_amd64.deb
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------- .rpm ---
+  rpm:
+    runs-on: ubuntu-latest
+    container: fedora:44
+    steps:
+      - name: Install build deps
+        run: |
+          dnf install -y gcc-c++ make cmake ninja-build rpm-build \
+            qt6-qtbase-devel qpdf-devel git tar curl findutils which python3
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Derive version from tag
+        run: echo "MERVIN_VERSION=$(python3 scripts/version-from-tag.py "$GITHUB_REF_NAME")" >> "$GITHUB_ENV"
+
+      - name: Build MuPDF
+        run: echo "MUPDF_DIR=$(bash scripts/build-mupdf-linux.sh)" >> "$GITHUB_ENV"
+
+      - name: Configure + build
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DMERVIN_VERSION="$MERVIN_VERSION" \
+            -DMERVIN_BUILD_TESTS=OFF \
+            -DMUPDF_DIR="$MUPDF_DIR"
+          cmake --build build
+
+      - name: Package .rpm
+        run: |
+          cd build && cpack -G RPM
+          rpm -qp --requires mervin-pdf-*.rpm
+
+      - name: Upload .rpm
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: linux-rpm
+          path: build/mervin-pdf-*.rpm
+          if-no-files-found: error
+
+  # ---------------------------------------------------- GitHub Release (tag) ---
+  release:
+    needs: [windows, appimage, deb, rpm]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Derive version from tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || exit 1
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Verify release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo "Invalid release tag: $GITHUB_REF_NAME" >&2
+            exit 1
+          }
+          read -r type target < <(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '[.object.type, .object.sha] | @tsv')
+          if [[ "$type" == tag ]]; then
+            read -r type target < <(gh api "repos/$GITHUB_REPOSITORY/git/tags/$target" --jq '[.object.type, .object.sha] | @tsv')
+          fi
+          [[ "$type" == commit && "$target" == "$GITHUB_SHA" ]] || {
+            echo "Tag does not resolve to workflow commit $GITHUB_SHA" >&2
+            exit 1
+          }
+          default_branch=$(gh api "repos/$GITHUB_REPOSITORY" --jq .default_branch)
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...$default_branch" --jq .status)
+          [[ "$status" == identical || "$status" == ahead ]] || {
+            echo "Tag is not on $default_branch" >&2
+            exit 1
+          }
+      - name: Download all artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: dist
+      - name: Verify and checksum exact release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import os
+          import re
+          from pathlib import Path
+
+          match = re.fullmatch(
+              r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)",
+              os.environ["GITHUB_REF_NAME"],
+          )
+          if not match:
+              raise SystemExit("Invalid release tag")
+          version = ".".join(match.groups())
+          expected = {
+              Path(f"dist/windows-installers/MervinPDF-Setup-{version}.exe"),
+              Path(f"dist/windows-installers/MervinPDF-{version}.msi"),
+              Path(f"dist/linux-appimage/MervinPDF-{version}-x86_64.AppImage"),
+              Path(f"dist/linux-deb-ubuntu-26.04/mervin-pdf_{version}_ubuntu26.04_amd64.deb"),
+              Path(f"dist/linux-rpm/mervin-pdf-{version}.x86_64.rpm"),
+          }
+          allowed_dirs = {Path("dist")}
+          for path in expected:
+              allowed_dirs.update(path.parents)
+
+          actual = set()
+          for path in Path("dist").rglob("*"):
+              if path.is_symlink():
+                  raise SystemExit(f"Unexpected symlink: {path}")
+              if path.is_dir():
+                  if path not in allowed_dirs:
+                      raise SystemExit(f"Unexpected directory: {path}")
+                  continue
+              if not path.is_file():
+                  raise SystemExit(f"Unexpected non-file artifact: {path}")
+              actual.add(path)
+
+          if actual != expected:
+              raise SystemExit(
+                  f"Artifact mismatch; missing={sorted(expected - actual)}, "
+                  f"extra={sorted(actual - expected)}"
+              )
+
+          lines = []
+          for path in sorted(expected):
+              digest = hashlib.sha256()
+              with path.open("rb") as stream:
+                  for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              lines.append(f"{digest.hexdigest()}  {path.name}")
+          Path("dist/SHA256SUMS").write_text("\n".join(lines) + "\n")
+          if os.environ.get("RELEASE_VERSION") != version:
+              raise SystemExit("Release version environment does not match tag")
+          PY
+      - name: Publish release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        with:
+          files: |
+            dist/windows-installers/MervinPDF-Setup-${{ env.RELEASE_VERSION }}.exe
+            dist/windows-installers/MervinPDF-${{ env.RELEASE_VERSION }}.msi
+            dist/linux-appimage/MervinPDF-${{ env.RELEASE_VERSION }}-x86_64.AppImage
+            dist/linux-deb-ubuntu-26.04/mervin-pdf_${{ env.RELEASE_VERSION }}_ubuntu26.04_amd64.deb
+            dist/linux-rpm/mervin-pdf-${{ env.RELEASE_VERSION }}.x86_64.rpm
+            dist/SHA256SUMS
+          fail_on_unmatched_files: true
+          generate_release_notes: true

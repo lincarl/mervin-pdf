@@ -1,0 +1,45 @@
+// Windows resource script for MervinPDF.exe - embeds the application icon AND a
+// version-info block. CMake configure_file()s this template into the build tree
+// (see CMakeLists.txt); edit mervin.rc.in, never the generated mervin.rc.
+//
+// The icon's first (lowest-ID) group is what Explorer, the Start menu, and the
+// ".pdf default app" picker display; the ProgID's DefaultIcon "<exe>,0" resolves
+// to it. Regenerate mervin.ico via make_icon.py.
+//
+// FileDescription is the key string: it is the friendly name Windows shows for
+// the program in the "Open with" menu and in Settings > Default apps. Without a
+// version resource Windows falls back to the bare "MervinPDF.exe" filename.
+
+#include <winver.h>
+
+IDI_ICON1 ICON "@MERVIN_RC_ICON@"
+
+VS_VERSION_INFO VERSIONINFO
+    FILEVERSION    @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+    PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+    FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+    FILEFLAGS      0x0L
+    FILEOS         VOS_NT_WINDOWS32
+    FILETYPE       VFT_APP
+    FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        // 0409 = US English, 04B0 = Unicode (codepage 1200).
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "@MERVIN_ORG_NAME@"
+            VALUE "FileDescription",  "@MERVIN_APP_NAME@"
+            VALUE "FileVersion",      "@MERVIN_VERSION@"
+            VALUE "InternalName",     "MervinPDF"
+            VALUE "LegalCopyright",   "Copyright (C) @MERVIN_ORG_NAME@"
+            VALUE "OriginalFilename", "MervinPDF.exe"
+            VALUE "ProductName",      "@MERVIN_APP_NAME@"
+            VALUE "ProductVersion",   "@MERVIN_VERSION@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

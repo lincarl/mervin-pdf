@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Mervin PDF - per-user MSI (WiX v4+ / built with WiX v6/v7 `wix build`).
+
+  The MSI is the managed/silent-deployment counterpart to the friendly NSIS .exe
+  (packaging/nsis/mervin.nsi); both are produced by scripts/deploy.ps1 from the
+  same staged `deploy` tree. Like the NSIS installer this is PER-USER (Scope
+  perUser -> installs to %LOCALAPPDATA%, registers under HKCU, no UAC) so it also
+  works under `msiexec /i MervinPDF-<ver>.msi /qn` without elevation.
+
+  Required preprocessor defines (passed by scripts/deploy.ps1):
+    -d Version=<x.y.z>     product version
+    -d DeployDir=<dir>     staged application tree (exe + Qt/qpdf DLLs)
+    -d IconFile=<file>     mervin.ico for the ARP entry + Start-menu shortcut
+  Optional:
+    -d TessData=<file>     eng.traineddata to seed %APPDATA%\MervinPDF\tessdata
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="Mervin PDF"
+      Manufacturer="Mervin"
+      Version="$(var.Version)"
+      UpgradeCode="A1E04BD8-CF2C-4B78-9506-C72EBCD29617"
+      Scope="perUser"
+      Compressed="yes">
+
+    <!-- Block downgrades; silently replace an older install on upgrade. -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Mervin PDF is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Add/Remove Programs presentation. Manufacturer becomes Publisher. -->
+    <Icon Id="MervinIcon.ico" SourceFile="$(var.IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="MervinIcon.ico" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <Feature Id="Main" Title="Mervin PDF" Level="1">
+      <ComponentGroupRef Id="AppPayload" />
+<?ifdef TessData ?>
+      <ComponentGroupRef Id="UserData" />
+<?endif?>
+    </Feature>
+  </Package>
+
+  <!-- == Directory layout (all per-user) == -->
+  <Fragment>
+    <StandardDirectory Id="LocalAppDataFolder">
+      <!-- %LOCALAPPDATA%\Mervin PDF  (matches the NSIS InstallDir) -->
+      <Directory Id="INSTALLFOLDER" Name="Mervin PDF" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="AppDataFolder">
+      <!-- %APPDATA%\MervinPDF (no space) - where the app reads config + tessdata -->
+      <Directory Id="AppDataMervin" Name="MervinPDF">
+        <Directory Id="AppDataTessdata" Name="tessdata" />
+      </Directory>
+    </StandardDirectory>
+  </Fragment>
+
+  <!-- == Application payload == -->
+  <Fragment>
+    <ComponentGroup Id="AppPayload" Directory="INSTALLFOLDER">
+      <!-- Auto-harvest the whole staged tree (exe + Qt/qpdf DLLs, plugins,
+           licenses, ...), preserving the subdirectory structure. -->
+      <Files Include="$(var.DeployDir)\**" />
+
+      <!-- Per-user Start-menu shortcut. It targets the harvested exe by its
+           installed path so it needs no reference to the auto-generated file
+           component; the HKCU value is the component key path so the per-user
+           shortcut component is well-formed (and mirrors the NSIS installer's
+           HKCU Software\Mervin PDF\InstallDir record). -->
+      <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder" Guid="*">
+        <Shortcut Id="MervinShortcut"
+                  Name="Mervin PDF"
+                  Target="[INSTALLFOLDER]MervinPDF.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="MervinIcon.ico"
+                  IconIndex="0" />
+        <RegistryValue Root="HKCU" Key="Software\Mervin PDF"
+                       Name="InstallDir" Type="string" Value="[INSTALLFOLDER]"
+                       KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- == Seeded per-user OCR language == -->
+<?ifdef TessData ?>
+  <Fragment>
+    <ComponentGroup Id="UserData">
+      <Component Id="TessdataEng" Directory="AppDataTessdata" Guid="*">
+        <File Id="EngTraineddata" Source="$(var.TessData)" KeyPath="yes" />
+        <!-- On uninstall remove the seeded file and the folders, but only if
+             empty - any extra languages the user added are left untouched, and
+             config/recent under %APPDATA%\MervinPDF are not tracked so survive. -->
+        <RemoveFolder Id="RemoveTessdataDir" Directory="AppDataTessdata" On="uninstall" />
+        <RemoveFolder Id="RemoveMervinData" Directory="AppDataMervin" On="uninstall" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+<?endif?>
+</Wix>
