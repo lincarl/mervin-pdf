@@ -94,7 +94,7 @@ do the following, in order:
 and scripts on pushes and pull requests.
 
 [.github/workflows/release.yml](.github/workflows/release.yml) builds **every** release
-artifact on GitHub Actions on a `v*` tag (or a manual `workflow_dispatch`) and attaches
+artifact on GitHub Actions from a stable `vMAJOR.MINOR.PATCH` tag and attaches
 them to a GitHub Release: Windows NSIS `.exe` + WiX `.msi`, a Linux **AppImage** (built
 on Ubuntu 26.04), a native **`.deb`** (Ubuntu 26.04 container), and an **`.rpm`**
 (Fedora container).
