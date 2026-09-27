@@ -46,7 +46,12 @@ public:
                          const QString &initialPassword = QString(),
                          QWidget *parent = nullptr);
 
-    // Valid after exec() == Accepted.
+    // Files open in the app's tabs. The viewer holds each one open, so the merged
+    // file may not replace one; the error line says so before Merge is pressed.
+    void setOpenFiles(const QStringList &paths);
+
+    // Valid after exec() == Accepted, by which time the merged file is written:
+    // accept() writes it and stays open on a failure, so the plan survives it.
     QList<PageOps::MergeInput> inputs() const { return plan_.inputs(); }
     QString outputPath() const { return outputPath_; }
 
@@ -57,6 +62,8 @@ public:
     void addPaths(const QStringList &paths);
 
 private:
+    // Validate, confirm an overwrite, then write the merged file. Closes only
+    // once the write succeeded; a failure goes on the error line instead.
     void accept() override;
     void resizeEvent(QResizeEvent *event) override;
 
@@ -83,6 +90,9 @@ private:
     MergePlan plan_;
     QString outputPath_;
     bool outputEdited_ = false; // stop re-deriving the name once the user typed one
+    QStringList openKeys_;      // normalizePathKey() of every file open in a tab
+    QString writeError_;        // the last failed write, until the plan or Save as changes
+    QString writeErrorDetail_;  // qpdf's message for it, the error line's tooltip
 
     RowList *list_ = nullptr;
     QList<QLabel *> nameLabels_; // one per row, rebuilt with the list

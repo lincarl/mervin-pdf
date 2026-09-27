@@ -433,9 +433,21 @@ QString ExtractPlan::destinationError(const QString &destination) const
         return tr("That folder does not exist.");
     // qpdf reads the source while it writes, so replacing it destroys the very
     // file being copied from.
-    if (fileKey(file) == sourceKey_)
+    const QString key = fileKey(file);
+    if (key == sourceKey_)
         return tr("The extract cannot replace the document it comes from.");
+    // The viewer keeps an open tab's file open, so the write would fail only
+    // after the dialog had closed and taken the rows with it.
+    if (openKeys_.contains(key))
+        return tr("That file is open in a tab. Choose another name.");
     return {};
+}
+
+void ExtractPlan::setOpenFiles(const QStringList &paths)
+{
+    openKeys_.clear();
+    for (const QString &p : paths)
+        openKeys_ << fileKey(p);
 }
 
 ExtractPlan::Job ExtractPlan::job(const QString &destination) const

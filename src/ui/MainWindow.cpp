@@ -2853,6 +2853,7 @@ void MainWindow::extractPagesOp()
     src.openWhenDone = settings_.extractOpenWhenDone;
     src.doc = v->document();
     src.engine = engine_;
+    src.openPaths = wm_ ? wm_->openTabPaths() : tabPaths();
 
     mervin::ExtractDialog dlg(src, this);
     if (dlg.exec() != QDialog::Accepted)
@@ -2865,22 +2866,10 @@ void MainWindow::extractPagesOp()
         settings_.save();
     }
 
-    // merge() fails on an out-of-range page instead of skipping it, so a stale
-    // page count cannot shorten the output silently. One input on the same file
-    // is exactly an extract.
+    // The dialog has written the file: it writes before closing, so a failed
+    // write stays in the dialog with the rows. No completion modal: the status
+    // bar says what was written, and Open when done decides what happens next.
     const mervin::ExtractPlan::Job job = dlg.job();
-    QString err;
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    const PageOps::Status st =
-        PageOps::merge({PageOps::MergeInput{src.path, job.pages, dlg.password()}}, job.path, &err);
-    QApplication::restoreOverrideCursor();
-    if (st != PageOps::Status::Ok) {
-        QMessageBox::warning(this, tr("Extract Pages"), tr("The extract failed.\n\n%1").arg(err));
-        return;
-    }
-
-    // No completion modal: the status bar says what was written, and the
-    // dialog's Open when done box decides what happens next.
     statusBar()->showMessage(mervin::ExtractPlan::doneText(job), 5000);
     if (dlg.openWhenDone())
         openFile(job.path);
@@ -2920,31 +2909,12 @@ void MainWindow::mergeDocuments()
     ViewerWidget *v = currentViewer();
     mervin::MergeDialog dlg(t ? t->path() : QString(), v ? v->pageCount() : 0,
                             t ? t->password() : QString(), this);
+    dlg.setOpenFiles(wm_ ? wm_->openTabPaths() : tabPaths());
     if (dlg.exec() != QDialog::Accepted)
         return;
-
-    const QList<PageOps::MergeInput> inputs = dlg.inputs();
-    const QString out = dlg.outputPath();
-    QString err;
-    int failed = -1;
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    const PageOps::Status st = PageOps::merge(inputs, out, &err, &failed);
-    QApplication::restoreOverrideCursor();
-
-    if (st == PageOps::Status::Ok) {
-        offerToOpen(out);
-        return;
-    }
-    // Name the file that stopped it. runWriteOp is not used here: its single
-    // password retry has nowhere to apply when the inputs are many, and the
-    // dialog has already rejected any encrypted file it holds no password for.
-    const QString who = failed >= 0 && failed < inputs.size()
-                            ? QDir::toNativeSeparators(inputs.at(failed).path)
-                            : QString();
-    QMessageBox::warning(this, tr("Merge PDFs"),
-                         who.isEmpty()
-                             ? tr("The merge failed.\n\n%1").arg(err)
-                             : tr("The merge failed on \"%1\".\n\n%2").arg(who, err));
+    // The dialog has written the file: it writes before closing, so a failure
+    // (naming the input that stopped it) stays in the dialog with the plan.
+    offerToOpen(dlg.outputPath());
 }
 
 void MainWindow::printDocument()

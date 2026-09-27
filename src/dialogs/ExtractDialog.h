@@ -5,6 +5,7 @@
 #include <QDialog>
 #include <QList>
 #include <QString>
+#include <QStringList>
 
 #include <optional>
 
@@ -47,6 +48,7 @@ public:
         int currentPage = 0;     // 0-based; seeds the first row
         bool hasUnsavedEdits = false;
         bool openWhenDone = true; // last choice, from Settings
+        QStringList openPaths;    // files open in any tab: Save as may not name one
         Document *doc = nullptr;  // thumbnails; may be null (tests)
         RenderEngine *engine = nullptr;
     };
@@ -56,7 +58,8 @@ public:
     // `source.password` unlocks is treated like an unencrypted one: no row appears.
     explicit ExtractDialog(const Source &source, QWidget *parent = nullptr);
 
-    // Valid after exec() == Accepted.
+    // Valid after exec() == Accepted, by which time the file has been written:
+    // accept() writes it and stays open on a failure, so the rows survive it.
     ExtractPlan::Job job() const { return job_; }
     // Verified: the Source's password when it worked, else the one typed in the
     // row. Empty when the file is not encrypted.
@@ -64,7 +67,9 @@ public:
     bool openWhenDone() const;
 
 private:
-    void accept() override; // verify the password, confirm an overwrite, freeze job_
+    // Verify the password, confirm an overwrite, then write the file. Closes only
+    // once the write succeeded; a failure goes on the error line instead.
+    void accept() override;
 
     // Tear down and rebuild every row from plan_, refresh(), then make `selectRow`
     // (clamped) current and reveal it in the strip. Field puts the caret at the
@@ -100,6 +105,8 @@ private:
     bool passwordRejected_ = false;       // until the password field is edited again
     bool readError_ = false;              // qpdf could not open the file at all
     QString readErrorDetail_;             // qpdf's message, the error line's tooltip
+    QString writeError_;                  // the last failed write, until Save as changes
+    QString writeErrorDetail_;            // qpdf's message for it, the tooltip
 
     // Row fields carry the generation they were built in and ignore their edits
     // once it is behind: a rebuild replaced them, or a pending split outdated them.

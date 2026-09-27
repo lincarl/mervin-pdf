@@ -84,6 +84,11 @@ public:
     // or raise the window, which a background open must not do.
     bool isOpenAnywhere(const QString &canonicalPath) const;
 
+    // Every file open in a tab, in any window of this process (canonical paths).
+    // Extract Pages and Merge PDFs refuse to write over one: the viewer holds it
+    // open, so the write would fail.
+    QStringList openTabPaths() const;
+
     // Cross-window: focus an already-open file by canonical path; raises and
     // activates the owning window. Returns true if found.
     bool focusExistingTab(const QString &canonicalPath);

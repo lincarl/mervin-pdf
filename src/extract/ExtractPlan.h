@@ -151,10 +151,14 @@ public:
     // Save as default: fileName() in the source's folder, stepping to "-2", "-3"...
     // while the name exists or is the source.
     QString defaultOutputPath() const;
+    // Files open in the app's tabs. The viewer holds each one open, so writing
+    // over one fails on Windows; destinationError() refuses them up front.
+    void setOpenFiles(const QStringList &paths);
     // First problem with `destination`, "" when usable. Relative paths are taken
     // against the source's folder. "Choose where to save the extracted pages." /
     // "That folder does not exist." / "That is a folder. Add a file name." / "The
-    // extract cannot replace the document it comes from."
+    // extract cannot replace the document it comes from." / "That file is open in
+    // a tab. Choose another name."
     QString destinationError(const QString &destination) const;
     // What to write: `destination` resolved with ".pdf" appended if missing, and
     // every page in row order. Only meaningful when isValid() and
@@ -185,6 +189,7 @@ private:
 
     QString sourcePath_;
     QString sourceKey_; // fileKey(sourcePath_), once: it opens the file on Windows
+    QStringList openKeys_; // fileKey() of every file open in a tab
     int pageCount_ = 0;
     QList<Row> rows_;
 };

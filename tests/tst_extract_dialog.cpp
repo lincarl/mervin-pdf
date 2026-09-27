@@ -12,13 +12,19 @@
 #include <QAction>
 #include <QApplication>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
+
+#include <memory>
 
 using mervin::ExtractDialog;
 using mervin::ExtractPlan;
@@ -35,7 +41,8 @@ using mervin::QpdfService;
 // or, failing that, inline before close.
 //
 // As in tst_merge_dialog, the dialog is flagged WA_DontShowOnScreen and never
-// exec()d, so nothing appears and nothing blocks. Source::doc and ::engine stay
+// exec()d, so it never appears and nothing blocks; only the "Replace it?" box
+// does, and answerReplaceWithYes() closes it. Source::doc and ::engine stay
 // null: thumbnails are out of scope, and the strip must cope without them.
 namespace {
 
@@ -81,6 +88,8 @@ private slots:
     void foldOpensAloneUntilResized();
     void saveAsFollowsThePlanUntilEdited();
     void destinationCannotBeTheSource();
+    void outputOpenInATabIsRefused();
+    void failedWriteKeepsTheRows();
     void encryptedSourceAsksOnceInline();
     void encryptedSourceUsesTheTabPassword();
     void staleTabPasswordFallsBackToTheRow();
@@ -147,6 +156,24 @@ private:
             QTest::keyClick(field, Qt::Key_Delete);
         else
             QTest::keyClicks(field, text);
+    }
+    // Answer the next "Replace it?" box with Yes once it is up. The box runs its
+    // own event loop, so a polling timer started beforehand is what reaches it.
+    static void answerReplaceWithYes()
+    {
+        auto *timer = new QTimer;
+        auto tries = std::make_shared<int>(0);
+        QObject::connect(timer, &QTimer::timeout, timer, [timer, tries] {
+            for (QWidget *w : QApplication::topLevelWidgets())
+                if (auto *box = qobject_cast<QMessageBox *>(w); box && box->isVisible()) {
+                    box->button(QMessageBox::Yes)->click();
+                    timer->deleteLater();
+                    return;
+                }
+            if (++*tries > 200) // 2 s: no box came, so the test fails on its own checks
+                timer->deleteLater();
+        });
+        timer->start(10);
     }
     // What the dialog would write: Extract, then its job's pages.
     static QList<int> accepted(ExtractDialog &d)
@@ -489,6 +516,63 @@ void TstExtractDialog::destinationCannotBeTheSource()
     QVERIFY(extract(d)->isEnabled());
 }
 
+void TstExtractDialog::outputOpenInATabIsRefused()
+{
+    // The viewer holds an open tab's file open, so writing over it would fail. The
+    // error line says so before Extract is pressed, and Extract stays disabled.
+    const QString opened = dir_.filePath(QStringLiteral("opened-in-tab.pdf"));
+    makePdf(opened, 2);
+    ExtractDialog::Source s = source(plain_);
+    s.openPaths = {plain_, opened};
+    ExtractDialog d(s);
+    prepare(d);
+    type(output(d), QDir::toNativeSeparators(opened));
+    QCOMPARE(error(d), QStringLiteral("That file is open in a tab. Choose another name."));
+    QVERIFY(!extract(d)->isEnabled());
+    QTest::keyClick(output(d), Qt::Key_Return); // Enter does nothing either
+    QVERIFY(d.result() != QDialog::Accepted);
+    QVERIFY(QFileInfo(opened).size() > 0);
+
+    type(output(d), QStringLiteral("not-open.pdf"));
+    QVERIFY(error(d).isEmpty());
+    QVERIFY(extract(d)->isEnabled());
+}
+
+void TstExtractDialog::failedWriteKeepsTheRows()
+{
+    // A write that fails (a read-only file here, standing in for one that another
+    // program holds open) is reported on the error line. The dialog stays open
+    // with its rows, Extract stays enabled, and once the cause is gone a second
+    // Extract succeeds without retyping anything.
+    const QString target = dir_.filePath(QStringLiteral("read-only.pdf"));
+    makePdf(target, 1);
+    QVERIFY(QFile::setPermissions(target, QFileDevice::ReadOwner | QFileDevice::ReadUser));
+    ExtractDialog d(source(plain_));
+    prepare(d);
+    QTest::keyClicks(rows(d).at(0), QStringLiteral("5-7")); // replaces the selected "7"
+    type(output(d), QDir::toNativeSeparators(target));
+    QVERIFY(extract(d)->isEnabled());
+
+    answerReplaceWithYes(); // the file exists, so Extract asks first
+    extract(d)->click();
+    QVERIFY(d.result() != QDialog::Accepted);                 // still open...
+    QCOMPARE(texts(d), QStringList({QStringLiteral("5-7")})); // ...with its rows
+    QVERIFY2(error(d).startsWith(QStringLiteral("Could not write \"read-only.pdf\".")),
+             qPrintable(error(d)));
+    QVERIFY(!child<QLabel>(d, "extractError")->toolTip().isEmpty()); // qpdf's reason
+    QVERIFY(extract(d)->isEnabled());
+
+    QVERIFY(QFile::setPermissions(target, QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                                              | QFileDevice::ReadUser | QFileDevice::WriteUser));
+    answerReplaceWithYes();
+    extract(d)->click();
+    QCOMPARE(d.result(), int(QDialog::Accepted));
+    int count = 0;
+    QString err;
+    QCOMPARE(PageOps::probe(target, &count, QString(), &err), PageOps::Status::Ok);
+    QCOMPARE(count, 3);
+}
+
 void TstExtractDialog::encryptedSourceAsksOnceInline()
 {
     ExtractDialog d(source(encrypted_));
@@ -528,14 +612,10 @@ void TstExtractDialog::encryptedSourceUsesTheTabPassword()
     QCOMPARE(d.result(), int(QDialog::Accepted));
     QCOMPARE(d.password(), QStringLiteral("secret"));
 
-    // What MainWindow does with the result: the job really writes with it.
-    const ExtractPlan::Job job = d.job();
+    // The dialog wrote the file with it before closing, unencrypted.
     QString err;
-    QCOMPARE(PageOps::merge({PageOps::MergeInput{encrypted_, job.pages, d.password()}}, job.path,
-                            &err),
-             PageOps::Status::Ok);
     int count = 0;
-    QCOMPARE(PageOps::probe(job.path, &count, QString(), &err), PageOps::Status::Ok);
+    QCOMPARE(PageOps::probe(d.job().path, &count, QString(), &err), PageOps::Status::Ok);
     QCOMPARE(count, 1);
 }
 

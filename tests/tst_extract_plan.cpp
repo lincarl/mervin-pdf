@@ -413,6 +413,29 @@ void TstExtractPlan::destinationRules()
     QCOMPARE(p.destinationError(QDir::toNativeSeparators(dir.path() + QLatin1Char('/'))), folder);
     QCOMPARE(p.destinationError(missing + QLatin1Char('/')),
              QStringLiteral("That folder does not exist."));
+
+    // A file open in a tab cannot be replaced: the viewer holds it open, so the
+    // write would fail. Another spelling of the same path is the same file; an
+    // existing file that no tab holds is fine (the dialog asks before replacing).
+    const QString opened = dir.filePath(QStringLiteral("opened.pdf"));
+    const QString closed = dir.filePath(QStringLiteral("closed.pdf"));
+    for (const QString &path : {opened, closed}) {
+        QFile out(path);
+        QVERIFY(out.open(QIODevice::WriteOnly));
+    }
+    ExtractPlan withTabs = plan({QStringLiteral("7")}, source);
+    withTabs.setOpenFiles({source, opened});
+    const QString inTab = QStringLiteral("That file is open in a tab. Choose another name.");
+    QCOMPARE(withTabs.destinationError(opened), inTab);
+    QCOMPARE(withTabs.destinationError(QStringLiteral("opened")), inTab); // relative, no ".pdf"
+    QCOMPARE(withTabs.destinationError(QDir::toNativeSeparators(opened)), inTab);
+#ifdef Q_OS_WIN
+    QCOMPARE(withTabs.destinationError(opened.toUpper()), inTab);
+#endif
+    QVERIFY(withTabs.destinationError(closed).isEmpty());
+    QCOMPARE(withTabs.destinationError(source), replace); // the source's own reason wins
+    withTabs.setOpenFiles({});
+    QVERIFY(withTabs.destinationError(opened).isEmpty());
 }
 
 void TstExtractPlan::jobFollowsRowOrder()

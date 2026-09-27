@@ -428,6 +428,14 @@ bool WindowManager::isOpenAnywhere(const QString &canonicalPath) const
     return false;
 }
 
+QStringList WindowManager::openTabPaths() const
+{
+    QStringList paths;
+    for (MainWindow *w : windows_)
+        paths << w->tabPaths();
+    return paths;
+}
+
 WindowManager::~WindowManager()
 {
     shuttingDown_ = true;

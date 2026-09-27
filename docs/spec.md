@@ -115,7 +115,8 @@ per file (`1-3, 5, 8-10`); Extract Pages builds one file from rows of one page o
 each, reordered like the files in Merge PDFs (typing a comma starts the next row).
 Pages are taken in the order given and duplicates are kept. A range that does not
 resolve is reported, never skipped, and Extract shows the result as thumbnails before
-anything is written.
+anything is written. Both dialogs write before they close: neither saves over a file
+that is open in a tab, and a write that fails leaves the dialog open with its plan.
 
 Extract copies pages from the saved file, so unsaved comments and form entries are not
 included; the dialog says so when the open document has any. The password typed to

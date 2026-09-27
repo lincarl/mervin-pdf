@@ -1,6 +1,7 @@
 #include "dialogs/MergeDialog.h"
 
 #include "dialogs/RowList.h"
+#include "recent/PathKey.h"
 #include "ui/Icons.h"
 #include "ui/Theme.h"
 
@@ -23,6 +24,23 @@
 namespace mervin {
 
 namespace {
+
+// Save as as the merge will write it: trimmed, with ".pdf" appended if missing.
+QString withPdf(const QString &text)
+{
+    const QString out = text.trimmed();
+    return out.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive) ? out
+                                                                     : out + QStringLiteral(".pdf");
+}
+
+// Symlinks resolved when the file exists (the tabs hold canonical paths).
+QString canonicalOrAbsolute(const QString &path)
+{
+    const QFileInfo fi(path);
+    const QString canonical = fi.canonicalFilePath();
+    return canonical.isEmpty() ? fi.absoluteFilePath() : canonical;
+}
+
 // Merge's own column widths; RowList owns the rest. Sized so the longest values
 // ("Unreadable", "12 of 999") still fit at 125% Windows text scaling.
 constexpr int kColSpec = 124;
@@ -151,6 +169,7 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
         // textEdited fires only for real input - setText() emits textChanged
         // alone - so this cannot be tripped by our own refresh.
         outputEdited_ = true;
+        writeError_.clear(); // a new destination deserves a fresh attempt
         refreshFooter();
     });
     outRow->addWidget(outputEdit_, 1);
@@ -300,6 +319,7 @@ void MergeDialog::browseForOutput()
         return;
     outputEdit_->setText(QDir::toNativeSeparators(out));
     outputEdited_ = true;
+    writeError_.clear();
     refreshFooter();
 }
 
@@ -310,6 +330,9 @@ int MergeDialog::currentRow() const
 
 void MergeDialog::rebuild(int selectRow)
 {
+    // A structural change (a row added, removed, moved) may be the fix for an
+    // input that stopped the last merge, so its verdict no longer stands.
+    writeError_.clear();
     const QColor ink = Theme::iconInk(palette());
     nameLabels_.clear();
     nameTexts_.clear();
@@ -413,7 +436,17 @@ void MergeDialog::refreshFooter()
     QString problem = plan_.errorText();
     if (problem.isEmpty() && !plan_.isEmpty() && outputEdit_->text().trimmed().isEmpty())
         problem = tr("Choose where to save the merged PDF.");
-    error_->setText(problem);
+    // The viewer keeps an open tab's file open, so the write would fail only once
+    // Merge was pressed.
+    if (problem.isEmpty() && !plan_.isEmpty()
+        && openKeys_.contains(normalizePathKey(canonicalOrAbsolute(withPdf(outputEdit_->text())))))
+        problem = tr("That file is open in a tab. Choose another name.");
+    // A disabled Merge always has its reason here. A failed write shows here too
+    // but leaves Merge enabled, so closing the file in the program that holds it
+    // and pressing Merge again is enough.
+    const bool showWrite = problem.isEmpty() && !writeError_.isEmpty();
+    error_->setText(showWrite ? writeError_ : problem);
+    error_->setToolTip(showWrite ? writeErrorDetail_ : QString());
 
     const bool has = !plan_.isEmpty();
     const int cur = currentRow();
@@ -421,7 +454,15 @@ void MergeDialog::refreshFooter()
     duplicateBtn_->setEnabled(cur >= 0);
     upBtn_->setEnabled(cur > 0);
     downBtn_->setEnabled(cur >= 0 && cur < plan_.count() - 1);
-    mergeBtn_->setEnabled(has && plan_.isValid() && !outputEdit_->text().trimmed().isEmpty());
+    mergeBtn_->setEnabled(has && plan_.isValid() && problem.isEmpty());
+}
+
+void MergeDialog::setOpenFiles(const QStringList &paths)
+{
+    openKeys_.clear();
+    for (const QString &p : paths)
+        openKeys_ << normalizePathKey(canonicalOrAbsolute(p));
+    refreshFooter();
 }
 
 void MergeDialog::accept()
@@ -431,14 +472,12 @@ void MergeDialog::accept()
         return;
     }
 
-    QString out = outputEdit_->text().trimmed();
-    if (out.isEmpty()) {
+    if (outputEdit_->text().trimmed().isEmpty()) {
         QMessageBox::warning(this, tr("Merge PDFs"), tr("Choose where to save the merged PDF."));
         outputEdit_->setFocus();
         return;
     }
-    if (!out.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive))
-        out += QStringLiteral(".pdf");
+    const QString out = withPdf(outputEdit_->text());
 
     // The merge reads every source while it writes the output, so naming an input
     // as the output destroys the file it is copying from. canonicalFilePath()
@@ -464,6 +503,28 @@ void MergeDialog::accept()
             return;
     }
 
+    // Written here rather than by the caller after the dialog closes: a file
+    // another program holds open, an input that went bad, or a full disk then
+    // costs a message on the error line instead of the whole plan.
+    const QList<PageOps::MergeInput> inputs = plan_.inputs();
+    QString err;
+    int failed = -1;
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const PageOps::Status st = PageOps::merge(inputs, out, &err, &failed);
+    QApplication::restoreOverrideCursor();
+    if (st != PageOps::Status::Ok) {
+        // Name the input that stopped it when the backend can tell; otherwise
+        // it was the write.
+        writeError_ = failed >= 0 && failed < inputs.size()
+                          ? tr("The merge failed on \"%1\".")
+                                .arg(QFileInfo(inputs.at(failed).path).fileName())
+                          : tr("Could not write \"%1\". If another program has it open, close "
+                               "it and press Merge again, or choose another name.")
+                                .arg(QFileInfo(out).fileName());
+        writeErrorDetail_ = QDir::toNativeSeparators(err);
+        refreshFooter();
+        return;
+    }
     outputPath_ = out;
     QDialog::accept();
 }

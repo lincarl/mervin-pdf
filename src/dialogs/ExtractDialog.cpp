@@ -73,6 +73,7 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
         readError_ = true;
         break;
     }
+    plan_.setOpenFiles(source.openPaths);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(12, 12, 12, 12);
@@ -216,6 +217,7 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
         // rule: tracking emptiness instead refilled a field the user had just
         // cleared). setText() does not emit textEdited, so refresh cannot trip it.
         outputEdited_ = true;
+        writeError_.clear(); // a new destination deserves a fresh attempt
         refresh();
     });
     auto *browse = new QPushButton(tr("&Browse…"), this);
@@ -449,11 +451,13 @@ void ExtractDialog::refresh()
         summary += tr(" Unsaved changes are not included."); // qpdf writes from disk
     summary_->setText(summary);
 
-    // The button is enabled exactly when the error line is empty, so a disabled
-    // Extract always has its reason on screen.
+    // A disabled Extract always has its reason on the error line. A failed write
+    // shows there too but leaves Extract enabled, so closing the file in the
+    // program that holds it and pressing Extract again is enough.
     const QString why = problem();
-    error_->setText(why);
-    error_->setToolTip(readError_ ? readErrorDetail_ : QString());
+    const bool showWrite = why.isEmpty() && !writeError_.isEmpty();
+    error_->setText(showWrite ? writeError_ : why);
+    error_->setToolTip(showWrite ? writeErrorDetail_ : readError_ ? readErrorDetail_ : QString());
     acceptBtn_->setEnabled(why.isEmpty());
 }
 
@@ -480,6 +484,7 @@ void ExtractDialog::browseForOutput()
         return;
     output_->setText(QDir::toNativeSeparators(picked));
     outputEdited_ = true;
+    writeError_.clear();
     refresh();
 }
 
@@ -529,9 +534,28 @@ void ExtractDialog::accept()
                != QMessageBox::Yes)
         return;
 
-    job_ = job;
     if (passwordEdit_)
         password_ = passwordEdit_->text();
+
+    // Written here rather than by the caller after the dialog closes: a file
+    // another program holds open, or a full disk, then costs a message on the
+    // error line instead of every row. merge() fails on an out-of-range page
+    // rather than skipping it, and one input on the same file is exactly an
+    // extract.
+    QString err;
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const PageOps::Status st = PageOps::merge(
+        {PageOps::MergeInput{source_.path, job.pages, password_}}, job.path, &err);
+    QApplication::restoreOverrideCursor();
+    if (st != PageOps::Status::Ok) {
+        writeError_ = tr("Could not write \"%1\". If another program has it open, close it "
+                         "and press Extract again, or choose another name.")
+                          .arg(QFileInfo(job.path).fileName());
+        writeErrorDetail_ = QDir::toNativeSeparators(err);
+        refresh();
+        return;
+    }
+    job_ = job;
     QDialog::accept();
 }
 
