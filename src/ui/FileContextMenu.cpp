@@ -16,7 +16,8 @@
 namespace mervin {
 
 void showFileContextMenu(QWidget *parent, const QString &path, const QPoint &globalPos,
-                         const QList<FileMenuItem> &leadingItems)
+                         const QList<FileMenuItem> &leadingItems,
+                         const QList<FileMenuItem> &trailingItems)
 {
     if (path.isEmpty())
         return;
@@ -28,50 +29,61 @@ void showFileContextMenu(QWidget *parent, const QString &path, const QPoint &glo
 
     QMenu menu(parent);
 
-    QList<QAction *> leadingActions;
-    for (const FileMenuItem &item : leadingItems) {
-        QAction *a = menu.addAction(item.icon, item.label);
-        a->setEnabled(item.enabled);
-        leadingActions.append(a);
-    }
+    // Surface items, paired with their QAction so the chosen one can be run
+    // after exec() returns.
+    QList<std::pair<QAction *, FileMenuItem>> surfaceActions;
+    const auto addSurfaceItems = [&](const QList<FileMenuItem> &items) {
+        for (const FileMenuItem &item : items) {
+            QAction *a = menu.addAction(item.icon, item.label);
+            a->setEnabled(item.enabled);
+            surfaceActions.append({a, item});
+        }
+    };
+
+    addSurfaceItems(leadingItems);
     if (!leadingItems.isEmpty())
         menu.addSeparator();
 
     // House pictographs, tinted to the menu's neutral icon ink. The two path
-    // items badge a small Copy glyph onto a folder / page base, so "copy the path
+    // items badge a small Copy glyph onto a page / folder base, so "copy the path
     // text" reads distinctly from the plain two-page Copy mark on "Copy file".
     using icons::Glyph;
     const QColor ink = Theme::iconInk(parent ? parent->palette() : QApplication::palette());
+    QAction *copyFile = menu.addAction(icons::glyph(Glyph::Copy, ink),
+                                       QObject::tr("Copy file"));
+    copyFile->setEnabled(fi.isFile());
     QAction *openFolder = menu.addAction(icons::glyph(Glyph::Open, ink),
                                          QObject::tr("Open folder"));
     openFolder->setEnabled(!folder.isEmpty() && QFileInfo::exists(folder));
-    QAction *copyFolder = menu.addAction(
-        icons::glyphBadged(Glyph::Open, Glyph::Copy, ink),
-        QObject::tr("Copy folder path"));
-    QAction *copyFile = menu.addAction(
+    menu.addSeparator();
+    QAction *copyFilePath = menu.addAction(
         icons::glyphBadged(Glyph::Document, Glyph::Copy, ink),
         QObject::tr("Copy file path"));
-    QAction *copyObject = menu.addAction(icons::glyph(Glyph::Copy, ink),
-                                         QObject::tr("Copy file"));
-    copyObject->setEnabled(fi.isFile());
+    QAction *copyFolderPath = menu.addAction(
+        icons::glyphBadged(Glyph::Open, Glyph::Copy, ink),
+        QObject::tr("Copy folder path"));
+
+    if (!trailingItems.isEmpty())
+        menu.addSeparator();
+    addSurfaceItems(trailingItems);
 
     QAction *chosen = menu.exec(globalPos);
     if (chosen == nullptr)
         return;
-    for (int i = 0; i < leadingActions.size(); ++i) {
-        if (chosen == leadingActions.at(i)) {
-            if (leadingItems.at(i).action)
-                leadingItems.at(i).action();
+    for (const auto &[action, item] : surfaceActions) {
+        if (chosen == action) {
+            if (item.action)
+                item.action();
             return;
         }
     }
     if (chosen == openFolder) {
         QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
-    } else if (chosen == copyFolder) {
+    } else if (chosen == copyFolderPath) {
         QApplication::clipboard()->setText(folderNative);
-    } else if (chosen == copyFile) {
+    } else if (chosen == copyFilePath) {
         QApplication::clipboard()->setText(fileNative);
-    } else if (chosen == copyObject) {
+    } else if (chosen == copyFile) {
         // The enabled state was computed when the menu opened; the file can
         // vanish while the menu is up, in which case the helper leaves the
         // clipboard untouched - do not let that look like a successful copy.

@@ -489,18 +489,18 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
             t->viewer() ? captureViewState(t->viewer()) : mervin::ViewState{};
         const QColor ink = mervin::Theme::iconInk(palette());
         mervin::showFileContextMenu(
-            this, t->path(), docTabBar_->mapToGlobal(pos),
-            {{tr("Move to new window"),
-              [this, idx] { onTabDetachRequested(idx, this->pos() + QPoint(40, 40)); },
-              tabs_->count() > 1,
-              mervin::icons::glyph(mervin::icons::Glyph::OpenInNewWindow, ink)},
-             {tr("Duplicate to new window"),
+            this, t->path(), docTabBar_->mapToGlobal(pos), {},
+            {{tr("Duplicate to new window"),
               [this, dupPath, dupState] {
                   if (wm_)
                       wm_->duplicateToNewWindow(dupPath, dupState, this->pos() + QPoint(40, 40));
               },
               true,
               mervin::icons::glyph(mervin::icons::Glyph::ShowAllWindows, ink)},
+             {tr("Move to new window"),
+              [this, idx] { onTabDetachRequested(idx, this->pos() + QPoint(40, 40)); },
+              tabs_->count() > 1,
+              mervin::icons::glyph(mervin::icons::Glyph::OpenInNewWindow, ink)},
              {tr("Close all tabs"),
               [this] { closeAllTabs(); },
               tabs_->count() > 0,
