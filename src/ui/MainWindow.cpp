@@ -489,7 +489,7 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
             t->viewer() ? captureViewState(t->viewer()) : mervin::ViewState{};
         const QColor ink = mervin::Theme::iconInk(palette());
         mervin::showFileContextMenu(
-            this, t->path(), docTabBar_->mapToGlobal(pos), {},
+            this, t->path(), docTabBar_->mapToGlobal(pos),
             {{tr("Duplicate to new window"),
               [this, dupPath, dupState] {
                   if (wm_)

@@ -445,22 +445,21 @@ bool RecentFilesPanel::eventFilter(QObject *obj, QEvent *event)
                 const bool regularEntry = item->data(kEpochRole).isValid();
                 const QStringList missingPaths = missingFilesInCurrentFilter();
                 const QColor ink = Theme::iconInk(palette());
-                QList<FileMenuItem> leadingItems{
+                QList<FileMenuItem> surfaceItems{
                     {tr("Open in new window"),
                      [this, path] { emit openInNewWindowRequested(path); },
                      !missing,
                      icons::glyph(icons::Glyph::OpenInNewWindow, ink)}
                 };
                 if (regularEntry) {
-                    leadingItems.append({tr("Clear missing files"),
+                    surfaceItems.append({tr("Clear missing files"),
                                          [this, missingPaths] {
                                              emit clearMissingRequested(missingPaths);
                                          },
                                          !missingPaths.isEmpty(),
                                          icons::glyph(icons::Glyph::Broom, ink)});
                 }
-                showFileContextMenu(this, path, ce->globalPos(),
-                                    leadingItems);
+                showFileContextMenu(this, path, ce->globalPos(), surfaceItems);
                 return true;
             }
         }

@@ -16,8 +16,7 @@
 namespace mervin {
 
 void showFileContextMenu(QWidget *parent, const QString &path, const QPoint &globalPos,
-                         const QList<FileMenuItem> &leadingItems,
-                         const QList<FileMenuItem> &trailingItems)
+                         const QList<FileMenuItem> &surfaceItems)
 {
     if (path.isEmpty())
         return;
@@ -28,21 +27,6 @@ void showFileContextMenu(QWidget *parent, const QString &path, const QPoint &glo
     const QString fileNative   = QDir::toNativeSeparators(fi.absoluteFilePath());
 
     QMenu menu(parent);
-
-    // Surface items, paired with their QAction so the chosen one can be run
-    // after exec() returns.
-    QList<std::pair<QAction *, FileMenuItem>> surfaceActions;
-    const auto addSurfaceItems = [&](const QList<FileMenuItem> &items) {
-        for (const FileMenuItem &item : items) {
-            QAction *a = menu.addAction(item.icon, item.label);
-            a->setEnabled(item.enabled);
-            surfaceActions.append({a, item});
-        }
-    };
-
-    addSurfaceItems(leadingItems);
-    if (!leadingItems.isEmpty())
-        menu.addSeparator();
 
     // House pictographs, tinted to the menu's neutral icon ink. The two path
     // items badge a small Copy glyph onto a page / folder base, so "copy the path
@@ -63,19 +47,24 @@ void showFileContextMenu(QWidget *parent, const QString &path, const QPoint &glo
         icons::glyphBadged(Glyph::Open, Glyph::Copy, ink),
         QObject::tr("Copy folder path"));
 
-    if (!trailingItems.isEmpty())
+    // Surface items; their QActions are kept so the chosen one can be run
+    // after exec() returns.
+    if (!surfaceItems.isEmpty())
         menu.addSeparator();
-    addSurfaceItems(trailingItems);
+    QList<QAction *> surfaceActions;
+    for (const FileMenuItem &item : surfaceItems) {
+        QAction *a = menu.addAction(item.icon, item.label);
+        a->setEnabled(item.enabled);
+        surfaceActions.append(a);
+    }
 
     QAction *chosen = menu.exec(globalPos);
     if (chosen == nullptr)
         return;
-    for (const auto &[action, item] : surfaceActions) {
-        if (chosen == action) {
-            if (item.action)
-                item.action();
-            return;
-        }
+    if (const qsizetype i = surfaceActions.indexOf(chosen); i >= 0) {
+        if (surfaceItems.at(i).action)
+            surfaceItems.at(i).action();
+        return;
     }
     if (chosen == openFolder) {
         QDesktopServices::openUrl(QUrl::fromLocalFile(folder));

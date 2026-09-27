@@ -11,9 +11,9 @@ class QWidget;
 
 namespace mervin {
 
-// A surface-specific entry shown above or below the shared file actions.
-// `enabled` greys it out when its action does not apply; `icon` is the glyph
-// shown in front of the label (see icons::glyph), null for none.
+// A surface-specific entry shown below the shared file actions. `enabled`
+// greys it out when its action does not apply; `icon` is the glyph shown in
+// front of the label (see icons::glyph), null for none.
 struct FileMenuItem
 {
     QString label;
@@ -23,19 +23,17 @@ struct FileMenuItem
 };
 
 // Pops up the shared right-click menu for a PDF file at globalPos:
-//   [optional leading items]
-//   ───────────────────────
 //   Copy file · Open folder
 //   ───────────────────────
 //   Copy file path · Copy folder path
 //   ───────────────────────
-//   [optional trailing items]
+//   [optional surface items]
 //
-// The file actions in the middle keep the Recent-list and document-tab menus
-// identical. Each surface supplies its own items around them (the recent list
-// leads with "Open in new window"; the tab bar trails with "Duplicate to new
-// window", "Move to new window", "Close all tabs"); pass an empty list to omit
-// either group.
+// The file actions on top keep the Recent-list and document-tab menus
+// identical. Each surface appends its own surfaceItems below them (the recent
+// list: "Open in new window", "Clear missing files"; the tab bar: "Duplicate
+// to new window", "Move to new window", "Close all tabs"); pass an empty list
+// to omit them.
 //
 // "Open folder" opens the containing folder in the OS file browser (disabled
 // when that folder no longer exists); the copy-path actions place the native-
@@ -44,7 +42,6 @@ struct FileMenuItem
 // manager or attached in a mail client (disabled when the file no longer
 // exists). No-op when path is empty.
 void showFileContextMenu(QWidget *parent, const QString &path, const QPoint &globalPos,
-                         const QList<FileMenuItem> &leadingItems = {},
-                         const QList<FileMenuItem> &trailingItems = {});
+                         const QList<FileMenuItem> &surfaceItems = {});
 
 } // namespace mervin
