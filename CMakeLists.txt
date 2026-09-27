@@ -110,6 +110,9 @@ add_library(mervin_core STATIC
     src/net/UrlDownloadLocation.h
     src/merge/MergePlan.cpp
     src/merge/MergePlan.h
+    src/merge/RowMoves.h
+    src/extract/ExtractPlan.cpp
+    src/extract/ExtractPlan.h
     src/config/ConfigPaths.cpp
     src/config/ConfigPaths.h
     src/config/Settings.cpp
@@ -220,6 +223,12 @@ qt_add_executable(MervinPDF
     src/dialogs/ManageLanguagesDialog.h
     src/dialogs/MergeDialog.cpp
     src/dialogs/MergeDialog.h
+    src/dialogs/RowList.cpp
+    src/dialogs/RowList.h
+    src/dialogs/ExtractDialog.cpp
+    src/dialogs/ExtractDialog.h
+    src/dialogs/ExtractStrip.cpp
+    src/dialogs/ExtractStrip.h
     src/update/UpdateChecker.cpp
     src/update/UpdateChecker.h
     src/update/ReleaseConfig.h

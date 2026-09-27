@@ -31,6 +31,7 @@ src/
   app/           process-level window and store ownership
   config/        paths and TOML settings
   dialogs/       application dialogs
+  extract/       extract-plan model
   ipc/           process lock, local socket, and message framing
   merge/         merge-plan model
   net/           safe URL request and download helpers
@@ -179,6 +180,13 @@ encryption.
 `PageOps` uses qpdf for rotation, deletion, extraction, splitting, and merging.
 `QpdfService` inspects and changes encryption and permission settings. These services
 write new files and do not share live MuPDF document handles with the viewer.
+
+`MergePlan` and `ExtractPlan` are the GUI-free models behind the Merge PDFs and
+Extract Pages dialogs, tested in `tst_merge_plan` and `tst_extract_plan`; each dialog
+only renders its plan and writes edits back to it. Both dialogs show their rows in
+the same reorderable `RowList`. Extract writes through `PageOps::merge`, which fails
+on an out-of-range page instead of skipping it, so a stale page count cannot silently
+shorten the output.
 
 ## Save and print pipeline
 

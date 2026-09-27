@@ -120,7 +120,7 @@ private slots:
 void TestIcons::rosterCoversTheEnum()
 {
     const auto &roster = mervin::icons::allGlyphs();
-    QCOMPARE(int(roster.size()), int(Glyph::DragHandle) + 1);
+    QCOMPARE(int(roster.size()), int(Glyph::FileX) + 1);
 
     QSet<int> seen;
     for (const auto &e : roster) {
@@ -248,6 +248,9 @@ void TestIcons::relatedGlyphsAreDistinct_data()
         {"prev vs next", Glyph::PrevPage, Glyph::NextPage, 0.90},
         {"copy vs show all windows", Glyph::Copy, Glyph::ShowAllWindows, 0.90},
         {"document vs fit page", Glyph::Document, Glyph::FitPage, 0.90},
+        // The same folded page; only the X tells the Extract strip's hidden pages
+        // apart from a plain document.
+        {"file x vs document", Glyph::FileX, Glyph::Document, 0.90},
         {"select all vs thumbnails", Glyph::SelectAll, Glyph::Thumbnails, 0.90},
         // Both are "a stack of marks in the middle of the box". If the grip ever
         // gets redrawn as stacked lines it becomes the hamburger, and the merge

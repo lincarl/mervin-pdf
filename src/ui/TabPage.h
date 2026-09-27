@@ -26,7 +26,7 @@ public:
 
     // Open `path`. For an encrypted document, pass the user password; if one is
     // required but missing/wrong, returns false and sets *needsPassword so the
-    // caller can prompt and retry.
+    // caller can prompt and retry. On success the password becomes password().
     bool open(const QString &path, const QString &password = QString(), QString *error = nullptr,
               bool *needsPassword = nullptr);
 
@@ -43,6 +43,15 @@ public:
     QString tabTitle() const;      // file name
     QString documentTitle() const; // embedded PDF title, or file name
 
+    // The password that unlocks this tab's file (empty when it is not encrypted),
+    // so the qpdf operations that re-read the file from disk do not ask again.
+    // setPassword() records one the user typed later that worked. Kept in memory
+    // for the tab's lifetime only and never written anywhere (settings, session,
+    // recent list, closed-tab history, logs): the decrypted document is already in
+    // memory, so also holding its password adds little exposure.
+    QString password() const { return password_; }
+    void setPassword(const QString &password) { password_ = password; }
+
 private:
     RenderEngine *engine_;
     std::unique_ptr<Document> doc_;
@@ -52,6 +61,7 @@ private:
     PanelStack *panelStack_ = nullptr; // docks measurePanel_ + annotPanel_ as a group
     QString path_;
     QString canonicalPath_;
+    QString password_; // see password()
 };
 
 } // namespace mervin

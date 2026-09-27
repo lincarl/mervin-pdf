@@ -198,6 +198,7 @@ bool TabPage::open(const QString &path, const QString &password, QString *error,
         }
     }
 
+    password_ = password;
     const QFileInfo fi(path);
     path_ = fi.absoluteFilePath();
     canonicalPath_ = fi.canonicalFilePath();

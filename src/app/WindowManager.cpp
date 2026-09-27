@@ -557,13 +557,14 @@ void WindowManager::detachTab(MainWindow *source, int index, const QPoint &globa
     w->activateWindow();
 }
 
-void WindowManager::duplicateToNewWindow(const QString &path, const ViewState &state,
-                                         const QPoint &globalPos)
+void WindowManager::duplicateToNewWindow(const QString &path, const QString &password,
+                                         const ViewState &state, const QPoint &globalPos)
 {
     if (path.isEmpty())
         return;
     MainWindow *w = createWindow();
-    if (w->openFile(path, /*allowDuplicate=*/true)) {
+    if (w->openFile(path, /*allowDuplicate=*/true, /*atIndex=*/-1, /*makeCurrent=*/true,
+                    password)) {
         w->applyViewState(canonicalOf(path), state); // mirror the source view
         w->move(globalPos);                           // offset from the source window
     }

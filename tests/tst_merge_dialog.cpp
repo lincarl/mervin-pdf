@@ -60,6 +60,7 @@ private slots:
 
     void seededPlainDocumentIsReadyToMerge();
     void seededEncryptedDocumentIsBlockedUpFront();
+    void seededEncryptedDocumentOpensWithTheTabPassword();
     void focusingARowEditorMakesThatRowCurrent();
     void outputFieldCanBeEmptied();
     void badRangeBlocksTheMerge();
@@ -130,14 +131,29 @@ void TstMergeDialog::seededEncryptedDocumentIsBlockedUpFront()
     // viewer's page count instead of probed, so an encrypted open document showed
     // a healthy row and the merge only died after the user had built the whole
     // plan and chosen an output path. The viewer really can have such a document
-    // open - it prompts for the password at open time and then discards it, so
-    // qpdf meets the file locked.
-    MergeDialog d(encrypted_, 6); // 6 = what the viewer would report
+    // open without a password that qpdf accepts - none passed, or a stale one
+    // after the file changed on disk - so qpdf meets the file locked.
+    for (const QString &password : {QString(), QStringLiteral("stale")}) {
+        MergeDialog d(encrypted_, 6, password); // 6 = what the viewer would report
+        prepare(d);
+        QCOMPARE(list(d)->count(), 1);
+        QVERIFY2(!mergeBtn(d)->isEnabled(), "an encrypted seeded row must block the merge");
+        // The row says why, and says it before anything is written.
+        QVERIFY(specs(d).size() == 1 && !specs(d).at(0)->isEnabled());
+    }
+}
+
+void TstMergeDialog::seededEncryptedDocumentOpensWithTheTabPassword()
+{
+    // The tab remembers the password it was opened with; the seeded row uses it.
+    MergeDialog d(encrypted_, 6, QStringLiteral("secret"));
     prepare(d);
     QCOMPARE(list(d)->count(), 1);
-    QVERIFY2(!mergeBtn(d)->isEnabled(), "an encrypted seeded row must block the merge");
-    // The row says why, and says it before anything is written.
-    QVERIFY(specs(d).size() == 1 && !specs(d).at(0)->isEnabled());
+    QVERIFY(specs(d).size() == 1 && specs(d).at(0)->isEnabled());
+    QVERIFY(mergeBtn(d)->isEnabled());
+    QCOMPARE(d.inputs().size(), 1);
+    QCOMPARE(d.inputs().at(0).pages.size(), 6);
+    QCOMPARE(d.inputs().at(0).password, QStringLiteral("secret"));
 }
 
 void TstMergeDialog::focusingARowEditorMakesThatRowCurrent()

@@ -81,6 +81,7 @@ enum class Glyph {
     Close,           // cross
     Broom,           // sweep entries away
     DragHandle,      // six-dot grip: press here to drag a row
+    FileX,           // folded-corner page with an X: pages the Extract strip hides
 };
 
 // The pictograph tinted to `color` (the palette's WindowText, Theme::iconInk, or

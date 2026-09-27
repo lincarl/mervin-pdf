@@ -106,34 +106,6 @@ PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPa
     }
 }
 
-PageOps::Status PageOps::extractPages(const QString &inPath, const QString &outPath,
-                                      const QList<int> &pages, const QString &password,
-                                      QString *error)
-{
-    QPDF q;
-    const Status st = open(q, inPath, password, error);
-    if (st != Status::Ok)
-        return st;
-    try {
-        QPDFPageDocumentHelper dh(q);
-        auto all = dh.getAllPages();
-        QPDF out;
-        out.emptyPDF();
-        QPDFPageDocumentHelper odh(out);
-        for (int idx : pages)
-            if (idx >= 0 && idx < static_cast<int>(all.size()))
-                odh.addPage(all[static_cast<size_t>(idx)], false);
-        QPDFWriter w(out, u8(outPath).c_str());
-        w.setStaticID(false);
-        w.write(); // `q` stays alive through write(), so stream data copies cleanly
-        return Status::Ok;
-    } catch (const std::exception &e) {
-        if (error)
-            *error = QString::fromUtf8(e.what());
-        return Status::Failed;
-    }
-}
-
 PageOps::Status PageOps::rotatePages(const QString &inPath, const QString &outPath,
                                      const QList<int> &pages, int angle, bool relative,
                                      const QString &password, QString *error)

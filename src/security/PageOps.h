@@ -34,12 +34,6 @@ public:
                               const QList<int> &pages, const QString &password = QString(),
                               QString *error = nullptr);
 
-    // Write a new document containing only `pages`, in the given order. Doubles
-    // as "reorder" when `pages` is a permutation of the whole document.
-    static Status extractPages(const QString &inPath, const QString &outPath,
-                               const QList<int> &pages, const QString &password = QString(),
-                               QString *error = nullptr);
-
     // Rotate `pages` by `angle` (a multiple of 90). relative=true adds to the
     // existing rotation; false sets it absolutely.
     static Status rotatePages(const QString &inPath, const QString &outPath,
@@ -63,10 +57,10 @@ public:
     // could not be read, or -1 when the failure was not attributable to one
     // input (a write error, say) - so a caller can name the offending file.
     //
-    // Unlike extractPages(), an out-of-range page index is an error rather than
-    // being skipped: a page count that went stale between the caller's probe and
-    // this write would otherwise silently produce a shorter document than the
-    // caller promised its user, and still report success.
+    // An out-of-range page index is an error rather than being skipped: a page
+    // count that went stale between the caller's probe and this write would
+    // otherwise silently produce a shorter document than the caller promised its
+    // user, and still report success. For an extract, pass one input.
     static Status merge(const QList<MergeInput> &inputs, const QString &outPath,
                         QString *error = nullptr, int *failedIndex = nullptr);
 

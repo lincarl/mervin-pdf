@@ -4,17 +4,16 @@
 
 #include <QDialog>
 #include <QList>
-#include <QPoint>
 #include <QString>
 #include <QStringList>
 
-class QHBoxLayout;
 class QLabel;
 class QLineEdit;
-class QListWidget;
 class QPushButton;
 
 namespace mervin {
+
+class RowList;
 
 // Document -> Merge PDFs.
 //
@@ -41,8 +40,10 @@ public:
     // ordinary first row - removable and reorderable like any other, which is the
     // point. It is probed with qpdf like every other row; `initialPageCount` (the
     // viewer's count) is only a fallback for the case where qpdf opens the file
-    // but reports no pages.
+    // but reports no pages. `initialPassword` is the one that opened it in its tab:
+    // when it unlocks the file the row is ready and carries it into inputs().
     explicit MergeDialog(const QString &initialPath, int initialPageCount,
+                         const QString &initialPassword = QString(),
                          QWidget *parent = nullptr);
 
     // Valid after exec() == Accepted.
@@ -57,11 +58,6 @@ public:
 
 private:
     void accept() override;
-    // Watches each row's page-range editor for focus (so the row the user is
-    // typing in becomes the current row, and Remove / Duplicate / Move act on it)
-    // and the list's viewport for resize (so the column captions stay over their
-    // columns when the scrollbar appears).
-    bool eventFilter(QObject *watched, QEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
 
     void addFiles();
@@ -71,15 +67,15 @@ private:
     void browseForOutput();
 
     // Probe `path` with qpdf and build the row it deserves (page count, or a
-    // Locked / Unreadable state with the backend's message as its tooltip).
-    static MergePlan::Entry probeEntry(const QString &path);
+    // Locked / Unreadable state with the backend's message as its tooltip). An
+    // encrypted file is tried with `password` when one is given; if it opens, the
+    // row is Ok and keeps the password. Added files have none, so they stay Locked.
+    static MergePlan::Entry probeEntry(const QString &path, const QString &password = QString());
 
     // Tear down and rebuild every row from plan_, then refresh the summary, the
     // error line and the enabled states. `selectRow` is reselected afterwards.
-    void startRowDrag(int row);
     void rebuild(int selectRow = -1);
     void refreshFooter();
-    void syncHeaderInsets(); // keep the captions over the columns
     void reelideNames();     // fit each row's file name to its actual width
     int currentRow() const;
     QString startDirectory() const;
@@ -87,11 +83,8 @@ private:
     MergePlan plan_;
     QString outputPath_;
     bool outputEdited_ = false; // stop re-deriving the name once the user typed one
-    int dragRow_ = -1;          // row whose grip is held, -1 when none
-    QPoint dragOrigin_;         // where that press landed, for the drag threshold
 
-    QListWidget *list_ = nullptr;
-    QHBoxLayout *headerRow_ = nullptr;
+    RowList *list_ = nullptr;
     QList<QLabel *> nameLabels_; // one per row, rebuilt with the list
     QStringList nameTexts_;      // their untruncated text, for re-eliding
     QLabel *summary_ = nullptr;

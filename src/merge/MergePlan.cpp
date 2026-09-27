@@ -1,5 +1,6 @@
 #include "merge/MergePlan.h"
 
+#include "merge/RowMoves.h"
 #include "print/PageRange.h"
 
 #include <QCoreApplication>
@@ -37,24 +38,12 @@ int MergePlan::duplicate(int i)
 
 int MergePlan::move(int i, int delta)
 {
-    const int to = i + delta;
-    if (i < 0 || i >= entries_.size() || to < 0 || to >= entries_.size() || delta == 0)
-        return -1;
-    entries_.move(i, to);
-    return to;
+    return moveRow(entries_, i, delta);
 }
 
 int MergePlan::moveToGap(int from, int gap)
 {
-    if (from < 0 || from >= entries_.size() || gap < 0 || gap > entries_.size())
-        return -1;
-    // Gaps are numbered against the list as it stands; lifting the row out closes
-    // the gap it occupied, so everything below it shifts up one.
-    const int to = gap > from ? gap - 1 : gap;
-    if (to == from)
-        return -1;
-    entries_.move(from, to);
-    return to;
+    return moveRowToGap(entries_, from, gap);
 }
 
 void MergePlan::setSpec(int i, const QString &spec)

@@ -17,9 +17,11 @@
 
 namespace mervin {
 
-SecurityDialog::SecurityDialog(const QString &documentPath, QWidget *parent)
+SecurityDialog::SecurityDialog(const QString &documentPath, const QString &password,
+                               QWidget *parent)
     : QDialog(parent)
     , path_(documentPath)
+    , password_(password)
 {
     setWindowTitle(tr("Document Security"));
     auto *layout = new QVBoxLayout(this);

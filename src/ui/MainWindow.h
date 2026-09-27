@@ -60,8 +60,11 @@ public:
     // Both exist for the staged session restore, which opens the previously
     // active document first and then slots the remaining documents back into
     // their saved positions around it without ever stealing the view.
+    //
+    // knownPassword is tried before any prompt: "Duplicate to new window" passes
+    // the source tab's, so the second view of an encrypted file does not ask.
     bool openFile(const QString &path, bool allowDuplicate = false, int atIndex = -1,
-                  bool makeCurrent = true);
+                  bool makeCurrent = true, const QString &knownPassword = QString());
 
     // If the given canonical path is open in THIS window, select its tab and
     // return true. (Cross-window focusing is orchestrated by WindowManager.)
@@ -149,7 +152,9 @@ private:
     QList<int> askPageRange(const QString &title, int pageCount);
     QStringList askForPdfs();              // app picker: local multi-select or typed URL
     void openUrl(const QUrl &url, bool inNewWindow = false); // download, then open its cache file
-    void offerToOpen(const QString &path); // ask whether to open a written file
+    // Ask whether to open a written file. `password` is tried before any prompt,
+    // for outputs that keep the source tab's encryption.
+    void offerToOpen(const QString &path, const QString &password = QString());
     // Gather a viewer's committed measurements + per-page overrides for saving
     // (the Mervin blob), or paired with each page's PDF transform + value label
     // for export/print rendering.

@@ -60,6 +60,10 @@ struct Settings
     bool highlightFormFields = true;
     bool autoFormFill = true;
 
+    // Document > Extract Pages: the dialog's "Open when done" box, remembered.
+    // True by default because the old "Open it now?" prompt defaulted to Yes.
+    bool extractOpenWhenDone = true;
+
     // Selection OCR. This is a Tesseract language code (for example, "eng").
     // If its model is not installed, the OCR picker falls back to the first
     // installed language instead of asking Tesseract to load a missing model.

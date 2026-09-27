@@ -8,7 +8,7 @@ namespace mervin {
 
 // A small, count-bounded cache of page thumbnails keyed by 0-based page index.
 // Eviction is simple FIFO - thumbnails are cheap to re-render, so an exact LRU
-// is unnecessary.
+// is unnecessary. Replacing a page's pixmap makes it the newest entry.
 class ThumbnailCache
 {
 public:
@@ -19,13 +19,11 @@ public:
 
     void put(int page, const QPixmap &pm)
     {
-        if (!map_.contains(page))
-            order_.append(page);
+        order_.removeOne(page);
+        order_.append(page);
         map_.insert(page, pm);
-        while (order_.size() > max_) {
-            const int evict = order_.takeFirst();
-            map_.remove(evict);
-        }
+        while (order_.size() > max_)
+            map_.remove(order_.takeFirst());
     }
 
     void clear()

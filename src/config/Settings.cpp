@@ -73,6 +73,7 @@ Settings Settings::load()
         s.measurementSnap = boolean("measurement_snap", s.measurementSnap);
         s.highlightFormFields = boolean("highlight_form_fields", s.highlightFormFields);
         s.autoFormFill = boolean("auto_form_fill", s.autoFormFill);
+        s.extractOpenWhenDone = boolean("extract_open_when_done", s.extractOpenWhenDone);
         s.ocrDefaultLanguage = str("ocr_default_language", s.ocrDefaultLanguage);
         s.annotationAuthor = str("annotation_author", s.annotationAuthor);
         s.annotationColor = str("annotation_color", s.annotationColor);
@@ -107,6 +108,7 @@ void Settings::save() const
     tbl.insert("measurement_snap", measurementSnap);
     tbl.insert("highlight_form_fields", highlightFormFields);
     tbl.insert("auto_form_fill", autoFormFill);
+    tbl.insert("extract_open_when_done", extractOpenWhenDone);
     tbl.insert("ocr_default_language", ocrDefaultLanguage.toStdString());
     tbl.insert("annotation_author", annotationAuthor.toStdString());
     tbl.insert("annotation_color", annotationColor.toStdString());

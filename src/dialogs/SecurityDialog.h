@@ -22,21 +22,24 @@ class SecurityDialog : public QDialog
     Q_OBJECT
 
 public:
-    SecurityDialog(const QString &documentPath, QWidget *parent = nullptr);
+    // `password` is the one that opened the document in its tab (empty when it is
+    // not encrypted). It is tried first, so the dialog prompts only if it fails.
+    SecurityDialog(const QString &documentPath, const QString &password = QString(),
+                   QWidget *parent = nullptr);
 
 signals:
     void openRequested(const QString &path); // user chose to open a written copy
 
 private:
     void refreshInfo();           // read + display current security info
-    bool ensurePassword();        // prompt for the open password if required
+    bool ensurePassword();        // prompt for the open password; only after password_ failed
     void doEncrypt();
     void doDecrypt(bool stripRestrictions); // false = remove password, true = strip
     QString chooseOutput(const QString &suffix);
     void reportResult(QpdfService::Status st, const QString &error, const QString &outPath);
 
     QString path_;
-    QString password_; // the open password supplied so far (may be empty)
+    QString password_; // the open password supplied so far (the tab's, or typed; may be empty)
     QpdfService svc_;
 
     QLabel *infoLabel_ = nullptr;

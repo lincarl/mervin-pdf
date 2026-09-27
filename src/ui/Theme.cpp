@@ -625,30 +625,49 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
             .arg(css(t.inkPrimary), css(t.borderPopoverControl)));
 
     // ── Merge dialog ────────────────────────────────────────────────────────
-    // Same item-view treatment as the measuring panel's list (there is no
-    // QHeaderView anywhere in the app, which is why the column captions are a
-    // plain widget above the list rather than a QTableWidget header).
+    // Its row list (RowList) is shared with the Extract dialog, so each list rule,
+    // and the summary and error lines, name both dialogs. Same item-view treatment as the measuring panel's list
+    // (there is no QHeaderView anywhere in the app, which is why the column
+    // captions are a plain widget above the list rather than a QTableWidget header).
     add(QStringLiteral("QLabel#mergeHint { color:%1; }").arg(css(t.inkSoft)));
-    add(QStringLiteral("QWidget#mergeListHeader QLabel { color:%1; font-weight:600; }")
+    add(QStringLiteral("QWidget#rowListHeader QLabel { color:%1; font-weight:600; }")
             .arg(css(t.inkSoft)));
-    add(QStringLiteral("QListWidget#mergeList { background:%1; border:1px solid %2;"
+    add(QStringLiteral("QListWidget#mergeList, QListWidget#extractList,"
+                       " QListView#extractStrip { background:%1; border:1px solid %2;"
                        " border-radius:6px; padding:2px; }")
-            .arg(css(t.well), css(t.border)));
-    add(QStringLiteral("QListWidget#mergeList::item { border-radius:4px; }"));
-    add(QStringLiteral("QListWidget#mergeList::item:hover { background:%1; }").arg(css(t.hover)));
+            .arg(css(t.well), css(t.border))); // the Extract strip sits in the same well
+    add(QStringLiteral("QListWidget#mergeList::item, QListWidget#extractList::item {"
+                       " border-radius:4px; }"));
+    add(QStringLiteral("QListWidget#mergeList::item:hover,"
+                       " QListWidget#extractList::item:hover { background:%1; }")
+            .arg(css(t.hover)));
     // Move Up / Move Down / Duplicate / Remove all act on the current row, so
     // which row is current has to be visible. Item views elsewhere in the app get
     // selection from the palette; this one draws its rows as item widgets, which
     // paint over it.
-    add(QStringLiteral("QListWidget#mergeList::item:selected { background:%1; }")
+    add(QStringLiteral("QListWidget#mergeList::item:selected,"
+                       " QListWidget#extractList::item:selected { background:%1; }")
             .arg(css(t.accentWash)));
-    add(QStringLiteral("QLabel#mergeRowNum, QLabel#mergeRowOutput { color:%1; }")
+    add(QStringLiteral("QLabel#rowListNum, QLabel#rowListOutput { color:%1; }")
             .arg(css(t.inkSoft)));
-    add(QStringLiteral("QLabel#mergeSummary { color:%1; }").arg(css(t.ink)));
+    add(QStringLiteral("QLabel#mergeSummary, QLabel#extractSummary { color:%1; }")
+            .arg(css(t.ink)));
     // The one red in the dialog: a range that does not resolve blocks the Merge
-    // button, so the reason has to read as a blocker, not as a hint.
-    add(QStringLiteral("QLabel#mergeError { color:%1; }").arg(css(t.inkDanger)));
-    add(QStringLiteral("QToolButton#mergeRowX { padding:0; }"));
+    // or Extract button, so the reason has to read as a blocker, not as a hint.
+    add(QStringLiteral("QLabel#mergeError, QLabel#extractError { color:%1; }")
+            .arg(css(t.inkDanger)));
+    add(QStringLiteral("QToolButton#rowListX { padding:0; }"));
+
+    // ── Extract dialog ──────────────────────────────────────────────────────
+    // The row list, summary and error line take the Merge rules above; the strip
+    // paints its cells from the same tokens (ExtractStrip::paintCell). These cover
+    // the rest.
+    add(QStringLiteral("QLineEdit#extractRowSpec[invalid=\"true\"] { border-color:%1; }")
+            .arg(css(t.inkDanger))); // beats QLineEdit:focus (id + attribute)
+    // "of 31" sits among the column captions but reads like "/ 31": it has to
+    // outrank the caption rule (id + two types) and undo its weight.
+    add(QStringLiteral("QWidget#rowListHeader QLabel#extractOf { color:%1; font-weight:normal; }")
+            .arg(css(t.inkFaint)));
 
     // OCR language manager: two compact, scan-friendly model lists. Row widgets
     // provide the name/code/size/action layout while all colour stays tokenized.

@@ -4,6 +4,7 @@
 #include "dialogs/AboutDialog.h"
 #include "dialogs/CalibrationDialog.h"
 #include "dialogs/ExportMeasureDialog.h"
+#include "dialogs/ExtractDialog.h"
 #include "dialogs/ManageLanguagesDialog.h"
 #include "dialogs/MergeDialog.h"
 #include "dialogs/OcrPopup.h"
@@ -485,15 +486,17 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
         auto *t = qobject_cast<TabPage *>(tabs_->widget(idx));
         if (!t) return;
         const QString dupPath = t->path();
+        const QString dupPassword = t->password(); // the copy opens without asking
         const mervin::ViewState dupState =
             t->viewer() ? captureViewState(t->viewer()) : mervin::ViewState{};
         const QColor ink = mervin::Theme::iconInk(palette());
         mervin::showFileContextMenu(
             this, t->path(), docTabBar_->mapToGlobal(pos),
             {{tr("Duplicate to new window"),
-              [this, dupPath, dupState] {
+              [this, dupPath, dupPassword, dupState] {
                   if (wm_)
-                      wm_->duplicateToNewWindow(dupPath, dupState, this->pos() + QPoint(40, 40));
+                      wm_->duplicateToNewWindow(dupPath, dupPassword, dupState,
+                                                this->pos() + QPoint(40, 40));
               },
               true,
               mervin::icons::glyph(mervin::icons::Glyph::ShowAllWindows, ink)},
@@ -1603,7 +1606,8 @@ void MainWindow::setUiEnabled(bool enabled)
         commentAction_->setEnabled(annot);
 }
 
-bool MainWindow::openFile(const QString &path, bool allowDuplicate, int atIndex, bool makeCurrent)
+bool MainWindow::openFile(const QString &path, bool allowDuplicate, int atIndex, bool makeCurrent,
+                          const QString &knownPassword)
 {
     QFileInfo fi(path);
     QString canon = fi.canonicalFilePath();
@@ -1632,7 +1636,7 @@ bool MainWindow::openFile(const QString &path, bool allowDuplicate, int atIndex,
 
     auto *page = new TabPage(engine_);
     QString error;
-    QString password;
+    QString password = knownPassword;
     bool needsPassword = false;
     bool ok = page->open(path, password, &error, &needsPassword);
     while (!ok && needsPassword) {
@@ -2361,20 +2365,25 @@ QList<int> parsePageSpec(const QString &spec, int count)
     return out;
 }
 
-// Run a write op, prompting for a password and retrying once on NeedsPassword,
-// then reporting any failure. Returns true on success.
-bool runWriteOp(QWidget *parent,
+// Run a write op on `tab`'s file, then report any failure. Returns true on
+// success. The tab's remembered password goes first (empty for an unencrypted
+// file); only a NeedsPassword with it prompts, once, and a typed password that
+// works is remembered on the tab so the next operation does not ask.
+bool runWriteOp(QWidget *parent, TabPage *tab,
                 const std::function<PageOps::Status(const QString &, QString *)> &op)
 {
     QString err;
-    PageOps::Status st = op(QString(), &err);
+    PageOps::Status st = op(tab->password(), &err);
     if (st == PageOps::Status::NeedsPassword) {
         bool ok = false;
         const QString pw = QInputDialog::getText(
             parent, QObject::tr("Password Required"),
             QObject::tr("Enter the document password:"), QLineEdit::Password, QString(), &ok);
-        if (ok)
+        if (ok) {
             st = op(pw, &err);
+            if (st == PageOps::Status::Ok)
+                tab->setPassword(pw);
+        }
     }
     if (st != PageOps::Status::Ok) {
         QMessageBox::warning(parent, QObject::tr("Operation failed"),
@@ -2427,13 +2436,13 @@ QList<int> MainWindow::askPageRange(const QString &title, int pageCount)
     return pages;
 }
 
-void MainWindow::offerToOpen(const QString &path)
+void MainWindow::offerToOpen(const QString &path, const QString &password)
 {
     const auto open = QMessageBox::information(
         this, tr("Done"), tr("Saved to:\n%1\n\nOpen it now?").arg(QDir::toNativeSeparators(path)),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
     if (open == QMessageBox::Yes)
-        openFile(path);
+        openFile(path, false, -1, true, password);
 }
 
 void MainWindow::addSectionHeader(QMenu *menu, const QString &text)
@@ -2501,7 +2510,7 @@ void MainWindow::openSecurity()
     TabPage *t = currentTab();
     if (!t)
         return;
-    mervin::SecurityDialog dlg(t->path(), this);
+    mervin::SecurityDialog dlg(t->path(), t->password(), this);
     connect(&dlg, &mervin::SecurityDialog::openRequested, this,
             [this](const QString &p) { openFile(p); });
     dlg.exec();
@@ -2551,7 +2560,7 @@ void MainWindow::saveAsCopy()
                                      tr("Could not save the document:\n%1").arg(ferr));
                 return;
             }
-            if (!runWriteOp(this, [&](const QString &pw, QString *err) {
+            if (!runWriteOp(this, t, [&](const QString &pw, QString *err) {
                     return MeasureExport::embedMervin(formTmp, out, md, pw, err);
                 })) {
                 QFile::remove(formTmp);
@@ -2563,12 +2572,12 @@ void MainWindow::saveAsCopy()
                                  tr("Could not save the document:\n%1").arg(ferr));
             return;
         }
-    } else if (!runWriteOp(this, [&](const QString &pw, QString *err) {
+    } else if (!runWriteOp(this, t, [&](const QString &pw, QString *err) {
                    return MeasureExport::embedMervin(in, out, md, pw, err);
                })) {
         return;
     }
-    offerToOpen(out);
+    offerToOpen(out, t->password()); // the copy keeps the source's encryption
 }
 
 mervin::MeasureDoc MainWindow::collectMeasureDoc(ViewerWidget *v) const
@@ -2679,7 +2688,7 @@ void MainWindow::saveMeasurements()
         if (hasMeasureData) {
             // Refresh /Mervin_Measurements (measurements + page-scale overrides) on
             // the form temp -> final temp.
-            if (!runWriteOp(this, [&](const QString &pw, QString *err) {
+            if (!runWriteOp(this, t, [&](const QString &pw, QString *err) {
                     return MeasureExport::embedMervin(formTmp, tmp, md, pw, err);
                 })) {
                 QFile::remove(formTmp);
@@ -2694,7 +2703,7 @@ void MainWindow::saveMeasurements()
         }
     } else {
         // Measurements only (the original behaviour).
-        if (!runWriteOp(this, [&](const QString &pw, QString *err) {
+        if (!runWriteOp(this, t, [&](const QString &pw, QString *err) {
                 return MeasureExport::embedMervin(path, tmp, md, pw, err);
             })) {
             QFile::remove(tmp);
@@ -2708,7 +2717,7 @@ void MainWindow::saveMeasurements()
     if (!replaceFileAtomic(path, tmp, &swapErr)) {
         QFile::remove(tmp);
         QString e;
-        t->open(path, QString(), &e); // re-attach the untouched original
+        t->open(path, t->password(), &e); // re-attach the untouched original
         applyViewStateToViewer(v, vs);
         QMessageBox::warning(this, tr("Save"), tr("Could not save:\n%1").arg(swapErr));
         return;
@@ -2716,9 +2725,10 @@ void MainWindow::saveMeasurements()
 
     // Re-open the now-updated file; load-on-open re-reads any embedded marks, and
     // filled values are read straight from /V during field enumeration (no blob).
+    // The tab's password goes first; the prompt is only for a file it no longer opens.
     QString e;
     bool needsPw = false;
-    if (!t->open(path, QString(), &e, &needsPw) && needsPw) {
+    if (!t->open(path, t->password(), &e, &needsPw) && needsPw) {
         bool ok = false;
         const QString pw = QInputDialog::getText(this, tr("Password Required"),
                                                  tr("Enter the document password:"),
@@ -2759,10 +2769,10 @@ void MainWindow::exportMeasuredCopy()
 
     const std::vector<mervin::RenderMeasurement> marks = collectRenderMeasurements(v);
     const QString in = t->path();
-    if (runWriteOp(this, [&](const QString &pw, QString *err) {
+    if (runWriteOp(this, t, [&](const QString &pw, QString *err) {
             return MeasureExport::flatten(in, out, marks, pw, err);
         }))
-        offerToOpen(out);
+        offerToOpen(out, t->password()); // output keeps the source's encryption
 }
 
 void MainWindow::rotatePagesOp()
@@ -2790,10 +2800,10 @@ void MainWindow::rotatePagesOp()
     if (out.isEmpty())
         return;
     const QString in = t->path();
-    if (runWriteOp(this, [&](const QString &pw, QString *err) {
+    if (runWriteOp(this, t, [&](const QString &pw, QString *err) {
             return PageOps::rotatePages(in, out, pages, angle, true, pw, err);
         }))
-        offerToOpen(out);
+        offerToOpen(out, t->password()); // output keeps the source's encryption
 }
 
 void MainWindow::deletePagesOp()
@@ -2817,10 +2827,10 @@ void MainWindow::deletePagesOp()
     if (out.isEmpty())
         return;
     const QString in = t->path();
-    if (runWriteOp(this, [&](const QString &pw, QString *err) {
+    if (runWriteOp(this, t, [&](const QString &pw, QString *err) {
             return PageOps::deletePages(in, out, pages, pw, err);
         }))
-        offerToOpen(out);
+        offerToOpen(out, t->password()); // output keeps the source's encryption
 }
 
 void MainWindow::extractPagesOp()
@@ -2829,22 +2839,51 @@ void MainWindow::extractPagesOp()
     ViewerWidget *v = currentViewer();
     if (!t || !v)
         return;
-    const QList<int> pages = askPageRange(tr("Extract Pages"), v->pageCount());
-    if (pages.isEmpty())
+    // Bake an edit still being typed into the live document so the unsaved-changes
+    // note sees it. Nothing is written here: Extract copies from the file on disk.
+    v->commitActiveFormEditor();
+    v->commitActiveAnnotEditor();
+
+    mervin::ExtractDialog::Source src;
+    src.path = t->path();
+    src.password = t->password();
+    src.viewerPageCount = v->pageCount();
+    src.currentPage = v->currentPage();
+    src.hasUnsavedEdits = v->hasFormEdits() || v->hasAnnotEdits();
+    src.openWhenDone = settings_.extractOpenWhenDone;
+    src.doc = v->document();
+    src.engine = engine_;
+
+    mervin::ExtractDialog dlg(src, this);
+    if (dlg.exec() != QDialog::Accepted)
         return;
-    const QFileInfo fi(t->path());
-    const QString out = QFileDialog::getSaveFileName(
-        this, tr("Save Extracted Pages"),
-        fi.absolutePath() + QLatin1Char('/') + fi.completeBaseName()
-            + QStringLiteral("-extract.pdf"),
-        tr("PDF documents (*.pdf)"));
-    if (out.isEmpty())
+
+    if (!dlg.password().isEmpty())
+        t->setPassword(dlg.password()); // verified by the dialog; typed there or the tab's own
+    if (dlg.openWhenDone() != settings_.extractOpenWhenDone) {
+        settings_.extractOpenWhenDone = dlg.openWhenDone();
+        settings_.save();
+    }
+
+    // merge() fails on an out-of-range page instead of skipping it, so a stale
+    // page count cannot shorten the output silently. One input on the same file
+    // is exactly an extract.
+    const mervin::ExtractPlan::Job job = dlg.job();
+    QString err;
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const PageOps::Status st =
+        PageOps::merge({PageOps::MergeInput{src.path, job.pages, dlg.password()}}, job.path, &err);
+    QApplication::restoreOverrideCursor();
+    if (st != PageOps::Status::Ok) {
+        QMessageBox::warning(this, tr("Extract Pages"), tr("The extract failed.\n\n%1").arg(err));
         return;
-    const QString in = t->path();
-    if (runWriteOp(this, [&](const QString &pw, QString *err) {
-            return PageOps::extractPages(in, out, pages, pw, err);
-        }))
-        offerToOpen(out);
+    }
+
+    // No completion modal: the status bar says what was written, and the
+    // dialog's Open when done box decides what happens next.
+    statusBar()->showMessage(mervin::ExtractPlan::doneText(job), 5000);
+    if (dlg.openWhenDone())
+        openFile(job.path);
 }
 
 void MainWindow::splitDocument()
@@ -2859,7 +2898,7 @@ void MainWindow::splitDocument()
     const QString base = QFileInfo(t->path()).completeBaseName();
     const QString in = t->path();
     QStringList written;
-    if (runWriteOp(this, [&](const QString &pw, QString *err) {
+    if (runWriteOp(this, t, [&](const QString &pw, QString *err) {
             return PageOps::split(in, dir, base, pw, &written, err);
         })) {
         // Not tr("%n file(s)", ..., n): with no translator loaded Qt substitutes
@@ -2876,9 +2915,11 @@ void MainWindow::mergeDocuments()
     // The open document seeds the list as an ordinary first row. The viewer's
     // page count goes along only as a fallback - the dialog probes the file with
     // qpdf itself, because MuPDF opens documents qpdf will not (see MergeDialog).
+    // The tab's password goes too, so an encrypted open document is not Locked.
     TabPage *t = currentTab();
     ViewerWidget *v = currentViewer();
-    mervin::MergeDialog dlg(t ? t->path() : QString(), v ? v->pageCount() : 0, this);
+    mervin::MergeDialog dlg(t ? t->path() : QString(), v ? v->pageCount() : 0,
+                            t ? t->password() : QString(), this);
     if (dlg.exec() != QDialog::Accepted)
         return;
 
@@ -2896,7 +2937,7 @@ void MainWindow::mergeDocuments()
     }
     // Name the file that stopped it. runWriteOp is not used here: its single
     // password retry has nowhere to apply when the inputs are many, and the
-    // dialog has already rejected anything encrypted.
+    // dialog has already rejected any encrypted file it holds no password for.
     const QString who = failed >= 0 && failed < inputs.size()
                             ? QDir::toNativeSeparators(inputs.at(failed).path)
                             : QString();
@@ -2998,8 +3039,10 @@ void MainWindow::printDocument()
     const bool grayscale = printer.colorMode() == QPrinter::GrayScale;
 
     // Print measurements by burning them into a temporary flattened PDF and
-    // printing that - the original file is never touched. Falls back to printing
-    // the original (no marks) if flattening fails (e.g. an encrypted source).
+    // printing that - the original file is never touched. An encrypted source is
+    // flattened with the tab's password, and the temp keeps that encryption. Falls
+    // back to printing the original (no marks) if flattening fails (e.g. the
+    // remembered password no longer opens the file).
     // For forms alone nothing special is needed: printDoc is the live, filled
     // document, whose appearances render (and so print) the filled values for free.
     QTemporaryDir measureTmp;
@@ -3020,9 +3063,10 @@ void MainWindow::printDocument()
         }
         const QString fp = measureTmp.filePath(QStringLiteral("measured.pdf"));
         QString perr;
-        if (MeasureExport::flatten(flattenSource, fp, collectRenderMeasurements(v), QString(), &perr)
+        if (MeasureExport::flatten(flattenSource, fp, collectRenderMeasurements(v), t->password(),
+                                   &perr)
             == MeasureExport::Status::Ok) {
-            flatDoc = engine_->openDocument(fp, QString(), &perr);
+            flatDoc = engine_->openDocument(fp, t->password(), &perr);
             if (flatDoc)
                 printDoc = flatDoc.get();
         }

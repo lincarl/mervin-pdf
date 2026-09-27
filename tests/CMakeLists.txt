@@ -56,6 +56,7 @@ set(_mervin_tests
     tst_print_range
     tst_url_open
     tst_merge_plan
+    tst_extract_plan
     tst_text_index
     tst_qpdf
     tst_ocr
@@ -240,15 +241,18 @@ set_target_properties(dump_icons PROPERTIES WIN32_EXECUTABLE OFF)
 # tst_qpdf builds fixture PDFs directly with qpdf, so it links it explicitly.
 target_link_libraries(tst_qpdf PRIVATE qpdf::libqpdf)
 
-# Widget-level guard rails for the merge dialog. MergeDialog and the two UI
-# sources it uses belong to the application target, so they are compiled in here
-# (as tst_viewer_preview does for the viewer); the headers are listed so AUTOMOC
-# processes them. The dialog is flagged WA_DontShowOnScreen and never exec()d, so
-# no window appears and the normal platform plugin is enough. It builds its own
-# encrypted fixture, so it links qpdf like tst_qpdf.
+# Widget-level guard rails for the merge dialog. MergeDialog and the UI sources
+# it uses (its shared row list, icons, theme) belong to the application target,
+# so they are compiled in here (as tst_viewer_preview does for the viewer); the
+# headers are listed so AUTOMOC processes them. The dialog is flagged
+# WA_DontShowOnScreen and never exec()d, so no window appears and the normal
+# platform plugin is enough. It builds its own encrypted fixture, so it links qpdf
+# like tst_qpdf.
 qt_add_executable(tst_merge_dialog tst_merge_dialog.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/MergeDialog.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/MergeDialog.h
+    ${CMAKE_SOURCE_DIR}/src/dialogs/RowList.cpp
+    ${CMAKE_SOURCE_DIR}/src/dialogs/RowList.h
     ${CMAKE_SOURCE_DIR}/src/ui/Icons.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/Icons.h
     ${CMAKE_SOURCE_DIR}/src/ui/Theme.cpp
@@ -258,6 +262,30 @@ target_link_libraries(tst_merge_dialog
 set_target_properties(tst_merge_dialog PROPERTIES WIN32_EXECUTABLE OFF)
 add_test(NAME tst_merge_dialog COMMAND tst_merge_dialog)
 set_tests_properties(tst_merge_dialog PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+
+# Widget-level guard rails for the extract dialog, arranged like tst_merge_dialog
+# above: the dialog, its strip, the row list it shares with Merge and the icon and
+# theme sources they paint with belong to the application target, so they are
+# compiled in here, and the test builds its plain and encrypted fixtures with qpdf
+# at runtime.
+qt_add_executable(tst_extract_dialog tst_extract_dialog.cpp
+    ${CMAKE_SOURCE_DIR}/src/dialogs/ExtractDialog.cpp
+    ${CMAKE_SOURCE_DIR}/src/dialogs/ExtractDialog.h
+    ${CMAKE_SOURCE_DIR}/src/dialogs/ExtractStrip.cpp
+    ${CMAKE_SOURCE_DIR}/src/dialogs/ExtractStrip.h
+    ${CMAKE_SOURCE_DIR}/src/dialogs/RowList.cpp
+    ${CMAKE_SOURCE_DIR}/src/dialogs/RowList.h
+    ${CMAKE_SOURCE_DIR}/src/ui/Icons.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/Icons.h
+    ${CMAKE_SOURCE_DIR}/src/ui/Theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/Theme.h)
+target_link_libraries(tst_extract_dialog
+    PRIVATE mervin_core Qt6::Test Qt6::Widgets qpdf::libqpdf)
+set_target_properties(tst_extract_dialog PROPERTIES WIN32_EXECUTABLE OFF)
+add_test(NAME tst_extract_dialog COMMAND tst_extract_dialog)
+set_tests_properties(tst_extract_dialog PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 

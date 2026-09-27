@@ -101,9 +101,10 @@ public:
     // "Duplicate to new window": open `path` in a fresh window as a second,
     // independent view (bypassing the usual focus-existing-tab dedup), placed
     // near globalPos and seeded with `state` so it mirrors the source tab's
-    // current page / zoom / rotation.
-    void duplicateToNewWindow(const QString &path, const ViewState &state,
-                              const QPoint &globalPos);
+    // current page / zoom / rotation. `password` is the source tab's (empty when
+    // the file is not encrypted), so the copy opens without asking again.
+    void duplicateToNewWindow(const QString &path, const QString &password,
+                              const ViewState &state, const QPoint &globalPos);
 
     // Active-window tracking, called by MainWindow on activation.
     void notifyActivated(MainWindow *w);

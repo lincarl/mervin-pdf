@@ -77,7 +77,6 @@ private slots:
     void userPasswordRequiredToOpen();
     void permissionsRoundTrip();
     void deletePagesReducesCount();
-    void extractPagesInOrder();
     void mergeConcatenates();
     void mergeHonoursPerFileRanges();
     void mergeRepeatsAPage();
@@ -191,17 +190,6 @@ void TstQpdf::deletePagesReducesCount()
     QCOMPARE(PageOps::pageCount(out), 3);
 }
 
-void TstQpdf::extractPagesInOrder()
-{
-    const QString src = in(QStringLiteral("ex_src.pdf"));
-    const QString out = in(QStringLiteral("ex_out.pdf"));
-    // Identifiable pages: the count alone would pass on a reversed or sorted
-    // implementation, which is what this case is named for.
-    makePdfSized(src, {100, 200, 300, 400, 500});
-    QCOMPARE(PageOps::extractPages(src, out, {4, 0, 2}), PageOps::Status::Ok);
-    QCOMPARE(widthsOf(out), QList<int>({500, 100, 300}));
-}
-
 void TstQpdf::mergeConcatenates()
 {
     const QString a = in(QStringLiteral("m_a.pdf"));
@@ -293,7 +281,7 @@ void TstQpdf::mergeReportsFailedIndex()
 
 void TstQpdf::mergeRejectsOutOfRangeIndex()
 {
-    // extractPages skips an out-of-range index; merge must not. A page count that
+    // An out-of-range index fails rather than being skipped. A page count that
     // went stale between the dialog's probe and this write would otherwise write a
     // shorter document than the dialog promised and still report success.
     const QString a = in(QStringLiteral("mo_a.pdf"));

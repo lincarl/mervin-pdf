@@ -14,6 +14,9 @@ namespace mervin {
 // reopening the file restores it through the ordinary resume path - duplicating
 // it here would give two sources of truth that drift apart the moment a file is
 // closed in one window while open in another.
+//
+// No password either: a tab's remembered password (TabPage::password) goes when
+// the tab does, so reopening an encrypted file asks for it again.
 struct ClosedTab
 {
     QString path;          // the file as it was opened, and how it is reopened

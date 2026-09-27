@@ -1,193 +1,37 @@
 #include "dialogs/MergeDialog.h"
 
+#include "dialogs/RowList.h"
 #include "ui/Icons.h"
 #include "ui/Theme.h"
 
 #include <QApplication>
 #include <QDialogButtonBox>
 #include <QDir>
-#include <QDrag>
-#include <QDragEnterEvent>
-#include <QDragLeaveEvent>
-#include <QDragMoveEvent>
-#include <QDropEvent>
-#include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
-#include <QListWidget>
 #include <QMessageBox>
-#include <QMimeData>
-#include <QMouseEvent>
-#include <QPainter>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QShortcut>
 #include <QTimer>
-#include <QToolButton>
 #include <QVBoxLayout>
-
-#include <functional>
 
 namespace mervin {
 
 namespace {
-
-// Column geometry, shared by the header strip and every row so they line up.
-// Sized with headroom for a UI font wider than Segoe UI 9pt: at 125% Windows
-// text scaling the captions and the longest cell values ("Unreadable", "12 of
-// 999") still fit, so nothing clips silently - QLabel hard-clips, it does not
-// elide.
-constexpr int kColHandle = 18;
-constexpr int kColNum = 30;
+// Merge's own column widths; RowList owns the rest. Sized so the longest values
+// ("Unreadable", "12 of 999") still fit at 125% Windows text scaling.
 constexpr int kColSpec = 124;
 constexpr int kColCount = 92;
 constexpr int kColOutput = 74;
-constexpr int kColX = 22;
-constexpr int kRowHeight = 30;
-constexpr int kRowSpacing = 8;
-
-QLabel *fixedLabel(QWidget *parent, int width, Qt::Alignment align)
-{
-    auto *l = new QLabel(parent);
-    l->setFixedWidth(width);
-    l->setAlignment(align | Qt::AlignVCenter);
-    return l;
-}
-
-// Rows carry their index in this, so a drop knows which row was picked up.
-const char *const kRowMime = "application/x-mervin-merge-row";
-
-// The row list. QListWidget's own InternalMove cannot be used here: it moves the
-// QListWidgetItem while the visible row is a separate item widget, so the two
-// come apart. Instead the drop is turned into a move on the MergePlan and the
-// whole list is rebuilt from it - the same path every other mutation takes.
-// Drops are accepted anywhere in the viewport, which also lets a row be dragged
-// past the last one into the empty space below.
-class RowList : public QListWidget
-{
-public:
-    explicit RowList(QWidget *parent) : QListWidget(parent)
-    {
-        setAcceptDrops(true);
-        // The rows are item widgets covering the viewport, so a drag over the
-        // list is over a row, not the viewport; Qt walks up to the first ancestor
-        // that accepts drops, which has to be the viewport. Setting it on the view
-        // alone does not reach it.
-        viewport()->setAcceptDrops(true);
-        // ...and the drag events are handled here rather than through the
-        // dragMoveEvent/dropEvent overrides, because QAbstractScrollArea's
-        // viewport forwarding does not deliver them to the view (verified: the
-        // overrides never ran). Filtering the viewport directly is unambiguous.
-        viewport()->installEventFilter(this);
-        setDropIndicatorShown(false); // we paint our own; see paintEvent
-    }
-
-    // Called with (sourceRow, insertionGap) when a row is dropped. Turning the
-    // gap into a destination index is MergePlan's job - that off-by-one is the
-    // part with teeth, and it is unit-tested there.
-    std::function<void(int, int)> onRowDropped;
-
-protected:
-    bool eventFilter(QObject *o, QEvent *e) override
-    {
-        if (o == viewport()) {
-            switch (e->type()) {
-            case QEvent::DragEnter:
-            case QEvent::DragMove:
-                takeIfOurs(static_cast<QDragMoveEvent *>(e));
-                return true;
-            case QEvent::DragLeave:
-                dropAt_ = -1;
-                viewport()->update();
-                return true;
-            case QEvent::Drop:
-                handleDrop(static_cast<QDropEvent *>(e));
-                return true;
-            default:
-                break;
-            }
-        }
-        return QListWidget::eventFilter(o, e);
-    }
-
-    void handleDrop(QDropEvent *e)
-    {
-        const int gap = dropAt_;
-        dropAt_ = -1;
-        viewport()->update();
-        if (!e->mimeData()->hasFormat(QLatin1String(kRowMime)) || gap < 0) {
-            e->ignore();
-            return;
-        }
-        const int from = e->mimeData()->data(QLatin1String(kRowMime)).toInt();
-        e->setDropAction(Qt::MoveAction);
-        e->accept();
-        if (onRowDropped)
-            onRowDropped(from, gap);
-    }
-
-    void paintEvent(QPaintEvent *e) override
-    {
-        QListWidget::paintEvent(e);
-        if (dropAt_ < 0)
-            return;
-        QPainter p(viewport());
-        QPen pen(palette().color(QPalette::Accent));
-        pen.setWidth(2);
-        p.setPen(pen);
-        p.drawLine(0, gapY(dropAt_), viewport()->width(), gapY(dropAt_));
-    }
-
-private:
-    void takeIfOurs(QDragMoveEvent *e)
-    {
-        if (!e->mimeData()->hasFormat(QLatin1String(kRowMime))) {
-            e->ignore();
-            return;
-        }
-        const int gap = gapAt(e->position().toPoint());
-        if (gap != dropAt_) {
-            dropAt_ = gap;
-            viewport()->update();
-        }
-        e->setDropAction(Qt::MoveAction);
-        e->accept();
-    }
-
-    // The insertion point nearest `pos`: 0 above the first row, count() below the
-    // last. Anywhere past the final row counts as the end, so the empty space
-    // under a short list is a valid target.
-    int gapAt(const QPoint &pos) const
-    {
-        for (int i = 0; i < count(); ++i) {
-            const QRect r = visualItemRect(item(i));
-            if (pos.y() < r.center().y())
-                return i;
-            if (pos.y() <= r.bottom())
-                return i + 1;
-        }
-        return count();
-    }
-
-    int gapY(int gap) const
-    {
-        if (count() == 0)
-            return 0;
-        if (gap >= count())
-            return qMin(visualItemRect(item(count() - 1)).bottom(), viewport()->height() - 1);
-        return qMax(visualItemRect(item(gap)).top(), 1);
-    }
-
-    int dropAt_ = -1; // insertion point under the cursor, -1 when not dragging
-};
-
 } // namespace
 
-MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount, QWidget *parent)
+MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
+                         const QString &initialPassword, QWidget *parent)
     : QDialog(parent)
 {
     setWindowTitle(tr("Merge PDFs"));
@@ -209,37 +53,17 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount, QWidg
     listSide->setContentsMargins(0, 0, 0, 0);
     listSide->setSpacing(4);
 
-    // Column captions. A QListWidget of row widgets rather than a QTableWidget:
-    // nothing in the app uses an item *view* with a header, so QHeaderView is
-    // entirely unstyled by Theme::buildStyleSheet and a native header strip would
-    // sit on the slate dialog surface looking imported. The row-widget idiom is
-    // the one MeasurePanel already ships.
-    auto *header = new QWidget(this);
-    header->setObjectName(QStringLiteral("mergeListHeader"));
-    auto *hh = new QHBoxLayout(header);
-    headerRow_ = hh;
-    hh->setContentsMargins(6, 0, 6, 0); // real insets set by syncHeaderInsets()
-    hh->setSpacing(kRowSpacing);
-    hh->addSpacing(kColHandle); // over the drag grips
-    auto *hNum = fixedLabel(header, kColNum, Qt::AlignRight);
-    hNum->setText(QStringLiteral("#"));
-    hh->addWidget(hNum);
-    auto *hFile = new QLabel(tr("File"), header);
-    hh->addWidget(hFile, 1);
-    auto *hSpec = fixedLabel(header, kColSpec, Qt::AlignLeft);
-    hSpec->setText(tr("Pages, in order"));
-    hh->addWidget(hSpec);
-    auto *hCount = fixedLabel(header, kColCount, Qt::AlignRight);
-    hCount->setText(tr("Count"));
-    hh->addWidget(hCount);
-    auto *hOut = fixedLabel(header, kColOutput, Qt::AlignRight);
-    hOut->setText(tr("Output"));
-    hh->addWidget(hOut);
-    hh->addSpacing(kColX + kRowSpacing);
-    listSide->addWidget(header);
-
-    auto *rows = new RowList(this);
-    rows->onRowDropped = [this](int from, int gap) {
+    // Column captions over a QListWidget of row widgets, rather than a
+    // QTableWidget; RowList explains why.
+    list_ = new RowList(kColCount, kColOutput, this);
+    list_->setObjectName(QStringLiteral("mergeList"));
+    listSide->addWidget(list_->makeHeader([](QWidget *header, QHBoxLayout *columns) {
+        columns->addWidget(new QLabel(tr("File"), header), 1);
+        auto *spec = new QLabel(tr("Pages, in order"), header);
+        spec->setFixedWidth(kColSpec);
+        columns->addWidget(spec);
+    }));
+    list_->onRowDropped = [this](int from, int gap) {
         // Move the plan now, rebuild the widgets after the drag machinery has
         // unwound: the drop arrives inside QDrag::exec()'s nested event loop, and
         // rebuilding here would delete the very grip widget whose event filter is
@@ -249,16 +73,9 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount, QWidg
             return; // dropped back where it already was
         QTimer::singleShot(0, this, [this, landed] { rebuild(landed); });
     };
-    list_ = rows;
-    list_->setObjectName(QStringLiteral("mergeList"));
-    list_->setSelectionMode(QAbstractItemView::SingleSelection);
-    list_->setUniformItemSizes(true);
-    list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    list_->onMove = [this](int delta) { moveCurrent(delta); };
+    list_->onRemove = [this] { removeCurrent(); };
     connect(list_, &QListWidget::currentRowChanged, this, [this] { refreshFooter(); });
-    // The captions are a sibling of the list, so they have to track the list's
-    // frame, padding and - the case that actually bites - the vertical scrollbar
-    // appearing once the plan gets long.
-    list_->viewport()->installEventFilter(this);
     listSide->addWidget(list_, 1);
 
     auto *specHint = new QLabel(tr("Type a page range in the Pages column, for example "
@@ -302,21 +119,11 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount, QWidg
     middle->addLayout(side, 0);
     layout->addLayout(middle, 1);
 
-    // Reorder from the keyboard, scoped to the list so the shortcuts do not fight
-    // the page-range editors for arrow keys. Ctrl+Delete (not plain Delete) frees
-    // Delete for the QLineEdit the user is typing in.
-    auto *up = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Up), list_);
-    up->setContext(Qt::WidgetWithChildrenShortcut);
-    connect(up, &QShortcut::activated, this, [this] { moveCurrent(-1); });
-    auto *down = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Down), list_);
-    down->setContext(Qt::WidgetWithChildrenShortcut);
-    connect(down, &QShortcut::activated, this, [this] { moveCurrent(1); });
+    // RowList has the move and remove shortcuts; Duplicate joins them, scoped
+    // the same way.
     auto *dup = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_D), list_);
     dup->setContext(Qt::WidgetWithChildrenShortcut);
     connect(dup, &QShortcut::activated, this, &MergeDialog::duplicateCurrent);
-    auto *del = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Delete), list_);
-    del->setContext(Qt::WidgetWithChildrenShortcut);
-    connect(del, &QShortcut::activated, this, &MergeDialog::removeCurrent);
 
     // ── Summary, error, output ───────────────────────────────────────────────
     summary_ = new QLabel(this);
@@ -363,13 +170,13 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount, QWidg
     if (!initialPath.isEmpty()) {
         // The open document goes in as an ordinary row - and is probed like any
         // other. It has to be: the viewer opened it with MuPDF, and MuPDF opens
-        // things this merge cannot. A document the user unlocked with a password
-        // at open time reads perfectly in the tab, but the password is not kept
-        // anywhere, so qpdf would meet it locked. Trusting the viewer's page count
-        // here would show a healthy row and dead-end after Merge, which is the
-        // exact failure this dialog exists to prevent. probe() is qpdf-only and
-        // never prompts, so this costs one parse and asks the user nothing.
-        MergePlan::Entry e = probeEntry(initialPath);
+        // things this merge cannot. Trusting the viewer's page count here would
+        // show a healthy row and dead-end after Merge, which is the exact failure
+        // this dialog exists to prevent. An encrypted document is probed with the
+        // password its tab remembers, so it is Locked only if that no longer
+        // opens it. probe() is qpdf-only and never prompts, so this costs one or
+        // two parses and asks the user nothing.
+        MergePlan::Entry e = probeEntry(initialPath, initialPassword);
         if (e.load == MergePlan::Load::Ok && e.pageCount <= 0 && initialPageCount > 0)
             e.pageCount = initialPageCount; // qpdf read it but counted nothing
         plan_.append(e);
@@ -377,13 +184,19 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount, QWidg
     rebuild(plan_.isEmpty() ? -1 : 0);
 }
 
-MergePlan::Entry MergeDialog::probeEntry(const QString &path)
+MergePlan::Entry MergeDialog::probeEntry(const QString &path, const QString &password)
 {
     MergePlan::Entry e;
     e.path = path;
     int n = 0;
     QString err;
-    switch (PageOps::probe(path, &n, QString(), &err)) {
+    PageOps::Status st = PageOps::probe(path, &n, QString(), &err);
+    if (st == PageOps::Status::NeedsPassword && !password.isEmpty()) {
+        st = PageOps::probe(path, &n, password, &err);
+        if (st == PageOps::Status::Ok)
+            e.password = password; // MergePlan::inputs() hands it to the merge
+    }
+    switch (st) {
     case PageOps::Status::Ok:
         e.load = n > 0 ? MergePlan::Load::Ok : MergePlan::Load::Unreadable;
         e.pageCount = n;
@@ -504,103 +317,45 @@ void MergeDialog::rebuild(int selectRow)
 
     for (int i = 0; i < plan_.count(); ++i) {
         const MergePlan::Entry &e = plan_.at(i);
-        auto *row = new QWidget(list_);
-        auto *h = new QHBoxLayout(row);
-        h->setContentsMargins(6, 1, 6, 1);
-        h->setSpacing(kRowSpacing);
+        list_->addRow([&](QWidget *row, QHBoxLayout *h) {
+            auto *name = new QLabel(row);
+            name->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+            nameLabels_.append(name);
+            nameTexts_.append(plan_.displayName(i));
+            name->setToolTip(e.loadError.isEmpty()
+                                 ? QDir::toNativeSeparators(e.path)
+                                 : QStringLiteral("%1\n\n%2").arg(
+                                       QDir::toNativeSeparators(e.path), e.loadError));
+            if (e.load != MergePlan::Load::Ok) {
+                auto *badge = new QLabel(row);
+                badge->setFixedSize(18, 18);
+                badge->setPixmap(icons::glyphPixmap(e.load == MergePlan::Load::Locked
+                                                        ? icons::Glyph::Security
+                                                        : icons::Glyph::Close,
+                                                    ink, 16));
+                badge->setToolTip(name->toolTip());
+                h->addWidget(badge, 0);
+            }
+            h->addWidget(name, 1);
 
-        // The grip. Rows are item widgets, so a press anywhere else in the row
-        // lands on a child widget and the list never sees it - the drag has to
-        // start from something that exists for exactly that purpose.
-        auto *grip = new QLabel(row);
-        grip->setObjectName(QStringLiteral("mergeRowGrip"));
-        grip->setFixedWidth(kColHandle);
-        grip->setAlignment(Qt::AlignCenter);
-        grip->setPixmap(icons::glyphPixmap(icons::Glyph::DragHandle, ink, 16));
-        grip->setCursor(Qt::OpenHandCursor);
-        grip->setToolTip(tr("Drag to reorder"));
-        grip->setProperty("mergeRow", i);
-        grip->installEventFilter(this);
-        h->addWidget(grip);
-
-        auto *num = fixedLabel(row, kColNum, Qt::AlignRight);
-        num->setObjectName(QStringLiteral("mergeRowNum"));
-        num->setText(QString::number(i + 1));
-        h->addWidget(num);
-
-        auto *name = new QLabel(row);
-        name->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        nameLabels_.append(name);
-        nameTexts_.append(plan_.displayName(i));
-        name->setToolTip(e.loadError.isEmpty()
-                             ? QDir::toNativeSeparators(e.path)
-                             : QStringLiteral("%1\n\n%2").arg(QDir::toNativeSeparators(e.path),
-                                                              e.loadError));
-        if (e.load != MergePlan::Load::Ok) {
-            auto *badge = new QLabel(row);
-            badge->setFixedSize(18, 18);
-            badge->setPixmap(icons::glyphPixmap(e.load == MergePlan::Load::Locked
-                                                    ? icons::Glyph::Security
-                                                    : icons::Glyph::Close,
-                                                ink, 16));
-            badge->setToolTip(name->toolTip());
-            h->addWidget(badge, 0);
-        }
-        h->addWidget(name, 1);
-
-        auto *spec = new QLineEdit(e.spec, row);
-        spec->setObjectName(QStringLiteral("mergeRowSpec"));
-        spec->setFixedWidth(kColSpec);
-        // A format prompt, not "All": a greyed placeholder identical to the
-        // default value made an emptied cell look like the default was in force
-        // while it was actually blocking the merge.
-        spec->setPlaceholderText(tr("e.g. 1-3, 5"));
-        spec->setEnabled(e.load == MergePlan::Load::Ok);
-        // Typing in a row makes it the current row, so Remove / Duplicate /
-        // Move Up / Move Down act on the row the user is looking at. The editor
-        // is the row's only focusable child, so this covers click and Tab alike.
-        spec->installEventFilter(this);
-        spec->setProperty("mergeRow", i);
-        // The list is rebuilt wholesale on every mutation, so this build-time
-        // index stays valid for as long as the widget it is captured in exists.
-        connect(spec, &QLineEdit::textChanged, this, [this, i](const QString &t) {
-            plan_.setSpec(i, t);
-            // Only the derived numbers change, so refresh them in place: a full
-            // rebuild here would destroy the QLineEdit being typed into.
-            refreshFooter();
+            auto *spec = new QLineEdit(e.spec, row);
+            spec->setObjectName(QStringLiteral("mergeRowSpec"));
+            spec->setFixedWidth(kColSpec);
+            // A format prompt, not "All": a greyed placeholder identical to the
+            // default value made an emptied cell look like the default was in
+            // force while it was actually blocking the merge.
+            spec->setPlaceholderText(tr("e.g. 1-3, 5"));
+            spec->setEnabled(e.load == MergePlan::Load::Ok);
+            // The list is rebuilt wholesale on every mutation, so this build-time
+            // index stays valid for as long as the widget it is captured in exists.
+            connect(spec, &QLineEdit::textChanged, this, [this, i](const QString &t) {
+                plan_.setSpec(i, t);
+                // Only the derived numbers change, so refresh them in place: a
+                // full rebuild here would destroy the QLineEdit being typed into.
+                refreshFooter();
+            });
+            h->addWidget(spec);
         });
-        h->addWidget(spec);
-
-        auto *count = fixedLabel(row, kColCount, Qt::AlignRight);
-        count->setObjectName(QStringLiteral("mergeRowCount"));
-        h->addWidget(count);
-
-        auto *outp = fixedLabel(row, kColOutput, Qt::AlignRight);
-        outp->setObjectName(QStringLiteral("mergeRowOutput"));
-        h->addWidget(outp);
-
-        auto *x = new QToolButton(row);
-        x->setObjectName(QStringLiteral("mergeRowX"));
-        x->setToolButtonStyle(Qt::ToolButtonTextOnly);
-        x->setText(QStringLiteral("✕"));
-        x->setAutoRaise(true);
-        x->setFixedSize(kColX, kColX);
-        x->setFocusPolicy(Qt::NoFocus); // 20 rows must not add 20 extra tab stops
-        x->setToolTip(tr("Remove this row"));
-        // Select, then remove on the next event-loop turn. Rebuilding here would
-        // delete this very button from inside its own clicked() emission; going
-        // through the current row also keeps the right row if anything else moved
-        // the list in between.
-        connect(x, &QToolButton::clicked, this, [this, i] {
-            list_->setCurrentRow(i);
-            QTimer::singleShot(0, this, [this] { removeCurrent(); });
-        });
-        h->addWidget(x);
-
-        auto *item = new QListWidgetItem(list_);
-        item->setSizeHint(QSize(0, kRowHeight));
-        list_->addItem(item);
-        list_->setItemWidget(item, row);
     }
 
     if (selectRow >= 0 && selectRow < plan_.count()) {
@@ -630,96 +385,9 @@ void MergeDialog::reelideNames()
     }
 }
 
-void MergeDialog::syncHeaderInsets()
-{
-    if (!headerRow_ || !list_)
-        return;
-    // Left: the list frame plus its QSS padding, i.e. wherever the viewport
-    // actually starts. Right: the same, plus the vertical scrollbar when it is
-    // showing - which is what used to shove the Count and Output captions 12px
-    // off their columns as soon as the plan got long enough to scroll.
-    const int left = list_->viewport()->x();
-    const int right = list_->width() - (list_->viewport()->x() + list_->viewport()->width());
-    headerRow_->setContentsMargins(6 + left, 0, 6 + qMax(0, right), 0);
-}
-
-bool MergeDialog::eventFilter(QObject *watched, QEvent *event)
-{
-    if (list_ && watched == list_->viewport() && event->type() == QEvent::Resize)
-        syncHeaderInsets();
-
-    if (event->type() == QEvent::FocusIn) {
-        const QVariant row = watched->property("mergeRow");
-        if (row.isValid())
-            list_->setCurrentRow(row.toInt());
-    }
-
-    // Drag a row by its grip. Arming on press and only starting once the pointer
-    // has travelled the platform's drag distance keeps a plain click on the grip
-    // from turning into a drag - it just selects the row.
-    auto *grip = qobject_cast<QLabel *>(watched);
-    if (grip && grip->objectName() == QLatin1String("mergeRowGrip")) {
-        if (event->type() == QEvent::MouseButtonPress) {
-            auto *me = static_cast<QMouseEvent *>(event);
-            if (me->button() == Qt::LeftButton) {
-                dragRow_ = grip->property("mergeRow").toInt();
-                dragOrigin_ = me->globalPosition().toPoint();
-                list_->setCurrentRow(dragRow_);
-            }
-            return true;
-        }
-        if (event->type() == QEvent::MouseButtonRelease) {
-            dragRow_ = -1;
-            return true;
-        }
-        if (event->type() == QEvent::MouseMove && dragRow_ >= 0) {
-            auto *me = static_cast<QMouseEvent *>(event);
-            if (!(me->buttons() & Qt::LeftButton)) {
-                dragRow_ = -1;
-                return true;
-            }
-            if ((me->globalPosition().toPoint() - dragOrigin_).manhattanLength()
-                < QApplication::startDragDistance())
-                return true;
-            startRowDrag(dragRow_);
-            dragRow_ = -1;
-            return true;
-        }
-    }
-    return QDialog::eventFilter(watched, event);
-}
-
-void MergeDialog::startRowDrag(int row)
-{
-    QListWidgetItem *item = list_->item(row);
-    QWidget *rowWidget = item ? list_->itemWidget(item) : nullptr;
-    if (!rowWidget)
-        return;
-
-    auto *mime = new QMimeData;
-    mime->setData(QLatin1String(kRowMime), QByteArray::number(row));
-
-    QDrag drag(this);
-    drag.setMimeData(mime);
-    // The row itself, dimmed, rides with the cursor - so what is being moved is
-    // never in doubt in a list where several rows can be the same file.
-    QPixmap shot = rowWidget->grab();
-    QPixmap ghost(shot.size());
-    ghost.fill(Qt::transparent);
-    {
-        QPainter p(&ghost);
-        p.setOpacity(0.75);
-        p.drawPixmap(0, 0, shot);
-    }
-    drag.setPixmap(ghost);
-    drag.setHotSpot(QPoint(kColHandle / 2, ghost.height() / 2));
-    drag.exec(Qt::MoveAction);
-}
-
 void MergeDialog::resizeEvent(QResizeEvent *event)
 {
     QDialog::resizeEvent(event);
-    syncHeaderInsets();
     reelideNames();
 }
 
@@ -728,15 +396,8 @@ void MergeDialog::refreshFooter()
     // The per-row Count and Output cells are derived from the whole plan (Output
     // is a running sum), so they are refreshed together in one pass, not per row.
     const QList<MergePlan::RowText> texts = plan_.rowTexts();
-    for (int i = 0; i < list_->count() && i < texts.size(); ++i) {
-        QWidget *row = list_->itemWidget(list_->item(i));
-        if (!row)
-            continue;
-        if (auto *c = row->findChild<QLabel *>(QStringLiteral("mergeRowCount")))
-            c->setText(texts.at(i).count);
-        if (auto *o = row->findChild<QLabel *>(QStringLiteral("mergeRowOutput")))
-            o->setText(texts.at(i).output);
-    }
+    for (int i = 0; i < list_->count() && i < texts.size(); ++i)
+        list_->setRowTexts(i, texts.at(i).count, texts.at(i).output);
 
     summary_->setText(plan_.summaryText());
 

@@ -513,6 +513,13 @@ QIcon glyph(Glyph id, const QColor &color)
                 for (qreal y : {5.5, 12.0, 18.5})
                     dot(x, y, 1.5);
             break;
+        case Glyph::FileX:
+            // Lucide's "file-x" in the house style: Document's page, a little
+            // wider, with an X in its lower middle.
+            page(5, 3, 14, 18, 4.5);
+            line(9.8, 12.3, 14.2, 16.7);
+            line(14.2, 12.3, 9.8, 16.7);
+            break;
         }
     });
 }
