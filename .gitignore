@@ -51,3 +51,7 @@ __pycache__/
 
 # CTest run artifacts
 /Testing/
+
+# Local agent instruction files: kept on the machine, never committed
+/AGENTS.md
+/CLAUDE.md

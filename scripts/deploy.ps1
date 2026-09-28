@@ -81,7 +81,7 @@ $missing  = $required | Where-Object { -not (Test-Path (Join-Path $deploy $_)) }
 if ($missing) {
     throw ("windeployqt did not stage: $($missing -join ', '). Run from a VS Dev Shell " +
            "with vcvars64.bat sourced (Windows SDK on PATH) so windeployqt can find the " +
-           "VC++ runtime and the Direct3D shader compiler. See CLAUDE.md > Build & installers.")
+           "VC++ runtime and the Direct3D shader compiler. See docs/BUILDING.md > Package.")
 }
 
 # vcpkg dependency DLLs (qpdf + its deps like z.dll/jpeg, and tomlplusplus).
