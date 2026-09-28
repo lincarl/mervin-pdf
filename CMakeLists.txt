@@ -12,7 +12,7 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 # ---- Dependencies ----------------------------------------------------------
 # Network: QLocalServer/QLocalSocket (IPC + single-instance) live in QtNetwork.
 # PrintSupport: QPrinter/QPrintDialog for Document -> Print.
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network PrintSupport)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network PrintSupport Svg)
 qt_standard_project_setup()
 find_package(MuPDF REQUIRED)
 # tomlplusplus is header-only. Prefer a system/vcpkg config package; fall back to
@@ -163,6 +163,23 @@ else()
     target_sources(mervin_core PRIVATE src/platform/linux/DesktopIntegration.cpp)
 endif()
 
+# ---- mervin_icons: the Lucide icon set ---------------------------------------
+# Icons.cpp renders the vendored Lucide SVGs (resources/icons/lucide, ISC). It is
+# a library of its own so the application and every test that paints icons link
+# one copy of the renderer, and the Qt resource holding the SVGs travels with it.
+add_library(mervin_icons STATIC
+    src/ui/Icons.cpp
+    src/ui/Icons.h
+    src/ui/IconList.h)
+target_include_directories(mervin_icons PUBLIC src)
+target_link_libraries(mervin_icons PUBLIC Qt6::Gui PRIVATE Qt6::Svg Qt6::Widgets)
+file(GLOB MERVIN_LUCIDE_SVGS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/lucide/*.svg")
+qt_add_resources(mervin_icons "lucide_icons"
+    PREFIX "/icons/lucide"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/lucide"
+    FILES ${MERVIN_LUCIDE_SVGS})
+
 # ---- MervinPDF: the application --------------------------------------------
 qt_add_executable(MervinPDF
     src/main.cpp
@@ -174,8 +191,6 @@ qt_add_executable(MervinPDF
     src/ui/OpenPdfDialog.h
     src/ui/Theme.cpp
     src/ui/Theme.h
-    src/ui/Icons.cpp
-    src/ui/Icons.h
     src/ui/RecentFilesPanel.cpp
     src/ui/RecentFilesPanel.h
     src/ui/DetachableTabBar.cpp
@@ -233,7 +248,8 @@ qt_add_executable(MervinPDF
     src/update/UpdateChecker.h
     src/update/ReleaseConfig.h
 )
-target_link_libraries(MervinPDF PRIVATE mervin_core Qt6::Widgets Qt6::Network Qt6::PrintSupport)
+target_link_libraries(MervinPDF PRIVATE mervin_core mervin_icons Qt6::Widgets Qt6::Network
+    Qt6::PrintSupport)
 
 # Embed the application icon + version info (generated above) as a Win32
 # resource so Explorer, the Start menu, and the "default app for .pdf" picker

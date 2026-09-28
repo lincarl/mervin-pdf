@@ -11,9 +11,7 @@
 #include <QDir>
 #include <QGuiApplication>
 #include <QPainter>
-#include <QPainterPath>
 #include <QPalette>
-#include <QPen>
 #include <QPixmap>
 #include <QStandardPaths>
 #include <QStyleHints>
@@ -45,37 +43,21 @@ QColor resolveAccent(const QString &hex, const QPalette &pal)
 }
 
 // ---- Generated indicator glyphs ---------------------------------------------
-// QSS can only point at glyph images via image: url(...), and we ship no .qrc,
-// so the pixmaps are painted at runtime into the cache dir, tinted to the theme.
+// QSS can only point at glyph images via image: url(...) on disk, so the icons
+// it needs are rendered at runtime into the cache dir, tinted to the theme. They
+// are the app's Lucide icons (mervin::icons), drawn with a heavier stroke than
+// the set's 1.75 units: at 10-15 px that line would thin to about a pixel.
 
-// A crisp antialiased check mark (menu indicators, checkbox check).
+// Lucide "check" (menu indicators, checkbox check).
 QPixmap paintCheck(const QColor &color, int sz)
 {
-    QPixmap pm(sz, sz);
-    pm.fill(Qt::transparent);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(QPen(color, sz / 7.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    const double s = sz / 16.0;
-    QPainterPath path(QPointF(3.2 * s, 8.6 * s));
-    path.lineTo(6.6 * s, 12.0 * s);
-    path.lineTo(12.8 * s, 4.8 * s);
-    p.drawPath(path);
-    return pm;
+    return icons::glyphPixmap(icons::Glyph::Check, color, sz, 2.6);
 }
 
-// A thin X (tab close buttons).
+// Lucide "x" (tab close buttons).
 QPixmap paintCross(const QColor &color, int sz)
 {
-    QPixmap pm(sz, sz);
-    pm.fill(Qt::transparent);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(QPen(color, sz / 8.0, Qt::SolidLine, Qt::RoundCap));
-    const double s = sz / 16.0;
-    p.drawLine(QPointF(4.6 * s, 4.6 * s), QPointF(11.4 * s, 11.4 * s));
-    p.drawLine(QPointF(11.4 * s, 4.6 * s), QPointF(4.6 * s, 11.4 * s));
-    return pm;
+    return icons::glyphPixmap(icons::Glyph::Close, color, sz, 2.2);
 }
 
 // A filled dot (radio-button check).

@@ -104,10 +104,8 @@ target_sources(tst_settings_dialog PRIVATE
     ${CMAKE_SOURCE_DIR}/src/dialogs/SettingsDialog.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/SettingsDialog.h
     ${CMAKE_SOURCE_DIR}/src/ui/Theme.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/Theme.h
-    ${CMAKE_SOURCE_DIR}/src/ui/Icons.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/Icons.h)
-target_link_libraries(tst_settings_dialog PRIVATE Qt6::Widgets)
+    ${CMAKE_SOURCE_DIR}/src/ui/Theme.h)
+target_link_libraries(tst_settings_dialog PRIVATE mervin_icons Qt6::Widgets)
 
 # Real picker-path guard rail: enter a URL into the visible file-name field and
 # press its Open button. This catches regressions where the native Windows shell
@@ -137,10 +135,8 @@ qt_add_executable(tst_viewer_preview tst_viewer_preview.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/AnnotPopup.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/AnnotPopup.h
     ${CMAKE_SOURCE_DIR}/src/ui/PdfPropertiesPopup.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/PdfPropertiesPopup.h
-    ${CMAKE_SOURCE_DIR}/src/ui/Icons.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/Icons.h)
-target_link_libraries(tst_viewer_preview PRIVATE mervin_core Qt6::Test Qt6::Widgets)
+    ${CMAKE_SOURCE_DIR}/src/ui/PdfPropertiesPopup.h)
+target_link_libraries(tst_viewer_preview PRIVATE mervin_icons mervin_core Qt6::Test Qt6::Widgets)
 target_compile_definitions(tst_viewer_preview PRIVATE
     MERVIN_HOUSE_PDF="${CMAKE_SOURCE_DIR}/examples/house-drawing.pdf"
     # A multi-page fixture: the fit-mode anchoring case needs pages to land on.
@@ -162,10 +158,8 @@ qt_add_executable(tst_viewer_fit tst_viewer_fit.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/AnnotPopup.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/AnnotPopup.h
     ${CMAKE_SOURCE_DIR}/src/ui/PdfPropertiesPopup.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/PdfPropertiesPopup.h
-    ${CMAKE_SOURCE_DIR}/src/ui/Icons.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/Icons.h)
-target_link_libraries(tst_viewer_fit PRIVATE mervin_core Qt6::Test Qt6::Widgets)
+    ${CMAKE_SOURCE_DIR}/src/ui/PdfPropertiesPopup.h)
+target_link_libraries(tst_viewer_fit PRIVATE mervin_icons mervin_core Qt6::Test Qt6::Widgets)
 set_target_properties(tst_viewer_fit PROPERTIES WIN32_EXECUTABLE OFF)
 add_test(NAME tst_viewer_fit COMMAND tst_viewer_fit)
 set_tests_properties(tst_viewer_fit PROPERTIES
@@ -178,15 +172,12 @@ qt_add_executable(dump_comfort_render dump_comfort_render.cpp)
 target_link_libraries(dump_comfort_render PRIVATE mervin_core)
 set_target_properties(dump_comfort_render PROPERTIES WIN32_EXECUTABLE OFF)
 
-# Guard rails for the house icon set. Icons.cpp belongs to the application
-# target, so it is compiled in here (as tst_viewer_preview does for the viewer);
-# nothing else from the app is needed, so this test does not link mervin_core.
-qt_add_executable(tst_icons tst_icons.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/Icons.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/Icons.h
-    ${CMAKE_SOURCE_DIR}/src/ui/IconList.h)
+# Guard rails for the Lucide icon set. The renderer and its SVGs come from the
+# mervin_icons library; nothing else from the app is needed, so this test does
+# not link mervin_core.
+qt_add_executable(tst_icons tst_icons.cpp)
 target_include_directories(tst_icons PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(tst_icons PRIVATE Qt6::Gui Qt6::Test)
+target_link_libraries(tst_icons PRIVATE mervin_icons Qt6::Gui Qt6::Test)
 set_target_properties(tst_icons PROPERTIES WIN32_EXECUTABLE OFF)
 add_test(NAME tst_icons COMMAND tst_icons)
 set_tests_properties(tst_icons PROPERTIES
@@ -195,14 +186,12 @@ set_tests_properties(tst_icons PROPERTIES
 
 # Guard rails for the colour vocabulary and the one stylesheet built from it.
 # Theme.cpp belongs to the application target, so it is compiled in here (as
-# tst_merge_dialog does); Icons.cpp comes along because the sheet's glyphs are
-# painted through it. QTEST_MAIN because QPalette needs a QApplication.
+# tst_merge_dialog does); it links mervin_icons because the sheet's indicator
+# images are rendered through it. QTEST_MAIN because QPalette needs a QApplication.
 qt_add_executable(tst_theme tst_theme.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/Theme.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/Theme.h
-    ${CMAKE_SOURCE_DIR}/src/ui/Icons.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/Icons.h)
-target_link_libraries(tst_theme PRIVATE mervin_core Qt6::Test Qt6::Widgets)
+    ${CMAKE_SOURCE_DIR}/src/ui/Theme.h)
+target_link_libraries(tst_theme PRIVATE mervin_icons mervin_core Qt6::Test Qt6::Widgets)
 set_target_properties(tst_theme PROPERTIES WIN32_EXECUTABLE OFF)
 add_test(NAME tst_theme COMMAND tst_theme)
 set_tests_properties(tst_theme PROPERTIES
@@ -212,40 +201,36 @@ set_tests_properties(tst_theme PROPERTIES
 # Guard rails for the shared find bar's two search contexts (document find vs the
 # recent-list filter), which used to leak into each other across a view switch.
 # FindBar.cpp belongs to the application target, so it is compiled in here (as
-# tst_icons does); Icons.cpp comes along because the bar paints its magnifier
+# tst_icons does); it links mervin_icons because the bar paints its magnifier
 # glyph through it. The bar talks to the rest of the app only through signals, so
 # nothing else is needed and this test does not link mervin_core - which also
 # keeps it building when MuPDF is not around. QTEST_MAIN because it is a QWidget.
 qt_add_executable(tst_find_bar tst_find_bar.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/FindBar.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/FindBar.h
-    ${CMAKE_SOURCE_DIR}/src/ui/Icons.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/Icons.h)
+    ${CMAKE_SOURCE_DIR}/src/ui/FindBar.h)
 target_include_directories(tst_find_bar PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(tst_find_bar PRIVATE Qt6::Test Qt6::Widgets)
+target_link_libraries(tst_find_bar PRIVATE mervin_icons Qt6::Test Qt6::Widgets)
 set_target_properties(tst_find_bar PROPERTIES WIN32_EXECUTABLE OFF)
 add_test(NAME tst_find_bar COMMAND tst_find_bar)
 set_tests_properties(tst_find_bar PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
-# Developer tool (not a test): a contact sheet of every house icon, at the
-# inspection size and at the 16/20/24 px the UI actually asks for. Icons.cpp is
-# compiled in directly - it belongs to the application target, not mervin_core.
-qt_add_executable(dump_icons dump_icons.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/Icons.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/Icons.h)
-target_link_libraries(dump_icons PRIVATE mervin_core Qt6::Gui)
+# Developer tool (not a test): a contact sheet of every icon, at the inspection
+# size and at the 16/20/24 px the UI actually asks for, rendered through
+# mervin_icons exactly as the application renders them.
+qt_add_executable(dump_icons dump_icons.cpp)
+target_link_libraries(dump_icons PRIVATE mervin_icons mervin_core Qt6::Gui)
 set_target_properties(dump_icons PROPERTIES WIN32_EXECUTABLE OFF)
 
 # tst_qpdf builds fixture PDFs directly with qpdf, so it links it explicitly.
 target_link_libraries(tst_qpdf PRIVATE qpdf::libqpdf)
 
 # Widget-level guard rails for the merge dialog. MergeDialog and the UI sources
-# it uses (its shared row list, icons, theme) belong to the application target,
-# so they are compiled in here (as tst_viewer_preview does for the viewer); the
-# headers are listed so AUTOMOC processes them. The dialog is flagged
-# WA_DontShowOnScreen and never exec()d, so no window appears and the normal
+# it uses (its shared row list, theme) belong to the application target, so they
+# are compiled in here (as tst_viewer_preview does for the viewer; the icons come
+# from mervin_icons); the headers are listed so AUTOMOC processes them. The
+# dialog is flagged WA_DontShowOnScreen and never exec()d, so no window appears and the normal
 # platform plugin is enough. It builds its own encrypted fixture, so it links qpdf
 # like tst_qpdf.
 qt_add_executable(tst_merge_dialog tst_merge_dialog.cpp
@@ -253,12 +238,10 @@ qt_add_executable(tst_merge_dialog tst_merge_dialog.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/MergeDialog.h
     ${CMAKE_SOURCE_DIR}/src/dialogs/RowList.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/RowList.h
-    ${CMAKE_SOURCE_DIR}/src/ui/Icons.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/Icons.h
     ${CMAKE_SOURCE_DIR}/src/ui/Theme.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/Theme.h)
 target_link_libraries(tst_merge_dialog
-    PRIVATE mervin_core Qt6::Test Qt6::Widgets qpdf::libqpdf)
+    PRIVATE mervin_icons mervin_core Qt6::Test Qt6::Widgets qpdf::libqpdf)
 set_target_properties(tst_merge_dialog PROPERTIES WIN32_EXECUTABLE OFF)
 add_test(NAME tst_merge_dialog COMMAND tst_merge_dialog)
 set_tests_properties(tst_merge_dialog PROPERTIES
@@ -266,9 +249,9 @@ set_tests_properties(tst_merge_dialog PROPERTIES
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
 # Widget-level guard rails for the extract dialog, arranged like tst_merge_dialog
-# above: the dialog, its strip, the row list it shares with Merge and the icon and
-# theme sources they paint with belong to the application target, so they are
-# compiled in here, and the test builds its plain and encrypted fixtures with qpdf
+# above: the dialog, its strip, the row list it shares with Merge and the theme
+# source they paint with belong to the application target, so they are compiled
+# in here (the icons come from mervin_icons), and the test builds its plain and encrypted fixtures with qpdf
 # at runtime.
 qt_add_executable(tst_extract_dialog tst_extract_dialog.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/ExtractDialog.cpp
@@ -277,12 +260,10 @@ qt_add_executable(tst_extract_dialog tst_extract_dialog.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/ExtractStrip.h
     ${CMAKE_SOURCE_DIR}/src/dialogs/RowList.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/RowList.h
-    ${CMAKE_SOURCE_DIR}/src/ui/Icons.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/Icons.h
     ${CMAKE_SOURCE_DIR}/src/ui/Theme.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/Theme.h)
 target_link_libraries(tst_extract_dialog
-    PRIVATE mervin_core Qt6::Test Qt6::Widgets qpdf::libqpdf)
+    PRIVATE mervin_icons mervin_core Qt6::Test Qt6::Widgets qpdf::libqpdf)
 set_target_properties(tst_extract_dialog PROPERTIES WIN32_EXECUTABLE OFF)
 add_test(NAME tst_extract_dialog COMMAND tst_extract_dialog)
 set_tests_properties(tst_extract_dialog PROPERTIES

@@ -1,11 +1,10 @@
-// Guard rails for the house icon set (src/ui/Icons.cpp).
+// Guard rails for the Lucide icon set (src/ui/Icons.cpp, resources/icons/lucide).
 //
 // The compiler already catches an unhandled enum value, so these cases go after
-// what it cannot see: a glyph that compiles but paints nothing, paints outside
-// its box, ignores the requested ink, or - the failure that actually shipped
-// during the v1.45.0 unification - paints a shape whose arrowhead is detached
-// from the stroke it is supposed to continue. A "does it draw any pixels" check
-// would have passed that happily, so the cases below are deliberately
+// what it cannot see: a glyph whose SVG is missing from the resource (it renders
+// nothing), one mapped to the wrong file (it collides with a sibling), one drawn
+// off-centre or clipped, or one that ignores the requested ink. A "does it draw
+// any pixels" check would pass most of those, so the cases below are deliberately
 // discriminating: they compare glyphs against each other and assert the
 // symmetries the drawings are built on.
 //
@@ -52,8 +51,8 @@ int inkCount(const QImage &img, int minAlpha = 40)
 }
 
 // Glyphs drawn as one straight stroke, where the "short side" of the ink is the
-// stroke width itself and nothing more. ZoomOut is `line(5, 12, 19, 12)` in
-// Icons.cpp - a minus, and the toolbar's counterpart to the ZoomIn plus - so no
+// stroke width itself and nothing more. ZoomOut is Lucide's "minus" - the
+// toolbar's counterpart to the ZoomIn plus - so no
 // correct drawing of it can reach the short-side floor the two-dimensional glyphs
 // are held to. Keep this list to glyphs that really are one stroke: a glyph that
 // merely came out thin is the bug this file exists to catch.
@@ -108,9 +107,9 @@ private slots:
     void relatedGlyphsAreDistinct_data();
     void relatedGlyphsAreDistinct();
     void rotateArrowsMirrorEachOther();
-    void rotateArrowHeadIsAttached();
     void badgeAddsInkToTheCorner();
-    void ocrWordmarkIsWide();
+    void strokeOverrideThickensTheLine();
+    void spinChevronsPointOppositeWays();
 };
 
 // The roster in IconList.h drives the contact-sheet tool and the cases below, so
@@ -120,7 +119,7 @@ private slots:
 void TestIcons::rosterCoversTheEnum()
 {
     const auto &roster = mervin::icons::allGlyphs();
-    QCOMPARE(int(roster.size()), int(Glyph::FileX) + 1);
+    QCOMPARE(int(roster.size()), int(Glyph::Star) + 1);
 
     QSet<int> seen;
     for (const auto &e : roster) {
@@ -212,20 +211,6 @@ void TestIcons::inkColourIsHonoured()
     }
 }
 
-void TestIcons::ocrWordmarkIsWide()
-{
-    const QImage img = mervin::icons::ocrWordmark(QColor(0, 0, 0))
-                           .pixmap(QSize(34, 20), 1.0)
-                           .toImage()
-                           .convertToFormat(QImage::Format_ARGB32);
-    QCOMPARE(img.size(), QSize(34, 20));
-
-    const QRect box = inkBounds(img);
-    QVERIFY2(box.width() >= 29 && box.height() >= 13,
-             qPrintable(QStringLiteral("wide OCR wordmark spans only %1x%2 px")
-                            .arg(box.width()).arg(box.height())));
-}
-
 void TestIcons::relatedGlyphsAreDistinct_data()
 {
     QTest::addColumn<int>("a");
@@ -239,27 +224,26 @@ void TestIcons::relatedGlyphsAreDistinct_data()
     // identical is a bug.
     const struct { const char *name; Glyph a, b; double max; } pairs[] = {
         {"rotate directions", Glyph::RotateLeft, Glyph::RotateRight, 0.90},
-        {"page vs split page", Glyph::FitPage, Glyph::DocumentTheme, 0.95},
-        {"page vs page with text", Glyph::FitPage, Glyph::SinglePage, 0.90},
-        {"moon vs sun", Glyph::UiTheme, Glyph::Sun, 0.90},
-        {"extract vs merge", Glyph::ExtractPages, Glyph::MergePages, 0.90},
-        {"zoom in vs out", Glyph::ZoomIn, Glyph::ZoomOut, 0.96},
-        {"search vs zoom out", Glyph::Search, Glyph::ZoomOut, 0.95},
         {"prev vs next", Glyph::PrevPage, Glyph::NextPage, 0.90},
+        // A minus is the plus without its vertical stroke, so the pair shares
+        // about half its ink by design; only a collapse to identical is a bug.
+        {"zoom in vs out", Glyph::ZoomIn, Glyph::ZoomOut, 0.96},
+        {"zoom in vs close", Glyph::ZoomIn, Glyph::Close, 0.90},
+        {"moon vs sun", Glyph::UiTheme, Glyph::Sun, 0.90},
+        {"split vs merge", Glyph::SplitPages, Glyph::MergePages, 0.90},
         {"copy vs show all windows", Glyph::Copy, Glyph::ShowAllWindows, 0.90},
-        {"document vs fit page", Glyph::Document, Glyph::FitPage, 0.90},
-        // The same folded page; only the X tells the Extract strip's hidden pages
-        // apart from a plain document.
-        {"file x vs document", Glyph::FileX, Glyph::Document, 0.90},
-        {"select all vs thumbnails", Glyph::SelectAll, Glyph::Thumbnails, 0.90},
+        // The same folded page; only the text lines tell the Extract strip's
+        // folded pages apart from a plain document.
+        {"file text vs document", Glyph::FileText, Glyph::Document, 0.90},
+        // Lucide draws both as corner brackets around the box ("scan" and
+        // "maximize" are near-identical), which is why FitMode is "fullscreen":
+        // the toolbar's fit toggle must not look like the menu's full screen.
+        {"fit mode vs full screen", Glyph::FitMode, Glyph::FullScreen, 0.75},
+        {"select all vs single page", Glyph::SelectAll, Glyph::SinglePage, 0.90},
         // Both are "a stack of marks in the middle of the box". If the grip ever
         // gets redrawn as stacked lines it becomes the hamburger, and the merge
         // dialog's drag affordance stops reading as one.
         {"grip vs hamburger", Glyph::DragHandle, Glyph::Menu, 0.75},
-        // Highlight Form Fields is two washed boxes; drop the wash or the second
-        // box and it turns into one of these instead.
-        {"fields vs split page", Glyph::HighlightFields, Glyph::DocumentTheme, 0.75},
-        {"fields vs thumbnails", Glyph::HighlightFields, Glyph::Thumbnails, 0.75},
     };
     for (const auto &p : pairs)
         QTest::newRow(p.name) << int(p.a) << int(p.b) << p.max;
@@ -276,11 +260,10 @@ void TestIcons::relatedGlyphsAreDistinct()
                             .arg(same * 100, 0, 'f', 1).arg(maxAgreement * 100, 0, 'f', 0)));
 }
 
-// RotateLeft is built as RotateRight's mirror image (the arc starts on the other
-// side of the top opening and the head travels the other way), so flipping one
-// must land on the other. This is the case that catches a mis-oriented or
-// mis-placed arrowhead: both glyphs stay non-empty and stay distinct when the
-// head is wrong, but the symmetry breaks immediately.
+// Lucide draws rotate-ccw as rotate-cw's mirror image, so flipping one must land
+// on the other. This catches the two being mapped to the same file, or to files
+// that point the same way: both stay non-empty and distinct from other glyphs,
+// but the symmetry breaks immediately.
 void TestIcons::rotateArrowsMirrorEachOther()
 {
     const QImage cw = render(Glyph::RotateRight, 48);
@@ -288,37 +271,6 @@ void TestIcons::rotateArrowsMirrorEachOther()
     const double same = agreement(cw, ccw);
     QVERIFY2(same > 0.82, qPrintable(QStringLiteral("mirrored rotate arrows agree only %1%%")
                                          .arg(same * 100, 0, 'f', 1)));
-}
-
-// The arrowhead is a solid triangle continuing the arc, so the rotate glyph must
-// carry noticeably more ink than the bare circle it is drawn on - and that extra
-// ink must sit in the top half, where the opening and the head are. The v1.45.0
-// regression drew the head detached and pointing out of the circle; it showed up
-// as ink in the wrong half.
-void TestIcons::rotateArrowHeadIsAttached()
-{
-    for (Glyph g : {Glyph::RotateLeft, Glyph::RotateRight}) {
-        const QImage img = render(g, 48);
-        const QImage top = img.copy(0, 0, 48, 24);
-        const QImage bottom = img.copy(0, 24, 48, 24);
-        const int t = inkCount(top), b = inkCount(bottom);
-        QVERIFY2(t > b, qPrintable(QStringLiteral("head is not in the top half: %1 vs %2")
-                                       .arg(t).arg(b)));
-
-        // A solid head is a mass of adjacent opaque pixels; a stroke never is.
-        // Look for a 4x4 fully opaque block in the top half.
-        bool solidBlock = false;
-        for (int y = 0; y + 4 <= top.height() && !solidBlock; ++y) {
-            for (int x = 0; x + 4 <= top.width(); ++x) {
-                bool all = true;
-                for (int dy = 0; dy < 4 && all; ++dy)
-                    for (int dx = 0; dx < 4; ++dx)
-                        if (qAlpha(top.pixel(x + dx, y + dy)) < 250) { all = false; break; }
-                if (all) { solidBlock = true; break; }
-            }
-        }
-        QVERIFY2(solidBlock, "no solid arrowhead found in the top half");
-    }
 }
 
 // glyphBadged() composes its pixmaps through QIcon::pixmap(), so which sizes the
@@ -345,6 +297,60 @@ void TestIcons::badgeAddsInkToTheCorner()
     const QRect corner(badged.width() - half, badged.height() - half, half, half);
     QVERIFY(inkCount(badged.copy(corner)) > inkCount(plain.copy(corner)));
     QVERIFY(agreement(plain, badged) < 0.95);
+}
+
+// The set draws a 1.75-unit stroke, lighter than the 2 units in Lucide's files,
+// and the stylesheet's indicator images (Theme.cpp) ask for a heavier one still.
+// Both rewrites have to reach the SVG: the set's own width must match an explicit
+// 1.75, Lucide's untouched 2 must carry more ink, and a heavier override more
+// again.
+void TestIcons::strokeOverrideThickensTheLine()
+{
+    const auto ink = [](double stroke) {
+        return inkCount(mervin::icons::glyphPixmap(Glyph::Check, QColor(0, 0, 0), 16, stroke)
+                            .toImage().convertToFormat(QImage::Format_ARGB32));
+    };
+    const int plain = ink(0);
+    QVERIFY(plain > 0);
+    QCOMPARE(ink(1.75), plain); // the set's own stroke: the same drawing
+    QVERIFY2(ink(2.0) > plain,
+             qPrintable(QStringLiteral("Lucide's stroke 2 inks %1 px, the set's 1.75 inks %2 px")
+                            .arg(ink(2.0)).arg(plain)));
+    QVERIFY2(ink(3.0) > plain * 5 / 4,
+             qPrintable(QStringLiteral("stroke 3 inks %1 px, stroke 1.75 inks %2 px")
+                            .arg(ink(3.0)).arg(plain)));
+}
+
+// The spin-box steppers and the combo arrow are Lucide chevron-up / chevron-down,
+// which mirror each other top to bottom. A swap (or both mapped to one file)
+// leaves each image plausible on its own, so compare them.
+void TestIcons::spinChevronsPointOppositeWays()
+{
+    const QImage up = mervin::icons::spinChevron(false, QColor(0, 0, 0), 32).toImage()
+                          .convertToFormat(QImage::Format_ARGB32);
+    const QImage down = mervin::icons::spinChevron(true, QColor(0, 0, 0), 32).toImage()
+                            .convertToFormat(QImage::Format_ARGB32);
+    QVERIFY(inkCount(up) > 0);
+    QVERIFY2(agreement(up, down) < 0.5, "the up and down chevrons are the same drawing");
+    QVERIFY2(agreement(up, down.mirrored(false, true)) > 0.85,
+             "the down chevron is not the up chevron flipped");
+    // The "down" one must actually point down. Both span the same rows, so look
+    // where the arms meet: in the middle column the down chevron's ink sits in
+    // the lower half of its box, the up chevron's in the upper half.
+    const auto apexY = [](const QImage &img) {
+        const QRect box = inkBounds(img);
+        const int x = box.center().x();
+        int sum = 0, n = 0;
+        for (int y = box.top(); y <= box.bottom(); ++y)
+            if (qAlpha(img.pixel(x, y)) >= 40) {
+                sum += y;
+                ++n;
+            }
+        return n ? double(sum) / n - box.center().y() : 0.0;
+    };
+    QVERIFY2(apexY(down) > 0 && apexY(up) < 0,
+             qPrintable(QStringLiteral("apex offsets: down %1, up %2")
+                            .arg(apexY(down)).arg(apexY(up))));
 }
 
 QTEST_MAIN(TestIcons)

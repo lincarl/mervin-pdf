@@ -1,5 +1,6 @@
 #include "ui/AnnotPanel.h"
 
+#include "ui/Icons.h"
 #include "ui/PanelStack.h"
 
 #include <QButtonGroup>
@@ -54,7 +55,7 @@ AnnotPanel::AnnotPanel(QWidget *parent) : QWidget(parent)
     auto *closeBtn = new QToolButton(this);
     closeBtn->setObjectName(QStringLiteral("measureClearX")); // square, muted, frameless
     closeBtn->setFixedSize(22, 22);
-    closeBtn->setText(QStringLiteral("✕"));
+    icons::setButtonGlyph(closeBtn, icons::Glyph::Close, 16);
     closeBtn->setAutoRaise(true);
     closeBtn->setToolTip(tr("Close comment tool"));
     connect(closeBtn, &QToolButton::clicked, this, &AnnotPanel::closeRequested);

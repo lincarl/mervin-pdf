@@ -97,7 +97,7 @@ private:
     int innerWidth_ = -1;
     int highlightedRow_ = -1;
     bool settingContent_ = false; // setContent() moves the current cell, not the user
-    mutable QIcon foldGlyph_;       // FileX for fold tiles, cached per ink by paintCell
+    mutable QIcon foldGlyph_;       // FileText for fold tiles, cached per ink by paintCell
     mutable QColor foldGlyphInk_;
     int hoverRow_ = -1;
     QPoint hoverPos_;

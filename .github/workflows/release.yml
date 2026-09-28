@@ -142,11 +142,12 @@ jobs:
         # platform plugin (qt6/plugins/platforms/libqxcb.so) that linuxdeploy has to
         # bundle - so --no-install-recommends is safe here. qt6-base-dev-tools
         # provides qmake6, which linuxdeploy-plugin-qt uses to locate that plugin dir.
+        # qt6-svg-dev: the icons are Lucide SVGs rendered through Qt SVG.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build curl ca-certificates file wget \
-            qt6-base-dev qt6-base-dev-tools libqpdf-dev libtomlplusplus-dev \
+            qt6-base-dev qt6-base-dev-tools qt6-svg-dev libqpdf-dev libtomlplusplus-dev \
             libgl1-mesa-dev libxkbcommon-dev libxcb-cursor0
 
       - name: Derive version from tag
@@ -203,7 +204,7 @@ jobs:
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build curl ca-certificates file git dpkg-dev python3 \
-            qt6-base-dev qt6-base-dev-tools libqpdf-dev libtomlplusplus-dev
+            qt6-base-dev qt6-base-dev-tools qt6-svg-dev libqpdf-dev libtomlplusplus-dev
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -247,7 +248,7 @@ jobs:
       - name: Install build deps
         run: |
           dnf install -y gcc-c++ make cmake ninja-build rpm-build \
-            qt6-qtbase-devel qpdf-devel git tar curl findutils which python3
+            qt6-qtbase-devel qt6-qtsvg-devel qpdf-devel git tar curl findutils which python3
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

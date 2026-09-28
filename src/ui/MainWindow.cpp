@@ -1174,8 +1174,7 @@ void MainWindow::createToolBar()
     addDocAction(rotateLeftAction_);
     addDocAction(rotateRightAction_);
     addSep();
-    ocrButton_ = addDocAction(ocrAction_); // rubber-band a region and recognise its text
-    ocrButton_->setIconSize(QSize(34, 20));
+    addDocAction(ocrAction_); // rubber-band a region and recognise its text
     addDocAction(measureAction_);
     addDocAction(commentAction_); // opens the Comment window (highlight + comment)
     addDocAction(printAction_);
@@ -1370,7 +1369,7 @@ void MainWindow::applyControlStyle()
     // The window chrome is styled centrally by mervin::Theme (built into the
     // app-wide stylesheet on qApp), so this per-window hook only refreshes what
     // QSS cannot express and what must track the active palette: the custom-
-    // painted toolbar dividers (below) and the Fluent glyph icons, plus the
+    // painted toolbar dividers (below) and the Lucide glyph icons, plus the
     // Recent pill / tab-bar selected state, which a dynamic property drives.
     const mervin::theme::Chrome t = mervin::theme::chrome(palette());
 
@@ -1453,7 +1452,7 @@ void MainWindow::applyActionIcons()
 {
     // One icon language everywhere (mervin::icons::glyph): the toolbar, the
     // hamburger menu, the Document popover and the context menus all draw the
-    // same painted Fluent Outline pictographs, so nothing depends on an icon
+    // same Lucide icons from the bundled SVGs, so nothing depends on an icon
     // font and Windows and Linux look identical. The ink comes from the Theme so
     // the slate dark chrome gets the design's toolbar-body tone rather than the
     // brighter palette text.
@@ -1462,7 +1461,7 @@ void MainWindow::applyActionIcons()
     if (copyAction_)
         copyAction_->setIcon(mervin::icons::glyph(Glyph::Copy, col));
     if (ocrAction_)
-        ocrAction_->setIcon(mervin::icons::ocrWordmark(col));
+        ocrAction_->setIcon(mervin::icons::glyph(Glyph::Ocr, col));
     openAction_->setIcon(mervin::icons::glyph(Glyph::Open, col));
     prevPageAction_->setIcon(mervin::icons::glyph(Glyph::PrevPage, col));
     nextPageAction_->setIcon(mervin::icons::glyph(Glyph::NextPage, col));

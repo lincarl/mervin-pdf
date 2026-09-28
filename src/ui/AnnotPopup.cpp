@@ -1,5 +1,6 @@
 #include "ui/AnnotPopup.h"
 
+#include "ui/Icons.h"
 #include "ui/ThemeTokens.h"
 
 #include <QDateTime>
@@ -51,7 +52,7 @@ AnnotPopup::AnnotPopup(QWidget *parent) : QWidget(parent)
     headerLabel_->setStyleSheet(QStringLiteral("font-weight:600;"));
     headerRow->addWidget(headerLabel_, 1);
     auto *closeBtn = new QToolButton(this);
-    closeBtn->setText(QStringLiteral("✕"));
+    icons::setButtonGlyph(closeBtn, icons::Glyph::Close, 16);
     closeBtn->setAutoRaise(true);
     closeBtn->setToolTip(tr("Close"));
     connect(closeBtn, &QToolButton::clicked, this, [this] { hide(); });

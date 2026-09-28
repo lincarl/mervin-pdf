@@ -39,6 +39,8 @@ namespace mervin {
 
 namespace {
 constexpr int kClearXSize = 22; // square side for the clear-all / per-row X buttons
+constexpr int kClearXGlyph = 16; // Lucide x inside them (its strokes span half the box)
+constexpr int kStepGlyph = 16;   // Lucide minus / plus on the Decimals steppers
 } // namespace
 
 // The panel's row captions ("Unit", "Decimals", "Line width"). They carry an
@@ -80,9 +82,9 @@ MeasurePanel::MeasurePanel(QWidget *parent)
     tf.setBold(true);
     title->setFont(tf);
     auto *closeBtn = new QToolButton(this);
-    closeBtn->setObjectName(QStringLiteral("measureClearX")); // square, muted ✕
+    closeBtn->setObjectName(QStringLiteral("measureClearX")); // square, muted x
     closeBtn->setFixedSize(kClearXSize, kClearXSize);
-    closeBtn->setText(QStringLiteral("✕")); // ✕
+    icons::setButtonGlyph(closeBtn, icons::Glyph::Close, kClearXGlyph);
     closeBtn->setAutoRaise(true);
     closeBtn->setToolTip(tr("Close measuring tool"));
     connect(closeBtn, &QToolButton::clicked, this, &MeasurePanel::closeRequested);
@@ -193,10 +195,7 @@ MeasurePanel::MeasurePanel(QWidget *parent)
     // favour of the two flanking buttons.
     precisionDownBtn_ = new QToolButton(this);
     precisionDownBtn_->setObjectName(QStringLiteral("measureStepBtn"));
-    // TextOnly so the style centres the glyph; the QToolButton default
-    // (IconOnly with a text fallback) left-aligns it in the button.
-    precisionDownBtn_->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    precisionDownBtn_->setText(QString(QChar(0x2212))); // − minus sign
+    icons::setButtonGlyph(precisionDownBtn_, icons::Glyph::ZoomOut, kStepGlyph); // minus
     precisionDownBtn_->setToolTip(tr("Fewer decimals"));
     precisionDownBtn_->setAutoRepeat(true);
     precisionDownBtn_->setFocusPolicy(Qt::NoFocus);
@@ -231,8 +230,7 @@ MeasurePanel::MeasurePanel(QWidget *parent)
 
     precisionUpBtn_ = new QToolButton(this);
     precisionUpBtn_->setObjectName(QStringLiteral("measureStepBtn"));
-    precisionUpBtn_->setToolButtonStyle(Qt::ToolButtonTextOnly); // centre the + glyph
-    precisionUpBtn_->setText(QStringLiteral("+"));
+    icons::setButtonGlyph(precisionUpBtn_, icons::Glyph::ZoomIn, kStepGlyph); // plus
     precisionUpBtn_->setToolTip(tr("More decimals"));
     precisionUpBtn_->setAutoRepeat(true);
     precisionUpBtn_->setFocusPolicy(Qt::NoFocus);
@@ -337,8 +335,7 @@ MeasurePanel::MeasurePanel(QWidget *parent)
     listHeader_->setObjectName(QStringLiteral("measureListHeader"));
     auto *clearAllBtn = new QToolButton(measuresHeader_);
     clearAllBtn->setObjectName(QStringLiteral("measureClearX"));
-    clearAllBtn->setToolButtonStyle(Qt::ToolButtonTextOnly); // centre the ✕ glyph
-    clearAllBtn->setText(QStringLiteral("✕"));
+    icons::setButtonGlyph(clearAllBtn, icons::Glyph::Close, kClearXGlyph);
     clearAllBtn->setAutoRaise(true);
     clearAllBtn->setCursor(Qt::ArrowCursor);
     clearAllBtn->setFixedSize(kClearXSize, kClearXSize); // square, matching the row X
@@ -472,8 +469,7 @@ void MeasurePanel::setMeasurements(const QStringList &items)
 
         auto *del = new QToolButton(row);
         del->setObjectName(QStringLiteral("measureClearX"));
-        del->setToolButtonStyle(Qt::ToolButtonTextOnly); // centre the ✕ glyph
-        del->setText(QStringLiteral("✕"));
+        icons::setButtonGlyph(del, icons::Glyph::Close, kClearXGlyph);
         del->setAutoRaise(true);
         del->setCursor(Qt::ArrowCursor);
         del->setFixedSize(kClearXSize, kClearXSize); // square (width == height)

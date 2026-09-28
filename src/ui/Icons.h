@@ -2,96 +2,85 @@
 
 #include <QIcon>
 
+class QAbstractButton;
 class QColor;
 class QPixmap;
 
 namespace mervin::icons {
 
-// The app's single icon language: "Fluent Outline", drawn with QPainter on a
-// 24-unit grid. One set, one look, every surface - toolbar, hamburger menu,
-// Document popover, context menus, tabs and panels.
+// The app's single icon language: Lucide (https://lucide.dev, ISC licence). One
+// set, one look, every surface - toolbar, hamburger menu, Document popover,
+// context menus, tabs, panels and the stylesheet's own indicator images.
 //
-// Nothing here depends on an icon font. Until v1.45.0 the toolbar drew Segoe
-// Fluent Icons / MDL2 font glyphs while the menus drew painted pictographs, so
-// the two families sat side by side on Windows, and on Linux (no Segoe fonts,
-// the codepoints are Private-Use-Area with no fallback) the toolbar silently
-// dropped to an incomplete painted stand-in - "Fill in form", "Comment" and the
-// tab glyph all rendered as a generic document. Painting everything ourselves
-// makes Windows and Linux identical by construction.
-//
-// House style, applied by glyph() to every pictograph below:
-//   - 1.45 grid-unit stroke, round caps and joins, no fill
-//   - 1.09x optical size (Fluent sits large in its box); the pen is divided by
-//     the same factor so the stroke still lands at 1.45
-//   - generous corner rounding (2.1x the base radius)
-//   - solid triangular arrow terminals
-// Icons are painted natively at 16/20/24/32/48 px - not scaled from one pixmap -
-// so thin strokes stay sharp wherever Qt asks for them.
+// The SVGs are vendored unmodified in resources/icons/lucide (see its README for
+// the pinned version and how to add one) and compiled in as a Qt resource, so
+// nothing depends on an icon font or on the platform: Windows and Linux render
+// the same files. glyph() substitutes the requested ink for Lucide's
+// stroke="currentColor", draws the stroke at 1.75 units instead of Lucide's 2
+// (closer to the weight of the app's text), and rasterizes each icon natively at
+// 16/20/24/32/48 px, so strokes stay sharp wherever Qt asks for a size.
 enum class Glyph {
     // Toolbar
-    Open,          // folder (also "open containing folder")
-    PrevPage,      // chevron left
-    NextPage,      // chevron right
-    ChevronDown,   // dropdown affordance
-    Search,        // magnifier
-    ZoomOut,       // minus sign
-    ZoomIn,        // plus sign
-    FitMode,       // page centred in a frame
-    RotateLeft,    // circular arrow, counter-clockwise
-    RotateRight,   // circular arrow, clockwise (also Document > Rotate pages)
+    Open,          // folder-open (also "open containing folder")
+    PrevPage,      // chevron-left
+    NextPage,      // chevron-right
+    ChevronDown,   // chevron-down: dropdown affordance
+    Search,        // search
+    ZoomOut,       // minus
+    ZoomIn,        // plus
+    FitMode,       // fullscreen: the fit page / fit width toggle
+    RotateLeft,    // rotate-ccw
+    RotateRight,   // rotate-cw (also Document > Rotate pages)
     Print,         // printer
-    Copy,          // two stacked pages
-    Save,          // floppy disk
-    FillForm,      // pencil
-    Ocr,           // OCR wordmark inside a capture frame
-    Measure,       // |<->| extent marker
-    Document,      // folded-corner page (Document button, tab glyph, generic page)
-    Menu,          // hamburger
+    Copy,          // copy
+    Save,          // save
+    FillForm,      // pencil-line
+    Ocr,           // scan-text: read the text inside a selection
+    Measure,       // ruler-dimension-line
+    Document,      // file (Document button, tab glyph, generic page)
+    Menu,          // menu
 
     // Hamburger menu
-    FitPage,          // page outline
-    FitWidth,         // horizontal double arrow
-    FullScreen,       // four expanding corner brackets
-    ContinuousScroll, // vertical strip of pages running past the edges
-    SinglePage,       // one page with text lines
-    TwoPageSpread,    // open book
-    Outline,          // bulleted list
-    Thumbnails,       // 2x2 grid
-    Comments,         // speech bubble (toolbar Comment and the Comments panel)
-    SelectAll,        // dashed rectangle
-    HighlightFields,  // two form fields carrying the viewer's tint
-    UiTheme,          // crescent moon (document-theme menu, comfort toggle at rest)
-    Sun,              // sun disc with rays (comfort toggle, active state)
-    DocumentTheme,    // page split by a mid line
-    AlwaysOnTop,      // star
-    Settings,         // gear
+    FitPage,          // shrink
+    FitWidth,         // move-horizontal
+    FullScreen,       // maximize
+    ContinuousScroll, // gallery-vertical
+    SinglePage,       // rectangle-vertical
+    TwoPageSpread,    // book-open
+    Outline,          // list
+    Thumbnails,       // layout-grid
+    Comments,         // message-square (toolbar Comment and the Comments panel)
+    SelectAll,        // square-dashed
+    HighlightFields,  // highlighter
+    UiTheme,          // moon (document-theme menu, comfort toggle at rest)
+    Sun,              // sun (comfort toggle, active state)
+    DocumentTheme,    // contrast
+    AlwaysOnTop,      // pin
+    Settings,         // settings
     Keyboard,         // keyboard
-    About,            // info circle
+    About,            // info
 
     // Document popover
-    ExtractPages, // down arrow into a tray
-    SplitPages,   // two side-by-side pages
-    MergePages,   // up arrow into a tray
-    Security,     // padlock
-    Delete,       // trash can (Document > Delete pages, context-menu deletes)
+    ExtractPages, // file-output
+    SplitPages,   // split
+    MergePages,   // merge
+    Security,     // lock
+    Delete,       // trash-2 (Document > Delete pages, context-menu deletes)
 
-    // Context menus and panels
-    OpenInNewWindow, // window with an out-arrow
-    ShowAllWindows,  // two overlapping windows
-    Close,           // cross
-    Broom,           // sweep entries away
-    DragHandle,      // six-dot grip: press here to drag a row
-    FileX,           // folded-corner page with an X: pages the Extract strip hides
+    // Context menus, panels and stylesheet indicators
+    OpenInNewWindow, // square-arrow-out-up-right
+    ShowAllWindows,  // app-window
+    Close,           // x (also the tab close cross)
+    Broom,           // brush-cleaning: sweep entries away
+    DragHandle,      // grip-vertical: press here to drag a row
+    FileText,        // file-text: pages the Extract strip folds away
+    Check,           // check: menu check marks and the checkbox tick
+    Star,            // star: favourite files in the Recent list (filled when set)
 };
 
 // The pictograph tinted to `color` (the palette's WindowText, Theme::iconInk, or
 // the accent tone the Document popover uses).
 QIcon glyph(Glyph id, const QColor &color);
-
-// The OCR toolbar mark deliberately uses a wide canvas so its three-letter
-// wordmark remains readable. Menus may scale this icon down to their square icon
-// slot; the toolbar gives it the native 34:20 aspect ratio.
-QIcon ocrWordmark(const QColor &color);
 
 // glyph() with a second, smaller glyph badged over the base's bottom-right
 // corner - the margin behind the badge is erased (not surface-filled) so the
@@ -101,13 +90,26 @@ QIcon glyphBadged(Glyph base, Glyph badge, const QColor &color);
 
 // A single pictograph as a transparent `sizePx`-square pixmap, for the places
 // that paint an icon directly instead of handing Qt a QIcon (the split Open
-// button draws its own ChevronDown over the menu strip).
-QPixmap glyphPixmap(Glyph id, const QColor &color, int sizePx);
+// button draws its own ChevronDown over the menu strip; the stylesheet's
+// generated indicator images). `strokeWidth` overrides Lucide's stroke, in its
+// 24-unit grid, for the small indicators that need a heavier line to read; 0
+// keeps the set's own. A valid `fill` fills the glyph's closed shapes (the
+// Recent list's favourite star); by default Lucide icons are outlines only.
+QPixmap glyphPixmap(Glyph id, const QColor &color, int sizePx, double strokeWidth = 0,
+                    const QColor &fill = QColor());
 
-// A single up ("^") or down ("v") chevron, antialiased and tinted to `color`,
-// rendered into a transparent `sizePx`-square pixmap. Used to supply the
-// spin-box stepper arrows via QSS (which can only reference arrow glyphs as
-// image: url(...) - the native arrows are illegibly small under our stylesheet).
+// Puts `glyph` on a text-free button, drawn in the button's own foreground colour
+// - the palette's ButtonText, which a stylesheet `color:` rule sets - with a
+// disabled variant in the palette's disabled ButtonText, and keeps it that way:
+// the icon is rendered again whenever the button is polished or its palette
+// changes, as on a theme switch. For the small close, remove and -/+ buttons that
+// used to draw a text character in that colour.
+void setButtonGlyph(QAbstractButton *button, Glyph glyph, int iconPx);
+
+// A single up or down chevron (Lucide chevron-up / chevron-down) as a transparent
+// `sizePx`-square pixmap. Used to supply the spin-box stepper arrows and the
+// combo-box arrow via QSS, which can only reference images through
+// image: url(...) - the native arrows are illegibly small under our stylesheet.
 QPixmap spinChevron(bool down, const QColor &color, int sizePx);
 
 } // namespace mervin::icons

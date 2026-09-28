@@ -167,8 +167,7 @@ void RowList::addRow(const Fill &fill)
 
     auto *x = new QToolButton(row);
     x->setObjectName(QStringLiteral("rowListX"));
-    x->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    x->setText(QStringLiteral("✕"));
+    icons::setButtonGlyph(x, icons::Glyph::Close, 16);
     x->setAutoRaise(true);
     x->setFixedSize(kColX, kColX);
     x->setFocusPolicy(Qt::NoFocus); // 20 rows must not add 20 extra tab stops

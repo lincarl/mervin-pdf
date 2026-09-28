@@ -179,7 +179,7 @@ private:
     void updateRecentButton();      // sync pill button accent state
     void syncDocTabBar();           // rebuild docTabBar_ to match tabs_
     void updateTabGlyphs();         // tint each doc tab's glyph (accent on the active tab)
-    void applyActionIcons();        // set the house icons on every action (theme-aware)
+    void applyActionIcons();        // set the Lucide icons on every action (theme-aware)
     void setUiEnabled(bool enabled);
     void updateForCurrentTab();
     void updatePageLabels(int current, int total);
@@ -291,7 +291,6 @@ private:
     QMenu *saveMenu_ = nullptr;         // its dropdown (Save edits / as copy / export)
     QToolButton *documentButton_ = nullptr; // dropdown-only Document button, right of Save
     QMenu *documentMenu_ = nullptr;         // its popover (page operations + Security)
-    QToolButton *ocrButton_ = nullptr;      // wide wordmark; larger than square glyph slots
     QToolButton *comfortButton_ = nullptr;  // moon/sun toggle: Comfort <-> Traditional theme
 
     QLineEdit *pageEdit_ = nullptr;

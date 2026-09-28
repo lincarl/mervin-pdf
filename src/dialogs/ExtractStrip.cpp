@@ -32,7 +32,7 @@ constexpr int kBandH = 16;             // the caption row
 constexpr int kWashTop = 4;            // hover / current highlight...
 constexpr int kWashBottom = 156;       // ...running 4 px into the scrollbar slot
 constexpr int kFoldTileW = 40;
-constexpr int kFoldGlyph = 24;         // FileX in the fold tile; glyph() paints 24 natively
+constexpr int kFoldGlyph = 24;         // FileText in the fold tile; glyph() paints 24 natively
 constexpr int kCloseSize = 16;         // the ✕ hit square; the glyph is 14 px inside it
 constexpr int kPad = 6;                // thumbnail inset inside a cell
 constexpr int kRenderDebounceMs = 150; // typing 4, 40, 400 renders nothing in between
@@ -339,7 +339,7 @@ void ExtractStrip::paintCell(QPainter *p, int row) const
         // Built once per ink, not per paint: glyph() renders five pixmaps.
         if (foldGlyphInk_ != t.inkBody) {
             foldGlyphInk_ = t.inkBody;
-            foldGlyph_ = icons::glyph(icons::Glyph::FileX, t.inkBody);
+            foldGlyph_ = icons::glyph(icons::Glyph::FileText, t.inkBody);
         }
         foldGlyph_.paint(p, glyph);
         captionInk = t.inkSoft;

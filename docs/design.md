@@ -239,9 +239,12 @@ the compile-time Comfort transform ramp are deliberate data-level exceptions.
 Document color transforms are separate from application chrome so page appearance
 can be changed independently.
 
-`ui/Icons` paints the interface icon set with `QPainter`, producing consistent
-artwork on Windows and Linux without depending on a platform icon font. The packaged
-application icon is generated from the repository's icon assets.
+The interface icons are [Lucide](https://lucide.dev) SVGs, vendored unmodified in
+`resources/icons/lucide` and compiled into the `mervin_icons` library as a Qt
+resource. `ui/Icons` renders them through Qt SVG in the theme's ink, so Windows and
+Linux show identical artwork without depending on a platform icon font; the
+stylesheet's check marks, close crosses and arrows are rendered from the same set.
+The packaged application icon is generated from the repository's icon assets.
 
 ## Platform integration and networking
 

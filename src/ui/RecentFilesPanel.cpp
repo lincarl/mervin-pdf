@@ -27,7 +27,6 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <cmath>
 
 namespace mervin {
 
@@ -51,7 +50,6 @@ constexpr int kVPad      =  9;  // top/bottom inner padding
 constexpr int kStarW     = 20;  // star icon hit area
 constexpr int kStarGap   =  8;  // gap between right meta column and star
 
-constexpr double kPi = 3.141592653589793;
 
 // Search-match highlight - the same yellow the in-page find bar paints over the
 // page, so a match looks consistent wherever it appears.
@@ -79,7 +77,8 @@ QString formatSize(qint64 bytes)
     return QStringLiteral("%1 MB").arg(mb, 0, 'f', 1);
 }
 
-// Blue gradient rounded-square with a white page glyph.
+// Blue gradient rounded-square (the app's brand tile) with Lucide's file-text on
+// it in white, like every other icon in the app.
 QPixmap makeDocIcon(int size)
 {
     QPixmap pm(size, size);
@@ -93,22 +92,11 @@ QPixmap makeDocIcon(int size)
     p.setPen(Qt::NoPen);
     p.drawRoundedRect(pm.rect(), size / 6, size / 6);
 
-    const int m = size / 5, fold = size / 5;
-    p.setPen(QPen(theme::brand().onBrand, qMax(1.0, size * 0.06), Qt::SolidLine, Qt::RoundCap,
-                  Qt::RoundJoin));
-    p.setBrush(Qt::NoBrush);
-    QPolygonF doc;
-    doc << QPointF(m, m) << QPointF(size-m-fold, m) << QPointF(size-m, m+fold)
-        << QPointF(size-m, size-m) << QPointF(m, size-m) << QPointF(m, m);
-    p.drawPolyline(doc);
-    p.drawLine(QPointF(size-m-fold, m),      QPointF(size-m-fold, m+fold));
-    p.drawLine(QPointF(size-m-fold, m+fold), QPointF(size-m, m+fold));
-
-    p.setPen(QPen(theme::brand().onBrandSoft, qMax(1.0, size*0.05)));
-    int ly = m + fold + (size - 2*m - fold) * 2 / 5;
-    p.drawLine(m+3, ly, size-m-3, ly);
-    ly += (size - 2*m - fold) / 5;
-    p.drawLine(m+3, ly, size-m-7, ly);
+    // Rendered at its exact size (an explicit stroke skips QIcon's nearest-size
+    // scaling), a little inside the tile so its rounded corners stay clear.
+    const int glyph = size * 3 / 4;
+    p.drawPixmap((size - glyph) / 2, (size - glyph) / 2,
+                 icons::glyphPixmap(icons::Glyph::FileText, theme::brand().onBrand, glyph, 2.0));
     return pm;
 }
 
@@ -119,28 +107,18 @@ QRect starRegion(const QRect &row)
                  kStarW, kStarW);
 }
 
+// Lucide "star": filled in the favourite yellow when starred, an outline when not.
+// Rendered at the device's pixel ratio so it stays sharp on scaled displays.
 void drawStar(QPainter *p, const QRect &rect, bool filled)
 {
-    p->save();
-    p->setRenderHint(QPainter::Antialiasing);
-    const QPointF center(rect.center().x(), rect.center().y());
-    const qreal r1 = rect.width() / 2.0 - 1.0;
-    const qreal r2 = r1 * 0.4;
-    QPolygonF star;
-    for (int i = 0; i < 10; ++i) {
-        const qreal angle = -kPi / 2.0 + i * kPi / 5.0;
-        const qreal r = (i % 2 == 0) ? r1 : r2;
-        star << center + QPointF(r * std::cos(angle), r * std::sin(angle));
-    }
-    if (filled) {
-        p->setBrush(theme::brand().starFill);
-        p->setPen(QPen(theme::brand().starEdge, 1.0));
-    } else {
-        p->setBrush(Qt::NoBrush);
-        p->setPen(QPen(theme::brand().starEmptyEdge, 1.5));
-    }
-    p->drawPolygon(star);
-    p->restore();
+    const qreal dpr = p->device()->devicePixelRatioF();
+    const int px = qRound(rect.width() * dpr);
+    QPixmap pm = filled ? icons::glyphPixmap(icons::Glyph::Star, theme::brand().starEdge, px, 2.0,
+                                             theme::brand().starFill)
+                        : icons::glyphPixmap(icons::Glyph::Star, theme::brand().starEmptyEdge,
+                                             px, 2.0);
+    pm.setDevicePixelRatio(dpr);
+    p->drawPixmap(rect.topLeft(), pm);
 }
 
 // Draw `fullText` on a single line within `rect` (left-aligned, vertically
