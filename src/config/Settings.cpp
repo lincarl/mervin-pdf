@@ -79,7 +79,7 @@ Settings Settings::load()
         s.annotationColor = str("annotation_color", s.annotationColor);
         s.annotationStyle = str("annotation_style", s.annotationStyle);
         s.restoreSession = boolean("restore_session", s.restoreSession);
-        s.checkUpdatesOnStartup = boolean("check_updates_on_startup", s.checkUpdatesOnStartup);
+        s.autoUpdate = boolean("auto_update", s.autoUpdate);
         s.promptedSetDefaultApp = boolean("prompted_set_default_app", s.promptedSetDefaultApp);
         s.windowGeometry = QByteArray::fromBase64(str("window_geometry", QString()).toLatin1());
         s.windowState = QByteArray::fromBase64(str("window_state", QString()).toLatin1());
@@ -114,7 +114,7 @@ void Settings::save() const
     tbl.insert("annotation_color", annotationColor.toStdString());
     tbl.insert("annotation_style", annotationStyle.toStdString());
     tbl.insert("restore_session", restoreSession);
-    tbl.insert("check_updates_on_startup", checkUpdatesOnStartup);
+    tbl.insert("auto_update", autoUpdate);
     tbl.insert("prompted_set_default_app", promptedSetDefaultApp);
     tbl.insert("window_geometry", std::string(windowGeometry.toBase64().constData()));
     tbl.insert("window_state", std::string(windowState.toBase64().constData()));

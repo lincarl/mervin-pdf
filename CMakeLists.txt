@@ -244,12 +244,27 @@ qt_add_executable(MervinPDF
     src/dialogs/ExtractDialog.h
     src/dialogs/ExtractStrip.cpp
     src/dialogs/ExtractStrip.h
-    src/update/UpdateChecker.cpp
-    src/update/UpdateChecker.h
+    src/update/Installer.cpp
+    src/update/Installer.h
     src/update/ReleaseConfig.h
+    src/update/UpdatePlan.cpp
+    src/update/UpdatePlan.h
+    src/update/Updater.cpp
+    src/update/Updater.h
 )
 target_link_libraries(MervinPDF PRIVATE mervin_core mervin_icons Qt6::Widgets Qt6::Network
     Qt6::PrintSupport)
+
+# The Linux package this build is for, which is how the in-app updater knows to
+# install a new .deb or .rpm (Windows installs and AppImages are recognised at
+# runtime instead). release.yml sets it for the package jobs; leave it empty for
+# every other build so a dev build never tries to replace a system package.
+set(MERVIN_PACKAGE_FORMAT "" CACHE STRING "Linux package this build is for: deb, rpm, or empty")
+set_property(CACHE MERVIN_PACKAGE_FORMAT PROPERTY STRINGS "" deb rpm)
+if(NOT MERVIN_PACKAGE_FORMAT MATCHES "^(|deb|rpm)$")
+    message(FATAL_ERROR "MERVIN_PACKAGE_FORMAT must be deb, rpm, or empty (got '${MERVIN_PACKAGE_FORMAT}')")
+endif()
+target_compile_definitions(MervinPDF PRIVATE MERVIN_PACKAGE_FORMAT="${MERVIN_PACKAGE_FORMAT}")
 
 # Embed the application icon + version info (generated above) as a Win32
 # resource so Explorer, the Start menu, and the "default app for .pdf" picker

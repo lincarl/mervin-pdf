@@ -224,6 +224,7 @@ jobs:
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DMERVIN_VERSION="$MERVIN_VERSION" \
+            -DMERVIN_PACKAGE_FORMAT=deb \
             -DMERVIN_BUILD_TESTS=OFF \
             -DMUPDF_DIR="$MUPDF_DIR"
           cmake --build build
@@ -268,6 +269,7 @@ jobs:
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DMERVIN_VERSION="$MERVIN_VERSION" \
+            -DMERVIN_PACKAGE_FORMAT=rpm \
             -DMERVIN_BUILD_TESTS=OFF \
             -DMUPDF_DIR="$MUPDF_DIR"
           cmake --build build

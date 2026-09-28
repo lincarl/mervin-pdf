@@ -566,6 +566,10 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
                     syncComfortButton(); // moon <-> sun on the toolbar toggle
                     applyDocumentThemeToViewers();
                 });
+        // Never (in the update prompt) or another window's Settings switched
+        // auto update: keep this copy current so a later save doesn't undo it.
+        connect(wm_, &mervin::WindowManager::autoUpdateChanged, this,
+                [this](bool on) { settings_.autoUpdate = on; });
     }
 
     setWindowTitle(tr("Mervin PDF"));
@@ -2191,6 +2195,7 @@ void MainWindow::openSettings()
     const QString prevAccent = settings_.accentColor;
     const QString prevDocTheme = settings_.documentTheme;
     const QString prevScheme = settings_.colorScheme;
+    const bool prevAutoUpdate = settings_.autoUpdate;
     settings_ = dlg.settings();
     settings_.save();
     // Keep the More-menu toggle in sync and push the highlight setting to every
@@ -2220,6 +2225,10 @@ void MainWindow::openSettings()
     // window re-applies it (the broadcast also re-tints this window's tabs).
     if (settings_.documentTheme != prevDocTheme && wm_)
         wm_->setDocumentTheme(settings_.documentTheme);
+    // Auto update too: the other windows' settings copies and the Updater (which
+    // drops a downloaded update when switched off) follow the broadcast.
+    if (settings_.autoUpdate != prevAutoUpdate && wm_)
+        wm_->setAutoUpdate(settings_.autoUpdate);
     if (auto *v = currentViewer())
         applySettingsToViewer(v); // apply the new defaults to the current view
 }

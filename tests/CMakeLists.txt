@@ -184,6 +184,19 @@ set_tests_properties(tst_icons PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
+# The updater's release parsing, asset choice, and Windows install recognition.
+# UpdatePlan is pure QtCore, so this test needs neither mervin_core nor widgets.
+qt_add_executable(tst_update_plan tst_update_plan.cpp
+    ${CMAKE_SOURCE_DIR}/src/update/UpdatePlan.cpp
+    ${CMAKE_SOURCE_DIR}/src/update/UpdatePlan.h)
+target_include_directories(tst_update_plan PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(tst_update_plan PRIVATE Qt6::Core Qt6::Test)
+set_target_properties(tst_update_plan PROPERTIES WIN32_EXECUTABLE OFF)
+add_test(NAME tst_update_plan COMMAND tst_update_plan)
+set_tests_properties(tst_update_plan PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+
 # Guard rails for the colour vocabulary and the one stylesheet built from it.
 # Theme.cpp belongs to the application target, so it is compiled in here (as
 # tst_merge_dialog does); it links mervin_icons because the sheet's indicator

@@ -43,7 +43,7 @@ src/
   security/      qpdf page, security, and measurement-output services
   session/       open-session and closed-tab state
   ui/            main window, viewer, tabs, panels, sidebars, theme, and icons
-  update/        release checking and update download
+  update/        release checks, per-package downloads, and installing updates
 ```
 
 `mervin_core` owns the document and service code that can be tested without Qt
@@ -226,9 +226,11 @@ The files are:
 
 Paths are normalized before deduplication and lookup, with case folding on Windows.
 Corrupt or missing state files fall back to defaults instead of blocking startup.
-Update throttling and skipped-version state use `QSettings`; Windows file-handler
-registration uses the per-user registry. A profile redirects the Qt settings as well
-as the files above.
+The update start count and pending download use `QSettings`; the downloads
+themselves live in a machine-local `updates/` folder (`%LOCALAPPDATA%\MervinPDF` on
+Windows, `$XDG_CACHE_HOME/mervin-pdf` on Linux, or inside the profile). Windows
+file-handler registration uses the per-user registry. A profile redirects the Qt
+settings as well as the files above.
 
 ## Theme and icons
 

@@ -150,6 +150,16 @@ void WindowManager::setDocumentTheme(const QString &theme)
     emit documentThemeChanged(theme);
 }
 
+void WindowManager::setAutoUpdate(bool on)
+{
+    Settings s = Settings::load();
+    if (s.autoUpdate != on) {
+        s.autoUpdate = on;
+        s.save();
+    }
+    emit autoUpdateChanged(on);
+}
+
 void WindowManager::scheduleThemeRefresh()
 {
     if (themeRefreshPending_)

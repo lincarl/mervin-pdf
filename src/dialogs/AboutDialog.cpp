@@ -1,7 +1,7 @@
 #include "dialogs/AboutDialog.h"
 
 #include "mervin_version.h"
-#include "update/UpdateChecker.h"
+#include "update/Updater.h"
 
 #include <QApplication>
 #include <QDialogButtonBox>
@@ -30,7 +30,8 @@ AboutDialog::AboutDialog(QWidget *parent)
     auto *privacy = new QLabel(
         tr("<p><i>Works offline. Your documents and all data - settings, recent files, "
            "OCR language data - stay on this machine. Mervin only reaches the internet "
-           "if you turn on update checks.</i></p>"),
+           "for downloads you start and for update checks, which you can turn off in "
+           "Settings.</i></p>"),
         this);
     privacy->setWordWrap(true);
     privacy->setTextFormat(Qt::RichText);
@@ -57,12 +58,12 @@ AboutDialog::AboutDialog(QWidget *parent)
     layout->addWidget(licenses);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok, this);
-    // Manual update check (ActionRole keeps the dialog open). The checker is
-    // parented to the application so it outlives this dialog, and deletes itself
-    // when the check finishes.
-    auto *checkButton = buttons->addButton(tr("Check for Updates"), QDialogButtonBox::ActionRole);
-    connect(checkButton, &QPushButton::clicked, this,
-            [] { (new mervin::UpdateChecker(qApp))->checkManually(); });
+    // Manual update check (ActionRole keeps the dialog open). The Updater lives
+    // for the whole process, so the check outlives this dialog.
+    if (mervin::Updater *updater = mervin::Updater::instance()) {
+        auto *checkButton = buttons->addButton(tr("Check for Updates"), QDialogButtonBox::ActionRole);
+        connect(checkButton, &QPushButton::clicked, updater, &mervin::Updater::checkNow);
+    }
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     layout->addWidget(buttons);
 }

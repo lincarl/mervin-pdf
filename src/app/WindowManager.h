@@ -126,6 +126,12 @@ public:
     QString documentTheme() const { return documentTheme_; }
     void setDocumentTheme(const QString &theme);
 
+    // Automatic updates on or off. Persists to config and broadcasts
+    // autoUpdateChanged: every window keeps a settings copy that it rewrites
+    // whole on close, so each must hear of the change, and the Updater drops a
+    // downloaded update when updates are switched off.
+    void setAutoUpdate(bool on);
+
     // ---- Recent files + view-state (M6), owned in-process ---------------------
     // Record that a file was opened (push to recent history). When
     // restoreViewState is true (a freshly opened tab), the file's saved view
@@ -189,6 +195,7 @@ signals:
     void recentListChanged(const QList<mervin::RecentEntry> &entries);
     void colorSchemeChanged(const QString &scheme);
     void documentThemeChanged(const QString &theme);
+    void autoUpdateChanged(bool on);
 
 private slots:
     void onWindowDestroyed(QObject *obj);

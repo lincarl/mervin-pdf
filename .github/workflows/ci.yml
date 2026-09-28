@@ -77,14 +77,14 @@ jobs:
           release_api = re.search(r"^#define MERVIN_RELEASE_API_URL (.+)$", macros, re.MULTILINE)
           if release_api is None or release_api.group(1) != expected_release_api:
               raise SystemExit("ReleaseConfig does not define the public mervin-pdf release API")
-          updater = Path("src/update/UpdateChecker.cpp").read_text()
+          updater = Path("src/update/Updater.cpp").read_text()
           if (
               updater.count("MERVIN_RELEASE_API_URL") != 1
               or "QStringLiteral(MERVIN_RELEASE_API_URL)" not in updater
               or "http://" in updater
               or "https://" in updater
           ):
-              raise SystemExit("UpdateChecker must consume only MERVIN_RELEASE_API_URL")
+              raise SystemExit("Updater must consume only MERVIN_RELEASE_API_URL")
 
           required_licenses = (
               "MuPDF-AGPL-3.0.txt",

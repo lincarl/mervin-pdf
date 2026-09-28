@@ -84,8 +84,11 @@ struct Settings
     // Crash recovery / session restore (M11), on by default
     bool restoreSession = true;
 
-    // Updates (opt-in, off by default)
-    bool checkUpdatesOnStartup = false;
+    // Download new releases in the background and offer to install them (see
+    // Updater). On by default. A new key on purpose: the retired
+    // `check_updates_on_startup` defaulted to off and every saved config wrote
+    // it, so honouring it would have kept updates off for nearly everyone.
+    bool autoUpdate = true;
 
     // First-run: whether we've already offered to make Mervin the default PDF
     // viewer. The prompt is shown exactly once, on the first launch; after that

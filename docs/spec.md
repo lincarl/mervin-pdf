@@ -145,8 +145,8 @@ Saving supports these workflows:
 
 Settings cover viewing defaults, application and document themes, open behavior,
 recent-file limits, measurement snapping, form behavior, annotation defaults, and
-optional update checks. The OCR default is selected in Manage OCR languages, and
-session restore is enabled by default.
+automatic updates. The OCR default is selected in Manage OCR languages, and session
+restore and automatic updates are enabled by default.
 
 On Windows, Mervin can register itself as a PDF handler and open the system Default
 Apps settings. If Mervin is not already the default, it offers this once on first
@@ -160,13 +160,17 @@ Document rendering, search, OCR, measurement, form filling, annotation, page
 operations, security operations, recent history, and settings are all local. Mervin
 has no account requirement or telemetry.
 
-Network access follows an explicit action or an opt-in setting:
+Network access follows an explicit action or the automatic update setting:
 
 - opening or downloading an explicit web URL;
 - loading the OCR language catalog or downloading a chosen language model; or
-- checking for updates manually or through the startup check, which is off by
-  default. A Windows installer is downloaded only after the user accepts an offered
-  update; Linux opens the release page instead.
+- checking for updates, manually from About or automatically on every 20th start
+  (on by default, off in Settings). An installed copy downloads the new release in
+  the same package format it was installed from (NSIS or MSI installer, AppImage,
+  .deb, or .rpm) in the background, then asks before installing: Install Now,
+  Later (asked again on every start), or Never (turns automatic updates off and
+  deletes the download). Copies that cannot update themselves, such as dev builds,
+  offer the release page instead.
 
 ## Product boundaries
 

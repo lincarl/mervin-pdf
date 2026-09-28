@@ -20,7 +20,7 @@
 #include "ui/ThemeTokens.h"
 #include "mervin_version.h"
 #include "session/StartupPlan.h"
-#include "update/UpdateChecker.h"
+#include "update/Updater.h"
 
 #ifdef Q_OS_WIN
 #  include "platform/PlatformIntegration.h"
@@ -330,14 +330,19 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &paths,
         onDone = [] { QCoreApplication::quit(); };
     wm.openStaged(batch, restore, onDone);
 
-    // Optional, opt-in background update check (off by default). Primary instance
-    // only - secondary launches hand off and exit before reaching here. Delayed so
-    // it never slows first paint; the checker fails silently on any error and
-    // deletes itself when done.
-    if (mervin::Settings::load().checkUpdatesOnStartup) {
-        QTimer::singleShot(2500, qApp,
-                           [] { (new mervin::UpdateChecker(qApp))->checkOnStartup(); });
-    }
+    // Updates (see Updater). Primary instance only - secondary launches hand off
+    // and exit before reaching here. The startup pass waits until the first
+    // window has painted and everything after it is asynchronous, so it never
+    // slows startup; a --quit-after-startup timing run skips it entirely. The
+    // prompt's "Never" goes through the WindowManager so every window's settings
+    // copy agrees.
+    mervin::Updater updater;
+    QObject::connect(&updater, &mervin::Updater::autoUpdateDisabled, &wm,
+                     [&wm] { wm.setAutoUpdate(false); });
+    QObject::connect(&wm, &mervin::WindowManager::autoUpdateChanged, &updater,
+                     &mervin::Updater::onAutoUpdateChanged);
+    if (!cli.quitAfterStartup)
+        QTimer::singleShot(2500, &updater, &mervin::Updater::onStartup);
 
     return app.exec();
 }
@@ -363,7 +368,7 @@ int main(int argc, char *argv[])
     }
     if (!cli.profileDir.isEmpty()) {
         // Redirect ALL persisted state before anything resolves a path or the
-        // single-instance name. The update checker's QSettings normally live in
+        // single-instance name. The updater's QSettings normally live in
         // the registry / org paths - point them into the profile too, so a
         // profile run is fully self-contained.
         mervin::ConfigPaths::setOverrideDir(cli.profileDir);

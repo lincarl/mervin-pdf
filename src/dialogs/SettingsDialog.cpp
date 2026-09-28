@@ -190,8 +190,10 @@ SettingsDialog::SettingsDialog(const mervin::Settings &current, QWidget *parent)
     mervin::Theme::useTypedSpinBox(retentionSpin_);
     behaviorForm->addRow(tr("Recent history kept:"), retentionSpin_);
 
-    updatesCheck_ = new QCheckBox(tr("Check for updates on startup"), this);
-    updatesCheck_->setChecked(current.checkUpdatesOnStartup);
+    updatesCheck_ = new QCheckBox(tr("Download updates automatically"), this);
+    updatesCheck_->setToolTip(
+        tr("Check for a new version every 20 starts and ask before installing it"));
+    updatesCheck_->setChecked(current.autoUpdate);
     behaviorForm->addRow(QString(), updatesCheck_);
 
     layout->addWidget(behaviorBox);
@@ -298,7 +300,7 @@ mervin::Settings SettingsDialog::settings() const
     s.openBehavior = openBehaviorCombo_->currentData().toString();
     s.recentVisibleCount = visibleSpin_->value();
     s.recentRetention = retentionSpin_->value();
-    s.checkUpdatesOnStartup = updatesCheck_->isChecked();
+    s.autoUpdate = updatesCheck_->isChecked();
     s.measurementSnap = snapCheck_->isChecked();
     s.highlightFormFields = highlightFormFieldsCheck_->isChecked();
     s.autoFormFill = autoFormFillCheck_->isChecked();

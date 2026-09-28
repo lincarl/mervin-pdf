@@ -52,4 +52,27 @@ QString ConfigPaths::configFile()
     return QDir(configDir()).filePath(QStringLiteral("config.toml"));
 }
 
+QString ConfigPaths::updatesDir()
+{
+    QString dir;
+    if (!g_overrideDir.isEmpty()) {
+        dir = QDir(g_overrideDir).filePath(QStringLiteral("updates"));
+    } else {
+#ifdef Q_OS_WIN
+        // %LOCALAPPDATA%, not %APPDATA%: installers must not roam with the profile.
+        QString base = qEnvironmentVariable("LOCALAPPDATA");
+        if (base.isEmpty())
+            base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+        dir = QDir(base).filePath(QStringLiteral("MervinPDF/updates"));
+#else
+        QString base = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation);
+        if (base.isEmpty())
+            base = QDir::homePath() + QStringLiteral("/.cache");
+        dir = QDir(base).filePath(QStringLiteral("mervin-pdf/updates"));
+#endif
+    }
+    QDir().mkpath(dir);
+    return dir;
+}
+
 } // namespace mervin
