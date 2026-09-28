@@ -142,12 +142,15 @@ jobs:
         # platform plugin (qt6/plugins/platforms/libqxcb.so) that linuxdeploy has to
         # bundle - so --no-install-recommends is safe here. qt6-base-dev-tools
         # provides qmake6, which linuxdeploy-plugin-qt uses to locate that plugin dir.
-        # qt6-svg-dev: the icons are Lucide SVGs rendered through Qt SVG.
+        # qt6-svg-dev: the icons are Lucide SVGs rendered through Qt SVG. Linking Qt
+        # SVG makes linuxdeploy-plugin-qt bundle the SVG icon engine plugin too, which
+        # ships separately in qt6-svg-plugins (not pulled in without recommends).
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build curl ca-certificates file wget \
-            qt6-base-dev qt6-base-dev-tools qt6-svg-dev libqpdf-dev libtomlplusplus-dev \
+            qt6-base-dev qt6-base-dev-tools qt6-svg-dev qt6-svg-plugins \
+            libqpdf-dev libtomlplusplus-dev \
             libgl1-mesa-dev libxkbcommon-dev libxcb-cursor0
 
       - name: Derive version from tag
