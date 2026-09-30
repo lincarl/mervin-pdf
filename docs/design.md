@@ -263,8 +263,8 @@ model downloads, and update checks/downloads.
 
 The project supports Windows x64 and Linux x86-64. CMake builds the targets; the
 platform release pipeline adds Windows NSIS/MSI installers and Linux
-AppImage/DEB/RPM artifacts. Windows uses Qt 6.8.3; Linux requires Qt 6.6 or newer.
-MuPDF 1.28.0 is built from source with OCR support.
+AppImage/DEB/RPM artifacts. Windows uses Qt 6.12.0; Linux requires Qt 6.6 or newer.
+MuPDF 1.28.5 is built from source with OCR support.
 
 QtTest targets cover the core stores, IPC, rendering helpers, document tools,
 dialogs, layout, theme, and platform-sensitive behavior. Performance targets measure

@@ -1,7 +1,7 @@
 # Lucide icons
 
 Every icon in the app comes from [Lucide](https://lucide.dev). The SVGs here are
-copied unmodified from the `lucide-static` npm package, version **1.48.0**, and
+copied unmodified from the `lucide-static` npm package, version **1.49.0**, and
 compiled into the `mervin_icons` library as a Qt resource (see `CMakeLists.txt`).
 Licence: ISC, with the icons Lucide derives from Feather under MIT; the full text
 ships as `licenses/lucide-LICENSE.txt`.

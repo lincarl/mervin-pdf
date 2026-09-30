@@ -4,6 +4,11 @@ Windows 11, x64, MSVC. The build uses CMake + Ninja, vcpkg (manifest mode) for
 most C/C++ deps, Qt 6 from aqtinstall, and **MuPDF built from source** (it is not
 in the vcpkg registry).
 
+The pinned dependency set is Qt 6.12.0, MuPDF 1.28.5, qpdf 12.4.2 and toml++
+3.4.0. `vcpkg.json` pins the registry revision for qpdf, toml++ and their
+dependencies. Linux release packages use the supported distribution's Qt and
+qpdf packages; MuPDF is built from the same source release on both platforms.
+
 ## Toolchain (one-time)
 
 ```powershell
@@ -15,10 +20,10 @@ winget install --id Ninja-build.Ninja --source winget --accept-source-agreements
 winget install --id NSIS.NSIS         --source winget --accept-source-agreements --accept-package-agreements
 winget install --id Python.Python.3.12 --source winget --accept-source-agreements --accept-package-agreements
 
-# Qt 6.8.3 (official prebuilt dynamic DLLs, no Qt account)
+# Qt 6.12.0 (official prebuilt dynamic DLLs, no Qt account)
 & "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m pip install --user aqtinstall
-& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 --outputdir C:\dev\Qt
-# => C:\dev\Qt\6.8.3\msvc2022_64
+& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m aqt install-qt windows desktop 6.12.0 win64_msvc2022_64 --outputdir C:\dev\Qt
+# => C:\dev\Qt\6.12.0\msvc2022_64
 
 # vcpkg
 git clone https://github.com/microsoft/vcpkg C:\dev\vcpkg
@@ -28,21 +33,21 @@ C:\dev\vcpkg\bootstrap-vcpkg.bat
 ## MuPDF from source (not in vcpkg)
 
 ```powershell
-# Download + extract the 1.28.0 source release (bundles all thirdparty deps).
-curl.exe -L --fail -o C:\dev\src\mupdf-1.28.0-source.tar.gz https://mupdf.com/downloads/archive/mupdf-1.28.0-source.tar.gz
-tar -xzf C:\dev\src\mupdf-1.28.0-source.tar.gz -C C:\dev\src
+# Download + extract the 1.28.5 source release (bundles all thirdparty deps).
+curl.exe -L --fail -o C:\dev\src\mupdf-1.28.5-source.tar.gz https://mupdf.com/downloads/archive/mupdf-1.28.5-source.tar.gz
+tar -xzf C:\dev\src\mupdf-1.28.5-source.tar.gz -C C:\dev\src
 # (A few symlinks in thirdparty wrapper/demo dirs fail to extract on Windows - harmless.)
 
 # Build the core static library (Release|x64). The .sln targets toolset v142;
 # retarget to v143. This pulls libthirdparty + harfbuzz + tesseract/leptonica +
 # barcode/zxing + pkcs7 + resources as project dependencies.
 & "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe" `
-  C:\dev\src\mupdf-1.28.0-source\platform\win32\mupdf.sln `
+  C:\dev\src\mupdf-1.28.5-source\platform\win32\mupdf.sln `
   /t:libmupdf /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
-# => libs land in  C:\dev\src\mupdf-1.28.0-source\platform\win32\x64\Release\*.lib
+# => libs land in  C:\dev\src\mupdf-1.28.5-source\platform\win32\x64\Release\*.lib
 ```
 
-`cmake/FindMuPDF.cmake` locates these (default root `C:/dev/src/mupdf-1.28.0-source`,
+`cmake/FindMuPDF.cmake` locates these (default root `C:/dev/src/mupdf-1.28.5-source`,
 overridable via the `MUPDF_DIR` env/cache variable) and links all produced `.lib`s.
 
 Notes:
@@ -57,7 +62,7 @@ Two env vars drive the CMake presets.
 
 ```powershell
 $env:VCPKG_ROOT = "C:\dev\vcpkg"
-$env:QT6_DIR    = "C:\dev\Qt\6.8.3\msvc2022_64"
+$env:QT6_DIR    = "C:\dev\Qt\6.12.0\msvc2022_64"
 & "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -SkipAutomaticLocation
 cmake --preset x64-release
 cmake --build --preset x64-release
@@ -69,7 +74,7 @@ cmake --build --preset x64-release
 An unpackaged development build needs the Qt and vcpkg DLLs on `PATH`:
 
 ```powershell
-$env:Path = "C:\dev\Qt\6.8.3\msvc2022_64\bin;" + $env:Path
+$env:Path = "C:\dev\Qt\6.12.0\msvc2022_64\bin;" + $env:Path
 # Also needs the vcpkg deps (qpdf etc.) on PATH for a non-deployed dev run:
 $env:Path = "build\x64-release\vcpkg_installed\x64-windows\bin;" + $env:Path
 .\build\x64-release\MervinPDF.exe "path\to\document.pdf"

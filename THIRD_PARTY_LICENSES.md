@@ -13,11 +13,11 @@ in the [`licenses/`](licenses/) directory.
 
 | Component | Version (pinned) | Licence | Linking | Notes |
 |---|---|---|---|---|
-| MuPDF | 1.28.0 | AGPL v3 or commercial (Artifex) | Static | Dominant distribution constraint. Built from source — not available in vcpkg. |
-| Qt 6 | Windows 6.8.3; Linux distribution Qt (Ubuntu 26.04 uses 6.10) | LGPL v3 or commercial | **Dynamic** | Dynamic linking satisfies the LGPL. Do not static-link. |
-| qpdf | Windows vcpkg baseline; Linux distribution package | Apache 2.0 | Dynamic | Page operations and security. |
-| toml++ | Windows vcpkg baseline; Linux distribution package or pinned 3.4.0 fallback | MIT | Header-only | Config-file parsing. |
-| Lucide icons | lucide-static 1.48.0 | ISC; icons derived from Feather are MIT | Compiled in (Qt resource) | Every UI icon, vendored unmodified in `resources/icons/lucide`. The licence text, including the Feather MIT notice for icons such as check, x, the chevrons, plus, minus and lock, is `licenses/lucide-LICENSE.txt`. |
+| MuPDF | 1.28.5 | AGPL v3 or commercial (Artifex) | Static | Dominant distribution constraint. Built from source — not available in vcpkg. |
+| Qt 6 | Windows 6.12.0; Linux distribution Qt (Ubuntu 26.04 uses 6.10) | LGPL v3 or commercial | **Dynamic** | Dynamic linking satisfies the LGPL. Do not static-link. |
+| qpdf | Windows 12.4.2 (vcpkg baseline); Linux distribution package | Apache 2.0 | Dynamic | Page operations and security. |
+| toml++ | 3.4.0 (vcpkg baseline, Linux distribution package or pinned fallback) | MIT | Header-only | Config-file parsing. |
+| Lucide icons | lucide-static 1.49.0 | ISC; icons derived from Feather are MIT | Compiled in (Qt resource) | Every UI icon, vendored unmodified in `resources/icons/lucide`. The licence text, including the Feather MIT notice for icons such as check, x, the chevrons, plus, minus and lock, is `licenses/lucide-LICENSE.txt`. |
 
 ## MuPDF bundled / transitive dependencies
 

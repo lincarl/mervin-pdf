@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  MUPDF_VERSION: "1.28.0"
-  MUPDF_SHA256: "21c7f064903154f1c3a7458bee81f130fc36f9b5147ea13328f9980e02d2dea2"
+  MUPDF_VERSION: "1.28.5"
+  MUPDF_SHA256: "98a5c10cda20c3992cdf76ff6b2a1149c32bd79cc796d3f703230b1185b7e934"
 
 jobs:
   # ---------------------------------------------------------------- Windows ---
@@ -44,10 +44,10 @@ jobs:
       - name: Install Ninja
         run: choco install ninja -y
 
-      - name: Install Qt 6.8.3
-        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4
+      - name: Install Qt 6.12.0
+        uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
         with:
-          version: "6.8.3"
+          version: "6.12.0"
           host: windows
           target: desktop
           arch: win64_msvc2022_64

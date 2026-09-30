@@ -3,7 +3,7 @@
   "name": "mervin-pdf",
   "version-string": "0.1.0",
   "description": "A lightweight, trustworthy PDF reader for Windows.",
-  "builtin-baseline": "cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3",
+  "builtin-baseline": "4cb050be2cfa7a947cdd2dd1a70e24b17774c979",
   "dependencies": [
     "tomlplusplus",
     "qpdf"
