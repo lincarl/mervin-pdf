@@ -47,6 +47,9 @@ jobs:
       - name: Install Qt 6.12.0
         uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
         with:
+          # aqtinstall 3.3.0 cannot read Qt 6.11+ Windows repository paths.
+          # Pin the merged fix until it ships in a release: miurahr/aqtinstall#1000.
+          aqtsource: "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
           version: "6.12.0"
           host: windows
           target: desktop

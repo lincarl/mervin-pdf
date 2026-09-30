@@ -21,7 +21,9 @@ winget install --id NSIS.NSIS         --source winget --accept-source-agreements
 winget install --id Python.Python.3.12 --source winget --accept-source-agreements --accept-package-agreements
 
 # Qt 6.12.0 (official prebuilt dynamic DLLs, no Qt account)
-& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m pip install --user aqtinstall
+# aqtinstall 3.3.0 cannot read Qt 6.11+ Windows repository paths; use the same
+# merged fix as the release workflow until it ships in an aqtinstall release.
+& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m pip install --user --upgrade "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
 & "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m aqt install-qt windows desktop 6.12.0 win64_msvc2022_64 --outputdir C:\dev\Qt
 # => C:\dev\Qt\6.12.0\msvc2022_64
 
