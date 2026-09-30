@@ -29,6 +29,9 @@ winget install --id Python.Python.3.12 --source winget --accept-source-agreement
 
 # vcpkg
 git clone https://github.com/microsoft/vcpkg C:\dev\vcpkg
+# From the Mervin source directory, align the registry and tool with the manifest.
+$baseline = (Get-Content vcpkg.json | ConvertFrom-Json).'builtin-baseline'
+git -C C:\dev\vcpkg checkout --detach $baseline
 C:\dev\vcpkg\bootstrap-vcpkg.bat
 ```
 

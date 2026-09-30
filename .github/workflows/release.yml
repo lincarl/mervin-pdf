@@ -88,11 +88,17 @@ jobs:
           $vcpkg = $env:VCPKG_INSTALLATION_ROOT
           if (-not $vcpkg) { $vcpkg = 'C:\vcpkg' }
           $env:VCPKG_ROOT = $vcpkg
-          # The runner's bundled vcpkg often lacks our vcpkg.json builtin-baseline
-          # commit, so manifest resolution dies with `git show <baseline>:versions/
-          # baseline.json` exit 128. Fetch that exact commit into the runner's vcpkg.
+          # Version lookup uses the checked-out registry, so fetching the baseline
+          # alone leaves the runner's older versions database active. Align the
+          # registry, ports, toolchain and executable with our pinned revision.
           $baseline = (Get-Content vcpkg.json | ConvertFrom-Json).'builtin-baseline'
-          if ($baseline) { git -C $env:VCPKG_ROOT fetch --depth 1 origin $baseline }
+          if (-not $baseline) { throw "vcpkg.json must pin a builtin-baseline" }
+          git -C $env:VCPKG_ROOT fetch --depth 1 origin $baseline
+          if ($LASTEXITCODE -ne 0) { throw "Fetching vcpkg baseline failed" }
+          git -C $env:VCPKG_ROOT checkout --detach $baseline
+          if ($LASTEXITCODE -ne 0) { throw "Checking out vcpkg baseline failed" }
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw "Bootstrapping vcpkg failed" }
           # MERVIN_BUILD_TESTS=OFF, same as every Linux job. The release pipeline
           # never runs ctest - the tests (and the tst_perf_* guardrails) are a local
           # check made BEFORE a change ships, not a release artifact. Building them
