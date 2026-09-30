@@ -187,6 +187,7 @@ qt_add_executable(MervinPDF
     src/app/WindowManager.h
     src/ui/MainWindow.cpp
     src/ui/MainWindow.h
+    src/ui/SidebarLayout.h
     src/ui/OpenPdfDialog.cpp
     src/ui/OpenPdfDialog.h
     src/ui/Theme.cpp

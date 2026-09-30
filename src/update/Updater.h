@@ -59,12 +59,14 @@ signals:
     void autoUpdateDisabled();
 
 private:
+    friend class TestUpdater;
+
     void check(bool manual);
     void onReleaseReply(QNetworkReply *reply);
     void download(const update::ReleaseAsset &asset, const QString &version);
     void showProgress();
     void onDownloadFinished();
-    void askWhenIdle(); // queue the prompt for when no other dialog is up
+    void askWhenIdle(bool manual = false); // manual checks can prompt over About
     void pollAsk();
     void askToInstall();
     void install(const QString &file, const QString &version);
@@ -78,6 +80,7 @@ private:
     bool busy_ = false;        // a check or download is running
     bool manual_ = false;      // ...on behalf of About, so progress and outcomes show
     bool askQueued_ = false;   // an Install Now / Later / Never prompt is waiting to show
+    bool askManual_ = false;   // an explicit check must report back while About is open
     QPointer<QNetworkReply> reply_;
     QFile *part_ = nullptr;    // the download in progress (<asset>.part)
     QCryptographicHash hash_{QCryptographicHash::Sha256};

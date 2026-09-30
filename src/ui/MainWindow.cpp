@@ -35,6 +35,7 @@
 #include "ui/FindBar.h"
 #include "ui/OutlineSidebar.h"
 #include "ui/OpenPdfDialog.h"
+#include "ui/SidebarLayout.h"
 #include "ui/RecentFilesPanel.h"
 #include "ui/TabPage.h"
 #include "ui/ThumbnailSidebar.h"
@@ -577,24 +578,9 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
         restoreGeometry(settings_.windowGeometry);
     else
         resize(1100, 820);
-    if (!settings_.windowState.isEmpty()) {
+    if (!settings_.windowState.isEmpty())
         restoreState(settings_.windowState);
-        // Older versions allowed sidebars to be moved to other dock areas or
-        // detached. Keep saved layouts from restoring them anywhere except the
-        // left sidebar.
-        bool migratedSidebar = false;
-        for (QDockWidget *dock : {outlineDock_, thumbnailDock_, commentsDock_}) {
-            if (dock && (dock->window() != this
-                         || dockWidgetArea(dock) != Qt::LeftDockWidgetArea)) {
-                addDockWidget(Qt::LeftDockWidgetArea, dock);
-                migratedSidebar = true;
-            }
-        }
-        if (migratedSidebar) {
-            tabifyDockWidget(thumbnailDock_, outlineDock_);
-            tabifyDockWidget(outlineDock_, commentsDock_);
-        }
-    }
+    mervin::dockSidebarsOnLeft(*this, {thumbnailDock_, outlineDock_, commentsDock_});
     updateForCurrentTab();
 }
 
@@ -611,6 +597,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
     // Don't persist the temporary fullscreen geometry.
     if (!isFullScreen()) {
+        mervin::dockSidebarsOnLeft(*this, {thumbnailDock_, outlineDock_, commentsDock_});
         settings_.windowGeometry = saveGeometry();
         settings_.windowState = saveState();
     }
@@ -1748,6 +1735,7 @@ void MainWindow::openUrl(const QUrl &url, bool inNewWindow)
                                          0, 0, this);
     progress->setWindowTitle(tr("Open from URL"));
     progress->setWindowModality(Qt::WindowModal);
+    progress->setMinimumWidth(420);
     progress->setMinimumDuration(0);
     progress->show();
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
@@ -1773,7 +1761,7 @@ void MainWindow::openUrl(const QUrl &url, bool inNewWindow)
     });
     connect(reply, &QNetworkReply::finished, this,
             [this, reply, progress, output, writeFailed, destination, inNewWindow] {
-                progress->close();
+                progress->hide(); // completion must not emit canceled() and abort the reply
                 const auto networkError = reply->error();
                 const QString error = reply->errorString();
                 const bool saved = networkError == QNetworkReply::NoError && output->commit();

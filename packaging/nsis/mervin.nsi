@@ -95,7 +95,10 @@ Section "Install"
   WriteRegStr   HKCU "${UNINST_KEY}" "Publisher"       "Mervin"
   WriteRegStr   HKCU "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr   HKCU "${UNINST_KEY}" "DisplayIcon"     "$INSTDIR\${EXENAME}"
-  WriteRegStr   HKCU "${UNINST_KEY}" "UninstallString" "$INSTDIR\uninstall.exe"
+  ; These registry values are command lines, so retain quotes around the exe
+  ; path: the default install directory ("Mervin PDF") contains a space.
+  WriteRegStr   HKCU "${UNINST_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
+  WriteRegStr   HKCU "${UNINST_KEY}" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
   WriteUninstaller "$INSTDIR\uninstall.exe"

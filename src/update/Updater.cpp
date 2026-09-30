@@ -103,6 +103,10 @@ void discardDownloads()
 // appears while Mervin is in the background still belongs to it.
 QWidget *dialogParent()
 {
+    // A screenshot tool or another app can take focus while About remains
+    // modal. Keep the update dialogs above it even without an active window.
+    if (QWidget *w = QApplication::activeModalWidget())
+        return w;
     if (QWidget *w = QApplication::activeWindow())
         return w;
     for (QWidget *w : QApplication::topLevelWidgets())
@@ -121,6 +125,7 @@ public:
     {
         setWindowTitle(Updater::tr("Update"));
         setWindowModality(Qt::ApplicationModal);
+        setMinimumWidth(420);
         auto *layout = new QVBoxLayout(this);
         layout->addWidget(new QLabel(text, this));
     }
@@ -280,7 +285,7 @@ void Updater::onReleaseReply(QNetworkReply *reply)
         // so only an explicit check asks again.
         markChecked();
         if (manual_)
-            askWhenIdle();
+            askWhenIdle(/*manual=*/true);
         endOperation();
         return;
     }
@@ -326,6 +331,7 @@ void Updater::showProgress()
                                     tr("Cancel"), 0, 100, dialogParent());
     progress_->setWindowTitle(tr("Update"));
     progress_->setWindowModality(Qt::WindowModal);
+    progress_->setMinimumWidth(420);
     progress_->setMinimumDuration(0);
     progress_->setAutoClose(false);
     progress_->setAutoReset(false);
@@ -344,8 +350,11 @@ void Updater::onDownloadFinished()
     reply_ = nullptr;
     reply->deleteLater();
     if (progress_) {
-        progress_->close();
+        // close() emits canceled(), which is wired to abort the reply. This is
+        // normal completion; only an explicit cancellation should abort it.
+        progress_->hide();
         progress_->deleteLater();
+        progress_ = nullptr;
     }
 
     const QByteArray rest = reply->readAll(); // normally empty: readyRead took it all
@@ -398,12 +407,16 @@ void Updater::onDownloadFinished()
     st.setValue(kPendingVersionKey, downloadVersion_);
     st.setValue(kPendingFileKey, file);
     markChecked();
+    const bool manual = manual_;
     endOperation();
-    askWhenIdle();
+    askWhenIdle(manual);
 }
 
-void Updater::askWhenIdle()
+void Updater::askWhenIdle(bool manual)
 {
+    // Promote an already queued automatic prompt when the user checks from
+    // About, so it reports back without queuing a second question.
+    askManual_ = askManual_ || manual;
     if (askQueued_)
         return;
     askQueued_ = true;
@@ -412,13 +425,15 @@ void Updater::askWhenIdle()
 
 void Updater::pollAsk()
 {
-    // Never stack the question on another dialog (a password prompt, Settings,
-    // an earlier update prompt): wait for it to close.
-    if (QApplication::activeModalWidget() || QApplication::activePopupWidget()) {
+    // Automatic updates wait for other dialogs. A manual check must be able to
+    // finish over its still-open About dialog, including after focus changes.
+    if ((!askManual_ && QApplication::activeModalWidget())
+        || QApplication::activePopupWidget()) {
         QTimer::singleShot(1000, this, &Updater::pollAsk);
         return;
     }
     askQueued_ = false;
+    askManual_ = false;
     askToInstall();
 }
 
@@ -431,8 +446,9 @@ void Updater::askToInstall()
     QMessageBox box(dialogParent());
     box.setWindowTitle(tr("Update Ready"));
     box.setIcon(QMessageBox::Information);
+    box.setTextFormat(Qt::RichText);
     box.setText(tr("Mervin PDF %1 is ready to install.").arg(pending.version.toString()));
-    box.setInformativeText(tr("You have %1. Never turns off automatic updates.")
+    box.setInformativeText(tr("You have %1. Click <b>Never</b> to turn off automatic updates.")
                                .arg(QStringLiteral(MERVIN_VERSION_STRING)));
     QPushButton *installButton = box.addButton(tr("Install Now"), QMessageBox::AcceptRole);
     QPushButton *laterButton = box.addButton(tr("Later"), QMessageBox::RejectRole);

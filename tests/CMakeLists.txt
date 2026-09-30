@@ -197,6 +197,35 @@ set_tests_properties(tst_update_plan PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
+# Exercise download completion/cancellation and modal prompt ownership with
+# local bytes and an isolated settings profile; no network or installer runs.
+qt_add_executable(tst_updater tst_updater.cpp
+    ${CMAKE_SOURCE_DIR}/src/update/Updater.cpp
+    ${CMAKE_SOURCE_DIR}/src/update/Updater.h
+    ${CMAKE_SOURCE_DIR}/src/update/UpdatePlan.cpp
+    ${CMAKE_SOURCE_DIR}/src/update/UpdatePlan.h
+    ${CMAKE_SOURCE_DIR}/src/update/Installer.cpp
+    ${CMAKE_SOURCE_DIR}/src/update/Installer.h
+    ${CMAKE_SOURCE_DIR}/src/ui/Theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/Theme.h)
+target_link_libraries(tst_updater PRIVATE mervin_core mervin_icons Qt6::Test Qt6::Widgets)
+set_target_properties(tst_updater PROPERTIES WIN32_EXECUTABLE OFF)
+add_test(NAME tst_updater COMMAND tst_updater)
+set_tests_properties(tst_updater PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+
+# Restoring old detached sidebars must not leave extra floating windows.
+qt_add_executable(tst_sidebar_layout tst_sidebar_layout.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/SidebarLayout.h)
+target_include_directories(tst_sidebar_layout PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(tst_sidebar_layout PRIVATE Qt6::Test Qt6::Widgets)
+set_target_properties(tst_sidebar_layout PROPERTIES WIN32_EXECUTABLE OFF)
+add_test(NAME tst_sidebar_layout COMMAND tst_sidebar_layout)
+set_tests_properties(tst_sidebar_layout PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+
 # Guard rails for the colour vocabulary and the one stylesheet built from it.
 # Theme.cpp belongs to the application target, so it is compiled in here (as
 # tst_merge_dialog does); it links mervin_icons because the sheet's indicator
