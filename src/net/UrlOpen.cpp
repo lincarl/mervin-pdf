@@ -45,16 +45,19 @@ QNetworkRequest makeRequest(const QUrl &url)
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
     request.setTransferTimeout(30000);
-    // Some document CDNs (notably Analog Devices' Akamai edge) reject Qt's
-    // HTTP/2 request with INTERNAL_ERROR unless it looks like a complete
-    // browser navigation.  A browser User-Agent by itself is not sufficient;
-    // keep the matching client hints and navigation header together.
+    // Document CDNs expect a complete browser navigation. Littelfuse rejects
+    // HeadlessChrome with HTTP 403, while Analog Devices also needs the client
+    // hints and navigation headers. Keep these browser signals together.
     request.setRawHeader(
         "User-Agent",
         QByteArrayLiteral("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                          "(KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36"));
+                          "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"));
     request.setRawHeader("Accept-Language", QByteArrayLiteral("en-US,en;q=0.9"));
     request.setRawHeader("Upgrade-Insecure-Requests", QByteArrayLiteral("1"));
+    request.setRawHeader("Sec-Fetch-Dest", QByteArrayLiteral("document"));
+    request.setRawHeader("Sec-Fetch-Mode", QByteArrayLiteral("navigate"));
+    request.setRawHeader("Sec-Fetch-Site", QByteArrayLiteral("none"));
+    request.setRawHeader("Sec-Fetch-User", QByteArrayLiteral("?1"));
     request.setRawHeader("sec-ch-ua",
                          QByteArrayLiteral("\"Chromium\";v=\"151\", "
                                            "\"Not=A?Brand\";v=\"99\""));

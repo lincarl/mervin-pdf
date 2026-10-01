@@ -43,6 +43,10 @@ void TstUrlOpen::parsesInternetUrl_data()
     QTest::newRow("trimmed and case-insensitive")
         << QStringLiteral("  HTTPS://www.onsemi.com/pdf/datasheet/esd5z2.5t1-d.pdf  ")
         << expected;
+    const QString littelfuse = QStringLiteral(
+        "https://www.littelfuse.com/assetdocs/tvs-diodes-smaj-datasheet"
+        "?assetguid=13c2a823-03b8-4d1f-9ddc-9b44670aed9d");
+    QTest::newRow("extensionless asset with query") << littelfuse << littelfuse;
 }
 
 void TstUrlOpen::parsesInternetUrl()
@@ -75,9 +79,14 @@ void TstUrlOpen::buildsCompatibleRequest()
     const QUrl url(QStringLiteral("https://www.onsemi.com/example.pdf"));
     const QNetworkRequest request = urlopen::makeRequest(url);
     QCOMPARE(request.url(), url);
-    QVERIFY(request.rawHeader("User-Agent").contains("HeadlessChrome/151"));
+    QVERIFY(request.rawHeader("User-Agent").contains("Chrome/151"));
+    QVERIFY(!request.rawHeader("User-Agent").contains("HeadlessChrome"));
     QCOMPARE(request.rawHeader("Accept-Language"), QByteArray("en-US,en;q=0.9"));
     QCOMPARE(request.rawHeader("Upgrade-Insecure-Requests"), QByteArray("1"));
+    QCOMPARE(request.rawHeader("Sec-Fetch-Dest"), QByteArray("document"));
+    QCOMPARE(request.rawHeader("Sec-Fetch-Mode"), QByteArray("navigate"));
+    QCOMPARE(request.rawHeader("Sec-Fetch-Site"), QByteArray("none"));
+    QCOMPARE(request.rawHeader("Sec-Fetch-User"), QByteArray("?1"));
     QVERIFY(request.rawHeader("sec-ch-ua").contains("Chromium"));
     QCOMPARE(request.rawHeader("sec-ch-ua-mobile"), QByteArray("?0"));
     QCOMPARE(request.rawHeader("sec-ch-ua-platform"), QByteArray("\"Linux\""));
@@ -122,9 +131,8 @@ void TstUrlOpen::choosesDownloadDirectory()
 
 void TstUrlOpen::downloadsConfiguredUrl()
 {
-    // Normal ctest runs stay hermetic. Set this explicitly for a pre-release
-    // compatibility check against a document server that rejected Qt's empty
-    // default User-Agent in v1.55.0.
+    // Normal ctest runs stay hermetic. Set this explicitly to check public
+    // document CDNs, including Littelfuse, Analog Devices, and onsemi.
     const QString input = qEnvironmentVariable("MERVIN_URL_OPEN_TEST_URL");
     if (input.isEmpty())
         return;

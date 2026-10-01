@@ -13,9 +13,8 @@ namespace mervin::urlopen {
 // returning the text to the application.
 std::optional<QUrl> fromUserInput(const QString &input);
 
-// Build a request suitable for public document servers. Some CDNs reject
-// Qt's empty default User-Agent, so identify both the download client family
-// and Mervin itself.
+// Build a request suitable for public document servers. Some CDNs require a
+// browser-compatible User-Agent, client hints, and document navigation headers.
 QNetworkRequest makeRequest(const QUrl &url);
 
 QString suggestedFileName(const QUrl &url);

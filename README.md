@@ -43,6 +43,9 @@ The measuring workflow is the main distinction. Mervin understands rectilinear P
 Documents, OCR, search, settings, recent-file history, and session data stay on the local machine. Mervin has no telemetry. It does not require an account, upload documents, or keep a background service running.
 
 Opening a web URL is an explicit user action and downloads that PDF for local viewing.
+Paste an HTTP or HTTPS link into the Open dialog's file name field, including links
+without a `.pdf` extension. Downloads use browser-compatible request headers for
+document servers such as Littelfuse, Analog Devices, and onsemi.
 
 ## Platforms
 
