@@ -71,6 +71,11 @@ foreach(_t IN LISTS _mervin_tests)
         SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 endforeach()
 
+if(WIN32)
+    # The native clipboard contract cannot be exercised by Qt's in-memory offscreen clipboard.
+    set_tests_properties(tst_file_clipboard PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=windows")
+endif()
+
 # Widget-level guard rails for the Selection OCR language picker. OcrPopup
 # belongs to the application target, so compile its self-contained sources into
 # this test; the actual OCR engine remains covered separately by tst_ocr.

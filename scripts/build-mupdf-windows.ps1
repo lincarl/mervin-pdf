@@ -19,16 +19,29 @@
   MuPDF source root to build in / extract to. Default C:\dev\src\mupdf-1.28.5-source
   (C:\dev is where this project keeps its development tools; the CI job caches the
   same path and so relies on this default).
+
+.PARAMETER NoLtcg
+  Build native object files for CI tests, avoiding repeated link-time optimization
+  in every test executable. Use a separate Dest from release builds.
 #>
-param([string]$Dest = "C:\dev\src\mupdf-1.28.5-source")
+param(
+    [string]$Dest = "C:\dev\src\mupdf-1.28.5-source",
+    [switch]$NoLtcg
+)
 
 $ErrorActionPreference = "Stop"
 $version = "1.28.5"
 $sha256 = "98a5c10cda20c3992cdf76ff6b2a1149c32bd79cc796d3f703230b1185b7e934"
 $url = "https://mupdf.com/downloads/archive/mupdf-$version-source.tar.gz"
 $lib = Join-Path $Dest "platform\win32\x64\Release\libmupdf.lib"
+$flavorFile = Join-Path (Split-Path $lib -Parent) "mervin-build-flavor.txt"
+$flavor = if ($NoLtcg) { "native" } else { "ltcg" }
 
 if (Test-Path $lib) {
+    $builtFlavor = if (Test-Path $flavorFile) { (Get-Content $flavorFile -Raw).Trim() } else { "ltcg" }
+    if ($builtFlavor -ne $flavor) {
+        throw "MuPDF at $Dest uses $builtFlavor objects; choose a separate -Dest for $flavor objects."
+    }
     Write-Host "MuPDF already built at $Dest"
     Write-Output $Dest
     exit 0
@@ -71,9 +84,12 @@ if (-not (Test-Path (Join-Path $Dest "platform\win32\mupdf.sln"))) {
 $sln = Join-Path $Dest "platform\win32\mupdf.sln"
 # Pipe msbuild's output to the host so the success stream carries only the final
 # Write-Output $Dest (callers do `$dir = build-mupdf-windows.ps1 | Select -Last 1`).
-& msbuild $sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 -m | Out-Host
+$buildArgs = @($sln, "/p:Configuration=Release", "/p:Platform=x64", "/p:PlatformToolset=v143", "-m")
+if ($NoLtcg) { $buildArgs += "/p:WholeProgramOptimization=false" }
+& msbuild @buildArgs | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "msbuild failed ($LASTEXITCODE)" }
 if (-not (Test-Path $lib)) { throw "Build did not produce $lib" }
+Set-Content -Path $flavorFile -Value $flavor
 
 Write-Host "Built MuPDF static libs in $(Split-Path $lib -Parent)"
 Write-Output $Dest

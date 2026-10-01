@@ -19,9 +19,40 @@ using namespace mervin;
 class TstDocumentWorkflow : public QObject
 {
     Q_OBJECT
+public:
+    TstDocumentWorkflow()
+    {
+        connect(&dialogs_, &QTimer::timeout, this, [this] {
+            auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            if (!box)
+                return;
+            if (answers_.isEmpty()) {
+                unexpectedDialogs_.append(box->windowTitle() + ": " + box->text());
+                box->reject();
+            } else if (auto *button = box->button(answers_.takeFirst())) {
+                button->click();
+            } else {
+                unexpectedDialogs_.append("Missing expected button: " + box->text());
+                box->reject();
+            }
+        });
+    }
+
 private slots:
-    void init() { ConfigPaths::setOverrideDir(profile_.path()); }
-    void cleanup() { ConfigPaths::setOverrideDir({}); }
+    void init()
+    {
+        ConfigPaths::setOverrideDir(profile_.path());
+        answers_.clear();
+        unexpectedDialogs_.clear();
+        dialogs_.start(10);
+    }
+    void cleanup()
+    {
+        dialogs_.stop();
+        ConfigPaths::setOverrideDir({});
+        QVERIFY2(unexpectedDialogs_.isEmpty(), qPrintable(unexpectedDialogs_.join('\n')));
+        QVERIFY(answers_.isEmpty());
+    }
     void closingDirtyTabCanBeCanceled()
     {
         RenderEngine engine;
@@ -31,19 +62,11 @@ private slots:
         QVERIFY(tab);
         auto *model = tab->viewer()->annotModel();
         QVERIFY(model->addTextNote(0, {50, 50}, Qt::yellow, {}, "pending") >= 0);
-        QTimer::singleShot(0, [] {
-            auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
-            QVERIFY(box);
-            box->button(QMessageBox::Cancel)->click();
-        });
+        answers_.append(QMessageBox::Cancel);
         QVERIFY(QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0)));
         QCOMPARE(window.tabCount(), 1);
         QVERIFY(tab->viewer()->hasUnsavedEdits());
-        QTimer::singleShot(0, [] {
-            auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
-            QVERIFY(box);
-            box->button(QMessageBox::Discard)->click();
-        });
+        answers_.append(QMessageBox::Discard);
         QVERIFY(QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0)));
         QCOMPARE(window.tabCount(), 0);
     }
@@ -90,11 +113,7 @@ private slots:
         const auto permissions = QFile::permissions(path);
         QVERIFY(QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::ReadUser
                                             | QFileDevice::ReadGroup | QFileDevice::ReadOther));
-        QTimer::singleShot(0, [] {
-            auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
-            QVERIFY(box);
-            box->accept();
-        });
+        answers_.append(QMessageBox::Ok);
         QVERIFY(QMetaObject::invokeMethod(&window, "saveMeasurements"));
         QVERIFY(tab->hasRecoverySnapshot());
         QCOMPARE(tab->path(), path);
@@ -130,6 +149,9 @@ private slots:
 
 private:
     QTemporaryDir profile_;
+    QTimer dialogs_;
+    QList<QMessageBox::StandardButton> answers_;
+    QStringList unexpectedDialogs_;
 };
 
 QTEST_MAIN(TstDocumentWorkflow)

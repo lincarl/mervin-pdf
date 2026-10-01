@@ -33,6 +33,7 @@
 #include <QPrintDialog>
 #include <QPrinter>
 #include <QSet>
+#include <QScopeGuard>
 #include <QStatusBar>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
@@ -291,15 +292,24 @@ bool MainWindow::saveTab(TabPage *t)
         return false;
     }
 
-    QTemporaryFile stage(QFileInfo(t->path()).absolutePath()
-                         + QStringLiteral("/.mervin-save-XXXXXX.pdf"));
-    QString error;
-    if (!stage.open()) {
-        QMessageBox::warning(this, tr("Save"), stage.errorString());
-        return false;
+    QString snapshot;
+    {
+        QTemporaryFile stage(QFileInfo(t->path()).absolutePath()
+                             + QStringLiteral("/.mervin-save-XXXXXX.pdf"));
+        if (!stage.open()) {
+            QMessageBox::warning(this, tr("Save"), stage.errorString());
+            return false;
+        }
+        snapshot = stage.fileName();
+        stage.setAutoRemove(false);
+        // Destroy the handle before qpdf opens it; close() keeps it open internally.
     }
-    const QString snapshot = stage.fileName();
-    stage.close();
+    bool retainSnapshot = false;
+    const auto cleanup = qScopeGuard([&] {
+        if (!retainSnapshot)
+            QFile::remove(snapshot);
+    });
+    QString error;
     if (!mervin::DocumentOutput::snapshot(*v->document(), collectMeasureDoc(v),
                                           snapshot, t->password(), &error)) {
         QMessageBox::warning(this, tr("Save"), tr("Could not save:\n%1").arg(error));
@@ -315,7 +325,7 @@ bool MainWindow::saveTab(TabPage *t)
     QString openError;
     if (!saved || !t->open(path, t->password(), &openError)) {
         // Keep all edits editable and retain the staged file if recovery also fails.
-        stage.setAutoRemove(false);
+        retainSnapshot = true;
         if (!t->recoverSnapshot(snapshot, &openError))
             error += tr("\nEdited document retained at %1.\n%2").arg(snapshot, openError);
         else if (saved)

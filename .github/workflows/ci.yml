@@ -189,7 +189,7 @@ jobs:
         run: cmake --build build/ci --parallel 2
       - name: Test
         run: |
-          ctest --test-dir build/ci --output-on-failure --output-junit results.xml -LE optional-corpus --parallel 2
+          ctest --test-dir build/ci --output-on-failure --output-junit results.xml -LE optional-corpus --parallel 2 --timeout 180
           python3 scripts/check-test-results.py build/ci/results.xml
 
   windows-tests:
@@ -224,21 +224,28 @@ jobs:
           cache: true
 
       - name: Cache MuPDF
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        id: mupdf-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
-          # Must match build-mupdf-windows.ps1's default -Dest (invoked below with
-          # no arguments): C:\dev is the project's tool root on Windows.
-          path: C:\dev\src\mupdf-${{ env.MUPDF_VERSION }}-source
-          key: mupdf-${{ env.MUPDF_VERSION }}-${{ env.MUPDF_SHA256 }}-windows-msvc2022-v143
+          path: C:\dev\src\mupdf-${{ env.MUPDF_VERSION }}-tests-source
+          key: mupdf-${{ env.MUPDF_VERSION }}-${{ env.MUPDF_SHA256 }}-windows-msvc2022-v143-tests-native-v1
 
       - name: Build MuPDF
         shell: pwsh
         run: |
-          $dir = & scripts\build-mupdf-windows.ps1 | Select-Object -Last 1
+          $dir = & scripts\build-mupdf-windows.ps1 -NoLtcg -Dest "C:\dev\src\mupdf-${env:MUPDF_VERSION}-tests-source" | Select-Object -Last 1
           "MUPDF_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      - name: Save MuPDF cache
+        if: steps.mupdf-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: C:\dev\src\mupdf-${{ env.MUPDF_VERSION }}-tests-source
+          key: ${{ steps.mupdf-cache.outputs.cache-primary-key }}
+
       - name: Cache vcpkg binaries
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        id: vcpkg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~\AppData\Local\vcpkg\archives
           key: vcpkg-windows-${{ hashFiles('vcpkg.json') }}
@@ -267,12 +274,20 @@ jobs:
           & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
           if ($LASTEXITCODE -ne 0) { throw "Bootstrapping vcpkg failed" }
           cmake --preset x64-release -DCMAKE_BUILD_TYPE=Release -DMERVIN_BUILD_TESTS=ON "-DMUPDF_DIR=$env:MUPDF_DIR"
+          if ($LASTEXITCODE -ne 0) { throw "Configuring failed" }
+
+      - name: Save vcpkg cache
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~\AppData\Local\vcpkg\archives
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
       - name: Build
         run: cmake --build --preset x64-release --parallel 2
       - name: Test
         shell: pwsh
         run: |
-          ctest --test-dir build/x64-release --output-on-failure --output-junit results.xml -LE optional-corpus --parallel 2
+          ctest --test-dir build/x64-release --output-on-failure --output-junit results.xml -LE optional-corpus --parallel 1 --timeout 180
           if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
           python scripts/check-test-results.py build/x64-release/results.xml
           if ($LASTEXITCODE -ne 0) { throw "Required tests were skipped" }
