@@ -72,6 +72,11 @@ foreach(_t IN LISTS _mervin_tests)
         SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 endforeach()
 
+# These tests inspect qpdf objects directly; mervin_core keeps its dependency private.
+foreach(_t tst_atomic_pdf_writer tst_document_output)
+    target_link_libraries(${_t} PRIVATE qpdf::libqpdf)
+endforeach()
+
 if(WIN32)
     # The native clipboard contract cannot be exercised by Qt's in-memory offscreen clipboard.
     set_tests_properties(tst_file_clipboard PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=windows")

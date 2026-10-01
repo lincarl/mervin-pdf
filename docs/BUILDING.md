@@ -172,7 +172,10 @@ illustrations and scans; it is not an exhaustive PDF compatibility corpus.
 
 The focused `tst_perf_render imageRegionPass` case (128 image regions, 1.92 MP,
 15 samples) measured 3.33 → 2.94 ms median after reusing row plans between rectangle
-boundaries. Whole-document timings varied substantially, including in unchanged
+boundaries. A follow-up alternating old/new transforms in the same process (five
+warm-ups, 30 measured pairs) measured 2.28 → 1.85 ms at 1.92 MP and 4.52 → 3.82 ms
+at 3.15 MP for 128 regions, with identical pixels. Whole-document timings varied
+substantially, including in unchanged
 Light rendering, so they do not establish an overall rendering speedup. The
 10,000-page layout benchmark separately verifies indexed lookup against a full
 scan. Run benchmarks with competing builds stopped and repeat before drawing
