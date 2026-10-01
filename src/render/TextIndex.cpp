@@ -37,7 +37,7 @@ QString normalizedWebUrl(const QString &raw)
 } // namespace
 
 TextIndex::TextIndex(fz_context *baseCtx, Document *doc)
-    : doc_(doc)
+    : lifetime_(doc ? doc->lifetime() : nullptr), doc_(doc)
 {
     // Clone the base context so text extraction runs on its own context,
     // independent of the render workers (MuPDF's documented multi-thread model;
@@ -63,7 +63,10 @@ const TextIndex::PageText &TextIndex::ensure(int pageNo)
     if (pt.ready)
         return pt;
     pt.ready = true;
-    if (!ctx_ || !doc_)
+    if (!ctx_ || !lifetime_)
+        return pt;
+    std::lock_guard gate(lifetime_->mutex);
+    if (!lifetime_->document)
         return pt;
 
     fz_page *page = nullptr;
@@ -360,12 +363,15 @@ std::vector<TextMatch> TextIndex::matchInText(const QString &text, int page,
     return out;
 }
 
-std::vector<TextMatch> TextIndex::search(const QString &query, bool caseSensitive, bool wholeWord)
+std::vector<TextMatch> TextIndex::search(const QString &query, bool caseSensitive, bool wholeWord,
+                                         const std::function<bool()> &canceled)
 {
     std::vector<TextMatch> out;
     if (query.isEmpty())
         return out;
     for (int p = 0; p < static_cast<int>(pages_.size()); ++p) {
+        if (canceled && canceled())
+            break;
         const PageText &pt = ensure(p);
         if (pt.text.isEmpty())
             continue;

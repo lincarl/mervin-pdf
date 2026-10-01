@@ -45,6 +45,8 @@ void TstPerfStartup::startupTime()
         QVERIFY2(proc.waitForStarted(10000), "MervinPDF failed to start");
         QVERIFY2(proc.waitForFinished(30000), "MervinPDF did not exit after startup");
         const double ms = t.nsecsElapsed() / 1e6;
+        if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0)
+            qWarning().noquote() << proc.readAllStandardError();
         QCOMPARE(proc.exitStatus(), QProcess::NormalExit);
         QCOMPARE(proc.exitCode(), 0);
         if (i == 0)
@@ -115,6 +117,8 @@ void TstPerfStartup::startupTimeWithRestoredSession()
         QVERIFY2(proc.waitForStarted(10000), "MervinPDF failed to start");
         QVERIFY2(proc.waitForFinished(60000), "MervinPDF did not exit after startup");
         const double ms = t.nsecsElapsed() / 1e6;
+        if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0)
+            qWarning().noquote() << proc.readAllStandardError();
         QCOMPARE(proc.exitStatus(), QProcess::NormalExit);
         QCOMPARE(proc.exitCode(), 0);
         if (i == 0)

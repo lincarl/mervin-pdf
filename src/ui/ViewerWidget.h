@@ -37,7 +37,9 @@ class QRubberBand;
 namespace mervin {
 
 class RenderEngine;
+class DocumentSearch;
 class Document;
+struct MeasureDoc;
 class FormModel;
 class AnnotModel;
 class AnnotPopup;
@@ -191,6 +193,10 @@ public:
     bool highlightFormFields() const { return highlightFormFields_; }
     // True when a field has been filled / changed since open or the last save.
     bool hasFormEdits() const;
+    MeasureDoc measurementDocument() const;
+    bool hasMeasurementEdits() const;
+    bool hasUnsavedEdits() const;
+    void markMeasurementsSaved();
     // The form model (nullptr for a non-form document). Used by the save / print
     // flows to persist filled values. Non-owning view.
     FormModel *formModel() const { return formModel_.get(); }
@@ -424,7 +430,7 @@ private:
     // The shared core of every zoom: re-lay the document out at `newScale` with
     // the document point under `viewportPos` pinned there. Leaves zoomMode_ alone
     // and emits nothing - its three callers own both.
-    void rescaleKeeping(double newScale, QPointF viewportPos);
+    void rescaleKeeping(double newScale, QPointF viewportPos, bool keepCenter = false);
     QPointF viewportCenter() const;
 
     // --- zoom ease -----------------------------------------------------------
@@ -593,6 +599,7 @@ private:
     // Last-good page images kept across a zoom so the viewer stretches them
     // instead of flashing blank paper while the new renders arrive.
     PreviewLayer preview_;
+    std::unique_ptr<DocumentSearch> documentSearch_;
     std::unique_ptr<TextIndex> textIndex_;
 
     double scale_ = 1.0;
@@ -691,6 +698,8 @@ private:
     MeasureUnit measureUnit_ = MeasureUnit::Millimeter;
     int measurePrecision_ = 2;
     double measureLineWidth_ = 2.0;         // stroke width (points) for drawn marks
+    QByteArray savedMeasurements_;
+    bool savedMeasureData_ = false;
     std::vector<Measurement> measurements_; // committed, page-point space
     std::vector<QPointF> inProgress_;       // current vertices, page-point space
     int inProgressPage_ = -1;               // page the current draw is locked to

@@ -1,4 +1,7 @@
 #include "security/PageOps.h"
+#include "security/MeasurementPages.h"
+#include <algorithm>
+#include <stdexcept>
 
 #include <qpdf/Constants.h>
 #include <qpdf/QPDF.hh>
@@ -92,10 +95,22 @@ PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPa
         QPDFPageDocumentHelper dh(q);
         auto all = dh.getAllPages();
         const std::set<int> drop(pages.begin(), pages.end());
+        QList<int> kept;
+        for (int index : drop)
+            if (index < 0 || index >= int(all.size()))
+                throw std::runtime_error("Page does not exist.");
+        if (drop.size() == all.size())
+            throw std::runtime_error("Cannot delete every page.");
         for (int i = 0; i < static_cast<int>(all.size()); ++i)
             if (drop.count(i))
                 dh.removePage(all[static_cast<size_t>(i)]);
-        QPDFWriter w(q, u8(outPath).c_str());
+            else
+                kept.append(i);
+        MeasureDoc mapped;
+        measurementPages::append(mapped, measurementPages::read(q), kept, 0);
+        measurementPages::write(q, mapped);
+        const std::string outputName = u8(outPath);
+        QPDFWriter w(q, outputName.c_str());
         w.setStaticID(false);
         w.write();
         return Status::Ok;
@@ -117,10 +132,49 @@ PageOps::Status PageOps::rotatePages(const QString &inPath, const QString &outPa
     try {
         QPDFPageDocumentHelper dh(q);
         auto all = dh.getAllPages();
-        for (int idx : pages)
-            if (idx >= 0 && idx < static_cast<int>(all.size()))
-                all[static_cast<size_t>(idx)].rotatePage(angle, relative);
-        QPDFWriter w(q, u8(outPath).c_str());
+        auto data = measurementPages::read(q);
+        if (angle % 90 != 0)
+            throw std::runtime_error("Rotation must be a multiple of 90 degrees.");
+        for (int idx : pages) {
+            if (idx < 0 || idx >= int(all.size()))
+                throw std::runtime_error("Page does not exist.");
+            auto &page = all[idx];
+            auto rotation = page.getAttribute("/Rotate", false);
+            const int before = rotation.isInteger() ? int(rotation.getIntValue()) : 0;
+            auto box = page.getCropBox().getArrayAsRectangle();
+            double width = box.urx - box.llx, height = box.ury - box.lly;
+            auto unit = page.getObjectHandle().getKey("/UserUnit");
+            const double factor = unit.isNumber() ? unit.getNumericValue() : 1.0;
+            width *= factor;
+            height *= factor;
+            if ((before % 180 + 180) % 180)
+                std::swap(width, height);
+            page.rotatePage(angle, relative);
+            const int after = int(page.getAttribute("/Rotate", false).getIntValue());
+            const int delta = ((after - before) % 360 + 360) % 360;
+            const auto turn = [=](QPointF point) {
+                switch (delta) {
+                case 90: return QPointF(height - point.y(), point.x());
+                case 180: return QPointF(width - point.x(), height - point.y());
+                case 270: return QPointF(point.y(), width - point.x());
+                default: return point;
+                }
+            };
+            for (auto &mark : data.measurements)
+                if (mark.page == idx) {
+                    for (auto &point : mark.pts)
+                        point = turn(point);
+                    if (mark.hasLabelPos)
+                        mark.labelPos = turn(mark.labelPos);
+                }
+            if (delta == 90 || delta == 270)
+                for (auto &scale : data.pageScales)
+                    if (scale.page == idx)
+                        std::swap(scale.mmPerPointX, scale.mmPerPointY);
+        }
+        measurementPages::write(q, data);
+        const std::string outputName = u8(outPath);
+        QPDFWriter w(q, outputName.c_str());
         w.setStaticID(false);
         w.write();
         return Status::Ok;
@@ -147,6 +201,8 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
         // would copy its shared objects into the output twice.
         std::vector<std::unique_ptr<QPDF>> sources;
         std::map<QString, QPDF *> opened;
+        MeasureDoc mergedMeasurements;
+        int outputPage = 0;
 
         for (int i = 0; i < inputs.size(); ++i) {
             const MergeInput &in = inputs.at(i);
@@ -165,12 +221,11 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
 
             auto all = QPDFPageDocumentHelper(*it->second).getAllPages();
             const int n = static_cast<int>(all.size());
-            if (in.pages.isEmpty()) {
-                for (auto &page : all)
-                    odh.addPage(page, false);
-                continue;
-            }
-            for (int idx : in.pages) {
+            QList<int> selected = in.pages;
+            if (selected.isEmpty())
+                for (int page = 0; page < n; ++page)
+                    selected.append(page);
+            for (int idx : selected) {
                 if (idx < 0 || idx >= n) {
                     // The caller names the file (it has failedIndex), so this says
                     // only what the caller cannot know. No "%n page(s)": Qt leaves
@@ -188,9 +243,14 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
                 }
                 odh.addPage(all[static_cast<size_t>(idx)], false);
             }
+            measurementPages::append(mergedMeasurements, measurementPages::read(*it->second),
+                                     selected, outputPage);
+            outputPage += selected.size();
         }
+        measurementPages::write(out, mergedMeasurements);
 
-        QPDFWriter w(out, u8(outPath).c_str());
+        const std::string outputName = u8(outPath);
+        QPDFWriter w(out, outputName.c_str());
         w.setStaticID(false);
         w.write();
         return Status::Ok;
@@ -221,15 +281,20 @@ PageOps::Status PageOps::split(const QString &inPath, const QString &outDir, con
         QPDFPageDocumentHelper dh(q);
         auto all = dh.getAllPages();
         const QDir dir(outDir);
+        const auto data = measurementPages::read(q);
         for (int i = 0; i < static_cast<int>(all.size()); ++i) {
             QPDF out;
             out.emptyPDF();
             QPDFPageDocumentHelper(out).addPage(all[static_cast<size_t>(i)], false);
+            MeasureDoc selected;
+            measurementPages::append(selected, data, {i}, 0);
+            measurementPages::write(out, selected);
             const QString name = QStringLiteral("%1-%2.pdf")
                                      .arg(baseName)
                                      .arg(i + 1, 3, 10, QLatin1Char('0'));
             const QString path = dir.filePath(name);
-            QPDFWriter w(out, u8(path).c_str());
+            const std::string outputName = u8(path);
+            QPDFWriter w(out, outputName.c_str());
             w.setStaticID(false);
             w.write();
             if (outFiles)

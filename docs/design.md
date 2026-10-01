@@ -22,8 +22,9 @@ are maintained in [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md).
 
 ## Source layout
 
-The build produces a reusable, widget-free static library named `mervin_core` and the
-Qt Widgets executable `MervinPDF`.
+The build produces the static libraries `mervin_core`, `mervin_viewer`, and
+`mervin_app`, plus the `MervinPDF` executable. Widget tests link the same
+implementations as the application.
 
 ```text
 src/
@@ -74,8 +75,9 @@ main() / runUi()
 tracks every window, routes file-open requests, prevents duplicate tabs for the same
 canonical path during normal opens, moves tabs between windows, and is the sole
 writer of the shared recent, view-state, and session files. The render engine
-outlives every open `Document`, ensuring worker threads stop before documents are
-destroyed.
+outlives every open `Document`. Queued jobs hold a shared lifetime gate:
+document destruction clears its pointer under the gate lock, waiting only for active
+document access. Rasterization of an independent display list can finish afterward.
 
 The explicit Duplicate to new window command bypasses normal path deduplication and
 creates a second independent view.
@@ -112,12 +114,15 @@ lists while holding that mutex, then rasterize the independent lists in parallel
 Each render request carries the requesting viewer's identifier, view epoch, and
 token. A viewer discards results that belong to an older zoom, rotation, or view.
 This avoids cross-window cancellation while preventing stale images from replacing
-current ones.
+current ones. Replacing requests, changing the view, and destroying viewers also
+cancel obsolete jobs before further parsing, rasterization, or color processing.
 
 `ViewerWidget` is a `QAbstractScrollArea` responsible for layout, visible-page render
 requests, cache use, coordinate conversion, selection, links, and tool overlays.
+`ViewerDocumentTools.cpp` implements form and annotation editing;
+`ViewerMeasurements.cpp` implements measurement interactions and saved-state comparison.
 `ViewLayout` handles continuous or single-page scrolling and the independent spread
-setting. A page-image cache limits memory use; high zoom levels render visible tiles
+setting. Visible pages and current rows use binary search over ordered rows. A page-image cache limits memory use; high zoom levels render visible tiles
 and use a preview layer while fresh pixels arrive.
 
 All interactive geometry uses a consistent unrotated page-point space with a
@@ -128,11 +133,13 @@ user space for rotated pages and non-zero page origins.
 
 `TextIndex` extracts structured text per document and keeps glyph rectangles for
 selection, hit testing, copying, and find highlights. The in-document matcher adds
-case-sensitive and whole-word behavior on top of the extracted text.
+case-sensitive and whole-word behavior on top of the extracted text. `DocumentSearch`
+owns a separate serial worker and text cache so changing queries leaves the UI responsive.
 
 Recent-file content search runs on its own worker and opens files independently. It
-returns the first matching page and a short snippet for each file. Generation and
-cancellation tokens stop replaced searches from publishing stale results.
+returns the first matching page and a short snippet for each file. Generation tokens are checked when queued results reach the UI.
+A persistent worker takes the newest pending query; cancellation never joins on the
+UI thread, except when the service is destroyed.
 
 PDF links, search state, and viewer state remain tab-local. The window-owned sidebars
 are rebound to the active tab. Per-file view state is written when tabs or windows
@@ -161,7 +168,9 @@ directory are passed explicitly; there is no automatic language-selection stage.
 the official `tessdata_best` catalog from GitHub, validates downloaded model files,
 and stores them in the writable per-user tessdata directory. The OCR dialog displays
 and edits the result, while the caller retains the selected page rectangle so a
-language change can submit the recognition again.
+language change can submit the recognition again. OCR captures a display list under the
+document lock, then recognizes on a private context in a serial background worker.
+Closing the popup or changing languages invalidates results and signals Tesseract cancellation.
 
 ### Forms and annotations
 
@@ -196,15 +205,27 @@ The application has two complementary writers:
 - qpdf embeds editable measurement data, flattens measurement graphics, and performs
   structural or security operations.
 
-When live MuPDF edits and measurement data coexist, the writers are applied in
-sequence to a temporary file. For an in-place Save edits operation, the application
-then closes the source handle, replaces the destination, and reopens it. Failed
-replacement restores the original where possible. Save as copy writes directly to
-the chosen destination. JSON state files use `QSaveFile` for atomic replacement.
+Document commands live in `ui/DocumentActions.cpp`. `DocumentOutput` prepares a
+snapshot through MuPDF and qpdf, including current forms, annotations, measurements,
+and manual scales. An empty measurement set is written too, so deleting the final
+measurement persists. Measurement dirty state compares serialized data against its
+saved baseline.
 
-Printing rasterizes the current live document at the selected quality, capped by the
-printer resolution. If measurements are present, a temporary flattened copy is used
-so the printed result contains them without changing the source.
+In-place Save closes the source handle and replaces it through `QSaveFile`, with
+direct-write fallback disabled. A failed replacement opens the staged edited snapshot
+under the original logical path; it remains dirty and can be saved again. If recovery
+also fails, the snapshot is retained on disk and its location is reported. Saving a
+file open in another view requires closing that view or choosing Save as Copy.
+
+Save as Copy and measured export prepare output before atomically replacing the
+destination. Printing a document with measurements uses a complete flattened snapshot
+and reports preparation or rendering failures. Closing tabs or windows commits active
+editors and offers Save, Discard, or Cancel for unsaved changes.
+
+Page deletion, extraction, merge, split, and rotation preserve editable measurement
+metadata. Page numbers follow output order (including duplicates); rotation transforms
+points and swaps anisotropic manual scales on quarter turns. Merged documents use the
+display defaults of the first contributing measurement set.
 
 ## Persistence
 
@@ -226,6 +247,9 @@ The files are:
 
 Paths are normalized before deduplication and lookup, with case folding on Windows.
 Corrupt or missing state files fall back to defaults instead of blocking startup.
+Settings saves merge only fields changed since that window's last load/save, preventing
+stale windows from overwriting newer preferences, and commit through `QSaveFile`.
+Closing a window batches view-state updates into one write.
 The update start count and pending download use `QSettings`; the downloads
 themselves live in a machine-local `updates/` folder (`%LOCALAPPDATA%\MervinPDF` on
 Windows, `$XDG_CACHE_HOME/mervin-pdf` on Linux, or inside the profile). Windows
@@ -270,3 +294,10 @@ QtTest targets cover the core stores, IPC, rendering helpers, document tools,
 dialogs, layout, theme, and platform-sensitive behavior. Performance targets measure
 rendering and startup separately. Windows contributor setup and exact commands live
 in [BUILDING.md](BUILDING.md).
+
+
+Required tests generate synthetic PDFs in the build directory. The optional photographic
+reference corpus remains local and is labeled `optional-corpus`; CI excludes it and
+fails on skips in every required target. Linux Release and sanitizer jobs and Windows
+Release jobs build and run the tests. `tst_perf_layout` compares indexed lookup against
+a full scan on 10,000 pages and reports median and 95th-percentile lookup time.

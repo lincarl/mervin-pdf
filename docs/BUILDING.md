@@ -108,3 +108,28 @@ the vcpkg dependency DLLs (qpdf + zlib/jpeg/toml++); MuPDF is statically linked.
 Menu shortcut + Apps & Features entry + uninstaller, and seeds `eng.traineddata`
 into `%APPDATA%\MervinPDF\tessdata`. The bundled
 `resources/tessdata/eng.traineddata` provides English OCR out of the box.
+
+
+## Linux development and verification
+
+Install Qt 6.6+ (Core, Gui, Widgets, Network, PrintSupport, Svg, Test), qpdf development
+headers, toml++, CMake, Ninja, a C++20 compiler, and Python 3. Build the pinned MuPDF
+with `scripts/build-mupdf-linux.sh`, then:
+
+```bash
+export MUPDF_DIR=/path/to/mupdf-1.28.5-source
+cmake --preset linux-release
+cmake --build --preset linux-release --parallel 2
+QT_QPA_PLATFORM=offscreen ctest --test-dir build/linux-release --output-on-failure -LE optional-corpus
+```
+
+CMake generates required PDF fixtures from `tests/generate_fixtures.py`. No personal
+documents or fixture downloads are needed. Encryption/form tests generate their own
+inputs. The optional photographic corpus is described in `examples/README.md`.
+Run `ctest -R tst_perf -V` to inspect performance measurements; use the same machine,
+build configuration, and workload for comparisons.
+
+For memory and undefined-behavior checks, configure a separate Debug build with
+`-DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"` and
+`-DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"`. CI disables leak detection
+for the prebuilt Qt/dependency binaries; address and undefined-behavior checks remain enabled.

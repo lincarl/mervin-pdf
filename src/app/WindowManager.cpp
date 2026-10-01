@@ -224,12 +224,19 @@ void WindowManager::applyViewStateIfStored(const QString &canonicalPath)
             break; // applied to the one tab holding this file
 }
 
-void WindowManager::saveViewState(const QString &canonicalPath, const ViewState &state)
+void WindowManager::saveViewState(const QString &path, const ViewState &state)
 {
-    if (canonicalPath.isEmpty())
-        return;
-    viewState_.put(canonicalPath, state, QDateTime::currentMSecsSinceEpoch());
-    viewState_.save(viewStateFile_);
+    saveViewStates({{path, state}});
+}
+
+void WindowManager::saveViewStates(const QList<QPair<QString, ViewState>> &states)
+{
+    const auto now = QDateTime::currentMSecsSinceEpoch();
+    for (const auto &[path, state] : states)
+        if (!path.isEmpty())
+            viewState_.put(path, state, now);
+    if (!states.isEmpty())
+        viewState_.save(viewStateFile_);
 }
 
 void WindowManager::removeRecent(const QString &canonicalPath)
@@ -464,17 +471,16 @@ MainWindow *WindowManager::createWindow()
 {
     auto *w = new MainWindow(engine_.get(), this);
     w->setAttribute(Qt::WA_DeleteOnClose, true);
-    connect(w, &QObject::destroyed, this, &WindowManager::onWindowDestroyed);
+    connect(w, &QObject::destroyed, this, [this, w] { onWindowDestroyed(w); });
     windows_.append(w);
     active_ = w;
     w->show();
     return w;
 }
 
-void WindowManager::onWindowDestroyed(QObject *obj)
+void WindowManager::onWindowDestroyed(MainWindow *w)
 {
-    // Pointer identity only - obj is mid-destruction, do not dereference it.
-    auto *w = static_cast<MainWindow *>(obj);
+    // Retain pointer identity; the MainWindow subobject has already been destroyed.
     windows_.removeOne(w);
     if (active_ == w)
         active_ = windows_.isEmpty() ? nullptr : windows_.last();
@@ -623,7 +629,8 @@ void WindowManager::quitAll()
         return;
     }
     for (MainWindow *w : copy)
-        w->close(); // WA_DeleteOnClose -> deleted; last one quits the process
+        if (!w->close())
+            break; // a canceled close also cancels Quit
 }
 
 void WindowManager::notifyActivated(MainWindow *w)

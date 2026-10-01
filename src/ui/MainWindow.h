@@ -200,6 +200,8 @@ private:
     // history (Ctrl+Shift+T); it is false for a bulk close, whose caller has
     // already recorded the whole bar through rememberOpenTabs().
     void closeTabAt(int index, bool remember);
+    bool confirmClose(mervin::TabPage *tab);
+    bool saveTab(mervin::TabPage *tab);
     // Push one tab onto the reopen history. `index` is the slot to restore it to,
     // which mid-bulk-close is NOT its live index - see rememberOpenTabs().
     void rememberClosedTab(mervin::TabPage *tab, int index);

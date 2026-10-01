@@ -119,7 +119,8 @@ MeasureExport::Status MeasureExport::flatten(const QString &inPath, const QStrin
         // measurements-burned-in PDF with no Mervin-private data.
         if (q.getRoot().hasKey("/Mervin_Measurements"))
             q.getRoot().removeKey("/Mervin_Measurements");
-        QPDFWriter w(q, u8(outPath).c_str());
+        const std::string outputName = u8(outPath);
+        QPDFWriter w(q, outputName.c_str());
         w.setStaticID(false);
         w.write();
         return Status::Ok;
@@ -142,7 +143,8 @@ MeasureExport::Status MeasureExport::embedMervin(const QString &inPath, const QS
         const QByteArray json = serializeMeasurements(doc);
         auto stream = q.newStream(std::string(json.constData(), static_cast<size_t>(json.size())));
         q.getRoot().replaceKey("/Mervin_Measurements", stream);
-        QPDFWriter w(q, u8(outPath).c_str());
+        const std::string outputName = u8(outPath);
+        QPDFWriter w(q, outputName.c_str());
         w.setStaticID(false);
         w.write();
         return Status::Ok;

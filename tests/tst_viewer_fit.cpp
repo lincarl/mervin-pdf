@@ -23,9 +23,7 @@
 // rotation 90 as well as 0 because at rotation 0 the width term binds and the
 // height half of the fit would never be exercised.
 //
-// One viewer and one engine serve every case, and every document stays alive until
-// cleanup: creating and destroying viewers while the engine still has renders in
-// flight crashes at teardown.
+// Reuse one viewer and engine across cases; tst_render_lifetime covers concurrent teardown.
 #include "render/Document.h"
 #include "render/RenderEngine.h"
 #include "ui/ViewerWidget.h"

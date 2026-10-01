@@ -3,11 +3,16 @@
 #include <QRectF>
 #include <QString>
 #include <QStringList>
+#include <atomic>
+#include <memory>
+
+typedef struct fz_context fz_context;
 
 namespace mervin {
 
 class RenderEngine;
 class Document;
+struct DocumentLifetime;
 
 // Selection OCR backed by MuPDF's built-in Tesseract (fz_new_ocr_device), so
 // no separate Tesseract dependency is needed and all MuPDF use stays in the
@@ -16,13 +21,15 @@ class Document;
 // on-screen zoom, which is the single biggest factor in OCR quality - and
 // returns the recognized text.
 //
-// recognize() is synchronous and runs under the document's access lock, so the
-// caller should show a wait cursor; OCR of a small selection is typically a
-// second or two.
+// Capture the page under its document lock, then recognize on a private context.
+// Calls may run on a worker; serialize calls on each service instance.
 class OcrService
 {
 public:
     explicit OcrService(RenderEngine *engine);
+    ~OcrService();
+    OcrService(const OcrService &) = delete;
+    OcrService &operator=(const OcrService &) = delete;
 
     // OCR the page-point rectangle `pageRect` on page `pageNo`. `languages` are
     // Tesseract language codes (e.g. {"eng","swe"}); empty defaults to English.
@@ -32,11 +39,16 @@ public:
                       const QStringList &languages, const QString &tessdataDir,
                       QString *error = nullptr);
 
+    QString recognize(const std::shared_ptr<DocumentLifetime> &document, int pageNo,
+                      const QRectF &pageRect, const QStringList &languages,
+                      const QString &tessdataDir, QString *error,
+                      const std::atomic<bool> *canceled = nullptr);
+
     // The DPI the selection is re-rendered at before OCR.
     static constexpr int kOcrDpi = 300;
 
 private:
-    RenderEngine *engine_ = nullptr;
+    fz_context *ctx_ = nullptr; // private context; calls must be serial
 };
 
 } // namespace mervin

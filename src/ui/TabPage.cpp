@@ -12,6 +12,7 @@
 #include "ui/ViewerWidget.h"
 
 #include <QFileInfo>
+#include <QFile>
 #include <QVBoxLayout>
 
 namespace mervin {
@@ -158,7 +159,15 @@ TabPage::TabPage(RenderEngine *engine, QWidget *parent)
     annotPanel_->setHighlightStyle(markupStyle);
 }
 
-TabPage::~TabPage() = default;
+TabPage::~TabPage()
+{
+    // Child widgets otherwise die after the Document member.
+    delete viewer_;
+    viewer_ = nullptr;
+    doc_.reset();
+    if (!recoveryPath_.isEmpty())
+        QFile::remove(recoveryPath_);
+}
 
 bool TabPage::open(const QString &path, const QString &password, QString *error,
                    bool *needsPassword)
@@ -167,6 +176,7 @@ bool TabPage::open(const QString &path, const QString &password, QString *error,
     if (!doc)
         return false;
 
+    viewer_->setDocument(nullptr);
     doc_ = std::move(doc);
     viewer_->setDocument(doc_.get());
 
@@ -198,12 +208,28 @@ bool TabPage::open(const QString &path, const QString &password, QString *error,
         }
     }
 
+    if (!recoveryPath_.isEmpty()) {
+        QFile::remove(recoveryPath_);
+        recoveryPath_.clear();
+    }
     password_ = password;
     const QFileInfo fi(path);
     path_ = fi.absoluteFilePath();
     canonicalPath_ = fi.canonicalFilePath();
     if (canonicalPath_.isEmpty())
         canonicalPath_ = path_;
+    return true;
+}
+
+bool TabPage::recoverSnapshot(const QString &snapshot, QString *error)
+{
+    const QString logical = path_;
+    const QString canonical = canonicalPath_;
+    if (!open(snapshot, password_, error))
+        return false;
+    recoveryPath_ = snapshot;
+    path_ = logical;
+    canonicalPath_ = canonical;
     return true;
 }
 

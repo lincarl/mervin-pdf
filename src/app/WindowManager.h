@@ -140,6 +140,7 @@ public:
 
     // Persist a tab's current view state (called on tab/window close).
     void saveViewState(const QString &canonicalPath, const ViewState &state);
+    void saveViewStates(const QList<QPair<QString, ViewState>> &states);
 
     // Remove a file from the recent history (panel "Remove from history").
     void removeRecent(const QString &canonicalPath);
@@ -198,11 +199,11 @@ signals:
     void autoUpdateChanged(bool on);
 
 private slots:
-    void onWindowDestroyed(QObject *obj);
     // An open delivered by a later launch over the single-instance pipe.
     void onInstanceMessage(QLocalSocket *socket, const mervin::ipc::Message &msg);
 
 private:
+    void onWindowDestroyed(MainWindow *window);
     void stagedStep(); // opens one document of stagedQueue_, then re-arms itself
 
     // Forget closed-tab entries that can no longer be brought back: the file is

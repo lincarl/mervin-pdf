@@ -66,8 +66,11 @@ void TstPerfRender::renderAndPixelPasses()
                     s, img.width(), img.height(), px / 1e6, renderMs, comfortMs, invertMs);
         std::fflush(stdout);
 
+        // Timing budgets apply to optimized builds; Debug still checks rendered output.
+#ifdef NDEBUG
         QVERIFY2(renderMs < 60000, "page render grossly regressed (>60 s)");
         QVERIFY2(comfortMs < 5000, "Comfort pixel pass grossly regressed (>5 s)");
+#endif
     }
 }
 

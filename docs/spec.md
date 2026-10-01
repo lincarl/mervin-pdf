@@ -137,9 +137,13 @@ Saving supports these workflows:
 - Save edits writes forms, annotations, editable measurements, and manual scales
   back to the open PDF.
 - Save as copy writes the same edits to a new PDF.
-- Export with measurements produces a flattened, portable copy.
+- Export with measurements produces a flattened, portable copy including current forms and annotations.
 - Print supports page ranges, scaling, orientation, paper selection, duplex options,
   forms, annotations, and measurements.
+
+Closing edited documents offers Save, Discard, or Cancel. Deleting the final saved
+measurement or calibration is an edit. If saving cannot replace the destination, the
+edited snapshot remains available for retry or recovery.
 
 ## Settings and platform integration
 

@@ -1,4 +1,8 @@
 #include "render/Document.h"
+#include "render/MeasureContent.h"
+#include "security/DocumentOutput.h"
+#include "security/MeasureExport.h"
+#include "security/QpdfService.h"
 #include "render/FormModel.h"
 #include "render/FormTypes.h"
 #include "render/RenderEngine.h"
@@ -14,11 +18,7 @@
 
 using namespace mervin;
 
-// FormModel is the only owner of AcroForm widget mutation (design §6). These
-// tests build a tiny self-contained AcroForm PDF on disk (so they always run, no
-// fixture needed), then exercise enumeration, mutation and the fill -> save ->
-// reopen round-trip that backs Save edits. An optional encrypted fixture
-// (MERVIN_FORM_AES_PDF + MERVIN_FORM_AES_PW) verifies PDF_ENCRYPT_KEEP when set.
+// Generated AcroForms cover enumeration, editing, Unicode, and encrypted output.
 class TstFormModel : public QObject
 {
     Q_OBJECT
@@ -208,17 +208,14 @@ void TstFormModel::nonLatinValueSurvivesSave()
 
 void TstFormModel::encryptedSourceStaysEncrypted()
 {
-    // Optional: a real encrypted form fixture. PDF_ENCRYPT_KEEP must preserve the
-    // source's encryption through the save, so the saved file still needs the
-    // password to open.
-    const QByteArray fixture = qgetenv("MERVIN_FORM_AES_PDF");
-    if (fixture.isEmpty() || !QFileInfo::exists(QString::fromLocal8Bit(fixture)))
-        QSKIP("MERVIN_FORM_AES_PDF not set");
-    const QString path = QString::fromLocal8Bit(fixture);
-    const QString pw = QString::fromLocal8Bit(qgetenv("MERVIN_FORM_AES_PW"));
-
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
+    const QString plain = writeTemp(dir, QStringLiteral("plain.pdf"), makeTextFormPdf());
+    const QString path = dir.filePath(QStringLiteral("encrypted.pdf"));
+    const QString pw = QStringLiteral("test-password");
+    mervin::QpdfService service;
+    QCOMPARE(service.encrypt(plain, path, {}, pw, pw, mervin::QpdfService::Algorithm::AES256, {}),
+             mervin::QpdfService::Status::Ok);
     RenderEngine engine;
     QString err;
     std::unique_ptr<Document> doc = engine.openDocument(path, pw, &err);
@@ -242,6 +239,32 @@ void TstFormModel::encryptedSourceStaysEncrypted()
     // With the password it opens again.
     std::unique_ptr<Document> withPw = engine.openDocument(out, pw, &e2);
     QVERIFY2(withPw != nullptr, qPrintable(e2));
+
+    // The application saves through MuPDF and then qpdf to include measurements.
+    MeasureDoc measurements;
+    measurements.measurements.push_back({0, MeasureKind::Distance, {{10, 20}, {30, 40}}});
+    const QString snapshot = dir.filePath(QStringLiteral("snapshot.pdf"));
+    QVERIFY2(DocumentOutput::snapshot(*doc, measurements, snapshot, pw, &serr), qPrintable(serr));
+    QVERIFY(!engine.openDocument(snapshot, {}, &e2, &needsPw));
+    QVERIFY(needsPw);
+    auto saved = engine.openDocument(snapshot, pw, &e2);
+    QVERIFY2(saved, qPrintable(e2));
+    QCOMPARE(FormModel(*saved).pageFields(0).at(0).value, QStringLiteral("x"));
+    QVERIFY(MeasureExport::readMervinBlob(snapshot, pw));
+
+    const QString flattened = dir.filePath(QStringLiteral("export.pdf"));
+    RenderMeasurement mark;
+    mark.page = 0;
+    mark.pts = {{10, 20}, {30, 40}};
+    mark.label = QStringLiteral("20 mm");
+    QCOMPARE(MeasureExport::flatten(snapshot, flattened, {mark}, pw, &serr),
+             MeasureExport::Status::Ok);
+    QVERIFY(!engine.openDocument(flattened, {}, &e2, &needsPw));
+    QVERIFY(needsPw);
+    auto exported = engine.openDocument(flattened, pw, &e2);
+    QVERIFY2(exported, qPrintable(e2));
+    QCOMPARE(FormModel(*exported).pageFields(0).at(0).value, QStringLiteral("x"));
+    QVERIFY(!MeasureExport::readMervinBlob(flattened, pw));
 }
 
 QTEST_GUILESS_MAIN(TstFormModel)

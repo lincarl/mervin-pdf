@@ -4,6 +4,8 @@
 #include <QString>
 
 #include <optional>
+#include <functional>
+#include <memory>
 #include <vector>
 
 // Forward declaration of the MuPDF context (defined in <mupdf/fitz.h>). Keeps
@@ -13,6 +15,7 @@ typedef struct fz_context fz_context;
 namespace mervin {
 
 class Document;
+struct DocumentLifetime;
 
 // One match of a search query: a contiguous run of UTF-16 code units within a
 // single page's extracted text. Page text never spans pages, so matches don't
@@ -47,10 +50,8 @@ struct TextLink
 // at 72 dpi, unrotated and unscaled (the same space fz_stext reports). The
 // viewer maps these to widget pixels using the active scale/rotation.
 //
-// This is the encapsulation boundary for MuPDF *text* usage. It owns a cloned
-// fz_context and is NOT thread-safe: all methods must be called from one thread
-// (the UI thread, in practice). The cloned context is dropped in the destructor,
-// which must run before the RenderEngine drops the base context.
+// Owns a cloned MuPDF context. Calls must be serialized: the viewer and
+// background search each use a separate index. Destroy before RenderEngine.
 class TextIndex
 {
 public:
@@ -84,7 +85,8 @@ public:
 
     // All matches of `query` across the whole document, ordered by (page, start).
     // An empty query yields no matches. Pages are extracted lazily and cached.
-    std::vector<TextMatch> search(const QString &query, bool caseSensitive, bool wholeWord);
+    std::vector<TextMatch> search(const QString &query, bool caseSensitive, bool wholeWord,
+                                  const std::function<bool()> &canceled = {});
 
 private:
     struct LineSpan
@@ -111,6 +113,7 @@ private:
                                               bool caseSensitive, bool wholeWord);
 
     fz_context *ctx_ = nullptr; // cloned from the base context; owned
+    std::shared_ptr<DocumentLifetime> lifetime_;
     Document *doc_ = nullptr;   // not owned
     std::vector<PageText> pages_;
 };

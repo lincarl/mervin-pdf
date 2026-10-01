@@ -20,9 +20,7 @@ class Document;
 //    per-pixel and per-image rules).
 enum class PageTheme { Light, Inverted, Comfort };
 
-// A request to render one page at a given scale/rotation. Pushed onto the
-// RenderEngine's internal queue (not sent across Qt signals), so it may carry a
-// raw Document pointer (valid for the lifetime of the owning document).
+// The document must be alive during submit(); queued jobs use its lifetime gate.
 struct RenderRequest
 {
     Document *document = nullptr;
@@ -30,7 +28,7 @@ struct RenderRequest
     int pageNo = 0;
     double scale = 1.0;   // 1.0 == 72 DPI (one point per pixel)
     int rotation = 0;     // 0 / 90 / 180 / 270 degrees, clockwise
-    quint64 epoch = 0;    // requests older than the engine's current epoch are dropped
+    quint64 epoch = 0;    // viewer generation, echoed in the result
     quint64 token = 0;    // unique id for correlation
     // Sub-region to render, in device pixels relative to the page's full
     // (scaled+rotated) image top-left. Empty (the default) renders the whole

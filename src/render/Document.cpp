@@ -16,6 +16,7 @@ namespace mervin {
 Document::Document(fz_context *baseCtx, fz_document *doc)
     : ctx_(baseCtx), doc_(doc)
 {
+    lifetime_->document = this;
     int n = 0;
     fz_try(ctx_)
         n = fz_count_pages(ctx_, doc_);
@@ -97,6 +98,8 @@ Document::Document(fz_context *baseCtx, fz_document *doc)
 
 Document::~Document()
 {
+    std::lock_guard<std::mutex> guard(lifetime_->mutex);
+    lifetime_->document = nullptr;
     if (doc_)
         fz_drop_document(ctx_, doc_);
 }

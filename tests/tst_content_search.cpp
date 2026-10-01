@@ -28,6 +28,7 @@ private slots:
     void emptyPathListFinishes();
     void findsTermInRealPdf();
     void missesAbsentTerm();
+    void replacedQueryRejectsQueuedResults();
 };
 
 namespace {
@@ -107,6 +108,24 @@ void TstContentSearch::missesAbsentTerm()
     QVERIFY(done.wait(60000));
     QCOMPARE(hits.count(), 0);
     QCOMPARE(done.at(0).at(1).toInt(), 0);
+}
+
+
+void TstContentSearch::replacedQueryRejectsQueuedResults()
+{
+    RenderEngine engine;
+    ContentSearch search(&engine);
+    QSignalSpy hits(&search, &ContentSearch::hit);
+    QSignalSpy done(&search, &ContentSearch::finished);
+    search.start({QStringLiteral(MERVIN_FIXTURE_PDF)}, "STANDARD");
+    // Keep UI delivery queued while the worker finishes the tiny document.
+    QTest::qSleep(100);
+    search.start({QStringLiteral(MERVIN_FIXTURE_PDF)}, "absent");
+    QTRY_COMPARE(done.size(), 1);
+    QCOMPARE(hits.size(), 0);
+    QCOMPARE(done[0][1].toInt(), 0);
+    search.start({QStringLiteral(MERVIN_FIXTURE_PDF)}, "STANDARD");
+    QTRY_COMPARE(hits.size(), 1);
 }
 
 QTEST_GUILESS_MAIN(TstContentSearch)

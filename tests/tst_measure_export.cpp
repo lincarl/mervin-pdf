@@ -40,7 +40,8 @@ void makePdf(const QString &path, int n, int rotate = 0, double ox = 0.0, double
             page.replaceKey("/Rotate", QPDFObjectHandle::newInteger(rotate));
         dh.addPage(QPDFPageObjectHelper(q.makeIndirectObject(page)), false);
     }
-    QPDFWriter w(q, path.toUtf8().constData());
+    const QByteArray outputName = path.toUtf8();
+    QPDFWriter w(q, outputName.constData());
     w.write();
 }
 

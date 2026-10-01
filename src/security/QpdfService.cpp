@@ -104,7 +104,8 @@ QpdfService::Status QpdfService::decrypt(const QString &inPath, const QString &o
         return st;
 
     try {
-        QPDFWriter w(q, u8(outPath).c_str());
+        const std::string outputName = u8(outPath);
+        QPDFWriter w(q, outputName.c_str());
         w.setStaticID(false);
         w.setPreserveEncryption(false); // drop encryption AND all owner restrictions
         w.write();
@@ -137,7 +138,8 @@ QpdfService::Status QpdfService::encrypt(const QString &inPath, const QString &o
         const bool formFill = perms.canAnnotate;
         const bool modifyOther = perms.canModify;
 
-        QPDFWriter w(q, u8(outPath).c_str());
+        const std::string outputName = u8(outPath);
+        QPDFWriter w(q, outputName.c_str());
         w.setStaticID(false);
         switch (algo) {
         case Algorithm::AES256:

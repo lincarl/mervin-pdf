@@ -3,6 +3,7 @@
 #include "render/AnnotModel.h"
 #include "render/ComfortTransform.h"
 #include "render/Document.h"
+#include "render/DocumentSearch.h"
 #include "render/FormModel.h"
 #include "render/MeasureContent.h"
 #include "render/RenderEngine.h"
@@ -54,16 +55,8 @@ namespace {
 constexpr double kMinScale = 0.08;
 constexpr double kMaxScale = 100.0; // 10000% - deep zoom uses clipped rendering (see ensureRendered)
 
-// The zoom ladder: the levels the +/- buttons, Ctrl+= / Ctrl+- and the wheel step
-// through. Round percentages, alternating x1.5 and x1.33 so the series doubles
-// every two rungs - about twice the old step, which was a flat 1.25x multiplier
-// off whatever the current scale happened to be. That both landed on values like
-// 137% and moved so little that a click read as a snap rather than a zoom. The
-// zoom box is still free to set any value, and a trackpad pinch still zooms
-// continuously - the ladder is for the discrete gestures.
-//
-// Every consecutive ratio here is above kZoomLadderMinStep, which is what stops
-// the skip rule below from eating every other rung.
+// Discrete zoom uses round rungs; pinch gestures and typed values remain continuous.
+// Every rung exceeds kZoomLadderMinStep so the minimum-step rule cannot skip alternate levels.
 constexpr double kZoomLadder[] = {0.08, 0.12, 0.18, 0.25, 0.35, 0.5,  0.75,
                                   1.0,  1.5,  2.0,  3.0,  4.0,  6.0,  8.0,
                                   12.0, 16.0, 24.0, 32.0, 50.0, 70.0, 100.0};
@@ -95,13 +88,7 @@ constexpr int kClipMargin = 256;
 // paper for the length of one render is the better picture.
 constexpr double kMaxPreviewStretch = 8.0;
 
-// Zoom ease. A zoom step is a whole ladder rung (~1.4x), so without this the view
-// cuts straight from one magnification to the next. The ease does NOT add intermediate
-// zoom levels: the zoom itself still lands on its target in one go - scale_, the
-// layout, the scrollbars and the render requests are all final before the gesture
-// returns - and this only decides WHERE the frozen page bitmaps are drawn for the
-// next few frames. That is what makes it safe: a missed cancel site costs one
-// stale-looking frame, never a wrong scale or a page stuck soft.
+// Animate the drawn rectangles only; layout and render requests immediately use the final scale.
 constexpr int kZoomEaseMs = 130;     // for exactly one kZoomStep
 constexpr int kZoomEaseMinMs = 90;   // must stay above keyboard auto-repeat (~33 ms)
 constexpr int kZoomEaseMaxMs = 260;  // hard bound on how far the picture may trail
@@ -154,20 +141,8 @@ const QColor &kMatchColor = theme::doc().findMatch;               // all matches
 const QColor &kCurrentMatchColor = theme::doc().findMatchCurrent; // active match: orange
 const QColor &kSelectionColor = theme::doc().textSelection;       // text selection: blue
 
-// Form-fill highlights (painted over fillable field rects in form mode).
-const QColor &kFormFieldColor = theme::doc().formField;            // fillable field tint
-const QColor &kFormRequiredColor = theme::doc().formFieldRequired; // required-but-empty
-const QColor &kFormFieldBorder = theme::doc().formFieldBorder;     // field outline
-const QColor &kFormFocusBorder = theme::doc().formFieldFocus;      // Tab-focused outline
-
 constexpr int kAutoScrollMargin = 24; // px from the viewport edge
 constexpr int kAutoScrollMaxStep = 40;
-
-// Measuring tool: how close (in screen pixels) the cursor must be to a CAD
-// vertex/edge to snap, and how long after the unit dropdown closes a press is
-// treated as Qt's popup-replay (and swallowed) rather than a real page click.
-constexpr double kSnapRadiusPx = 10.0;
-constexpr qint64 kPopupReplayWindowMs = 150;
 
 // Hand out a unique id per viewer instance. Viewers are only created on the UI
 // thread, so a plain counter is sufficient; it is monotonic (never reused) so a
@@ -176,33 +151,6 @@ quint64 nextViewerId()
 {
     static quint64 counter = 0;
     return ++counter;
-}
-
-// Grab radius (px) for picking a committed measurement's vertex handle.
-constexpr double kHandleGrabPx = 8.0;
-
-// Default value-label centre (widget space) for a measurement, given its points
-// already mapped to widget coordinates. Mirrors the anchor logic in paintShape so
-// hit-testing matches what is drawn. Returns a null point when there is no label.
-QPointF computeLabelAnchor(MeasureKind kind, const std::vector<QPointF> &w)
-{
-    if (w.size() < 2)
-        return {};
-    switch (kind) {
-    case MeasureKind::Distance:
-        return (w.front() + w.back()) / 2.0;
-    case MeasureKind::Polyline:
-        return (w[w.size() - 2] + w[w.size() - 1]) / 2.0;
-    case MeasureKind::Area: {
-        QPointF c;
-        for (const QPointF &pt : w)
-            c += pt;
-        return c / double(w.size());
-    }
-    case MeasureKind::Angle:
-        return w[1] + QPointF(0, -28);
-    }
-    return {};
 }
 
 std::optional<QUrl> openableWebUrl(const QString &raw)
@@ -228,14 +176,8 @@ ViewerWidget::ViewerWidget(RenderEngine *engine, QWidget *parent)
     , engine_(engine)
     , viewerId_(nextViewerId())
 {
-    // Window, not Dark. The canvas colour comes from paintEvent (which fills the
-    // whole damaged rect before anything else), so the role's only real effect is
-    // on the widgets parented to this viewport - the floating tool panels and the
-    // page popups. QWidget::backgroundRole() inherits down the parent chain and
-    // QWidget::foregroundRole() maps a Dark/Shadow background to QPalette::Light,
-    // so with Dark here every plain QLabel in those children painted its text in
-    // Light: #2a313a on the dark panel, pure white on the light one - invisible in
-    // both themes, which is exactly how the measuring panel lost its captions.
+    // Window gives viewport children readable foreground colors. Painting supplies the canvas background.
+    documentSearch_ = std::make_unique<DocumentSearch>(engine_);
     viewport()->setBackgroundRole(QPalette::Window);
     viewport()->setCursor(Qt::IBeamCursor); // text-selection affordance
     // Deliver mouse-move events even when no button is held. Without this the
@@ -264,7 +206,11 @@ ViewerWidget::ViewerWidget(RenderEngine *engine, QWidget *parent)
     connect(engine_, &RenderEngine::resultReady, this, &ViewerWidget::onResultReady);
 }
 
-ViewerWidget::~ViewerWidget() = default;
+ViewerWidget::~ViewerWidget()
+{
+    documentSearch_.reset();
+    engine_->cancelRequests(viewerId_);
+}
 
 int ViewerWidget::pageCount() const
 {
@@ -325,6 +271,8 @@ QPoint ViewerWidget::contentOffset() const
 
 void ViewerWidget::setDocument(Document *doc)
 {
+    engine_->cancelRequests(viewerId_);
+    documentSearch_->cancel();
     // First, while doc_ and layout_ still agree: no gliding the new document's
     // pages in from where the old one's happened to be.
     endZoomEase();
@@ -388,6 +336,7 @@ void ViewerWidget::setDocument(Document *doc)
     findQuery_.clear();
     emit findStatusChanged(0, 0);
 
+    markMeasurementsSaved();
     layout_.setDocument(doc_);
     dpr_ = devicePixelRatioF();
     applyFitScale();
@@ -415,22 +364,9 @@ void ViewerWidget::applyFitScale()
     if (!doc_ || doc_->pageCount() == 0)
         return;
 
-    // Fit against the viewport size WITHOUT scrollbars, not viewport()->size().
-    // The viewport shrinks when a bar is shown, and the fit scale derived from
-    // it decides whether that bar is needed at all. Under ScrollBarAsNeeded the
-    // two states can each imply the other (content a hair taller than the
-    // viewport only while the bar is hidden), and every visibility toggle
-    // resizes the viewport back into resizeEvent -> applyFitScale, oscillating
-    // forever: blank pages with jumping edges until the user leaves the fit
-    // mode. A bar-independent basis yields the same scale in both states, so
-    // there is nothing to feed the loop.
-    //
-    // Two Qt subtleties here: AsNeeded toggles an internal container widget,
-    // never the QScrollBar itself, so isHidden() is constant-false and only
-    // isVisibleTo(this) tracks the bar's real state (and keeps working while
-    // the whole viewer is a hidden tab). And a bar that was never laid out
-    // reports a default width()/height() of 100/30, so the extent must come
-    // from sizeHint(), which honours the themed 12px even before first layout.
+    // Fit against the viewport without scrollbars to avoid visibility/resize feedback.
+    // Qt hides scrollbar containers, so isVisibleTo() detects their contribution; maximumViewportSize()
+    // already excludes AlwaysOn bars.
     QScrollBar *vsb = verticalScrollBar();
     QScrollBar *hsb = horizontalScrollBar();
     const int vsbW = vsb->sizeHint().width();
@@ -438,22 +374,8 @@ void ViewerWidget::applyFitScale()
     const double fullW = std::max(1, viewport()->width() + (vsb->isVisibleTo(this) ? vsbW : 0));
     const double fullH = std::max(1, viewport()->height() + (hsb->isVisibleTo(this) ? hsbH : 0));
 
-    // Fit against what the LAYOUT will be, not against one page. The canvas width
-    // is a document-wide quantity in both scrolling modes (the widest page in
-    // Continuous, the width of the two columns in TwoPage), so a scale derived
-    // from the current page must either overflow or leave a gutter as soon as the
-    // pages differ in size - and which one you got depended on where the reader
-    // happened to be scrolled, because nothing re-fits on scroll. ViewLayout owns
-    // the margins, the inner gap, the breathing space and the per-page rounding,
-    // so it does the arithmetic: the `- 40` that used to be here duplicated
-    // 2 * margin_ + slack_ and only happened to be right for a two-page row.
-    //
-    // This buys an invariant worth keeping: in a fit mode the canvas is never
-    // wider than the viewport in either scrollbar state, so a fit mode cannot
-    // produce a horizontal scrollbar and the vertical-bar prediction below is
-    // exact. Fit Width is now a pure function of (viewport, document, mode,
-    // rotation); only Fit Page keeps a currentPage_ term, on the height axis,
-    // because it fits the row you are looking at.
+    // Use ViewLayout for fit arithmetic, including spread columns and mixed page sizes.
+    // Fit Page limits height to the current row; Fit Width uses the complete canvas width.
     const auto fitTo = [&](double w) {
         const ViewLayout::FitBasis b =
             layout_.fitBasis(w, fullH, layoutMode_, rotation_, currentPage_);
@@ -501,6 +423,7 @@ void ViewerWidget::invalidateRenders(PreviewPolicy preview)
         seedPreview(); // before cache_.clear(): it reads the images we are dropping
     else
         preview_.clear();
+    engine_->cancelRequests(viewerId_);
     ++viewEpoch_; // per-viewer epoch; results from older epochs are discarded
     cache_.clear();
     pending_.clear();
@@ -511,13 +434,7 @@ void ViewerWidget::seedPreview()
     if (!doc_ || pageCount() == 0)
         return;
     const QRect vpCanvas(contentOffset(), viewport()->size());
-    // How much more of the document the new scale pulls into view: layout_ still
-    // holds the OLD scale here while scale_ is already the new one, so a ratio
-    // above 1 means zooming out. Freeze that much extra around the viewport so
-    // the pages a zoom-out reveals have something to show too - capped, so a
-    // jump from 800% to Fit Width does not try to freeze the whole document.
-    // (In Single page mode only the current page is laid out, so the slack has
-    // nothing to find and only that page is seeded.)
+    // Capture the old viewport plus the area a zoom-out reveals. Cap expansion to bound preview memory.
     const double ratio = std::clamp(layout_.scale() / std::max(scale_, 1e-6), 1.0, 8.0);
     const int dx = static_cast<int>(vpCanvas.width() * (ratio - 0.5));
     const int dy = static_cast<int>(vpCanvas.height() * (ratio - 0.5));
@@ -554,13 +471,7 @@ bool ViewerWidget::drawPreview(QPainter &p, int pageNo, const QRect &pageCanvas,
     const PreviewLayer::Tile *t = preview_.tile(pageNo);
     if (!t || t->image.isNull())
         return false;
-    // Past a certain magnification the stretch is mush rather than a preview of
-    // the page; clean paper reads better than that. A ladder step is ~1.4x, so this
-    // rules out a typed-in jump of more than about six rungs, or that many gestures
-    // fired off faster than a single render completes. Judged
-    // against the page's FINAL rect even mid-ease, so a jump too big for the tile
-    // shows gliding paper throughout instead of blinking from content to white
-    // half way through the gesture.
+    // Discard previews stretched beyond the quality limit, using final page geometry even during easing.
     if (PreviewLayer::targetRect(*t, pageCanvas).width() * dpr_
         > kMaxPreviewStretch * t->image.width()) {
         return false;
@@ -584,25 +495,8 @@ bool ViewerWidget::drawPreview(QPainter &p, int pageNo, const QRect &pageCanvas,
     return true;
 }
 
-// --- zoom ease ---------------------------------------------------------------
-//
-// A zoom step is a full 1.25x, and rescaleKeeping applies it between two paint
-// events, so the view cuts from one magnification to the next. The ease removes
-// that cut WITHOUT touching the zoom itself: every zoom still lands on its final
-// scale, layout, scroll offsets and render requests inside the one synchronous
-// call, and only the DRAWING lags for ~130 ms, each page's frozen PreviewLayer
-// tile being stretched from where the page was a moment ago onto where it now
-// belongs. Two consequences worth keeping in mind when editing this:
-//
-//  - Nothing is deferred, so nothing can be left broken. Every cancel site below
-//    is a cosmetic safeguard: missing one costs a single stale-looking frame, not
-//    a wrong scale, a permanently soft page or a leaked render suppression.
-//  - Each page is interpolated on its OWN rect rather than through one global
-//    transform. ViewLayout adds fixed logical pixels (margin/gap) to scaled page
-//    sizes, so a single similarity about one anchor would scale those too and the
-//    pages would visibly slide against each other and snap shut at the landing.
-//    Per-page rects keep the gaps constant, which is what a genuine intermediate
-//    scale looks like.
+// Zoom easing interpolates viewport rectangles after the final layout is installed.
+// Capture any interrupted animation before changing scale, then arm easing after scrollbar updates.
 bool ViewerWidget::zoomEaseAllowed() const
 {
     if (zoomEaseMs_ <= 0 || zoomEaseSuppress_ || !doc_ || pageCount() == 0 || !isVisible())
@@ -729,13 +623,8 @@ QRectF ViewerWidget::zoomEaseFromRect(int pageNo, const QRectF &finalRect) const
     const auto it = zoomEase_.from.constFind(pageNo);
     if (it != zoomEase_.from.constEnd())
         return it.value();
-    // A page the new layout revealed beyond what we captured: put it where the
-    // same similarity that maps repPage's final rect back onto its captured one
-    // would put it. On a zoom-out that factor is > 1, which pushes the page OFF
-    // screen at u == 0, so a revealed page with no tile of its own arrives roughly
-    // when its render does instead of sitting there as flat paper. Exact in the
-    // scaling part and off only by the layout's fixed margins/gaps - invisible on
-    // a page entering from the edge, and gone by the last frame.
+    // For newly visible pages, extrapolate from the representative page.
+    // Fixed margins introduce a small error that disappears when easing ends.
     const auto rep = zoomEase_.from.constFind(zoomEase_.repPage);
     const QRect repFinal = layout_.pageRect(zoomEase_.repPage);
     if (rep == zoomEase_.from.constEnd() || !repFinal.isValid() || repFinal.width() <= 0)
@@ -759,12 +648,7 @@ QRectF ViewerWidget::zoomEaseRect(int pageNo, const QRectF &finalRect) const
     return lerpRect(from, finalRect, zoomEaseU());
 }
 
-// Per-axis rather than one factor from the width, and fed the SAME rect the bitmap
-// was blitted into rather than re-deriving it: ViewLayout rounds a page's width and
-// height independently, and paintEvent snaps the eased rect to whole pixels, so a
-// single width-derived factor would leave the border and the overlays up to a few
-// pixels clear of the bottom of the drawn image on a tall page. The anisotropy this
-// introduces is under a third of a percent, well below the pixel snap it replaces.
+// Use independent axis scales from the actual painted rectangle; layout rounds width and height separately.
 QTransform ViewerWidget::zoomEaseTransform(const QRectF &finalRect, const QRectF &easedRect) const
 {
     if (finalRect.width() <= 0.0 || finalRect.height() <= 0.0 || easedRect.width() <= 0.0
@@ -879,15 +763,7 @@ void ViewerWidget::onResultReady(const mervin::RenderResult &result)
     img.setDevicePixelRatio(dpr_);
     cache_.put(result.pageNo, img, covered);
     if (zoomEase_.active) {
-        // Mid-ease the page is drawn somewhere other than `covered`, so it has to
-        // keep going through the stretched path - hence no erase here; endZoomEase
-        // catches up. Re-tiling rather than stretching the cache image directly
-        // matters for cost: the render cache is RGB888, which the raster engine has
-        // no fast transformed path for (see PreviewLayer.h), and add() pays the
-        // RGB32 re-encode once so every remaining frame is the cheap blit. Only for
-        // a whole-page render or a page with no tile yet, though: a clipped
-        // deep-zoom band covers less of the page than the tile it would replace,
-        // and swapping it in would open white gaps mid-flight.
+        // Map fresh tiles into the eased page rectangle so they sharpen in place during animation.
         if (covered == layout_.pageRect(result.pageNo) || !preview_.tile(result.pageNo))
             preview_.add(result.pageNo, img, covered, layout_.pageRect(result.pageNo));
         viewport()->update(); // partial damage is meaningless while the page moves
@@ -955,12 +831,7 @@ void ViewerWidget::paintEvent(QPaintEvent *event)
             p.drawImage(e->covered.topLeft() - off, e->image);
             ++paintStats_.fresh;
         } else {
-            // Missing or only partially covered (e.g. a deep-zoom tile we have
-            // just scrolled past): paint the theme's paper colour, stretch the
-            // page's frozen preview over it (so a zoom shows the old image
-            // scaled instead of blank paper until the sharp one lands), redraw
-            // whatever we still have anchored to its page position, then
-            // request the needed region.
+            // Use the frozen preview for uncovered areas, then overlay any available sharp tile.
             p.fillRect(rDraw, pageBase);
             bool drew = drawPreview(p, i, pageCanvas, off, easedCanvas);
             if (!zoomEase_.active && e && !e->image.isNull()) {
@@ -1032,15 +903,7 @@ void ViewerWidget::paintEvent(QPaintEvent *event)
     // Snap target marker (drawn last so it sits above the page + overlays).
     drawSnapIndicator(p);
 
-    // Frozen previews are only worth keeping for pages at or near the viewport.
-    // Pruning here rather than at the next zoom is what stops a tile for a page
-    // whose render never arrived (scrolled away first) from holding memory
-    // indefinitely, and covers the paths that re-lay the document out without
-    // invalidating the renders - Single page mode leaves every other page
-    // unlaid-out and unpaintable. Normally a no-op: the layer is empty as soon as
-    // the pages on screen have rendered.
-    // Skipped mid-ease: retain() prunes by the FINAL viewport and would drop the
-    // tile of a page that is on screen only because the ease is drawing it.
+    // Keep previews near the viewport so scrolling cannot retain obsolete page images indefinitely.
     if (!zoomEase_.active && !preview_.isEmpty()) {
         const QRect nearby = vpCanvas.adjusted(-vpCanvas.width(), -vpCanvas.height(),
                                                vpCanvas.width(), vpCanvas.height());
@@ -1069,13 +932,7 @@ void ViewerWidget::resizeEvent(QResizeEvent *event)
     if (pendingRestore_)
         restoring_ = true;
     if (zoomMode_ != ZoomMode::Custom) {
-        // Same unchanged-scale guard as showEvent: a resize that does not move
-        // the fit scale (notably the viewport shrinking/growing because a
-        // scrollbar toggled) must not invalidate the render cache - during the
-        // former scrollbar oscillation that per-cycle invalidation was what
-        // kept pages permanently blank. A device-pixel-ratio change must still
-        // re-render, though: dpr_ is only refreshed in relayout(), and cached
-        // images carry the old ratio.
+        // Only invalidate rendered images when the fitted scale changes.
         const double previous = scale_;
         applyFitScale();
         if (!qFuzzyCompare(previous, scale_) || dpr_ != devicePixelRatioF()) {
@@ -1092,14 +949,7 @@ void ViewerWidget::resizeEvent(QResizeEvent *event)
         applyPendingRestore();
     restoring_ = wasRestoring;
 
-    // Re-anchor the inline overlay editors on every resize. The centring offset
-    // (centerDelta) shifts with the viewport size whenever the content is smaller
-    // than the viewport, but in Custom zoom the branch above neither re-fits
-    // (relayout -> syncFormEditors) nor necessarily moves the scrollbar
-    // (scrollContentsBy -> syncFormEditors), so the form-fill editors would keep
-    // their pre-resize geometry and drift off their fields. Sync them - and the
-    // open annotation editor - here so they always track the page. Idempotent in
-    // the fit modes, where relayout() already synced.
+    // Reposition inline editors after every resize, including centering changes at the same scale.
     if (toolMode_ == ToolMode::FillForms)
         syncFormEditors();
     if (annotPopup_ && annotPopup_->isVisible())
@@ -1323,15 +1173,7 @@ void ViewerWidget::keyPressEvent(QKeyEvent *event)
         return;
     case Qt::Key_Down:
     case Qt::Key_PageDown:
-        // Single mode lays out only the current row, so the scrollbar covers just
-        // that row and the base-class scroll can never reach the next one. Flip
-        // once the row's own content is fully scrolled (a fitted row has no
-        // scroll range, so the flip is immediate); a zoomed-in row scrolls its
-        // remaining content first.
-        //
-        // A ROW, not a page: with the spread on, the row already on screen holds
-        // both facing sheets, so stepping one page would re-show the same spread
-        // and the key would look dead every other press.
+        // In single-row mode, page keys move to the adjacent row once the current row reaches its scroll limit.
         if (layoutMode_.scroll == ViewLayout::Scroll::Single) {
             QScrollBar *bar = verticalScrollBar();
             if (bar->value() >= bar->maximum()) {
@@ -1401,7 +1243,7 @@ void ViewerWidget::setZoomMode(ZoomMode mode)
     // the view. Without that the raw scroll value survives into a layout of a
     // different height, which after a deep zoom lands the reader on a different
     // page entirely.
-    rescaleKeeping(fitted, viewportCenter());
+    rescaleKeeping(fitted, viewportCenter(), true);
     emit zoomModeChanged(zoomMode_);
     emit scaleChanged(scale_);
 }
@@ -1415,7 +1257,7 @@ void ViewerWidget::setScale(double scale)
     // the view - is the one to keep still. (Wheel and pinch zoom come through
     // zoomAtViewportPos with the cursor instead.)
     if (doc_ && pageCount() > 0 && !qFuzzyCompare(target, scale_))
-        rescaleKeeping(target, viewportCenter());
+        rescaleKeeping(target, viewportCenter(), true);
     else
         scale_ = target; // no document, or already at that scale
     emit zoomModeChanged(zoomMode_);
@@ -1440,7 +1282,7 @@ void ViewerWidget::zoomAtViewportPos(double newScale, QPointF viewportPos)
     emit scaleChanged(scale_);
 }
 
-void ViewerWidget::rescaleKeeping(double newScale, QPointF viewportPos)
+void ViewerWidget::rescaleKeeping(double newScale, QPointF viewportPos, bool keepCenter)
 {
     // Snapshot where the pages are DRAWN right now, before anything moves, then
     // arm the ease as the very LAST statement. That ordering is load-bearing: the
@@ -1451,12 +1293,7 @@ void ViewerWidget::rescaleKeeping(double newScale, QPointF viewportPos)
     const bool wantEase = captureZoomEase(newScale, &ease);
     endZoomEase(); // the snapshot has consumed any running one
 
-    // Pin the document point currently under `viewportPos` (the cursor for wheel
-    // and pinch zoom, the middle of the viewport for the toolbar / menu /
-    // keyboard): find which page point sits there now, rescale, then scroll so
-    // that same page point lands back there. Using a page point (not a raw canvas
-    // point) keeps the anchor exact even though the layout's margins/gaps are
-    // fixed pixels that do not scale with the page.
+    // Preserve the page point under the cursor or viewport center. Page coordinates avoid drift from fixed margins.
     const QPointF canvasBefore = viewportPos + QPointF(contentOffset());
     const int pg = (doc_ && pageCount() > 0) ? pageAtCanvas(canvasBefore.toPoint()) : -1;
     const QPointF anchorPage =
@@ -1465,6 +1302,8 @@ void ViewerWidget::rescaleKeeping(double newScale, QPointF viewportPos)
     scale_ = newScale;
     invalidateRenders(PreviewPolicy::Keep);
     relayout(); // recomputes the layout and scrollbar ranges at the new scale
+    if (keepCenter)
+        viewportPos = viewportCenter(); // scrollbar visibility can change the viewport size
 
     if (pg >= 0) {
         // Want: canvasAfter - contentOffset == viewportPos, and
@@ -2015,8 +1854,12 @@ void ViewerWidget::startFind(const QString &query, bool caseSensitive, bool whol
     matchesByPage_.clear();
     currentMatch_ = -1;
 
-    if (textIndex_ && !query.isEmpty())
-        matches_ = textIndex_->search(query, caseSensitive, wholeWord);
+    documentSearch_->cancel();
+    emit findStatusChanged(0, 0);
+    viewport()->update();
+    documentSearch_->start(doc_, query, caseSensitive, wholeWord,
+                           [this](std::vector<TextMatch> matches) {
+        matches_ = std::move(matches);
     rebuildMatchIndex();
 
     if (!matches_.empty()) {
@@ -2035,6 +1878,7 @@ void ViewerWidget::startFind(const QString &query, bool caseSensitive, bool whol
     emit findStatusChanged(currentMatch_ >= 0 ? currentMatch_ + 1 : 0,
                            static_cast<int>(matches_.size()));
     viewport()->update();
+    });
 }
 
 void ViewerWidget::findNext()
@@ -2060,6 +1904,7 @@ void ViewerWidget::findPrev()
 
 void ViewerWidget::clearFind()
 {
+    documentSearch_->cancel();
     findQuery_.clear();
     matches_.clear();
     matchesByPage_.clear();
@@ -2187,782 +2032,6 @@ void ViewerWidget::setOcrMode(bool on)
 }
 
 // ─────────────────────────────── Form filling ──────────────────────────────
-
-void ViewerWidget::rebuildFormModel()
-{
-    formModel_.reset();
-    if (doc_ && doc_->hasForm())
-        formModel_ = std::make_unique<FormModel>(*doc_);
-}
-
-bool ViewerWidget::hasFormEdits() const
-{
-    return formModel_ && formModel_->isDirty();
-}
-
-void ViewerWidget::clearFormDirty()
-{
-    if (formModel_)
-        formModel_->clearDirty();
-    emit formEditsChanged();
-}
-
-void ViewerWidget::setFormMode(bool on)
-{
-    if (on) {
-        if (!doc_ || !formModel_)
-            return; // nothing to fill
-        if (measureToolEnabled_)
-            setMeasureMode(false); // forms, measure and OCR are mutually exclusive
-        if (toolMode_ == ToolMode::Ocr)
-            setOcrMode(false);
-        setCommentToolEnabled(false); // forms are fully exclusive: close the Comment panel
-        selection_.clear();
-        selecting_ = false;
-        if (rubberBand_)
-            rubberBand_->hide();
-        toolMode_ = ToolMode::FillForms;
-        formFocusIndex_ = -1;
-        // Fill Forms keeps normal document text selectable. Individual editor
-        // widgets provide their own text/choice cursors; the page itself uses the
-        // same I-beam affordance as the standard Select tool.
-        viewport()->setCursor(Qt::IBeamCursor);
-        syncFormEditors();
-        emit formModeChanged(true);
-        viewport()->update();
-    } else if (toolMode_ == ToolMode::FillForms) {
-        commitActiveFormEditor();
-        destroyFormEditors();
-        toolMode_ = ToolMode::None;
-        formFocusIndex_ = -1;
-        viewport()->setCursor(Qt::IBeamCursor);
-        emit formModeChanged(false);
-        viewport()->update();
-    }
-}
-
-void ViewerWidget::setHighlightFormFields(bool on)
-{
-    if (highlightFormFields_ == on)
-        return;
-    highlightFormFields_ = on;
-    if (toolMode_ == ToolMode::FillForms)
-        viewport()->update();
-}
-
-// ─────────────────────────────── Annotations ───────────────────────────────
-
-void ViewerWidget::rebuildAnnotModel()
-{
-    annotModel_.reset();
-    if (doc_ && doc_->isPdf()) // any PDF can receive annotations; other formats can't
-        annotModel_ = std::make_unique<AnnotModel>(*doc_);
-}
-
-bool ViewerWidget::hasAnnotEdits() const
-{
-    return annotModel_ && annotModel_->isDirty();
-}
-
-void ViewerWidget::clearAnnotDirty()
-{
-    if (annotModel_)
-        annotModel_->clearDirty();
-    emit annotEditsChanged();
-}
-
-void ViewerWidget::commitActiveAnnotEditor()
-{
-    if (annotPopup_ && annotPopup_->isVisible())
-        annotPopup_->commit(); // pushes any edited comment into the model
-}
-
-std::vector<Annotation> ViewerWidget::allAnnotations() const
-{
-    return annotModel_ ? annotModel_->allAnnots() : std::vector<Annotation>{};
-}
-
-void ViewerWidget::setMarkupStyle(AnnotType type)
-{
-    if (isTextMarkup(type))
-        markupStyle_ = type;
-}
-
-void ViewerWidget::setMarkupColor(const QColor &color)
-{
-    if (color.isValid())
-        markupColor_ = color;
-}
-
-void ViewerWidget::idleMeasureCursor()
-{
-    // Release the single active gesture from the measuring crosshair without
-    // closing the measure panel (its committed marks stay drawn). Cancels any
-    // half-drawn vector and tells the measure panel to un-check its cursor toggle.
-    cancelInProgressMeasure();
-    clearSnapState();
-    emit measureCursorActiveChanged(false);
-}
-
-void ViewerWidget::idleAnnotGesture()
-{
-    // Release the single active gesture from the annotation tool without closing
-    // the Comment panel; the panel shows "Select".
-    closeAnnotPopup();
-    selection_.clear();
-    selecting_ = false;
-    emit annotSubModeChanged(AnnotSubMode::Select);
-}
-
-void ViewerWidget::setCommentToolEnabled(bool on)
-{
-    if (on) {
-        if (!doc_ || !annotModel_)
-            return;
-        // OCR and Forms remain fully exclusive; Measure does NOT (the panels dock
-        // together) - instead the measure crosshair just idles.
-        if (toolMode_ == ToolMode::Ocr)
-            setOcrMode(false);
-        if (toolMode_ == ToolMode::FillForms)
-            setFormMode(false);
-        commentToolEnabled_ = true;
-        if (rubberBand_)
-            rubberBand_->hide();
-        // Arm the Markup sub-mode by default and take the single active gesture
-        // from the measuring crosshair (the measure panel stays open if it was).
-        toolMode_ = ToolMode::Highlight;
-        idleMeasureCursor();
-        viewport()->setCursor(Qt::IBeamCursor); // drag selects text to mark up
-        emit commentToolEnabledChanged(true); // TabPage shows + docks the Comment panel
-        emit annotSubModeChanged(AnnotSubMode::Markup);
-        viewport()->update();
-    } else if (commentToolEnabled_) {
-        closeAnnotPopup();
-        commentToolEnabled_ = false;
-        selection_.clear();
-        selecting_ = false;
-        // Only release the gesture if the Comment tool holds it; if Measure owns it
-        // (panel docked alongside), leave its crosshair gesture and cursor intact.
-        if (toolMode_ == ToolMode::Highlight || toolMode_ == ToolMode::Comment) {
-            toolMode_ = ToolMode::None;
-            viewport()->setCursor(Qt::IBeamCursor);
-        } else if (measureMode()) {
-            viewport()->setCursor(Qt::CrossCursor);
-        }
-        emit commentToolEnabledChanged(false); // TabPage hides the Comment panel
-        viewport()->update();
-    }
-}
-
-void ViewerWidget::setAnnotSubMode(AnnotSubMode mode)
-{
-    if (!commentToolEnabled_)
-        return;
-    switch (mode) {
-    case AnnotSubMode::Select:
-        toolMode_ = ToolMode::None;
-        closeAnnotPopup();
-        selection_.clear();
-        selecting_ = false;
-        viewport()->setCursor(Qt::IBeamCursor);
-        idleMeasureCursor(); // explicit Select is pure pointer - measure idles too
-        break;
-    case AnnotSubMode::Markup:
-        toolMode_ = ToolMode::Highlight;
-        viewport()->setCursor(Qt::IBeamCursor);
-        idleMeasureCursor();
-        break;
-    case AnnotSubMode::Note:
-        toolMode_ = ToolMode::Comment;
-        viewport()->setCursor(Qt::PointingHandCursor);
-        idleMeasureCursor();
-        break;
-    }
-    emit annotSubModeChanged(mode); // keep the panel selector in sync (blocked there)
-    viewport()->update();
-}
-
-QRectF ViewerWidget::annotWidgetRect(int page, int id) const
-{
-    if (!annotModel_)
-        return {};
-    for (const Annotation &a : annotModel_->pageAnnots(page))
-        if (a.id == id)
-            return pageRectToWidget(page, a.rect);
-    return {};
-}
-
-bool ViewerWidget::annotAt(QPoint viewportPos, int &page, int &id) const
-{
-    if (!annotModel_)
-        return false;
-    const QPoint off = contentOffset();
-    const QRect vpCanvas(off, viewport()->size());
-    bool found = false;
-    // Iterate visible pages; within a page the later annotation wins (drawn on
-    // top), so a click on overlapping marks selects the topmost.
-    for (int p : layout_.pagesInViewport(vpCanvas)) {
-        for (const Annotation &a : annotModel_->pageAnnots(p)) {
-            const QRectF w = pageRectToWidget(p, a.rect);
-            // Sticky-note icons are tiny; give them a little slack so they're easy
-            // to click.
-            const QRectF hit = a.type == AnnotType::Text ? w.adjusted(-3, -3, 3, 3) : w;
-            if (hit.contains(viewportPos)) {
-                page = p;
-                id = a.id;
-                found = true; // keep scanning: prefer the last (topmost) match
-            }
-        }
-    }
-    return found;
-}
-
-bool ViewerWidget::annotShowsReadOnly(int page, int id) const
-{
-    // A plain click while the Comment tool is closed should pop the read-only
-    // viewer only when there's something to read: sticky notes (their whole purpose
-    // is the comment) and any mark that actually carries comment text. Comment-less
-    // highlights are skipped so casual clicks while reading don't flash empty cards.
-    const std::optional<Annotation> a =
-        annotModel_ ? annotModel_->annot(page, id) : std::nullopt;
-    return a && (a->type == AnnotType::Text || !a->contents.trimmed().isEmpty());
-}
-
-void ViewerWidget::createHighlightFromSelection()
-{
-    if (!annotModel_ || !textIndex_ || !selection_.hasSelection())
-        return;
-    const TextPos s = selection_.start();
-    const TextPos e = selection_.end();
-    int firstPage = -1;
-    int firstId = -1;
-    for (int pg = s.page; pg <= e.page; ++pg) {
-        const int from = (pg == s.page) ? s.offset : 0;
-        const int to = (pg == e.page) ? e.offset : textIndex_->pageTextLength(pg);
-        if (to <= from)
-            continue;
-        const std::vector<QRectF> rects = textIndex_->rangeRects(pg, from, to - from);
-        if (rects.empty())
-            continue;
-        const int id =
-            annotModel_->addTextMarkup(pg, markupStyle_, rects, markupColor_, annotAuthor_);
-        if (id < 0)
-            continue;
-        applyAnnotChange(pg);
-        if (firstId < 0) {
-            firstPage = pg;
-            firstId = id;
-        }
-    }
-    selection_.clear();
-    if (firstId >= 0) {
-        emit annotEditsChanged();
-        emit annotationsChanged();
-        openAnnotPopup(firstPage, firstId); // let the user add a comment immediately
-    }
-    viewport()->update();
-}
-
-void ViewerWidget::createCommentAt(QPoint viewportPos)
-{
-    if (!annotModel_)
-        return;
-    const QPoint canvas = viewportPos + contentOffset();
-    const int pg = pageAtCanvas(canvas);
-    if (pg < 0)
-        return;
-    const QPointF pagePoint = canvasToPagePoint(pg, canvas);
-    // A new comment takes the current default annotation colour (set in Settings;
-    // the single shared colour, also used for new highlights).
-    const int id = annotModel_->addTextNote(pg, pagePoint, markupColor_, annotAuthor_, QString());
-    if (id < 0)
-        return;
-    applyAnnotChange(pg);
-    emit annotEditsChanged();
-    emit annotationsChanged();
-    // A placed note is one-shot: return the tool to Select so the next click does
-    // not drop another note. Switch BEFORE opening the editor - the Select
-    // transition closes any open popup, so doing it afterwards would close the very
-    // card we open here. The card stays editable (the Comment tool is still open).
-    setAnnotSubMode(AnnotSubMode::Select);
-    openAnnotPopup(pg, id);
-}
-
-void ViewerWidget::openAnnotPopup(int page, int id, bool readOnly)
-{
-    if (!annotModel_)
-        return;
-    const std::optional<Annotation> a = annotModel_->annot(page, id);
-    if (!a)
-        return;
-    // Flush any edit in a popup already open for a DIFFERENT annotation before we
-    // rebind to the new one. commit() runs the commentEdited lambda while
-    // openAnnotPage_/openAnnotId_ still point at the OLD annotation, so the
-    // in-progress text lands on the right one. The mouse paths closeAnnotPopup()
-    // first, but the comments-sidebar reveal path comes straight here.
-    if (annotPopup_ && annotPopup_->isVisible() && (openAnnotPage_ != page || openAnnotId_ != id))
-        annotPopup_->commit();
-    if (!annotPopup_) {
-        annotPopup_ = new AnnotPopup(viewport());
-        connect(annotPopup_, &AnnotPopup::commentEdited, this, [this](const QString &text) {
-            if (annotModel_ && openAnnotId_ >= 0
-                && annotModel_->setContents(openAnnotPage_, openAnnotId_, text)) {
-                applyAnnotChange(openAnnotPage_);
-                emit annotEditsChanged();
-                emit annotationsChanged();
-            }
-        });
-        connect(annotPopup_, &AnnotPopup::colorPicked, this, [this](const QColor &color) {
-            if (annotModel_ && openAnnotId_ >= 0
-                && annotModel_->setColor(openAnnotPage_, openAnnotId_, color)) {
-                applyAnnotChange(openAnnotPage_);
-                emit annotEditsChanged();
-                emit annotationsChanged();
-            }
-        });
-        connect(annotPopup_, &AnnotPopup::deleteRequested, this, [this] {
-            if (annotModel_ && openAnnotId_ >= 0) {
-                const int pg = openAnnotPage_;
-                if (annotModel_->remove(pg, openAnnotId_)) {
-                    openAnnotPage_ = -1;
-                    openAnnotId_ = -1;
-                    annotPopup_->hide();
-                    applyAnnotChange(pg);
-                    emit annotEditsChanged();
-                    emit annotationsChanged();
-                }
-            }
-        });
-        connect(annotPopup_, &AnnotPopup::dismissed, this, [this] {
-            openAnnotPage_ = -1;
-            openAnnotId_ = -1;
-            viewport()->update(); // clear the selection outline
-        });
-    }
-    openAnnotPage_ = page;
-    openAnnotId_ = id;
-    annotPopup_->showFor(*a, /*allowEdit=*/!readOnly);
-    syncAnnotPopup();
-    annotPopup_->focusComment();
-    viewport()->update(); // draw the selection outline
-}
-
-void ViewerWidget::closeAnnotPopup()
-{
-    if (annotPopup_ && annotPopup_->isVisible())
-        annotPopup_->hide(); // hideEvent commits + emits dismissed (clears open ids)
-    openAnnotPage_ = -1;
-    openAnnotId_ = -1;
-}
-
-void ViewerWidget::syncAnnotPopup()
-{
-    if (!annotPopup_ || !annotPopup_->isVisible() || openAnnotId_ < 0)
-        return;
-    const QRectF r = annotWidgetRect(openAnnotPage_, openAnnotId_);
-    if (r.isNull()) {
-        // The annotation scrolled out of view: keep the editor where it is rather
-        // than jumping it around (it stays usable; closing re-commits).
-        return;
-    }
-    annotPopup_->positionNear(r.toRect());
-}
-
-void ViewerWidget::applyAnnotChange(int page)
-{
-    // Re-render just the touched page (annotations are baked into the page image),
-    // mirroring applyFormFieldChange: drop the cached tile, its pre-edit frozen
-    // preview and any stale request, then request a fresh one.
-    cache_.erase(page);
-    preview_.erase(page);
-    pending_.remove(page);
-    const QPoint off = contentOffset();
-    const QRect vpCanvas(off, viewport()->size());
-    const QRect pageCanvas = layout_.pageRect(page);
-    if (pageCanvas.isValid()) {
-        const QRect needed = pageCanvas.intersected(vpCanvas);
-        if (!needed.isEmpty())
-            ensureRendered(page, needed);
-    }
-    viewport()->update();
-}
-
-void ViewerWidget::revealAnnotation(int page, int id)
-{
-    if (!annotModel_)
-        return;
-    const std::optional<Annotation> a = annotModel_->annot(page, id);
-    if (!a)
-        return;
-    // Scroll the annotation into view, then open its inline editor.
-    goToPage(page);
-    const QRectF canvasRect = pageRectToCanvas(page, a->rect);
-    ensureCanvasRectVisible(canvasRect);
-    // Editable only while an annotation gesture is active (Highlight / Comment
-    // sub-mode); view-only otherwise, matching a plain pointer/Select click.
-    openAnnotPopup(page, id, /*readOnly=*/!annotationMode());
-}
-
-void ViewerWidget::drawAnnotSelection(QPainter &p, int pageNo) const
-{
-    if (openAnnotId_ < 0 || openAnnotPage_ != pageNo || !annotModel_)
-        return;
-    const QRectF w = annotWidgetRect(pageNo, openAnnotId_);
-    if (w.isNull())
-        return;
-    const QColor accent = palette().color(QPalette::Highlight);
-    p.setPen(QPen(accent, 1.5, Qt::DashLine));
-    p.setBrush(Qt::NoBrush);
-    p.drawRect(w.adjusted(-2, -2, 2, 2));
-}
-
-int ViewerWidget::editorIndexFor(QObject *widget) const
-{
-    for (int i = 0; i < static_cast<int>(formEditors_.size()); ++i)
-        if (formEditors_[i].widget == widget)
-            return i;
-    return -1;
-}
-
-QWidget *ViewerWidget::createFormEditor(const FormField &f, int page, int fieldIndex)
-{
-    QWidget *w = nullptr;
-    switch (f.type) {
-    case FormFieldType::Text:
-        if (f.multiline() || f.comb()) {
-            auto *te = new QPlainTextEdit(viewport());
-            te->setFrameShape(QFrame::NoFrame);
-            te->document()->setDocumentMargin(0); // tighten text origin vs the render
-            te->setPlainText(f.value);
-            w = te;
-        } else {
-            auto *le = new QLineEdit(viewport());
-            le->setFrame(false);
-            le->setText(f.value);
-            w = le;
-        }
-        break;
-    case FormFieldType::ComboBox: {
-        auto *cb = new QComboBox(viewport());
-        cb->addItems(f.options);
-        int idx = f.options.indexOf(f.value);
-        if (idx < 0 && !f.value.isEmpty()) {
-            cb->addItem(f.value);
-            idx = cb->count() - 1;
-        }
-        if (idx >= 0)
-            cb->setCurrentIndex(idx);
-        connect(cb, &QComboBox::activated, this, [this, page, fieldIndex, cb](int) {
-            if (formModel_ && formModel_->setChoiceValue(page, fieldIndex, cb->currentText())) {
-                applyFormFieldChange(page);
-                emit formEditsChanged();
-            }
-        });
-        w = cb;
-        break;
-    }
-    case FormFieldType::ListBox: {
-        auto *lw = new QListWidget(viewport());
-        lw->setSelectionMode(QAbstractItemView::SingleSelection);
-        lw->addItems(f.options);
-        for (int i = 0; i < lw->count(); ++i)
-            if (lw->item(i)->text() == f.value) {
-                lw->setCurrentRow(i);
-                break;
-            }
-        connect(lw, &QListWidget::itemSelectionChanged, this, [this, page, fieldIndex, lw]() {
-            const QString v = lw->currentItem() ? lw->currentItem()->text() : QString();
-            if (formModel_ && formModel_->setChoiceValue(page, fieldIndex, v)) {
-                applyFormFieldChange(page);
-                emit formEditsChanged();
-            }
-        });
-        w = lw;
-        break;
-    }
-    default:
-        return nullptr; // toggles / signatures / push buttons have no inline editor
-    }
-    // Give the inline editor a clean light-blue input surface so the field being
-    // filled stands out from the page (and so it overrides the app-wide chrome
-    // stylesheet, which would otherwise tint it to the dark UI theme and clash
-    // with the white page). Tight padding keeps the text aligned in the rect.
-    const theme::Doc &d = theme::doc();
-    w->setStyleSheet(
-        QStringLiteral("QLineEdit, QPlainTextEdit, QComboBox, QListWidget {"
-                       " background:%1; color:%2; border:1px solid %3; border-radius:2px;"
-                       " padding:0 3px; selection-background-color:%4; selection-color:%5; }"
-                       "QComboBox::drop-down { border:none; width:16px; }"
-                       // The popup is a separate top-level view, so none of the type
-                       // selectors above reach it; without this the field is a pale
-                       // blue input whose list opens as a dark slate menu.
-                       "QComboBox QAbstractItemView { background:%1; color:%2;"
-                       " selection-background-color:%4; selection-color:%5; }")
-            .arg(theme::css(d.formEditorSurface), theme::css(d.formEditorInk),
-                 theme::css(d.formEditorBorder), theme::css(d.formEditorSelection),
-                 theme::css(d.formEditorSelectionInk)));
-    w->installEventFilter(this);
-    return w;
-}
-
-void ViewerWidget::syncFormEditors()
-{
-    if (syncingFormEditors_)
-        return;
-    syncingFormEditors_ = true;
-    if (toolMode_ != ToolMode::FillForms || !formModel_) {
-        syncingFormEditors_ = false;
-        destroyFormEditors();
-        return;
-    }
-
-    const QPoint off = contentOffset();
-    const QRect vpCanvas(off, viewport()->size());
-    QSet<int> visible;
-    for (int p : layout_.pagesInViewport(vpCanvas))
-        visible.insert(p);
-
-    // Drop editors whose page has scrolled out of view (committing first).
-    for (size_t i = 0; i < formEditors_.size();) {
-        if (!visible.contains(formEditors_[i].page)) {
-            commitFormEditor(static_cast<int>(i));
-            if (formEditors_[i].widget) {
-                formEditors_[i].widget->removeEventFilter(this);
-                formEditors_[i].widget->deleteLater();
-            }
-            formEditors_.erase(formEditors_.begin() + static_cast<long>(i));
-        } else {
-            ++i;
-        }
-    }
-
-    // Ensure an editor exists for every editable text/choice field on a visible
-    // page, and (re)position all editors over their fields.
-    for (int p : layout_.pagesInViewport(vpCanvas)) {
-        if (!layout_.pageRect(p).isValid())
-            continue;
-        const std::vector<FormField> &fields = formModel_->pageFields(p);
-        for (int fi = 0; fi < static_cast<int>(fields.size()); ++fi) {
-            const FormField &f = fields[fi];
-            if (!f.editable() || f.isToggle())
-                continue;
-            int existing = -1;
-            for (int k = 0; k < static_cast<int>(formEditors_.size()); ++k)
-                if (formEditors_[k].page == p && formEditors_[k].fieldIndex == fi) {
-                    existing = k;
-                    break;
-                }
-            QWidget *w = nullptr;
-            if (existing < 0) {
-                w = createFormEditor(f, p, fi);
-                if (!w)
-                    continue;
-                formEditors_.push_back(FormEditor{p, fi, f.type, w});
-            } else {
-                w = formEditors_[existing].widget;
-            }
-            const QRect r = pageRectToWidget(p, f.rect).toRect();
-            w->setGeometry(r);
-            // Match the inline editor's glyph height to the rendered (printed)
-            // field text: pixelSize = effective point size * scale_ (logical px;
-            // scale_ ONLY, never *dpr_ - the editor box is in logical pixels and
-            // Qt applies the device pixel ratio internally). setPixelSize, not
-            // setPointSizeF, so the OS logical-DPI point->pixel step can't
-            // double-scale against the box. Recomputed every sync so it tracks
-            // zoom (createFormEditor runs once; only sync sees the new scale_).
-            {
-                const int px = std::clamp(qRound(f.fontSizePt * scale_), 8, 4000);
-                QFont fnt = w->font();
-                if (fnt.pixelSize() != px
-                    || (!f.fontFamily.isEmpty() && fnt.family() != f.fontFamily)) {
-                    fnt.setPixelSize(px);
-                    if (!f.fontFamily.isEmpty())
-                        fnt.setFamily(f.fontFamily);
-                    w->setFont(fnt);
-                }
-            }
-            w->show();
-        }
-    }
-    syncingFormEditors_ = false;
-}
-
-void ViewerWidget::destroyFormEditors()
-{
-    for (FormEditor &e : formEditors_) {
-        if (e.widget) {
-            e.widget->removeEventFilter(this);
-            e.widget->deleteLater();
-        }
-    }
-    formEditors_.clear();
-}
-
-void ViewerWidget::commitFormEditor(int editorIndex)
-{
-    if (editorIndex < 0 || editorIndex >= static_cast<int>(formEditors_.size()) || !formModel_)
-        return;
-    const FormEditor &e = formEditors_[editorIndex];
-    bool changed = false;
-    switch (e.type) {
-    case FormFieldType::Text:
-        if (auto *le = qobject_cast<QLineEdit *>(e.widget))
-            changed = formModel_->setTextValue(e.page, e.fieldIndex, le->text());
-        else if (auto *te = qobject_cast<QPlainTextEdit *>(e.widget))
-            changed = formModel_->setTextValue(e.page, e.fieldIndex, te->toPlainText());
-        break;
-    case FormFieldType::ComboBox:
-        if (auto *cb = qobject_cast<QComboBox *>(e.widget))
-            changed = formModel_->setChoiceValue(e.page, e.fieldIndex, cb->currentText());
-        break;
-    case FormFieldType::ListBox:
-        if (auto *lw = qobject_cast<QListWidget *>(e.widget))
-            changed = formModel_->setChoiceValue(
-                e.page, e.fieldIndex, lw->currentItem() ? lw->currentItem()->text() : QString());
-        break;
-    default:
-        break;
-    }
-    if (changed) {
-        applyFormFieldChange(e.page);
-        emit formEditsChanged();
-    }
-}
-
-void ViewerWidget::commitActiveFormEditor()
-{
-    // Idempotent (unchanged values are no-ops), so flushing every editor before a
-    // save / print or mode change is safe and catches the field still being typed.
-    for (int i = static_cast<int>(formEditors_.size()) - 1; i >= 0; --i)
-        commitFormEditor(i);
-}
-
-void ViewerWidget::applyFormFieldChange(int page)
-{
-    // Re-render just the touched page: drop its cached image and any stale in-flight
-    // request (so the new request's token supersedes), then request a fresh tile.
-    // Its frozen preview goes too - it predates the edit.
-    cache_.erase(page);
-    preview_.erase(page);
-    pending_.remove(page);
-    const QPoint off = contentOffset();
-    const QRect vpCanvas(off, viewport()->size());
-    const QRect pageCanvas = layout_.pageRect(page);
-    if (pageCanvas.isValid()) {
-        const QRect needed = pageCanvas.intersected(vpCanvas);
-        if (!needed.isEmpty())
-            ensureRendered(page, needed);
-    }
-    viewport()->update();
-}
-
-const std::vector<std::pair<int, int>> &ViewerWidget::formFieldOrder()
-{
-    static const std::vector<std::pair<int, int>> kEmpty;
-    if (!formModel_)
-        return kEmpty;
-    if (!formFieldOrderBuilt_) {
-        formFieldOrder_.clear();
-        const int n = doc_ ? doc_->pageCount() : 0;
-        for (int p = 0; p < n; ++p) {
-            const std::vector<FormField> &fields = formModel_->pageFields(p);
-            for (int fi = 0; fi < static_cast<int>(fields.size()); ++fi)
-                if (fields[fi].editable())
-                    formFieldOrder_.push_back({p, fi});
-        }
-        formFieldOrderBuilt_ = true;
-    }
-    return formFieldOrder_;
-}
-
-void ViewerWidget::focusFormFieldAt(int orderIndex)
-{
-    const std::vector<std::pair<int, int>> &order = formFieldOrder();
-    if (orderIndex < 0 || orderIndex >= static_cast<int>(order.size()) || !formModel_)
-        return;
-    formFocusIndex_ = orderIndex;
-    const int pg = order[orderIndex].first;
-    const int fi = order[orderIndex].second;
-    const std::vector<FormField> &fields = formModel_->pageFields(pg);
-    if (fi < 0 || fi >= static_cast<int>(fields.size()))
-        return;
-    ensureCanvasRectVisible(pageRectToCanvas(pg, fields[fi].rect)); // may scroll
-    syncFormEditors(); // make sure the now-visible field's editor exists
-    if (fields[fi].isToggle()) {
-        setFocus(); // a toggle has no editor; Space/Enter flips it via keyPressEvent
-        viewport()->update();
-        return;
-    }
-    for (FormEditor &e : formEditors_)
-        if (e.page == pg && e.fieldIndex == fi && e.widget) {
-            e.widget->setFocus(Qt::TabFocusReason);
-            if (auto *le = qobject_cast<QLineEdit *>(e.widget))
-                le->selectAll();
-            break;
-        }
-    viewport()->update();
-}
-
-void ViewerWidget::advanceFormFocus(int delta)
-{
-    const std::vector<std::pair<int, int>> &order = formFieldOrder();
-    if (order.empty())
-        return;
-    const int n = static_cast<int>(order.size());
-    int idx = (formFocusIndex_ < 0) ? (delta > 0 ? -1 : 0) : formFocusIndex_;
-    idx = ((idx + delta) % n + n) % n; // wrap both directions
-    focusFormFieldAt(idx);
-}
-
-bool ViewerWidget::formFieldAt(QPoint viewportPos, int &page, int &fieldIndex) const
-{
-    if (!formModel_)
-        return false;
-    const QPoint canvas = viewportPos + contentOffset();
-    const int pg = pageAtCanvas(canvas);
-    if (pg < 0 || !layout_.pageRect(pg).isValid())
-        return false;
-    const QPointF pp = canvasToPagePoint(pg, QPointF(canvas), true);
-    const std::vector<FormField> &fields = formModel_->pageFields(pg);
-    for (int i = 0; i < static_cast<int>(fields.size()); ++i)
-        if (fields[i].editable() && fields[i].rect.contains(pp)) {
-            page = pg;
-            fieldIndex = i;
-            return true;
-        }
-    return false;
-}
-
-void ViewerWidget::drawFormHighlights(QPainter &p, int pageNo) const
-{
-    if (!formModel_)
-        return;
-    const std::vector<FormField> &fields = formModel_->pageFields(pageNo);
-    p.save();
-    for (int fi = 0; fi < static_cast<int>(fields.size()); ++fi) {
-        const FormField &f = fields[fi];
-        if (!f.editable())
-            continue;
-        const QRectF wr = pageRectToWidget(pageNo, f.rect);
-        if (!wr.isValid())
-            continue;
-        if (highlightFormFields_) {
-            const bool requiredEmpty = f.required() && f.value.isEmpty() && !f.isToggle();
-            p.setPen(QPen(kFormFieldBorder, 1.0));
-            p.setBrush(requiredEmpty ? kFormRequiredColor : kFormFieldColor);
-            p.drawRect(wr.adjusted(0, 0, -1, -1));
-        }
-        // Tab-focused field ring (the only on-screen cue for a focused toggle).
-        if (formFocusIndex_ >= 0 && formFocusIndex_ < static_cast<int>(formFieldOrder_.size())
-            && formFieldOrder_[formFocusIndex_].first == pageNo
-            && formFieldOrder_[formFocusIndex_].second == fi) {
-            p.setPen(QPen(kFormFocusBorder, 2.0));
-            p.setBrush(Qt::NoBrush);
-            p.drawRect(wr.adjusted(1, 1, -2, -2));
-        }
-    }
-    p.restore();
-}
 
 bool ViewerWidget::eventFilter(QObject *watched, QEvent *event)
 {
@@ -3643,829 +2712,6 @@ void ViewerWidget::onAutoScroll()
     if (p.valid())
         selection_.extendTo(p);
     viewport()->update();
-}
-
-// ---- Measuring tool --------------------------------------------------------
-
-void ViewerWidget::setMeasureMode(bool on)
-{
-    if (on) {
-        if (!doc_)
-            return;
-        if (toolMode_ == ToolMode::Ocr)
-            setOcrMode(false);
-        if (toolMode_ == ToolMode::FillForms)
-            setFormMode(false); // forms and measure are mutually exclusive
-        const bool wasEnabled = measureToolEnabled_;
-        measureToolEnabled_ = true;
-        toolMode_ = ToolMode::Measure; // enabling arms the measuring crosshair
-        // Measure and the Comment tool can be open together; taking the crosshair
-        // just idles the annotation gesture (the Comment panel stays docked).
-        idleAnnotGesture();
-        selection_.clear();
-        selecting_ = false;
-        if (rubberBand_)
-            rubberBand_->hide();
-        viewport()->setCursor(Qt::CrossCursor);
-        lastScaleDesc_.clear();
-        lastScaleResettable_ = -1; // panel just shown: force a fresh Reset-button sync
-        const QSizeF sz = doc_->pageSize(currentPage_);
-        updateHoverScale(currentPage_, QPointF(sz.width() / 2, sz.height() / 2));
-        if (!wasEnabled)
-            emit measureModeChanged(true);
-        emit measureCursorActiveChanged(true);
-        maybeAutoCalibrate(); // scale-less document: the first line calibrates
-        viewport()->update();
-    } else if (measureToolEnabled_) {
-        // Disable the whole tool: cancel any vector, hide the panel and the
-        // overlays (the measurements themselves are kept, just not drawn).
-        cancelInProgressMeasure();
-        clearSnapState();
-        measureDrag_ = MeasureDrag::None;
-        dragMeasureIdx_ = -1;
-        dragVertexIdx_ = -1;
-        sincePanelPopupClosed_.invalidate(); // don't swallow a later real click
-        measureToolEnabled_ = false;
-        // Only release the single active gesture if Measure actually holds it - the
-        // Comment tool may own it (Highlight/Comment) while its panel stays docked.
-        if (measureMode()) {
-            toolMode_ = ToolMode::None;
-            viewport()->setCursor(Qt::IBeamCursor);
-        } else if (commentMode()) {
-            viewport()->setCursor(Qt::PointingHandCursor); // Comment tool keeps the Note gesture
-        } // else Highlight/None already use the I-beam cursor
-        emit measureModeChanged(false);
-        viewport()->update();
-    }
-}
-
-bool ViewerWidget::pageHasScale(int page) const
-{
-    if (!doc_ || page < 0)
-        return false;
-    const QSizeF sz = doc_->pageSize(page);
-    return resolvedScale(page, QPointF(sz.width() / 2, sz.height() / 2)).valid();
-}
-
-bool ViewerWidget::pageHasEmbeddedScale(int page) const
-{
-    if (!doc_ || page < 0)
-        return false;
-    // Resolve with an empty override so an override on this page doesn't mask the
-    // underlying embedded scale; it's embedded only if the PDF itself supplies one.
-    const PageMeasurement pm = doc_->pageMeasurement(page);
-    const QSizeF sz = doc_->pageSize(page);
-    const MeasureScale s =
-        measure::resolveScale(pm, QPointF(sz.width() / 2, sz.height() / 2), MeasureScale{});
-    return s.valid() && s.source == MeasureSource::Embedded;
-}
-
-bool ViewerWidget::canResetScale(int page) const
-{
-    // Resettable only when a manual/calibrated override is masking an embedded PDF
-    // scale: clearing it then falls back to the PDF's scale. On a scale-less page
-    // the override is the only scale, so it's kept (not resettable).
-    return measureOverrides_.hasOverride(page) && pageHasEmbeddedScale(page);
-}
-
-void ViewerWidget::maybeAutoCalibrate()
-{
-    if (!measureToolEnabled_ || !doc_)
-        return;
-    if (toolMode_ != ToolMode::Measure)
-        return; // already calibrating, or on the standard pointer
-    if (!measurements_.empty() || !inProgress_.empty())
-        return; // not the very first measurement
-    if (pageHasScale(currentPage_))
-        return; // the document already has a usable scale - nothing to calibrate
-    beginCalibration(); // first drawn line becomes the calibration line
-}
-
-void ViewerWidget::setMeasureCursorActive(bool active)
-{
-    if (!measureToolEnabled_)
-        return; // only meaningful while the tool is on
-    if (active) {
-        if (measureMode())
-            return; // already on the crosshair (Measure or Calibrate)
-        toolMode_ = ToolMode::Measure;
-        idleAnnotGesture(); // taking the crosshair idles the Comment gesture (panel stays)
-        selection_.clear();
-        selecting_ = false;
-        viewport()->setCursor(Qt::CrossCursor);
-        emit measureCursorActiveChanged(true);
-        viewport()->update();
-    } else {
-        if (!measureMode())
-            return; // not currently measuring (the gesture may belong to the Comment tool)
-        cancelInProgressMeasure();
-        clearSnapState();
-        measureDrag_ = MeasureDrag::None;
-        dragMeasureIdx_ = -1;
-        dragVertexIdx_ = -1;
-        toolMode_ = ToolMode::None; // standard pointer: clicks select text, not points
-        viewport()->setCursor(Qt::IBeamCursor);
-        emit measurementReadout(QString()); // drop the live readout
-        emit measureCursorActiveChanged(false);
-        viewport()->update();
-    }
-}
-
-void ViewerWidget::setMeasureKind(MeasureKind kind)
-{
-    if (measureKind_ == kind)
-        return;
-    measureKind_ = kind;
-    cancelInProgressMeasure();
-    emit measurementReadout(QString());
-    viewport()->update();
-}
-
-void ViewerWidget::setMeasureUnit(MeasureUnit unit)
-{
-    if (measureUnit_ == unit)
-        return;
-    measureUnit_ = unit;
-    lastScaleDesc_.clear();
-    if (measureToolEnabled_ && doc_) {
-        // Re-sync the panel for the page whose scale it is showing (the last
-        // hovered/calibrated page), not the viewport-centre page: otherwise a unit
-        // change with the cursor parked would flip the label and the Reset target
-        // to a different page. scalePage_ < 0 (no hover yet) falls back to current.
-        const int p = scalePage_ >= 0 ? scalePage_ : currentPage_;
-        const QSizeF sz = doc_->pageSize(p);
-        updateHoverScale(p, QPointF(sz.width() / 2, sz.height() / 2));
-    }
-    emitMeasurementsChanged(); // list values reflect the new unit
-    viewport()->update();      // labels reflect the new unit
-}
-
-void ViewerWidget::setMeasurePrecision(int decimals)
-{
-    decimals = std::clamp(decimals, 0, 6);
-    if (measurePrecision_ == decimals)
-        return;
-    measurePrecision_ = decimals;
-    emitMeasurementsChanged(); // list values reflect the new precision
-    viewport()->update();
-}
-
-void ViewerWidget::setMeasureLineWidth(double width)
-{
-    width = std::clamp(width, 0.25, 10.0);
-    if (qFuzzyCompare(measureLineWidth_, width))
-        return;
-    measureLineWidth_ = width;
-    viewport()->update(); // redraw marks at the new stroke width
-}
-
-void ViewerWidget::setMeasureSnap(bool on)
-{
-    if (measureSnap_ == on)
-        return;
-    measureSnap_ = on;
-    if (!on)
-        clearSnapState();
-    viewport()->update();
-}
-
-void ViewerWidget::notifyMeasurePanelPopupClosed()
-{
-    // Arm the one-shot guard: the imminent replayed press (if any) is swallowed.
-    sincePanelPopupClosed_.start();
-}
-
-void ViewerWidget::beginCalibration()
-{
-    if (!doc_)
-        return;
-    const bool wasCursorActive = measureMode();
-    cancelInProgressMeasure();
-    toolMode_ = ToolMode::Calibrate;
-    idleAnnotGesture(); // calibrating takes the crosshair; idle the Comment gesture
-    viewport()->setCursor(Qt::CrossCursor);
-    if (!wasCursorActive)
-        emit measureCursorActiveChanged(true); // calibrating uses the crosshair
-    emit measurementReadout(tr("Draw a line over a known dimension…"));
-    viewport()->update();
-}
-
-void ViewerWidget::cancelCalibration()
-{
-    if (toolMode_ != ToolMode::Calibrate)
-        return;
-    cancelInProgressMeasure();
-    toolMode_ = ToolMode::Measure;
-    emit measurementReadout(QString());
-    viewport()->update();
-}
-
-void ViewerWidget::promptSetScale()
-{
-    if (!doc_)
-        return;
-    // Manual scale entry draws no line: drop any half-drawn vector and abandon a
-    // pending calibration so the tool returns to a clean measuring state.
-    cancelInProgressMeasure();
-    if (toolMode_ == ToolMode::Calibrate)
-        toolMode_ = ToolMode::Measure;
-    emit measurementReadout(QString()); // clear the "Draw a line…" prompt if shown
-    // Target the page whose scale the panel is showing (set by updateHoverScale),
-    // falling back to the current page - same as resetPageScale.
-    const int page = scalePage_ >= 0 ? scalePage_ : currentPage_;
-    emit setScaleRequested(page);
-    viewport()->update();
-}
-
-void ViewerWidget::resetPageScale()
-{
-    // Target the page whose scale the panel is showing (set by updateHoverScale),
-    // falling back to the current page. Re-check the guard: the button is only
-    // shown when resettable, but a stale click shouldn't drop a calibration that
-    // is a page's only scale.
-    const int page = scalePage_ >= 0 ? scalePage_ : currentPage_;
-    if (!canResetScale(page))
-        return;
-    // An invalid scale clears the override; setPageScaleOverride re-emits the scale
-    // description + resettable state so the panel updates (label reverts to the
-    // embedded scale, Reset hides).
-    setPageScaleOverride(page, MeasureScale{});
-}
-
-void ViewerWidget::clearMeasurements()
-{
-    measurements_.clear();
-    cancelInProgressMeasure();
-    measureDrag_ = MeasureDrag::None;
-    dragMeasureIdx_ = -1;
-    dragVertexIdx_ = -1;
-    emit measurementReadout(QString());
-    emitMeasurementsChanged();
-    viewport()->update();
-}
-
-void ViewerWidget::removeMeasurement(int index)
-{
-    if (index < 0 || index >= static_cast<int>(measurements_.size()))
-        return;
-    measurements_.erase(measurements_.begin() + index);
-    // A drag in flight referring to a now-shifted index would be unsafe; the X
-    // button is only reachable when not dragging, but cancel defensively.
-    measureDrag_ = MeasureDrag::None;
-    dragMeasureIdx_ = -1;
-    dragVertexIdx_ = -1;
-    emitMeasurementsChanged();
-    viewport()->update();
-}
-
-void ViewerWidget::copyMeasurementValue(int index)
-{
-    if (index < 0 || index >= static_cast<int>(measurements_.size()))
-        return;
-    const Measurement &m = measurements_[index];
-    const QString value = formatMeasurement(m.page, m.kind, m.pts);
-    if (!value.isEmpty())
-        QGuiApplication::clipboard()->setText(value);
-}
-
-void ViewerWidget::onMeasurementHovered(int index, bool hovered)
-{
-    const int next = (hovered && index >= 0 && index < static_cast<int>(measurements_.size()))
-                         ? index
-                         : -1;
-    if (next == hoveredMeasurementIndex_)
-        return;
-    hoveredMeasurementIndex_ = next;
-    viewport()->update(); // repaint so the emphasis appears/clears immediately
-}
-
-void ViewerWidget::emitMeasurementsChanged()
-{
-    QStringList items;
-    items.reserve(static_cast<int>(measurements_.size()));
-    for (const Measurement &m : measurements_) {
-        // The list rows are single-line and elided; collapse an area's two-line
-        // value (area + perimeter) into one inline row so it reads cleanly there.
-        QString s = formatMeasurement(m.page, m.kind, m.pts);
-        s.replace(QLatin1Char('\n'), QStringLiteral(" · "));
-        items << s;
-    }
-    emit measurementsChanged(items);
-}
-
-void ViewerWidget::setPageScaleOverride(int page, const MeasureScale &scale)
-{
-    if (scale.valid())
-        measureOverrides_.setOverride(page, scale);
-    else
-        measureOverrides_.clearOverride(page);
-    lastScaleDesc_.clear();
-    if (doc_) {
-        const QSizeF sz = doc_->pageSize(page);
-        updateHoverScale(page, QPointF(sz.width() / 2, sz.height() / 2));
-    }
-    emit measurementReadout(QString());
-    emitMeasurementsChanged(); // committed values on this page rescale
-    viewport()->update();
-}
-
-void ViewerWidget::handleMeasureClick(QPoint vpPos)
-{
-    const QPoint canvas = vpPos + contentOffset();
-    const int pg = pageAtCanvas(canvas);
-    if (pg < 0)
-        return;
-    // A measurement isn't valid without a scale: starting one on a page that has
-    // none arms calibration instead, so this click becomes the first calibration
-    // point and the user must set the scale before any measurement is committed.
-    if (toolMode_ == ToolMode::Measure && inProgress_.empty() && !pageHasScale(pg))
-        beginCalibration();
-    if (!inProgress_.empty() && pg != inProgressPage_)
-        return; // a multi-vertex measurement stays on one page (check before snapping)
-    const QPointF pp = snapPagePoint(pg, canvasToPagePoint(pg, canvas));
-
-    if (inProgress_.empty())
-        inProgressPage_ = pg;
-
-    inProgress_.push_back(pp);
-    hoverPagePoint_ = pp;
-    hoverValid_ = true;
-
-    if (toolMode_ == ToolMode::Calibrate) {
-        if (inProgress_.size() >= 2) {
-            const double lenPts = QLineF(inProgress_[0], inProgress_[1]).length();
-            const int page = inProgressPage_;
-            cancelInProgressMeasure();
-            toolMode_ = ToolMode::Measure;
-            viewport()->update();
-            emit calibrationLineDrawn(page, lenPts);
-        } else {
-            viewport()->update();
-        }
-        return;
-    }
-
-    const int need = (measureKind_ == MeasureKind::Distance) ? 2
-                     : (measureKind_ == MeasureKind::Angle)  ? 3
-                                                             : -1;
-    if (need > 0 && static_cast<int>(inProgress_.size()) >= need) {
-        commitInProgress();
-    } else {
-        emit measurementReadout(formatMeasurement(inProgressPage_, measureKind_, inProgress_));
-        viewport()->update();
-    }
-}
-
-void ViewerWidget::commitInProgress()
-{
-    if (inProgress_.empty())
-        return;
-    Measurement m;
-    m.page = inProgressPage_;
-    m.kind = measureKind_;
-    m.pts = inProgress_;
-    const QString text = formatMeasurement(m.page, m.kind, m.pts);
-    measurements_.push_back(std::move(m));
-    inProgress_.clear();
-    inProgressPage_ = -1;
-    hoverValid_ = false;
-    emit measurementReadout(text);
-    emitMeasurementsChanged();
-    viewport()->update();
-}
-
-void ViewerWidget::cancelInProgressMeasure()
-{
-    inProgress_.clear();
-    inProgressPage_ = -1;
-    hoverValid_ = false;
-}
-
-void ViewerWidget::finishPolyOrArea()
-{
-    if (measureKind_ != MeasureKind::Polyline && measureKind_ != MeasureKind::Area)
-        return;
-    // Drop a near-duplicate final vertex left by the finishing double-click.
-    if (inProgress_.size() >= 2 && inProgressPage_ >= 0) {
-        const QPointF a = pagePointToWidget(inProgressPage_, inProgress_[inProgress_.size() - 1]);
-        const QPointF b = pagePointToWidget(inProgressPage_, inProgress_[inProgress_.size() - 2]);
-        if (QLineF(a, b).length() < 4.0)
-            inProgress_.pop_back();
-    }
-    const int minPts = (measureKind_ == MeasureKind::Area) ? 3 : 2;
-    if (static_cast<int>(inProgress_.size()) >= minPts)
-        commitInProgress();
-    else
-        cancelInProgressMeasure();
-    viewport()->update();
-}
-
-std::vector<QPointF> ViewerWidget::previewPts() const
-{
-    std::vector<QPointF> pts = inProgress_;
-    if (hoverValid_ && !pts.empty())
-        pts.push_back(hoverPagePoint_);
-    return pts;
-}
-
-MeasureScale ViewerWidget::resolvedScale(int page, QPointF pp) const
-{
-    if (!doc_)
-        return {};
-    const PageMeasurement pm = doc_->pageMeasurement(page);
-    return measure::resolveScale(pm, pp, measureOverrides_.override(page));
-}
-
-QString ViewerWidget::formatMeasurement(int page, MeasureKind kind,
-                                        const std::vector<QPointF> &pts) const
-{
-    if (pts.empty())
-        return {};
-    // Shared with the burned-in / annotated PDF labels, so they read identically.
-    return formatMeasurementValue(kind, pts, resolvedScale(page, pts.front()), measureUnit_,
-                                  measurePrecision_);
-}
-
-void ViewerWidget::loadMeasurements(std::vector<Measurement> measurements, MeasureModel overrides,
-                                    MeasureUnit unit, int precision, double lineWidth)
-{
-    measurements_ = std::move(measurements);
-    measureOverrides_ = std::move(overrides);
-    measureUnit_ = unit;
-    measurePrecision_ = precision;
-    measureLineWidth_ = std::clamp(lineWidth, 0.25, 10.0);
-    // Marks are only painted while the tool is enabled (see paintEvent), so turn
-    // it on to surface the loaded measurements and the panel.
-    if (!measurements_.empty())
-        setMeasureMode(true);
-    emitMeasurementsChanged();
-    viewport()->update();
-}
-
-QString ViewerWidget::scaleDescription(int page, QPointF pp) const
-{
-    const MeasureScale s = resolvedScale(page, pp);
-    const QString unit = measure::unitSuffix(measureUnit_);
-    if (!s.valid())
-        return tr("No scale - Calibrate (paper · %1)").arg(unit);
-    QString suffix;
-    if (s.source == MeasureSource::Calibrated)
-        suffix = tr(" · calibrated");
-    else if (s.source == MeasureSource::Manual)
-        suffix = tr(" · manual");
-    return tr("Scale %1 · %2%3").arg(s.label, unit, suffix);
-}
-
-void ViewerWidget::updateHoverScale(int page, QPointF pp)
-{
-    scalePage_ = page; // the page Reset would act on (the one whose scale is shown)
-    const QString desc = scaleDescription(page, pp);
-    if (desc != lastScaleDesc_) {
-        lastScaleDesc_ = desc;
-        emit measureScaleChanged(desc);
-    }
-    const int resettable = canResetScale(page) ? 1 : 0;
-    if (resettable != lastScaleResettable_) {
-        lastScaleResettable_ = resettable;
-        emit measureScaleResettableChanged(resettable == 1);
-    }
-}
-
-bool ViewerWidget::pressIsOverMeasurePanel(QMouseEvent *event) const
-{
-    const QPoint g = event->globalPosition().toPoint();
-    for (QWidget *panel : {static_cast<QWidget *>(measurePanel_), static_cast<QWidget *>(annotPanel_)}) {
-        if (panel && panel->isVisible() && panel->rect().contains(panel->mapFromGlobal(g)))
-            return true;
-    }
-    return false;
-}
-
-bool ViewerWidget::swallowToolPress(QMouseEvent *event)
-{
-    // (1) the synthetic press Qt replays when a panel dropdown (unit / line-width)
-    //     is dismissed over the page - the common case, since the list extends onto
-    //     the page so its dismiss-click lands on the viewport;
-    if (sincePanelPopupClosed_.isValid()
-        && sincePanelPopupClosed_.elapsed() < kPopupReplayWindowMs) {
-        sincePanelPopupClosed_.invalidate();
-        return true;
-    }
-    // (2) a popup is still up - never a real page click;
-    if (QApplication::activePopupWidget())
-        return true;
-    // (3) a press physically over a visible docked tool panel (measure OR comment).
-    return pressIsOverMeasurePanel(event);
-}
-
-void ViewerWidget::clearSnapState()
-{
-    snapValid_ = false;
-    snapPage_ = -1;
-    snapType_ = snap::SnapType::None;
-}
-
-void ViewerWidget::ensureMeasureGeometry(int page)
-{
-    if (!doc_ || page < 0 || measureGeoPage_ == page)
-        return;
-    measureGeo_ = doc_->pageGeometry(page); // cached in Document; one copy per page change
-    measureGeoPage_ = page;
-}
-
-QPointF ViewerWidget::snapPagePoint(int page, QPointF pp)
-{
-    if (!measureSnap_ || !doc_ || page < 0) {
-        clearSnapState();
-        return pp;
-    }
-    ensureMeasureGeometry(page);
-    if (measureGeo_.empty()) {
-        clearSnapState();
-        return pp;
-    }
-    // Keep the snap reach a constant on-screen distance regardless of zoom.
-    const double radiusPts = (scale_ > 0.0) ? kSnapRadiusPx / scale_ : kSnapRadiusPx;
-    const snap::SnapResult r = snap::snap(measureGeo_, pp, radiusPts);
-    if (r.snapped()) {
-        snapValid_ = true;
-        snapPage_ = page;
-        snapPagePoint_ = r.point;
-        snapType_ = r.type;
-        return r.point;
-    }
-    clearSnapState();
-    return pp;
-}
-
-void ViewerWidget::drawSnapIndicator(QPainter &p) const
-{
-    if (!snapValid_ || !measureMode() || snapPage_ < 0)
-        return;
-    QPointF w = pagePointToWidget(snapPage_, snapPagePoint_);
-    // Drawn after the page loop, so it does not inherit the loop's ease transform:
-    // carry it to the eased position by hand, or the marker would sit off the point
-    // it is locked to for the length of a zoom.
-    if (zoomEase_.active) {
-        const QRect pr = layout_.pageRect(snapPage_);
-        if (pr.isValid()) {
-            const QRectF fin(pr.translated(-contentOffset()));
-            w = zoomEaseTransform(fin, zoomEaseRect(snapPage_, fin)).map(w);
-        }
-    }
-    p.save();
-    p.setRenderHint(QPainter::Antialiasing, true);
-    QColor accent = theme::chrome(palette()).accent;
-    p.setPen(QPen(accent, 2.0));
-    p.setBrush(Qt::NoBrush);
-    // Sized to roughly match the crosshair cursor's arms so the snap marker reads
-    // as "the cursor is locked here" rather than a tiny separate dot.
-    const double r = 12.0;
-    if (snapType_ == snap::SnapType::Vertex) {
-        p.drawRect(QRectF(w.x() - r, w.y() - r, 2 * r, 2 * r)); // endpoint marker
-    } else {
-        p.drawLine(QPointF(w.x() - r, w.y() - r), QPointF(w.x() + r, w.y() + r)); // edge marker (×)
-        p.drawLine(QPointF(w.x() - r, w.y() + r), QPointF(w.x() + r, w.y() - r));
-    }
-    p.restore();
-}
-
-void ViewerWidget::drawMeasurements(QPainter &p, int page) const
-{
-    bool hasCommitted = false;
-    for (const Measurement &m : measurements_) {
-        if (m.page == page) {
-            hasCommitted = true;
-            break;
-        }
-    }
-    const bool hasInProgress = (inProgressPage_ == page && !inProgress_.empty());
-    if (!hasCommitted && !hasInProgress)
-        return;
-
-    p.save();
-    p.setRenderHint(QPainter::Antialiasing, true);
-    QColor accent = theme::chrome(palette()).accent;
-
-    // A measurement's decoration - stroke width, vertex handles, the angle arc, the
-    // value pill and its font - is screen-space chrome in device-independent pixels,
-    // so it must NOT ride the zoom ease's transform (a 4x zoom-out would draw
-    // 8-pixel strokes and a giant pill for a few frames, then snap back). Take the
-    // transform off the painter and apply it to the POINTS instead: identical
-    // placement, true screen sizes. Whatever the painter carries is what gets
-    // mapped, so this holds no matter what put it there.
-    QTransform pointXf;
-    if (zoomEase_.active) {
-        pointXf = p.transform();
-        p.setWorldTransform(QTransform());
-    }
-
-    for (int i = 0; i < static_cast<int>(measurements_.size()); ++i) {
-        const Measurement &m = measurements_[i];
-        if (m.page == page)
-            paintShape(p, page, m.kind, m.pts, accent, false, m.hasLabelPos, m.labelPos,
-                       i == hoveredMeasurementIndex_, pointXf);
-    }
-
-    if (hasInProgress)
-        paintShape(p, page, measureKind_, previewPts(), accent, true, false, {}, false, pointXf);
-
-    p.restore();
-}
-
-void ViewerWidget::paintShape(QPainter &p, int page, MeasureKind kind,
-                              const std::vector<QPointF> &pagePts, const QColor &accent,
-                              bool inProgress, bool hasLabelOverride, QPointF labelOverridePage,
-                              bool isHovered, const QTransform &pointXf) const
-{
-    if (pagePts.empty())
-        return;
-    // pointXf is identity except during a zoom ease, where the caller hands us the
-    // page's ease transform to apply here instead of on the painter (see
-    // drawMeasurements) so the chrome keeps its true screen size.
-    std::vector<QPointF> w;
-    w.reserve(pagePts.size());
-    for (const QPointF &pp : pagePts)
-        w.push_back(pointXf.map(pagePointToWidget(page, pp)));
-
-    QPolygonF poly;
-    for (const QPointF &pt : w)
-        poly << pt;
-
-    QPen pen(accent);
-    // Hovering the measurement's row in the panel thickens its stroke by 2 pt.
-    pen.setWidthF(measureLineWidth_ + (isHovered ? 2.0 : 0.0));
-    if (inProgress)
-        pen.setStyle(Qt::DashLine);
-    p.setPen(pen);
-    p.setBrush(Qt::NoBrush);
-
-    if (kind == MeasureKind::Area && w.size() >= 3) {
-        QColor fill = accent;
-        fill.setAlpha(theme::doc().measureAreaAlpha);
-        p.setBrush(fill);
-        p.drawPolygon(poly);
-        p.setBrush(Qt::NoBrush);
-    } else if (kind == MeasureKind::Angle && w.size() >= 3) {
-        p.drawPolyline(poly);
-        const QPointF v = w[1];
-        const double r = 22.0;
-        auto angOf = [&](const QPointF &q) {
-            return std::atan2(-(q.y() - v.y()), q.x() - v.x()) * 180.0
-                   / 3.14159265358979323846;
-        };
-        const double a0 = angOf(w[0]);
-        double span = angOf(w[2]) - a0;
-        while (span <= -180.0)
-            span += 360.0;
-        while (span > 180.0)
-            span -= 360.0;
-        QPen ap(accent);
-        ap.setWidthF(1.4);
-        p.setPen(ap);
-        p.drawArc(QRectF(v.x() - r, v.y() - r, 2 * r, 2 * r), qRound(a0 * 16),
-                  qRound(span * 16));
-        p.setPen(pen);
-    } else {
-        p.drawPolyline(poly);
-    }
-
-    // Vertex handles.
-    p.setPen(QPen(accent, 1.4));
-    p.setBrush(theme::doc().measureHandle);
-    for (const QPointF &pt : w)
-        p.drawEllipse(pt, 3.5, 3.5);
-
-    // Value label - at the user-pinned position when set, else auto-anchored.
-    if (w.size() >= 2) {
-        const QString text = formatMeasurement(page, kind, pagePts);
-        if (!text.isEmpty()) {
-            const QPointF anchor = hasLabelOverride
-                                       ? pointXf.map(pagePointToWidget(page, labelOverridePage))
-                                       : computeLabelAnchor(kind, w);
-            drawLabelPill(p, anchor, text);
-        }
-    }
-}
-
-// The value-pill rect for `text` centred on `anchorWidget`. The anchor is in
-// widget space (already shifted by the scroll offset), so the pill scrolls with
-// the page rather than being pinned inside the viewport. Shared by drawing and
-// hit-testing so they agree.
-QRectF ViewerWidget::labelRectForAnchor(const QString &text, QPointF anchorWidget) const
-{
-    const QFontMetricsF fm(font());
-    // boundingRect(const QString&) treats the text as one line; the rect+flags
-    // overload honours embedded '\n' (an area's value with its perimeter below),
-    // so the pill grows to fit every line.
-    const QRectF tb = fm.boundingRect(QRectF(0, 0, 10000, 10000), Qt::AlignLeft, text);
-    QRectF pill(0, 0, tb.width() + 14.0, tb.height() + 8.0);
-    pill.moveCenter(anchorWidget);
-    return pill;
-}
-
-QColor ViewerWidget::pagePaper() const
-{
-    const theme::Doc &d = theme::doc();
-    switch (pageTheme_) {
-    case PageTheme::Comfort:
-        return d.paperComfort;
-    case PageTheme::Inverted:
-        return d.paperInverted;
-    default:
-        return d.paperNormal;
-    }
-}
-
-QColor ViewerWidget::pageInk() const
-{
-    // The ink the page itself renders text in, so a pill drawn over the page
-    // matches the page rather than the chrome.
-    if (pageTheme_ == PageTheme::Comfort)
-        return QColor(comfort::kRampFg[0], comfort::kRampFg[1], comfort::kRampFg[2]);
-    return pageTheme_ == PageTheme::Inverted ? theme::doc().paperNormal
-                                             : theme::doc().paperInverted;
-}
-
-void ViewerWidget::drawLabelPill(QPainter &p, QPointF anchor, const QString &text) const
-{
-    p.save();
-    const QRectF pill = labelRectForAnchor(text, anchor);
-    // The pill sits ON the page, so it takes the page's paper and ink - not the
-    // chrome palette, which would put a near-black pill on white paper as soon as
-    // the UI theme went dark.
-    const theme::Doc &d = theme::doc();
-    QColor bg = pagePaper();
-    bg.setAlpha(d.measureLabelAlpha);
-    const QColor ink = pageInk();
-    QColor bd = ink;
-    bd.setAlpha(d.measureLabelEdgeAlpha);
-    p.setBrush(bg);
-    p.setPen(QPen(bd, 1.0));
-    p.drawRoundedRect(pill, 6, 6);
-    p.setPen(ink);
-    p.setFont(font());
-    p.drawText(pill, Qt::AlignCenter, text);
-    p.restore();
-}
-
-QPointF ViewerWidget::labelAnchorWidget(const Measurement &m) const
-{
-    if (m.hasLabelPos)
-        return pagePointToWidget(m.page, m.labelPos);
-    std::vector<QPointF> w;
-    w.reserve(m.pts.size());
-    for (const QPointF &pp : m.pts)
-        w.push_back(pagePointToWidget(m.page, pp));
-    return computeLabelAnchor(m.kind, w);
-}
-
-QRectF ViewerWidget::labelRectFor(const Measurement &m) const
-{
-    if (m.pts.size() < 2)
-        return {};
-    const QString text = formatMeasurement(m.page, m.kind, m.pts);
-    if (text.isEmpty())
-        return {};
-    return labelRectForAnchor(text, labelAnchorWidget(m));
-}
-
-bool ViewerWidget::measureHitTest(QPoint vpPos, int &measureIdx, int &vertexIdx,
-                                  bool &onLabel) const
-{
-    measureIdx = -1;
-    vertexIdx = -1;
-    onLabel = false;
-    const QPointF cursor(vpPos);
-    // Vertex handles first (topmost measurement wins), so a handle on top of a
-    // label is grabbed for an endpoint drag rather than a label move. Skip pages
-    // that are not currently laid out (e.g. non-current page in Single mode):
-    // pagePointToWidget collapses their points to (0,0), which would otherwise
-    // create a phantom hit target at the viewport's top-left corner.
-    for (int i = static_cast<int>(measurements_.size()) - 1; i >= 0; --i) {
-        const Measurement &m = measurements_[i];
-        if (!layout_.pageRect(m.page).isValid())
-            continue;
-        for (int v = 0; v < static_cast<int>(m.pts.size()); ++v) {
-            if (QLineF(cursor, pagePointToWidget(m.page, m.pts[v])).length() <= kHandleGrabPx) {
-                measureIdx = i;
-                vertexIdx = v;
-                return true;
-            }
-        }
-    }
-    // Then value labels.
-    for (int i = static_cast<int>(measurements_.size()) - 1; i >= 0; --i) {
-        if (!layout_.pageRect(measurements_[i].page).isValid())
-            continue;
-        const QRectF pill = labelRectFor(measurements_[i]);
-        if (pill.isValid() && pill.contains(cursor)) {
-            measureIdx = i;
-            onLabel = true;
-            return true;
-        }
-    }
-    return false;
 }
 
 } // namespace mervin

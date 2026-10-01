@@ -1,5 +1,10 @@
 # Local PDF fixtures
 
-PDF test fixtures are intentionally not committed because the original private repository used personal documents and third-party files without redistribution permission.
+Required tests use synthetic PDFs generated in the build directory by
+`tests/generate_fixtures.py`, plus forms and encrypted files created in individual tests.
 
-Place local fixtures in this directory when running the data-dependent tests. The expected filenames are defined in `tests/CMakeLists.txt`; tests without an available fixture skip only their data-dependent cases. `tst_viewer_fit` now generates its geometry fixtures at runtime.
+The optional `tst_ink_rects` photographic reference checks still use local
+`images.pdf`, `images2.pdf`, `pcba.pdf`, and `house-drawing.pdf`. These personal or
+third-party documents are not redistributable and must not be committed.
+The target has the CTest label `optional-corpus`. Generated tests separately cover
+scan inversion, clipped rendering, OCR, measurements, text, and mixed page sizes.

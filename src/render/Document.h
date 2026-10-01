@@ -12,6 +12,7 @@
 #include <array>
 #include <functional>
 #include <mutex>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -56,6 +57,16 @@ struct PdfItemProperties
     QStringList values;
 
     bool valid() const { return page >= 0 && !values.isEmpty(); }
+};
+
+class Document;
+
+// A job locks this gate before touching a document. Destruction clears the
+// pointer under the same lock; the gate can outlive the document.
+struct DocumentLifetime
+{
+    std::mutex mutex;
+    Document *document = nullptr;
 };
 
 // Owns an open MuPDF document and caches its per-page sizes and title.
@@ -165,8 +176,10 @@ public:
 
     // Serializes all access to handle() across threads (see class note).
     std::mutex &accessMutex() const { return access_; }
+    std::shared_ptr<DocumentLifetime> lifetime() const { return lifetime_; }
 
 private:
+    std::shared_ptr<DocumentLifetime> lifetime_ = std::make_shared<DocumentLifetime>();
     fz_context *ctx_ = nullptr;  // base context, not owned (owned by RenderEngine)
     fz_document *doc_ = nullptr; // owned
     std::vector<QSizeF> pageSizes_;

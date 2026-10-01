@@ -102,6 +102,7 @@ private:
         bool standalone = false;
     };
 
+    int rowBottom(const Row &row) const;
     void rebuildSpreadPlan();
     void relayout();
     QSize displaySize(int pageNo) const;

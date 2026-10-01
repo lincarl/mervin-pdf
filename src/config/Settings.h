@@ -100,7 +100,11 @@ struct Settings
     QByteArray windowState;
 
     static Settings load();
-    void save() const;
+    bool save(QString *error = nullptr) const;
+
+private:
+    mutable QByteArray baseline_; // serialized values at load/last successful save
+
 };
 
 } // namespace mervin

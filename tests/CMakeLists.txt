@@ -1,4 +1,10 @@
 find_package(Qt6 REQUIRED COMPONENTS Test)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(MERVIN_FIXTURES_DIR "${CMAKE_CURRENT_BINARY_DIR}/fixtures")
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/generate_fixtures.py"
+    "${MERVIN_FIXTURES_DIR}" COMMAND_ERROR_IS_FATAL ANY)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS generate_fixtures.py)
+
 
 # Windows only: ensure ctest can find the runtime DLLs without manual PATH setup
 # (Qt's bin + the vcpkg-installed bin where qpdf and its deps live). On Linux the
@@ -6,45 +12,22 @@ find_package(Qt6 REQUIRED COMPONENTS Test)
 if(WIN32)
     file(TO_CMAKE_PATH "$ENV{QT6_DIR}/bin" _mervin_qt_bin)
     set(_mervin_vcpkg_bin "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/bin")
-    # PATH: the test exes are not deployed with their DLLs, so Qt's bin and the
-    # vcpkg-installed bin (where qpdf and its deps live) must be reachable or
-    # every test dies with 0xc0000135 before reaching main(). On Linux the
-    # dynamic loader finds the shared libs normally, so this stays empty there.
-    #
-    # QT_ASSUME_STDERR_HAS_CONSOLE: on Windows, QPlainTestLogger hands the whole
-    # test log to OutputDebugStringA instead of writing it to stdout whenever Qt
-    # decides stderr is not attached to a console - and under ctest stderr is a
-    # pipe, so it never is. The symptom is an empty LastTest.log and a
-    # --output-on-failure that explains nothing at all, which is exactly how a
-    # broken test used to be undiagnosable here. Telling Qt to assume a console
-    # puts the log back on stdout where ctest can capture it. (The older
-    # QT_LOGGING_TO_CONSOLE=1 does the same thing but Qt 6 deprecates it.)
-    #
-    # Note this is a *runtime* fix. WIN32_EXECUTABLE OFF below is still needed
-    # and was never the problem: the exes were already console-subsystem.
+    # Tests need Qt/vcpkg DLLs on PATH. Force Qt test output to stderr so CTest captures failures.
     set(_mervin_test_env
         "PATH=path_list_prepend:${_mervin_qt_bin}"
         "PATH=path_list_prepend:${_mervin_vcpkg_bin}"
         "QT_ASSUME_STDERR_HAS_CONSOLE=set:1")
 endif()
 
-# A QSKIP makes QTest exit 0, so ctest reports a test that silently ran nothing
-# as "Passed" - which is how a corrupt shipped eng.traineddata stayed hidden for
-# six weeks behind a test that skipped itself (see tst_tessdata). Several cases
-# here legitimately skip when their fixture data is absent, so a skip must not
-# fail the build; it just has to be visible in the ctest summary.
-#
-# The regex deliberately anchors on QTest's totals line and requires "0 failed".
-# Matching the bare "SKIP   :" line would be wrong: SKIP_REGULAR_EXPRESSION wins
-# "regardless of the process exit code", so a test that skipped one function and
-# genuinely FAILED another would be reported as Skipped and the failure lost.
-# Verified both ways against ctest 4.3.3 before settling on this.
-#
-# This only works because of the stdout fix above - with no captured output there
-# is nothing for the regex to match.
+# Expose QTest skips without masking failures in the same executable.
+# CI rejects skips in required targets; optional corpus tests have a separate label.
 set(_mervin_skip_regex "Totals: [0-9]+ passed, 0 failed, [1-9][0-9]* skipped")
 
 set(_mervin_tests
+    tst_perf_layout
+    tst_document_output
+    tst_render_lifetime
+    tst_settings_store
     tst_comfort_transform
     tst_ink_rects
     tst_preview_layer
@@ -123,43 +106,22 @@ set_tests_properties(tst_open_pdf_dialog PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
-# Widget-level guard rail for the zoom preview layer. ViewerWidget lives in the
-# application target, so its four self-contained UI sources are compiled into
-# this test as well (the headers are listed so AUTOMOC processes them here).
-# The viewer is flagged WA_DontShowOnScreen, so no window ever appears and the
-# normal platform plugin is enough - no offscreen plugin to deploy, and the exe
-# can be run directly like the perf guardrails.
-qt_add_executable(tst_viewer_preview tst_viewer_preview.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/ViewerWidget.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/ViewerWidget.h
-    ${CMAKE_SOURCE_DIR}/src/ui/AnnotPopup.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/AnnotPopup.h
-    ${CMAKE_SOURCE_DIR}/src/ui/PdfPropertiesPopup.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/PdfPropertiesPopup.h)
-target_link_libraries(tst_viewer_preview PRIVATE mervin_icons mervin_core Qt6::Test Qt6::Widgets)
+# The application and widget tests link the same viewer implementation.
+qt_add_executable(tst_viewer_preview tst_viewer_preview.cpp)
+target_link_libraries(tst_viewer_preview PRIVATE mervin_viewer Qt6::Test)
 target_compile_definitions(tst_viewer_preview PRIVATE
-    MERVIN_HOUSE_PDF="${CMAKE_SOURCE_DIR}/examples/house-drawing.pdf"
+    MERVIN_HOUSE_PDF="${MERVIN_FIXTURES_DIR}/house-drawing.pdf"
     # A multi-page fixture: the fit-mode anchoring case needs pages to land on.
-    MERVIN_IMAGES_PDF="${CMAKE_SOURCE_DIR}/examples/images.pdf")
+    MERVIN_IMAGES_PDF="${MERVIN_FIXTURES_DIR}/images.pdf")
 set_target_properties(tst_viewer_preview PROPERTIES WIN32_EXECUTABLE OFF)
 add_test(NAME tst_viewer_preview COMMAND tst_viewer_preview)
 set_tests_properties(tst_viewer_preview PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
-# Widget-level guard rails for the fit modes on a mixed-size document. Same
-# arrangement as tst_viewer_preview above: ViewerWidget belongs to the application
-# target, so its four self-contained UI sources are compiled in here too (headers
-# listed so AUTOMOC processes them), and the viewer is flagged WA_DontShowOnScreen
-# so no window appears.
-qt_add_executable(tst_viewer_fit tst_viewer_fit.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/ViewerWidget.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/ViewerWidget.h
-    ${CMAKE_SOURCE_DIR}/src/ui/AnnotPopup.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/AnnotPopup.h
-    ${CMAKE_SOURCE_DIR}/src/ui/PdfPropertiesPopup.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/PdfPropertiesPopup.h)
-target_link_libraries(tst_viewer_fit PRIVATE mervin_icons mervin_core Qt6::Test Qt6::Widgets)
+# Fit-mode regression tests use generated mixed-size documents.
+qt_add_executable(tst_viewer_fit tst_viewer_fit.cpp)
+target_link_libraries(tst_viewer_fit PRIVATE mervin_viewer Qt6::Test)
 set_target_properties(tst_viewer_fit PROPERTIES WIN32_EXECUTABLE OFF)
 add_test(NAME tst_viewer_fit COMMAND tst_viewer_fit)
 set_tests_properties(tst_viewer_fit PROPERTIES
@@ -320,10 +282,10 @@ set_tests_properties(tst_extract_dialog PROPERTIES
 # annotations the old walk resolved just to read a width and a height.
 target_link_libraries(tst_document PRIVATE MuPDF::MuPDF)
 target_compile_definitions(tst_document PRIVATE
-    MERVIN_SCHEMATIC_PDF="${CMAKE_SOURCE_DIR}/examples/schematic.pdf"
-    MERVIN_FORM_PDF="${CMAKE_SOURCE_DIR}/examples/form_comment.pdf"
-    MERVIN_HOUSE_PDF="${CMAKE_SOURCE_DIR}/examples/house-drawing.pdf"
-    MERVIN_IMAGES_PDF="${CMAKE_SOURCE_DIR}/examples/images.pdf")
+    MERVIN_SCHEMATIC_PDF="${MERVIN_FIXTURES_DIR}/schematic.pdf"
+    MERVIN_FORM_PDF="${MERVIN_FIXTURES_DIR}/form_comment.pdf"
+    MERVIN_HOUSE_PDF="${MERVIN_FIXTURES_DIR}/house-drawing.pdf"
+    MERVIN_IMAGES_PDF="${MERVIN_FIXTURES_DIR}/images.pdf")
 
 # tst_view_layout builds its own /MediaBox-only fixtures, with exact integer page
 # sizes so the layout arithmetic can be checked by hand.
@@ -331,7 +293,7 @@ target_compile_definitions(tst_document PRIVATE
 # tst_content_search searches a real document through MuPDF text extraction. It
 # uses an optional local fixture; MERVIN_TEST_PDF still overrides it.
 target_compile_definitions(tst_content_search PRIVATE
-    MERVIN_SEARCH_PDF="${CMAKE_SOURCE_DIR}/examples/properties.pdf")
+    MERVIN_SEARCH_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
 
 # tst_tessdata validates the language model the installers ship, and checks that
 # the validator rejects the damage classes that would otherwise abort the process
@@ -343,7 +305,7 @@ target_compile_definitions(tst_tessdata PRIVATE
 # developer's own so the test exercises the model we package; the PDF fixture is
 # optional and local.
 target_compile_definitions(tst_ocr PRIVATE
-    MERVIN_OCR_PDF="${CMAKE_SOURCE_DIR}/examples/images.pdf"
+    MERVIN_OCR_PDF="${MERVIN_FIXTURES_DIR}/images.pdf"
     MERVIN_TESSDATA_DIR="${CMAKE_SOURCE_DIR}/resources/tessdata")
 
 # tst_measure_export builds fixture PDFs and inspects flatten/annotate output
@@ -351,12 +313,11 @@ target_compile_definitions(tst_ocr PRIVATE
 # shipped sample drawing through MuPDF (QSKIPs if the file is absent).
 target_link_libraries(tst_measure_export PRIVATE qpdf::libqpdf)
 target_compile_definitions(tst_measure_export PRIVATE
-    MERVIN_DRAWING_PDF="${CMAKE_SOURCE_DIR}/docs/drawing.pdf")
+    MERVIN_DRAWING_PDF="${MERVIN_FIXTURES_DIR}/drawing.pdf")
 
-# tst_measure's data-gated cases open the sample drawing shipped in docs/. The
-# path is baked in; the test QSKIPs the data cases if the file is absent.
+# Measurement metadata and snapping use a generated CAD-style drawing.
 target_compile_definitions(tst_measure PRIVATE
-    MERVIN_DRAWING_PDF="${CMAKE_SOURCE_DIR}/docs/drawing.pdf")
+    MERVIN_DRAWING_PDF="${MERVIN_FIXTURES_DIR}/drawing.pdf")
 
 # tst_file_clipboard verifies the Explorer-style file copy against the real
 # Win32 clipboard (CF_HDROP + Preferred DropEffect), so it needs user32/shell32.
@@ -370,10 +331,10 @@ endif()
 # --profile and times the whole process. Their numbers print to stdout - run
 # the exes directly (or `ctest -R tst_perf -V`) to read them.
 target_compile_definitions(tst_perf_render PRIVATE
-    MERVIN_HOUSE_PDF="${CMAKE_SOURCE_DIR}/examples/house-drawing.pdf"
+    MERVIN_HOUSE_PDF="${MERVIN_FIXTURES_DIR}/house-drawing.pdf"
     # The document-open case times every sample in the directory: open cost is what
     # a multi-document start is made of, and whole-process timings cannot resolve it.
-    MERVIN_EXAMPLES_DIR="${CMAKE_SOURCE_DIR}/examples")
+    MERVIN_EXAMPLES_DIR="${MERVIN_FIXTURES_DIR}")
 # tst_ink_rects renders pages of optional local image-heavy samples end to end
 # through the Comfort pipeline (QSKIPs if a file is absent).
 target_compile_definitions(tst_ink_rects PRIVATE
@@ -386,5 +347,21 @@ target_compile_definitions(tst_perf_startup PRIVATE
     # Documents for the restored-session case: a real multi-document startup is
     # what the staged open + cheap page walk changed, and the empty-profile run
     # cannot see any of it.
-    MERVIN_EXAMPLES_DIR="${CMAKE_SOURCE_DIR}/examples")
+    MERVIN_EXAMPLES_DIR="${MERVIN_FIXTURES_DIR}")
 add_dependencies(tst_perf_startup MervinPDF)
+
+foreach(_t tst_document_output tst_render_lifetime tst_content_search)
+    target_compile_definitions(${_t} PRIVATE MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
+endforeach()
+target_compile_definitions(tst_document_output PRIVATE MERVIN_DRAWING_PDF="${MERVIN_FIXTURES_DIR}/drawing.pdf")
+
+target_compile_definitions(tst_perf_layout PRIVATE MERVIN_LONG_PDF="${MERVIN_FIXTURES_DIR}/long.pdf")
+
+qt_add_executable(tst_document_workflow tst_document_workflow.cpp)
+target_link_libraries(tst_document_workflow PRIVATE mervin_app Qt6::Test)
+target_compile_definitions(tst_document_workflow PRIVATE MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
+add_test(NAME tst_document_workflow COMMAND tst_document_workflow)
+set_tests_properties(tst_document_workflow PROPERTIES ENVIRONMENT_MODIFICATION "${_mervin_test_env}")
+set_tests_properties(tst_ink_rects PROPERTIES LABELS "optional-corpus")
+
+target_compile_definitions(tst_document_output PRIVATE MERVIN_SCAN_PDF="${MERVIN_FIXTURES_DIR}/scan.pdf")

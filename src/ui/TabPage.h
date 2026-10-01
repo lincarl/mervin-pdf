@@ -34,6 +34,8 @@ public:
     // before replacing the file on disk, e.g. an in-place "Save Measurements").
     // The viewer shows a blank page until open() is called again.
     void detachDocument();
+    bool recoverSnapshot(const QString &snapshot, QString *error);
+    bool hasRecoverySnapshot() const { return !recoveryPath_.isEmpty(); }
 
     ViewerWidget *viewer() const { return viewer_; }
     MeasurePanel *measurePanel() const { return measurePanel_; }
@@ -61,6 +63,7 @@ private:
     PanelStack *panelStack_ = nullptr; // docks measurePanel_ + annotPanel_ as a group
     QString path_;
     QString canonicalPath_;
+    QString recoveryPath_;
     QString password_; // see password()
 };
 

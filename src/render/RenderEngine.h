@@ -18,6 +18,7 @@ typedef struct fz_context fz_context;
 namespace mervin {
 
 class Document;
+struct DocumentLifetime;
 
 // Owns MuPDF's base fz_context and a pool of render worker threads, each with
 // its own cloned context (the documented MuPDF multi-threading pattern). All
@@ -45,6 +46,8 @@ public:
     // the engine does not interpret it, so epochs are private to each viewer.
     void submit(const RenderRequest &req);
 
+    void cancelRequests(quint64 requester);
+
     void shutdown(); // stop and join workers (idempotent)
 
     // Synchronous, on-the-calling-thread render of a single page (used by Print,
@@ -70,7 +73,13 @@ private:
     std::array<std::mutex, 4> locks_;
 
     std::vector<std::thread> workers_;
-    std::deque<RenderRequest> queue_;
+    struct Job {
+        RenderRequest request;
+        std::shared_ptr<DocumentLifetime> lifetime;
+        std::atomic<bool> canceled{false};
+    };
+    std::deque<std::shared_ptr<Job>> queue_;
+    std::vector<std::weak_ptr<Job>> jobs_; // includes active jobs; guarded by queueMutex_
     std::mutex queueMutex_;
     std::condition_variable queueCv_;
     std::atomic<bool> stop_{false};

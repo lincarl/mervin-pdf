@@ -1,9 +1,7 @@
 #pragma once
 
-// Per-page manual / calibrated scale overrides. Lives in the UI/viewer layer
-// and is NOT persisted into the PDF. A manual or calibrated override beats the
-// document's embedded /VP measurement for that page until cleared. GUI-free and
-// MuPDF-free, modeled on SelectionModel.
+// Per-page manual/calibrated scales override embedded /VP metadata.
+// MeasureContent serializes them with the document's editable measurements.
 
 #include "render/MeasureMath.h"
 #include "render/MeasureTypes.h"

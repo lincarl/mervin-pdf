@@ -430,43 +430,40 @@ QRect ViewLayout::pageRect(int pageNo) const
     return {};
 }
 
+int ViewLayout::rowBottom(const Row &row) const
+{
+    int bottom = 0;
+    for (int k = 0; k < row.count; ++k)
+        bottom = std::max(bottom, rects_[row.first + k].bottom());
+    return bottom;
+}
+
 std::vector<int> ViewLayout::pagesInViewport(const QRect &viewport) const
 {
     std::vector<int> out;
-    for (int i = 0; i < static_cast<int>(rects_.size()); ++i)
-        if (rects_[i].isValid() && rects_[i].intersects(viewport))
-            out.push_back(i);
+    if (!viewport.isValid())
+        return out;
+    auto row = std::lower_bound(rows_.begin(), rows_.end(), viewport.top(),
+                               [this](const Row &r, int y) { return rowBottom(r) < y; });
+    for (; row != rows_.end() && rects_[row->first].top() <= viewport.bottom(); ++row)
+        for (int k = 0; k < row->count; ++k) {
+            const int page = row->first + k;
+            if (rects_[page].intersects(viewport))
+                out.push_back(page);
+        }
     return out;
 }
 
 int ViewLayout::pageAtY(int y) const
 {
-    // Walk the laid-out ROWS, not rects: the two halves of a spread can differ in
-    // height, so rects_ is not sorted by bottom() and a plain scan would skip the
-    // shorter half of every row for ever (it ends above its partner, so its band
-    // is already consumed) or hand back the right-hand page mid-spread. Comparing
-    // against the row's lowest edge and reporting the row's first page keeps the
-    // answer one page per spread, whichever way the sizes fall. With the spread
-    // axis off every row is one page, so this is the plain scan it replaces.
-    int last = -1;
-    for (const Row &r : rows_) {
-        int bottom = 0;
-        int leader = -1;
-        for (int k = 0; k < r.count && r.first + k < static_cast<int>(rects_.size()); ++k) {
-            const QRect &rc = rects_[r.first + k];
-            if (!rc.isValid())
-                continue;
-            if (leader < 0)
-                leader = r.first + k;
-            bottom = std::max(bottom, rc.bottom());
-        }
-        if (leader < 0)
-            continue;
-        last = leader;
-        if (y <= bottom + gap_ / 2)
-            return leader;
-    }
-    return last;
+    if (rows_.empty())
+        return -1;
+    // Rows have monotonic bottoms even when the two pages differ in height.
+    auto row = std::lower_bound(rows_.begin(), rows_.end(), y,
+                               [this](const Row &r, int point) {
+                                   return rowBottom(r) + gap_ / 2 < point;
+                               });
+    return (row == rows_.end() ? rows_.back() : *row).first;
 }
 
 } // namespace mervin

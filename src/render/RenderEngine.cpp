@@ -470,6 +470,9 @@ void RenderEngine::shutdown()
     stop_.store(true);
     {
         std::lock_guard<std::mutex> lk(queueMutex_);
+        for (auto &weak : jobs_)
+            if (auto job = weak.lock())
+                job->canceled.store(true);
         queue_.clear();
     }
     queueCv_.notify_all();
@@ -557,43 +560,58 @@ QImage RenderEngine::renderPageImage(Document *doc, int pageNo, double scale, in
 
 void RenderEngine::submit(const RenderRequest &req)
 {
+    if (!req.document)
+        return;
+    auto job = std::make_shared<Job>();
+    job->request = req;
+    job->lifetime = req.document->lifetime();
+    job->request.document = nullptr; // workers resolve through the lifetime gate
     {
         std::lock_guard<std::mutex> lk(queueMutex_);
         if (stop_.load())
             return;
-        // Coalesce: a newer request for the same viewer+page supersedes any
-        // still-queued one (the requester only ever honours its latest token, so
-        // an older queued band would be rasterized just to be discarded). This
-        // matters for deep-zoom tiling, where a fast scroll/pan re-requests the
-        // visible band every paint.
-        std::erase_if(queue_, [&](const RenderRequest &q) {
-            return q.requester == req.requester && q.pageNo == req.pageNo;
+        std::erase_if(jobs_, [&](const auto &weak) {
+            auto old = weak.lock();
+            if (!old)
+                return true;
+            if (old->request.requester == req.requester
+                && old->request.pageNo == req.pageNo)
+                old->canceled.store(true);
+            return false;
         });
-        queue_.push_back(req);
+        std::erase_if(queue_, [](const auto &old) { return old->canceled.load(); });
+        jobs_.push_back(job);
+        queue_.push_back(std::move(job));
     }
     queueCv_.notify_one();
+}
+
+void RenderEngine::cancelRequests(quint64 requester)
+{
+    std::lock_guard<std::mutex> lk(queueMutex_);
+    for (auto &weak : jobs_)
+        if (auto job = weak.lock(); job && job->request.requester == requester)
+            job->canceled.store(true);
+    std::erase_if(queue_, [](const auto &job) { return job->canceled.load(); });
 }
 
 void RenderEngine::workerLoop(fz_context *ctx)
 {
     for (;;) {
-        RenderRequest req;
+        std::shared_ptr<Job> job;
         {
             std::unique_lock<std::mutex> lk(queueMutex_);
             queueCv_.wait(lk, [this] { return stop_.load() || !queue_.empty(); });
             if (stop_.load())
                 break;
             // Most-recently-requested first: keeps the visible viewport responsive.
-            req = queue_.back();
+            job = queue_.back();
             queue_.pop_back();
         }
 
-        if (!req.document)
+        if (job->canceled.load())
             continue;
-        // Note: stale-request cancellation is the requester's responsibility
-        // (each viewer discards results whose epoch != its current epoch). The
-        // engine must not drop based on a shared epoch - that would let one
-        // viewer cancel another viewer's renders.
+        const RenderRequest &req = job->request;
 
         RenderResult res;
         res.requester = req.requester;
@@ -603,7 +621,7 @@ void RenderEngine::workerLoop(fz_context *ctx)
         res.epoch = req.epoch;
         res.token = req.token;
 
-        fz_document *doc = req.document->handle();
+        fz_document *doc = nullptr;
         fz_page *page = nullptr;
         fz_display_list *list = nullptr;
         fz_pixmap *pix = nullptr;
@@ -616,7 +634,12 @@ void RenderEngine::workerLoop(fz_context *ctx)
         // document's object cache / lazy loading, which is not thread-safe, so
         // it runs under the document's access lock (see Document class note).
         {
-            std::lock_guard<std::mutex> docLk(req.document->accessMutex());
+            std::lock_guard<std::mutex> lifetimeLock(job->lifetime->mutex);
+            Document *document = job->lifetime->document;
+            if (!document || job->canceled.load())
+                continue;
+            std::lock_guard<std::mutex> docLk(document->accessMutex());
+            doc = document->handle();
             fz_try(ctx) {
                 page = fz_load_page(ctx, doc, req.pageNo);
                 list = fz_new_display_list_from_page(ctx, page);
@@ -633,6 +656,10 @@ void RenderEngine::workerLoop(fz_context *ctx)
             }
         }
 
+        if (job->canceled.load()) {
+            fz_drop_display_list(ctx, list);
+            continue;
+        }
         if (!list) {
             emit resultReady(res); // phase 1 failed; res carries the error
             continue;
@@ -883,10 +910,11 @@ void RenderEngine::workerLoop(fz_context *ctx)
         // The transform is per-pixel (switching treatment at image-rect
         // boundaries), so it applies to whole-page renders and clipped
         // deep-zoom tiles identically.
-        if (res.ok && req.theme == PageTheme::Comfort)
+        if (!job->canceled.load() && res.ok && req.theme == PageTheme::Comfort)
             applyComfortTransform(res.image, imageRects);
 
-        emit resultReady(res);
+        if (!job->canceled.load())
+            emit resultReady(res);
     }
 
     fz_drop_context(ctx);

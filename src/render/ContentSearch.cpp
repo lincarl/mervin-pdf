@@ -85,53 +85,77 @@ QString makeSnippet(const QString &text, const QString &query)
 } // namespace
 
 ContentSearch::ContentSearch(RenderEngine *engine, QObject *parent)
-    : QObject(parent)
-    , engine_(engine)
+    : QObject(parent), engine_(engine)
 {
+    fz_context *ctx = engine_ ? fz_clone_context(engine_->baseContext()) : nullptr;
+    worker_ = std::thread([this, ctx] { workerLoop(ctx); });
 }
 
 ContentSearch::~ContentSearch()
 {
-    stopWorker();
-}
-
-void ContentSearch::stopWorker()
-{
-    cancel_.store(true);
-    generation_.fetch_add(1); // invalidate any in-flight worker's emissions
-    if (worker_.joinable())
-        worker_.join();
-    running_.store(false);
+    generation_.fetch_add(1);
+    {
+        std::lock_guard lock(mutex_);
+        stopping_ = true;
+        pending_.reset();
+    }
+    ready_.notify_one();
+    worker_.join();
 }
 
 void ContentSearch::cancel()
 {
-    stopWorker();
+    generation_.fetch_add(1);
+    {
+        std::lock_guard lock(mutex_);
+        pending_.reset();
+    }
+    if (running_.exchange(false))
+        emit finished(true, 0);
 }
 
 void ContentSearch::start(const QStringList &paths, const QString &query)
 {
-    stopWorker(); // cancel + join any previous run
-
-    if (query.trimmed().isEmpty() || paths.isEmpty()) {
-        emit finished(false, 0);
-        return;
+    const quint64 generation = generation_.fetch_add(1) + 1;
+    const bool empty = query.trimmed().isEmpty() || paths.isEmpty();
+    {
+        std::lock_guard lock(mutex_);
+        pending_.reset();
+        if (!empty)
+            pending_ = Request{paths, query, generation};
     }
-
-    cancel_.store(false);
-    running_.store(true);
-    const quint64 gen = generation_.load();
-    worker_ = std::thread(&ContentSearch::run, this, paths, query, gen);
+    running_.store(!empty);
+    if (empty)
+        emit finished(false, 0);
+    else
+        ready_.notify_one();
 }
 
-void ContentSearch::run(QStringList paths, QString query, quint64 generation)
+void ContentSearch::workerLoop(fz_context *ctx)
 {
-    fz_context *ctx = engine_ ? fz_clone_context(engine_->baseContext()) : nullptr;
+    for (;;) {
+        Request request;
+        {
+            std::unique_lock lock(mutex_);
+            ready_.wait(lock, [this] { return stopping_ || pending_.has_value(); });
+            if (stopping_)
+                break;
+            request = std::move(*pending_);
+            pending_.reset();
+        }
+        run(std::move(request.paths), std::move(request.query), request.generation, ctx);
+    }
+    if (ctx)
+        fz_drop_context(ctx);
+}
+
+void ContentSearch::run(QStringList paths, QString query, quint64 generation, fz_context *ctx)
+{
     int matched = 0;
     int scanned = 0;
     bool canceled = false;
 
-    auto current = [&] { return generation_.load() == generation && !cancel_.load(); };
+    auto current = [&] { return generation_.load() == generation; };
 
     if (ctx) {
         for (const QString &path : paths) {
@@ -175,19 +199,24 @@ void ContentSearch::run(QStringList paths, QString query, quint64 generation)
             }
             if (matchPage > 0) {
                 ++matched;
-                emit hit(path, matchPage, snippet);
+                QMetaObject::invokeMethod(this, [this, generation, path, matchPage, snippet] {
+                    if (generation_.load() == generation)
+                        emit hit(path, matchPage, snippet);
+                }, Qt::QueuedConnection);
             }
-            emit progress(scanned, static_cast<int>(paths.size()));
+            QMetaObject::invokeMethod(this, [this, generation, scanned, total = int(paths.size())] {
+                if (generation_.load() == generation)
+                    emit progress(scanned, total);
+            }, Qt::QueuedConnection);
         }
-        fz_drop_context(ctx);
     }
 
-    // Only the current generation reports completion; a superseded worker exits
-    // silently so it can't disturb the run that replaced it.
-    if (generation_.load() == generation) {
-        running_.store(false);
-        emit finished(canceled || cancel_.load(), matched);
-    }
+    QMetaObject::invokeMethod(this, [this, generation, canceled, matched] {
+        if (generation_.load() == generation) {
+            running_.store(false);
+            emit finished(canceled, matched);
+        }
+    }, Qt::QueuedConnection);
 }
 
 } // namespace mervin

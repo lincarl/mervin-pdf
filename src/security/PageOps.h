@@ -9,7 +9,7 @@
 namespace mervin {
 
 // Structural page operations backed by qpdf. All page indices are 0-based;
-// out-of-range indices are ignored. Operations never modify the source in
+// out-of-range indices fail the operation. Operations never modify the source in
 // place - they write a new file (or, for split, a set of files). All qpdf usage
 // is confined to the .cpp. Reuses QpdfService::Status (NeedsPassword when the
 // source is user-password encrypted and no password is supplied).

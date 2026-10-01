@@ -1,3 +1,6 @@
+#include "security/DocumentOutput.h"
+#include <QTemporaryFile>
+#include <QThreadPool>
 #include "ui/MainWindow.h"
 
 #include "app/WindowManager.h"
@@ -442,15 +445,8 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
         {
             QSignalBlocker bd(docTabBar_);
             QSignalBlocker bt(tabs_);
-            // Do NOT block tabs_->tabBar(): QTabWidget reorders its content
-            // stack via that bar's tabMoved signal (the internal _q_tabMoved
-            // slot does stack->removeWidget(from) + insertWidget(to)). Blocking
-            // it would move the visible tab while leaving the documents in
-            // place, so the moved tab would then show the document that used to
-            // sit at that position. (The QDrag reorder path in
-            // onTabMergeRequested calls moveTab unblocked for the same reason.)
-            // tabs_ itself stays blocked so its currentChanged doesn't re-enter
-            // onCurrentTabChanged mid-move; we reconcile explicitly below.
+            // Keep the internal tab-bar signal active: QTabWidget needs it to reorder its pages.
+            // Block only the mirrored visible bar to avoid duplicate moves.
             tabs_->tabBar()->moveTab(from, to);
             tabs_->setCurrentIndex(docTabBar_->currentIndex());
         }
@@ -547,15 +543,7 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
         connect(wm_, &mervin::WindowManager::colorSchemeChanged, this,
                 [this](const QString &scheme) {
                     settings_.colorScheme = scheme;
-                    // The palette has not settled yet at this point (Theme::applyApp
-                    // runs on the next event-loop turn via scheduleThemeRefresh), so
-                    // defer the per-window re-setup to run just after it. A
-                    // QEvent::PaletteChange does NOT reliably reach this window on an
-                    // explicit light/dark switch (only ApplicationPaletteChange fires
-                    // for an app-palette change), so relying on changeEvent alone
-                    // left the painted icons, dividers, Recent pill and - since a
-                    // stylesheet re-apply drops it - the toolbar buttons' hover
-                    // repaint stale after switching. This signal is always emitted.
+                    // Defer icon and document-theme refresh until the application palette and stylesheet settle.
                     QTimer::singleShot(0, this, [this] {
                         applyControlStyle();
                         applyDocumentThemeToViewers();
@@ -586,6 +574,12 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    for (int i = 0; i < tabs_->count(); ++i) {
+        if (!confirmClose(qobject_cast<TabPage *>(tabs_->widget(i)))) {
+            event->ignore();
+            return;
+        }
+    }
     saveAllViewStates(); // resume works after a clean window close, not just per-tab
 
     // A closing window takes its tabs with it as plain child widgets, never
@@ -760,18 +754,7 @@ void MainWindow::createActions()
             closeTab(tabs_->currentIndex());
     });
 
-    // Chrome's undo-close-tab, same binding: brings back the tab you just closed,
-    // and keeps stepping back through the history on further presses.
-    //
-    // Keyboard only, by design - no toolbar button and no menu row, so the ☰
-    // popup and the tab bar's right-click menu stay as short as they are. That
-    // makes the Keyboard Shortcuts dialog (showShortcuts) the one place it is
-    // written down, and means the action must be registered on the window
-    // directly or its shortcut would never be live.
-    //
-    // Deliberately NOT listed in setUiEnabled() either: the case that matters
-    // most is a window whose last document was just closed, where every document
-    // action is dead but this one still has work to do.
+    // Ctrl+Shift+T restores the newest closed document from the process-wide history.
     reopenTabAction_ = new QAction(tr("Reopen Closed &Tab"), this);
     reopenTabAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T));
     connect(reopenTabAction_, &QAction::triggered, this, &MainWindow::reopenClosedTab);
@@ -1293,17 +1276,7 @@ void MainWindow::createMenus()
     // key sequences it registers on the window.
     hideShortcutHints(mainMenu);
 
-    // These actions are no longer in the popup but keep their global shortcuts.
-    // New Tab duplicates Open; New Window (Ctrl+N) and Close Tab moved off the
-    // menu; Find and Find Next/Previous live on the always-visible find bar; Copy
-    // moved to the viewer's right-click menu. Zoom In/Out, Rotate Left/Right and
-    // Print belong here too: their only toolbar host (docControls_) is greyed out
-    // while the Recent panel is active, and registerShortcuts() only walks the
-    // menu while a transient context menu does not keep a shortcut alive - so
-    // register them on the window directly to keep them live in document mode.
-    // (When Recent is active their actions are disabled, so these shortcuts stay
-    // dead there as intended. Open stays live via the always-visible split
-    // button; Exit uses the window close box / Alt+F4.)
+    // Register shortcut actions on the window even when they are absent from the menu.
     for (QAction *a : {newTabAction_, newWindowAction_, closeTabAction_, findAction_,
                        findNextAction_, findPrevAction_, copyAction_, zoomInAction_,
                        zoomOutAction_, rotateLeftAction_, rotateRightAction_,
@@ -1376,13 +1349,7 @@ void MainWindow::applyControlStyle()
     updateRecentButton(); // re-apply pill style with the updated palette
     applyActionIcons();   // re-draw icons with the current text colour
 
-    // A theme switch rebuilds qApp's stylesheet, which re-polishes every widget.
-    // That re-polish can drop the WA_Hover attribute the stylesheet style uses to
-    // repaint a button on mouse enter/leave, so some flat toolbar buttons stop
-    // showing their :hover highlight after switching light<->dark (intermittent,
-    // depending on polish ordering). Re-assert it once the switch has fully
-    // settled - deferred, because this runs mid-switch on the PaletteChange, before
-    // qApp's own re-polish, which would otherwise overwrite an immediate set.
+    // Reapplying the stylesheet can remove WA_Hover; restore it on toolbar controls.
     QTimer::singleShot(0, this, [this] { reassertHoverAttributes(); });
 }
 
@@ -1875,6 +1842,8 @@ void MainWindow::closeTabAt(int index, bool remember)
     if (!w)
         return;
     if (auto *t = qobject_cast<TabPage *>(w)) {
+        if (!confirmClose(t))
+            return;
         saveTabViewState(t); // remember where the user left off
         if (remember)
             rememberClosedTab(t, index);
@@ -1896,14 +1865,7 @@ void MainWindow::rememberOpenTabs()
 {
     if (!wm_ || !tabs_)
         return;
-    // Read off the live bar BEFORE anything is removed, so every entry records the
-    // full bar as it stood. Recording inside a close loop instead would hand each
-    // tab whichever position it happened to hold once the ones in front of it were
-    // gone. The tab on screen is recorded last, so it is the newest entry and the
-    // first one brought back - closing a window and undoing it puts you back on
-    // the document you were actually reading, and the rest slot in around it
-    // (reopenClosedTab re-derives each slot, so returning them out of order is
-    // what the sibling list is there to absorb).
+    // Record original tab positions before removing any tabs. Record the active tab last so it reopens first.
     const int cur = tabs_->currentIndex();
     for (int i = 0; i < tabs_->count(); ++i)
         if (i != cur)
@@ -1919,21 +1881,19 @@ void MainWindow::closeAllTabs()
     // as the per-tab close button, so each tab's view state is saved and the
     // empty window falls back to Recent.
     rememberOpenTabs();
-    while (tabs_->count() > 0)
+    while (tabs_->count() > 0) {
+        const int before = tabs_->count();
         closeTabAt(0, /*remember=*/false);
+        if (tabs_->count() == before)
+            break;
+    }
 }
 
 void MainWindow::reopenClosedTab()
 {
     if (!wm_)
         return;
-    // Only an empty history gets a message, and only this one: a press that spent
-    // an entry and failed has already been explained by openFile (an error box, or
-    // the user's own Cancel on a password prompt), and saying "nothing to reopen"
-    // there would be untrue while older entries are still waiting.
-    //
-    // showMessage() hides the status label for its duration and restores it
-    // afterwards, so the current document's path comes straight back.
+    // Show a status message only for an empty history; open failures already report their own error.
     if (wm_->reopenClosedTab(this) == mervin::WindowManager::Reopen::NothingToReopen)
         statusBar()->showMessage(tr("No recently closed tab to reopen"), 3000);
 }
@@ -1958,12 +1918,7 @@ void MainWindow::showRecentPanel()
 
 void MainWindow::updateRecentButton()
 {
-    // Mirror the Recent state onto both the visible tab bar (so no document tab
-    // reads as selected while Recent is active - only the pill is highlighted)
-    // and the Recent pill itself. Both are driven by a `recentActive` dynamic
-    // property that the central stylesheet (mervin::Theme) keys off; re-polish
-    // so the rules recompute, then repaint (polish alone leaves the cached
-    // rendering until a stray hover/enter event forces a redraw).
+    // Apply the Recent state to both tab controls and refresh their stylesheet-dependent appearance.
     const auto setRecentActive = [this](QWidget *w) {
         if (!w || w->property("recentActive").toBool() == recentActive_)
             return;
@@ -1981,12 +1936,7 @@ void MainWindow::updateRecentButton()
 
 void MainWindow::setCommandBarMode(bool recentActive)
 {
-    // On the Recent view the document toolbar controls (page nav, zoom, fit,
-    // rotate, print) have no target document, so they stay visible but greyed
-    // out / inactive rather than disappearing - this keeps the command bar's
-    // shape stable across views. They re-enable when a PDF tab becomes current.
-    // setUiEnabled() independently disables the underlying actions so their
-    // shortcuts go dead here too.
+    // Keep document controls visible but disabled on Recent; action shortcuts are disabled separately.
     if (docControls_)
         docControls_->setEnabled(!recentActive);
 }
@@ -2022,13 +1972,7 @@ void MainWindow::updateStartPage()
 
 void MainWindow::updateForCurrentTab()
 {
-    // Persist which document is on screen, so the next start reopens that one
-    // first. This is the single funnel every current-tab change goes through
-    // (clicks on either tab bar, a tab move, a close, a detach), and nothing else
-    // records it - a clean quit destroys tabs as child widgets without going
-    // through closeTab(). Guarded on tabCount() so a window still under
-    // construction (no tabs, not yet registered with the manager) cannot write a
-    // session that leaves its own documents out.
+    // Record the active document after each tab change, once the window has tabs.
     if (wm_ && tabCount() > 0)
         wm_->updateSession();
 
@@ -2177,6 +2121,7 @@ void MainWindow::toggleAlwaysOnTop(bool on)
 
 void MainWindow::openSettings()
 {
+    settings_ = mervin::Settings::load();
     SettingsDialog dlg(settings_, this);
     if (dlg.exec() != QDialog::Accepted)
         return;
@@ -2199,12 +2144,7 @@ void MainWindow::openSettings()
             if (annotColor.isValid())
                 tp->viewer()->setMarkupColor(annotColor); // new default for new marks/notes
         }
-    // The UI theme is global and must go through the WindowManager: it owns the
-    // forced Qt colour scheme, and the palette change that follows is what
-    // schedules the app-wide sheet rebuild for every window and dialog. That
-    // rebuild re-reads the accent from the config just saved, so a simultaneous
-    // accent change rides along - calling applyApp() here as well would build one
-    // extra sheet against the pre-switch scheme.
+    // Apply global theme changes through WindowManager; its scheduled refresh reads the saved accent.
     if (settings_.colorScheme != prevScheme && wm_)
         wm_->setColorScheme(settings_.colorScheme);
     else if (settings_.accentColor != prevAccent)
@@ -2317,770 +2257,12 @@ void MainWindow::saveAllViewStates()
 {
     if (!wm_ || !tabs_)
         return;
+    QList<QPair<QString, mervin::ViewState>> states;
     for (int i = 0; i < tabs_->count(); ++i)
         if (auto *t = qobject_cast<TabPage *>(tabs_->widget(i)))
-            saveTabViewState(t);
+            states.append({t->canonicalPath(), captureViewState(t->viewer())});
+    wm_->saveViewStates(states);
 }
-
-// ---- Document menu: security + page operations (M8) ------------------------
-
-namespace {
-
-using mervin::PageOps;
-
-// Parse "all" / "1-5" / "1,3,5-9" (1-based) into a sorted, de-duplicated set of
-// 0-based indices clamped to [0, count). Returns empty on no valid pages.
-QList<int> parsePageSpec(const QString &spec, int count)
-{
-    const QString s = spec.trimmed();
-    QList<int> out;
-    if (s.isEmpty() || s.compare(QStringLiteral("all"), Qt::CaseInsensitive) == 0) {
-        for (int i = 0; i < count; ++i)
-            out.append(i);
-        return out;
-    }
-    QSet<int> seen;
-    for (const QString &partRaw : s.split(QLatin1Char(','), Qt::SkipEmptyParts)) {
-        const QString part = partRaw.trimmed();
-        int lo = 0, hi = 0;
-        if (part.contains(QLatin1Char('-'))) {
-            const auto se = part.split(QLatin1Char('-'));
-            if (se.size() != 2)
-                continue;
-            lo = se[0].trimmed().toInt();
-            hi = se[1].trimmed().isEmpty() ? count : se[1].trimmed().toInt();
-        } else {
-            lo = hi = part.toInt();
-        }
-        for (int p = lo; p <= hi; ++p)
-            if (p >= 1 && p <= count && !seen.contains(p - 1)) {
-                seen.insert(p - 1);
-                out.append(p - 1);
-            }
-    }
-    return out;
-}
-
-// Run a write op on `tab`'s file, then report any failure. Returns true on
-// success. The tab's remembered password goes first (empty for an unencrypted
-// file); only a NeedsPassword with it prompts, once, and a typed password that
-// works is remembered on the tab so the next operation does not ask.
-bool runWriteOp(QWidget *parent, TabPage *tab,
-                const std::function<PageOps::Status(const QString &, QString *)> &op)
-{
-    QString err;
-    PageOps::Status st = op(tab->password(), &err);
-    if (st == PageOps::Status::NeedsPassword) {
-        bool ok = false;
-        const QString pw = QInputDialog::getText(
-            parent, QObject::tr("Password Required"),
-            QObject::tr("Enter the document password:"), QLineEdit::Password, QString(), &ok);
-        if (ok) {
-            st = op(pw, &err);
-            if (st == PageOps::Status::Ok)
-                tab->setPassword(pw);
-        }
-    }
-    if (st != PageOps::Status::Ok) {
-        QMessageBox::warning(parent, QObject::tr("Operation failed"),
-                             st == PageOps::Status::NeedsPassword
-                                 ? QObject::tr("A password is required.")
-                                 : QObject::tr("The operation failed.\n\n%1").arg(err));
-        return false;
-    }
-    return true;
-}
-
-// Replace `target` with `src` transactionally: move the original aside, rename
-// the new file into place, then drop the backup. On failure the original is
-// restored, so an interrupted save never leaves a broken file. The caller must
-// have closed any handle to `target` first (see TabPage::detachDocument).
-bool replaceFileAtomic(const QString &target, const QString &src, QString *error)
-{
-    const QString bak = target + QStringLiteral(".mervin-bak");
-    QFile::remove(bak);
-    if (QFile::exists(target) && !QFile::rename(target, bak)) {
-        if (error)
-            *error = QObject::tr("Could not move the original file aside.");
-        return false;
-    }
-    if (!QFile::rename(src, target)) {
-        if (QFile::exists(bak))
-            QFile::rename(bak, target); // restore the original
-        if (error)
-            *error = QObject::tr("Could not write the updated file.");
-        return false;
-    }
-    QFile::remove(bak);
-    return true;
-}
-
-} // namespace
-
-QList<int> MainWindow::askPageRange(const QString &title, int pageCount)
-{
-    bool ok = false;
-    const QString spec = QInputDialog::getText(
-        this, title,
-        tr("Pages (e.g. \"all\", \"1-%1\", \"1,3,5-9\"):").arg(pageCount),
-        QLineEdit::Normal, QStringLiteral("all"), &ok);
-    if (!ok)
-        return {};
-    const QList<int> pages = parsePageSpec(spec, pageCount);
-    if (pages.isEmpty())
-        QMessageBox::warning(this, title, tr("No valid pages in that range."));
-    return pages;
-}
-
-void MainWindow::offerToOpen(const QString &path, const QString &password)
-{
-    const auto open = QMessageBox::information(
-        this, tr("Done"), tr("Saved to:\n%1\n\nOpen it now?").arg(QDir::toNativeSeparators(path)),
-        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
-    if (open == QMessageBox::Yes)
-        openFile(path, false, -1, true, password);
-}
-
-void MainWindow::addSectionHeader(QMenu *menu, const QString &text)
-{
-    // A non-interactive group label for the menu's sections, in sentence case as
-    // written at the call site ("Scroll", not "SCROLL"). Rendered as a QLabel
-    // inside a QWidgetAction because Qt menus have no natively styleable section
-    // text. Colour comes from the #menuSectionHeader QSS rule (theme-aware,
-    // re-applied on theme switches); the font metrics are set here since they
-    // don't change with the theme.
-    auto *label = new QLabel(menu);
-    label->setObjectName(QStringLiteral("menuSectionHeader"));
-    // No '&' escaping: a QLabel without a buddy shows ampersands literally
-    // (doubling them rendered "Select && Annotate").
-    label->setText(text);
-    QFont f = label->font();
-    f.setPointSizeF(f.pointSizeF() * 0.82);
-    f.setWeight(QFont::DemiBold);
-    // Mixed case needs far less tracking than the small-caps look it replaced:
-    // .12em on lowercase letters reads as a spacing bug, not as a caption.
-    f.setLetterSpacing(QFont::PercentageSpacing, 102);
-    label->setFont(f);
-    // Left margin aligns the caption with the items' ICON column, not with their
-    // text: QMenu::item's 10px padding does not apply to a QWidgetAction's widget,
-    // so the widget already starts at the popup's padding edge and only needs the
-    // 2px the icons' own margin adds. A larger value here reads as the headings
-    // hanging indented to the right of everything else in the menu.
-    label->setContentsMargins(2, 7, 10, 3);
-    label->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-
-    auto *wa = new QWidgetAction(menu);
-    wa->setDefaultWidget(label);
-    wa->setEnabled(false); // never selectable or hoverable
-    menu->addAction(wa);
-}
-
-void MainWindow::createDocumentMenu()
-{
-    // Standalone popover owned by the toolbar's Document button (built in
-    // createToolBar). It reads exactly like the hamburger menu - same neutral icon
-    // ink, same neutral hover wash, no heading. The design originally gave it an
-    // accent treatment (blue heading, blue icons, tinted hover), but with only one
-    // section a "DOCUMENT TOOLS" label under a button already labelled Document is
-    // redundant, and the second colour made the app look like it had two icon sets.
-    // Item order follows the design's Document Menu: page operations first, then
-    // Security below a divider. Icons are assigned in applyActionIcons() so they
-    // re-tint with the theme.
-    documentMenu_ = new QMenu(documentButton_);
-    documentMenu_->addAction(tr("&Rotate Pages"), this, &MainWindow::rotatePagesOp);
-    documentMenu_->addAction(tr("&Delete Pages"), this, &MainWindow::deletePagesOp);
-    documentMenu_->addAction(tr("&Extract Pages"), this, &MainWindow::extractPagesOp);
-    documentMenu_->addAction(tr("Split All Pages into One File Each"), this,
-                             &MainWindow::splitDocument);
-    documentMenu_->addAction(tr("&Merge PDFs"), this, &MainWindow::mergeDocuments);
-    documentMenu_->addSeparator();
-    documentMenu_->addAction(tr("&Security"), this, &MainWindow::openSecurity);
-    // Save / Save as copy / Export with measurements live on the toolbar's
-    // dropdown-only Save button (see createToolBar), not in this menu.
-
-    documentButton_->setMenu(documentMenu_);
-}
-
-void MainWindow::openSecurity()
-{
-    TabPage *t = currentTab();
-    if (!t)
-        return;
-    mervin::SecurityDialog dlg(t->path(), t->password(), this);
-    connect(&dlg, &mervin::SecurityDialog::openRequested, this,
-            [this](const QString &p) { openFile(p); });
-    dlg.exec();
-}
-
-void MainWindow::saveAsCopy()
-{
-    TabPage *t = currentTab();
-    ViewerWidget *v = currentViewer();
-    if (!t || !v)
-        return;
-    const QFileInfo fi(t->path());
-    const QString suggested = fi.absolutePath() + QLatin1Char('/') + fi.completeBaseName()
-                              + QStringLiteral("-copy.pdf");
-    const QString out = QFileDialog::getSaveFileName(this, tr("Save as Copy"), suggested,
-                                                     tr("PDF documents (*.pdf)"));
-    if (out.isEmpty())
-        return;
-    if (QFileInfo(out) == fi) {
-        QMessageBox::warning(this, tr("Save as Copy"),
-                             tr("Choose a different file name - use Save edits to write back to "
-                                "the original."));
-        return;
-    }
-
-    // Same as Save edits, but to a chosen new file; the original is untouched.
-    // Filled fields + annotations go through a full MuPDF rewrite, measurements
-    // through the qpdf /Mervin_Measurements embed (run on the MuPDF copy when both
-    // are present).
-    v->commitActiveFormEditor();
-    v->commitActiveAnnotEditor();
-    const mervin::MeasureDoc md = collectMeasureDoc(v);
-    const QString in = t->path();
-    // A calibration (page-scale override) is persistable on its own, with no
-    // committed measurement - embed the blob whenever either is present so a
-    // calibrate-only copy keeps its scale.
-    const bool hasMeasureData = v->hasMeasurements() || v->measureOverrides().hasAnyOverride();
-    const bool hasMuPdf = v->hasFormEdits() || v->hasAnnotEdits();
-    if (hasMuPdf) {
-        QString ferr;
-        if (hasMeasureData) {
-            const QString formTmp = out + QStringLiteral(".mervin-form-tmp");
-            QFile::remove(formTmp);
-            if (!v->document() || !v->document()->savePdfTo(formTmp, &ferr)) {
-                QFile::remove(formTmp);
-                QMessageBox::warning(this, tr("Save as Copy"),
-                                     tr("Could not save the document:\n%1").arg(ferr));
-                return;
-            }
-            if (!runWriteOp(this, t, [&](const QString &pw, QString *err) {
-                    return MeasureExport::embedMervin(formTmp, out, md, pw, err);
-                })) {
-                QFile::remove(formTmp);
-                return;
-            }
-            QFile::remove(formTmp);
-        } else if (!v->document() || !v->document()->savePdfTo(out, &ferr)) {
-            QMessageBox::warning(this, tr("Save as Copy"),
-                                 tr("Could not save the document:\n%1").arg(ferr));
-            return;
-        }
-    } else if (!runWriteOp(this, t, [&](const QString &pw, QString *err) {
-                   return MeasureExport::embedMervin(in, out, md, pw, err);
-               })) {
-        return;
-    }
-    offerToOpen(out, t->password()); // the copy keeps the source's encryption
-}
-
-mervin::MeasureDoc MainWindow::collectMeasureDoc(ViewerWidget *v) const
-{
-    mervin::MeasureDoc md;
-    if (!v)
-        return md;
-    md.version = 1;
-    md.unit = v->measureUnit();
-    md.precision = v->measurePrecision();
-    md.lineWidth = v->measureLineWidth();
-    md.measurements = v->committedMeasurements();
-    // Persist only the manual/calibrated page overrides (embedded scales are
-    // re-derived from the PDF). MeasureModel has no enumerator, so scan pages.
-    const MeasureModel &ov = v->measureOverrides();
-    for (int p = 0; p < v->pageCount(); ++p) {
-        if (!ov.hasOverride(p))
-            continue;
-        const MeasureScale s = ov.override(p);
-        mervin::PageScale ps;
-        ps.page = p;
-        ps.mmPerPointX = s.mmPerPointX;
-        ps.mmPerPointY = s.mmPerPointY;
-        ps.label = s.label;
-        ps.source = s.source;
-        md.pageScales.push_back(ps);
-    }
-    return md;
-}
-
-std::vector<mervin::RenderMeasurement> MainWindow::collectRenderMeasurements(ViewerWidget *v) const
-{
-    std::vector<mervin::RenderMeasurement> out;
-    if (!v || !v->document())
-        return out;
-    Document *doc = v->document();
-    const MeasureModel &ov = v->measureOverrides();
-    std::unordered_map<int, std::array<double, 6>> mats;
-    for (const Measurement &m : v->committedMeasurements()) {
-        if (m.pts.size() < 2)
-            continue;
-        auto it = mats.find(m.page);
-        if (it == mats.end())
-            it = mats.emplace(m.page, doc->pagePointToPdfMatrix(m.page)).first;
-        const mervin::PageMeasurement pm = doc->pageMeasurement(m.page);
-        const MeasureScale sc = mervin::measure::resolveScale(pm, m.pts.front(), ov.override(m.page));
-
-        mervin::RenderMeasurement rm;
-        rm.page = m.page;
-        rm.kind = m.kind;
-        rm.pts = m.pts;
-        rm.hasLabelPos = m.hasLabelPos;
-        rm.labelPos = m.labelPos;
-        rm.label = mervin::formatMeasurementValue(m.kind, m.pts, sc, v->measureUnit(),
-                                                  v->measurePrecision());
-        rm.lineWidth = v->measureLineWidth();
-        const std::array<double, 6> &a = it->second;
-        rm.toPdf = mervin::Mat6{a[0], a[1], a[2], a[3], a[4], a[5]};
-        out.push_back(std::move(rm));
-    }
-    return out;
-}
-
-void MainWindow::saveMeasurements()
-{
-    TabPage *t = currentTab();
-    ViewerWidget *v = currentViewer();
-    if (!t || !v)
-        return;
-    v->commitActiveFormEditor();  // flush the field still being typed, if any
-    v->commitActiveAnnotEditor(); // flush a comment still being typed, if any
-    const bool hasMeasure = v->hasMeasurements();
-    // Filled form fields AND created/edited annotations both live in the one live
-    // pdf_document and persist through the same MuPDF full rewrite (savePdfTo).
-    const bool hasMuPdf = v->hasFormEdits() || v->hasAnnotEdits();
-    // A manual/calibrated page scale is persistable on its own (no measurement
-    // required); treat it like measurements when deciding whether to embed the
-    // /Mervin_Measurements blob, so a calibrate-only edit isn't silently lost.
-    const bool hasOverrides = v->measureOverrides().hasAnyOverride();
-    const bool hasMeasureData = hasMeasure || hasOverrides;
-    if (!hasMeasureData && !hasMuPdf) {
-        QMessageBox::information(this, tr("Save"), tr("Nothing to save"));
-        return;
-    }
-    const QString path = t->path();
-    const mervin::MeasureDoc md = collectMeasureDoc(v);
-    const mervin::ViewState vs = captureViewState(v);
-    const bool wasFormMode = v->formMode();
-
-    // Build the updated file in a sibling temp, then swap it over the original:
-    //  - filled fields + annotations -> a full MuPDF rewrite (preserves any existing
-    //    /Mervin_Measurements blob), written to a MuPDF temp;
-    //  - measurements                -> the qpdf /Mervin_Measurements embed, run on the
-    //    MuPDF temp when both are dirty so it carries the freshly-written objects.
-    const QString tmp = path + QStringLiteral(".mervin-tmp");
-    QFile::remove(tmp);
-
-    if (hasMuPdf) {
-        const QString formTmp = path + QStringLiteral(".mervin-form-tmp");
-        QFile::remove(formTmp);
-        QString ferr;
-        if (!v->document() || !v->document()->savePdfTo(formTmp, &ferr)) {
-            QFile::remove(formTmp);
-            QMessageBox::warning(this, tr("Save"),
-                                 tr("Could not save the document:\n%1").arg(ferr));
-            return;
-        }
-        if (hasMeasureData) {
-            // Refresh /Mervin_Measurements (measurements + page-scale overrides) on
-            // the form temp -> final temp.
-            if (!runWriteOp(this, t, [&](const QString &pw, QString *err) {
-                    return MeasureExport::embedMervin(formTmp, tmp, md, pw, err);
-                })) {
-                QFile::remove(formTmp);
-                QFile::remove(tmp);
-                return;
-            }
-            QFile::remove(formTmp);
-        } else if (!QFile::rename(formTmp, tmp)) { // form only: the MuPDF temp is the result
-            QFile::remove(formTmp);
-            QMessageBox::warning(this, tr("Save"), tr("Could not stage the saved file."));
-            return;
-        }
-    } else {
-        // Measurements only (the original behaviour).
-        if (!runWriteOp(this, t, [&](const QString &pw, QString *err) {
-                return MeasureExport::embedMervin(path, tmp, md, pw, err);
-            })) {
-            QFile::remove(tmp);
-            return;
-        }
-    }
-
-    // Close the open handle so Windows lets us replace the file, then swap.
-    t->detachDocument();
-    QString swapErr;
-    if (!replaceFileAtomic(path, tmp, &swapErr)) {
-        QFile::remove(tmp);
-        QString e;
-        t->open(path, t->password(), &e); // re-attach the untouched original
-        applyViewStateToViewer(v, vs);
-        QMessageBox::warning(this, tr("Save"), tr("Could not save:\n%1").arg(swapErr));
-        return;
-    }
-
-    // Re-open the now-updated file; load-on-open re-reads any embedded marks, and
-    // filled values are read straight from /V during field enumeration (no blob).
-    // The tab's password goes first; the prompt is only for a file it no longer opens.
-    QString e;
-    bool needsPw = false;
-    if (!t->open(path, t->password(), &e, &needsPw) && needsPw) {
-        bool ok = false;
-        const QString pw = QInputDialog::getText(this, tr("Password Required"),
-                                                 tr("Enter the document password:"),
-                                                 QLineEdit::Password, QString(), &ok);
-        if (ok)
-            t->open(path, pw, &e, &needsPw);
-    }
-    applyViewStateToViewer(v, vs);
-    if (wasFormMode && v->hasFormFields())
-        v->setFormMode(true); // re-enter form-fill so editing continues seamlessly
-    updateForCurrentTab();
-    if (statusInfo_)
-        statusInfo_->setText(tr("Saved %1").arg(QDir::toNativeSeparators(path)));
-}
-
-void MainWindow::exportMeasuredCopy()
-{
-    TabPage *t = currentTab();
-    ViewerWidget *v = currentViewer();
-    if (!t || !v)
-        return;
-    if (!v->hasMeasurements()) {
-        QMessageBox::information(this, tr("Export with Measurements"),
-                                 tr("There are no measurements to export. Add measurements first."));
-        return;
-    }
-    ExportMeasureDialog dlg(this);
-    if (dlg.exec() != QDialog::Accepted)
-        return;
-
-    const QFileInfo fi(t->path());
-    const QString suggested = fi.absolutePath() + QLatin1Char('/') + fi.completeBaseName()
-                              + QStringLiteral("-measured.pdf");
-    const QString out = QFileDialog::getSaveFileName(this, tr("Export with Measurements"), suggested,
-                                                     tr("PDF documents (*.pdf)"));
-    if (out.isEmpty())
-        return;
-
-    const std::vector<mervin::RenderMeasurement> marks = collectRenderMeasurements(v);
-    const QString in = t->path();
-    if (runWriteOp(this, t, [&](const QString &pw, QString *err) {
-            return MeasureExport::flatten(in, out, marks, pw, err);
-        }))
-        offerToOpen(out, t->password()); // output keeps the source's encryption
-}
-
-void MainWindow::rotatePagesOp()
-{
-    TabPage *t = currentTab();
-    ViewerWidget *v = currentViewer();
-    if (!t || !v)
-        return;
-    const QList<int> pages = askPageRange(tr("Rotate Pages"), v->pageCount());
-    if (pages.isEmpty())
-        return;
-    const QStringList angles{tr("90° clockwise"), tr("180°"), tr("90° counter-clockwise")};
-    bool ok = false;
-    const QString choice = QInputDialog::getItem(this, tr("Rotate Pages"), tr("Rotation:"), angles,
-                                                 0, false, &ok);
-    if (!ok)
-        return;
-    const int angle = choice == angles[1] ? 180 : (choice == angles[2] ? 270 : 90);
-
-    const QFileInfo fi(t->path());
-    const QString out = QFileDialog::getSaveFileName(
-        this, tr("Save Rotated Copy"),
-        fi.absolutePath() + QLatin1Char('/') + fi.completeBaseName() + QStringLiteral("-rotated.pdf"),
-        tr("PDF documents (*.pdf)"));
-    if (out.isEmpty())
-        return;
-    const QString in = t->path();
-    if (runWriteOp(this, t, [&](const QString &pw, QString *err) {
-            return PageOps::rotatePages(in, out, pages, angle, true, pw, err);
-        }))
-        offerToOpen(out, t->password()); // output keeps the source's encryption
-}
-
-void MainWindow::deletePagesOp()
-{
-    TabPage *t = currentTab();
-    ViewerWidget *v = currentViewer();
-    if (!t || !v)
-        return;
-    const QList<int> pages = askPageRange(tr("Delete Pages"), v->pageCount());
-    if (pages.isEmpty())
-        return;
-    if (pages.size() >= v->pageCount()) {
-        QMessageBox::warning(this, tr("Delete Pages"), tr("Cannot delete every page."));
-        return;
-    }
-    const QFileInfo fi(t->path());
-    const QString out = QFileDialog::getSaveFileName(
-        this, tr("Save Edited Copy"),
-        fi.absolutePath() + QLatin1Char('/') + fi.completeBaseName() + QStringLiteral("-edited.pdf"),
-        tr("PDF documents (*.pdf)"));
-    if (out.isEmpty())
-        return;
-    const QString in = t->path();
-    if (runWriteOp(this, t, [&](const QString &pw, QString *err) {
-            return PageOps::deletePages(in, out, pages, pw, err);
-        }))
-        offerToOpen(out, t->password()); // output keeps the source's encryption
-}
-
-void MainWindow::extractPagesOp()
-{
-    TabPage *t = currentTab();
-    ViewerWidget *v = currentViewer();
-    if (!t || !v)
-        return;
-    // Bake an edit still being typed into the live document so the unsaved-changes
-    // note sees it. Nothing is written here: Extract copies from the file on disk.
-    v->commitActiveFormEditor();
-    v->commitActiveAnnotEditor();
-
-    mervin::ExtractDialog::Source src;
-    src.path = t->path();
-    src.password = t->password();
-    src.viewerPageCount = v->pageCount();
-    src.currentPage = v->currentPage();
-    src.hasUnsavedEdits = v->hasFormEdits() || v->hasAnnotEdits();
-    src.openWhenDone = settings_.extractOpenWhenDone;
-    src.doc = v->document();
-    src.engine = engine_;
-    src.openPaths = wm_ ? wm_->openTabPaths() : tabPaths();
-
-    mervin::ExtractDialog dlg(src, this);
-    if (dlg.exec() != QDialog::Accepted)
-        return;
-
-    if (!dlg.password().isEmpty())
-        t->setPassword(dlg.password()); // verified by the dialog; typed there or the tab's own
-    if (dlg.openWhenDone() != settings_.extractOpenWhenDone) {
-        settings_.extractOpenWhenDone = dlg.openWhenDone();
-        settings_.save();
-    }
-
-    // The dialog has written the file: it writes before closing, so a failed
-    // write stays in the dialog with the rows. No completion modal: the status
-    // bar says what was written, and Open when done decides what happens next.
-    const mervin::ExtractPlan::Job job = dlg.job();
-    statusBar()->showMessage(mervin::ExtractPlan::doneText(job), 5000);
-    if (dlg.openWhenDone())
-        openFile(job.path);
-}
-
-void MainWindow::splitDocument()
-{
-    TabPage *t = currentTab();
-    if (!t)
-        return;
-    const QString dir = QFileDialog::getExistingDirectory(this, tr("Choose Output Folder"),
-                                                          QFileInfo(t->path()).absolutePath());
-    if (dir.isEmpty())
-        return;
-    const QString base = QFileInfo(t->path()).completeBaseName();
-    const QString in = t->path();
-    QStringList written;
-    if (runWriteOp(this, t, [&](const QString &pw, QString *err) {
-            return PageOps::split(in, dir, base, pw, &written, err);
-        })) {
-        // Not tr("%n file(s)", ..., n): with no translator loaded Qt substitutes
-        // the number but leaves the "(s)", so this used to read "Wrote 3 file(s)".
-        const QString what = written.size() == 1 ? tr("1 file") : tr("%1 files").arg(written.size());
-        QMessageBox::information(this, tr("Split Pages"),
-                                 tr("Wrote %1 to:\n%2")
-                                     .arg(what, QDir::toNativeSeparators(dir)));
-    }
-}
-
-void MainWindow::mergeDocuments()
-{
-    // The open document seeds the list as an ordinary first row. The viewer's
-    // page count goes along only as a fallback - the dialog probes the file with
-    // qpdf itself, because MuPDF opens documents qpdf will not (see MergeDialog).
-    // The tab's password goes too, so an encrypted open document is not Locked.
-    TabPage *t = currentTab();
-    ViewerWidget *v = currentViewer();
-    mervin::MergeDialog dlg(t ? t->path() : QString(), v ? v->pageCount() : 0,
-                            t ? t->password() : QString(), this);
-    dlg.setOpenFiles(wm_ ? wm_->openTabPaths() : tabPaths());
-    if (dlg.exec() != QDialog::Accepted)
-        return;
-    // The dialog has written the file: it writes before closing, so a failure
-    // (naming the input that stopped it) stays in the dialog with the plan.
-    offerToOpen(dlg.outputPath());
-}
-
-void MainWindow::printDocument()
-{
-    TabPage *t = currentTab();
-    ViewerWidget *v = currentViewer();
-    if (!t || !v || !v->document())
-        return;
-    v->commitActiveFormEditor();  // bake the field still being typed into the live doc
-    v->commitActiveAnnotEditor(); // bake a comment still being typed into the live doc
-    const int pageCount = v->pageCount();
-    if (pageCount <= 0)
-        return;
-
-    // Pre-select the paper orientation matching the page the user is looking at.
-    // pageSize() is the page's unrotated size; fold in the viewer's rotation
-    // (90/270 swap the displayed aspect - same rule as ViewLayout::displaySize) so
-    // a landscape page rotated to display portrait pre-selects Portrait. Square
-    // pages fall through to Portrait.
-    QSizeF pageSz = v->document()->pageSize(v->currentPage());
-    if (v->rotation() == 90 || v->rotation() == 270)
-        pageSz.transpose();
-    const QPageLayout::Orientation initialOrientation =
-        pageSz.width() > pageSz.height() ? QPageLayout::Landscape : QPageLayout::Portrait;
-
-    QPrinter printer(QPrinter::HighResolution);
-    printer.setPageOrientation(initialOrientation);
-
-    // Our own dialog, not QPrintDialog: on Windows the native dialog ignores the
-    // orientation we set and renders the driver's mangled option labels. PrintDialog
-    // pre-selects orientation reliably and applies the user's choices to `printer`.
-    PrintDialog dialog(&printer, initialOrientation, pageCount, v->currentPage() + 1,
-                       QFileInfo(t->path()).completeBaseName(), this);
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-
-    // Resolve which pages to print and how to scale/rasterize them. The in-app
-    // dialog supplies an explicit page list plus scale + quality; "Print using
-    // system dialogue…" hands off to the native QPrintDialog, from which we
-    // derive the same values (Fit/Normal, since it has no equivalents).
-    QList<int> pages;
-    PrintDialog::ScaleMode scaleMode = PrintDialog::ScaleMode::FitToPage;
-    int scalePercent = 100;
-    int qualityDpi = 300;
-    if (dialog.useSystemDialog()) {
-        printer.setFromTo(1, pageCount);
-        QPrintDialog native(&printer, this);
-        native.setWindowTitle(tr("Print"));
-        native.setOption(QAbstractPrintDialog::PrintPageRange, true);
-        native.setOption(QAbstractPrintDialog::PrintCurrentPage, true);
-        if (native.exec() != QDialog::Accepted)
-            return;
-        switch (printer.printRange()) {
-        case QPrinter::PageRange: {
-            const int f = qBound(1, printer.fromPage(), pageCount);
-            const int tt = qBound(f, printer.toPage(), pageCount);
-            for (int p = f; p <= tt; ++p)
-                pages << p;
-            break;
-        }
-        case QPrinter::CurrentPage:
-            pages << (v->currentPage() + 1);
-            break;
-        default: // AllPages / Selection
-            for (int p = 1; p <= pageCount; ++p)
-                pages << p;
-            break;
-        }
-    } else {
-        pages = dialog.selectedPages();
-        scaleMode = dialog.scaleMode();
-        scalePercent = dialog.scalePercent();
-        qualityDpi = dialog.qualityDpi();
-    }
-    if (pages.isEmpty())
-        return;
-
-    QPainter painter;
-    if (!painter.begin(&printer)) {
-        QMessageBox::warning(this, tr("Print"), tr("Could not start the print job."));
-        return;
-    }
-
-    // Rasterize at the chosen quality, capped at the printer's own resolution
-    // (asking for more than the device offers just wastes memory). The page image
-    // is then scaled to the device per the scale mode below.
-    const int printerRes = printer.resolution();
-    const int renderDpi = qMin(printerRes, qMax(72, qualityDpi));
-    const double scale = renderDpi / 72.0;
-    const int rotation = v->rotation();
-    const QRect target = printer.pageLayout().paintRectPixels(printerRes);
-    const bool grayscale = printer.colorMode() == QPrinter::GrayScale;
-
-    // Print measurements by burning them into a temporary flattened PDF and
-    // printing that - the original file is never touched. An encrypted source is
-    // flattened with the tab's password, and the temp keeps that encryption. Falls
-    // back to printing the original (no marks) if flattening fails (e.g. the
-    // remembered password no longer opens the file).
-    // For forms alone nothing special is needed: printDoc is the live, filled
-    // document, whose appearances render (and so print) the filled values for free.
-    QTemporaryDir measureTmp;
-    std::unique_ptr<Document> flatDoc;
-    Document *printDoc = v->document();
-    if (v->hasMeasurements() && measureTmp.isValid()) {
-        // The on-disk original lacks any unsaved field values or annotations, so
-        // when either is dirty, flatten from a MuPDF temp that carries them rather
-        // than t->path(). (For the annotations-only / forms-only case there are no
-        // measurements to burn in, so printDoc stays the live document, which
-        // renderPageImage already draws with annotations + filled fields.)
-        QString flattenSource = t->path();
-        if ((v->hasFormEdits() || v->hasAnnotEdits()) && v->document()) {
-            const QString formTmp = measureTmp.filePath(QStringLiteral("filled.pdf"));
-            QString ferr;
-            if (v->document()->savePdfTo(formTmp, &ferr))
-                flattenSource = formTmp;
-        }
-        const QString fp = measureTmp.filePath(QStringLiteral("measured.pdf"));
-        QString perr;
-        if (MeasureExport::flatten(flattenSource, fp, collectRenderMeasurements(v), t->password(),
-                                   &perr)
-            == MeasureExport::Status::Ok) {
-            flatDoc = engine_->openDocument(fp, t->password(), &perr);
-            if (flatDoc)
-                printDoc = flatDoc.get();
-        }
-    }
-
-    bool first = true;
-    for (int p : pages) {
-        if (p < 1 || p > pageCount)
-            continue;
-        if (!first)
-            printer.newPage();
-        first = false;
-        const QImage img = engine_->renderPageImage(printDoc, p - 1, scale, rotation);
-        if (img.isNull())
-            continue;
-
-        // Pixel size to draw on the page. Fit to page shrinks/grows the rendered
-        // image to the printable area; Actual size and Custom map PDF points to
-        // physical device pixels (1 pt = 1/72") so output is true-to-size, scaled
-        // by the custom percentage when set.
-        QSize drawSize;
-        if (scaleMode == PrintDialog::ScaleMode::FitToPage) {
-            drawSize = img.size().scaled(target.size(), Qt::KeepAspectRatio);
-        } else {
-            QSizeF pts = printDoc->pageSize(p - 1);
-            if (rotation == 90 || rotation == 270)
-                pts.transpose();
-            double factor = printerRes / 72.0;
-            if (scaleMode == PrintDialog::ScaleMode::Custom)
-                factor *= scalePercent / 100.0;
-            drawSize = QSize(qRound(pts.width() * factor), qRound(pts.height() * factor));
-        }
-        if (drawSize.isEmpty())
-            continue;
-
-        QImage scaled = img.scaled(drawSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        if (grayscale)
-            scaled = scaled.convertToFormat(QImage::Format_Grayscale8);
-        // Centre on the printable area. Actual/Custom output larger than the page
-        // bleeds into the margins and clips - the expected true-size behaviour.
-        const int x = target.x() + (target.width() - scaled.width()) / 2;
-        const int y = target.y() + (target.height() - scaled.height()) / 2;
-        painter.drawImage(QPoint(x, y), scaled);
-    }
-    painter.end();
-}
-
-// ---- Detachable tabs (M9) --------------------------------------------------
 
 void MainWindow::wireCurrentViewer(ViewerWidget *v)
 {
@@ -3346,17 +2528,26 @@ void MainWindow::onOcrRegionSelected(int pageNo, const QRectF &pageRect)
     mervin::OcrService ocr(engine_);
     mervin::OcrPopup popup(installed, settings_.ocrDefaultLanguage, this);
 
+    QThreadPool worker;
+    worker.setMaxThreadCount(1);
+    std::shared_ptr<std::atomic<bool>> canceled;
+    const auto lifetime = v->document()->lifetime();
+    const QString tessdata = mervin::TessdataManager::directory();
     auto recognize = [&](const QStringList &langs) {
-        QApplication::setOverrideCursor(Qt::WaitCursor);
-        QString err;
-        const QString text =
-            ocr.recognize(v->document(), pageNo, pageRect, langs,
-                          mervin::TessdataManager::directory(), &err);
-        QApplication::restoreOverrideCursor();
-        if (text.isEmpty() && !err.isEmpty())
-            popup.setRawText(tr("[OCR failed: %1]").arg(err));
-        else
-            popup.setRawText(text);
+        if (canceled)
+            canceled->store(true);
+        worker.clear();
+        canceled = std::make_shared<std::atomic<bool>>(false);
+        popup.setRawText(tr("Recognizing…"));
+        worker.start([&, token = canceled, langs, lifetime, tessdata] {
+            QString error;
+            const QString text = ocr.recognize(lifetime, pageNo, pageRect, langs,
+                                               tessdata, &error, token.get());
+            QMetaObject::invokeMethod(&popup, [&, token, text, error] {
+                if (!token->load())
+                    popup.setRawText(error.isEmpty() ? text : tr("[OCR failed: %1]").arg(error));
+            }, Qt::QueuedConnection);
+        });
     };
 
     connect(&popup, &mervin::OcrPopup::recognizeRequested, this,
@@ -3378,8 +2569,12 @@ void MainWindow::onOcrRegionSelected(int pageNo, const QRectF &pageRect)
                 popup.refreshLanguages(refreshed, preferred);
             });
 
-    recognize(popup.selectedLanguages()); // initial pass before showing
+    recognize(popup.selectedLanguages());
     popup.exec();
+    if (canceled)
+        canceled->store(true);
+    worker.clear();
+    worker.waitForDone();
 }
 
 void MainWindow::toggleMeasure(bool on)

@@ -3,6 +3,8 @@
 #include "config/ConfigPaths.h"
 
 #include <QFile>
+#include <QSaveFile>
+#include <QDebug>
 
 #include <toml++/toml.hpp>
 
@@ -12,7 +14,7 @@
 
 namespace mervin {
 
-Settings Settings::load()
+static Settings loadValues()
 {
     Settings s;
     QFile f(ConfigPaths::configFile());
@@ -89,43 +91,81 @@ Settings Settings::load()
     return s;
 }
 
-void Settings::save() const
+static toml::table settingsTable(const Settings &s)
 {
     toml::table tbl;
-    tbl.insert("default_zoom", defaultZoom.toStdString());
-    tbl.insert("page_mode", pageMode.toStdString());
-    tbl.insert("two_page_spread", twoPageSpread);
-    tbl.insert("color_scheme", colorScheme.toStdString());
-    tbl.insert("document_theme", documentTheme.toStdString());
-    tbl.insert("accent_color", accentColor.toStdString());
-    tbl.insert("open_behavior", openBehavior.toStdString());
-    tbl.insert("recent_visible_count", static_cast<int64_t>(recentVisibleCount));
-    tbl.insert("recent_retention", static_cast<int64_t>(recentRetention));
-    tbl.insert("measurement_unit", measurementUnit.toStdString());
-    tbl.insert("measurement_type", measurementType.toStdString());
-    tbl.insert("measurement_precision", static_cast<int64_t>(measurementPrecision));
-    tbl.insert("measurement_line_width", measurementLineWidth);
-    tbl.insert("measurement_snap", measurementSnap);
-    tbl.insert("highlight_form_fields", highlightFormFields);
-    tbl.insert("auto_form_fill", autoFormFill);
-    tbl.insert("extract_open_when_done", extractOpenWhenDone);
-    tbl.insert("ocr_default_language", ocrDefaultLanguage.toStdString());
-    tbl.insert("annotation_author", annotationAuthor.toStdString());
-    tbl.insert("annotation_color", annotationColor.toStdString());
-    tbl.insert("annotation_style", annotationStyle.toStdString());
-    tbl.insert("restore_session", restoreSession);
-    tbl.insert("auto_update", autoUpdate);
-    tbl.insert("prompted_set_default_app", promptedSetDefaultApp);
-    tbl.insert("window_geometry", std::string(windowGeometry.toBase64().constData()));
-    tbl.insert("window_state", std::string(windowState.toBase64().constData()));
+    tbl.insert("default_zoom", s.defaultZoom.toStdString());
+    tbl.insert("page_mode", s.pageMode.toStdString());
+    tbl.insert("two_page_spread", s.twoPageSpread);
+    tbl.insert("color_scheme", s.colorScheme.toStdString());
+    tbl.insert("document_theme", s.documentTheme.toStdString());
+    tbl.insert("accent_color", s.accentColor.toStdString());
+    tbl.insert("open_behavior", s.openBehavior.toStdString());
+    tbl.insert("recent_visible_count", static_cast<int64_t>(s.recentVisibleCount));
+    tbl.insert("recent_retention", static_cast<int64_t>(s.recentRetention));
+    tbl.insert("measurement_unit", s.measurementUnit.toStdString());
+    tbl.insert("measurement_type", s.measurementType.toStdString());
+    tbl.insert("measurement_precision", static_cast<int64_t>(s.measurementPrecision));
+    tbl.insert("measurement_line_width", s.measurementLineWidth);
+    tbl.insert("measurement_snap", s.measurementSnap);
+    tbl.insert("highlight_form_fields", s.highlightFormFields);
+    tbl.insert("auto_form_fill", s.autoFormFill);
+    tbl.insert("extract_open_when_done", s.extractOpenWhenDone);
+    tbl.insert("ocr_default_language", s.ocrDefaultLanguage.toStdString());
+    tbl.insert("annotation_author", s.annotationAuthor.toStdString());
+    tbl.insert("annotation_color", s.annotationColor.toStdString());
+    tbl.insert("annotation_style", s.annotationStyle.toStdString());
+    tbl.insert("restore_session", s.restoreSession);
+    tbl.insert("auto_update", s.autoUpdate);
+    tbl.insert("prompted_set_default_app", s.promptedSetDefaultApp);
+    tbl.insert("window_geometry", std::string(s.windowGeometry.toBase64().constData()));
+    tbl.insert("window_state", std::string(s.windowState.toBase64().constData()));
 
-    std::stringstream ss;
-    ss << tbl;
-    const std::string out = ss.str();
+    return tbl;
+}
 
-    QFile f(ConfigPaths::configFile());
-    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        f.write(out.data(), static_cast<qint64>(out.size()));
+static QByteArray serializeTable(const toml::table &tbl)
+{
+    std::stringstream stream;
+    stream << tbl;
+    return QByteArray::fromStdString(stream.str());
+}
+
+Settings Settings::load()
+{
+    Settings result = loadValues();
+    result.baseline_ = serializeTable(settingsTable(result));
+    return result;
+}
+
+bool Settings::save(QString *error) const
+{
+    const auto desired = settingsTable(*this);
+    auto merged = settingsTable(loadValues());
+    if (baseline_.isEmpty()) {
+        merged = desired;
+    } else {
+        const auto baseline = toml::parse(std::string_view(baseline_.constData(), baseline_.size()));
+        for (const auto &[key, value] : desired) {
+            toml::table before, after;
+            if (const auto *old = baseline.get(key))
+                before.insert(key, *old);
+            after.insert(key, value);
+            if (before != after)
+                merged.insert_or_assign(key, value);
+        }
+    }
+    const QByteArray bytes = serializeTable(merged);
+    QSaveFile file(ConfigPaths::configFile());
+    file.setDirectWriteFallback(false);
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
+        if (error)
+            *error = file.errorString();
+        qWarning() << "Could not save settings:" << file.errorString();
+        return false;
+    }
+    baseline_ = serializeTable(desired);
+    return true;
 }
 
 } // namespace mervin

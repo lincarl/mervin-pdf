@@ -72,6 +72,8 @@ add_library(mervin_core STATIC
     src/render/PageCache.h
     src/render/PreviewLayer.cpp
     src/render/PreviewLayer.h
+    src/render/DocumentSearch.cpp
+    src/render/DocumentSearch.h
     src/render/TextIndex.cpp
     src/render/TextIndex.h
     src/render/ContentSearch.cpp
@@ -132,6 +134,10 @@ add_library(mervin_core STATIC
     src/ipc/SingleInstanceServer.h
     src/security/QpdfService.cpp
     src/security/QpdfService.h
+    src/security/DocumentOutput.cpp
+    src/security/DocumentOutput.h
+    src/security/MeasurementPages.cpp
+    src/security/MeasurementPages.h
     src/security/PageOps.cpp
     src/security/PageOps.h
     src/security/MeasureExport.cpp
@@ -180,11 +186,24 @@ qt_add_resources(mervin_icons "lucide_icons"
     BASE "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/lucide"
     FILES ${MERVIN_LUCIDE_SVGS})
 
+# Shared viewer implementation for the application and widget regressions.
+add_library(mervin_viewer STATIC
+    src/ui/ViewerWidget.cpp
+    src/ui/ViewerWidget.h
+    src/ui/ViewerDocumentTools.cpp
+    src/ui/ViewerMeasurements.cpp
+    src/ui/AnnotPopup.cpp
+    src/ui/AnnotPopup.h
+    src/ui/PdfPropertiesPopup.cpp
+    src/ui/PdfPropertiesPopup.h
+)
+target_link_libraries(mervin_viewer PUBLIC mervin_core mervin_icons Qt6::Widgets)
+
 # ---- MervinPDF: the application --------------------------------------------
-qt_add_executable(MervinPDF
-    src/main.cpp
+add_library(mervin_app STATIC
     src/app/WindowManager.cpp
     src/app/WindowManager.h
+    src/ui/DocumentActions.cpp
     src/ui/MainWindow.cpp
     src/ui/MainWindow.h
     src/ui/SidebarLayout.h
@@ -204,17 +223,11 @@ qt_add_executable(MervinPDF
     src/ui/CommentsSidebar.h
     src/ui/TabPage.cpp
     src/ui/TabPage.h
-    src/ui/ViewerWidget.cpp
-    src/ui/ViewerWidget.h
     src/ui/MeasureTypes.h
     src/ui/PanelStack.cpp
     src/ui/PanelStack.h
     src/ui/AnnotPanel.cpp
     src/ui/AnnotPanel.h
-    src/ui/AnnotPopup.cpp
-    src/ui/AnnotPopup.h
-    src/ui/PdfPropertiesPopup.cpp
-    src/ui/PdfPropertiesPopup.h
     src/dialogs/ExportMeasureDialog.cpp
     src/dialogs/ExportMeasureDialog.h
     src/ui/MeasurePanel.cpp
@@ -253,7 +266,9 @@ qt_add_executable(MervinPDF
     src/update/Updater.cpp
     src/update/Updater.h
 )
-target_link_libraries(MervinPDF PRIVATE mervin_core mervin_icons Qt6::Widgets Qt6::Network
+qt_add_executable(MervinPDF src/main.cpp)
+target_link_libraries(MervinPDF PRIVATE mervin_app)
+target_link_libraries(mervin_app PUBLIC mervin_viewer mervin_core mervin_icons Qt6::Widgets Qt6::Network
     Qt6::PrintSupport)
 
 # The Linux package this build is for, which is how the in-app updater knows to
@@ -265,7 +280,7 @@ set_property(CACHE MERVIN_PACKAGE_FORMAT PROPERTY STRINGS "" deb rpm)
 if(NOT MERVIN_PACKAGE_FORMAT MATCHES "^(|deb|rpm)$")
     message(FATAL_ERROR "MERVIN_PACKAGE_FORMAT must be deb, rpm, or empty (got '${MERVIN_PACKAGE_FORMAT}')")
 endif()
-target_compile_definitions(MervinPDF PRIVATE MERVIN_PACKAGE_FORMAT="${MERVIN_PACKAGE_FORMAT}")
+target_compile_definitions(mervin_app PRIVATE MERVIN_PACKAGE_FORMAT="${MERVIN_PACKAGE_FORMAT}")
 
 # Embed the application icon + version info (generated above) as a Win32
 # resource so Explorer, the Start menu, and the "default app for .pdf" picker
@@ -276,7 +291,7 @@ target_compile_definitions(MervinPDF PRIVATE MERVIN_PACKAGE_FORMAT="${MERVIN_PAC
 if(WIN32)
     target_sources(MervinPDF PRIVATE ${CMAKE_BINARY_DIR}/generated/mervin.rc)
     # Dark-theme caption colouring (DwmSetWindowAttribute in MainWindow.cpp).
-    target_link_libraries(MervinPDF PRIVATE comctl32 dwmapi ole32 shell32 uuid)
+    target_link_libraries(mervin_app PUBLIC comctl32 dwmapi ole32 shell32 uuid)
 endif()
 
 # Build as a Windows GUI (no-console) app by DEFAULT so launching Mervin never

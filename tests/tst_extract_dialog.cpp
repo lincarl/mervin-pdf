@@ -62,7 +62,8 @@ void makePdf(const QString &path, int n)
         page.replaceKey("/MediaBox", box);
         dh.addPage(QPDFPageObjectHelper(q.makeIndirectObject(page)), false);
     }
-    QPDFWriter w(q, path.toUtf8().constData());
+    const QByteArray outputName = path.toUtf8();
+    QPDFWriter w(q, outputName.constData());
     w.write();
 }
 

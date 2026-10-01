@@ -21,6 +21,7 @@
 #include "ui/ThemeTokens.h"
 
 #include <QImage>
+#include <QScopeGuard>
 #include <QLabel>
 #include <QPalette>
 #include <QScrollBar>
@@ -309,12 +310,17 @@ void TstViewerPreview::fitModeHoldsTheVerticalCentre()
     QVERIFY2(pages != nullptr, qPrintable(err));
     QVERIFY(pages->pageCount() > 2);
 
+    const auto restore = qScopeGuard([this] { viewer_->setDocument(doc_.get()); });
     viewer_->setDocument(pages.get());
     viewer_->setScale(3.0);
     QVERIFY(settle());
-    viewer_->verticalScrollBar()->setValue(viewer_->verticalScrollBar()->maximum() / 2);
+    viewer_->goToPage(pages->pageCount() / 2);
+    const double pageHeight = pages->pageSize(pages->pageCount() / 2).height() * viewer_->scale();
+    viewer_->verticalScrollBar()->setValue(viewer_->verticalScrollBar()->value()
+        + qRound(pageHeight / 2 - viewer_->viewport()->height() / 2.0));
     QVERIFY(settle());
 
+    // Anchor inside a page: document midpoint can lie in a fixed-size inter-page gap.
     // Vertical position of the middle of the viewport within its own page.
     const auto centreFraction = [this, &pages] {
         const ViewerWidget::ScrollAnchor a = viewer_->scrollAnchor();
@@ -329,7 +335,7 @@ void TstViewerPreview::fitModeHoldsTheVerticalCentre()
     viewer_->setZoomMode(ViewerWidget::ZoomMode::FitWidth);
     QCOMPARE(viewer_->scrollAnchor().page, page);
     const double tol = 2.0 / (pages->pageSize(page).height() * viewer_->scale());
-    QVERIFY(qAbs(centreFraction() - before) < tol);
+    QVERIFY2(qAbs(centreFraction() - before) < tol, qPrintable(QString("before=%1 after=%2 tolerance=%3 page=%4 scale=%5").arg(before).arg(centreFraction()).arg(tol).arg(page).arg(viewer_->scale())));
 
     viewer_->setDocument(doc_.get()); // hand the viewer back its own document
     QVERIFY(settle());

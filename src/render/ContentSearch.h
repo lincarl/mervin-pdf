@@ -6,6 +6,11 @@
 
 #include <atomic>
 #include <thread>
+#include <condition_variable>
+#include <mutex>
+#include <optional>
+
+typedef struct fz_context fz_context;
 
 namespace mervin {
 
@@ -33,8 +38,7 @@ public:
     // A blank query or empty path list is a no-op that emits finished().
     void start(const QStringList &paths, const QString &query);
 
-    // Request the running scan to stop. Non-blocking; finished(canceled=true)
-    // follows once the worker notices.
+    // Invalidate pending deliveries and request cancellation without joining the worker.
     void cancel();
 
     bool isRunning() const { return running_.load(); }
@@ -50,12 +54,16 @@ signals:
     void finished(bool canceled, int matched);
 
 private:
-    void stopWorker();                                 // signal cancel + join
-    void run(QStringList paths, QString query, quint64 generation);
+    struct Request { QStringList paths; QString query; quint64 generation; };
+    void workerLoop(fz_context *ctx);
+    void run(QStringList paths, QString query, quint64 generation, fz_context *ctx);
 
     RenderEngine *engine_ = nullptr;
     std::thread worker_;
-    std::atomic<bool> cancel_{false};
+    std::mutex mutex_;
+    std::condition_variable ready_;
+    std::optional<Request> pending_;
+    bool stopping_ = false;
     std::atomic<bool> running_{false};
     // Bumped on every start()/cancel(); a worker whose generation is stale exits
     // without emitting (guards against a just-canceled run racing the next one).

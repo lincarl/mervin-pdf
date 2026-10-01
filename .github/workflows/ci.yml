@@ -144,3 +144,135 @@ jobs:
           bash -n scripts/*.sh \
             packaging/linux/postinst packaging/linux/postrm \
             packaging/linux/rpm-post.sh packaging/linux/rpm-postun.sh
+
+  linux-tests:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        build: [release, sanitize]
+    env:
+      QT_QPA_PLATFORM: offscreen
+      ASAN_OPTIONS: detect_leaks=0
+      UBSAN_OPTIONS: halt_on_error=1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libqpdf-dev libtomlplusplus-dev libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0
+      - name: Install Qt
+        uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125
+        with:
+          aqtsource: "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
+          version: "6.12.0"
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          cache: true
+      - name: Cache MuPDF
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~/src/mupdf-1.28.5-source
+          key: mupdf-1.28.5-ubuntu24-tests-v1
+      - name: Build MuPDF
+        run: echo "MUPDF_DIR=$(scripts/build-mupdf-linux.sh)" >> "$GITHUB_ENV"
+      - name: Configure
+        shell: bash
+        run: |
+          flags=()
+          if [ "${{ matrix.build }}" = sanitize ]; then
+            flags+=("-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer")
+            flags+=("-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined")
+          fi
+          cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMERVIN_BUILD_TESTS=ON "${flags[@]}"
+      - name: Build
+        run: cmake --build build/ci --parallel 2
+      - name: Test
+        run: |
+          ctest --test-dir build/ci --output-on-failure --output-junit results.xml -LE optional-corpus --parallel 2
+          python3 scripts/check-test-results.py build/ci/results.xml
+
+  windows-tests:
+    runs-on: windows-2022
+    env:
+      MUPDF_VERSION: "1.28.5"
+      MUPDF_SHA256: "98a5c10cda20c3992cdf76ff6b2a1149c32bd79cc796d3f703230b1185b7e934"
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Set up MSVC (x64)
+        # Maintained, Node-24 vcvars action (fork of the now-unmaintained
+        # ilammy/msvc-dev-cmd). Exports the MSVC dev env to later steps via
+        # $GITHUB_ENV/$GITHUB_PATH, so Configure/Build inherit cl/INCLUDE/LIB.
+        uses: TheMrMilchmann/setup-msvc-dev@368ef7d1ee4d1171b31d4a7f67f4d954f903f5a9 # v4.1.0
+        with:
+          arch: x64
+
+      - name: Install Ninja
+        run: choco install ninja -y
+
+      - name: Install Qt 6.12.0
+        uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
+        with:
+          # aqtinstall 3.3.0 cannot read Qt 6.11+ Windows repository paths.
+          # Pin the merged fix until it ships in a release: miurahr/aqtinstall#1000.
+          aqtsource: "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
+          version: "6.12.0"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Cache MuPDF
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          # Must match build-mupdf-windows.ps1's default -Dest (invoked below with
+          # no arguments): C:\dev is the project's tool root on Windows.
+          path: C:\dev\src\mupdf-${{ env.MUPDF_VERSION }}-source
+          key: mupdf-${{ env.MUPDF_VERSION }}-${{ env.MUPDF_SHA256 }}-windows-msvc2022-v143
+
+      - name: Build MuPDF
+        shell: pwsh
+        run: |
+          $dir = & scripts\build-mupdf-windows.ps1 | Select-Object -Last 1
+          "MUPDF_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Cache vcpkg binaries
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~\AppData\Local\vcpkg\archives
+          key: vcpkg-windows-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-windows-
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          # Read these in-shell ($env:) rather than via GitHub Actions expression
+          # interpolation: QT_ROOT_DIR (exported by install-qt-action) and the
+          # VCPKG_INSTALLATION_ROOT. The windows-base preset reads $env:QT6_DIR ->
+          # CMAKE_PREFIX_PATH and $env:VCPKG_ROOT -> the vcpkg toolchainFile.
+          $env:QT6_DIR = $env:QT_ROOT_DIR
+          $vcpkg = $env:VCPKG_INSTALLATION_ROOT
+          if (-not $vcpkg) { $vcpkg = 'C:\vcpkg' }
+          $env:VCPKG_ROOT = $vcpkg
+          # Version lookup uses the checked-out registry, so fetching the baseline
+          # alone leaves the runner's older versions database active. Align the
+          # registry, ports, toolchain and executable with our pinned revision.
+          $baseline = (Get-Content vcpkg.json | ConvertFrom-Json).'builtin-baseline'
+          if (-not $baseline) { throw "vcpkg.json must pin a builtin-baseline" }
+          git -C $env:VCPKG_ROOT fetch --depth 1 origin $baseline
+          if ($LASTEXITCODE -ne 0) { throw "Fetching vcpkg baseline failed" }
+          git -C $env:VCPKG_ROOT checkout --detach $baseline
+          if ($LASTEXITCODE -ne 0) { throw "Checking out vcpkg baseline failed" }
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw "Bootstrapping vcpkg failed" }
+          cmake --preset x64-release -DCMAKE_BUILD_TYPE=Release -DMERVIN_BUILD_TESTS=ON "-DMUPDF_DIR=$env:MUPDF_DIR"
+      - name: Build
+        run: cmake --build --preset x64-release --parallel 2
+      - name: Test
+        shell: pwsh
+        run: |
+          ctest --test-dir build/x64-release --output-on-failure --output-junit results.xml -LE optional-corpus --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
+          python scripts/check-test-results.py build/x64-release/results.xml
+          if ($LASTEXITCODE -ne 0) { throw "Required tests were skipped" }
