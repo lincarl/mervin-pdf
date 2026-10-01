@@ -133,3 +133,47 @@ For memory and undefined-behavior checks, configure a separate Debug build with
 `-DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"` and
 `-DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"`. CI disables leak detection
 for the prebuilt Qt/dependency binaries; address and undefined-behavior checks remain enabled.
+
+## Repeatable corpus profiling
+
+`mervin_benchmark` is built with the tests but runs only when explicitly invoked.
+Supply local PDFs; it does not download files or modify them:
+
+```bash
+build/linux-release/tests/mervin_benchmark /path/to/*.pdf > before.json
+# Rebuild after a change, then run the same files:
+build/linux-release/tests/mervin_benchmark /path/to/*.pdf > after.json
+python3 scripts/compare-benchmarks.py before.json after.json
+```
+
+Each file records its SHA-256, page count, five open times, five render times per
+case, rendered pixel hashes, and exact matches for a whole-word search for “the”.
+Render cases use the first, quarter, middle, three-quarter and last pages, in Light
+and Comfort at 1.5x full-page and 5x clipped to a 1200×900 region. The first search
+includes extraction; subsequent searches use cached text. Times include worker
+queue/delivery overhead but exclude hashing. `first_ms` is the first measured run,
+**not** a cold filesystem-cache measurement; five samples make p95 the maximum.
+The comparison script rejects changed pixels, search results or workloads, and
+reports timings without treating noisy wall-clock results as correctness failures.
+
+The October 2026 pass used these public documents locally (no PDFs are committed):
+
+| Input | Pages | SHA-256 |
+| --- | ---: | --- |
+| [LaTeX introduction, CTAN](https://mirrors.ctan.org/info/lshort/english/lshort.pdf) | 153 | `ecef13f225de55549ee5214f70cca30998f3251dee65c6b00931aae18b7736c2` |
+| [NASA HECC December 2024 report](https://www.nas.nasa.gov/hecc/assets/monthlies/pdf/HECC_12-24.pdf) | 51 | `27f38757d3be658a421072bcf92da39d2f2b272ce6a997ff1ce64fab7c80c079` |
+| [NASA scanned technical report](https://ntrs.nasa.gov/api/citations/19970026889/downloads/19970026889.pdf) | 164 | `e5e7cb62e14fe01d95746b8ead479c067338f3540e62b6ef689bf2a0ca6e98e9` |
+
+On Ubuntu 26.04, GCC 15 Release, Qt 6.12.0 and MuPDF 1.28.5, with four exposed
+Core 3 100U CPUs, all 60 before/after render hashes and all search results matched.
+Baseline median opens were 2.15/0.95/1.27 ms respectively; first searches were
+124.6/75.4/404.6 ms and cached searches 1.20/0.15/1.55 ms. This sample covers text,
+illustrations and scans; it is not an exhaustive PDF compatibility corpus.
+
+The focused `tst_perf_render imageRegionPass` case (128 image regions, 1.92 MP,
+15 samples) measured 3.33 → 2.94 ms median after reusing row plans between rectangle
+boundaries. Whole-document timings varied substantially, including in unchanged
+Light rendering, so they do not establish an overall rendering speedup. The
+10,000-page layout benchmark separately verifies indexed lookup against a full
+scan. Run benchmarks with competing builds stopped and repeat before drawing
+performance conclusions on another machine.

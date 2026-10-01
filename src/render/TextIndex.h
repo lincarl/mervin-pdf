@@ -37,21 +37,10 @@ struct TextLink
     QString url;
 };
 
-// Extracts and caches each page's text (via MuPDF's fz_stext), and answers the
-// geometry/search questions the viewer needs for find-highlighting and text
-// selection:
-//   - the plain text of a page (for copy and whole-word boundary checks),
-//   - per-character bounding boxes in page-point space (for highlight rects),
-//   - hit-testing a page-space point to a caret offset (for click/drag select),
-//   - a custom matcher supporting case-sensitive and whole-word options
-//     (MuPDF's built-in search is case-insensitive only and has no whole-word).
-//
-// All coordinates are in page-point space: the document's own coordinate system
-// at 72 dpi, unrotated and unscaled (the same space fz_stext reports). The
-// viewer maps these to widget pixels using the active scale/rotation.
-//
-// Owns a cloned MuPDF context. Calls must be serialized: the viewer and
-// background search each use a separate index. Destroy before RenderEngine.
+// Lazily cache MuPDF page text, character/line geometry and links for selection and case/whole-
+// word search. Coordinates are unscaled, unrotated page points at 72 dpi.
+// Owns a cloned MuPDF context. Serialize calls; viewer and background search use separate
+// indexes. Destroy before RenderEngine.
 class TextIndex
 {
 public:

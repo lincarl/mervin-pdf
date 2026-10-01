@@ -13,14 +13,8 @@ class QToolButton;
 
 namespace mervin {
 
-// Always-visible search bar that adapts to the active view.
-//
-// FindDocument mode (a PDF is open): query field + Previous/Next navigation +
-//   match count + Match case / Whole word toggles.
-//
-// RecentSearch mode (the Recent/home panel is shown): query field +
-//   Name / Inside-documents segmented toggle.
-//   The document-specific controls are hidden in this mode.
+// Adaptive search: FindDocument shows navigation, count and match options; RecentSearch shows
+// name/content scope and hides document controls.
 class FindBar : public QWidget
 {
     Q_OBJECT

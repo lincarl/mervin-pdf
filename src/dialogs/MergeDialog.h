@@ -15,33 +15,15 @@ namespace mervin {
 
 class RowList;
 
-// Document -> Merge PDFs.
-//
-// The old flow was two native file pickers: getOpenFileNames() returned the
-// files in *its* sort order (not click order) while the title claimed "in
-// order", the open document was silently prepended, and the whole of every file
-// was always taken. Nothing about the result was visible before it was written.
-//
-// This dialog shows the merge plan instead. Each row is one (file, page range)
-// segment; the row's position in the list is its position in the output, and
-// every row states how many pages it contributes and which output pages those
-// become. The footer states the total. Order and selection are read, not
-// imagined.
-//
-// All of the arithmetic lives in MergePlan (mervin_core, unit-tested); this
-// class is the widgets around it, and rebuilds the rows wholesale after every
-// mutation so build-time row indices can never go stale.
+// MergePlan-backed editor: each row contributes a file/page range in output order. Rebuild rows
+// after every mutation so captured row indices remain valid.
 class MergeDialog : public QDialog
 {
     Q_OBJECT
 
 public:
-    // `initialPath` is the document the user had open (may be empty), added as an
-    // ordinary first row - removable and reorderable like any other, which is the
-    // point. It is probed with qpdf like every other row; `initialPageCount` (the
-    // viewer's count) is only a fallback for the case where qpdf opens the file
-    // but reports no pages. `initialPassword` is the one that opened it in its tab:
-    // when it unlocks the file the row is ready and carries it into inputs().
+    // Add nonempty initialPath as a normal editable row, probed with qpdf and initialPassword.
+    // initialPageCount is only a fallback when qpdf opens but reports no pages.
     explicit MergeDialog(const QString &initialPath, int initialPageCount,
                          const QString &initialPassword = QString(),
                          QWidget *parent = nullptr);

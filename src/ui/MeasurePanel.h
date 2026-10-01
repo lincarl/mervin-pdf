@@ -21,13 +21,8 @@ namespace mervin {
 
 class PanelStack;
 
-// A small floating tool palette shown over the page while the measuring tool is
-// active. Parented to the viewer's viewport so it overlaps the page (and does not
-// scroll with content). Holds the measure-type selector, the detected/active
-// scale, a unit + precision picker, the live readout, and Calibrate / Clear
-// buttons. It emits intent signals; the viewer/MainWindow own the behaviour. Its
-// position (and group-drag) is owned by a PanelStack so it can dock with the
-// Comment panel.
+// Viewport tool palette for measurement kind, scale, units, precision and calibration. Emits
+// intent to the viewer/window; PanelStack owns positioning and group dragging.
 class MeasurePanel : public QWidget
 {
     Q_OBJECT

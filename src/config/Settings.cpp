@@ -43,12 +43,8 @@ static Settings loadValues()
         };
 
         s.defaultZoom = str("default_zoom", s.defaultZoom);
-        // Page layout, on two independent axes. `page_mode` was once a single
-        // three-valued key, so its retired "two-page" value migrates to the
-        // spread flag and leaves the scrolling choice at its default. Any
-        // unrecognised value falls back to continuous rather than being kept:
-        // pageMode is compared against literals downstream, so an odd string
-        // would silently read as continuous anyway.
+        // Migrate legacy two-page mode to the independent spread flag. Unrecognized scrolling
+        // modes become continuous.
         s.twoPageSpread = boolean("two_page_spread", s.twoPageSpread);
         const QString pm = str("page_mode", s.pageMode);
         if (pm == QLatin1String("two-page"))

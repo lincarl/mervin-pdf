@@ -24,6 +24,7 @@ endif()
 set(_mervin_skip_regex "Totals: [0-9]+ passed, 0 failed, [1-9][0-9]* skipped")
 
 set(_mervin_tests
+    tst_atomic_pdf_writer
     tst_perf_layout
     tst_document_output
     tst_render_lifetime
@@ -355,7 +356,7 @@ target_compile_definitions(tst_perf_startup PRIVATE
     MERVIN_EXAMPLES_DIR="${MERVIN_FIXTURES_DIR}")
 add_dependencies(tst_perf_startup MervinPDF)
 
-foreach(_t tst_document_output tst_render_lifetime tst_content_search)
+foreach(_t tst_document_output tst_render_lifetime tst_content_search tst_atomic_pdf_writer)
     target_compile_definitions(${_t} PRIVATE MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
 endforeach()
 target_compile_definitions(tst_document_output PRIVATE MERVIN_DRAWING_PDF="${MERVIN_FIXTURES_DIR}/drawing.pdf")
@@ -370,3 +371,9 @@ set_tests_properties(tst_document_workflow PROPERTIES ENVIRONMENT_MODIFICATION "
 set_tests_properties(tst_ink_rects PROPERTIES LABELS "optional-corpus")
 
 target_compile_definitions(tst_document_output PRIVATE MERVIN_SCAN_PDF="${MERVIN_FIXTURES_DIR}/scan.pdf")
+target_compile_definitions(tst_document_output PRIVATE MERVIN_INHERITED_PDF="${MERVIN_FIXTURES_DIR}/inherited-resources.pdf")
+
+# Explicit local corpus profiling; never downloads files or skips required CI tests.
+qt_add_executable(mervin_benchmark benchmark_corpus.cpp)
+target_link_libraries(mervin_benchmark PRIVATE mervin_core)
+set_target_properties(mervin_benchmark PROPERTIES WIN32_EXECUTABLE OFF)

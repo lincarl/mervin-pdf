@@ -4,6 +4,8 @@
 #include "security/DocumentOutput.h"
 #include "security/MeasureExport.h"
 #include "security/PageOps.h"
+#include <qpdf/QPDF.hh>
+#include <qpdf/QPDFPageDocumentHelper.hh>
 
 #include <QFile>
 #include <QSignalSpy>
@@ -20,7 +22,40 @@ private slots:
     void failedReplacementPreservesBothFiles();
     void pageOperationsRemapMeasurements();
     void generatedScanRendersInComfortAndTiles();
+    void flattenPreservesInheritedResources();
 };
+
+void TstDocumentOutput::flattenPreservesInheritedResources()
+{
+    QTemporaryDir dir;
+    const QString source = QStringLiteral(MERVIN_INHERITED_PDF);
+    const QString output = dir.filePath("flattened.pdf");
+    RenderMeasurement mark;
+    mark.page = 0;
+    mark.pts = {{30, 30}, {100, 30}};
+    mark.label = QStringLiteral("70 mm");
+    QCOMPARE(MeasureExport::flatten(source, output, {mark}, {}), MeasureExport::Status::Ok);
+    QPDF pdf;
+    const QByteArray name = output.toUtf8();
+    pdf.processFile(name.constData());
+    const auto pages = QPDFPageDocumentHelper(pdf).getAllPages();
+    auto page = pages[0];
+    auto fonts = page.getAttribute("/Resources", false).getKey("/Font");
+    QCOMPARE(fonts.getKey("/F1").getKey("/BaseFont").getName(), std::string("/Courier"));
+    QCOMPARE(fonts.getKey("/Fluc").getKey("/BaseFont").getName(), std::string("/Courier"));
+    QCOMPARE(fonts.getKey("/Fluc1").getKey("/BaseFont").getName(), std::string("/Helvetica"));
+    page = pages[1];
+    QVERIFY(!page.getAttribute("/Resources", false).getKey("/Font").hasKey("/Fluc1"));
+    RenderEngine engine;
+    auto before = engine.openDocument(source);
+    auto after = engine.openDocument(output);
+    QVERIFY(before && after);
+    const QImage original = engine.renderPageImage(before.get(), 0, 1, 0);
+    const QImage flattened = engine.renderPageImage(after.get(), 0, 1, 0);
+    QVERIFY(!original.isNull() && !flattened.isNull());
+    QCOMPARE(flattened.copy(0, 0, 612, 200), original.copy(0, 0, 612, 200));
+    QVERIFY(flattened != original); // the label is present, below the original text
+}
 
 static MeasureDoc marks()
 {

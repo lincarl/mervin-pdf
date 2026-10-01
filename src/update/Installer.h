@@ -14,12 +14,9 @@ namespace mervin::update {
 // registry reads, no processes.
 PackageKind installedPackageKind();
 
-// Windows: starts the downloaded installer detached so it outlives this
-// process, which must quit straight after (the installer replaces files it
-// holds open). NSIS runs silently and relaunches Mervin itself (mervin.nsi); the
-// MSI shows only a progress bar, and a cmd.exe wrapper starts Mervin again once
-// msiexec returns, whatever the outcome, keeping --profile so a test instance
-// comes back in its profile. False if nothing could be started.
+// Windows launches the installer detached; the caller must then quit to release binaries. NSIS
+// silently relaunches; MSI shows progress and its wrapper relaunches on any outcome, preserving
+// --profile. Return false if launch fails.
 bool startWindowsInstaller(PackageKind kind, const QString &file);
 
 // AppImage: moves a copy of `file` over the running image ($APPIMAGE). The

@@ -16,18 +16,11 @@ QT_END_NAMESPACE
 
 namespace mervin {
 
-// Keeps an installed Mervin current from its GitHub Releases. With auto update
-// on (Settings::autoUpdate, the default), every update::kStartsPerCheck-th start
-// looks for a newer release, quietly downloads the asset for this copy's
-// package kind (see update::PackageKind), verifies its SHA-256, and then asks:
-// Install Now, Later (asked again on every start) or Never (auto update off and
-// the download deleted). About -> Check for Updates runs the same check on
-// demand with visible progress. Copies that cannot update themselves (dev
-// builds, portable copies) only point the user at the release page.
-//
-// One instance lives for the primary process (runUi in main.cpp); reach it
-// through instance(). The only URL requested directly is the release API in
-// ReleaseConfig.h; download URLs come from its answer.
+// Primary-process updater singleton. Every kStartsPerCheck starts, auto-update checks the
+// release API, downloads the matching package and verifies SHA-256. Install Now installs; Later
+// prompts next start; Never disables updates and deletes the download. Manual checks show
+// progress; unsupported/dev/portable copies link to the release. Asset URLs come only from the
+// configured release API response.
 class Updater : public QObject
 {
     Q_OBJECT

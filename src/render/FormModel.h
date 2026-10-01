@@ -11,19 +11,9 @@ namespace mervin {
 
 class Document;
 
-// The sole owner of all AcroForm widget mutation in the app, keeping MuPDF
-// confined to render/ (see design §6). Bound to one open Document; every access
-// runs through Document::withPdfDocument(), which holds the document's access
-// mutex and yields the live pdf_document, so a field edit is serialised against
-// the render workers' page loads exactly like any other object-model touch.
-//
-// Field values persist as standard AcroForm /V + /AP (written by saveTo via
-// pdf_save_document), so there is no private blob to restore - re-opening a saved
-// file just re-enumerates /V. GUI-free; lives in mervin_core.
-//
-// Lifetime: holds the Document by reference and must not outlive it. The viewer
-// recreates the FormModel whenever it binds a new Document, so the reference is
-// always valid for the model's lifetime.
+// Owns AcroForm mutations for one Document. withPdfDocument serializes access against page
+// loads; standard /V and /AP persist through savePdfTo. Recreate on document rebinding and
+// destroy before the referenced Document.
 class FormModel
 {
 public:

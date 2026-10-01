@@ -22,25 +22,9 @@ struct FileMenuItem
     QIcon icon;
 };
 
-// Pops up the shared right-click menu for a PDF file at globalPos:
-//   Copy file · Open folder
-//   ───────────────────────
-//   Copy file path · Copy folder path
-//   ───────────────────────
-//   [optional surface items]
-//
-// The file actions on top keep the Recent-list and document-tab menus
-// identical. Each surface appends its own surfaceItems below them (the recent
-// list: "Open in new window", "Clear missing files"; the tab bar: "Duplicate
-// to new window", "Move to new window", "Close all tabs"); pass an empty list
-// to omit them.
-//
-// "Open folder" opens the containing folder in the OS file browser (disabled
-// when that folder no longer exists); the copy-path actions place the native-
-// separator folder / file path on the clipboard. "Copy file" places the file
-// itself on the clipboard Explorer-style so it can be pasted into a file
-// manager or attached in a mail client (disabled when the file no longer
-// exists). No-op when path is empty.
+// Shared file menu at globalPos: copy file, open containing folder, copy file/folder paths,
+// then optional surfaceItems. File copy uses the OS file clipboard; paths use native
+// separators. Missing files/folders disable their respective actions. An empty path is a no-op.
 void showFileContextMenu(QWidget *parent, const QString &path, const QPoint &globalPos,
                          const QList<FileMenuItem> &surfaceItems = {});
 

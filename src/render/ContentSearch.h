@@ -16,16 +16,9 @@ namespace mervin {
 
 class RenderEngine;
 
-// On-demand, no-index content search across a list of files (the recent-files
-// history, most-recent first). Extraction uses MuPDF, so this lives in the
-// render subsystem and its header exposes no fz_* types: it clones the engine's
-// base context onto a private worker thread, opens each file in turn, extracts
-// page text, and streams a hit for the first page of each file that contains
-// the query. Results arrive incrementally so the user can open one before the
-// search completes; a new start() or cancel() stops the in-flight scan.
-//
-// Matching is case-insensitive substring (the recent-files "search contents"
-// affordance), independent of the in-page find bar's case/whole-word toggles.
+// Search recent files on a private worker/context, streaming the first matching page per file.
+// start()/cancel() supersede pending work. Matching is a case-insensitive substring,
+// independent of in-page find options.
 class ContentSearch : public QObject
 {
     Q_OBJECT

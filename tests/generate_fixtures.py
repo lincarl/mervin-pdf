@@ -16,8 +16,12 @@ def pdf(objects):
     result += f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{start}\n%%EOF\n".encode()
     return result
 
-def document(count=4, drawing=False, mixed=False):
+def document(count=4, drawing=False, mixed=False, inherited=False):
     objects = [b"", b"", b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    if inherited:
+        objects[2] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>"
+    fonts = "/F1 3 0 R /Fluc 3 0 R" if inherited else "/F1 3 0 R"
+    resources = f"/Resources << /Font << {fonts} >> >>"
     pages = []
     for i in range(count):
         page = len(objects) + 1
@@ -38,11 +42,11 @@ def document(count=4, drawing=False, mixed=False):
                   "/Measure << /Subtype /RL /R (1:100) /X [<< /U (mm) /C 35.27573 >>] >> >>]")
         objects += [
             (f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] "
-             f"/Resources << /Font << /F1 3 0 R >> >> /Contents {page+1} 0 R {vp} >>").encode(),
+             f"{'' if inherited else resources} /Contents {page+1} 0 R {vp} >>").encode(),
             f"<< /Length {len(content)} >>\nstream\n".encode() + content + b"endstream"
         ]
     objects[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
-    objects[1] = f"<< /Type /Pages /Count {count} /Kids [{' '.join(pages)}] >>".encode()
+    objects[1] = f"<< /Type /Pages /Count {count} /Kids [{' '.join(pages)}] {resources if inherited else ''} >>".encode()
     return pdf(objects)
 
 def scanned_page():
@@ -66,6 +70,7 @@ def main(directory):
     directory.mkdir(parents=True, exist_ok=True)
     fixtures = {
         "scan.pdf": scanned_page(),
+        "inherited-resources.pdf": document(2, inherited=True),
         "house-drawing.pdf": document(1, drawing=True),
         "drawing.pdf": document(2, drawing=True),
         "properties.pdf": document(),

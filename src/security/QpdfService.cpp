@@ -1,9 +1,9 @@
 #include "security/QpdfService.h"
+#include "security/AtomicPdfWriter.h"
 
 #include <qpdf/Constants.h>
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFExc.hh>
-#include <qpdf/QPDFWriter.hh>
 
 #include <exception>
 #include <string>
@@ -104,11 +104,9 @@ QpdfService::Status QpdfService::decrypt(const QString &inPath, const QString &o
         return st;
 
     try {
-        const std::string outputName = u8(outPath);
-        QPDFWriter w(q, outputName.c_str());
-        w.setStaticID(false);
-        w.setPreserveEncryption(false); // drop encryption AND all owner restrictions
-        w.write();
+        AtomicPdfWriter output(q, outPath);
+        output.options().setPreserveEncryption(false); // drop encryption AND all owner restrictions
+        output.write();
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)
@@ -138,27 +136,26 @@ QpdfService::Status QpdfService::encrypt(const QString &inPath, const QString &o
         const bool formFill = perms.canAnnotate;
         const bool modifyOther = perms.canModify;
 
-        const std::string outputName = u8(outPath);
-        QPDFWriter w(q, outputName.c_str());
-        w.setStaticID(false);
+        AtomicPdfWriter output(q, outPath);
+        auto &writer = output.options();
         switch (algo) {
         case Algorithm::AES256:
-            w.setR6EncryptionParameters(user.c_str(), owner.c_str(), accessibility, extract,
+            writer.setR6EncryptionParameters(user.c_str(), owner.c_str(), accessibility, extract,
                                         assemble, annotateForm, formFill, modifyOther, print,
                                         /*encrypt_metadata_aes=*/true);
             break;
         case Algorithm::AES128:
-            w.setR4EncryptionParametersInsecure(user.c_str(), owner.c_str(), accessibility, extract,
+            writer.setR4EncryptionParametersInsecure(user.c_str(), owner.c_str(), accessibility, extract,
                                                 assemble, annotateForm, formFill, modifyOther, print,
                                                 /*encrypt_metadata=*/true, /*use_aes=*/true);
             break;
         case Algorithm::RC4_128:
-            w.setR4EncryptionParametersInsecure(user.c_str(), owner.c_str(), accessibility, extract,
+            writer.setR4EncryptionParametersInsecure(user.c_str(), owner.c_str(), accessibility, extract,
                                                 assemble, annotateForm, formFill, modifyOther, print,
                                                 /*encrypt_metadata=*/true, /*use_aes=*/false);
             break;
         }
-        w.write();
+        output.write();
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)

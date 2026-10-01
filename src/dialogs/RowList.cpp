@@ -70,12 +70,8 @@ RowList::RowList(int countWidth, int outputWidth, QWidget *parent)
     // accepts drops, which has to be the viewport. Setting it on the view alone
     // does not reach it.
     viewport()->setAcceptDrops(true);
-    // ...and the drag events are handled in eventFilter rather than through the
-    // dragMoveEvent/dropEvent overrides, because QAbstractScrollArea's viewport
-    // forwarding does not deliver them to the view (verified: the overrides never
-    // ran). Filtering the viewport directly is unambiguous. The same filter sees
-    // the viewport's resizes and shows, which is when the header insets
-    // change.
+    // Filter the viewport directly: QAbstractScrollArea does not forward these drag/drop events
+    // to the overrides. Resize/show events also refresh header insets.
     viewport()->installEventFilter(this);
     setDropIndicatorShown(false); // we paint our own; see paintEvent
 

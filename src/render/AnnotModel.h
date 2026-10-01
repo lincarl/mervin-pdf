@@ -14,27 +14,10 @@ namespace mervin {
 
 class Document;
 
-// The sole owner of all markup-annotation mutation in the app (highlights,
-// underlines, strike-outs, and sticky-note comments), keeping MuPDF confined to
-// render/ (see design §6, mirrored for §6b). Bound to one open Document; every
-// access runs through Document::withPdfDocument(), which holds the document's
-// access mutex and yields the live pdf_document - so an annotation edit is
-// serialised against the render workers' page loads exactly like a form-field
-// edit or any other object-model touch.
-//
-// Annotations persist as standard PDF /Annots (/Subtype /Highlight | /Underline |
-// /StrikeOut | /Text, with /Contents carrying the comment), written by
-// Document::savePdfTo (the same full MuPDF rewrite forms use). There is no private
-// blob to restore - re-opening a saved file just re-enumerates /Annots. GUI-free;
-// lives in mervin_core.
-//
-// Identity: an Annotation is addressed by (page, id) where id is the PDF object
-// number, stable for the life of one open document. A save+reopen builds a fresh
-// AnnotModel against the reopened Document, so ids never have to survive a save.
-//
-// Lifetime: holds the Document by reference and must not outlive it. The viewer
-// recreates the AnnotModel whenever it binds a new Document, so the reference is
-// always valid for the model's lifetime.
+// Owns markup and note mutations for one Document. withPdfDocument serializes access against
+// page loads. Standard /Annots and /Contents persist through Document::savePdfTo.
+// Annotation identity is (page, PDF object number), valid until save/reopen. Recreate this
+// model when rebinding the viewer; it must not outlive its Document.
 class AnnotModel
 {
 public:

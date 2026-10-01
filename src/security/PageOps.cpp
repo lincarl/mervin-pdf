@@ -1,4 +1,5 @@
 #include "security/PageOps.h"
+#include "security/AtomicPdfWriter.h"
 #include "security/MeasurementPages.h"
 #include <algorithm>
 #include <stdexcept>
@@ -8,7 +9,6 @@
 #include <qpdf/QPDFExc.hh>
 #include <qpdf/QPDFPageDocumentHelper.hh>
 #include <qpdf/QPDFPageObjectHelper.hh>
-#include <qpdf/QPDFWriter.hh>
 
 #include <QDir>
 
@@ -109,10 +109,8 @@ PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPa
         MeasureDoc mapped;
         measurementPages::append(mapped, measurementPages::read(q), kept, 0);
         measurementPages::write(q, mapped);
-        const std::string outputName = u8(outPath);
-        QPDFWriter w(q, outputName.c_str());
-        w.setStaticID(false);
-        w.write();
+        AtomicPdfWriter output(q, outPath);
+        output.write();
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)
@@ -173,10 +171,8 @@ PageOps::Status PageOps::rotatePages(const QString &inPath, const QString &outPa
                         std::swap(scale.mmPerPointX, scale.mmPerPointY);
         }
         measurementPages::write(q, data);
-        const std::string outputName = u8(outPath);
-        QPDFWriter w(q, outputName.c_str());
-        w.setStaticID(false);
-        w.write();
+        AtomicPdfWriter output(q, outPath);
+        output.write();
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)
@@ -249,10 +245,8 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
         }
         measurementPages::write(out, mergedMeasurements);
 
-        const std::string outputName = u8(outPath);
-        QPDFWriter w(out, outputName.c_str());
-        w.setStaticID(false);
-        w.write();
+        AtomicPdfWriter output(out, outPath);
+        output.write();
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)
@@ -293,10 +287,8 @@ PageOps::Status PageOps::split(const QString &inPath, const QString &outDir, con
                                      .arg(baseName)
                                      .arg(i + 1, 3, 10, QLatin1Char('0'));
             const QString path = dir.filePath(name);
-            const std::string outputName = u8(path);
-            QPDFWriter w(out, outputName.c_str());
-            w.setStaticID(false);
-            w.write();
+            AtomicPdfWriter output(out, path);
+            output.write();
             if (outFiles)
                 outFiles->append(path);
         }

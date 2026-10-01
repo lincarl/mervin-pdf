@@ -23,17 +23,9 @@ struct Settings
     // Appearance -> UI theme. New installs default to "dark". "system" follows the
     // OS setting, including live auto-switches.
     QString colorScheme = QStringLiteral("dark");      // "system" | "light" | "dark"
-    // Document theme: how PDF pages are tinted, independent of the UI theme. A
-    // user may want dark chrome but classic white pages, or vice versa.
-    //   "light"     - classic, never inverted (the default)
-    //   "dark"      - always inverted (plain colour negative)
-    //   "comfort"   - the Inverted negative offset onto a soft dark ramp
-    //                 (white paper -> dark grey, black ink -> light grey,
-    //                 colours -> muted complements), applied uniformly to
-    //                 every pixel (see ComfortTransform)
-    //   "follow-ui" - inverted only when the UI theme is dark
-    // Migrated from the old boolean `invert_colors` (true -> "dark", false ->
-    // "light") when an older config is loaded; fresh installs default to light.
+    // Document theme is independent of chrome: light preserves pages, dark inverts, comfort
+    // applies the colour-aware dark transform, and legacy follow-ui follows the UI scheme.
+    // Migrate invert_colors true/false to dark/light; new installs default to light.
     QString documentTheme = QStringLiteral("light"); // "light" | "dark" | "comfort" | "follow-ui"
 
     // UI accent colour. Drives selected segments, tabs, focus rings, etc. via the

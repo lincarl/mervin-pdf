@@ -1,11 +1,7 @@
 #pragma once
 
-// Pure, header-only snapping math for the measuring tool: given a page's
-// vector geometry (see GeometryTypes.h) and a cursor position in page-point
-// space, find the nearest snap target within a radius. Endpoints (vertices)
-// win over edges within the radius - the CAD-conventional "endpoint first"
-// behaviour - so a precise corner is preferred even when a passing edge is
-// marginally closer. No Qt widgets, no MuPDF: trivially unit-testable.
+// Header-only page-point snapping. Vertices take priority over edges within the radius, even
+// when an edge is marginally closer. No widgets or MuPDF.
 
 #include "render/GeometryTypes.h"
 

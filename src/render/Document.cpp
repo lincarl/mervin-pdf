@@ -23,17 +23,9 @@ Document::Document(fz_context *baseCtx, fz_document *doc)
     fz_catch(ctx_)
         n = 0;
 
-    // A PDF's page sizes are read from the page OBJECT, not from a loaded page.
-    // fz_load_page builds a pdf_page and, for any page carrying /Annots, eagerly
-    // resolves every annotation and link on it (pdf_load_page_imp) - all of which
-    // is dropped again one line later here. On link-heavy exports (a KiCad
-    // schematic carries a Link annotation per component) that preload dominated
-    // document open, and on a cold file cache it turned every open into thousands
-    // of scattered reads. pdf_page_obj_transform reads the same inheritable
-    // /MediaBox + /CropBox + /Rotate + /UserUnit that fz_bound_page ends up
-    // using - it requests the crop box too - so the sizes are identical, just
-    // without building the page. Non-PDF documents (XPS, CBZ, image files) have
-    // no page objects and keep the generic path below.
+    // Read PDF sizes with pdf_page_obj_transform to avoid loading annotations/links for every
+    // page. It applies the same inherited boxes, rotation and UserUnit as fz_bound_page. Non-
+    // PDF documents use the generic page-loading path.
     pdf_document *pdoc = nullptr;
     fz_try(ctx_)
         pdoc = pdf_specifics(ctx_, doc_);
@@ -323,13 +315,9 @@ PageMeasurement Document::pageMeasurement(int pageNo) const
             if (pm.userUnit <= 0.0)
                 pm.userUnit = 1.0;
 
-            // /VP BBoxes are in PDF user space (y-up). The cursor and the snap
-            // geometry live in the app's page-point space (y-down, shifted to a
-            // 0-based origin - see pageGeometry). Build the same content->app
-            // transform and apply it to each BBox, otherwise resolveScale's
-            // bbox-containment test is wrong off-centre: a y-flip is invisible at
-            // the page centre (so an unflipped bbox appeared to work there) but
-            // mismatches everywhere else, which flipped the readout to 1:1.
+            // Transform PDF-user-space /VP bounds into zero-origin, y-down page points,
+            // matching cursor/snap geometry. Otherwise rotation or shifted boxes select the
+            // wrong viewport scale.
             fzpage = fz_load_page(ctx_, doc_, pageNo);
             const fz_rect bound = fz_bound_page(ctx_, fzpage);
             fz_rect mbox;

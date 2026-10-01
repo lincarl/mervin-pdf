@@ -6,58 +6,16 @@
 
 namespace mervin {
 
-// The "Comfort" document theme's pixel transform (final form chosen in the
-// comfort-image-variants exploration, 2026-07). Three per-pixel treatments,
-// selected by where the pixel sits:
-//
-// - Page content (outside embedded-image rectangles): the "ink" treatment.
-//   Neutral pixels take the offset negative - each channel inverted onto
-//   [#181A1E, #D6D9DE], so white paper lands on the dark background and
-//   black ink on the off-white text colour, bit-identical to the previous
-//   uniform Comfort on greys. Colourful pixels are unmixed into ink + paper
-//   coverage: dark inks (coloured text/lines) are re-composited over the
-//   dark background, which kills the white anti-alias halo around coloured
-//   glyphs; light inks (pale fills) keep their authored colour.
-//
-// - Inside embedded-image rectangles, one of three per-image modes decided
-//   by the render worker from the EMBEDDED image's pixels (so every zoom
-//   level and deep-zoom tile agrees). A picture must not change colour, so
-//   the default is to leave it alone and only sink its white/transparent
-//   backdrop into the page:
-//   - PhotoOnWhite: the image is shown authored and its white backdrop is
-//     ramped into the dark page (a dead-zone whiteness ramp that also
-//     swallows JPEG ringing at object edges). A transparent backdrop lands
-//     here too - over white paper it renders as white.
-//   - KeepAuthored: an image with no white backdrop to remove (a full-bleed
-//     photo or render) is left completely untouched.
-//   - Split: a soft Oklab chroma gate between the offset negative and the
-//     authored pixel, i.e. neutral content inverts like the page. Reserved
-//     for content that would go INVISIBLE if kept authored on a dark page:
-//     scanned pages, line art, plots and flat dark artwork on white (see
-//     comfortImageMode). This is the v1.36.0 lesson - a page that IS a scan
-//     must still invert - scoped to exactly the images that need it.
-//
-// The page treatment and Split are bit-identical on neutral pixels, so
-// those rectangle boundaries are invisible on paper/greys, and nothing
-// outside a KeepAuthored/PhotoOnWhite photo is ever un-inverted.
-//
-// (History worth keeping: v1.36.0 deleted image handling altogether because a
-// whole-page scan was being un-inverted into invisibility, and v1.37-v1.38
-// brought it back photo-first - only images that positively looked like a
-// product photo were spared. That made every image the user cared about but
-// the classifier had not seen - wide crops, dark subjects, flat renders - come
-// out as a negative. The polarity below is the fix: keep the picture, and
-// invert only what would otherwise disappear.)
-//
-// `image` is the page render (Format_RGB888 from the worker; converted if
-// not). Safe for whole-page renders and clipped deep-zoom tiles alike.
+// Comfort tones RGB888 page renders (converting other formats as needed).
+// Outside images, neutral pixels map white/black to #181A1E/#D6D9DE. Dark coloured inks are
+// recomposited over the dark page without white halos; pale fills retain their colour.
+// Embedded-image modes are chosen from source pixels, independent of zoom or clipping:
+// PhotoOnWhite removes a white/transparent backdrop; KeepAuthored preserves images without one;
+// Split inverts scans, line art and flat artwork that would disappear on dark paper.
+// Ink and Split agree exactly on neutral pixels, avoiding seams at rectangle boundaries.
 
-// Endpoints of the offset invert that the ink treatment (and Split's neutral
-// half) maps every channel into: an input channel at 255 lands on kRampBg, an
-// input at 0 on kRampFg. Exposed here so the viewer can back a not-yet-rendered
-// page with the exact backdrop the pixel pass produces (surfaced as
-// theme::doc().paperComfort) instead of re-typing the literal. Both values are
-// pinned by tst_comfort_transform.
+// Channel endpoints for Ink and neutral Split: 255 maps to kRampBg, 0 to kRampFg. The viewer
+// uses the same backdrop via theme::doc().paperComfort; tests pin both values.
 namespace comfort {
 inline constexpr int kRampBg[3] = {24, 26, 30};    // #181A1E - white paper lands here
 inline constexpr int kRampFg[3] = {214, 217, 222}; // #D6D9DE - black ink lands here
@@ -70,12 +28,9 @@ inline constexpr int kRampFg[3] = {214, 217, 222}; // #D6D9DE - black ink lands 
 // document. It outranks the three image modes.
 enum class ComfortImageMode : quint8 { Split, KeepAuthored, PhotoOnWhite, PageInk };
 
-// One embedded raster image's placement: its device-pixel rectangle
-// (relative to the render's top-left, may extend outside it) and the
-// per-image treatment decision made by the render worker. For PhotoOnWhite,
-// rampLo/rampHi parameterize the backdrop ramp
-// alpha = smoothstep(rampLo, rampHi, distance-from-white); the two are chosen
-// per image by comfortBackdropRamp.
+// Device-pixel image rectangle relative to the render origin; may extend outside it.
+// PhotoOnWhite alpha uses smoothstep(rampLo, rampHi, distance-from-white), selected by
+// comfortBackdropRamp.
 struct ComfortImageRect
 {
     QRect rect;
@@ -93,15 +48,9 @@ void applyComfortTransform(QImage &image);
 // inside them.
 void applyComfortTransform(QImage &image, const QVector<ComfortImageRect> &imageRects);
 
-// What the render worker measures about one embedded image to choose its
-// mode. Everything is measured on the image composited over WHITE (its
-// soft mask / alpha applied), because that is what the page render shows:
-// a transparent backdrop over white paper IS a white backdrop.
-//
-// The "non-white" pixels referred to below are the image's content: those
-// further than 8 from white (255 - min channel > 8). Normalising to content
-// rather than to the whole image is what makes the features comparable
-// between a tightly cropped photo and one floating in white space.
+// Embedded-image classification features, measured after alpha/soft-mask compositing over
+// white. Non-white content has 255-min(channel) > 8. Normalize features to content rather than
+// full image area so white margins do not change classification.
 struct ComfortImageFeatures
 {
     // Backdrop: fraction of grid samples with min channel >= 250.
@@ -123,57 +72,23 @@ struct ComfortImageFeatures
     float pageCoverage = 0.0f;
 };
 
-// Picks the treatment for one embedded image. Keeping a picture authored is
-// the default; Split (inversion) is chosen only where authored content would
-// vanish into the dark page:
-//   - the images cover the page => it is a scanned page, invert it;
-//   - content on a white backdrop that reads as ink rather than as a
-//     picture: thin marks (strokeFrac) or no shading at all (gradFrac).
-// Corpus separation, measured over examples/: scan strips stroke 0.49-0.99
-// (and coverage 1.00), a line-art plot stroke 0.38, a logo on white stroke
-// 0.33-0.64, flat logo artwork grad 0.0000-0.0005 - against photos and
-// product renders at stroke <= 0.15 and grad 0.024-0.80. Every image the
-// "photo first" classifier used to miss (wide crops, black subjects, flat
-// CAD renders, anything with a soft mask) now lands on PhotoOnWhite or
-// KeepAuthored.
-//
-// A dithered or grainy scan is caught by strokeFrac, not by a hard-edge
-// count: its marks are isolated pixels, so nearly all of them have white
-// within reach. A separate hard-step feature was tried and dropped - real
-// photographs with crisp silhouettes score as high as line art does.
+// Default to authored pictures; use Split when page coverage indicates a scan, or a white
+// backdrop surrounds thin strokes/flat artwork. Corpus strokeFrac: scans 0.49-0.99, line art
+// 0.33-0.64, photos <=0.15; gradFrac: flat art <=0.0005, photos 0.024-0.80. Stroke proximity
+// catches dithered scans; hard-edge counts also catch crisp photos and are unsuitable.
 ComfortImageMode comfortImageMode(const ComfortImageFeatures &f);
 
-// Cheap gates that let the render worker skip measurement it cannot use, so
-// the thresholds still live in exactly one place:
-// - with this much of the page covered by images the verdict is Split whatever
-//   the pixels say, so an image needs no probe at all;
-// - the full-resolution walk (strokeFrac/gradFrac for the ink test, and the
-//   ringing measurements the backdrop ramp needs) is only worth doing for an
-//   image that could be ink on white, or that has a backdrop to remove.
+// Shared early-out thresholds: scan coverage forces Split without probing; full-resolution
+// ink/ringing analysis is only needed for possible ink-on-white or removable backdrops.
 bool comfortScannedPageCoverage(float pageCoverage);
 bool comfortNeedsInkFeatures(float whiteFrac);
 bool comfortHasWhiteBackdrop(float ringWhiteFrac);
 
-// Chooses the PhotoOnWhite backdrop ramp for one image. The hard part is that
-// lossy compression leaves a band of near-white pixels hugging every dark
-// silhouette (JPEG ringing), and a photograph of a WHITE object has near-white
-// pixels of its own - the two are the same values, so one fixed dead zone
-// cannot serve both. Sinking too little leaves a ragged bright halo around the
-// subject; sinking too much eats the subject's white faces (the "bleed" of
-// v1.38.x).
-//
-// The way out is that the choice only matters when there is white subject
-// content to lose, and then the image has plenty of near-white pixels to
-// measure. So:
-// - ringingFrac / nearWhiteFrac - what share of the near-white pixels are
-//   RINGING, i.e. sandwiched between pure white and dark content within a few
-//   pixels - decides. Corpus: a CMYK photo of a grey part scores 0.30, tinted
-//   product shots 0.66-0.84, while photos of white housings score 0.002-0.088.
-// - Ringing-dominated images get an aggressive dead zone: they have almost no
-//   near-white content of their own (<= 1.5% of pixels), so nothing is lost.
-// - Everything else gets a ramp calibrated to the border ring's own noise
-//   (99th percentile + 1, width 4), which is (1, 5) for a clean backdrop and
-//   keeps subject faces sitting 2-5 values from white.
+// Choose a per-image backdrop ramp without erasing white subjects. The
+// ringingFrac/nearWhiteFrac ratio distinguishes JPEG edge noise (corpus: 0.30-0.84) from white
+// housings (0.002-0.088). Ringing-dominated images with <=1.5% near-white content use an
+// aggressive dead zone. Otherwise use border-noise p99 + 1, width 4: clean backdrops get (1,
+// 5), preserving faces 2-5 values from white.
 void comfortBackdropRamp(float nearWhiteFrac, float ringingFrac, int ringNoiseP99, quint8 *rampLo,
                          quint8 *rampHi);
 

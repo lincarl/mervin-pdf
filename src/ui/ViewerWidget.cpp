@@ -69,12 +69,6 @@ constexpr double kZoomLadderMinStep = 1.25;
 // trackpads report a fraction of a notch per event, so the deltas are accumulated
 // (see wheelEvent) instead of stepping a rung per micro-tick.
 constexpr int kWheelNotch = 120;
-// The step the zoom ease's duration is calibrated against - not the zoom step
-// itself (see kZoomLadder). A ladder step is ~1.4x, i.e. ~1.5 of these, so an
-// ordinary +/- gesture glides for ~200 ms and only bigger typed-in jumps reach
-// the kZoomEaseMaxMs cap.
-constexpr double kZoomEaseRefRatio = 1.25;
-
 // Above this device-pixel area, a page is rendered as a single viewport-sized
 // tile (only the visible region) rather than one whole-page bitmap. Deep zoom
 // would otherwise allocate gigantic pixmaps that MuPDF refuses, blanking the
@@ -90,37 +84,7 @@ constexpr double kMaxPreviewStretch = 8.0;
 
 // Animate the drawn rectangles only; layout and render requests immediately use the final scale.
 constexpr int kZoomEaseMs = 130;     // for exactly one kZoomStep
-constexpr int kZoomEaseMinMs = 90;   // must stay above keyboard auto-repeat (~33 ms)
-constexpr int kZoomEaseMaxMs = 260;  // hard bound on how far the picture may trail
 constexpr int kZoomEaseTickMs = 16;
-// Below this magnification the ease is skipped: input this fine is already
-// continuous (a trackpad pinch), and easing it would only make it feel late.
-constexpr double kZoomEaseMinRatio = 1.05;
-
-double easeOutCubic(double t)
-{
-    return 1.0 - std::pow(1.0 - std::clamp(t, 0.0, 1.0), 3.0);
-}
-
-// Progress reparameterized so that a plain lerp between the captured rect and the
-// final one grows the drawn size GEOMETRICALLY: size(e) == size0 * k^e, which is
-// the path the eye reads as a constant-rate zoom (lerping the size itself lunges
-// on the way in and stalls on the way out). u(0) == 0 and u(1) == 1, so the last
-// frame lands exactly on the final layout.
-double easeU(double t, double k)
-{
-    const double e = easeOutCubic(t);
-    if (!(k > 0.0) || std::abs(k - 1.0) < 1e-6)
-        return e;
-    return (std::pow(k, e) - 1.0) / (k - 1.0);
-}
-
-QRectF lerpRect(const QRectF &a, const QRectF &b, double u)
-{
-    return QRectF(a.x() + (b.x() - a.x()) * u, a.y() + (b.y() - a.y()) * u,
-                  a.width() + (b.width() - a.width()) * u,
-                  a.height() + (b.height() - a.height()) * u);
-}
 
 // save()/restore() that survives the `continue` in the middle of paintEvent's page
 // loop (the no-text-index early out). A hand-rolled pair would leak painter state
@@ -515,7 +479,7 @@ bool ViewerWidget::zoomEaseAllowed() const
     return !selecting_ && !panning_ && measureDrag_ == MeasureDrag::None;
 }
 
-bool ViewerWidget::captureZoomEase(double newScale, ZoomEase *out) const
+bool ViewerWidget::captureZoomEase(double newScale, ZoomAnimation::Snapshot *out) const
 {
     if (!zoomEaseAllowed())
         return false;
@@ -536,7 +500,7 @@ bool ViewerWidget::captureZoomEase(double newScale, ZoomEase *out) const
         // from the state (already at the previous target), so a burst of wheel
         // notches reads as one continuous accelerating movement instead of a
         // sequence of restarts.
-        out->from.insert(pg, zoomEase_.active ? zoomEaseRect(pg, shown) : shown);
+        out->from.insert(pg, zoomEase_.active() ? zoomEaseRect(pg, shown) : shown);
     }
     if (out->from.isEmpty())
         return false;
@@ -549,31 +513,20 @@ bool ViewerWidget::captureZoomEase(double newScale, ZoomEase *out) const
     return true;
 }
 
-void ViewerWidget::startZoomEase(ZoomEase &&e)
+void ViewerWidget::startZoomEase(ZoomAnimation::Snapshot &&e)
 {
     const QRect repFinal = layout_.pageRect(e.repPage);
-    const auto rep = e.from.constFind(e.repPage);
-    if (!repFinal.isValid() || rep == e.from.constEnd() || rep.value().width() <= 0.0)
+    if (!zoomEase_.start(std::move(e), repFinal, zoomEaseMs_))
         return;
-    const double k = repFinal.width() / rep.value().width();
-    if (!(k > 0.0) || std::abs(std::log(k)) < std::log(kZoomEaseMinRatio))
-        return; // too small to be worth easing, or a retarget the display caught up with
-    e.k = k;
-    e.durMs = std::clamp(static_cast<int>(zoomEaseMs_ * std::abs(std::log(k))
-                                          / std::log(kZoomEaseRefRatio)),
-                         kZoomEaseMinMs, kZoomEaseMaxMs);
-    e.active = true;
-    e.clock.start();
-    zoomEase_ = std::move(e);
     zoomEaseTimer_->start();
     viewport()->update();
 }
 
 void ViewerWidget::endZoomEase()
 {
-    if (!zoomEase_.active)
+    if (!zoomEase_.active())
         return;
-    zoomEase_ = ZoomEase{};
+    zoomEase_.reset();
     zoomEaseTimer_->stop();
     // Restore the invariant onResultReady holds while idle - a tile lives only
     // until its page's sharp render is in. Mid-ease that erase is skipped (the
@@ -592,82 +545,32 @@ void ViewerWidget::endZoomEase()
 
 void ViewerWidget::onZoomEaseTick()
 {
-    if (!zoomEase_.active) {
+    if (!zoomEase_.active()) {
         zoomEaseTimer_->stop();
         return;
     }
     // Progress comes from the clock, never from a tick count: a slow frame
     // shortens the remaining path instead of stretching the gesture, and a stall
     // (or a cancel site we missed) self-heals on the next tick.
-    if (zoomEase_.forcedT < 0.0 && zoomEase_.clock.elapsed() >= zoomEase_.durMs) {
+    if (zoomEase_.finished()) {
         endZoomEase();
         return;
     }
     viewport()->update();
 }
 
-double ViewerWidget::zoomEaseU() const
-{
-    if (!zoomEase_.active)
-        return 1.0;
-    const double t = zoomEase_.forcedT >= 0.0
-                         ? zoomEase_.forcedT
-                         : (zoomEase_.durMs <= 0
-                                ? 1.0
-                                : double(zoomEase_.clock.elapsed()) / zoomEase_.durMs);
-    return easeU(t, zoomEase_.k);
-}
-
-QRectF ViewerWidget::zoomEaseFromRect(int pageNo, const QRectF &finalRect) const
-{
-    const auto it = zoomEase_.from.constFind(pageNo);
-    if (it != zoomEase_.from.constEnd())
-        return it.value();
-    // For newly visible pages, extrapolate from the representative page.
-    // Fixed margins introduce a small error that disappears when easing ends.
-    const auto rep = zoomEase_.from.constFind(zoomEase_.repPage);
-    const QRect repFinal = layout_.pageRect(zoomEase_.repPage);
-    if (rep == zoomEase_.from.constEnd() || !repFinal.isValid() || repFinal.width() <= 0)
-        return finalRect;
-    const QRectF repFinalW(repFinal.translated(-contentOffset()));
-    if (repFinalW.width() <= 0.0)
-        return finalRect;
-    const double a = rep.value().width() / repFinalW.width();
-    return QRectF(a * finalRect.x() + (rep.value().x() - a * repFinalW.x()),
-                  a * finalRect.y() + (rep.value().y() - a * repFinalW.y()),
-                  a * finalRect.width(), a * finalRect.height());
-}
-
 QRectF ViewerWidget::zoomEaseRect(int pageNo, const QRectF &finalRect) const
 {
-    if (!zoomEase_.active || finalRect.width() <= 0.0)
-        return finalRect;
-    const QRectF from = zoomEaseFromRect(pageNo, finalRect);
-    if (from.width() <= 0.0)
-        return finalRect;
-    return lerpRect(from, finalRect, zoomEaseU());
-}
-
-// Use independent axis scales from the actual painted rectangle; layout rounds width and height separately.
-QTransform ViewerWidget::zoomEaseTransform(const QRectF &finalRect, const QRectF &easedRect) const
-{
-    if (finalRect.width() <= 0.0 || finalRect.height() <= 0.0 || easedRect.width() <= 0.0
-        || easedRect.height() <= 0.0) {
-        return {};
-    }
-    const double ax = easedRect.width() / finalRect.width();
-    const double ay = easedRect.height() / finalRect.height();
-    QTransform xf;
-    xf.translate(easedRect.x() - ax * finalRect.x(), easedRect.y() - ay * finalRect.y());
-    xf.scale(ax, ay);
-    return xf;
+    const QRectF representative = layout_.pageRect(zoomEase_.representativePage())
+                                      .translated(-contentOffset());
+    return zoomEase_.rect(pageNo, finalRect, representative);
 }
 
 void ViewerWidget::addPagesHeldByEase(std::vector<int> *pages) const
 {
     const QRectF vp(QPointF(0, 0), QSizeF(viewport()->size()));
     const QPoint off = contentOffset();
-    for (auto it = zoomEase_.from.cbegin(); it != zoomEase_.from.cend(); ++it) {
+    for (auto it = zoomEase_.capturedRects().cbegin(); it != zoomEase_.capturedRects().cend(); ++it) {
         if (std::find(pages->begin(), pages->end(), it.key()) != pages->end())
             continue;
         const QRect pc = layout_.pageRect(it.key());
@@ -687,7 +590,7 @@ void ViewerWidget::setZoomEaseMs(int ms)
 
 void ViewerWidget::setZoomEaseProgressForTest(double t)
 {
-    zoomEase_.forcedT = t; // < 0 hands progress back to the clock
+    zoomEase_.setProgressForTest(t); // < 0 hands progress back to the clock
     viewport()->update();
 }
 
@@ -762,7 +665,7 @@ void ViewerWidget::onResultReady(const mervin::RenderResult &result)
         img.invertPixels();
     img.setDevicePixelRatio(dpr_);
     cache_.put(result.pageNo, img, covered);
-    if (zoomEase_.active) {
+    if (zoomEase_.active()) {
         // Map fresh tiles into the eased page rectangle so they sharpen in place during animation.
         if (covered == layout_.pageRect(result.pageNo) || !preview_.tile(result.pageNo))
             preview_.add(result.pageNo, img, covered, layout_.pageRect(result.pageNo));
@@ -802,7 +705,7 @@ void ViewerWidget::paintEvent(QPaintEvent *event)
     // neither counted nor rendered - they exist for this flight only.
     std::vector<int> pages = layout_.pagesInViewport(vpCanvas);
     const std::size_t liveCount = pages.size();
-    if (zoomEase_.active)
+    if (zoomEase_.active())
         addPagesHeldByEase(&pages);
 
     for (std::size_t idx = 0; idx < pages.size(); ++idx) {
@@ -813,14 +716,14 @@ void ViewerWidget::paintEvent(QPaintEvent *event)
             continue;
         const QRect r = pageCanvas.translated(-off);
         // Where this page is drawn this frame. Equals r whenever no ease is running.
-        const QRect rDraw = zoomEase_.active ? zoomEaseRect(i, QRectF(r)).toAlignedRect() : r;
+        const QRect rDraw = zoomEase_.active() ? zoomEaseRect(i, QRectF(r)).toAlignedRect() : r;
         const QRect easedCanvas = rDraw.translated(off);
         const QRect neededCanvas = pageCanvas.intersected(vpCanvas);
         const PageCache::Entry *e = cache_.get(i);
         // Mid-ease a landed render is re-tiled into preview_ (see onResultReady),
         // so the drawing always goes through the cheap stretched path and the page
         // sharpens in place instead of snapping to its final size.
-        if (!zoomEase_.active && e && e->covered.contains(neededCanvas)) {
+        if (!zoomEase_.active() && e && e->covered.contains(neededCanvas)) {
             // A clipped tile's realized image can be a sub-pixel short of the
             // region it claims (the layout and the renderer round the page bound
             // differently), so back it with page-white; otherwise the far-edge
@@ -834,7 +737,7 @@ void ViewerWidget::paintEvent(QPaintEvent *event)
             // Use the frozen preview for uncovered areas, then overlay any available sharp tile.
             p.fillRect(rDraw, pageBase);
             bool drew = drawPreview(p, i, pageCanvas, off, easedCanvas);
-            if (!zoomEase_.active && e && !e->image.isNull()) {
+            if (!zoomEase_.active() && e && !e->image.isNull()) {
                 p.drawImage(e->covered.topLeft() - off, e->image);
                 drew = true;
             }
@@ -847,10 +750,10 @@ void ViewerWidget::paintEvent(QPaintEvent *event)
         // FINAL geometry. Mid-ease the transform carries it onto the eased rect, so
         // the border and every overlay travel with the bitmap as one object.
         std::optional<PainterStateGuard> easeGuard;
-        if (zoomEase_.active) {
+        if (zoomEase_.active()) {
             ++paintStats_.eased;
             easeGuard.emplace(p);
-            p.setTransform(zoomEaseTransform(QRectF(r), QRectF(rDraw)), /*combine=*/true);
+            p.setTransform(ZoomAnimation::transform(QRectF(r), QRectF(rDraw)), /*combine=*/true);
         }
         p.setPen(theme::doc().pageBorder);
         p.setBrush(Qt::NoBrush);
@@ -904,7 +807,7 @@ void ViewerWidget::paintEvent(QPaintEvent *event)
     drawSnapIndicator(p);
 
     // Keep previews near the viewport so scrolling cannot retain obsolete page images indefinitely.
-    if (!zoomEase_.active && !preview_.isEmpty()) {
+    if (!zoomEase_.active() && !preview_.isEmpty()) {
         const QRect nearby = vpCanvas.adjusted(-vpCanvas.width(), -vpCanvas.height(),
                                                vpCanvas.width(), vpCanvas.height());
         preview_.retain(layout_.pagesInViewport(nearby));
@@ -1289,7 +1192,7 @@ void ViewerWidget::rescaleKeeping(double newScale, QPointF viewportPos, bool kee
     // scrollbar writes below (and relayout's range clamp) both land in
     // scrollContentsBy, which ends an ease on the rule that a scroll the ease did
     // not cause is the user taking over. Arming first would cancel it immediately.
-    ZoomEase ease;
+    ZoomAnimation::Snapshot ease;
     const bool wantEase = captureZoomEase(newScale, &ease);
     endZoomEase(); // the snapshot has consumed any running one
 
@@ -2325,12 +2228,8 @@ void ViewerWidget::mousePressEvent(QMouseEvent *event)
             setFocus();
         } else {
             selection_.clear();
-            // No text under the cursor (e.g. a sticky-note icon in the margin): in
-            // the pointer/Select state (this branch only runs when no annotation
-            // gesture is active - i.e. the Comment tool is closed OR open on Select)
-            // a click on a comment opens it read-only. Marks that overlap text are
-            // decided on release so a drag still selects text (see the selecting_
-            // branch in mouseReleaseEvent).
+            // In Select mode, clicks without text open comments read-only. Resolve text-
+            // overlapping annotations on release so dragging still selects text.
             int pg = -1;
             int id = -1;
             if (annotAt(event->pos(), pg, id) && annotShowsReadOnly(pg, id))

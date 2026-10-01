@@ -13,12 +13,8 @@ struct ViewState
     QString zoomMode = QStringLiteral("fit-width"); // "fit-width" | "fit-page" | "custom"
     double scale = 1.0;                             // used only when zoomMode == "custom"
     int rotation = 0;                               // 0 / 90 / 180 / 270 degrees
-    // Scroll position within `page`, as a fraction of the page's displayed size:
-    // the canvas point at the viewport's top-left, minus the page's top-left,
-    // over the page size. Scale-independent (numerator and denominator both scale
-    // with zoom), so the exact spot is restored at any zoom level / window size.
-    // 0,0 means "page top-left at the viewport corner" - the legacy page-only
-    // behaviour, and the default for entries written before this field existed.
+    // Viewport top-left within page as a fraction of displayed page size, independent of scale.
+    // Zero fractions place the page corner at the viewport corner.
     double offsetX = 0.0;
     double offsetY = 0.0;
 };

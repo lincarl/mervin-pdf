@@ -2,15 +2,9 @@
 
 namespace mervin {
 
-// Cross-platform "default PDF app" integration. Each OS provides one
-// implementation, selected at build time (see CMakeLists.txt):
-//   - Windows (platform/win/WindowsIntegration.cpp): per-user (HKCU) registry
-//     capabilities + opens Settings -> Default Apps (the supported Win10/11
-//     pattern; apps may not silently take over an association).
-//   - Linux (platform/linux/DesktopIntegration.cpp): xdg-mime against the
-//     installed/bundled mervin-pdf.desktop (which carries MimeType=application/pdf).
-// The current first-run prompt and Settings button are Windows-only. The Linux
-// implementation remains available for non-UI integration.
+// Build-selected integration: Windows registers per-user capabilities and opens Default Apps;
+// Linux uses xdg-mime and mervin-pdf.desktop. First-run/Settings controls are Windows-only;
+// Linux remains available to other callers.
 namespace PlatformIntegration {
 
 // Make Mervin a candidate .pdf handler and, on Windows, open the OS picker for

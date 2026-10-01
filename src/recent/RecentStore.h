@@ -8,13 +8,8 @@
 
 namespace mervin {
 
-// The recent-files history: an ordered list (most-recent first) of opened
-// files, persisted as JSON. Owned by the primary (single-instance) UI process,
-// which is the sole writer; secondary launches hand off and never touch it.
-// Dedup and case/separator matching use a normalized path key (see PathKey.h);
-// the original spelling is preserved for display. The list is trimmed to a
-// retention cap (spec default 500) on every mutation so it never grows without
-// bound.
+// JSON recent history, newest first, with a bounded retention count. The primary UI process is
+// the sole writer. PathKey normalizes matching while original spelling is retained for display.
 class RecentStore
 {
 public:

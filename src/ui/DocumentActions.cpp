@@ -5,6 +5,7 @@
 #include "dialogs/MergeDialog.h"
 #include "dialogs/PrintDialog.h"
 #include "dialogs/SecurityDialog.h"
+#include "print/PageRange.h"
 #include "render/Document.h"
 #include "render/MeasureContent.h"
 #include "render/MeasureMath.h"
@@ -56,39 +57,6 @@ namespace {
 
 using mervin::PageOps;
 
-// Parse "all" / "1-5" / "1,3,5-9" (1-based) into a sorted, de-duplicated set of
-// 0-based indices clamped to [0, count). Returns empty on no valid pages.
-QList<int> parsePageSpec(const QString &spec, int count)
-{
-    const QString s = spec.trimmed();
-    QList<int> out;
-    if (s.isEmpty() || s.compare(QStringLiteral("all"), Qt::CaseInsensitive) == 0) {
-        for (int i = 0; i < count; ++i)
-            out.append(i);
-        return out;
-    }
-    QSet<int> seen;
-    for (const QString &partRaw : s.split(QLatin1Char(','), Qt::SkipEmptyParts)) {
-        const QString part = partRaw.trimmed();
-        int lo = 0, hi = 0;
-        if (part.contains(QLatin1Char('-'))) {
-            const auto se = part.split(QLatin1Char('-'));
-            if (se.size() != 2)
-                continue;
-            lo = se[0].trimmed().toInt();
-            hi = se[1].trimmed().isEmpty() ? count : se[1].trimmed().toInt();
-        } else {
-            lo = hi = part.toInt();
-        }
-        for (int p = lo; p <= hi; ++p)
-            if (p >= 1 && p <= count && !seen.contains(p - 1)) {
-                seen.insert(p - 1);
-                out.append(p - 1);
-            }
-    }
-    return out;
-}
-
 // Retry once with a prompted password and remember it only on success.
 bool runWriteOp(QWidget *parent, TabPage *tab,
                 const std::function<PageOps::Status(const QString &, QString *)> &op)
@@ -128,9 +96,16 @@ QList<int> MainWindow::askPageRange(const QString &title, int pageCount)
         QLineEdit::Normal, QStringLiteral("all"), &ok);
     if (!ok)
         return {};
-    const QList<int> pages = parsePageSpec(spec, pageCount);
+    QString error;
+    QList<int> pages;
+    QSet<int> seen;
+    for (int page : PageRange::parseAllowingAll(spec, pageCount, &error))
+        if (!seen.contains(page)) {
+            seen.insert(page);
+            pages.append(page - 1);
+        }
     if (pages.isEmpty())
-        QMessageBox::warning(this, title, tr("No valid pages in that range."));
+        QMessageBox::warning(this, title, error);
     return pages;
 }
 

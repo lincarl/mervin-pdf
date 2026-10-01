@@ -22,7 +22,30 @@ class TstPerfRender : public QObject
 private slots:
     void renderAndPixelPasses();
     void documentOpen();
+    void imageRegionPass();
 };
+
+void TstPerfRender::imageRegionPass()
+{
+    QImage image(1600, 1200, QImage::Format_RGB888);
+    image.fill(QColor(235, 235, 235));
+    QVector<mervin::ComfortImageRect> rects;
+    for (int y = 0; y < 1200; y += 150)
+        for (int x = 0; x < 1600; x += 100)
+            rects.append({QRect(x, y, 90, 140), mervin::ComfortImageMode::PhotoOnWhite, 1, 5});
+    std::vector<double> times;
+    for (int run = 0; run < 15; ++run) {
+        auto copy = image.copy();
+        QElapsedTimer timer;
+        timer.start();
+        mervin::applyComfortTransform(copy, rects);
+        times.push_back(timer.nsecsElapsed() / 1e6);
+        QCOMPARE(copy.pixelColor(10, 10), QColor(235, 235, 235));
+        QCOMPARE(copy.pixelColor(95, 145), QColor(39, 41, 45));
+    }
+    std::sort(times.begin(), times.end());
+    qInfo("Comfort 128 regions 1.92 MP: p50=%.3f ms p95=%.3f ms", times[7], times[14]);
+}
 
 void TstPerfRender::renderAndPixelPasses()
 {

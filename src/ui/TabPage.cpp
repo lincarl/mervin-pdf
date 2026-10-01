@@ -180,23 +180,13 @@ bool TabPage::open(const QString &path, const QString &password, QString *error,
     doc_ = std::move(doc);
     viewer_->setDocument(doc_.get());
 
-    // Restore any measurements Mervin previously embedded in this PDF (a private
-    // catalog blob; invisible to other viewers). Shown + editable immediately.
-    //
-    // Gated on the MuPDF-side catalog check: readMervinBlob opens and parses the
-    // whole file a SECOND time through qpdf, which on a cold file cache costs
-    // about as much as the MuPDF open itself - and virtually no file carries the
-    // blob. hasMervinMeasurements() answers from the catalog MuPDF has already
-    // parsed, so the qpdf reopen now happens only for files that really do.
+    // Restore the editable private measurement blob only when the MuPDF catalog reports it.
+    // This avoids a second full qpdf parse for ordinary documents.
     if (doc_->hasMervinMeasurements()) {
         if (auto blob = MeasureExport::readMervinBlob(path, password)) {
             MeasureDoc md;
-            // Restore when the blob carries measurements OR page-scale overrides: a
-            // calibration (override) is persisted independently of any committed
-            // measurement, so a calibrate-only file must still restore its override
-            // (otherwise the scale silently reverts and Reset never appears).
-            // loadMeasurements tolerates an empty measurements vector - it assigns
-            // the overrides and only force-enables the tool when measurements exist.
+            // Restore scale overrides even without measurements. loadMeasurements enables the
+            // tool only when marks exist.
             if (parseMeasurements(*blob, &md)
                 && (!md.measurements.empty() || !md.pageScales.empty())) {
                 viewer_->loadMeasurements(md.measurements, md.overridesModel(), md.unit,

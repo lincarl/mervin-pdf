@@ -17,15 +17,9 @@ class Document;
 class RenderEngine;
 class ExtractCellModel;
 
-// The result strip in the Extract Pages dialog: one QListView item per
-// ExtractPlan::Cell, in output order, painted by an internal delegate. Owns the
-// thumbnail cache and the render pump (one page per event-loop turn, after a
-// 150 ms debounce, only for cells in view). Holds no plan state: the dialog hands
-// it cells after each change and turns its signals into plan edits.
-//
-// Fixed height: the thumbnails are always 89 x 124, and the bottom 16 px of the
-// viewport stay free for the horizontal scrollbar, so nothing moves when it
-// appears.
+// Display ExtractPlan cells in output order; signals request plan edits. Own a thumbnail cache
+// and render visible cells one per event-loop turn after 150 ms debounce. Fixed 89x124
+// thumbnails and a 16px scrollbar reserve prevent height changes.
 class ExtractStrip : public QListView
 {
     Q_OBJECT

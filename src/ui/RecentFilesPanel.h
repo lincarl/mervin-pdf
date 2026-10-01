@@ -16,19 +16,9 @@ class QToolButton;
 
 namespace mervin {
 
-// The recent-files home panel. Lists the recent history (most-recent first).
-// Files no longer on disk are greyed out; activating one offers
-// Locate / Remove from history / Cancel.
-//
-// Filtering and scope selection are driven externally via setSearch() - the
-// internal filter field and checkbox are functional but not shown in the UI;
-// they live in the global adaptive FindBar instead.
-//
-// Content search is on-demand (M7): results stream in through addContentHit().
-//
-// Each row shows a star icon (right edge) that toggles the favourite flag;
-// clicking it emits favoriteToggled(). A Recent / Favorites toggle below the
-// heading filters the list to show only starred entries.
+// Recent history, newest first, with favorite toggles/filtering. Missing files offer
+// Locate/Remove/Cancel. The adaptive FindBar drives setSearch; internal filter controls remain
+// hidden. Content-search results stream through addContentHit().
 class RecentFilesPanel : public QWidget
 {
     Q_OBJECT

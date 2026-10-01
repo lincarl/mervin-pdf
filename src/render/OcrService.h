@@ -14,15 +14,9 @@ class RenderEngine;
 class Document;
 struct DocumentLifetime;
 
-// Selection OCR backed by MuPDF's built-in Tesseract (fz_new_ocr_device), so
-// no separate Tesseract dependency is needed and all MuPDF use stays in the
-// render subsystem (this header exposes no fz_* types). Renders the selected
-// page region to an internal bitmap at a fixed high DPI - independent of the
-// on-screen zoom, which is the single biggest factor in OCR quality - and
-// returns the recognized text.
-//
-// Capture the page under its document lock, then recognize on a private context.
-// Calls may run on a worker; serialize calls on each service instance.
+// MuPDF's built-in Tesseract recognizes a selected region at fixed high DPI, independent of
+// viewer zoom. Capture the display list under the document lock; recognize on a private
+// context. Worker use is allowed, but serialize calls per service instance.
 class OcrService
 {
 public:

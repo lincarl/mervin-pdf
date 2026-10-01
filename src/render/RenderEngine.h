@@ -20,12 +20,8 @@ namespace mervin {
 class Document;
 struct DocumentLifetime;
 
-// Owns MuPDF's base fz_context and a pool of render worker threads, each with
-// its own cloned context (the documented MuPDF multi-threading pattern). All
-// MuPDF usage in the application is confined to this subsystem.
-//
-// fz_context is NOT thread-safe; the base context is created with lock
-// callbacks backed by std::mutexes, and each worker renders on fz_clone_context().
+// Owns the base MuPDF context and worker pool. Each worker uses a cloned context; mutex
+// callbacks protect shared MuPDF caches. Contexts themselves are not thread-safe.
 class RenderEngine : public QObject
 {
     Q_OBJECT

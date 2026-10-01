@@ -40,11 +40,8 @@ QString runCapture(const QString &program, const QStringList &args)
 
 bool PlatformIntegration::isDefaultPdfHandler()
 {
-    // A strict Snap can't observe the host's MIME associations: the kde-neon
-    // extension redirects $XDG_CONFIG_HOME into the sandbox and the `home`
-    // interface forbids reading the real ~/.config, so xdg-mime here would query
-    // a confined copy, never the desktop's mimeapps.list. Report "not default"
-    // (the safe answer) rather than claim a state we can't verify.
+    // Snap confinement hides the host MIME configuration. Report false rather than trusting the
+    // confined xdg-mime result.
     if (isSnap())
         return false;
 
@@ -60,15 +57,9 @@ bool PlatformIntegration::isDefaultPdfHandler()
 
 bool PlatformIntegration::registerPdfHandlerAndPromptDefault()
 {
-    // A strict Snap cannot set the host's default PDF handler from inside the
-    // sandbox: xdg-mime would write the confined $XDG_CONFIG_HOME (which the
-    // desktop ignores), the `home` interface forbids touching the real
-    // ~/.config/mimeapps.list, and snapd's io.snapcraft.Settings proxy only
-    // accepts default-web-browser / default-url-scheme-handler - never a MIME
-    // type like application/pdf. So don't silently no-op: return false and let
-    // the caller point the user at the desktop's Default Applications settings
-    // (the Snap-exported .desktop advertises MimeType=application/pdf, so the
-    // manual route works). See docs/design.md.
+    // Snap cannot modify the host MIME configuration, and its settings proxy supports only
+    // browser/URL handlers. Return false so callers direct users to desktop settings; the
+    // exported .desktop advertises application/pdf.
     if (isSnap())
         return false;
 

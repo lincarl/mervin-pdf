@@ -22,19 +22,9 @@ class ExtractStrip;
 class RenderEngine;
 class RowList;
 
-// Document > Extract Pages.
-//
-// The old flow was three modals: a text prompt for the range, a native save
-// dialog, and an "Open it now?" box. Nothing showed what the new file would
-// contain until it was written, and a bad range was only reported after the fact.
-//
-// This dialog shows the extract plan instead: one output file, built from rows
-// of one page or range each, reordered like the rows of Merge PDFs (the same
-// RowList). The strip under them is the result drawn in output order, with a bad
-// row as a red cell where it would land. Every edit, in a row or in the strip,
-// goes into the plan, and everything on screen is rebuilt from it. All
-// arithmetic lives in ExtractPlan (mervin_core, unit-tested); this class wires
-// widgets to it.
+// ExtractPlan-backed editor with reorderable page/range rows and an output thumbnail strip.
+// Rows and strip write into the plan; all displayed state is rebuilt from it. Shares RowList
+// with MergeDialog.
 class ExtractDialog : public QDialog
 {
     Q_OBJECT

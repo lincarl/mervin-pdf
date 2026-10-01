@@ -30,12 +30,8 @@ constexpr unsigned Multiline = 1u << 12;   // PDF_TX_FIELD_IS_MULTILINE
 constexpr unsigned Comb = 1u << 24;        // PDF_TX_FIELD_IS_COMB
 } // namespace form_flags
 
-// One AcroForm widget on a page. A plain value type (no fz_*/pdf_* leakage),
-// mirroring MeasureViewport. `rect` is in app page-point space (top-left origin,
-// y-down, 72 dpi, unrotated - the same space Measurement::pts live in), so it
-// survives zoom/rotation. `value` is the current /V; `options` lists the display
-// strings for choice fields (empty otherwise). `flags` is the raw PDF field-flag
-// word (the form_flags bits above).
+// Widget value in zero-origin, y-down page points at 72 dpi. value is /V; options holds choice
+// display strings; flags is the raw PDF field-flags word.
 struct FormField {
     int page = -1;
     FormFieldType type = FormFieldType::Text;
@@ -45,14 +41,9 @@ struct FormField {
     QStringList options; // choice options (combo/list); empty otherwise
     unsigned flags = 0;  // raw PDF field flags (form_flags::*)
 
-    // Effective text size for the inline editor, in PDF page points (text space,
-    // 72 dpi, unrotated - the same space as `rect`). Already resolved from the
-    // field's /DA in FormModel::pageFields: an explicit /DA size (including the
-    // 12 pt MuPDF returns when a field has no /DA at all) is used verbatim; only
-    // the true auto-size sentinel ("0 Tf") is resolved per field type (multiline
-    // / list box -> 12; single-line / comb / combo -> a fraction of the inner
-    // field height). The editor multiplies this by the view scale to get a
-    // logical-pixel font size that matches the rendered (printed) glyph height.
+    // Resolved font size in page points. Preserve explicit /DA sizes (or the 12pt missing-/DA
+    // default). Only 0 Tf means auto: multiline/list use 12pt; single-line/comb/combo derive
+    // from inner height. The editor scales this to logical pixels.
     float fontSizePt = 12.0f;
 
     // The /DA base14 font tag mapped to a Qt family ("Helvetica", "Times New

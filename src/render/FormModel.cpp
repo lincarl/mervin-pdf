@@ -137,12 +137,8 @@ const std::vector<FormField> &FormModel::pageFields(int pageNo) const
                     // back as 12 pt (MuPDF's hard-coded default), not as auto-size.
                     f.fontSizePt = daSize;
                 } else {
-                    // True auto-size: the /DA exists and says "0 Tf". Mirror MuPDF
-                    // write_variable_text:
-                    //  - multiline text and list box  -> fixed 12 pt
-                    //  - single-line text, comb, combo -> fit-to-width capped to
-                    //    the inner height; for short/empty text (the editing case)
-                    //    the height cap dominates, so use the inner height.
+                    // For 0 Tf, mirror MuPDF: multiline/list use 12pt; single-line/comb/combo
+                    // use the inner-height cap, appropriate for short/empty editing values.
                     if ((f.type == FormFieldType::Text && f.multiline())
                         || f.type == FormFieldType::ListBox) {
                         f.fontSizePt = 12.0f;
@@ -157,14 +153,8 @@ const std::vector<FormField> &FormModel::pageFields(int pageNo) const
                                            : static_cast<float>(f.rect.height()) - 4.0f * b;
                         if (innerH < 4.0f) // empty / degenerate rect guard
                             innerH = 12.0f;
-                        // MuPDF draws auto-size text at point size == inner height,
-                        // but Qt lays out a line at ~1.16x the point size (ascent +
-                        // descent + leading), so a glyph sized to the full inner
-                        // height clips its descenders in the editor. Scale down so
-                        // the Qt line box fits: the text still fills ~85% of the
-                        // field (matching the rendered look) without clipping. Only
-                        // this box-height-derived value is reduced - explicit /DA
-                        // sizes and the fixed 12 pt above are honored as-is.
+                        // Qt line height is about 1.16x point size; reduce height-derived auto-
+                        // size to fit descenders. Preserve explicit /DA and fixed 12pt sizes.
                         f.fontSizePt = innerH * 0.85f;
                     }
                 }

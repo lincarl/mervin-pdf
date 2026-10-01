@@ -6,29 +6,10 @@
 
 namespace mervin {
 
-// The application's colour vocabulary - the ONE place a UI colour is written
-// down. Everything that paints chrome reads from here:
-//
-//   * Theme::buildStyleSheet interpolates the tokens into the app-wide QSS,
-//   * the popovers that build their own local sheets (PdfPropertiesPopup,
-//     AnnotPopup, the inline form editors) interpolate the same tokens,
-//   * QPainter code (ViewerWidget's canvas and overlays, MainWindow's toolbar
-//     dividers, RecentFilesPanel's icons) reads the QColor directly.
-//
-// So a colour change is a one-line edit in ThemeTokens.cpp, and light and dark
-// can never drift apart by accident.
-//
-// Deliberately NOT here, because these are document data rather than UI chrome:
-//   * annot::palette() / annot::defaultColor() in render/AnnotTypes.h - the
-//     markup preset colours, written into the PDF's annotation objects.
-//   * EmitStyle's stroke/fill in render/MeasureContent.h - PDF content-stream
-//     colours for exported measurement marks.
-//   * ComfortTransform's ramp endpoints - the Comfort document theme's pixel
-//     transform, pinned by tst_comfort_transform. theme::doc() re-exports the
-//     backdrop so the viewer does not re-type the literal.
-//
-// This module lives in mervin_core (values only - QColor/QPalette, no widgets)
-// so every test target can link it without pulling in the application.
+// Shared chrome colours for QSS, local popup styles and QPainter code; values live in
+// ThemeTokens.cpp. This widget-free module belongs to mervin_core.
+// PDF annotation colours (AnnotTypes), exported measurement colours (EmitStyle), and the
+// Comfort pixel ramp remain document data; theme::doc() re-exports the Comfort backdrop.
 namespace theme {
 
 // Which half of the vocabulary a palette selects. One definition of "dark",
@@ -98,12 +79,8 @@ Chrome chrome(const QPalette &pal, const QColor &accent);
 // paint code: applyApp() installs the resolved accent into the palette.
 Chrome chrome(const QPalette &pal);
 
-// The explicit application palette for the dark chrome. The QSS covers the
-// styled widgets, but panels, item delegates, icon tinting and the tab-drag
-// indicator all read palette roles, so installing this keeps them on the same
-// slate ramp. Light mode uses the platform palette unchanged, which is why there
-// is no lightPalette() counterpart. Defined here, next to the values it is built
-// from, so no other file needs the raw slate constants.
+// Dark palette for painters outside QSS, including delegates and tab dragging. Light mode uses
+// the platform palette unchanged.
 QPalette darkPalette(const QColor &accent);
 
 // ── Document surface: the theme-independent half ────────────────────────────

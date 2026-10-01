@@ -12,12 +12,8 @@ class QToolButton;
 
 namespace mervin {
 
-// A small frameless editor that floats over a clicked annotation to read/edit its
-// comment, recolour it, or delete it (peer of the form inline editors and the
-// MeasurePanel - a child of the viewer's viewport). It shows the author/date,
-// a multi-line comment field, the colour swatches, and a delete button. It edits
-// whichever annotation the viewer most recently opened it for; it emits intent
-// signals and the viewer routes them to the AnnotModel.
+// Viewport popup for annotation text, author/date, colour and deletion. Emits intent; the
+// viewer routes edits to AnnotModel.
 class AnnotPopup : public QWidget
 {
     Q_OBJECT

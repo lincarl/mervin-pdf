@@ -20,40 +20,18 @@ struct StagedOpen
     bool makeCurrent = true;
 };
 
-// Build the startup open plan: what to open and in which order. Two rules, both
-// about a wait the user actually notices:
-//
-//   * Files named on the command line come FIRST. A launch almost always happens
-//     because someone double-clicked a PDF, and that file used to queue up behind
-//     the entire restored session - on a cold file cache, seconds of it.
-//   * The restored session then opens its previously-active document first (the
-//     one the user was last reading), and the others follow in saved order.
-//
-// Exactly one document takes the view: the command-line file when there is one
-// (the last of them, as when they were opened inline), otherwise the restored
-// active document - or, when the session recorded none, the first restored one.
-//
-// `sessionPaths` should be caller-filtered to files that still exist, but may
-// legitimately contain a path that is also on the command line: that document
-// opens once (as the command-line entry) and its restore entry becomes a no-op,
-// while still reserving its saved tab position. `sessionActive` may be empty.
+// Open command-line files first, then the restored active document, then remaining session
+// files in saved order. Exactly one becomes current: the last command-line file, otherwise the
+// saved active file or first restored file.
+// Callers filter missing sessionPaths. Paths shared with the command line open once but retain
+// their saved tab positions. sessionActive may be empty.
 QList<StagedOpen> planStartupOpens(const QStringList &cliPaths,
                                    const QStringList &sessionPaths,
                                    const QString &sessionActive);
 
-// Where a restored document's tab belongs in a tab bar that may already hold
-// others: directly after every document of the saved session that precedes it
-// there, and before everything else (so command-line files, which are not in the
-// saved order, end up after the restored block).
-//
-// Derived from the live tab bar on every open instead of being precomputed, which
-// is what makes the restored order hold when an open does not produce a tab -
-// a corrupt file, a password prompt the user cancelled, or a document that is
-// already open. Those simply leave a gap in the saved order rather than shifting
-// everything after them.
-//
-// `currentTabs` are the window's canonical tab paths in order and `savedOrder` the
-// session's canonical paths in order. Returns -1 (append) when savedIndex < 0.
+// Place a restored tab after its live predecessors in savedOrder and before other tabs. Derive
+// from currentTabs on every open so failed, canceled and duplicate opens leave the remaining
+// order intact. Both lists use canonical paths; savedIndex < 0 returns -1 (append).
 int insertIndexForSaved(const QStringList &currentTabs, const QStringList &savedOrder,
                         int savedIndex);
 

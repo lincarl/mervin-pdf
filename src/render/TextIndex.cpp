@@ -159,15 +159,8 @@ int TextIndex::offsetAt(int pageNo, QPointF p)
     if (pt.lines.empty())
         return 0;
 
-    // Choose the line nearest the point. Tables and other multi-column layouts
-    // give each cell its own line, and adjacent rows overlap vertically, so
-    // several lines can share the click's vertical band. Pick by band first (a
-    // line that vertically contains the click beats one that doesn't), then
-    // break ties by horizontal distance, so the click lands in the column
-    // actually under the cursor rather than whichever cell comes first in
-    // reading order. Choosing on y alone snaps to a far-away cell and makes the
-    // clicked text impossible to select (a horizontal drag never moves the caret
-    // off that distant line).
+    // Choose by vertical containment first, then horizontal distance. Overlapping table rows
+    // can share a vertical band; horizontal tie-breaking keeps selection in the clicked column.
     int bestLine = -1;
     bool bestInside = false;
     double bestDy = std::numeric_limits<double>::max();

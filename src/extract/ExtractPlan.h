@@ -6,21 +6,11 @@
 
 namespace mervin {
 
-// What Document > Extract Pages will write: one output file, built from an
-// ordered list of rows, each holding one page or one range of the source. Every
-// number, sentence and name the dialog shows comes from here; ExtractDialog only
-// renders it and writes edits back to it (compare MergePlan / MergeDialog).
-//
-// Row grammar: exactly one PageRange token: "5", "5-7", "7-" (to the end), "-5"
-// (from the first page) or "all", parsed with PageRange::parseAllowingAll, whose
-// sentences are kept verbatim. The output is the rows' pages in row order; nothing
-// is dropped, sorted or de-duplicated. The dialog splits typed or pasted commas
-// and semicolons into rows (splitPieces) before a row's text reaches the plan.
-//
-// Pages are 0-based everywhere in this API except inside row text and user-facing
-// strings. GUI-free; the only file-system access is in the Output section and the
-// constructor, which resolves the source's path once for the "is it the source"
-// checks.
+// One output file assembled from ordered page/range rows. ExtractDialog renders this model and
+// writes edits back to it. Each row accepts one PageRange token (5, 5-7, 7-, -5, all); the
+// dialog splits commas/semicolons via splitPieces. Preserve page order and duplicates.
+// API pages are zero-based; row text and UI strings are one-based. Filesystem access is limited
+// to output validation and resolving the source path at construction.
 class ExtractPlan
 {
 public:

@@ -13,6 +13,7 @@
 #include "render/SelectionModel.h"
 #include "render/TextIndex.h"
 #include "render/ViewLayout.h"
+#include "render/ZoomAnimation.h"
 #include "ui/MeasureTypes.h"
 
 #include <QAbstractScrollArea>
@@ -81,14 +82,9 @@ public:
         double fracX = 0.0;
         double fracY = 0.0;
     };
-    // Paint accounting, for the zoom-preview guard rail (tst_viewer_preview):
-    // how each visible page was drawn in the frames since resetPaintStats() -
-    // from its sharp render, from a stretched preview, or with nothing at all to
-    // put on the paper. `blank` is the zoom blink this feature exists to remove,
-    // so a test can assert it stays at zero across a zoom instead of eyeballing
-    // the window. `eased` counts pages drawn into an interpolated rect by the zoom
-    // ease (see the ZoomEase comment in the .cpp) - it is orthogonal to the other
-    // three, which still record where the pixels came from.
+    // Paint counters since resetPaintStats(): fresh/preview/blank identify the pixel source.
+    // eased independently counts animated rectangles. Tests assert zooms do not introduce blank
+    // frames.
     struct PaintStats
     {
         int fresh = 0;
@@ -106,7 +102,7 @@ public:
     // ease only decides where the frozen bitmaps are drawn for a few frames.
     void setZoomEaseMs(int ms);
     int zoomEaseMs() const { return zoomEaseMs_; }
-    bool zoomEaseActive() const { return zoomEase_.active; }
+    bool zoomEaseActive() const { return zoomEase_.active(); }
     // Freeze the ease at linear progress `t` in [0,1] so a grabbed frame is
     // reproducible; t < 0 hands progress back to the clock. Test hook.
     void setZoomEaseProgressForTest(double t);
@@ -389,24 +385,16 @@ private:
     // visible region). Small pages render whole; pages whose full bitmap exceeds
     // the tiling budget render only the visible band (deep-zoom clipping).
     void ensureRendered(int pageNo, const QRect &neededCanvas);
-    // What happens to the frozen preview images (see PreviewLayer) when the
-    // cached renders are thrown away: Keep for a change that only re-lays the
-    // same page content out (scale, fit mode, device pixel ratio, page mode), so
-    // the old images can be stretched over the gap; Drop when the pixels
-    // themselves would be wrong (rotation flips the page's aspect, a page-theme
-    // change re-tones it, a new document replaces it outright).
+    // Keep previews for content-preserving scale/fit/DPR/layout changes. Drop on rotation,
+    // page-theme changes or document replacement.
     enum class PreviewPolicy { Keep, Drop };
     void invalidateRenders(PreviewPolicy preview);
     // Freeze what we have for the pages at/near the viewport into preview_.
     // Must run BEFORE cache_.clear() and before relayout(), while layout_ still
     // holds the rects those images were rendered for.
     void seedPreview();
-    // Paint page `pageNo`'s frozen preview stretched into `easedCanvas`, as a
-    // stand-in until the sharp render lands. Returns whether anything was drawn.
-    // `pageCanvas` is the page's rect in the CURRENT layout and `easedCanvas` where
-    // it is actually drawn this frame - the two differ only while the zoom ease is
-    // running. The magnification guard is judged on `pageCanvas`, so its verdict
-    // holds for a whole gesture instead of flipping part way through.
+    // Draw the frozen preview in easedCanvas; return whether drawn. Judge stretch against the
+    // final pageCanvas so the quality cutoff remains stable throughout easing.
     bool drawPreview(QPainter &p, int pageNo, const QRect &pageCanvas, const QPoint &off,
                      const QRect &easedCanvas) const;
     void updateScrollBars();
@@ -433,35 +421,11 @@ private:
     void rescaleKeeping(double newScale, QPointF viewportPos, bool keepCenter = false);
     QPointF viewportCenter() const;
 
-    // --- zoom ease -----------------------------------------------------------
-    // Purely visual: the zoom itself is already complete when the ease starts, so
-    // the ease can never leave the viewer in a wrong state. See the block comment
-    // above captureZoomEase() in the .cpp for the whole story.
-    struct ZoomEase
-    {
-        bool active = false;
-        // page -> the viewport rect it was being DRAWN at when this ease began.
-        QHash<int, QRectF> from;
-        int repPage = -1;      // stands in for pages the new layout reveals
-        double k = 1.0;        // repPage's final width / its captured width
-        int durMs = 0;
-        double forcedT = -1.0; // test hook; < 0 means clock-driven
-        QElapsedTimer clock;
-    };
     bool zoomEaseAllowed() const;
-    // Snapshot where the pages are drawn right now. False when the ease is not
-    // wanted (see zoomEaseAllowed) or there is nothing on screen to capture.
-    bool captureZoomEase(double newScale, ZoomEase *out) const;
-    void startZoomEase(ZoomEase &&e); // no-op when the jump is too small to bother
+    bool captureZoomEase(double newScale, ZoomAnimation::Snapshot *out) const;
+    void startZoomEase(ZoomAnimation::Snapshot &&snapshot);
     void endZoomEase();
-    double zoomEaseU() const;                                       // eased progress, 0..1
-    QRectF zoomEaseFromRect(int pageNo, const QRectF &finalRect) const;
-    QRectF zoomEaseRect(int pageNo, const QRectF &finalRect) const; // where to draw it now
-    // Maps a page's final rect onto the rect it is actually being drawn into, so the
-    // page border and every overlay positioned from layout_ travels with the bitmap.
-    // Takes the eased rect rather than deriving it, so it agrees exactly with what
-    // was blitted (paintEvent snaps that to whole pixels).
-    QTransform zoomEaseTransform(const QRectF &finalRect, const QRectF &easedRect) const;
+    QRectF zoomEaseRect(int pageNo, const QRectF &finalRect) const;
     // Append pages that are on screen only because the ease is drawing them
     // smaller/larger than the final layout would.
     void addPagesHeldByEase(std::vector<int> *pages) const;
@@ -627,12 +591,8 @@ private:
     PaintStats paintStats_;
     int currentPage_ = 0;
 
-    // Sticky scroll-fraction restore (resume-where-you-left-off). While
-    // pendingRestore_ is set, the target page + fraction is re-applied after every
-    // resize/show-driven re-fit so the spot survives the layout settling that
-    // follows opening a file; the first genuine user scroll clears it.
-    // restoring_ guards scrollContentsBy from mistaking our own programmatic
-    // scrolls (and resize-induced clamps) for user input.
+    // Reapply pendingRestore_ through resize/show fitting until a user scroll. restoring_
+    // distinguishes programmatic scrollbar updates and clamps from user input.
     bool pendingRestore_ = false;
     bool restoring_ = false;
     // Set while goToPage() writes the scrollbars. Those writes reach
@@ -666,7 +626,7 @@ private:
     // Zoom ease state. zoomEaseSuppress_ is set around a single zoom call by input
     // that is already continuous (trackpad pinch, a high-resolution wheel tick):
     // easing those would only make direct input feel late.
-    ZoomEase zoomEase_;
+    ZoomAnimation zoomEase_;
     QTimer *zoomEaseTimer_ = nullptr;
     int zoomEaseMs_ = 130;
     bool zoomEaseSuppress_ = false;
@@ -755,14 +715,9 @@ private:
     bool formFieldOrderBuilt_ = false;
     int formFocusIndex_ = -1; // index into formFieldOrder_ (or -1 for none)
 
-    // Annotation state. annotModel_ is non-null for any PDF document.
-    // commentToolEnabled_ tracks whether the Comment panel is open (independent of
-    // the active gesture). markupStyle_ and markupColor_ are driven by the Comment
-    // panel; markupColor_ is the single shared colour applied to NEW text markups
-    // AND NEW sticky-note comments (the panel has one swatch row). annotAuthor_
-    // stamps the /T author. The inline editor (annotPopup_) is a lazily-created
-    // child of viewport() that edits the annotation identified by
-    // openAnnotPage_/openAnnotId_ (both -1 when closed).
+    // annotModel_ exists for PDFs. Panel visibility is independent of the active gesture. New
+    // marks/notes share markupColor_; annotAuthor_ stamps /T. The lazy viewport popup edits
+    // (openAnnotPage_, openAnnotId_), both -1 when closed.
     std::unique_ptr<AnnotModel> annotModel_;
     bool commentToolEnabled_ = false;
     AnnotType markupStyle_ = AnnotType::Highlight;

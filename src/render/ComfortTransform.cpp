@@ -19,12 +19,8 @@ namespace {
 constexpr const auto &kBg = comfort::kRampBg;
 constexpr const auto &kFg = comfort::kRampFg;
 
-// Tuning constants, chosen by visual A/B on the example corpus (see the
-// comfort-image-variants exploration, 2026-07):
-// - the chroma gate: pixels below kChromaC0 Oklab chroma take the neutral
-//   negative, above kChromaC1 the colour treatment, smoothstep between.
-//   Measured JPEG background noise on the corpus stays under 0.002 (p99),
-//   a 10x margin below the gate.
+// Oklab chroma gates: neutral below C0, colour treatment above C1, smoothstep between. Measured
+// JPEG background chroma p99 <0.002 leaves a tenfold margin.
 constexpr float kChromaC0 = 0.02f;
 constexpr float kChromaC1 = 0.06f;
 // - the ink-lightness band: unmixed inks darker than kInkLightS0 Oklab L are
@@ -34,20 +30,8 @@ constexpr float kChromaC1 = 0.06f;
 constexpr float kInkLightS0 = 0.65f;
 constexpr float kInkLightS1 = 0.82f;
 
-// ---------------------------------------------------------------------------
-// The neutral tone map: the plain colour negative (what the Inverted theme
-// does), offset so it lands on the comfort greys instead of pure black/white.
-// Each channel is inverted independently and scaled into [kBg, kFg]:
-//   tone_c(v) = kBg_c + round((255 - v) * (kFg_c - kBg_c) / 255)
-// White paper -> kBg, black ink -> kFg.
-//
-// For an exact grey (r = g = b = v) this is bit-identical to every previous
-// Comfort map (their luminance invert kept greys on the grey axis and used
-// the same ramp), so grey rendering has never changed across versions. The
-// rounding is half-up and no half-way ties exist: a tie would need
-// 2*(255-v)*(kFg_c-kBg_c), an even number, to be congruent to 255 (odd)
-// mod 510 (even) - impossible.
-// ---------------------------------------------------------------------------
+// Neutral channel map: bg + round((255-v)*(fg-bg)/255). White becomes bg and black fg. Integer
+// half-up rounding has no ties because the denominator is odd.
 
 struct ChannelLut
 {
@@ -100,12 +84,8 @@ float smoothstepf(float e0, float e1, float x)
     return t * t * (3.0f - 2.0f * t);
 }
 
-// --- 3D lookup lattices over RGB (33 nodes/axis, trilinear interpolation) ---
-// The transform needs per-pixel Oklab quantities; evaluating them exactly
-// would cost 3 cbrt per pixel. Both are smooth scalar functions of RGB, so a
-// 33^3 node lattice with trilinear interpolation reproduces them visually
-// exactly at a tiny fraction of the cost - the same technique colour-grading
-// LUTs use. Built lazily on first use (thread-safe magic statics).
+// Lazily initialized 33^3 RGB lattices approximate smooth Oklab weights with trilinear
+// interpolation, avoiding three cube roots per pixel.
 
 constexpr int kGrid = 33; // nodes per axis, spaced 255/32 apart
 
@@ -177,14 +157,9 @@ bool nearNeutral(const uint8_t *px)
     return mx - mn <= 2;
 }
 
-// --- the ink treatment (outside image rects) ---------------------------------
-// Each pixel is unmixed into ink over white paper (alpha = (255-min)/255; the
-// ink always has a zero channel, greys unmix to pure black ink). Neutral
-// pixels take the offset negative. Colourful pixels: dark inks - coloured
-// text and lines - are re-composited over the comfort background with their
-// paper coverage, so the anti-alias fringe blends glyph -> dark page with no
-// white halo; light inks - pale fills like schematic component boxes - keep
-// the authored pixel and stay bright.
+// Unmix ink over white with alpha=(255-min)/255. Neutral pixels use the offset negative.
+// Recompose dark coloured ink over the dark page to remove antialias halos; preserve light
+// fills.
 void inkRow(uint8_t *px, int width)
 {
     const WeightLut3 &wlut = chromaGateLut();
@@ -213,13 +188,8 @@ void inkRow(uint8_t *px, int width)
     }
 }
 
-// --- the photo treatment (inside image rects) --------------------------------
-// Soft chroma gate between the offset negative and the authored pixel:
-// neutral image content (greyscale photos, scans, white backdrops) inverts
-// exactly like the page, colourful content keeps its authored colours. No
-// unmixing here - a photo's colours are not paper-diluted ink, and keeping
-// them at full authored brightness is what reads as "the picture, on a dark
-// page".
+// Split treatment chroma-blends the offset negative with authored pixels. Neutral image content
+// inverts; colourful content stays bright. Photos need no ink/paper unmixing.
 void photoRow(uint8_t *px, int width)
 {
     const WeightLut3 &wlut = chromaGateLut();
@@ -238,12 +208,8 @@ void photoRow(uint8_t *px, int width)
     }
 }
 
-// --- the photo-on-white treatment (PhotoOnWhite rects) -----------------------
-// The photo is shown fully authored; only its white backdrop is ramped into
-// the comfort background: alpha = smoothstep(lo, hi, 255 - min(R,G,B)).
-// The dead zone up to `lo` makes the backdrop's noise fully transparent;
-// distance >= `hi` is the authored pixel. See ComfortImageRect for how
-// lo/hi are chosen per image.
+// PhotoOnWhite preserves subject pixels and blends the backdrop with alpha=smoothstep(lo, hi,
+// 255-min(R,G,B)). Values <=lo disappear; >=hi remain authored.
 void photoOnWhiteRow(uint8_t *px, int width, int lo, int hi)
 {
     for (int x = 0; x < width; ++x, px += 3) {
@@ -259,12 +225,8 @@ void photoOnWhiteRow(uint8_t *px, int width, int lo, int hi)
     }
 }
 
-// How many threads to tone `pixels` with. The pass runs on one of
-// RenderEngine's clamp(hw/2, 2, 4) render workers, any of which may be toning
-// a page at the same time; sizing the fan-out to hw/workers lets all workers
-// together roughly fill the machine instead of oversubscribing it. Small
-// images stay single-threaded (below ~1 MPx the spawn/join overhead is not
-// worth it).
+// Limit per-page fan-out to hw/render-worker-count to avoid oversubscription. Small images
+// remain single-threaded to avoid spawn/join overhead.
 int comfortThreadCount(long long pixels)
 {
     if (pixels < 1000000)
@@ -281,9 +243,10 @@ template <typename RowProc>
 void runBanded(uint8_t *bits, qsizetype stride, int width, int height, const RowProc &proc)
 {
     const int nthreads = comfortThreadCount(static_cast<long long>(width) * height);
+    auto localProc = proc; // each band owns its mutable row-plan cache
     if (nthreads <= 1) {
         for (int y = 0; y < height; ++y)
-            proc(bits + y * stride, y);
+            localProc(bits + y * stride, y);
         return;
     }
 
@@ -297,9 +260,9 @@ void runBanded(uint8_t *bits, qsizetype stride, int width, int height, const Row
             const int y1 = std::min(height, y0 + rowsPer);
             if (y0 >= y1)
                 break;
-            helpers.emplace_back([bits, stride, y0, y1, &proc] {
+            helpers.emplace_back([bits, stride, y0, y1, rowProc = proc]() mutable {
                 for (int y = y0; y < y1; ++y)
-                    proc(bits + y * stride, y);
+                    rowProc(bits + y * stride, y);
             });
             helperEnd = y1;
         }
@@ -311,9 +274,9 @@ void runBanded(uint8_t *bits, qsizetype stride, int width, int height, const Row
     // The calling render worker tones the first band itself, then any bands
     // left uncovered by a failed spawn.
     for (int y = 0; y < std::min(rowsPer, height); ++y)
-        proc(bits + y * stride, y);
+        localProc(bits + y * stride, y);
     for (int y = helperEnd; y < height; ++y)
-        proc(bits + y * stride, y);
+        localProc(bits + y * stride, y);
     for (std::thread &h : helpers)
         h.join();
 }
@@ -442,101 +405,104 @@ void applyComfortTransform(QImage &image, const QVector<ComfortImageRect> &image
         return;
     }
 
-    // Rows are split into segments - ink outside the image rectangles, the
-    // per-mode treatment inside them: Split (chroma-gated), PhotoOnWhite
-    // (authored + backdrop ramp), KeepAuthored (nothing at all). Ink and
-    // Split are bit-identical on neutral pixels, so those segment boundaries
-    // cannot show on paper or grey content. Where rects overlap, the higher
-    // mode wins: PageInk (page text drawn over a picture) > KeepAuthored >
-    // PhotoOnWhite > Split.
-    const std::vector<ComfortImageRect> rects(imageRects.begin(), imageRects.end());
-    runBanded(bits, stride, width, height, [&rects, width](uint8_t *row, int y) {
-        std::vector<Interval> keepIv, splitIv, inkIv; // x-intervals covering row y
-        // PhotoOnWhite intervals grouped by ramp parameters (usually one or
-        // two distinct ramps per page).
-        struct PowGroup
-        {
-            int lo, hi;
-            std::vector<Interval> iv;
-        };
-        std::vector<PowGroup> powGroups;
-        for (const ComfortImageRect &cr : rects) {
-            if (y < cr.rect.top() || y > cr.rect.bottom())
-                continue;
-            const int x0 = std::max(0, cr.rect.left());
-            const int x1 = std::min(width, cr.rect.left() + cr.rect.width());
-            if (x0 >= x1)
-                continue;
-            switch (cr.mode) {
-            case ComfortImageMode::KeepAuthored: keepIv.emplace_back(x0, x1); break;
-            case ComfortImageMode::PhotoOnWhite: {
-                PowGroup *g = nullptr;
-                for (PowGroup &cand : powGroups)
-                    if (cand.lo == cr.rampLo && cand.hi == cr.rampHi)
-                        g = &cand;
-                if (!g) {
-                    powGroups.push_back({cr.rampLo, cr.rampHi, {}});
-                    g = &powGroups.back();
+    // Reuse the row plan until a rectangle starts/ends. Each worker owns its cache.
+    // Precedence: PageInk > KeepAuthored > PhotoOnWhite (first ramp group) > Split.
+    struct Segment {
+        int s, e;
+        ComfortImageMode mode;
+        int lo, hi;
+    };
+    runBanded(bits, stride, width, height,
+              [&imageRects, width, height, nextBoundary = 0, segs = std::vector<Segment>{}]
+              (uint8_t *row, int y) mutable {
+        if (y >= nextBoundary) {
+            nextBoundary = height;
+            segs.clear();
+            std::vector<Interval> keepIv, splitIv, inkIv; // x-intervals covering row y
+            // PhotoOnWhite intervals grouped by ramp parameters (usually one or
+            // two distinct ramps per page).
+            struct PowGroup
+            {
+                int lo, hi;
+                std::vector<Interval> iv;
+            };
+            std::vector<PowGroup> powGroups;
+            for (const ComfortImageRect &cr : imageRects) {
+                if (y < cr.rect.top()) {
+                    nextBoundary = std::min(nextBoundary, cr.rect.top());
+                    continue;
                 }
-                g->iv.emplace_back(x0, x1);
-                break;
+                if (y > cr.rect.bottom())
+                    continue;
+                nextBoundary = static_cast<int>(std::min<qint64>(nextBoundary,
+                                                                qint64(cr.rect.bottom()) + 1));
+                const int x0 = std::max(0, cr.rect.left());
+                const int x1 = static_cast<int>(std::min<qint64>(width,
+                                            qint64(cr.rect.left()) + cr.rect.width()));
+                if (x0 >= x1)
+                    continue;
+                switch (cr.mode) {
+                case ComfortImageMode::KeepAuthored: keepIv.emplace_back(x0, x1); break;
+                case ComfortImageMode::PhotoOnWhite: {
+                    PowGroup *g = nullptr;
+                    for (PowGroup &cand : powGroups)
+                        if (cand.lo == cr.rampLo && cand.hi == cr.rampHi)
+                            g = &cand;
+                    if (!g) {
+                        powGroups.push_back({cr.rampLo, cr.rampHi, {}});
+                        g = &powGroups.back();
+                    }
+                    g->iv.emplace_back(x0, x1);
+                    break;
+                }
+                case ComfortImageMode::Split: splitIv.emplace_back(x0, x1); break;
+                case ComfortImageMode::PageInk: inkIv.emplace_back(x0, x1); break;
+                }
             }
-            case ComfortImageMode::Split: splitIv.emplace_back(x0, x1); break;
-            case ComfortImageMode::PageInk: inkIv.emplace_back(x0, x1); break;
-            }
-        }
-        if (keepIv.empty() && powGroups.empty() && splitIv.empty()) {
-            inkRow(row, width);
-            return;
-        }
-        mergeIntervals(keepIv);
-        for (PowGroup &g : powGroups)
-            mergeIntervals(g.iv);
-        mergeIntervals(splitIv);
-        // Page text drawn over an image outranks every image treatment. No
-        // segment is emitted for it: subtracting it from the image intervals
-        // leaves a gap, and the loop below fills gaps with the ink treatment -
-        // exactly what that text would get anywhere else on the page.
-        if (!inkIv.empty()) {
-            mergeIntervals(inkIv);
-            keepIv = subtractIntervals(keepIv, inkIv);
+            mergeIntervals(keepIv);
             for (PowGroup &g : powGroups)
-                g.iv = subtractIntervals(g.iv, inkIv);
-            splitIv = subtractIntervals(splitIv, inkIv);
-        }
-        // Precedence where rects overlap: Keep > PhotoOnWhite (earlier ramp
-        // group wins) > Split - each class is carved out of the lower ones.
-        for (size_t gi = 0; gi < powGroups.size(); ++gi) {
+                mergeIntervals(g.iv);
+            mergeIntervals(splitIv);
+            // Page text drawn over an image outranks every image treatment. No
+            // segment is emitted for it: subtracting it from the image intervals
+            // leaves a gap, and the loop below fills gaps with the ink treatment -
+            // exactly what that text would get anywhere else on the page.
+            if (!inkIv.empty()) {
+                mergeIntervals(inkIv);
+                keepIv = subtractIntervals(keepIv, inkIv);
+                for (PowGroup &g : powGroups)
+                    g.iv = subtractIntervals(g.iv, inkIv);
+                splitIv = subtractIntervals(splitIv, inkIv);
+            }
+            // Precedence where rects overlap: Keep > PhotoOnWhite (earlier ramp
+            // group wins) > Split - each class is carved out of the lower ones.
+            for (size_t gi = 0; gi < powGroups.size(); ++gi) {
+                if (!keepIv.empty())
+                    powGroups[gi].iv = subtractIntervals(powGroups[gi].iv, keepIv);
+                for (size_t gj = 0; gj < gi; ++gj)
+                    if (!powGroups[gj].iv.empty())
+                        powGroups[gi].iv = subtractIntervals(powGroups[gi].iv, powGroups[gj].iv);
+            }
             if (!keepIv.empty())
-                powGroups[gi].iv = subtractIntervals(powGroups[gi].iv, keepIv);
-            for (size_t gj = 0; gj < gi; ++gj)
-                if (!powGroups[gj].iv.empty())
-                    powGroups[gi].iv = subtractIntervals(powGroups[gi].iv, powGroups[gj].iv);
-        }
-        if (!keepIv.empty())
-            splitIv = subtractIntervals(splitIv, keepIv);
-        for (const PowGroup &g : powGroups)
-            if (!g.iv.empty())
-                splitIv = subtractIntervals(splitIv, g.iv);
+                splitIv = subtractIntervals(splitIv, keepIv);
+            for (const PowGroup &g : powGroups)
+                if (!g.iv.empty())
+                    splitIv = subtractIntervals(splitIv, g.iv);
 
-        struct Seg
-        {
-            int s, e;
-            ComfortImageMode mode;
-            int lo, hi;
-        };
-        std::vector<Seg> segs;
-        for (const Interval &v : keepIv)
-            segs.push_back({v.first, v.second, ComfortImageMode::KeepAuthored, 0, 0});
-        for (const PowGroup &g : powGroups)
-            for (const Interval &v : g.iv)
-                segs.push_back({v.first, v.second, ComfortImageMode::PhotoOnWhite, g.lo, g.hi});
-        for (const Interval &v : splitIv)
-            segs.push_back({v.first, v.second, ComfortImageMode::Split, 0, 0});
-        std::sort(segs.begin(), segs.end(), [](const Seg &a, const Seg &b) { return a.s < b.s; });
+            for (const Interval &v : keepIv)
+                segs.push_back({v.first, v.second, ComfortImageMode::KeepAuthored, 0, 0});
+            for (const PowGroup &g : powGroups)
+                for (const Interval &v : g.iv)
+                    segs.push_back({v.first, v.second, ComfortImageMode::PhotoOnWhite, g.lo, g.hi});
+            for (const Interval &v : splitIv)
+                segs.push_back({v.first, v.second, ComfortImageMode::Split, 0, 0});
+            std::sort(segs.begin(), segs.end(), [](const Segment &a, const Segment &b) {
+                return a.s < b.s;
+            });
+        }
 
         int cursor = 0;
-        for (const Seg &seg : segs) {
+        for (const Segment &seg : segs) {
             if (seg.s > cursor)
                 inkRow(row + 3 * cursor, seg.s - cursor);
             if (seg.mode == ComfortImageMode::PhotoOnWhite)

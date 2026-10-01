@@ -9,20 +9,10 @@ class QHBoxLayout;
 
 namespace mervin {
 
-// The reorderable row list shared by Merge PDFs and Extract Pages: one row widget
-// per plan row, laid out as
-//
-//   grip | # | <the dialog's own columns> | Count | Output | ✕
-//
-// with a caption strip over the same columns. The dialog owns the plan and
-// rebuilds every row from it after each change (so a row index captured at build
-// time never goes stale); this class owns the idiom around the rows: dragging a
-// row by its grip with a drop marker, the row shortcuts (Ctrl+Shift+Up / Down to
-// move, Ctrl+Delete to remove), the ✕, and "focus in a row makes it current".
-//
-// QListWidget's own InternalMove cannot be used: it moves the QListWidgetItem
-// while the visible row is a separate item widget, so the two come apart. A drop
-// is handed to onRowDropped instead, for the plan's moveToGap().
+// Shared Merge/Extract row UI: grip, index, dialog columns, count, output and remove button.
+// Dialogs own plans and rebuild rows after edits. This class handles focus, drag markers,
+// Ctrl+Shift+Up/Down and Ctrl+Delete. Route drops to onRowDropped/moveToGap:
+// QListWidget::InternalMove moves items separately from their row widgets.
 class RowList : public QListWidget
 {
 public:

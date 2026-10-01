@@ -11,13 +11,8 @@ namespace mervin {
 
 class Document;
 
-// How a rendered page is toned, driven by the document-theme setting.
-//  - Light:    the page as authored (classic white paper).
-//  - Inverted: plain colour negative (QImage::invertPixels, applied by the viewer).
-//  - Comfort:  a colour-aware dark mode applied by the render worker: white
-//    paper -> dark grey, black ink -> light grey, coloured text and photo
-//    content keep their authored hues (see ComfortTransform for the full
-//    per-pixel and per-image rules).
+// Light preserves authored pixels; Inverted applies the viewer colour negative; Comfort applies
+// the worker colour-aware dark transform (see ComfortTransform).
 enum class PageTheme { Light, Inverted, Comfort };
 
 // The document must be alive during submit(); queued jobs use its lifetime gate.

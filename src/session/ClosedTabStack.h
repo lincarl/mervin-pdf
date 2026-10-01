@@ -6,43 +6,22 @@
 
 namespace mervin {
 
-// One document tab that was closed, kept so "Reopen Closed Tab" (Ctrl+Shift+T)
-// can bring it back where it was.
-//
-// Deliberately no page / zoom / scroll position. Closing a tab already pushes
-// that to the per-file view-state store (MainWindow::saveTabViewState), and
-// reopening the file restores it through the ordinary resume path - duplicating
-// it here would give two sources of truth that drift apart the moment a file is
-// closed in one window while open in another.
-//
-// No password either: a tab's remembered password (TabPage::password) goes when
-// the tab does, so reopening an encrypted file asks for it again.
+// Closed-tab identity for Ctrl+Shift+T. View position lives only in the per-file view-state
+// store. Passwords are not retained: reopening encrypted files prompts again.
 struct ClosedTab
 {
     QString path;          // the file as it was opened, and how it is reopened
     QString canonicalPath; // identity: dedup, and the "is it open again?" test
 
-    // The bar this tab was closed from - every tab's canonical path, in order -
-    // and this tab's position in it.
-    //
-    // `index` is NOT replayed as a literal tab index. The slot is re-derived from
-    // the live bar at reopen time with insertIndexForSaved() (session/StartupPlan.h),
-    // exactly as the staged session restore does, and for exactly the same reason:
-    // a stored index is only right while the rest of the bar is untouched. Replay
-    // absolute indices into a bar being rebuilt from empty by repeated presses and
-    // every index that overshoots the live count silently appends instead of
-    // inserting, so a whole window's tabs come back scrambled. Keeping the sibling
-    // order lets each tab land after whichever of its neighbours are already back.
+    // Canonical sibling paths and the original position. Reopen derives the live insertion slot
+    // with insertIndexForSaved; replaying absolute indices would scramble partially restored
+    // bars.
     QStringList siblings;
     int index = 0;
 };
 
-// Bounded most-recently-closed-first history of closed tabs.
-//
-// Process-wide, not per-window: tabs move between windows (detach / merge), and
-// a tab closed in a window that has since gone should still be reachable from
-// the window the user is looking at now. Plain value type, unit-testable; the
-// WindowManager owns the one live instance and supplies the reopen policy.
+// Bounded process-wide closed-tab history, owned by WindowManager. Reopening survives tab moves
+// and destruction of the original window.
 class ClosedTabStack
 {
 public:
@@ -50,13 +29,8 @@ public:
     // so the cap is about bounding the history's age, not its memory.
     static constexpr int kMaxEntries = 25;
 
-    // Record a closed tab as the newest entry.
-    //
-    // An older entry for the same canonical path is dropped rather than kept as a
-    // duplicate: closing the same document twice should not cost two presses to
-    // undo, and the second press would find the file already open and skip its
-    // entry anyway. An entry with no canonical path is ignored - there is nothing
-    // to reopen.
+    // Prepend a closed tab, replacing any entry for the same canonical path. Ignore entries
+    // without a canonical path.
     void push(const ClosedTab &tab);
 
     bool isEmpty() const { return tabs_.isEmpty(); }

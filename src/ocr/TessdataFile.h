@@ -5,20 +5,10 @@
 
 namespace mervin {
 
-// Structural validation of Tesseract .traineddata language files, run before
-// any of them is handed to MuPDF's OCR device.
-//
-// Why this exists: Tesseract reacts to damaged language data with ASSERT_HOST ->
-// abort(), or by writing past the end of a std::vector. Neither is a C++
-// exception, so the fz_try/fz_catch around the OCR device cannot intercept it -
-// a single bad file takes the whole process down with it, losing every open
-// tab's unsaved edits. Since users install languages by dropping files into the
-// tessdata folder by hand, that has to be caught before Tesseract sees it.
-//
-// The checks mirror Tesseract's own container parse (TessdataManager::
-// LoadMemBuffer) and then verify the one invariant its unicharset loader assumes
-// but never checks: that every line of a unicharset introduces a *new* unichar.
-// A duplicate silently fails to grow the vector the loader then indexes into.
+// Validate .traineddata before MuPDF/Tesseract reads it. Corrupt containers can trigger abort()
+// or unchecked vector access, beyond fz_try/fz_catch recovery. Mirror
+// TessdataManager::LoadMemBuffer and require unique unicharset entries: duplicates fail to grow
+// the vector subsequently indexed by the loader.
 namespace TessdataFile {
 
 // True if `path` is language data Tesseract can load safely. On failure returns

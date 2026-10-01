@@ -36,13 +36,8 @@ QString canonicalOf(const QString &path)
     return c.isEmpty() ? fi.absoluteFilePath() : c;
 }
 
-// Bring a window to the user: restore it if minimized (preserving a maximized
-// state, which showNormal() would drop) and lift it to the foreground. The Qt
-// calls are the whole story on Linux; on Windows they are refused while this
-// process is in the background - e.g. handling a file forwarded by a secondary
-// launch - so a native fallback restores and takes the foreground with the
-// rights that launch granted via AllowSetForegroundWindow (see main.cpp). When
-// no grant exists the fallback degrades to the OS-sanctioned taskbar flash.
+// Restore without losing maximized state and activate. Windows uses foreground rights granted
+// by the forwarding process; without a grant, fall back to taskbar flashing.
 void surfaceWindow(MainWindow *w)
 {
     if (!w)
@@ -74,13 +69,9 @@ WindowManager::WindowManager()
     documentTheme_ = s.documentTheme;
     applyColorSchemeToQt(colorScheme_);
 
-    // Central app-wide theme: applied once now (before any window is shown) and
-    // rebuilt whenever the effective light/dark scheme changes - including system
-    // auto-switches, which only surface as a styleHints signal. The accent comes
-    // from Settings, so changing it just calls Theme::applyApp() again. The signal
-    // fires before Qt finishes updating the palette, so the rebuild is deferred to
-    // the next event-loop turn (see scheduleThemeRefresh). The initial build below
-    // is safe to run now: no window exists yet and the forced scheme has settled.
+    // Apply theme before showing windows. Scheme-change signals precede palette updates, so
+    // subsequent rebuilds run next event-loop turn. Accent changes explicitly reapply the
+    // theme.
     Theme::applyApp();
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this,
@@ -104,12 +95,8 @@ void WindowManager::applyColorSchemeToQt(const QString &scheme)
         cs = Qt::ColorScheme::Light;
     QGuiApplication::styleHints()->setColorScheme(cs);
 #else
-    // Qt < 6.8 (e.g. Ubuntu 24.04's 6.4) has no QStyleHints::setColorScheme /
-    // Qt::ColorScheme. The app then follows the platform palette (themed via
-    // Theme::applyApp()); forcing light/dark from Settings is inert here. No
-    // shipped artifact lands in this branch - every release build (Windows,
-    // AppImage, .deb, .rpm) is Qt 6.8+ - it only covers source builds against an
-    // older Qt. The preference is still saved and would apply against newer Qt.
+    // Older Qt source builds follow the platform palette; forced colour schemes require Qt
+    // 6.8+. Preserve the preference for future upgrades.
     Q_UNUSED(scheme);
 #endif
 }
@@ -185,12 +172,9 @@ void WindowManager::onInstanceMessage(QLocalSocket *socket, const ipc::Message &
     if (msg.cmd != ipc::Message::Cmd::Open)
         return; // tolerate any other command a future/older client might send
 
-    // Acknowledge receipt IMMEDIATELY, before opening anything. The open can pop
-    // a modal (encrypted-PDF password prompt, or an error box) that runs a nested
-    // event loop for an unbounded time; if we acked only after openPaths(), the
-    // sender would time out, give up, and spawn a duplicate standalone process
-    // (two concurrent writers to recent.json). Acking first also means we never
-    // touch `socket` again, so a nested loop can't free it under us.
+    // Acknowledge before opening: nested password/error dialogs can block indefinitely and
+    // would make the sender launch another primary. Never access the socket afterward; nested
+    // loops may destroy it.
     ipc::SingleInstanceServer::send(socket, ipc::Message::ack(QStringLiteral("open")));
 
     // Defer the (possibly modal) open to a fresh event-loop turn so it does not
@@ -292,13 +276,9 @@ QStringList WindowManager::sessionPaths()
 
 void WindowManager::updateSession()
 {
-    // While a staged batch is still in flight the open set is deliberately
-    // incomplete, and the stored session already lists every document of it - so
-    // writing now would drop the ones not yet opened. That mattered less when
-    // restore ran inline before the event loop: the user could not quit halfway
-    // through. They can now, and a truncated session is exactly what restore
-    // exists to prevent. The final document of a batch is taken off the queue
-    // before it opens, so the write that follows it sees the full state again.
+    // Do not persist an incomplete restore: pending entries would disappear from the saved
+    // session. The final entry leaves the queue before opening, so its following save sees the
+    // complete set.
     if (!stagedQueue_.isEmpty())
         return;
 

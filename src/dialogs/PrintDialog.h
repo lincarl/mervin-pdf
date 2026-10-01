@@ -12,21 +12,11 @@ class QSpinBox;
 class QCheckBox;
 class QPrinter;
 
-// In-app print dialog that replaces the native Windows print dialog.
-//
-// Why we don't use QPrintDialog on Windows: it is hard-wired to the native
-// dialog, which on Windows 11 (a) ignores QPrinter::setPageOrientation(), so the
-// orientation can't be pre-selected to match the page, and (b) surfaces the
-// driver's legacy accelerator strings verbatim (e.g. "La&ndscape"). Owning the
-// dialog lets us pre-select orientation from the displayed page and show clean
-// labels, and it inherits the app's theme for free (QSS styles QDialog). Users
-// who want the OS dialog anyway can still reach it via "Print using system
-// dialogue…" (useSystemDialog()).
-//
-// The dialog configures the QPrinter passed to it; on Accepted the caller renders
-// the pages to that printer. The exact pages to print (1-based, in print order)
-// are exposed via selectedPages(); scaling and rasterization quality the caller
-// must apply itself are exposed via scaleMode()/scalePercent()/qualityDpi().
+// Configures the supplied QPrinter; the caller renders on acceptance using selectedPages (one-
+// based, ordered), scaleMode/scalePercent and qualityDpi.
+// The in-app dialog supports page-derived orientation, themed labels and a system-dialog
+// fallback. Windows' native dialog ignores the initial orientation and exposes driver
+// accelerator strings.
 class PrintDialog : public QDialog
 {
     Q_OBJECT

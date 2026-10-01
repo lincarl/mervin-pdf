@@ -11,20 +11,10 @@ namespace mervin {
 
 class PanelStack;
 
-// The floating "Comment" tool window shown over the page (peer of MeasurePanel),
-// docked alongside it via a shared PanelStack. The two top buttons (Select /
-// Comment, a vertical list) and the three markup-style buttons below (Highlight /
-// Underline / Strike out) form one logical single-selection: picking a style is
-// what arms the Markup sub-mode, so there is no separate "Highlight" mode button.
-// While Select or Comment is active none of the style buttons are checked; while a
-// style is active neither Select nor Comment is. New marks and notes take the
-// default annotation colour (a Setting); each existing mark is recoloured
-// individually from the swatches in its comment card, so the panel itself carries
-// no colour picker. The active gesture is single and shared with the measuring
-// tool, so the Select state also shows when Measure has taken the gesture over.
-// Emits intent signals only; the viewer owns the state. Geometry / group-drag are
-// owned by the PanelStack. (The Comment button maps to AnnotSubMode::Note; the
-// style buttons map to AnnotSubMode::Markup with the chosen AnnotType.)
+// Comment panel sharing a PanelStack with MeasurePanel. Select, Note and markup styles form one
+// exclusive gesture choice; selecting a style arms Markup. Measure taking the gesture restores
+// Select. New marks use the configured colour; existing marks are recoloured in their cards.
+// Emits intent only: the viewer owns state, PanelStack owns geometry and dragging.
 class AnnotPanel : public QWidget
 {
     Q_OBJECT

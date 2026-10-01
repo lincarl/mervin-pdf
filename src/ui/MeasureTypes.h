@@ -9,12 +9,9 @@ namespace mervin {
 // The kind of measurement the tool is currently drawing.
 enum class MeasureKind { Distance, Polyline, Area, Angle };
 
-// A committed, ephemeral measurement. Points are in PAGE-POINT space (unrotated,
-// 72 dpi), so they survive zoom/rotation and are transformed at paint time.
-//   Distance : 2 points
-//   Polyline : N points (open)
-//   Area     : N points (auto-closed polygon)
-//   Angle    : 3 points (p0, vertex, p2) - the vertex is the middle point
+// Measurement geometry in unrotated 72-dpi page points. Distance uses two points; Polyline is
+// open; Area closes automatically; Angle uses (start, vertex, end). Persistence is handled by
+// MeasureDoc.
 struct Measurement
 {
     int page = -1;

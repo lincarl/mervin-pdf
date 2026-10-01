@@ -105,6 +105,8 @@ add_library(mervin_core STATIC
     src/session/ClosedTabStack.h
     src/render/ViewLayout.cpp
     src/render/ViewLayout.h
+    src/render/ZoomAnimation.cpp
+    src/render/ZoomAnimation.h
     src/print/PageRange.cpp
     src/print/PageRange.h
     src/net/UrlOpen.cpp
@@ -134,6 +136,8 @@ add_library(mervin_core STATIC
     src/ipc/SingleInstanceServer.h
     src/security/QpdfService.cpp
     src/security/QpdfService.h
+    src/security/AtomicPdfWriter.cpp
+    src/security/AtomicPdfWriter.h
     src/security/DocumentOutput.cpp
     src/security/DocumentOutput.h
     src/security/MeasurementPages.cpp

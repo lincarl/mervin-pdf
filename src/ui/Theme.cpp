@@ -73,12 +73,8 @@ QPixmap paintDot(const QColor &color, int sz)
     return pm;
 }
 
-// Paint the QSS-referenced glyphs to PNGs in the cache dir and return the
-// directory (forward-slashed for QSS url()), or an empty string on failure.
-// Both themes need the spin-box stepper chevrons, the combo-box drop-down chevron
-// and the tab close cross; the dark theme additionally draws its own menu check
-// marks and checkbox/radio indicators (the native ones don't match the Compact
-// Slate spec, while the native light ones are fine).
+// Rasterize QSS glyphs into the cache and return its forward-slash path, or empty on failure.
+// Both themes need arrows/close; dark additionally supplies menu/check/radio indicators.
 QString writeThemeAssets(const theme::Chrome &t)
 {
     // A --profile instance keeps its glyph cache inside the profile: the file
@@ -247,12 +243,8 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
         add(QStringLiteral("QComboBox::drop-down { border:none; width:18px; }"));
     }
 
-    // The toolbar zoom box is the one combo that has to stay compact. The
-    // padding-right above is *additive* with the ::drop-down width - Qt shrinks
-    // the edit field by the subcontrol and by the padding - so the 24px reserve
-    // buys the chevron a second helping of space it already has, leaving a wide
-    // dead gap between the text and the arrow. The drop-down alone already keeps
-    // the text off the chevron, so the zoom box only needs a breathing gap.
+    // Qt adds right padding to the dropdown width. The compact zoom box needs only a small gap;
+    // the subcontrol already reserves chevron space.
     add(QStringLiteral("QComboBox#zoomCombo { padding-right:6px; }"));
 
     // Spin boxes: the native up/down arrows render illegibly small under our
@@ -293,12 +285,8 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
                            " image:url(%1/spin_down_off.png); }")
                 .arg(assetDir));
     }
-    // A typed-only spin box (Theme::useTypedSpinBox) has no stepper column, so
-    // it must not reserve 22px for one: with a narrow fixed width the reservation
-    // pushed the value out of the visible content rect entirely, which is how the
-    // measuring panel's Decimals field came to show a blank box in both themes.
-    // The attribute selector outranks the plain-type rules above, so order does
-    // not matter here.
+    // Typed-only spin boxes reserve no stepper width; otherwise narrow fields clip their
+    // values. The attribute selector overrides plain-type rules.
     add(QStringLiteral("QAbstractSpinBox[noButtons=\"true\"] { padding-right:8px; }"));
     add(QStringLiteral("QAbstractSpinBox[noButtons=\"true\"]::up-button,"
                        " QAbstractSpinBox[noButtons=\"true\"]::down-button {"
@@ -500,12 +488,8 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
                  css(t.accent),
                  dark ? QStringLiteral("400") : QStringLiteral("600")));
 
-    // ── Segmented controls - the signature md-easy element: the selected segment
-    // is a solid accent fill. Used by All|Favorites and Name|Inside on the Recent
-    // screen, and by any #segmentBar: the measuring panel's Distance|Path|Area|Angle
-    // row and the Comment panel's Highlight|Underline|Strike out row. A set of
-    // mutually exclusive choices is exactly what this control is for, and it is the
-    // only place in the app where "selected" is unmistakable. ──────────────────
+    // Exclusive segmented choices use a solid accent fill: Recent scope/filter and
+    // Measure/Comment kinds.
     const QString segSel = QStringLiteral("QWidget#viewModeBar QToolButton%1,"
                                           " QWidget#recentScopeBar QToolButton%1,"
                                           " QWidget#segmentBar QToolButton%1");
@@ -591,13 +575,8 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
             .arg(css(t.borderStrong)));
     add(QStringLiteral("QToolButton#measureStepBtn:disabled { color:%1; border-color:%2; }")
             .arg(css(t.inkDisabled), css(t.borderDisabled)));
-    // Square clear/delete X buttons (the panel's close, the list's clear-all and
-    // each row's remove): drop the default 4px 8px padding so a fixed-size square
-    // isn't clipped, and stay frameless until hover - an always-outlined close box
-    // reads as a command button competing with Calibrate.
-    // Qt scores an id at 0x100 and each element name at 1, so the panel-scoped
-    // rule above (0x102) outranks a bare `QToolButton#measureClearX` (0x101) -
-    // these have to be written with the ancestor too or they lose the border war.
+    // Square close/remove buttons need zero padding and no resting border. Include the panel
+    // ancestor so specificity exceeds the panel-scoped toolbutton rule (0x102 versus 0x101).
     add(QStringLiteral("QToolButton#measureClearX,"
                        " QWidget#measurePanel QToolButton#measureClearX {"
                        " padding:0; color:%1; border-color:transparent; }")
@@ -695,13 +674,9 @@ void Theme::applyApp()
                           ? theme::isDark(qApp->palette())
                           : scheme == Qt::ColorScheme::Dark;
 
-    // The Compact Slate chrome needs its own palette: panels, item delegates and
-    // icon tinting read palette roles QSS alone can't reach. Installed only while
-    // dark. On the way back to light, a default-constructed QPalette (resolve
-    // mask 0) makes Qt re-resolve every role against the platform theme - which
-    // by now IS the light palette (this code runs after the scheme has settled) -
-    // and clears the explicit-palette latch, so light mode keeps following OS
-    // palette changes (accent, contrast) exactly as before this override existed.
+    // Install the dark palette for painters not covered by QSS. Returning to a default QPalette
+    // clears explicit overrides and resumes platform palette tracking after the light scheme
+    // settles.
     static bool slateApplied = false;
 
     if (dark) {

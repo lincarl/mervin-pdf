@@ -37,12 +37,8 @@ void selectByData(QComboBox *combo, const QString &value)
     combo->setCurrentIndex(idx >= 0 ? idx : 0);
 }
 
-// A QFormLayout on the Windows/Fusion styles defaults to AllNonFixedFieldsGrow,
-// which stretched every combo and spin box across the whole row - several times
-// wider than the longest text it can ever hold. FieldsStayAtSizeHint gives each
-// field exactly its sizeHint and left-aligns it, with the label column still
-// aligned and the label/field buddy (and its mnemonic) intact - which a wrapper
-// widget would have broken.
+// FieldsStayAtSizeHint prevents platform styles stretching compact inputs while preserving
+// label alignment and mnemonic buddies.
 QFormLayout *snugForm(QWidget *parent)
 {
     auto *form = new QFormLayout(parent);

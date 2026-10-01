@@ -19,16 +19,9 @@ public:
     DetachableTabBar *detachableTabBar() const;
 };
 
-// A QTabBar that supports dragging a tab out of the bar to detach it into a new
-// window, and dropping a dragged tab onto another window's tab bar to merge it.
-// All moves are in-process (the live TabPage widget is re-parented between
-// windows - see WindowManager); this bar only detects the gestures.
-//
-// Reordering within the bar uses QTabBar's built-in movable behaviour while the
-// pointer stays inside the bar; once it leaves the bar far enough, a QDrag
-// begins. If that drag is dropped on another DetachableTabBar, mergeRequested
-// fires there; if it ends anywhere else (the desktop, a window body),
-// detachRequested fires on the source.
+// Detect in-process tab movement; WindowManager reparents live TabPages. Native reordering
+// applies inside the bar. Dragging far enough outside starts QDrag: dropping on another bar
+// emits mergeRequested there; other drops emit detachRequested on the source.
 class DetachableTabBar : public QTabBar
 {
     Q_OBJECT

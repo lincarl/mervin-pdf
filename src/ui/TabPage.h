@@ -45,12 +45,8 @@ public:
     QString tabTitle() const;      // file name
     QString documentTitle() const; // embedded PDF title, or file name
 
-    // The password that unlocks this tab's file (empty when it is not encrypted),
-    // so the qpdf operations that re-read the file from disk do not ask again.
-    // setPassword() records one the user typed later that worked. Kept in memory
-    // for the tab's lifetime only and never written anywhere (settings, session,
-    // recent list, closed-tab history, logs): the decrypted document is already in
-    // memory, so also holding its password adds little exposure.
+    // Verified password for this tab, reused by disk operations. Retain only in memory for the
+    // tab lifetime; never persist or log it.
     QString password() const { return password_; }
     void setPassword(const QString &password) { password_ = password; }
 

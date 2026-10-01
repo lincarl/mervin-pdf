@@ -127,12 +127,8 @@ using mervin::MeasureScale;
 using mervin::RenderMeasurement;
 
 namespace {
-// A 1px toolbar divider that stays crisp and identical at fractional display
-// scaling (e.g. 125%). A cosmetic pen always paints exactly one device pixel;
-// a stylesheet background fill of a 1px-wide widget is 1.25 device px at 125%
-// and gets smeared across two physical pixels by an amount that varies with
-// the widget's sub-pixel position - which is why some dividers looked thicker.
-// The line colour comes from the "lineColor" property, set in applyControlStyle().
+// Use a cosmetic pen for exactly one device pixel at fractional scaling. applyControlStyle
+// supplies lineColor.
 class ToolSeparator : public QWidget
 {
 public:
@@ -158,12 +154,8 @@ protected:
     }
 };
 
-// A split QToolButton (MenuButtonPopup) that paints a thin house chevron in its
-// menu section instead of Qt's heavy default filled triangle, so the dropdown
-// affordance matches the app's line-icon toolbar. The default arrow is
-// suppressed in QSS (#openButton::menu-arrow { image: none }); we draw the
-// ChevronDown pictograph in the rightmost strip, whose width matches the QSS
-// menu-button width.
+// Draw the Lucide chevron in the split-button menu strip; QSS suppresses the native arrow and
+// defines the matching strip width.
 class SplitToolButton : public QToolButton
 {
 public:
@@ -186,31 +178,10 @@ protected:
     }
 };
 
-// The hamburger menu (and the theme submenus): paints the design's accent check
-// on the RIGHT edge of checked actions tagged with a "rightCheck" property. It
-// uses the same stroke and 3-point path as the theme's menu_check.png.
-//
-// Tag every checkable action that carries a left glyph icon: both menu pipelines
-// (dark QSS and native light) draw icon XOR check indicator in the left column,
-// so an icon-bearing toggle has no left mark to show. The check lands in the
-// row's right-hand padding instead - the scroll-mode radio group, the panel
-// toggles, Highlight Form Fields and Always on Top.
-//
-// That padding used to be the menu-wide shortcut column, wide enough for the
-// check for free. Since the rows stopped showing shortcut hints
-// (hideShortcutHints below) Qt sizes the popup to the longest label alone, and
-// the longest label is itself a tagged toggle ("Highlight Form Fields") - so the
-// column is now reserved explicitly, in the constructor.
-//
-// Checked rows carry NO background tint. Earlier versions washed every checked
-// row in accent (here for the native light menus, via QMenu::item:checked in
-// Theme.cpp for the styled dark ones) to mirror the checked toolbutton, but in
-// a list of toggles the filled rows read as selection/hover rather than state
-// and fought the popup's calm surface. The check mark alone carries "active".
-//
-// The accent is resolved fresh on every popup - a colour cached at theme-apply
-// time would go stale when the accent changes in another window (or, in light
-// mode, without any PaletteChange at all).
+// Paint right-edge accent checks for actions tagged "rightCheck". Qt uses the left column for
+// either an icon or a check, so icon-bearing toggles need this separate mark and reserved
+// padding. Checked rows receive no background tint. Resolve the accent on every popup to
+// reflect changes in other windows.
 class RightCheckMenu : public QMenu
 {
 public:
@@ -285,18 +256,9 @@ private:
     QColor checkColor_; // refreshed in showEvent; falls back to QPalette::Accent
 };
 
-// Menu rows name their command and nothing else: the key bindings are listed in
-// one place, the Keyboard Shortcuts dialog (☰ > Keyboard Shortcuts). A column of
-// "Ctrl+Shift+…" hints down the right of every popup is reference material the
-// reader has already learned or will never read, and it doubled the width of the
-// ☰ popup.
-//
-// The binding itself is untouched - only its on-row hint is hidden - so the
-// shortcut keeps firing (and createMenus()'s registerShortcuts walk, which keys
-// off a NON-EMPTY QAction::shortcut(), still registers it on the window).
-// Qt suppresses the hint only for menus it considers context menus, i.e. any
-// popup whose caused-chain does not top out in a QMenuBar; this app hides the
-// menu bar and never fills it, so that covers every menu here.
+// Hide menu shortcut hints while retaining QAction bindings and window registration. Shortcuts
+// remain listed in the Keyboard Shortcuts dialog. Qt applies this flag only to context-menu
+// chains; these popups do not originate from a QMenuBar.
 void hideShortcutHints(QMenu *menu)
 {
     for (QAction *a : menu->actions()) {
@@ -1132,12 +1094,8 @@ void MainWindow::createToolBar()
     // already excludes the ::drop-down subcontrol, so centring here centres the
     // text in the well it actually occupies and never slides under the arrow.
     zoomCombo_->lineEdit()->setAlignment(Qt::AlignCenter);
-    // The editable combo's line edit otherwise keeps a blinking caret after the
-    // window is deactivated or a popup steals focus: Qt deliberately leaves the
-    // cursor "visible" for ActiveWindowFocusReason/PopupFocusReason, so the caret
-    // can blink even though the box no longer has keyboard focus. Keeping the line
-    // edit read-only while unfocused means no caret is ever drawn unless the user
-    // is actually editing; the focus-in filter (see eventFilter) re-enables typing.
+    // Keep the zoom editor read-only while unfocused: Qt otherwise retains its caret for
+    // popup/window focus loss. eventFilter enables typing on focus.
     zoomCombo_->lineEdit()->setReadOnly(true);
     zoomCombo_->lineEdit()->installEventFilter(this);
     dcLayout->addWidget(zoomCombo_);
@@ -1248,12 +1206,8 @@ void MainWindow::createMenus()
     mainMenu->addAction(highlightFormFieldsAction_);
     mainMenu->addSeparator();
 
-    // App - settings + help. The document-theme choice used to sit above this
-    // group as a submenu; it now lives in Settings > Viewing, next to the other
-    // "how documents open" defaults, and the toolbar's moon/sun button remains
-    // the one-click Traditional <-> Comfort switch for while you are reading.
-    // The in-app UI-theme switch was removed earlier - new installs default to a
-    // dark chrome and the colour_scheme config value is still honoured.
+    // Document-theme defaults live in Settings; the toolbar toggles Traditional/Comfort. The
+    // colour_scheme setting still controls chrome.
     addSectionHeader(mainMenu, tr("App"));
     mainMenu->addAction(settingsAction_);
     keyboardShortcutsAction_ = mainMenu->addAction(tr("&Keyboard Shortcuts"), this, &MainWindow::showShortcuts);
@@ -1408,12 +1362,7 @@ void MainWindow::showEvent(QShowEvent *event)
 
 void MainWindow::applyActionIcons()
 {
-    // One icon language everywhere (mervin::icons::glyph): the toolbar, the
-    // hamburger menu, the Document popover and the context menus all draw the
-    // same Lucide icons from the bundled SVGs, so nothing depends on an icon
-    // font and Windows and Linux look identical. The ink comes from the Theme so
-    // the slate dark chrome gets the design's toolbar-body tone rather than the
-    // brighter palette text.
+    // Use bundled Lucide glyphs across toolbar and menus, tinted from the current theme.
     using mervin::icons::Glyph;
     const QColor col = mervin::Theme::iconInk(palette());
     if (copyAction_)
@@ -1528,12 +1477,8 @@ void MainWindow::updateTabGlyphs()
 
 void MainWindow::setUiEnabled(bool enabled)
 {
-    // The document toolbar controls (page nav, zoom, fit, rotate, print) act on
-    // the current PDF. They are dead when no document is open, and also greyed
-    // out while the Recent panel is the active view - so their keyboard
-    // shortcuts don't drive the document hidden behind it either.
-    // setCommandBarMode() greys the visible group; disabling the actions here
-    // also kills their window-wide shortcuts.
+    // Disable document actions and their shortcuts while no PDF or the Recent view is active.
+    // setCommandBarMode separately styles the visible controls.
     const bool docEnabled = enabled && !recentActive_;
     for (QAction *a : {prevPageAction_, nextPageAction_, zoomInAction_, zoomOutAction_,
                        fitModeAction_, rotateLeftAction_, rotateRightAction_, printAction_})
@@ -2279,12 +2224,8 @@ void MainWindow::wireCurrentViewer(ViewerWidget *v)
                             [this, v](double) { syncZoomCombo(v); });
     viewerConns_ << connect(v, &ViewerWidget::zoomModeChanged, this,
                             [this, v](ViewerWidget::ZoomMode) { syncZoomCombo(v); });
-    // The menu's Scroll rows and Two-Page Spread tick follow the viewer, wherever
-    // the change came from. syncViewActions alone is not enough: it runs on tab
-    // switch, and applySettingsToViewer sets a newly opened tab's layout AFTER
-    // that - so a default of two-page spread used to open in a spread with the
-    // menu still claiming it was off, which left the toggle looking dead (its
-    // first click would re-send the state the viewer was already in).
+    // Track live layout changes as well as tab switches: newly applied defaults arrive after
+    // updateForCurrentTab.
     viewerConns_ << connect(v, &ViewerWidget::layoutModeChanged, this,
                             [this, v](ViewLayout::Mode) { syncViewActions(v); });
     viewerConns_ << connect(v, &ViewerWidget::ocrRegionSelected, this,

@@ -217,12 +217,8 @@ void FindBar::setMode(Mode mode)
     debounce_->stop();
 
     if (recent) {
-        // Put this view's own query back. RecentFilesPanel kept filtering by it the
-        // whole time we were in a document - nothing clears the panel on the way out
-        // - so leaving the field empty here showed an empty box over a filtered
-        // list. Blocked, because the panel already holds exactly this filter:
-        // re-emitting would only churn, and would restart the content scan that
-        // leaving the Recent view deliberately cancelled.
+        // Restore the Recent query with signals blocked: the panel retains its filter, and re-
+        // emitting would restart a canceled content scan.
         {
             QSignalBlocker blk(edit_);
             edit_->setText(recentQuery_);

@@ -9,21 +9,10 @@ class QWidget;
 
 namespace mervin {
 
-// Coordinates a vertical "dock" of floating tool panels (MeasurePanel, the
-// Comment panel) that overlap the viewer's viewport. The panels stay independent
-// children of the viewport (no reparenting), but PanelStack owns their geometry:
-//
-//   - Visible panels are stacked top-to-bottom in registration order, anchored
-//     near the viewport's top-right by default. Opening a second panel places it
-//     directly below the first; hiding one reflows the rest up. Works for any
-//     show/hide order.
-//   - The whole stack drags as a group: a panel reports a drag delta via nudge()
-//     and the entire stack moves together. Once dragged, the stack keeps the
-//     user's anchor (it no longer re-pins to the top-right on resize), but is
-//     always clamped back into view.
-//
-// Panels call relayout() whenever they show/hide or change size, and nudge() while
-// being dragged. PanelStack watches the viewport for resize to re-anchor/clamp.
+// Own floating tool-panel geometry without reparenting them. Visible panels stack in
+// registration order near the viewport's top-right. nudge() moves the group and preserves that
+// anchor on resize; all positions remain clamped to the viewport. Panels call relayout() after
+// visibility/size changes; viewport resizes are watched here.
 class PanelStack : public QObject
 {
     Q_OBJECT

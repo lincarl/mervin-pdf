@@ -44,12 +44,8 @@ QVersionNumber parseVersion(QString text);
 // version tag.
 std::optional<Release> parseRelease(const QByteArray &json);
 
-// The asset that updates a `kind` install, or nullopt when the release has none
-// (or kind is None). Releases only carry x86-64 builds. Only assets with a
-// SHA-256 digest count, since nothing else can be verified before it runs, and
-// only plain file names, since the name becomes a path in the updates folder.
-// `osVersion` is QSysInfo::productVersion(): a .deb built for that Ubuntu
-// release is preferred when a release carries several.
+// Choose a package-kind asset or nullopt. Require an x86-64 build, SHA-256 digest and plain
+// filename. For .deb alternatives, prefer QSysInfo::productVersion via osVersion.
 std::optional<ReleaseAsset> assetFor(const QList<ReleaseAsset> &assets, PackageKind kind,
                                      const QString &osVersion);
 

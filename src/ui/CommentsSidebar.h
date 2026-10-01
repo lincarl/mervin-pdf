@@ -12,12 +12,8 @@ class QStackedLayout;
 
 namespace mervin {
 
-// Collapsible panel listing every annotation in the document (peer of
-// OutlineSidebar / ThumbnailSidebar). Each row shows the page, author, a colour
-// chip, and the comment text (or the markup kind when there is no comment).
-// Activating a row emits annotationActivated with the annotation's (page, id) so
-// the window can jump to it and open its inline editor. A pure view - the window
-// supplies the annotations and routes navigation.
+// Annotation list with page, author, colour and comment/kind. The window supplies data and
+// routes annotationActivated(page, id) to navigation/editor actions.
 class CommentsSidebar : public QWidget
 {
     Q_OBJECT

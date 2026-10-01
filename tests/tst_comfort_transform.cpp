@@ -1,6 +1,7 @@
 #include "render/ComfortTransform.h"
 
 #include <QImage>
+#include <QRandomGenerator>
 #include <QtTest>
 
 // Pins the Comfort theme's pixel rules (see ComfortTransform.h). Without
@@ -25,6 +26,7 @@ private slots:
     void photoOnWhiteRampsBackdrop();
     void backdropRampChoice();
     void imageModeClassifier();
+    void cachedRegionsMatchIndependentRows();
 };
 
 namespace {
@@ -33,6 +35,40 @@ const QColor kComfortBg(24, 26, 30);    // comfortPixel(#FFFFFF), exact
 const QColor kComfortFg(214, 217, 222); // comfortPixel(#000000), exact
 
 } // namespace
+
+void TstComfortTransform::cachedRegionsMatchIndependentRows()
+{
+    // Cross both rectangle and worker-band boundaries, including overlaps and clipping.
+    QImage source(1601, 1301, QImage::Format_RGB888);
+    for (int y = 0; y < source.height(); ++y) {
+        auto *row = source.scanLine(y);
+        for (int x = 0; x < source.width() * 3; ++x)
+            row[x] = (x * 13 + y * 7) % 256;
+    }
+    QRandomGenerator random(42);
+    QVector<mervin::ComfortImageRect> rects;
+    const mervin::ComfortImageMode modes[] = {mervin::ComfortImageMode::Split,
+        mervin::ComfortImageMode::PhotoOnWhite, mervin::ComfortImageMode::KeepAuthored,
+        mervin::ComfortImageMode::PageInk};
+    for (int i = 0; i < 80; ++i)
+        rects.append({QRect(int(random.bounded(1800)) - 100, int(random.bounded(1500)) - 100,
+                            20 + random.bounded(700), 20 + random.bounded(400)),
+                      modes[i % 4], quint8(i % 8), quint8(10 + i % 24)});
+    QImage expected(source.size(), source.format());
+    for (int y = 0; y < source.height(); ++y) {
+        QImage row = source.copy(0, y, source.width(), 1);
+        QVector<mervin::ComfortImageRect> rowRects;
+        for (auto rect : rects) {
+            rect.rect.translate(0, -y);
+            rowRects.append(rect);
+        }
+        mervin::applyComfortTransform(row, rowRects);
+        std::copy_n(row.constScanLine(0), source.width() * 3, expected.scanLine(y));
+    }
+    auto actual = source.copy();
+    mervin::applyComfortTransform(actual, rects);
+    QCOMPARE(actual, expected);
+}
 
 void TstComfortTransform::neutralPixelsOffsetInverted()
 {

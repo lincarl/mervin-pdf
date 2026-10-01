@@ -8,23 +8,9 @@ class QPalette;
 
 namespace mervin {
 
-// Central application styling. One QSS sheet, applied at the QApplication level
-// (so it reaches the main windows AND the separate top-level dialogs).
-//
-// Every colour it uses comes from ui/ThemeTokens.h - this file owns the rules,
-// that one owns the values, so a colour change is a single edit there.
-//
-// Light mode matches the md-easy visual language: clean, light, flat, rounded,
-// with a single user-configurable accent colour driving selected segments, tabs
-// and focus. Dark mode implements the "Compact Slate" spec from the Mervin PDF
-// design project: a cool blue-gray slate ramp with flat borderless toolbar
-// buttons, hairline white-alpha separators and a single blue accent.
-//
-// The sheet is theme-aware: light colours derive from the active QPalette; in
-// dark mode applyApp() additionally installs an explicit slate QPalette
-// (theme::darkPalette) so that palette-driven paint code (panels, item
-// delegates, icon tinting) matches the QSS chrome. Switching back to light
-// restores the platform palette.
+// Application-wide QSS, including top-level dialogs, with colours from ThemeTokens. Light mode
+// derives from the platform palette. Dark mode installs the slate palette for both QSS and
+// palette-based painters; switching back restores the platform palette.
 namespace Theme {
 
 // Build the full stylesheet for a given palette and accent ("#RRGGBB").

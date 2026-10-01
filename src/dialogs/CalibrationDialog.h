@@ -10,15 +10,8 @@ class QSpinBox;
 
 namespace mervin {
 
-// Modal dialog for setting a page's drawing scale. Two purpose-built variants:
-//
-//  * Mode::Calibrate - shown after the user draws a calibration line over a known
-//    dimension (the panel's "Calibrate" button). Asks only for that line's real
-//    length (+ unit).
-//  * Mode::SetScale  - shown when the user sets the scale manually (the panel's
-//    "Set Scale" button, no line drawn). Asks only for a scale ratio (1 : N).
-//
-// result() returns the resolved scale once the dialog is accepted.
+// Calibrate asks for the real length/unit of a drawn line; SetScale asks for a manual 1:N
+// ratio. result() returns the resolved scale after acceptance.
 class CalibrationDialog : public QDialog
 {
     Q_OBJECT

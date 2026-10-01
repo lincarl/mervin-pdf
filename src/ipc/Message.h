@@ -49,12 +49,8 @@ struct Message
     static Cmd cmdFromString(const QString &s);
 };
 
-// Incremental frame decoder: one instance per connection. Accumulates bytes and
-// yields whole messages as '\n'-terminated frames arrive. Handles partial reads
-// (a frame split across chunks) and coalesced reads (several frames in one
-// chunk). If the internal buffer grows past the frame-size cap without a
-// newline, the stream is considered malformed: feed() sets *overflow and the
-// caller should drop the connection.
+// Per-connection newline-framed decoder, supporting partial/coalesced reads. If the frame-size
+// cap is exceeded without a newline, feed sets overflow; the caller must drop the connection.
 class MessageDecoder
 {
 public:

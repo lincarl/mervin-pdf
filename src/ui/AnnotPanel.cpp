@@ -91,14 +91,9 @@ AnnotPanel::AnnotPanel(QWidget *parent) : QWidget(parent)
     connect(modeGroup_, &QButtonGroup::idClicked, this,
             [this](int id) { emit modeChanged(static_cast<AnnotSubMode>(id)); });
 
-    // Markup style: full-name buttons in one horizontal row, below Comment. Picking
-    // one is what selects the Markup sub-mode, so a style click emits BOTH the style
-    // and modeChanged(Markup); the viewer round-trips back through setMode, which
-    // clears Select/Comment. Default-checked (Highlight) to match the tool's open
-    // state (the viewer arms Markup when the Comment tool opens).
-    // Three mutually exclusive choices, so this is the app's segmented control -
-    // the same element the measuring panel's kind row uses, and the only treatment
-    // in which "selected" is unmistakable.
+    // Style buttons form an exclusive group and emit both the style and Markup mode. setMode
+    // clears Select/Comment; Highlight starts checked to match the viewer when opening the
+    // tool.
     auto *styleBar = new QWidget(this);
     styleBar->setObjectName(QStringLiteral("segmentBar"));
     auto *styleRow = new QHBoxLayout(styleBar);

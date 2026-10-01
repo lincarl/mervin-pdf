@@ -132,15 +132,9 @@ inline QString formatAngle(double deg, int prec)
     return QString::number(deg, 'f', prec) + QString::fromUtf8("\xC2\xB0"); // degree sign
 }
 
-// --- auto SI-unit reduction -------------------------------------------------
-//
-// A value shown in the user's chosen unit is hard to read once its integer part
-// has more than three digits (e.g. "7128.93 mm"). These helpers append the same
-// value re-expressed in the next-larger unit that brings the integer part back
-// under four digits, in brackets - e.g. "7128.93 mm (712.89 cm)". They step up a
-// unit ladder (metric: mm→cm→m→km; imperial: in→ft→mi), squaring the factor for
-// areas. They return the bare single-unit string when no reduction is needed
-// (value already < 1000) or no larger unit exists.
+// Append an equivalent larger-unit value when magnitude reaches 1000: mm/cm/m/km or in/ft/mi,
+// squaring conversion factors for areas. Return the original unit alone if no reduction is
+// needed or available.
 
 namespace detail {
 

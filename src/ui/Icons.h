@@ -8,17 +8,9 @@ class QPixmap;
 
 namespace mervin::icons {
 
-// The app's single icon language: Lucide (https://lucide.dev, ISC licence). One
-// set, one look, every surface - toolbar, hamburger menu, Document popover,
-// context menus, tabs, panels and the stylesheet's own indicator images.
-//
-// The SVGs are vendored unmodified in resources/icons/lucide (see its README for
-// the pinned version and how to add one) and compiled in as a Qt resource, so
-// nothing depends on an icon font or on the platform: Windows and Linux render
-// the same files. glyph() substitutes the requested ink for Lucide's
-// stroke="currentColor", draws the stroke at 1.75 units instead of Lucide's 2
-// (closer to the weight of the app's text), and rasterizes each icon natively at
-// 16/20/24/32/48 px, so strokes stay sharp wherever Qt asks for a size.
+// Lucide icons (https://lucide.dev, ISC), vendored unmodified under resources/icons/lucide and
+// compiled as Qt resources. See its README for the pinned version. glyph() substitutes
+// currentColor, uses a 1.75-unit stroke, and rasterizes at 16/20/24/32/48 px.
 enum class Glyph {
     // Toolbar
     Open,          // folder-open (also "open containing folder")
@@ -88,22 +80,13 @@ QIcon glyph(Glyph id, const QColor &color);
 // the file context menu's "Copy folder path" / "Copy file path".
 QIcon glyphBadged(Glyph base, Glyph badge, const QColor &color);
 
-// A single pictograph as a transparent `sizePx`-square pixmap, for the places
-// that paint an icon directly instead of handing Qt a QIcon (the split Open
-// button draws its own ChevronDown over the menu strip; the stylesheet's
-// generated indicator images). `strokeWidth` overrides Lucide's stroke, in its
-// 24-unit grid, for the small indicators that need a heavier line to read; 0
-// keeps the set's own. A valid `fill` fills the glyph's closed shapes (the
-// Recent list's favourite star); by default Lucide icons are outlines only.
+// Transparent sizePx-square glyph. strokeWidth uses the 24-unit Lucide grid (0 keeps the
+// default); a valid fill colours closed shapes.
 QPixmap glyphPixmap(Glyph id, const QColor &color, int sizePx, double strokeWidth = 0,
                     const QColor &fill = QColor());
 
-// Puts `glyph` on a text-free button, drawn in the button's own foreground colour
-// - the palette's ButtonText, which a stylesheet `color:` rule sets - with a
-// disabled variant in the palette's disabled ButtonText, and keeps it that way:
-// the icon is rendered again whenever the button is polished or its palette
-// changes, as on a theme switch. For the small close, remove and -/+ buttons that
-// used to draw a text character in that colour.
+// Set a text-free button glyph using active/disabled ButtonText colours. Re-render on polish or
+// palette changes, including theme switches.
 void setButtonGlyph(QAbstractButton *button, Glyph glyph, int iconPx);
 
 // A single up or down chevron (Lucide chevron-up / chevron-down) as a transparent

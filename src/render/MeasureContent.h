@@ -1,17 +1,7 @@
 #pragma once
 
-// Shared, GUI-free measurement <-> PDF glue, used by the save / export / print
-// flows. Three responsibilities, none of which touch MuPDF or qpdf:
-//   1. (De)serialize a measurement set to/from the Mervin-only JSON blob that is
-//      embedded in a PDF's catalog (so reopening in Mervin restores the marks).
-//   2. Format a measurement's value string (the same logic the on-screen panel
-//      uses, factored out here so burned-in / annotated labels match exactly).
-//   3. Emit a PDF content-stream operator string that draws one measurement in
-//      PDF user space - reused verbatim for flatten-export, the print temp PDF,
-//      and annotation /AP appearance streams.
-//
-// Lives in mervin_core so the security-layer writer (MeasureExport) and the unit
-// tests can link it without the widgets executable.
+// GUI-free measurement serialization, value formatting and PDF operator emission, shared by
+// save/export/print. No MuPDF or qpdf access; lives in mervin_core.
 
 #include "render/MeasureModel.h"
 #include "render/MeasureTypes.h"
@@ -99,14 +89,13 @@ struct EmitStyle
     double fontSize = 6.0;
 };
 
-// The Helvetica resource name the emitter references for label text. The PDF
-// writer must add a font under exactly this name to the page (flatten) or the
-// appearance-stream XObject (annotate) /Resources.
+// Default label font resource. Writers supply a unique suffix if the source uses this name.
 inline constexpr char kMeasureFontResource[] = "Fluc";
 
-// Emit PDF content-stream operators (a self-contained q...Q block) that draw one
-// measurement in absolute PDF user space, using rm.toPdf to place geometry.
-std::string emitMeasurementOps(const RenderMeasurement &rm, const EmitStyle &style = {});
+// Emit a q...Q block in PDF user space. fontName must name a Helvetica resource
+// installed by the caller (without the leading slash); rm.toPdf places geometry.
+std::string emitMeasurementOps(const RenderMeasurement &rm, const EmitStyle &style = {},
+                               const std::string &fontName = kMeasureFontResource);
 
 // Format a measurement's value string. Identical to what the on-screen panel
 // shows (the viewer delegates here), so burned-in / annotated labels match.

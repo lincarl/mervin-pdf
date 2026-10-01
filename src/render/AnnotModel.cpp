@@ -52,14 +52,8 @@ QColor readColor(fz_context *ctx, pdf_annot *a)
     return annot::defaultColor(); // the markup preset yellow
 }
 
-// Build one Annotation value from a live pdf_annot. `boundOrigin` is the page's
-// fz_bound_page top-left. pdf_bound_annot already folds in the page CTM (/Rotate,
-// MediaBox offset, y-flip) - it returns the rect in the same fz "doc space" as
-// fz_bound_page - so mapping to app page-point space (top-left origin, y-down,
-// the space rangeRects / FormField::rect / Measurement::pts use) is just a shift
-// by the page bound's origin, exactly as FormModel maps widget rects. The
-// creation helpers below place coordinates in the inverse of this (app + origin),
-// so a created annotation re-enumerates back onto the same page location.
+// pdf_bound_annot already applies rotation, box origin and y-flip. Subtract fz_bound_page
+// origin to obtain app page points; creation helpers add it back for the inverse mapping.
 Annotation readAnnot(fz_context *ctx, pdf_annot *a, int pageNo, fz_point boundOrigin)
 {
     Annotation an;

@@ -35,20 +35,10 @@ void warningCallback(void *, const char *message)
     qDebug("MuPDF: %s", message);
 }
 
-// A minimal fz_device that harvests the device-space bounding boxes of the
-// raster images a page draws, for the Comfort theme: the rects only switch
-// which per-pixel treatment runs, nothing is restored to its original
-// colours (the v1.36.0 failure mode).
-// fz_device MUST be the first member so the pointers alias (same pattern as
-// Document.cpp's GeomDevice); fz_new_derived_device zero-allocates it, so it
-// holds only trivially-zeroable members set explicitly after allocation.
-//
-// Stencil masks (fill_image_mask) are deliberately NOT recorded: they paint
-// flat colour through an image-shaped mask - scanned signatures and bilevel
-// line art - which reads as ink, so the outside-rect ink treatment is the
-// right one for them.
-// The render worker's decision for one embedded image: the treatment mode
-// plus, for PhotoOnWhite, the backdrop ramp bounds (see ComfortImageRect).
+// Harvest embedded-image bounds and source-pixel classifications for Comfort. fz_device must be
+// first for pointer aliasing; fz_new_derived_device zero-allocates, so members must be
+// trivially zeroable. Exclude stencil masks: their signatures and bilevel line art need PageInk
+// treatment.
 struct ImageDecision
 {
     uint8_t mode;
@@ -67,14 +57,8 @@ struct ImageRectDevice
     int seq;                        // running paint-order counter
 };
 
-// One decoded embedded image (plus its soft mask, if any), sampled as RGB
-// composited over white - the way the page render shows it, since a
-// transparent backdrop over white paper is a white backdrop. MuPDF keeps the
-// soft mask as a separate image (the PDF interpreter draws the image inside a
-// clip built from it), so the decoded pixmap alone would report a logo's
-// transparent surround as whatever base colour happens to sit under it -
-// usually black, which is how the classifier used to mistake logos for dark
-// artwork.
+// Sample decoded RGB over white, applying the separate MuPDF soft mask. Otherwise transparent
+// image surrounds can be misclassified from their hidden base colour.
 struct SampledImage
 {
     int w = 0, h = 0;
@@ -178,13 +162,9 @@ ImageProbe embeddedImageProbe(fz_context *ctx, fz_image *img)
     fz_var(maskPix);
     fz_try(ctx) {
         pix = fz_get_pixmap_from_image(ctx, img, nullptr, nullptr, nullptr, nullptr);
-        // Anything that is not already RGB or grey - CMYK scans, Lab, indexed,
-        // separations - is converted once here rather than per sampled pixel.
-        // Note that an ICCBased RGB colourspace is NOT fz_device_rgb: comparing
-        // pointers instead of asking for the TYPE sent every pixel of every
-        // ICC-tagged image (which is most photographs a PDF carries) through a
-        // full colour conversion, and cost more than the rest of the probe put
-        // together.
+        // Convert non-RGB/grey colourspaces once. Check the colourspace type, not pointer
+        // identity: ICC-based RGB is not fz_device_rgb and would otherwise incur per-pixel
+        // conversions.
         fz_colorspace *cs = fz_pixmap_colorspace(ctx, pix);
         if (cs && !fz_colorspace_is_rgb(ctx, cs) && !fz_colorspace_is_gray(ctx, cs)) {
             fz_pixmap *conv = fz_convert_pixmap(ctx, pix, fz_device_rgb(ctx), nullptr, nullptr,
@@ -396,13 +376,8 @@ void imageRectFillImage(fz_context *ctx, fz_device *dev, fz_image *img, fz_matri
     d->imageSeq->push_back(d->seq);
 }
 
-// Vector TEXT bboxes, recorded so that page text drawn OVER a PhotoOnWhite
-// image can take the page treatment instead of the picture's (see the region
-// pass in workerLoop). Paint order (seq) distinguishes text drawn over an
-// image from text drawn UNDER it (which the image hides anyway).
-//
-// Paths are deliberately not recorded: a stroked leader line's bounding box
-// bears no relation to the few pixels of ink in it.
+// Record text bounds and paint sequence to distinguish labels above images from hidden text
+// below. Exclude paths: their bounds can be much larger than their ink.
 void recordOverlay(fz_context *ctx, fz_device *dev, fz_rect bounds, float alpha)
 {
     auto *d = reinterpret_cast<ImageRectDevice *>(dev);
@@ -712,12 +687,8 @@ void RenderEngine::workerLoop(fz_context *ctx)
 
             if (pix) {
                 if (req.theme == PageTheme::Comfort) {
-                    // Walk the display list once more (no rasterizing) to find
-                    // where raster images land in this render. This runs
-                    // BEFORE the QImage below is constructed: these fz calls
-                    // can fz_throw, and a longjmp would skip the QImage's
-                    // destructor. The pixel transform itself runs after
-                    // fz_always - it is pure Qt code.
+                    // Collect image bounds before constructing QImage: MuPDF longjmp would skip
+                    // its destructor. Apply the Qt-only pixel transform after fz_always.
                     ImageRectDevice *ird = fz_new_derived_device(ctx, ImageRectDevice);
                     imgDev = reinterpret_cast<fz_device *>(ird);
                     ird->base.fill_image = imageRectFillImage;
@@ -729,13 +700,8 @@ void RenderEngine::workerLoop(fz_context *ctx)
                     ird->overlays = &fzOverlays;
                     ird->overlaySeq = &fzOverlaySeq;
                     ird->seq = 0;
-                    // The playback is NOT culled to the rendered area: the
-                    // scanned-page test needs how much of the whole PAGE its
-                    // images cover, and that has to come out the same for a
-                    // fit-width render and for one deep-zoom tile of it.
-                    // Recording is cheap (bbox arithmetic); the expensive part
-                    // - decoding an image to classify it - is skipped below for
-                    // rects this render does not touch.
+                    // Walk the whole page so scan coverage is independent of zoom/clipping.
+                    // Bounds are cheap; decode/classify only images intersecting this render.
                     fz_run_display_list(ctx, list, imgDev, ctm, fz_infinite_rect, nullptr);
                     fz_close_device(ctx, imgDev);
 
@@ -794,29 +760,10 @@ void RenderEngine::workerLoop(fz_context *ctx)
                             probe.rampHi};
                     }
 
-                    // The pixmap's bbox origin is the image's (0,0); a clipped
-                    // tile's origin already includes the clip offset, so the
-                    // same rects serve whole pages and deep-zoom tiles.
-                    //
-                    // Page TEXT drawn over a PhotoOnWhite image (see
-                    // recordOverlay) - a callout label, a caption, a title set
-                    // on a banner image - is written on the picture's white
-                    // backdrop, and the backdrop ramp is a pixel rule: it
-                    // cannot tell the picture's own white from an opaque white
-                    // label dropped on top of it, so sinking the backdrop takes
-                    // the label's fill with it and leaves black text on a black
-                    // hole. The region such text covers is therefore treated as
-                    // page content, which is what it is.
-                    //
-                    // Two boundaries learned the hard way on the examples:
-                    // - only TEXT, never paths. A leader line or dimension
-                    //   arrow has a bounding box many times its ink - half a
-                    //   picture - and treating that box as page content tears
-                    //   the image in two. Ink merely crossing a picture stays
-                    //   legible on the page outside it, so it needs nothing.
-                    // - page treatment, not "keep authored". Pinning the region
-                    //   authored instead leaves a white rectangle sitting on the
-                    //   picture exactly where the backdrop should have sunk.
+                    // The pixmap origin includes clipping, so rect offsets also work for deep-
+                    // zoom tiles. Text painted over an image uses PageInk: otherwise removing a
+                    // white label backdrop leaves black text on dark paper. Exclude paths,
+                    // whose loose bounding boxes can cover much of the picture.
                     std::vector<fz_rect> inkRegions;
                     for (size_t ri = 0; ri < fzRects.size(); ++ri) {
                         if (fzDecisions[ri].mode

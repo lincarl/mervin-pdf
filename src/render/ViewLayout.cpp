@@ -13,18 +13,9 @@ namespace {
 // Slack for a scanner that rounds a millimetre differently on one page.
 constexpr double kSheetTolerance = 1.02;
 
-// Above this multiple of the reference sheet's AREA a page is treated as
-// oversized and given a row of its own, instead of being paired with a normal
-// sheet. 1.5 sits between 1.0 (the same sheet, turned) and 2.0 (the next ISO size
-// up), so a document of uniform pages is never affected.
-//
-// AREA, not width, and the ISO ratios are why: one size up doubles the area but
-// multiplies the width by only sqrt(2). Measured on width, an A3 sheet among A4s
-// comes out at 1.41 and slips under any threshold that still ignores a page
-// merely turned on its side - which is to say a width rule cannot separate the
-// two cases at all, and would both miss the A3 title sheet in
-// examples/schematic.pdf and give every landscape page of a portrait report a row
-// of its own. Verified both ways in tst_view_layout.
+// Give sheets above 1.5 times the reference area their own spread row. Area distinguishes the
+// next ISO size (2x) from the same sheet rotated (1x); width cannot. Covered by
+// tst_view_layout.
 constexpr double kOversizedAreaRatio = 1.5;
 
 } // namespace
@@ -363,17 +354,9 @@ void ViewLayout::relayout()
         sizes[i] = displaySize(i);
 
     if (mode_.spread) {
-        // Column model with one spine shared by every laid-out row: every
-        // left-hand page is right-aligned to it and every right-hand page
-        // left-aligned after innerGap_, so the gutter sits at the same x on every
-        // spread and the sheets form two clean columns even when they differ in
-        // size. (Centring each row inside the widest row, as this used to, slid
-        // the gutter sideways by up to 170 px as the reader scrolled a mixed
-        // document.) In Scroll::Single there is one row, so the spine simply
-        // centres that spread. Rows are top-aligned: facing sheets share the head
-        // edge as a bound book does, which also makes pageRect(i).top() the row
-        // top, so navigating to a page lands on the whole spread rather than part
-        // way into it.
+        // Align every spread to one spine: left pages end there, right pages begin after
+        // innerGap_. Top-align facing sheets so page navigation shows the whole row. In Single
+        // mode the spine centers the only spread.
         const Columns cols = columnWidths(rows_, sizes);
         const int content = contentWidth(cols);
         const int paired = cols.left + (cols.right > 0 ? innerGap_ + cols.right : 0);

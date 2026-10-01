@@ -29,20 +29,9 @@ class SingleInstanceServer;
 
 class RenderEngine;
 
-// Process-level owner of the UI session: one shared RenderEngine and all the
-// MainWindows in this process. Created once per UI process.
-//
-// This process is also the single-instance "primary": it owns the recent-files
-// history and per-file view state directly (single writer, persisted as JSON),
-// and - when handed the instance server - accepts file-opens from later launches
-// over IPC and routes them into its own windows. There is no separate background
-// process; when the last window closes the process exits and nothing lingers.
-//
-// Teardown ordering is structural and load-bearing: render workers dereference
-// a live Document, and the MuPDF base context must outlive every Document.
-// So the engine is declared before the window list (destroyed last), and on
-// the last window closing we stop the workers BEFORE the final Documents are
-// freed, then drop the context.
+// Owns the shared RenderEngine, windows, recent history and view state. The primary process
+// routes IPC opens; it exits with the last window. Shutdown workers before freeing final
+// documents, and keep the MuPDF base context alive until every document is destroyed.
 class WindowManager : public QObject
 {
     Q_OBJECT
@@ -65,17 +54,9 @@ public:
     // new-tab). Files already open in any window are focused, not duplicated.
     void openPaths(const QStringList &paths, const QString &behavior);
 
-    // Open a batch one document per event-loop turn, into the active window.
-    // Startup uses this so the window paints and stays responsive while the batch
-    // trickles in: on a cold file cache a single open is dominated by disk reads
-    // and the virus scanner's first pass, and doing a whole session inline froze
-    // the process with nothing on screen. `onDone` runs after the last document
-    // (and still runs for an empty batch) - --quit-after-startup waits for it so
-    // tst_perf_startup keeps timing the whole batch rather than just first paint.
-    // A batch replaces any batch still in flight. The batch is pinned to one
-    // window, so a window created while it drains does not inherit the rest of it.
-    // `savedOrder` is the session's canonical paths in order, used to place each
-    // restored tab against the live tab bar (see insertIndexForSaved).
+    // Open one document per event-loop turn in a fixed target window. Replace any pending
+    // batch. onDone runs even for an empty batch; startup timing waits for it. savedOrder
+    // contains canonical session paths for insertion against the live tab bar.
     void openStaged(const QList<StagedOpen> &batch, const QStringList &savedOrder = {},
                     std::function<void()> onDone = {});
 
@@ -168,13 +149,8 @@ public:
     // The current recent list (so a newly shown panel has data immediately).
     const QList<RecentEntry> &recentEntries() const { return recent_.entries(); }
 
-    // ---- Reopen closed tab (Ctrl+Shift+T) -------------------------------------
-    // Record a tab that is being closed. `siblings` are the canonical paths of the
-    // whole tab bar it is leaving, in order, and `index` its position in them;
-    // together they let a reopen re-derive the slot against whatever the bar looks
-    // like by then (see ClosedTab). Held in memory only: this is an undo for the
-    // session in front of you, not a second session file (the real session restore
-    // is sessionPaths() above, and it lists only what is still open).
+    // Remember canonical sibling order and the closed index so reopening derives a position in
+    // the live bar. Memory-only undo history; sessionPaths separately persists open tabs.
     void rememberClosedTab(const QString &path, const QStringList &siblings, int index);
 
     enum class Reopen {

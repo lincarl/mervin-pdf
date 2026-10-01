@@ -82,16 +82,9 @@ QIcon makeAppIcon()
     return icon;
 }
 
-// Command-line options. Non-flag arguments are file paths; unknown flags are
-// tolerated/ignored for forward/backward compatibility. Known flags:
-//   --profile <dir> (or --profile=<dir>)
-//       Keep ALL persisted state (settings, recent files, session, view state,
-//       tessdata) in <dir> instead of the user's config dir, and form a
-//       separate single-instance group - a dev/test launch never hands its
-//       files to, nor restores the session of, the installed app.
-//   --quit-after-startup
-//       Exit as soon as startup completes and the event loop goes idle.
-//       Used by tst_perf_startup to measure startup time.
+// Non-flags are paths; unknown flags are ignored. --profile <dir> (or =<dir>) redirects
+// persistent state and isolates single-instance/session handling. --quit-after-startup exits
+// once startup completes, for process timing.
 struct CliOptions
 {
     QString profileDir;
@@ -159,12 +152,8 @@ bool handOffToPrimary(const QStringList &paths, const QString &behavior)
         return false;
 
 #ifdef Q_OS_WIN
-    // The primary is a background process, so Windows would refuse the
-    // SetForegroundWindow it issues when surfacing the target window (at most
-    // the taskbar button flashes, and a minimized window stays minimized). This
-    // freshly launched sender still holds foreground rights - pass them to the
-    // primary before handing over, so its activation succeeds. The primary's
-    // PID sits in the single-instance lock file (QLockFile records its holder).
+    // Pass this launch's foreground rights to the primary before IPC delivery, allowing it to
+    // restore/activate the target window. QLockFile supplies the primary PID.
     {
         qint64 pid = 0;
         QString host, appName;
@@ -199,16 +188,9 @@ bool handOffToPrimary(const QStringList &paths, const QString &behavior)
 }
 
 #ifdef Q_OS_WIN
-// First launch only on Windows: offer to make Mervin the default PDF viewer.
-// The whole check is one-time - on the FIRST run we look at whether Mervin is
-// already the default and prompt only if it is not; on every later run we skip
-// both the registry read and the prompt, so normal startup is never slowed.
-//
-// Windows 10/11 forbids silently taking over a file association, so "Yes"
-// registers Mervin as a candidate .pdf handler and opens Settings -> Default
-// Apps for the user to confirm. Run BEFORE any window is created: MainWindow
-// loads its own Settings at construction and rewrites the whole file on close,
-// so the flag must already be persisted by the time the first window exists.
+// Offer default-handler setup once on Windows; register as a candidate and open Default Apps
+// for user confirmation. Persist the prompt flag before constructing windows so they load the
+// updated setting.
 void maybePromptSetDefaultPdfApp()
 {
     mervin::Settings s = mervin::Settings::load();
@@ -258,14 +240,9 @@ void maybePromptSetDefaultPdfApp()
 #endif
 
 #ifdef Q_OS_WIN
-// Mervin ships as a Windows GUI-subsystem app, so launching it from Explorer, the
-// Start menu, the installer, or a PDF double-click never pops up a console window.
-// The cost of that is a GUI app started from a terminal would normally swallow its
-// stdout/stderr - so when there IS a parent console (a dev shell), attach to it and
-// reopen the std streams. qDebug()/stderr then shows up in that terminal exactly
-// like the old console-subsystem build, with no stray window for end users.
-// AttachConsole fails harmlessly when there is no parent console (the Explorer /
-// Start-menu case), in which case we leave the streams alone and do nothing.
+// GUI-subsystem builds create no console. Attach to an existing parent console and reopen
+// streams for terminal diagnostics; Explorer launches have no parent and leave streams
+// untouched.
 void attachParentConsole()
 {
     if (!AttachConsole(ATTACH_PARENT_PROCESS))
@@ -312,13 +289,8 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &paths,
                 restore.append(p);
     }
 
-    // Command-line files first, then the session with its previously-active
-    // document ahead of the rest - see planStartupOpens for the ordering rules. A
-    // file that is BOTH on the command line and in the session deliberately stays
-    // in the restore list: it opens once (as the command-line entry, which takes
-    // the view) and its restore entry becomes a no-op that still holds its saved
-    // tab position, so double-clicking a file from the last session no longer
-    // migrates its tab to the end of the bar.
+    // Keep command-line/session duplicates in the restore list: planStartupOpens opens them
+    // once while reserving their saved tab positions.
     const QList<mervin::StagedOpen> batch =
         mervin::planStartupOpens(paths, restore, wm.sessionActivePath());
 
@@ -330,12 +302,8 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &paths,
         onDone = [] { QCoreApplication::quit(); };
     wm.openStaged(batch, restore, onDone);
 
-    // Updates (see Updater). Primary instance only - secondary launches hand off
-    // and exit before reaching here. The startup pass waits until the first
-    // window has painted and everything after it is asynchronous, so it never
-    // slows startup; a --quit-after-startup timing run skips it entirely. The
-    // prompt's "Never" goes through the WindowManager so every window's settings
-    // copy agrees.
+    // Start asynchronous update handling after first paint in the primary process; skip startup
+    // timing runs. Route Never through WindowManager to synchronize settings.
     mervin::Updater updater;
     QObject::connect(&updater, &mervin::Updater::autoUpdateDisabled, &wm,
                      [&wm] { wm.setAutoUpdate(false); });

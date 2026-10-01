@@ -8,12 +8,8 @@
 
 namespace mervin {
 
-// Simple byte-budgeted LRU cache of rendered page images, keyed by page number.
-// The cache holds images for the *current* scale/rotation only; the viewer
-// clear()s it whenever scale or rotation changes, so the page number is a
-// sufficient key. Each entry records the canvas-space rectangle the image
-// covers: the whole page rect for a normally-rendered page, or just the visible
-// band for a deep-zoom clipped tile.
+// Byte-budgeted page-image LRU for the current scale/rotation. Viewer invalidation makes page
+// number a sufficient key. Entries record canvas coverage for whole pages or clipped tiles.
 class PageCache
 {
 public:

@@ -7,16 +7,8 @@
 
 namespace mervin {
 
-// The ordered list of (file, page range) segments a merge will write, plus every
-// number the merge dialog puts on screen: each row's page count, the range it
-// occupies in the finished document, the running total, and the first thing
-// wrong with the plan.
-//
-// It is deliberately GUI-free and lives in mervin_core so the ordering and
-// validation rules can be unit-tested without QtWidgets (see
-// tests/tst_merge_plan.cpp) - MergeDialog is then only a rendering of this.
-// Nothing here touches the file system except defaultOutputPath(); the caller
-// probes each file (PageOps::probe) and reports what it found through Entry.
+// GUI-free ordered file/range segments with page counts, output spans, totals and validation
+// errors. MergeDialog displays this model and writes edits back to it.
 class MergePlan
 {
 public:

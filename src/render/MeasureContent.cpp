@@ -251,7 +251,8 @@ QString formatMeasurementValue(MeasureKind kind, const std::vector<QPointF> &pts
     return out;
 }
 
-std::string emitMeasurementOps(const RenderMeasurement &rm, const EmitStyle &st)
+std::string emitMeasurementOps(const RenderMeasurement &rm, const EmitStyle &st,
+                               const std::string &fontName)
 {
     if (rm.pts.size() < 2)
         return {};
@@ -367,7 +368,7 @@ std::string emitMeasurementOps(const RenderMeasurement &rm, const EmitStyle &st)
                       pnum(y).c_str(), pnum(pw).c_str(), pnum(ph).c_str());
         s += buf;
         s += "0 0 0 rg BT ";
-        std::snprintf(buf, sizeof(buf), "/%s %s Tf %s TL ", kMeasureFontResource, pnum(fs).c_str(),
+        std::snprintf(buf, sizeof(buf), "/%s %s Tf %s TL ", fontName.c_str(), pnum(fs).c_str(),
                       pnum(lineH).c_str());
         s += buf;
         // Baseline of the first (top) line: a pad below the box top, less the ascent.

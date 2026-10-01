@@ -49,20 +49,9 @@ public:
                         QWidget *parent = nullptr);
     ~MainWindow() override;
 
-    // Opens a PDF in a new tab, or focuses the existing tab if the file is
-    // already open in any window of this process. When allowDuplicate is true
-    // the focus-existing-tab dedup is skipped, so the file opens as a second,
-    // independent view even if it is already open elsewhere ("Duplicate to new
-    // window"); the caller seeds the new tab's view state itself.
-    //
-    // atIndex places the new tab at a specific position (-1 = append), and
-    // makeCurrent=false opens it without pulling focus off the tab on screen.
-    // Both exist for the staged session restore, which opens the previously
-    // active document first and then slots the remaining documents back into
-    // their saved positions around it without ever stealing the view.
-    //
-    // knownPassword is tried before any prompt: "Duplicate to new window" passes
-    // the source tab's, so the second view of an encrypted file does not ask.
+    // Open or focus an existing tab across this process. allowDuplicate creates an independent
+    // view whose state the caller seeds. atIndex=-1 appends; makeCurrent=false preserves focus
+    // during staged restore. Try knownPassword before prompting.
     bool openFile(const QString &path, bool allowDuplicate = false, int atIndex = -1,
                   bool makeCurrent = true, const QString &knownPassword = QString());
 

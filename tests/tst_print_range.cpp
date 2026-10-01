@@ -148,6 +148,8 @@ void TstPrintRange::overflowIsError()
     // Out-of-int-range digits: toInt() fails rather than wrapping.
     QVERIFY(PageRange::parse(QStringLiteral("99999999999999"), 10, &err).isEmpty());
     QVERIFY(!err.isEmpty());
+    QVERIFY(PageRange::parseAllowingAll(QStringLiteral("1-2147483647"), 10, &err).isEmpty());
+    QVERIFY(!err.isEmpty());
 }
 
 void TstPrintRange::allowingAllExpandsAll()

@@ -52,15 +52,9 @@ public:
         QString password;
     };
 
-    // Concatenate the selected pages of `inputs`, in order, into one document.
-    // On failure *failedIndex (when given) receives the index of the input that
-    // could not be read, or -1 when the failure was not attributable to one
-    // input (a write error, say) - so a caller can name the offending file.
-    //
-    // An out-of-range page index is an error rather than being skipped: a page
-    // count that went stale between the caller's probe and this write would
-    // otherwise silently produce a shorter document than the caller promised its
-    // user, and still report success. For an extract, pass one input.
+    // Concatenate selected pages in input order (one input performs extraction). Reject invalid
+    // page indices to avoid silently shortening output. On failure, failedIndex identifies the
+    // unreadable input, or -1 for errors such as output writes.
     static Status merge(const QList<MergeInput> &inputs, const QString &outPath,
                         QString *error = nullptr, int *failedIndex = nullptr);
 

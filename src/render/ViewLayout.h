@@ -10,25 +10,9 @@ namespace mervin {
 
 class Document;
 
-// Computes page rectangles in logical (device-independent) pixels.
-//
-// The layout has TWO INDEPENDENT AXES, and every combination is legal:
-//
-//   scroll: Continuous - every row is laid out, the reader scrolls the document.
-//           Single     - only the row holding the current page is laid out, so
-//                        the canvas is one screenful and paging replaces it.
-//   spread: false      - one page per row.
-//           true       - facing pages share a row, taken from the document's
-//                        spread plan (see rebuildSpreadPlan).
-//
-// The two used to be one three-valued enum, which forced the reader to give up
-// their scrolling preference to see a spread and gave "two-page" no way back.
-// Keeping them apart means Single+spread - one spread at a time - simply exists.
-//
-// ViewLayout also owns the fit arithmetic (fitBasis), because the canvas size is
-// a property of the layout and not of any single page: getting a fit right means
-// knowing the margins, the inner gap, the breathing space and the per-page
-// rounding, all of which live here.
+// Page rectangles and fit arithmetic in logical pixels. Scroll and spread are independent:
+// Continuous lays out every row; Single only the current row. Spread pairs pages according to
+// rebuildSpreadPlan. fitBasis accounts for margins, gaps and per-page rounding.
 class ViewLayout
 {
 public:
@@ -61,12 +45,8 @@ public:
 
     Mode mode() const { return mode_; }
     QSize totalSize() const { return total_; }
-    // Total layout height/width at a hypothetical scale/mode/rotation/current
-    // page, without touching the laid-out state. Lets the viewer's fit
-    // computation predict the canvas BEFORE committing to a scale (notably
-    // whether content will scroll vertically, and thus show the vertical
-    // scrollbar). Both mirror relayout()'s math exactly, same rounding and same
-    // pixel constants - keep the three in sync.
+    // Predict canvas dimensions at a hypothetical view state without relayout, including
+    // scrollbar needs. Keep rounding/constants identical to relayout and fitBasis.
     int heightForScale(double scale, Mode mode, int rotation, int currentPage) const;
     int widthForScale(double scale, Mode mode, int rotation, int currentPage) const;
     // The fit scales for a viewport of fullW x fullH logical pixels.

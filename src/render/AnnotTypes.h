@@ -54,13 +54,9 @@ inline bool isTextMarkup(AnnotType t)
 // strike-out from the current text selection; Note drops a sticky-note comment.
 enum class AnnotSubMode { Select, Markup, Note };
 
-// One annotation on a page, as the UI sees it. A plain value type, mirroring
-// FormField. `rect` is in app page-point space (top-left origin, y-down, 72 dpi,
-// unrotated - the same space Measurement::pts and FormField::rect live in), so it
-// survives zoom/rotation; for text markup it is the union of the marked lines,
-// for a sticky note it is the icon box. `id` is the PDF object number - stable
-// for the life of one open document (until a save+reopen re-enumerates), used to
-// re-find the annotation for edit/delete without relying on a list index.
+// Annotation value in zero-origin, y-down page points at 72 dpi. rect encloses markup lines or
+// the note icon. id is the PDF object number, stable until save/reopen; use it for edits
+// instead of list indices.
 struct Annotation {
     int page = -1;
     int id = 0;             // PDF object number (stable per open document)

@@ -69,17 +69,10 @@ struct DocumentLifetime
     Document *document = nullptr;
 };
 
-// Owns an open MuPDF document and caches its per-page sizes and title.
-// Created by RenderEngine::openDocument(). The render workers read handle()
-// using their own cloned fz_context (MuPDF's documented multi-thread pattern).
-//
-// IMPORTANT: a single fz_document is NOT thread-safe. MuPDF's lock callbacks
-// (fz_locks_context) only protect the shared store / glyph cache / allocator -
-// they do NOT serialize access to one document's object cache and lazy loading.
-// Every thread that touches this document's handle (render workers + the
-// per-document TextIndex) must therefore hold accessMutex() around its
-// page-load / content-parse / text-extraction. Rasterizing an already-built
-// display list does not touch the document and can run outside the lock.
+// Owns a MuPDF document, cached page sizes and title; created by RenderEngine. All handle
+// access, including page loading and text extraction on cloned contexts, requires
+// accessMutex(). MuPDF context locks protect shared caches, not document state. Playback of an
+// independent display list may run outside the document lock.
 class Document
 {
 public:
@@ -106,14 +99,10 @@ public:
     // Empty for pages with no vector content (or on failure).
     PageGeometry pageGeometry(int pageNo) const;
 
-    // The affine transform that maps this page's app page-point space (top-left
-    // origin, y-down, 72 dpi, unrotated - what Measurement::pts live in) into the
-    // PDF's user space (y-up, MediaBox origin). Returned as {a,b,c,d,e,f} with
-    //   x' = a*x + c*y + e,  y' = b*x + d*y + f  (MuPDF's fz_matrix convention).
-    // It is the inverse of the content->app transform pageMeasurement() applies to
-    // /VP BBoxes, so writers (flatten / annotate) place marks exactly where they
-    // appear on screen, handling /Rotate and a non-zero MediaBox origin. Identity
-    // for a non-PDF document or on failure. Read on demand under the access lock.
+    // Map app page points (zero top-left, y-down, 72 dpi) to PDF user space, including rotation
+    // and MediaBox origin. Return {a,b,c,d,e,f}: x'=a*x+c*y+e, y'=b*x+d*y+f. Inverse of the
+    // viewport transform used by pageMeasurement(); identity for non-PDF/failure. Read under
+    // the access lock.
     std::array<double, 6> pagePointToPdfMatrix(int pageNo) const;
 
     fz_document *handle() const { return doc_; }
@@ -140,13 +129,8 @@ public:
     // the Fill-Forms action's enabled state. Read on demand under the access lock.
     bool hasForm() const;
 
-    // True when the PDF catalog carries Mervin's private measurement blob
-    // (/Mervin_Measurements, written by MeasureExport::embedMervin). One dict
-    // lookup on the already-parsed catalog, which is what makes it worth having:
-    // it gates the qpdf reopen MeasureExport::readMervinBlob needs, and that
-    // second full parse of the same file used to run on EVERY document open even
-    // though almost no file carries the blob. Cached; false for non-PDFs. Read
-    // under the access lock, so it is safe on the UI thread.
+    // Cached /Mervin_Measurements catalog check under the access lock; false for non-PDFs.
+    // Gates the second qpdf parse used to restore measurements.
     bool hasMervinMeasurements() const;
 
     // True when this is a PDF (pdf_specifics succeeds) - i.e. annotations and form
@@ -154,24 +138,14 @@ public:
     // open (XPS, CBZ, image documents). Read under the access lock.
     bool isPdf() const;
 
-    // Run `fn` against the live pdf_document under accessMutex() - the ONLY
-    // sanctioned way to mutate the PDF object model (AcroForm field edits, see
-    // FormModel; markup annotations, see AnnotModel). This serialises the edit
-    // against the render workers' page loads exactly like every other handle()
-    // access. `fn` receives the base context and the pdf_document and must let
-    // neither escape the call. Returns false without calling `fn` for a non-PDF
-    // document, false if `fn` raises a MuPDF exception, and true otherwise.
-    // (Const: the PDF bytes change, but the Document object's own state does not -
-    // like outline()/pageMeasurement() reading via handle().)
+    // Mutate the live PDF only through fn under accessMutex(). Neither the supplied context nor
+    // document may escape. Return false for non-PDFs or MuPDF exceptions, true otherwise. Const
+    // refers to the wrapper, not PDF contents.
     bool withPdfDocument(const std::function<void(fz_context *, pdf_document *)> &fn) const;
 
-    // Persist the live pdf_document - with all in-memory mutations (filled form
-    // fields and created/edited annotations) - to `tmpPath` via a full MuPDF
-    // rewrite (do_incremental = 0, do_encrypt = PDF_ENCRYPT_KEEP). The caller
-    // swaps it over the original with the measurement atomic-swap flow. This is
-    // the single MuPDF save path shared by FormModel and AnnotModel, since both
-    // mutate this one live pdf_document. Returns false (and sets *error) on a
-    // non-PDF document or write failure. Const for the same reason as above.
+    // Full MuPDF rewrite of live form/annotation edits to tmpPath, preserving encryption.
+    // Caller atomically replaces the destination. Returns false with *error for non-PDFs or
+    // write failures.
     bool savePdfTo(const QString &tmpPath, QString *error = nullptr) const;
 
     // Serializes all access to handle() across threads (see class note).

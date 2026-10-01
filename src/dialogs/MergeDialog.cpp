@@ -187,14 +187,8 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
     layout->addWidget(buttons);
 
     if (!initialPath.isEmpty()) {
-        // The open document goes in as an ordinary row - and is probed like any
-        // other. It has to be: the viewer opened it with MuPDF, and MuPDF opens
-        // things this merge cannot. Trusting the viewer's page count here would
-        // show a healthy row and dead-end after Merge, which is the exact failure
-        // this dialog exists to prevent. An encrypted document is probed with the
-        // password its tab remembers, so it is Locked only if that no longer
-        // opens it. probe() is qpdf-only and never prompts, so this costs one or
-        // two parses and asks the user nothing.
+        // Probe the current document with qpdf like any input: MuPDF accepts files qpdf may
+        // reject. Use the tab's password; probing never prompts.
         MergePlan::Entry e = probeEntry(initialPath, initialPassword);
         if (e.load == MergePlan::Load::Ok && e.pageCount <= 0 && initialPageCount > 0)
             e.pageCount = initialPageCount; // qpdf read it but counted nothing

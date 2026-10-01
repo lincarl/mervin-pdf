@@ -13,17 +13,9 @@ class QLockFile;
 
 namespace mervin::ipc {
 
-// The resident host's IPC endpoint and single-instance lock in one object.
-//
-// start() first acquires a per-user lock file: that, not the pipe, is the
-// single-instance guard. (On Windows a named pipe permits MULTIPLE server
-// instances on the same name, so QLocalServer::listen() does NOT fail for a
-// duplicate - it can't enforce single-instance.) If the lock is already held,
-// another host owns it and the caller should exit. Otherwise we listen on the
-// pipe and serve. Each accepted connection gets its own MessageDecoder; whole
-// frames are emitted via messageReceived(). The lock file is released (and on
-// Windows the pipe auto-vanishes) when this process dies, so a crashed host
-// leaves nothing stale behind.
+// IPC endpoint guarded by a per-user lock file. Windows permits multiple named-pipe servers, so
+// listen() alone cannot enforce one primary. Each connection owns a MessageDecoder and emits
+// complete frames. Process exit releases the lock and endpoint.
 class SingleInstanceServer : public QObject
 {
     Q_OBJECT

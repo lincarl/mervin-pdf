@@ -227,6 +227,25 @@ metadata. Page numbers follow output order (including duplicates); rotation tran
 points and swaps anisotropic manual scales on quarter turns. Merged documents use the
 display defaults of the first contributing measurement set.
 
+`AtomicPdfWriter` streams all qpdf output through `QSaveFile`, including page,
+security and measurement operations. A failed write discards its temporary file;
+only a complete write replaces the destination. A split commits each output file
+individually. Flattening copies inherited resource/font dictionaries and allocates
+a unique label font name, preserving existing page fonts and sibling resources.
+Rotate/Delete prompts use the same validated page-range grammar as Print/Extract.
+
+`ZoomAnimation` owns visual interpolation state, timing and overlay transforms;
+`ViewerWidget` captures viewport rectangles and coordinates layout and repainting.
+Comfort workers reuse their region plan until an image rectangle starts or ends;
+each worker has its own mutable cache. Rectangle priority and pixel treatments are
+unchanged.
+
+The October 2026 improvement pass covered lifetime/save correctness, asynchronous
+search/OCR, indexed viewport lookup, settings persistence, component extraction,
+and a source-wide comment audit. Validation combines required synthetic regression
+tests on Linux/Windows, Linux ASan/UBSan, and explicit public-corpus profiling.
+The benchmark procedure and its limits are recorded in `BUILDING.md`.
+
 ## Persistence
 
 Primary application files live in one per-user directory:

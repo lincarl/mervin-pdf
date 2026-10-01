@@ -7,16 +7,9 @@
 
 namespace mervin {
 
-// Flattened vector geometry harvested from a page's content stream (straight
-// line segments and their endpoints), used by the measuring tool to snap the
-// cursor to precise vertices/edges on CAD line drawings.
-//
-// Points are in PAGE-POINT space (unrotated, 72 dpi, (0,0)-based - the same
-// space as TextIndex rects and ViewerWidget::canvasToPagePoint), so they survive
-// zoom/rotation and map cleanly to/from the widget. Curves are pre-flattened to
-// short segments; segments index into `vertices` (deduplicated) so shared
-// endpoints are stored once. `truncated` is set when a hard segment cap was hit
-// on a pathological page (the data is still usable, just incomplete).
+// Flattened page-content segments for CAD snapping. Coordinates are unrotated page points at 72
+// dpi with a zero origin. Segments reference deduplicated vertices. truncated marks a hard
+// segment-cap hit; partial geometry remains usable.
 struct PageGeometry
 {
     std::vector<QPointF> vertices;            // deduped endpoints, page-point space

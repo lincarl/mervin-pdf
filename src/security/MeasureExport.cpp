@@ -1,4 +1,5 @@
 #include "security/MeasureExport.h"
+#include "security/AtomicPdfWriter.h"
 
 #include <qpdf/Buffer.hh>
 #include <qpdf/Constants.h>
@@ -7,13 +8,13 @@
 #include <qpdf/QPDFObjectHandle.hh>
 #include <qpdf/QPDFPageDocumentHelper.hh>
 #include <qpdf/QPDFPageObjectHelper.hh>
-#include <qpdf/QPDFWriter.hh>
 
 #include <QPointF>
 
 #include <algorithm>
 #include <exception>
 #include <initializer_list>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -53,24 +54,22 @@ Status openQpdf(QPDF &q, const QString &path, const QString &password, QString *
     }
 }
 
-// Add a base-14 Helvetica (WinAnsi) under kMeasureFontResource to a /Resources
-// dict, used by the label text the emitter draws. Idempotent.
-void ensureHelvetica(QPDF &q, QPDFObjectHandle resources)
+// Copy the font dictionary before adding a private name: resources may be inherited/shared.
+std::string addHelvetica(QPDF &q, QPDFObjectHandle resources)
 {
     auto fonts = resources.getKey("/Font");
-    if (!fonts.isDictionary()) {
-        fonts = QPDFObjectHandle::newDictionary();
-        resources.replaceKey("/Font", fonts);
-    }
-    const std::string key = std::string("/") + kMeasureFontResource;
-    if (!fonts.hasKey(key)) {
-        auto f = QPDFObjectHandle::newDictionary();
-        f.replaceKey("/Type", QPDFObjectHandle::newName("/Font"));
-        f.replaceKey("/Subtype", QPDFObjectHandle::newName("/Type1"));
-        f.replaceKey("/BaseFont", QPDFObjectHandle::newName("/Helvetica"));
-        f.replaceKey("/Encoding", QPDFObjectHandle::newName("/WinAnsiEncoding"));
-        fonts.replaceKey(key, q.makeIndirectObject(f));
-    }
+    fonts = fonts.isDictionary() ? fonts.shallowCopy() : QPDFObjectHandle::newDictionary();
+    resources.replaceKey("/Font", fonts);
+    std::string name = kMeasureFontResource;
+    for (int suffix = 1; fonts.hasKey("/" + name); ++suffix)
+        name = std::string(kMeasureFontResource) + std::to_string(suffix);
+    auto font = QPDFObjectHandle::newDictionary();
+    font.replaceKey("/Type", QPDFObjectHandle::newName("/Font"));
+    font.replaceKey("/Subtype", QPDFObjectHandle::newName("/Type1"));
+    font.replaceKey("/BaseFont", QPDFObjectHandle::newName("/Helvetica"));
+    font.replaceKey("/Encoding", QPDFObjectHandle::newName("/WinAnsiEncoding"));
+    fonts.replaceKey("/" + name, q.makeIndirectObject(font));
+    return name;
 }
 
 } // namespace
@@ -87,25 +86,27 @@ MeasureExport::Status MeasureExport::flatten(const QString &inPath, const QStrin
         QPDFPageDocumentHelper dh(q);
         auto pages = dh.getAllPages();
         const int n = static_cast<int>(pages.size());
-        for (int i = 0; i < n; ++i) {
+        std::map<int, std::vector<const RenderMeasurement *>> byPage;
+        for (const auto &mark : marks)
+            if (mark.page >= 0 && mark.page < n && mark.pts.size() >= 2)
+                byPage[mark.page].push_back(&mark);
+        for (const auto &[i, pageMarks] : byPage) {
+            auto &page = pages[static_cast<size_t>(i)];
+            auto resources = page.getAttribute("/Resources", true);
+            if (!resources.isDictionary()) {
+                resources = QPDFObjectHandle::newDictionary();
+                page.getObjectHandle().replaceKey("/Resources", resources);
+            }
+            const std::string fontName = addHelvetica(q, resources);
             std::string content;
-            for (const RenderMeasurement &m : marks)
-                if (m.page == i) {
-                    EmitStyle style;
-                    if (m.lineWidth > 0.0)
-                        style.lineWidth = m.lineWidth;
-                    content += emitMeasurementOps(m, style);
-                }
+            for (const RenderMeasurement *mark : pageMarks) {
+                EmitStyle style;
+                if (mark->lineWidth > 0.0)
+                    style.lineWidth = mark->lineWidth;
+                content += emitMeasurementOps(*mark, style, fontName);
+            }
             if (content.empty())
                 continue;
-
-            QPDFObjectHandle pageObj = pages[static_cast<size_t>(i)].getObjectHandle();
-            auto res = pageObj.getKey("/Resources");
-            if (!res.isDictionary()) {
-                res = QPDFObjectHandle::newDictionary();
-                pageObj.replaceKey("/Resources", res);
-            }
-            ensureHelvetica(q, res);
 
             // Bracket the existing content in q/Q (prepend a save, append a
             // restore) so our marks draw from the default graphics state, then
@@ -119,10 +120,8 @@ MeasureExport::Status MeasureExport::flatten(const QString &inPath, const QStrin
         // measurements-burned-in PDF with no Mervin-private data.
         if (q.getRoot().hasKey("/Mervin_Measurements"))
             q.getRoot().removeKey("/Mervin_Measurements");
-        const std::string outputName = u8(outPath);
-        QPDFWriter w(q, outputName.c_str());
-        w.setStaticID(false);
-        w.write();
+        AtomicPdfWriter output(q, outPath);
+        output.write();
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)
@@ -143,10 +142,8 @@ MeasureExport::Status MeasureExport::embedMervin(const QString &inPath, const QS
         const QByteArray json = serializeMeasurements(doc);
         auto stream = q.newStream(std::string(json.constData(), static_cast<size_t>(json.size())));
         q.getRoot().replaceKey("/Mervin_Measurements", stream);
-        const std::string outputName = u8(outPath);
-        QPDFWriter w(q, outputName.c_str());
-        w.setStaticID(false);
-        w.write();
+        AtomicPdfWriter output(q, outPath);
+        output.write();
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)

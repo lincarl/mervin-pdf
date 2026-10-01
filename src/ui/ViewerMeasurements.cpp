@@ -648,11 +648,11 @@ void ViewerWidget::drawSnapIndicator(QPainter &p) const
     // Drawn after the page loop, so it does not inherit the loop's ease transform:
     // carry it to the eased position by hand, or the marker would sit off the point
     // it is locked to for the length of a zoom.
-    if (zoomEase_.active) {
+    if (zoomEase_.active()) {
         const QRect pr = layout_.pageRect(snapPage_);
         if (pr.isValid()) {
             const QRectF fin(pr.translated(-contentOffset()));
-            w = zoomEaseTransform(fin, zoomEaseRect(snapPage_, fin)).map(w);
+            w = ZoomAnimation::transform(fin, zoomEaseRect(snapPage_, fin)).map(w);
         }
     }
     p.save();
@@ -691,7 +691,7 @@ void ViewerWidget::drawMeasurements(QPainter &p, int page) const
 
     // Keep stroke, handle, arc, and label sizes fixed in viewport pixels while measurement points scale.
     QTransform pointXf;
-    if (zoomEase_.active) {
+    if (zoomEase_.active()) {
         pointXf = p.transform();
         p.setWorldTransform(QTransform());
     }

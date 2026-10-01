@@ -65,12 +65,8 @@ bool PlatformIntegration::registerPdfHandlerAndPromptDefault()
                      QStringLiteral("Software\\MervinPDF\\Capabilities"));
     }
 
-    // Let the user confirm in the OS UI (silent association is not permitted).
-    // Deep-link straight to Mervin's own Default Apps page (Win11 21H2+ with the
-    // 2023-04 cumulative update) so the .pdf association is right there with a
-    // one-click "Set default"; older builds ignore the query and show the list.
-    // registeredAppUser matches the per-user name written above under HKCU
-    // \Software\RegisteredApplications.
+    // Open Default Apps for user confirmation. Supported Windows 11 builds deep-link using the
+    // HKCU RegisteredApplications name; older builds show the app list.
     const QString deepLink = QStringLiteral("ms-settings:defaultapps?registeredAppUser=%1")
                                  .arg(QString::fromUtf8(
                                      QUrl::toPercentEncoding(QStringLiteral("MervinPDF"))));

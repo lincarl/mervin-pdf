@@ -243,13 +243,8 @@ protected:
     }
 
 private:
-    // Measure the wrapped text height at a given width WITHOUT touching the live
-    // displayed document. The earlier implementation called
-    // document()->setTextWidth() from these layout queries; because QTextEdit also
-    // syncs the live document's text width to its viewport, the two fought and the
-    // relayout recursed until the stack overflowed (a crash on any property long
-    // enough to widen the popup past kBaseWidth). A throwaway document mirrors the
-    // content/font/wrap so measurement has no side effects on the widget.
+    // Measure wrapping with a temporary document. Mutating the live text width during size
+    // queries conflicts with QTextEdit viewport sizing and causes recursive layout.
     int measureHeight(int width) const
     {
         if (width <= 0)
@@ -373,13 +368,8 @@ void PdfPropertiesPopup::hideEvent(QHideEvent *event)
 void PdfPropertiesPopup::changeEvent(QEvent *event)
 {
     if (event->type() == QEvent::PaletteChange) {
-        // Only re-skin when the light/dark state actually flips. Calling
-        // setStyleSheet() re-resolves the widget palette and posts ANOTHER
-        // PaletteChange, so re-applying it unconditionally here recurses
-        // setStyleSheet -> PaletteChange -> changeEvent -> setStyleSheet until the
-        // stack overflows (it crashed the app the moment any properties popup was
-        // built). Gating on a real theme change makes the re-entrant PaletteChange
-        // a no-op, which stops the loop after one pass.
+        // Reapply styles only when light/dark changes: setStyleSheet posts PaletteChange, so
+        // unconditional restyling recurses.
         const bool dark = theme::isDark(palette());
         if (dark != appliedDark_) {
             appliedDark_ = dark;
