@@ -26,11 +26,6 @@ public:
     // Select a scope as if its toggle were clicked; emits scopeChanged() on a change.
     void setScope(Scope scope);
 
-    // Content-search progress as a line along the inside bottom edge of the field:
-    // `fraction` from 0 to 1 over a faint full-length track, or below 0 for none.
-    void setProgress(qreal fraction);
-    qreal progress() const { return progress_; }
-
     // The Settings value ("names", "contents", "all") for a scope, and back.
     // An unknown value reads as Names.
     static QString settingValue(Scope scope);
@@ -42,7 +37,6 @@ signals:
 protected:
     bool event(QEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
-    void paintEvent(QPaintEvent *event) override;
 
 private:
     void layoutRightEnd();
@@ -50,7 +44,6 @@ private:
     void updateSearchIcon();
 
     Scope scope_ = Scope::Names;
-    qreal progress_ = -1;
     QAction *searchAction_ = nullptr; // leading magnifier
     QToolButton *clearBtn_ = nullptr;
     QFrame *rule_ = nullptr;

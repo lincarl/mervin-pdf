@@ -57,8 +57,6 @@ public slots:
     // `snippet` is a short preview of the matching text (may be empty).
     void addContentHit(const QString &path, int page, const QString &snippet); // page is 1-based
     void setContentProgress(int scanned, int total);
-    // Progress inside the file being read, so the line keeps moving in large files.
-    void setContentPageProgress(int page, int pageCount);
     void endContentSearch(bool canceled, int matched);
 
 signals:
@@ -100,10 +98,10 @@ private:
     void startContentSearch();
     // Stop button: ends the scan and keeps what it found.
     void stopSearch();
-    // While a scan is pending or running: the status in full ink, Stop shown and
-    // the progress line drawn in the field; off again when it ends.
+    // While a scan is pending or running, the status is in full ink and Stop shows.
+    // Both return to rest when it ends.
     void setRunning(bool running);
-    void showScanProgress(qreal withinFile);
+    void showScanProgress();
     bool contentMode() const; // Contents or All with a query: a scan runs or ran
     QString needle() const;
     bool nameMatches(const RecentEntry &entry) const;

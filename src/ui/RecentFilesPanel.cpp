@@ -586,12 +586,11 @@ void RecentFilesPanel::onSearchChanged()
         status_->setVisible(false);
         return;
     }
-    // The line and the status show at once, so the search is visibly on its way
-    // during the pause too.
+    // The status and Stop show at once, so the search is visibly on its way during
+    // the pause too.
     status_->setText(tr("Searching…"));
     status_->setVisible(true);
     setRunning(true);
-    search_->setProgress(0);
     debounce_->start();
 }
 
@@ -618,7 +617,7 @@ void RecentFilesPanel::startContentSearch()
     scanTotal_ = paths.size();
     status_->setVisible(true);
     setRunning(true);
-    showScanProgress(0);
+    showScanProgress();
     emit contentSearchRequested(needle(), paths);
 }
 
@@ -642,21 +641,18 @@ void RecentFilesPanel::setRunning(bool running)
                                  + fm.horizontalAdvance(QLatin1Char(' ')));
     } else {
         status_->setMinimumWidth(0);
-        search_->setProgress(-1);
     }
     stopBtn_->setVisible(running);
 }
 
-// "Searching file 3 of 40" names the file being read; the line also counts the
-// pages read in it, so it keeps moving through a large file.
-void RecentFilesPanel::showScanProgress(qreal withinFile)
+// Shows "Searching file 3 of 40", the file being read out of the files to read.
+void RecentFilesPanel::showScanProgress()
 {
     if (scanTotal_ <= 0)
         return;
     status_->setText(tr("Searching file %1 of %2")
                          .arg(std::min(scanned_ + 1, scanTotal_))
                          .arg(scanTotal_));
-    search_->setProgress((scanned_ + std::clamp<qreal>(withinFile, 0, 1)) / scanTotal_);
 }
 
 void RecentFilesPanel::stopSearch()
@@ -696,14 +692,7 @@ void RecentFilesPanel::setContentProgress(int scanned, int total)
         return;
     scanned_ = scanned;
     scanTotal_ = total;
-    showScanProgress(0);
-}
-
-void RecentFilesPanel::setContentPageProgress(int page, int pageCount)
-{
-    if (!searching_ || pageCount <= 0)
-        return;
-    showScanProgress(qreal(page) / pageCount);
+    showScanProgress();
 }
 
 void RecentFilesPanel::endContentSearch(bool canceled, int matched)

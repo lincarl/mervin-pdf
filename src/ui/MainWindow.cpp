@@ -339,8 +339,6 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
             recentPanel_, &RecentFilesPanel::addContentHit);
     connect(contentSearch_, &mervin::ContentSearch::progress,
             recentPanel_, &RecentFilesPanel::setContentProgress);
-    connect(contentSearch_, &mervin::ContentSearch::pageProgress,
-            recentPanel_, &RecentFilesPanel::setContentPageProgress);
     connect(contentSearch_, &mervin::ContentSearch::finished, this,
             [this](bool canceled, int matched) { recentPanel_->endContentSearch(canceled, matched); });
 
