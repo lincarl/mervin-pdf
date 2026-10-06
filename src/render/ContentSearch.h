@@ -43,10 +43,6 @@ signals:
     void hit(const QString &path, int page, const QString &snippet);
     // Emitted periodically so the UI can show "scanned / total".
     void progress(int scanned, int total);
-    // Within the file being read (the one after the `scanned` of the last
-    // progress()): `page` of `pageCount` pages done. At most about ten times a
-    // second, so a large file still shows movement.
-    void pageProgress(int page, int pageCount);
     // canceled is true if the scan was stopped early; matched is the hit count.
     void finished(bool canceled, int matched);
 

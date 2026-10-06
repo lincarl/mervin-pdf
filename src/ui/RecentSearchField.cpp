@@ -1,17 +1,12 @@
 #include "ui/RecentSearchField.h"
 
 #include "ui/Icons.h"
-#include "ui/ThemeTokens.h"
 
 #include <QAction>
 #include <QButtonGroup>
 #include <QEvent>
 #include <QFrame>
-#include <QPainter>
-#include <QPainterPath>
 #include <QToolButton>
-
-#include <algorithm>
 
 namespace mervin {
 
@@ -20,8 +15,6 @@ constexpr int kClearSize = 22;  // the clear button's square
 constexpr int kClearGlyph = 14; // Lucide x inside it
 constexpr int kRightInset = 6;  // from the field's outer right edge
 constexpr int kTextGap = 6;     // between the typed text and the clear button
-constexpr qreal kLine = 3;      // the progress line's thickness
-constexpr qreal kRuleGap = 4;   // the line ends this far before the rule
 } // namespace
 
 RecentSearchField::RecentSearchField(QWidget *parent)
@@ -92,15 +85,6 @@ void RecentSearchField::setScope(Scope scope)
     scope_ = scope;
     updateScopeLook();
     emit scopeChanged(scope_);
-}
-
-void RecentSearchField::setProgress(qreal fraction)
-{
-    const qreal next = fraction < 0 ? -1 : std::min<qreal>(fraction, 1);
-    if (qFuzzyCompare(next + 2, progress_ + 2))
-        return;
-    progress_ = next;
-    update();
 }
 
 QString RecentSearchField::settingValue(Scope scope)
@@ -182,45 +166,6 @@ bool RecentSearchField::event(QEvent *event)
         break;
     }
     return SearchLineEdit::event(event);
-}
-
-// The progress line sits on the field's inside bottom edge, under the frame drawn
-// by the style sheet: a faint track, so the line reads as a bar from the first
-// moment, and the filled part in the focus ring's accent. It spans the text and
-// the clear button and ends before the rule, never under the scope toggles. It
-// repaints only when progress arrives; nothing moves on its own.
-void RecentSearchField::paintEvent(QPaintEvent *event)
-{
-    SearchLineEdit::paintEvent(event);
-    if (progress_ < 0)
-        return;
-    const theme::Chrome t = theme::chrome(palette());
-    const QColor accent = theme::legibleAccent(t.accent, t.dark);
-    const bool ring = hasFocus();
-    const qreal border = ring ? 2 : 1;   // the focus ring, or the resting edge
-    const qreal radius = t.dark ? 6 : 8; // as Theme's control radius
-    const QRectF inner = QRectF(rect()).adjusted(border, border, -border, -border);
-    // Against the focus ring the line reaches 1px into it: the ring is the same
-    // accent, so the overlap is invisible, and at 125% or 150% scaling no half
-    // pixel of background is left between the two.
-    const qreal overlap = ring ? 1 : 0;
-    const QRectF reach = inner.adjusted(-overlap, -overlap, overlap, overlap);
-
-    QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing);
-    QPainterPath clip;
-    clip.addRoundedRect(reach, radius - border + overlap, radius - border + overlap);
-    p.setClipPath(clip);
-    p.setPen(Qt::NoPen);
-    QColor track = accent;
-    track.setAlphaF(0.28);
-    const qreal end = rule_->geometry().left() - kRuleGap;
-    const QRectF line(inner.left(), inner.bottom() - kLine, end - inner.left(), kLine + overlap);
-    p.setBrush(track);
-    p.drawRoundedRect(line, kLine / 2, kLine / 2);
-    p.setBrush(accent);
-    p.drawRoundedRect(QRectF(line.left(), line.top(), line.width() * progress_, line.height()),
-                      kLine / 2, kLine / 2);
 }
 
 void RecentSearchField::resizeEvent(QResizeEvent *event)
