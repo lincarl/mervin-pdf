@@ -7,6 +7,7 @@
 #include <mupdf/fitz.h>
 
 #include <QByteArray>
+#include <QCoreApplication>
 #include <QDir>
 
 #include <cstring>
@@ -72,7 +73,7 @@ QString OcrService::recognize(const std::shared_ptr<DocumentLifetime> &lifetime,
         error->clear();
     if (!ctx_ || !lifetime || pageRect.isEmpty()) {
         if (error)
-            *error = QStringLiteral("Invalid OCR request.");
+            *error = QCoreApplication::translate("mervin::OcrService", "Invalid OCR request.");
         return {};
     }
     if (canceled && canceled->load())

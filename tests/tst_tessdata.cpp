@@ -1,3 +1,4 @@
+#include "i18n/UiLanguage.h"
 #include "ocr/TessdataFile.h"
 #include "ocr/TessdataManager.h"
 
@@ -26,6 +27,7 @@ class TstTessdata : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase();
     void shippedEngModelIsLoadable();
     void rejectsEmDashPurgedModel();
     void rejectsTruncatedModel();
@@ -60,12 +62,23 @@ QString writeModel(const QString &dir, const QByteArray &bytes)
 
 } // namespace
 
+// The checks below read English messages and names.
+void TstTessdata::initTestCase()
+{
+    mervin::i18n::apply(QStringLiteral("en"));
+}
+
 void TstTessdata::languageNamesAreFriendly()
 {
+    // Plain languages come from QLocale, which names them in English whatever
+    // the UI language.
     QCOMPARE(mervin::TessdataManager::languageName(QStringLiteral("eng")),
              QStringLiteral("English"));
     QCOMPARE(mervin::TessdataManager::languageName(QStringLiteral("swe")),
              QStringLiteral("Swedish"));
+    // Models that are not a plain language have their own translated names.
+    QCOMPARE(mervin::TessdataManager::languageName(QStringLiteral("osd")),
+             QStringLiteral("Orientation and script detection"));
     QCOMPARE(mervin::TessdataManager::languageName(QStringLiteral("unknown_model")),
              QStringLiteral("unknown_model"));
 }

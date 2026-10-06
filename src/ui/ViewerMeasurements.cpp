@@ -287,6 +287,8 @@ void ViewerWidget::beginCalibration()
     viewport()->setCursor(Qt::CrossCursor);
     if (!wasCursorActive)
         emit measureCursorActiveChanged(true); // calibrating uses the crosshair
+    //: Prompt while calibrating: the user draws a line over a dimension whose real
+    //: length they know, then types that length.
     emit measurementReadout(tr("Draw a line over a known dimension…"));
     viewport()->update();
 }
@@ -522,9 +524,10 @@ QString ViewerWidget::formatMeasurement(int page, MeasureKind kind,
 {
     if (pts.empty())
         return {};
-    // Shared with the burned-in / annotated PDF labels, so they read identically.
+    // Shared with the burned-in PDF labels, so they read the same (apart from the
+    // translated "(paper)" note, which stays English in the PDF).
     return formatMeasurementValue(kind, pts, resolvedScale(page, pts.front()), measureUnit_,
-                                  measurePrecision_);
+                                  measurePrecision_, MeasureLabelText::Ui);
 }
 
 void ViewerWidget::loadMeasurements(std::vector<Measurement> measurements, MeasureModel overrides,
@@ -547,15 +550,25 @@ void ViewerWidget::loadMeasurements(std::vector<Measurement> measurements, Measu
 QString ViewerWidget::scaleDescription(int page, QPointF pp) const
 {
     const MeasureScale s = resolvedScale(page, pp);
-    const QString unit = measure::unitSuffix(measureUnit_);
-    if (!s.valid())
+    const QString unit = measure::unitSuffix(measureUnit_); // a symbol, never translated
+    if (!s.valid()) {
+        //: Shown when the page has no drawing scale. %1 is the unit symbol, such as mm.
+        //: Values are measured on the paper until the user calibrates.
         return tr("No scale - Calibrate (paper · %1)").arg(unit);
-    QString suffix;
-    if (s.source == MeasureSource::Calibrated)
-        suffix = tr(" · calibrated");
-    else if (s.source == MeasureSource::Manual)
-        suffix = tr(" · manual");
-    return tr("Scale %1 · %2%3").arg(s.label, unit, suffix);
+    }
+    if (s.source == MeasureSource::Calibrated) {
+        //: %1 is the drawing scale, such as 1:100. %2 is the unit symbol, such as mm.
+        //: The user set the scale by drawing a line of known length.
+        return tr("Scale %1 · %2 · calibrated").arg(s.label, unit);
+    }
+    if (s.source == MeasureSource::Manual) {
+        //: %1 is the drawing scale, such as 1:100. %2 is the unit symbol, such as mm.
+        //: The user typed the scale.
+        return tr("Scale %1 · %2 · manual").arg(s.label, unit);
+    }
+    //: %1 is the drawing scale, such as 1:100, read from the PDF. %2 is the unit
+    //: symbol, such as mm.
+    return tr("Scale %1 · %2").arg(s.label, unit);
 }
 
 void ViewerWidget::updateHoverScale(int page, QPointF pp)

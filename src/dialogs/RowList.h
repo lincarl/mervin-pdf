@@ -1,7 +1,9 @@
 #pragma once
 
+#include <QCoreApplication>
 #include <QListWidget>
 #include <QPoint>
+#include <QStringList>
 
 #include <functional>
 
@@ -15,12 +17,25 @@ namespace mervin {
 // QListWidget::InternalMove moves items separately from their row widgets.
 class RowList : public QListWidget
 {
+    // Its own context: without Q_OBJECT, tr() would be QListWidget's.
+    Q_DECLARE_TR_FUNCTIONS(mervin::RowList)
+
 public:
     // Adds the dialog's own columns (or their captions) to a row (or the header):
     // widgets created with `parent`, added to `columns` in order.
     using Fill = std::function<void(QWidget *parent, QHBoxLayout *columns)>;
 
+    // The Count and Output columns get these widths, or more when their
+    // translated captions need it.
     RowList(int countWidth, int outputWidth, QWidget *parent);
+
+    // `minimum`, or wider when one of `texts` needs more room in `font`, plus
+    // `padding`. Column widths fit English with room to spare; this lets a longer
+    // translation widen a column instead of being clipped, since a QLabel clips
+    // rather than elides.
+    static int widthFor(int minimum, const QFont &font, const QStringList &texts, int padding);
+    // The caption strip's font: `base` at the weight Theme gives the captions.
+    static QFont captionFont(const QFont &base);
 
     // The caption strip, for the dialog to place directly above the list: "#",
     // the captions `fill` adds, "Count" and "Output". Its insets follow the list's

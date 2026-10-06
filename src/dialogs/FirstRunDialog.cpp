@@ -113,9 +113,11 @@ void FirstRunDialog::retranslate()
 {
     heading_->setText(tr("Welcome to Mervin PDF"));
     languageLabel_->setText(tr("Display language:"));
+    //: Accessible name of the picker for the language of Mervin's own text.
     combo_->setAccessibleName(tr("Display language"));
     if (defaultAppCheck_) {
         defaultAppCheck_->setText(tr("Make Mervin PDF my default PDF viewer"));
+        //: Shown under the default PDF viewer checkbox. Windows Settings is the system app.
         defaultAppHint_->setText(tr("Windows Settings opens so you can confirm."));
     }
     continueButton_->setText(tr("Continue"));

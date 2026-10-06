@@ -1,21 +1,12 @@
 #include "merge/MergePlan.h"
 
 #include "merge/RowMoves.h"
-#include "print/PageRange.h"
 
-#include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QSet>
 
 namespace mervin {
-
-namespace {
-QString tr(const char *s, const char *c = nullptr, int n = -1)
-{
-    return QCoreApplication::translate("MergePlan", s, c, n);
-}
-} // namespace
 
 void MergePlan::append(const Entry &e)
 {
@@ -82,14 +73,18 @@ QString MergePlan::rowError(int i) const
     const Entry &e = entries_.at(i);
     switch (e.load) {
     case Load::Locked:
+        //: %1 is a file name.
         return tr("\"%1\" is encrypted and cannot be merged.").arg(displayName(i));
     case Load::Unreadable:
+        //: %1 is a file name.
         return tr("\"%1\" could not be read.").arg(displayName(i));
     case Load::Ok:
         break;
     }
-    if (e.pageCount <= 0)
+    if (e.pageCount <= 0) {
+        //: %1 is a file name.
         return tr("\"%1\" has no pages.").arg(displayName(i));
+    }
 
     QString err;
     const QList<int> pages = PageRange::parseAllowingAll(e.spec, e.pageCount, &err);
@@ -105,8 +100,10 @@ QString MergePlan::countText(int i) const
     const Entry &e = entries_.at(i);
     switch (e.load) {
     case Load::Locked:
+        //: Count column of a merge row whose file is encrypted.
         return tr("Locked");
     case Load::Unreadable:
+        //: Count column of a merge row whose file could not be read.
         return tr("Unreadable");
     case Load::Ok:
         break;
@@ -116,9 +113,25 @@ QString MergePlan::countText(int i) const
         return QStringLiteral("-");
     // "All" is the whole file and needs no arithmetic; an explicit range says how
     // much of the file it took, even when that happens to be all of it.
-    if (e.spec.trimmed().compare(QLatin1String("all"), Qt::CaseInsensitive) == 0)
+    if (PageRange::isAll(e.spec))
         return QString::number(pages.size());
+    //: Count column of a merge row: %1 pages taken of the file's %2 pages.
     return tr("%1 of %2").arg(pages.size()).arg(e.pageCount);
+}
+
+QStringList MergePlan::widestCountTexts()
+{
+    MergePlan p;
+    Entry e;
+    e.load = Load::Locked;
+    p.append(e);
+    e.load = Load::Unreadable;
+    p.append(e);
+    e.load = Load::Ok;
+    e.pageCount = 999;
+    e.spec = QStringLiteral("2-999");
+    p.append(e);
+    return {p.countText(0), p.countText(1), p.countText(2)};
 }
 
 QList<MergePlan::RowText> MergePlan::rowTexts() const
@@ -198,23 +211,24 @@ QString MergePlan::summaryText() const
     QSet<QString> distinct;
     for (const Entry &e : entries_)
         distinct.insert(e.path);
-    // Spelled out rather than tr("%n page(s)", ..., n): with no translator loaded
-    // - and this project ships no .ts files - Qt's %n substitutes the number but
-    // leaves the "(s)" verbatim, so the headline sentence of this dialog would
-    // read "13 page(s) from 1 file(s)".
-    const int pages = totalPages();
-    const QString pagesText = pages == 1 ? tr("1 page") : tr("%1 pages").arg(pages);
-    const QString filesText =
-        distinct.size() == 1 ? tr("1 file") : tr("%1 files").arg(distinct.size());
-    return tr("Result: %1 from %2, in the order shown.").arg(pagesText, filesText);
+    // Two counts, and Qt's %n takes one: the sentence takes the pages and the
+    // file count comes in as its own plural phrase. The English forms come from
+    // i18n/mervin_en.ts; without that catalog the "(s)" would show verbatim.
+    //: Goes into %1 of "Result: %n page(s) from %1, in the order shown.", so
+    //: use the form that fits after "from".
+    const QString files = tr("%n file(s)", nullptr, int(distinct.size()));
+    //: %1 is the number of files, like "4 files".
+    return tr("Result: %n page(s) from %1, in the order shown.", nullptr, totalPages()).arg(files);
 }
 
 QString MergePlan::errorText() const
 {
     for (int i = 0; i < entries_.size(); ++i) {
         const QString e = rowError(i);
-        if (!e.isEmpty())
+        if (!e.isEmpty()) {
+            //: %1 is the row number, %2 the sentence saying what is wrong with it.
             return tr("Row %1: %2").arg(i + 1).arg(e);
+        }
     }
     return {};
 }

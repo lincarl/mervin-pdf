@@ -26,8 +26,11 @@ struct LanguageNames
 };
 
 constexpr LanguageNames kNames[] = {
+    //: Language name. The language picker's search finds a language by this name too.
     {"en", "English", QT_TRANSLATE_NOOP("UiLanguage", "English")},
+    //: Language name. The language picker's search finds a language by this name too.
     {"sv", "Svenska", QT_TRANSLATE_NOOP("UiLanguage", "Swedish")},
+    //: Language name. The language picker's search finds a language by this name too.
     {"zh_CN", "简体中文", QT_TRANSLATE_NOOP("UiLanguage", "Chinese, Simplified")},
 };
 

@@ -1,11 +1,13 @@
 #include "ui/OpenPdfDialog.h"
 
+#include <QCoreApplication>
 #include <QDialogButtonBox>
 #include <QElapsedTimer>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QTest>
+#include <QTranslator>
 
 using namespace mervin;
 
@@ -15,6 +17,7 @@ class TstOpenPdfDialog : public QObject
 
 private slots:
     void acceptsTypedUrlImmediately();
+    void textComesFromItsOwnContext();
 };
 
 void TstOpenPdfDialog::acceptsTypedUrlImmediately()
@@ -50,6 +53,31 @@ void TstOpenPdfDialog::acceptsTypedUrlImmediately()
     QCOMPARE(accepted.count(), 1);
     QVERIFY(elapsed.elapsed() < 1000);
     QCOMPARE(dialog.internetUrl(), url);
+#endif
+}
+
+// The picker looks its text up in "mervin::OpenPdfDialog", the context lupdate
+// files it under, rather than in QFileDialog's, where no translation is found.
+void TstOpenPdfDialog::textComesFromItsOwnContext()
+{
+#ifdef Q_OS_WIN
+    QSKIP("The native Windows picker shows its title outside Qt's widgets.");
+#else
+    class Catalog : public QTranslator
+    {
+    public:
+        QString translate(const char *context, const char *source, const char *, int) const override
+        {
+            return qstrcmp(context, "mervin::OpenPdfDialog") == 0 && qstrcmp(source, "Open PDF") == 0
+                ? QStringLiteral("Öppna PDF")
+                : QString();
+        }
+        bool isEmpty() const override { return false; }
+    } catalog;
+    QCoreApplication::installTranslator(&catalog);
+    OpenPdfDialog dialog;
+    QCoreApplication::removeTranslator(&catalog);
+    QCOMPARE(dialog.windowTitle(), QStringLiteral("Öppna PDF"));
 #endif
 }
 

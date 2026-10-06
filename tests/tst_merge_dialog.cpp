@@ -159,6 +159,7 @@ void TstMergeDialog::seededPlainDocumentIsReadyToMerge()
     MergeDialog d(plain_, 6);
     prepare(d);
     QCOMPARE(list(d)->count(), 1);
+    QCOMPARE(specs(d).at(0)->text(), QStringLiteral("All")); // the keyword, every page
     QCOMPARE(d.inputs().size(), 1);
     QCOMPARE(d.inputs().at(0).pages.size(), 6);
     QVERIFY(!output(d)->text().isEmpty()); // a destination is proposed

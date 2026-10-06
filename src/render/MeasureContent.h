@@ -97,9 +97,15 @@ inline constexpr char kMeasureFontResource[] = "Fluc";
 std::string emitMeasurementOps(const RenderMeasurement &rm, const EmitStyle &style = {},
                                const std::string &fontName = kMeasureFontResource);
 
-// Format a measurement's value string. Identical to what the on-screen panel
-// shows (the viewer delegates here), so burned-in / annotated labels match.
+// Who reads a formatted value. Pdf text stays English because it is burned into
+// the document and the label font only covers Latin-1; Ui text is translated.
+enum class MeasureLabelText { Pdf, Ui };
+
+// Format a measurement's value string. The viewer delegates here with
+// MeasureLabelText::Ui, so burned-in labels match what the panel shows; the only
+// difference is the translated "(paper)" note on values without a scale.
 QString formatMeasurementValue(MeasureKind kind, const std::vector<QPointF> &pts,
-                               const MeasureScale &scale, MeasureUnit unit, int precision);
+                               const MeasureScale &scale, MeasureUnit unit, int precision,
+                               MeasureLabelText text = MeasureLabelText::Pdf);
 
 } // namespace mervin

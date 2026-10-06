@@ -76,6 +76,7 @@ private:
     QString writeError_;        // the last failed write, until the plan or Save as changes
     QString writeErrorDetail_;  // qpdf's message for it, the error line's tooltip
 
+    int specWidth_ = 0;          // the Pages column: its caption and fields
     RowList *list_ = nullptr;
     QList<QLabel *> nameLabels_; // one per row, rebuilt with the list
     QStringList nameTexts_;      // their untruncated text, for re-eliding

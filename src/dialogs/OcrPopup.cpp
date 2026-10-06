@@ -26,6 +26,7 @@ OcrPopup::OcrPopup(const QStringList &installedLanguages, const QString &preferr
 
     // Language row.
     auto *langRow = new QHBoxLayout;
+    //: Label for the OCR language picker.
     langRow->addWidget(new QLabel(tr("Language"), this));
     langCombo_ = new QComboBox(this);
     langCombo_->setObjectName(QStringLiteral("ocrLanguageCombo"));
@@ -48,6 +49,7 @@ OcrPopup::OcrPopup(const QStringList &installedLanguages, const QString &preferr
     auto *optRow = new QHBoxLayout;
     preserveBreaks_ = new QCheckBox(tr("Preserve line breaks"), this);
     preserveBreaks_->setChecked(true);
+    //: Check box. Removes spaces and blank lines at the start and end of the text.
     autoTrim_ = new QCheckBox(tr("Auto-trim"), this);
     autoTrim_->setChecked(true);
     connect(preserveBreaks_, &QCheckBox::toggled, this, &OcrPopup::renderDisplay);
@@ -58,6 +60,7 @@ OcrPopup::OcrPopup(const QStringList &installedLanguages, const QString &preferr
     layout->addLayout(optRow);
 
     auto *buttons = new QDialogButtonBox(this);
+    //: Button. Copies the recognized text to the clipboard.
     auto *copyBtn = buttons->addButton(tr("Copy"), QDialogButtonBox::AcceptRole);
     buttons->addButton(QDialogButtonBox::Close);
     connect(copyBtn, &QPushButton::clicked, this, &OcrPopup::copyText);

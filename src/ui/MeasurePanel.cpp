@@ -76,6 +76,7 @@ MeasurePanel::MeasurePanel(QWidget *parent)
     // ── Header: title + close (the title doubles as the drag handle) ──
     auto *headerRow = new QHBoxLayout;
     headerRow->setContentsMargins(0, 0, 0, 0);
+    //: Title of the measuring tool panel (noun, the tool's name).
     auto *title = new QLabel(tr("Measure"), this);
     title->setObjectName(QStringLiteral("measureTitle"));
     QFont tf = title->font();
@@ -137,10 +138,15 @@ MeasurePanel::MeasurePanel(QWidget *parent)
         const char *label;
         const char *tip;
     };
+    // The labels are nouns on four side-by-side buttons that pick what to measure.
     const KindDef defs[] = {
+        //: Measurement type button (noun): a straight distance between two points.
         {MeasureKind::Distance, QT_TR_NOOP("Distance"), QT_TR_NOOP("Measure a straight distance")},
+        //: Measurement type button (noun): the length of a line with several segments.
         {MeasureKind::Polyline, QT_TR_NOOP("Path"), QT_TR_NOOP("Measure a multi-segment length")},
+        //: Measurement type button (noun): the area of a polygon.
         {MeasureKind::Area, QT_TR_NOOP("Area"), QT_TR_NOOP("Measure a polygon area and perimeter")},
+        //: Measurement type button (noun): the angle between two lines.
         {MeasureKind::Angle, QT_TR_NOOP("Angle"), QT_TR_NOOP("Measure an angle (three points)")},
     };
     const int kindCount = static_cast<int>(std::size(defs));
@@ -168,6 +174,7 @@ MeasurePanel::MeasurePanel(QWidget *parent)
     outer->addWidget(kindBar);
 
     // ── Detected / active scale ──
+    //: Placeholder until the drawing scale is known. The dash means "no value yet".
     scaleLabel_ = new QLabel(tr("Scale -"), this);
     scaleLabel_->setObjectName(QStringLiteral("measureScale"));
     outer->addWidget(scaleLabel_);
@@ -176,18 +183,19 @@ MeasurePanel::MeasurePanel(QWidget *parent)
     auto *unitRow = new QHBoxLayout;
     unitRow->setContentsMargins(0, 0, 0, 0);
     unitRow->setSpacing(6);
+    //: Label before a picker of length units (mm, cm, m, in, ft).
     unitRow->addWidget(fieldLabel(tr("Unit")));
     unitCombo_ = new QComboBox(this);
-    unitCombo_->addItem(tr("mm"), static_cast<int>(MeasureUnit::Millimeter));
-    unitCombo_->addItem(tr("cm"), static_cast<int>(MeasureUnit::Centimeter));
-    unitCombo_->addItem(tr("m"), static_cast<int>(MeasureUnit::Meter));
-    unitCombo_->addItem(tr("in"), static_cast<int>(MeasureUnit::Inch));
-    unitCombo_->addItem(tr("ft"), static_cast<int>(MeasureUnit::Foot));
+    // Unit symbols are not translated (see measure::unitSuffix).
+    for (const MeasureUnit u : {MeasureUnit::Millimeter, MeasureUnit::Centimeter, MeasureUnit::Meter,
+                                MeasureUnit::Inch, MeasureUnit::Foot})
+        unitCombo_->addItem(measure::unitSuffix(u), static_cast<int>(u));
     connect(unitCombo_, &QComboBox::currentIndexChanged, this, [this](int) {
         emit unitChanged(unit());
     });
     unitRow->addWidget(unitCombo_);
     unitRow->addSpacing(6);
+    //: Label before a number field: how many decimal places measured values show.
     unitRow->addWidget(fieldLabel(tr("Decimals")));
 
     // A clean stepper: [-] [value] [+]. The spin box keeps the range/clamping
@@ -261,11 +269,13 @@ MeasurePanel::MeasurePanel(QWidget *parent)
     auto *widthRow = new QHBoxLayout;
     widthRow->setContentsMargins(0, 0, 0, 0);
     widthRow->setSpacing(6);
+    //: Label before a picker of stroke widths for measurement lines.
     widthRow->addWidget(fieldLabel(tr("Line width")));
     lineWidthCombo_ = new QComboBox(this);
     const double widths[] = {0.5, 1.0, 1.5, 2.0, 3.0, 4.0};
+    // "pt" is a unit symbol, so it is not translated.
     for (double w : widths)
-        lineWidthCombo_->addItem(tr("%1 pt").arg(w, 0, 'g', 2), w);
+        lineWidthCombo_->addItem(QStringLiteral("%1 pt").arg(w, 0, 'g', 2), w);
     lineWidthCombo_->setCurrentIndex(3); // 2 pt default
     connect(lineWidthCombo_, &QComboBox::currentIndexChanged, this,
             [this](int) { emit lineWidthChanged(lineWidth()); });
@@ -295,6 +305,7 @@ MeasurePanel::MeasurePanel(QWidget *parent)
     actionRow->setContentsMargins(0, 0, 0, 0);
     actionRow->setSpacing(6);
     auto *calibrateBtn = new QToolButton(this);
+    //: Button (verb): set the drawing scale by drawing a line of known length.
     calibrateBtn->setText(tr("Calibrate"));
     calibrateBtn->setToolTip(tr("Set the scale by drawing a line of known length"));
     connect(calibrateBtn, &QToolButton::clicked, this, &MeasurePanel::calibrateRequested);
@@ -303,6 +314,7 @@ MeasurePanel::MeasurePanel(QWidget *parent)
     // "Set Scale" sits to the right of "Calibrate": it sets the page scale manually
     // by typing a ratio (1 : N), without drawing a calibration line.
     auto *setScaleBtn = new QToolButton(this);
+    //: Button (verb): type the drawing scale as a ratio, such as 1 : 100.
     setScaleBtn->setText(tr("Set Scale"));
     setScaleBtn->setToolTip(tr("Set the scale manually by typing a ratio (1 : N)"));
     connect(setScaleBtn, &QToolButton::clicked, this, &MeasurePanel::setScaleRequested);
@@ -313,6 +325,7 @@ MeasurePanel::MeasurePanel(QWidget *parent)
     // viewer drives its visibility via setResetVisible). Clicking it discards the
     // override so the PDF's own scale is used again.
     resetBtn_ = new QToolButton(this);
+    //: Button (verb): drop the scale the user set and use the scale stored in the PDF.
     resetBtn_->setText(tr("Reset"));
     resetBtn_->setToolTip(tr("Discard the manual calibration and use the scale embedded in the PDF"));
     resetBtn_->hide();
@@ -331,6 +344,7 @@ MeasurePanel::MeasurePanel(QWidget *parent)
     auto *measuresHeaderRow = new QHBoxLayout(measuresHeader_);
     measuresHeaderRow->setContentsMargins(0, 0, 0, 0);
     measuresHeaderRow->setSpacing(6);
+    //: Heading above the list of measurements drawn on the document (noun, plural).
     listHeader_ = new QLabel(tr("Measurements"), measuresHeader_);
     listHeader_->setObjectName(QStringLiteral("measureListHeader"));
     auto *clearAllBtn = new QToolButton(measuresHeader_);
@@ -383,8 +397,23 @@ MeasurePanel::MeasurePanel(QWidget *parent)
 
 void MeasurePanel::setScaleText(const QString &text)
 {
-    if (scaleLabel_)
-        scaleLabel_->setText(text);
+    if (!scaleLabel_)
+        return;
+    scaleLabel_->setText(text);
+    growToFit(scaleLabel_);
+}
+
+void MeasurePanel::growToFit(QLabel *label)
+{
+    // A child widget does not resize itself when its layout asks for more room,
+    // so new text wider than the panel (a long translation, say) would be clipped.
+    // Only grow: a value streaming into the readout must not make the panel
+    // jitter. The next full re-fit (show, a readout appearing or going) shrinks it.
+    if (!isVisible() || label->isHidden() || label->sizeHint().width() <= label->width())
+        return;
+    adjustSize();
+    if (stack_)
+        stack_->relayout();
 }
 
 void MeasurePanel::setResetVisible(bool visible)
@@ -422,6 +451,8 @@ void MeasurePanel::setReadout(const QString &text)
         adjustSize();
         if (stack_)
             stack_->relayout();
+    } else if (visible) {
+        growToFit(readout_); // e.g. the calibration prompt replacing a short value
     }
 }
 

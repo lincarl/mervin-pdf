@@ -222,11 +222,16 @@ jobs:
         # qt6-svg-dev: the icons are Lucide SVGs rendered through Qt SVG. Linking Qt
         # SVG makes linuxdeploy-plugin-qt bundle the SVG icon engine plugin too, which
         # ships separately in qt6-svg-plugins (not pulled in without recommends).
+        # qt6-tools-dev: Qt's LinguistTools CMake package; it pulls lupdate,
+        # lrelease and lprodump. qt6-translations-l10n: Qt's own catalogs
+        # (qtbase_<id>.qm), which the build merges into Mervin's; configure stops
+        # without them. make-appimage.sh keeps the loose copies out of the bundle.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build curl ca-certificates file wget \
             qt6-base-dev qt6-base-dev-tools qt6-svg-dev qt6-svg-plugins \
+            qt6-tools-dev qt6-translations-l10n \
             libqpdf-dev libtomlplusplus-dev \
             libgl1-mesa-dev libxkbcommon-dev libxcb-cursor0
 
@@ -264,7 +269,8 @@ jobs:
 
   # ------------------------------------------------------------------- .deb ---
   # Native .deb built against the distro's system Qt. Only Ubuntu 26.04 (Qt 6.10):
-  # 24.04 ships Qt 6.4, which lacks the 6.6/6.8 APIs Mervin uses (accent colour,
+  # 24.04 ships Qt 6.4, below the Qt 6.9 the build needs (merging Qt's own
+  # translations) and without the 6.6/6.8 APIs Mervin uses (accent colour,
   # color-scheme control), and the AppImage no longer covers 24.04 either - 26.04
   # is the minimum supported release. (Matrix kept for easy re-add of later ones.)
   deb:
@@ -280,11 +286,15 @@ jobs:
     container: ${{ matrix.image }}
     steps:
       - name: Install build deps
+        # qt6-tools-dev and qt6-translations-l10n: the UI translations, as in the
+        # appimage job. The catalogs are compiled into the binary, so the .deb
+        # needs neither at run time.
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build curl ca-certificates file git dpkg-dev python3 \
-            qt6-base-dev qt6-base-dev-tools qt6-svg-dev libqpdf-dev libtomlplusplus-dev
+            qt6-base-dev qt6-base-dev-tools qt6-svg-dev qt6-tools-dev qt6-translations-l10n \
+            libqpdf-dev libtomlplusplus-dev
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -327,9 +337,13 @@ jobs:
     container: fedora:44
     steps:
       - name: Install build deps
+        # qt6-qttools-devel: Qt's LinguistTools CMake package; it requires
+        # qt6-linguist (lupdate, lrelease). qt6-qttranslations: Qt's own catalogs,
+        # listed so the build does not depend on dnf installing weak dependencies.
         run: |
           dnf install -y gcc-c++ make cmake ninja-build rpm-build \
-            qt6-qtbase-devel qt6-qtsvg-devel qpdf-devel git tar curl findutils which python3
+            qt6-qtbase-devel qt6-qtsvg-devel qt6-qttools-devel qt6-qttranslations \
+            qpdf-devel git tar curl findutils which python3
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

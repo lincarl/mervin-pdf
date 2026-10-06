@@ -67,6 +67,7 @@ New-Item -ItemType Directory -Force $deploy | Out-Null
 Copy-Item $exe $deploy
 
 # Qt DLLs, plugins, and the compiler runtime.
+# --no-translations: Mervin's catalogs, Qt's own strings included, are compiled into the exe.
 & "$env:QT6_DIR\bin\windeployqt.exe" --release --no-translations --no-system-d3d-compiler `
     --compiler-runtime (Join-Path $deploy "MervinPDF.exe")
 if ($LASTEXITCODE -ne 0) { throw "windeployqt failed ($LASTEXITCODE)" }

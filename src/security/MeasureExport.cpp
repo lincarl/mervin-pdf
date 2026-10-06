@@ -40,8 +40,9 @@ Status openQpdf(QPDF &q, const QString &path, const QString &password, QString *
         return Status::Ok;
     } catch (const QPDFExc &e) {
         if (e.getErrorCode() == qpdf_e_password) {
+            // QpdfService's message, so translators see it once.
             if (error)
-                *error = QStringLiteral("A password is required to open this document.");
+                *error = QpdfService::tr("A password is required to open this document.");
             return Status::NeedsPassword;
         }
         if (error)

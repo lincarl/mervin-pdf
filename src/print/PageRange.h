@@ -14,7 +14,16 @@ namespace PageRange {
 // user-facing error.
 QList<int> parse(const QString &spec, int pageCount, QString *error);
 
-// As parse(), also accepting case-insensitive, trimmed "all". Empty input remains an error.
+// As parse(), also accepting isAll() input. Empty input remains an error.
 QList<int> parseAllowingAll(const QString &spec, int pageCount, QString *error);
+
+// The word for every page in the UI language ("All" in English): what a merge
+// row starts with, and what the hints tell the user to type.
+QString allKeyword();
+
+// True when `spec`, trimmed, is English "all" or allKeyword(), in any case.
+// English always works, so a range typed or saved in English keeps working
+// after the UI language changes.
+bool isAll(const QString &spec);
 
 } // namespace PageRange

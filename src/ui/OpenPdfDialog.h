@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QCoreApplication>
 #include <QString>
 #include <QStringList>
 #include <QtGlobal>
@@ -19,6 +20,8 @@ namespace mervin {
 // download an HTTP(S) URL.
 class OpenPdfDialog final
 {
+    Q_DECLARE_TR_FUNCTIONS(mervin::OpenPdfDialog)
+
 public:
     explicit OpenPdfDialog(QWidget *parent = nullptr);
 
@@ -37,9 +40,12 @@ private:
 
 // The URL-capturing behavior relies on the Windows IFileDialog event API.
 // Other platforms retain the in-process picker until they gain an equivalent
-// native pre-validation hook.
+// native pre-validation hook. Its own tr() context, rather than QFileDialog's,
+// matches the Windows class, so both platforms share one set of translations.
 class OpenPdfDialog final : public QFileDialog
 {
+    Q_DECLARE_TR_FUNCTIONS(mervin::OpenPdfDialog)
+
 public:
     explicit OpenPdfDialog(QWidget *parent = nullptr);
 

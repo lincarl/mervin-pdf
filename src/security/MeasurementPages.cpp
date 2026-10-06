@@ -1,5 +1,6 @@
 #include "security/MeasurementPages.h"
 
+#include <QCoreApplication>
 #include <qpdf/Buffer.hh>
 #include <qpdf/QPDF.hh>
 #include <stdexcept>
@@ -12,12 +13,20 @@ MeasureDoc read(QPDF &pdf)
     auto stream = pdf.getRoot().getKey("/Mervin_Measurements");
     if (stream.isNull())
         return data;
-    if (!stream.isStream())
-        throw std::runtime_error("Invalid measurement metadata.");
+    // Page operations show these to the user.
+    if (!stream.isStream()) {
+        //: Page operation error. The measurements Mervin saved in this PDF are damaged.
+        throw std::runtime_error(QCoreApplication::translate(
+            "mervin::measurementPages", "Invalid measurement metadata.").toStdString());
+    }
     auto bytes = stream.getStreamData();
     if (!parseMeasurements(QByteArray(reinterpret_cast<const char *>(bytes->getBuffer()),
-                                      bytes->getSize()), &data) || data.version != 1)
-        throw std::runtime_error("Unsupported measurement metadata.");
+                                      bytes->getSize()), &data) || data.version != 1) {
+        //: Page operation error. The measurements Mervin saved in this PDF are damaged or
+        //: come from a newer version.
+        throw std::runtime_error(QCoreApplication::translate(
+            "mervin::measurementPages", "Unsupported measurement metadata.").toStdString());
+    }
     return data;
 }
 

@@ -176,8 +176,9 @@ edited snapshot remains available for retry or recovery.
 
 ## Settings and platform integration
 
-Settings is one window with a page menu on the left: General (opening files,
-session restore, memory and tray, recent files, updates, and the Windows default-app action),
+Settings is one window with a page menu on the left: General (display language,
+opening files, session restore, memory and tray, recent files, updates, and the
+Windows default-app action),
 Appearance (UI theme, accent colour, document theme), Viewing (default zoom,
 scrolling, spreads), Annotations (default colour, author name), OCR (default and
 installed languages), Measuring (snapping and the defaults new tabs start from),
@@ -189,6 +190,36 @@ since the last Apply. Removing or adding OCR languages takes effect at once. Ses
 restore and automatic updates are enabled by default. Copies that cannot update
 themselves (portable and development builds) show no automatic-update switch, only
 Check for Updates.
+
+The interface is available in English, Swedish, and Simplified Chinese. The first
+time Mervin starts without a saved display language (a new install, or the first
+start after updating from a version without language support), a welcome window
+appears before any other. Its display language picker starts at the first
+language in the OS preference list that Mervin offers, or English, and picking
+another switches the window to it at once. On Windows, when Mervin is not the
+default PDF viewer and has not offered this before, the window also has a ticked
+"Make Mervin PDF my default PDF viewer" checkbox; Continue then opens the system
+Default Apps settings to confirm. An offer made by an earlier version on its first
+launch counts. Closing the window keeps the language it shows and leaves the
+default viewer alone. Files opened while the window is up, such as a
+double-clicked PDF, open with the first main window.
+
+Language in General holds the same picker. Each language is listed by its own name
+and its English name, such as "Svenska (Swedish)", and the open list has a search
+field that also matches the name in the current interface language and the language
+code, ignoring case and accents. Choosing a language other than the one shown adds
+the note "Mervin will restart." OK or Apply then saves the choice, closes Settings,
+and restarts Mervin. The restart closes windows as Quit does, so unsaved documents
+still offer Save, Discard, or Cancel; cancelling one cancels the restart, and the
+saved language applies at the next start. With session restore on, the new copy
+reopens the documents that were open.
+
+Starting Mervin with `--language <code>` (or `--language=<code>`), such as
+`--language sv`, shows that language for that run only. It skips the welcome window
+and leaves the saved setting unchanged. The codes are `en`, `sv`, and `zh_CN`;
+case and `-` or `_` do not matter, and an unknown code shows English. If Mervin is
+already running, the new launch hands its files to the running copy and the flag
+has no effect.
 
 Memory and tray contains a numeric inactivity interval from 1 through 10080 whole
 minutes, with a default of 30. The Never checkbox disables the number field and
@@ -203,8 +234,8 @@ Traditional, Comfort, Inverted. Traditional preserves page colours, Comfort dark
 the page while keeping photos readable, and Inverted reverses all page colours.
 
 On Windows, Mervin can register itself as a PDF handler and open the system Default
-Apps settings. If Mervin is not already the default, it offers this once on first
-launch, and the same action remains available in Settings. Linux packages install
+Apps settings. If Mervin is not already the default, the welcome window offers this
+once, and the same action remains available in Settings. Linux packages install
 the desktop and MIME metadata needed for the desktop environment's Open With and
 default-application controls; Mervin does not expose a Linux default-app button.
 

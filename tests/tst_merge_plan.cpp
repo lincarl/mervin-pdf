@@ -1,3 +1,4 @@
+#include "i18n/UiLanguage.h"
 #include "merge/MergePlan.h"
 
 #include <QFileInfo>
@@ -19,6 +20,8 @@ class TstMergePlan : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase();
+
     void appendAndCount();
     void moveReordersAndClampsAtTheEnds();
     void removeShiftsTheRest();
@@ -51,6 +54,13 @@ private:
         return e;
     }
 };
+
+void TstMergePlan::initTestCase()
+{
+    // The English plural forms ("1 page", "13 pages") come from the English
+    // catalog; without it Qt would show "13 page(s)".
+    mervin::i18n::apply(QStringLiteral("en"));
+}
 
 void TstMergePlan::appendAndCount()
 {
@@ -138,11 +148,19 @@ void TstMergePlan::countTextDistinguishesAllFromASubset()
 {
     MergePlan p;
     p.append(ok(QStringLiteral("/a/one.pdf"), 31));
+    QCOMPARE(p.at(0).spec, QStringLiteral("All")); // a new row takes every page
     QCOMPARE(p.countText(0), QStringLiteral("31"));
     p.setSpec(0, QStringLiteral("1-3, 7"));
     QCOMPARE(p.countText(0), QStringLiteral("4 of 31"));
     p.setSpec(0, QStringLiteral("nonsense"));
     QCOMPARE(p.countText(0), QStringLiteral("-"));
+    p.setSpec(0, QStringLiteral("all"));
+    QCOMPARE(p.countText(0), QStringLiteral("31"));
+
+    // What the dialog sizes its Count column for.
+    QCOMPARE(MergePlan::widestCountTexts(),
+             QStringList({QStringLiteral("Locked"), QStringLiteral("Unreadable"),
+                          QStringLiteral("998 of 999")}));
 }
 
 void TstMergePlan::outputRangesAreARunningSum()
@@ -252,15 +270,15 @@ void TstMergePlan::summaryTextCountsDistinctFiles()
     p.append(ok(QStringLiteral("/a/one.pdf"), 12));
     p.append(ok(QStringLiteral("/a/one.pdf"), 12, QStringLiteral("12")));
     // Two rows, one file, 13 pages.
-    const QString s = p.summaryText();
-    QVERIFY2(s.contains(QStringLiteral("13 pages")), qPrintable(s));
-    QVERIFY2(s.contains(QStringLiteral("1 file")), qPrintable(s));
-    QVERIFY2(!s.contains(QStringLiteral("1 files")), qPrintable(s)); // plural forms wired up
+    QCOMPARE(p.summaryText(), QStringLiteral("Result: 13 pages from 1 file, in the order shown."));
+
+    p.append(ok(QStringLiteral("/a/two.pdf"), 2));
+    QCOMPARE(p.summaryText(), QStringLiteral("Result: 15 pages from 2 files, in the order shown."));
 
     MergePlan single;
     single.append(ok(QStringLiteral("/a/one.pdf"), 1));
-    QVERIFY2(single.summaryText().contains(QStringLiteral("1 page")),
-             qPrintable(single.summaryText()));
+    QCOMPARE(single.summaryText(),
+             QStringLiteral("Result: 1 page from 1 file, in the order shown."));
 
     MergePlan empty;
     QCOMPARE(empty.summaryText(), QStringLiteral("Add PDFs to merge."));

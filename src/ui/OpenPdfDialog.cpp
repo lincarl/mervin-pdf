@@ -33,11 +33,6 @@ LRESULT CALLBACK dialogSubclassProc(HWND window, UINT message, WPARAM wParam, LP
 LRESULT CALLBACK openButtonSubclassProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
                                         UINT_PTR subclassId, DWORD_PTR referenceData);
 
-QString translated(const char *text)
-{
-    return QCoreApplication::translate("OpenPdfDialog", text);
-}
-
 class DialogEvents final : public IFileDialogEvents
 {
 public:
@@ -301,11 +296,13 @@ int OpenPdfDialog::exec()
         return QDialog::Rejected;
     }
 
-    const QString title = translated("Open PDF");
+    const QString title = tr("Open PDF");
     dialog->SetTitle(reinterpret_cast<LPCWSTR>(title.utf16()));
 
-    const QString pdfLabel = translated("PDF documents (*.pdf)");
-    const QString allLabel = translated("All files (*.*)");
+    //: File type filter in the Open dialog. Keep the pattern in parentheses as it is.
+    const QString pdfLabel = tr("PDF documents (*.pdf)");
+    //: File type filter in the Open dialog. Keep the pattern in parentheses as it is.
+    const QString allLabel = tr("All files (*.*)");
     const COMDLG_FILTERSPEC filters[] = {
         {reinterpret_cast<LPCWSTR>(pdfLabel.utf16()), L"*.pdf"},
         {reinterpret_cast<LPCWSTR>(allLabel.utf16()), L"*.*"},
@@ -368,11 +365,14 @@ namespace mervin {
 
 OpenPdfDialog::OpenPdfDialog(QWidget *parent)
     : QFileDialog(parent, tr("Open PDF"), QString(),
+                  //: Two file type filters in the Open dialog, separated by ";;". Keep the
+                  //: patterns in parentheses and the ";;" as they are.
                   tr("PDF documents (*.pdf);;All files (*)"))
 {
     setFileMode(QFileDialog::ExistingFiles);
     setAcceptMode(QFileDialog::AcceptOpen);
     setOption(QFileDialog::DontUseNativeDialog);
+    //: Label of the Open dialog's file name field, which also accepts a web address.
     setLabelText(QFileDialog::FileName, tr("File &name or URL:"));
 
     auto *nameEdit = findChild<QLineEdit *>(QStringLiteral("fileNameEdit"));

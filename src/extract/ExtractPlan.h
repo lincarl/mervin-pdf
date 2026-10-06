@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QCoreApplication>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -7,12 +8,15 @@
 namespace mervin {
 
 // One output file assembled from ordered page/range rows. ExtractDialog renders this model and
-// writes edits back to it. Each row accepts one PageRange token (5, 5-7, 7-, -5, all); the
-// dialog splits commas/semicolons via splitPieces. Preserve page order and duplicates.
+// writes edits back to it. Each row accepts one PageRange token (5, 5-7, 7-, -5, all or
+// PageRange::allKeyword()); the dialog splits commas/semicolons via splitPieces. Preserve page
+// order and duplicates.
 // API pages are zero-based; row text and UI strings are one-based. Filesystem access is limited
 // to output validation and resolving the source path at construction.
 class ExtractPlan
 {
+    Q_DECLARE_TR_FUNCTIONS(mervin::ExtractPlan)
+
 public:
     ExtractPlan(const QString &sourcePath, int pageCount);
 

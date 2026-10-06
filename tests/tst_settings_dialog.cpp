@@ -5,6 +5,8 @@
 #include "ui/LanguageCombo.h"
 #include "render/AnnotTypes.h"
 #include "ui/DocumentThemePicker.h"
+#include "ui/Theme.h"
+#include "ui/ThemeTokens.h"
 
 #include <QCheckBox>
 #include <QClipboard>
@@ -12,6 +14,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
+#include <QHash>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
@@ -21,6 +24,8 @@
 #include <QMetaEnum>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QScopeGuard>
+#include <QScrollBar>
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QStackedWidget>
@@ -29,6 +34,7 @@
 #include <QTimeZone>
 #include <QTimer>
 #include <QToolButton>
+#include <QTranslator>
 
 #include <functional>
 
@@ -71,6 +77,8 @@ private slots:
     void theLastOcrLanguageStays();
     void newUiLanguageRestartsOnApply();
     void untouchedUiLanguageKeepsTheStoredValue();
+    void menuFitsLongerPageTitles();
+    void shortcutKeysFollowTheUiLanguage();
 
 private:
     QString tessdataPath(const char *code) const;
@@ -103,10 +111,33 @@ QPushButton *dialogButton(QWidget *dialog, QDialogButtonBox::StandardButton whic
     return buttons ? buttons->button(which) : nullptr;
 }
 
+// A catalog holding only the given texts, standing in for a language whose
+// text differs from English. Installed for the lifetime of the object.
+class StubCatalog : public QTranslator
+{
+public:
+    explicit StubCatalog(QHash<QByteArray, QString> texts) : texts_(std::move(texts))
+    {
+        QCoreApplication::installTranslator(this);
+    }
+    ~StubCatalog() override { QCoreApplication::removeTranslator(this); }
+
+    QString translate(const char *context, const char *source, const char *, int) const override
+    {
+        return texts_.value(QByteArray(context) + '|' + source);
+    }
+    bool isEmpty() const override { return false; }
+
+private:
+    QHash<QByteArray, QString> texts_; // "context|source" -> text
+};
+
 } // namespace
 
 void TstSettingsDialog::initTestCase()
 {
+    // The assertions below read the English UI text.
+    mervin::i18n::apply(QStringLiteral("en"));
     QVERIFY(profile_.isValid());
     mervin::ConfigPaths::setOverrideDir(profile_.path());
     QVERIFY(QDir().mkpath(QDir(profile_.path()).filePath(QStringLiteral("tessdata"))));
@@ -748,6 +779,9 @@ void TstSettingsDialog::updateControlsFollowTheUpdater()
         QLabel *date = labelStartingWith(&dialog, QStringLiteral("Last checked "));
         QVERIFY(date);
         QVERIFY(date->text().contains(QStringLiteral("2026")));
+        // The OS long date, without the weekday it normally carries.
+        const QDate shown = QDateTime(QDate(2026, 10, 2), QTime(12, 0), QTimeZone::UTC).toLocalTime().date();
+        QVERIFY(!date->text().contains(QLocale().dayName(shown.dayOfWeek())));
         QVERIFY(checkBox(&dialog, QStringLiteral("Check for updates at start (every 30 days)"))->isEnabled());
     }
 
@@ -907,6 +941,51 @@ void TstSettingsDialog::untouchedUiLanguageKeepsTheStoredValue()
         SettingsDialog dialog(in);
         QCOMPARE(dialog.settings().uiLanguage, stored);
     }
+}
+
+// The menu on the left keeps its 196 px for the English page titles and widens
+// for a longer one, which would otherwise be cut off: it never scrolls sideways.
+void TstSettingsDialog::menuFitsLongerPageTitles()
+{
+    const QString previousStyle = qApp->styleSheet();
+    const auto restoreStyle = qScopeGuard([&] { qApp->setStyleSheet(previousStyle); });
+    const QPalette palette = mervin::theme::darkPalette(QColor(QStringLiteral("#4f8cff")));
+    qApp->setStyleSheet(mervin::Theme::buildStyleSheet(palette, QStringLiteral("#4f8cff")));
+
+    {
+        SettingsDialog dialog(mervin::Settings{});
+        auto *nav = dialog.findChild<QListWidget *>(QStringLiteral("settingsNav"));
+        QVERIFY(nav);
+        QCOMPARE(nav->width(), 196);
+    }
+
+    const QString longTitle = QStringLiteral("Tangentbordsgenvägar och kortkommandon för alla verktyg");
+    StubCatalog catalog({{"SettingsDialog|Keyboard shortcuts", longTitle}});
+    SettingsDialog dialog(mervin::Settings{}, {}, Page::Shortcuts);
+    auto *nav = dialog.findChild<QListWidget *>(QStringLiteral("settingsNav"));
+    QVERIFY(nav);
+    QCOMPARE(nav->currentItem()->text(), longTitle);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    QVERIFY(nav->width() > 196);
+    QVERIFY(!nav->verticalScrollBar()->isVisible());
+    const int needed = nav->iconSize().width() + nav->fontMetrics().horizontalAdvance(longTitle);
+    QVERIFY2(nav->viewport()->width() >= needed, "The longest page title must fit the menu.");
+}
+
+// The shortcuts page writes keys the way the OS does, with key names from the UI
+// language's catalog ("Strg" in German), not fixed English text.
+void TstSettingsDialog::shortcutKeysFollowTheUiLanguage()
+{
+    const auto firstRowKeys = [] {
+        SettingsDialog dialog(mervin::Settings{}, {}, Page::Shortcuts);
+        const auto keys = dialog.findChildren<QLabel *>(QStringLiteral("shortcutKeys"));
+        return keys.isEmpty() ? QString() : keys.first()->text();
+    };
+    QCOMPARE(firstRowKeys(), QStringLiteral("Ctrl+O"));
+
+    StubCatalog german({{"QShortcut|Ctrl", QStringLiteral("Strg")}});
+    QCOMPARE(firstRowKeys(), QStringLiteral("Strg+O"));
 }
 
 QTEST_MAIN(TstSettingsDialog)

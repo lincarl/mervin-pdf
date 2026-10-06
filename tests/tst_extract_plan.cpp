@@ -1,4 +1,5 @@
 #include "extract/ExtractPlan.h"
+#include "i18n/UiLanguage.h"
 
 #include <QDir>
 #include <QFile>
@@ -19,6 +20,8 @@ class TstExtractPlan : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase();
+
     void rowsKeepTheirPagesInOrder();
     void everyBadRowIsExplained_data();
     void everyBadRowIsExplained();
@@ -64,6 +67,13 @@ private:
         return w;
     }
 };
+
+void TstExtractPlan::initTestCase()
+{
+    // The English plural forms ("24 pages") come from the English catalog;
+    // without it Qt would show "24 page(s)".
+    mervin::i18n::apply(QStringLiteral("en"));
+}
 
 void TstExtractPlan::rowsKeepTheirPagesInOrder()
 {

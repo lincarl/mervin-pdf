@@ -374,6 +374,8 @@ foreach(lang IN LISTS QT_I18N_TRANSLATED_LANGUAGES)
             "qt6-qttranslations (Fedora).")
     endif()
 endforeach()
+# tests/CMakeLists.txt runs lupdate the same way for its catalog check.
+set(MERVIN_LUPDATE_OPTIONS -locations none -no-obsolete)
 qt_add_translations(
     TARGETS mervin_core
     SOURCE_TARGETS mervin_core mervin_icons mervin_viewer mervin_app MervinPDF
@@ -381,7 +383,7 @@ qt_add_translations(
     TS_FILE_DIR i18n
     MERGE_QT_TRANSLATIONS
     QT_TRANSLATION_CATALOGS qtbase
-    LUPDATE_OPTIONS -locations none -no-obsolete
+    LUPDATE_OPTIONS ${MERVIN_LUPDATE_OPTIONS}
     LRELEASE_OPTIONS -nounfinished)
 
 # ---- Tests -----------------------------------------------------------------

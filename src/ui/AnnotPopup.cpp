@@ -54,6 +54,7 @@ AnnotPopup::AnnotPopup(QWidget *parent) : QWidget(parent)
     auto *closeBtn = new QToolButton(this);
     icons::setButtonGlyph(closeBtn, icons::Glyph::Close, 16);
     closeBtn->setAutoRaise(true);
+    //: Tooltip of the button that closes the annotation card (verb).
     closeBtn->setToolTip(tr("Close"));
     connect(closeBtn, &QToolButton::clicked, this, [this] { hide(); });
     headerRow->addWidget(closeBtn);
@@ -100,13 +101,17 @@ AnnotPopup::AnnotPopup(QWidget *parent) : QWidget(parent)
 
 void AnnotPopup::showFor(const Annotation &a, bool allowEdit)
 {
-    QString who = a.author.isEmpty() ? tr("Annotation") : a.author;
+    //: Header of an annotation's card when the annotation names no author.
+    const QString who = a.author.isEmpty() ? tr("Annotation") : a.author;
     if (a.modifiedMs > 0) {
         const QString when =
             QDateTime::fromMSecsSinceEpoch(a.modifiedMs).toString(QStringLiteral("yyyy-MM-dd"));
-        who += QStringLiteral("  ·  ") + when;
+        //: Header of an annotation's card. %1 is the author (or "Annotation"), %2
+        //: the date it was last changed.
+        headerLabel_->setText(tr("%1  ·  %2").arg(who, when));
+    } else {
+        headerLabel_->setText(who);
     }
-    headerLabel_->setText(who);
 
     {
         QSignalBlocker block(comment_);

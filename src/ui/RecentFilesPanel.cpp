@@ -58,6 +58,15 @@ constexpr int kFieldWidth = 460; // the search field
 // page, so a match looks consistent wherever it appears.
 const QColor &kHighlightFill = theme::brand().searchMatch;
 
+// Two details of a file row side by side, such as "3 days ago · 03/10/2026" or
+// "12 pages · 1.4 MB".
+QString joinDetails(const QString &first, const QString &second)
+{
+    //: Joins two details in a row of the Recent list, such as when the file was
+    //: opened and the date ("3 days ago · 03/10/2026"), or its page count and size.
+    return RecentFilesPanel::tr("%1 · %2").arg(first, second);
+}
+
 QString formatDate(qint64 epochMs)
 {
     if (epochMs <= 0)
@@ -65,19 +74,26 @@ QString formatDate(qint64 epochMs)
     const QDate date = QDateTime::fromMSecsSinceEpoch(epochMs).date();
     const int daysAgo = date.daysTo(QDate::currentDate());
     QString rel;
-    if (daysAgo == 0)      rel = QObject::tr("Today");
-    else if (daysAgo == 1) rel = QObject::tr("Yesterday");
-    else                   rel = QObject::tr("%1 days ago").arg(daysAgo);
-    return rel + QStringLiteral(" · ") + QLocale().toString(date, QLocale::ShortFormat);
+    // A date after today (the clock was set back) reads as today.
+    if (daysAgo <= 0) {
+        //: When a recent file was last opened.
+        rel = RecentFilesPanel::tr("Today");
+    } else if (daysAgo == 1) {
+        //: When a recent file was last opened.
+        rel = RecentFilesPanel::tr("Yesterday");
+    } else {
+        //: When a recent file was last opened. Used from 2 days on.
+        rel = RecentFilesPanel::tr("%n day(s) ago", nullptr, daysAgo);
+    }
+    return joinDetails(rel, QLocale().toString(date, QLocale::ShortFormat));
 }
 
+// The OS regional format, as the other dialogs show sizes.
 QString formatSize(qint64 bytes)
 {
-    if (bytes <= 0)          return QString();
-    if (bytes < 1024)        return QStringLiteral("%1 B").arg(bytes);
-    if (bytes < 1024*1024)   return QStringLiteral("%1 KB").arg(bytes / 1024);
-    const double mb = static_cast<double>(bytes) / (1024.0 * 1024.0);
-    return QStringLiteral("%1 MB").arg(mb, 0, 'f', 1);
+    if (bytes <= 0)
+        return QString();
+    return QLocale().formattedDataSize(bytes, 1, QLocale::DataSizeTraditionalFormat);
 }
 
 QRect starRegion(const QRect &row)
@@ -215,11 +231,11 @@ public:
         const QString query  = idx.data(kQueryRole).toString();
         const QString snippet = idx.data(kSnippetRole).toString();
         const bool hasSnippet = !snippet.isEmpty();
-        QStringList meta;
-        if (pages > 0)        meta << (pages == 1 ? QObject::tr("1 page")
-                                                   : QObject::tr("%1 pages").arg(pages));
-        if (!size.isEmpty())  meta << size;
-        const QString metaLine = meta.join(QStringLiteral(" · "));
+        const QString pageText =
+            pages > 0 ? RecentFilesPanel::tr("%n page(s)", nullptr, pages) : QString();
+        const QString metaLine = pageText.isEmpty() || size.isEmpty()
+                                     ? pageText + size
+                                     : joinDetails(pageText, size);
 
         const QRect r = opt.rect;
         p->save();
@@ -289,13 +305,17 @@ public:
         p->setFont(smallF);
         drawHighlighted(p, pathR, Qt::ElideLeft, pDisp, QString(), subCol);
 
+        // The meta column has a fixed width; a longer translation is elided.
+        constexpr int kMetaFlags = Qt::AlignRight | Qt::AlignVCenter | Qt::TextSingleLine;
         p->setFont(opt.font);
         p->setPen(textCol);
-        p->drawText(dateR, Qt::AlignRight | Qt::AlignVCenter | Qt::TextSingleLine, date);
+        p->drawText(dateR, kMetaFlags,
+                    p->fontMetrics().elidedText(date, Qt::ElideRight, dateR.width()));
 
         p->setFont(smallF);
         p->setPen(subCol);
-        p->drawText(sizeR, Qt::AlignRight | Qt::AlignVCenter | Qt::TextSingleLine, metaLine);
+        p->drawText(sizeR, kMetaFlags,
+                    p->fontMetrics().elidedText(metaLine, Qt::ElideRight, sizeR.width()));
 
         p->restore();
     }
@@ -361,6 +381,7 @@ RecentFilesPanel::RecentFilesPanel(QWidget *parent)
     statusRow->addWidget(status_);
     stopBtn_ = new QToolButton(this);
     stopBtn_->setObjectName(QStringLiteral("recentSearchStop"));
+    //: Button that stops the search inside the documents.
     stopBtn_->setText(tr("Stop"));
     stopBtn_->setFocusPolicy(Qt::TabFocus); // a click leaves the caret in the field
     stopBtn_->setVisible(false);
@@ -636,6 +657,7 @@ void RecentFilesPanel::setRunning(bool running)
         // pixel wider than the advance.
         const int n = std::max(1, int(entries_.size()));
         const QFontMetrics fm = status_->fontMetrics();
+        //: %1 is the file being read, %2 how many files the search reads.
         const QString widest = tr("Searching file %1 of %2").arg(n).arg(n);
         status_->setMinimumWidth(std::max(fm.horizontalAdvance(widest), fm.boundingRect(widest).width())
                                  + fm.horizontalAdvance(QLatin1Char(' ')));
@@ -650,6 +672,7 @@ void RecentFilesPanel::showScanProgress()
 {
     if (scanTotal_ <= 0)
         return;
+    //: %1 is the file being read, %2 how many files the search reads.
     status_->setText(tr("Searching file %1 of %2")
                          .arg(std::min(scanned_ + 1, scanTotal_))
                          .arg(scanTotal_));
@@ -667,9 +690,8 @@ void RecentFilesPanel::stopSearch()
     rescanOnShow_ = false; // stopped on purpose: no restart on return
     setRunning(false);
     const int listed = favRows_ + recentRows_;
-    status_->setText(listed == 0   ? tr("Stopped")
-                     : listed == 1 ? tr("Stopped, 1 file found")
-                                   : tr("Stopped, %1 files found").arg(listed));
+    //: The search inside the documents was stopped before it finished.
+    status_->setText(listed == 0 ? tr("Stopped") : tr("Stopped, %n file(s) found", nullptr, listed));
     status_->setVisible(true);
     updateSummary(listed);
 }
@@ -717,7 +739,7 @@ void RecentFilesPanel::endContentSearch(bool canceled, int matched)
     if (listed == 0)
         status_->setVisible(false);
     else
-        status_->setText(listed == 1 ? tr("1 file found") : tr("%1 files found").arg(listed));
+        status_->setText(tr("%n file(s) found", nullptr, listed));
     updateSummary(listed);
 }
 
@@ -747,9 +769,11 @@ void RecentFilesPanel::insertResult(QListWidgetItem *item, bool favourite)
     };
     if (favourite) {
         if (!favCaption_) {
+            //: Caption above the starred files in the Recent list.
             favCaption_ = caption(tr("Favourites"));
             list_->insertItem(0, favCaption_);
             if (recentRows_ > 0 && !recentCaption_) {
+                //: Caption above the files that are not starred in the Recent list.
                 recentCaption_ = caption(tr("Recent"));
                 list_->insertItem(1, recentCaption_);
             }
@@ -758,6 +782,7 @@ void RecentFilesPanel::insertResult(QListWidgetItem *item, bool favourite)
         ++favRows_;
     } else {
         if (favRows_ > 0 && !recentCaption_) {
+            //: Caption above the files that are not starred in the Recent list.
             recentCaption_ = caption(tr("Recent"));
             list_->addItem(recentCaption_);
         }
@@ -777,8 +802,11 @@ QListWidgetItem *RecentFilesPanel::makeHitItem(const RecentEntry &entry, const C
 {
     QListWidgetItem *item = makeFileItem(entry);
     item->setData(kSnippetRole, hit.snippet);
-    item->setToolTip(QDir::toNativeSeparators(entry.path)
-                     + (hit.page > 0 ? tr("\nMatch on page %1").arg(hit.page) : QString()));
+    const QString native = QDir::toNativeSeparators(entry.path);
+    //: Tooltip of a file found by the content search. %1 is the file's path, %2
+    //: the page with the first match.
+    item->setToolTip(hit.page > 0 ? tr("%1\nMatch on page %2").arg(native, QString::number(hit.page))
+                                  : native);
     return item;
 }
 
@@ -795,8 +823,9 @@ QListWidgetItem *RecentFilesPanel::makeFileItem(const RecentEntry &entry)
     // While searching, record the term so the delegate highlights it.
     if (!needle().isEmpty())
         item->setData(kQueryRole, needle());
-    item->setToolTip(QDir::toNativeSeparators(entry.path)
-                     + (missing ? tr("\nThis file is no longer on disk.") : QString()));
+    const QString native = QDir::toNativeSeparators(entry.path);
+    //: Tooltip of a recent file that was moved or deleted. %1 is its path.
+    item->setToolTip(missing ? tr("%1\nThis file is no longer on disk.").arg(native) : native);
     return item;
 }
 
@@ -848,14 +877,19 @@ void RecentFilesPanel::rebuild()
 // The window's status bar line for the list as it stands.
 void RecentFilesPanel::updateSummary(int listed)
 {
-    if (!needle().isEmpty())
-        statusSummary_ = (listed == 1) ? tr("1 result") : tr("%1 results").arg(listed);
-    else if (favRows_ > 0)
+    if (!needle().isEmpty()) {
+        statusSummary_ = tr("%n result(s)", nullptr, listed);
+    } else if (favRows_ > 0) {
+        //: Status bar summary of the Recent list. %1 is the number of starred
+        //: files, %2 the number of other recent files. If the words must agree
+        //: with the numbers, a form such as "Starred: %1, recent: %2" works.
         statusSummary_ = tr("%1 starred, %2 recent").arg(favRows_).arg(recentRows_);
-    else if (recentRows_ > 0)
-        statusSummary_ = tr("Your last %1 opened documents").arg(recentRows_);
-    else
+    } else if (recentRows_ > 0) {
+        //: Status bar summary of the Recent list.
+        statusSummary_ = tr("Your last %n opened document(s)", nullptr, recentRows_);
+    } else {
         statusSummary_ = tr("No recent files yet");
+    }
     emit statusSummaryChanged(statusSummary_);
     emit countChanged(listed);
 }
@@ -877,8 +911,10 @@ void RecentFilesPanel::handleMissingFile(const QString &path)
     QMessageBox box(this);
     box.setIcon(QMessageBox::Question);
     box.setWindowTitle(tr("File not found"));
+    //: %1 is the file's path.
     box.setText(tr("\"%1\" could not be found.").arg(native));
     box.setInformativeText(tr("It may have been moved, renamed, or deleted."));
+    //: Button that opens a file dialog to find where the missing file is now.
     QPushButton *locate = box.addButton(tr("Locate"), QMessageBox::AcceptRole);
     QPushButton *remove = box.addButton(tr("Remove from history"), QMessageBox::DestructiveRole);
     box.addButton(QMessageBox::Cancel);
@@ -887,7 +923,9 @@ void RecentFilesPanel::handleMissingFile(const QString &path)
     if (box.clickedButton() == locate) {
         const QFileInfo fi(path);
         const QString picked = QFileDialog::getOpenFileName(
+            //: Title of the file dialog. %1 is the missing file's name.
             this, tr("Locate \"%1\"").arg(fi.fileName()), fi.absolutePath(),
+            //: File type filter. Keep the patterns in parentheses and the ";;".
             tr("PDF documents (*.pdf);;All files (*)"));
         if (!picked.isEmpty()) { emit removeRequested(path); emit openRequested(picked); }
     } else if (box.clickedButton() == remove) {

@@ -32,6 +32,9 @@ constexpr int kMinHeight = 480;
 constexpr int kColCount = 56;  // "999" and the caption, at 125% text scaling
 constexpr int kColOutput = 74; // "999-999", as in Merge
 constexpr int kPasswordWidth = 260;
+// A field's frame and padding around its text (Theme: 1px border, 8px padding,
+// plus the line edit's own 2px margin, on each side).
+constexpr int kFieldPadding = 24;
 constexpr int kBrowseMinWidth = 84;
 
 QHBoxLayout *row()
@@ -87,6 +90,8 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
     list_ = new RowList(kColCount, kColOutput, this);
     list_->setObjectName(QStringLiteral("extractList"));
     listSide->addWidget(list_->makeHeader([this](QWidget *header, QHBoxLayout *columns) {
+        //: Column caption over the page range fields. The next label, "of %1",
+        //: follows it in a lighter style and reads "Pages of 31".
         columns->addWidget(new QLabel(tr("Pages"), header));
         of_ = new QLabel(header);
         of_->setObjectName(QStringLiteral("extractOf"));
@@ -116,12 +121,14 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
         side->addWidget(b);
         return b;
     };
+    //: Button: adds an empty row below the selected one.
     connect(sideButton(tr("&Add Range")), &QPushButton::clicked, this, &ExtractDialog::addRange);
     upBtn_ = sideButton(tr("Move &Up"));
     connect(upBtn_, &QPushButton::clicked, this, [this] { moveCurrent(-1); });
     downBtn_ = sideButton(tr("Move &Down"));
     connect(downBtn_, &QPushButton::clicked, this, [this] { moveCurrent(1); });
     side->addSpacing(6);
+    //: Button: removes the selected row.
     removeBtn_ = sideButton(tr("&Remove"), icons::glyph(icons::Glyph::Delete, Theme::iconInk(palette())));
     connect(removeBtn_, &QPushButton::clicked, this, &ExtractDialog::removeCurrent);
     side->addStretch(1);
@@ -154,6 +161,7 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
         strip_->addAction(a);
         return a;
     };
+    //: Context menu item of a page in the strip: takes it out of the extract.
     removeAct_ = stripAction(tr("Remove"));
     removeAct_->setShortcuts({QKeySequence(Qt::Key_Delete), QKeySequence(Qt::Key_Backspace)});
     connect(removeAct_, &QAction::triggered, this, [this] {
@@ -193,7 +201,10 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
         passwordEdit_->setObjectName(QStringLiteral("extractPassword"));
         passwordEdit_->setEchoMode(QLineEdit::Password);
         passwordEdit_->setPlaceholderText(tr("This PDF is encrypted"));
-        passwordEdit_->setFixedWidth(kPasswordWidth);
+        // Wider only when a translated placeholder would not fit.
+        passwordEdit_->setFixedWidth(RowList::widthFor(kPasswordWidth, font(),
+                                                       {passwordEdit_->placeholderText()},
+                                                       kFieldPadding));
         passwordLabel->setBuddy(passwordEdit_);
         connect(passwordEdit_, &QLineEdit::textEdited, this, [this] {
             passwordRejected_ = false;
@@ -245,6 +256,7 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
     buttonRow->addWidget(openWhenDone_);
     buttonRow->addStretch(1);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
+    //: Button: writes the extracted pages to a new file.
     acceptBtn_ = buttons->addButton(tr("Extract"), QDialogButtonBox::AcceptRole);
     acceptBtn_->setObjectName(QStringLiteral("extractAccept"));
     acceptBtn_->setDefault(true);
@@ -392,8 +404,11 @@ void ExtractDialog::updateActions()
     const bool fold = c && c->kind == ExtractPlan::Cell::Kind::Fold;
     expandAct_->setVisible(fold);
     expandAct_->setEnabled(fold);
-    if (fold)
+    if (fold) {
+        //: Context menu item of a tile standing in for hidden pages. %1 is their
+        //: range, like "14-30".
         expandAct_->setText(tr("Show Pages %1").arg(plan_.caption(*c)));
+    }
 }
 
 void ExtractDialog::syncCurrentRow(bool reveal)
@@ -445,10 +460,15 @@ void ExtractDialog::refresh()
     strip_->setContent(content, current);
     syncCurrentRow(false);
 
+    //: Follows the "Pages" column caption, reading "Pages of 31". %1 is the
+    //: source document's page count.
     of_->setText(tr("of %1").arg(plan_.pageCount()));
     QString summary = plan_.summaryText();
-    if (!summary.isEmpty() && source_.hasUnsavedEdits)
-        summary += tr(" Unsaved changes are not included."); // qpdf writes from disk
+    if (!summary.isEmpty() && source_.hasUnsavedEdits) {
+        // qpdf writes from the file on disk.
+        //: %1 is the result sentence, like "Result: 4 pages, in the order shown."
+        summary = tr("%1 Unsaved changes are not included.").arg(summary);
+    }
     summary_->setText(summary);
 
     // A disabled Extract always has its reason on the error line. A failed write
@@ -479,6 +499,7 @@ void ExtractDialog::browseForOutput()
 {
     const QString picked = QFileDialog::getSaveFileName(this, tr("Save Extracted Pages"),
                                                         plan_.resolvePath(output_->text()),
+                                                        //: File type filter. Keep "(*.pdf)".
                                                         tr("PDF documents (*.pdf)"));
     if (picked.isEmpty())
         return;
@@ -528,6 +549,7 @@ void ExtractDialog::accept()
     const ExtractPlan::Job job = plan_.job(output_->text());
     if (QFileInfo::exists(job.path)
         && QMessageBox::question(this, tr("Extract Pages"),
+                                 //: %1 is a file path.
                                  tr("\"%1\" already exists. Replace it?")
                                      .arg(QDir::toNativeSeparators(job.path)),
                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
@@ -548,6 +570,7 @@ void ExtractDialog::accept()
         {PageOps::MergeInput{source_.path, job.pages, password_}}, job.path, &err);
     QApplication::restoreOverrideCursor();
     if (st != PageOps::Status::Ok) {
+        //: %1 is the new file's name.
         writeError_ = tr("Could not write \"%1\". If another program has it open, close it "
                          "and press Extract again, or choose another name.")
                           .arg(QFileInfo(job.path).fileName());

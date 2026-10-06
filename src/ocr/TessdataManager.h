@@ -18,7 +18,8 @@ QString directory();
 QStringList installedLanguages();
 
 // Friendly label for a Tesseract language code (for example, "English" for
-// "eng"). Unknown codes are returned unchanged.
+// "eng"). Unknown codes are returned unchanged. Only the five models QLocale
+// cannot name have translated labels; the rest are QLocale's English names.
 QString languageName(const QString &code);
 
 // Open the tessdata folder in Explorer.

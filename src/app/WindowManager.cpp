@@ -102,10 +102,13 @@ WindowManager::WindowManager()
 
     activityClock_.start();
     trayMenu_ = std::make_unique<QMenu>();
+    //: Tray icon menu item: show the windows hidden in the tray.
     trayMenu_->addAction(tr("Show Mervin"), this, &WindowManager::restoreFromTray);
     trayMenu_->addSeparator();
+    //: Tray icon menu item: close every window and exit.
     trayMenu_->addAction(tr("Quit Mervin"), this, &WindowManager::quitAll);
     tray_ = new QSystemTrayIcon(icons::applicationIcon(), this);
+    //: Tooltip of the tray icon. The product name.
     tray_->setToolTip(tr("Mervin PDF"));
     tray_->setContextMenu(trayMenu_.get());
     connect(tray_, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
@@ -813,6 +816,7 @@ void WindowManager::checkDocumentActivity()
 void WindowManager::notifySuspensionFailure(const QString &message)
 {
     if (tray_ && tray_->isVisible())
+        //: Title of a tray notification: an inactive document could not be unloaded from memory.
         tray_->showMessage(tr("Document remains loaded"), message, QSystemTrayIcon::Warning);
 }
 

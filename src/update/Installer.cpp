@@ -103,11 +103,14 @@ bool startWindowsInstaller(PackageKind kind, const QString &file)
     return false;
 }
 
+// The messages share the Updater's context: it shows them, inside its own text.
 bool replaceAppImage(const QString &file, QString *error)
 {
     const QString target = qEnvironmentVariable("APPIMAGE");
     if (target.isEmpty()) {
-        *error = QCoreApplication::translate("Updater", "This copy is not running as an AppImage.");
+        //: AppImage is a Linux package format; keep the name as it is.
+        *error = QCoreApplication::translate("mervin::Updater",
+                                             "This copy is not running as an AppImage.");
         return false;
     }
     // Stage beside the target so the final rename stays on one filesystem and
@@ -115,7 +118,8 @@ bool replaceAppImage(const QString &file, QString *error)
     const QString staged = target + QStringLiteral(".update");
     QFile::remove(staged);
     if (!QFile::copy(file, staged)) {
-        *error = QCoreApplication::translate("Updater", "Couldn't write to %1.")
+        //: %1 is a folder path.
+        *error = QCoreApplication::translate("mervin::Updater", "Couldn't write to %1.")
                      .arg(QFileInfo(target).absolutePath());
         return false;
     }
@@ -127,7 +131,8 @@ bool replaceAppImage(const QString &file, QString *error)
     if (std::rename(QFile::encodeName(staged).constData(), QFile::encodeName(target).constData())
         != 0) {
         QFile::remove(staged);
-        *error = QCoreApplication::translate("Updater", "Couldn't replace %1.").arg(target);
+        //: %1 is the path of the running AppImage file.
+        *error = QCoreApplication::translate("mervin::Updater", "Couldn't replace %1.").arg(target);
         return false;
     }
     return true;

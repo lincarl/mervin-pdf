@@ -9,7 +9,6 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QLocale>
-#include <QObject>
 #include <QUrl>
 
 namespace mervin {
@@ -82,15 +81,28 @@ QStringList TessdataManager::installedLanguages()
 
 QString TessdataManager::languageName(const QString &code)
 {
+    // Built once, which is safe because the UI language is only set at startup.
     static const QHash<QString, QString> names{
-        {QStringLiteral("chi_sim"), QObject::tr("Chinese (Simplified)")},
-        {QStringLiteral("chi_tra"), QObject::tr("Chinese (Traditional)")},
-        {QStringLiteral("deu_frak"), QObject::tr("German Fraktur")},
-        {QStringLiteral("equ"), QObject::tr("Math / equation detection")},
-        {QStringLiteral("osd"), QObject::tr("Orientation and script detection")},
+        //: OCR language model name.
+        {QStringLiteral("chi_sim"), QCoreApplication::translate("mervin::TessdataManager",
+                                                                "Chinese (Simplified)")},
+        //: OCR language model name.
+        {QStringLiteral("chi_tra"), QCoreApplication::translate("mervin::TessdataManager",
+                                                                "Chinese (Traditional)")},
+        //: OCR language model name. Fraktur is the German blackletter typeface.
+        {QStringLiteral("deu_frak"), QCoreApplication::translate("mervin::TessdataManager",
+                                                                 "German Fraktur")},
+        //: OCR model name. The model finds math formulas instead of reading a language.
+        {QStringLiteral("equ"), QCoreApplication::translate("mervin::TessdataManager",
+                                                            "Math / equation detection")},
+        //: OCR model name. The model finds page orientation and writing system instead
+        //: of reading a language.
+        {QStringLiteral("osd"), QCoreApplication::translate("mervin::TessdataManager",
+                                                            "Orientation and script detection")},
     };
     if (const auto it = names.constFind(code); it != names.cend())
         return *it;
+    // Other models get QLocale's English name, whatever the UI language.
     const QLocale::Language language = QLocale::codeToLanguage(code);
     return language == QLocale::AnyLanguage || language == QLocale::C
         ? code

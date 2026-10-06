@@ -1,6 +1,25 @@
 #include "print/PageRange.h"
 
+#include <QCoreApplication>
 #include <QTest>
+#include <QTranslator>
+
+namespace {
+
+// Stands in for a catalog that translates the "all pages" keyword.
+class KeywordTranslator : public QTranslator
+{
+public:
+    bool isEmpty() const override { return false; }
+    QString translate(const char *context, const char *sourceText, const char *, int) const override
+    {
+        if (qstrcmp(context, "PageRange") == 0 && qstrcmp(sourceText, "All") == 0)
+            return QStringLiteral("Alla");
+        return {};
+    }
+};
+
+} // namespace
 
 class TstPrintRange : public QObject
 {
@@ -24,6 +43,7 @@ private slots:
     void overflowIsError();
     void allowingAllExpandsAll();
     void allowingAllIsOtherwiseParse();
+    void allowingAllAcceptsTheTranslatedWord();
 };
 
 void TstPrintRange::singlePage()
@@ -176,6 +196,32 @@ void TstPrintRange::allowingAllIsOtherwiseParse()
     QVERIFY(!err.isEmpty());
     QVERIFY(PageRange::parseAllowingAll(QStringLiteral("40"), 10, &err).isEmpty());
     QVERIFY2(err.contains(QStringLiteral("1-10")), qPrintable(err)); // plain hyphen, no en dash
+}
+
+void TstPrintRange::allowingAllAcceptsTheTranslatedWord()
+{
+    QCOMPARE(PageRange::allKeyword(), QStringLiteral("All")); // English: no catalog loaded
+
+    KeywordTranslator swedish;
+    QCoreApplication::installTranslator(&swedish);
+    QCOMPARE(PageRange::allKeyword(), QStringLiteral("Alla"));
+    QString err = QStringLiteral("untouched");
+    // The translated word, in any case and padding...
+    QCOMPARE(PageRange::parseAllowingAll(QStringLiteral(" ALLA "), 3, &err), (QList<int>{1, 2, 3}));
+    QVERIFY(err.isEmpty());
+    QVERIFY(PageRange::isAll(QStringLiteral("alla")));
+    // ...and English still, so ranges typed in English keep working.
+    QCOMPARE(PageRange::parseAllowingAll(QStringLiteral("All"), 3, &err), (QList<int>{1, 2, 3}));
+    QVERIFY(PageRange::isAll(QStringLiteral("all")));
+    // Anything else is a range to parse, and these are not ranges.
+    QVERIFY(!PageRange::isAll(QStringLiteral("allan")));
+    QVERIFY(PageRange::parseAllowingAll(QStringLiteral("allan"), 3, &err).isEmpty());
+    QVERIFY(!err.isEmpty());
+    QVERIFY(PageRange::parse(QStringLiteral("alla"), 3, &err).isEmpty()); // only parseAllowingAll
+    QCoreApplication::removeTranslator(&swedish);
+
+    QCOMPARE(PageRange::allKeyword(), QStringLiteral("All"));
+    QVERIFY(!PageRange::isAll(QStringLiteral("alla")));
 }
 
 QTEST_GUILESS_MAIN(TstPrintRange)

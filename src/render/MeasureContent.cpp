@@ -198,7 +198,8 @@ bool parseMeasurements(const QByteArray &json, MeasureDoc *out)
 }
 
 QString formatMeasurementValue(MeasureKind kind, const std::vector<QPointF> &pts,
-                               const MeasureScale &scaleIn, MeasureUnit unit, int precision)
+                               const MeasureScale &scaleIn, MeasureUnit unit, int precision,
+                               MeasureLabelText text)
 {
     using namespace measure;
     if (pts.empty())
@@ -230,10 +231,9 @@ QString formatMeasurementValue(MeasureKind kind, const std::vector<QPointF> &pts
             // "Perimeter" label is needed - the units (mm² vs mm) make it clear
             // which is which. The '\n' is honoured by the on-screen readout/pill
             // and the burned-in PDF label; the compact measurement list flattens
-            // it to an inline form.
-            out = QCoreApplication::translate("MeasureContent", "%1\n%2")
-                      .arg(formatAreaMm2Auto(areaMm2(pts, s), unit, precision),
-                           formatLengthMmAuto(perimeterMm(pts, s), unit, precision));
+            // it to an inline form. Not translated: there are no words to translate.
+            out = formatAreaMm2Auto(areaMm2(pts, s), unit, precision) + QLatin1Char('\n')
+                  + formatLengthMmAuto(perimeterMm(pts, s), unit, precision);
         }
         break;
     case MeasureKind::Angle:
@@ -246,8 +246,17 @@ QString formatMeasurementValue(MeasureKind kind, const std::vector<QPointF> &pts
         }
         break;
     }
-    if (noScale && kind != MeasureKind::Angle)
-        out += QCoreApplication::translate("MeasureContent", " (paper)");
+    if (noScale && kind != MeasureKind::Angle) {
+        if (text == MeasureLabelText::Ui) {
+            //: %1 is a measured value with its unit, such as "12.50 mm" (an area adds
+            //: its perimeter on a second line). The page has no drawing scale, so the
+            //: value is the size on the paper.
+            out = QCoreApplication::translate("MeasureContent", "%1 (paper)").arg(out);
+        } else {
+            // Burned-in PDF labels stay English: see MeasureLabelText.
+            out += QStringLiteral(" (paper)");
+        }
+    }
     return out;
 }
 

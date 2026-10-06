@@ -37,8 +37,9 @@ PageOps::Status open(QPDF &q, const QString &path, const QString &password, QStr
         return PageOps::Status::Ok;
     } catch (const QPDFExc &e) {
         if (e.getErrorCode() == qpdf_e_password) {
+            // QpdfService's message, so translators see it once.
             if (error)
-                *error = QStringLiteral("A password is required to open this document.");
+                *error = QpdfService::tr("A password is required to open this document.");
             return PageOps::Status::NeedsPassword;
         }
         if (error)
@@ -98,9 +99,9 @@ PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPa
         QList<int> kept;
         for (int index : drop)
             if (index < 0 || index >= int(all.size()))
-                throw std::runtime_error("Page does not exist.");
+                throw std::runtime_error(tr("Page does not exist.").toStdString());
         if (drop.size() == all.size())
-            throw std::runtime_error("Cannot delete every page.");
+            throw std::runtime_error(tr("Cannot delete every page.").toStdString());
         for (int i = 0; i < static_cast<int>(all.size()); ++i)
             if (drop.count(i))
                 dh.removePage(all[static_cast<size_t>(i)]);
@@ -132,10 +133,11 @@ PageOps::Status PageOps::rotatePages(const QString &inPath, const QString &outPa
         auto all = dh.getAllPages();
         auto data = measurementPages::read(q);
         if (angle % 90 != 0)
-            throw std::runtime_error("Rotation must be a multiple of 90 degrees.");
+            throw std::runtime_error(
+                tr("Rotation must be a multiple of 90 degrees.").toStdString());
         for (int idx : pages) {
             if (idx < 0 || idx >= int(all.size()))
-                throw std::runtime_error("Page does not exist.");
+                throw std::runtime_error(tr("Page does not exist.").toStdString());
             auto &page = all[idx];
             auto rotation = page.getAttribute("/Rotate", false);
             const int before = rotation.isInteger() ? int(rotation.getIntValue()) : 0;
@@ -224,15 +226,13 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
             for (int idx : selected) {
                 if (idx < 0 || idx >= n) {
                     // The caller names the file (it has failedIndex), so this says
-                    // only what the caller cannot know. No "%n page(s)": Qt leaves
-                    // the "(s)" verbatim when no translator is loaded.
-                    if (error)
-                        *error = n == 1
-                                     ? QStringLiteral("It has 1 page; page %1 does not exist.")
-                                           .arg(idx + 1)
-                                     : QStringLiteral("It has %1 pages; page %2 does not exist.")
-                                           .arg(n)
-                                           .arg(idx + 1);
+                    // only what the caller cannot know.
+                    if (error) {
+                        //: Merge or extract error, shown below a line that names the file.
+                        //: %n is the file's page count, %1 the missing page number.
+                        *error = tr("It has %n page(s); page %1 does not exist.", nullptr, n)
+                                     .arg(idx + 1);
+                    }
                     if (failedIndex)
                         *failedIndex = i;
                     return Status::Failed;

@@ -189,6 +189,7 @@ void LanguageCombo::retranslate()
 {
     search_->setPlaceholderText(tr("Search languages"));
     search_->setAccessibleName(tr("Search languages"));
+    //: Accessible name of the list of UI languages below the search field.
     list_->setAccessibleName(tr("Languages"));
     // The search also matches the name in the UI language, which just changed.
     for (int row = 0; row < model_->rowCount(); ++row) {

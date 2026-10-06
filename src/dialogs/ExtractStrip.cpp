@@ -413,6 +413,8 @@ bool ExtractStrip::viewportEvent(QEvent *event)
         auto *he = static_cast<QHelpEvent *>(event);
         const int row = indexAt(he->pos()).row();
         if (row >= 0 && row == hoverRow_ && closeRect(row).contains(he->pos())) {
+            //: Tooltip of the close button on a page in the strip: takes it out of
+            //: the extract.
             QToolTip::showText(he->globalPos(), tr("Remove"), viewport(), closeRect(row));
             return true;
         }

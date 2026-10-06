@@ -1,3 +1,4 @@
+#include "i18n/UiLanguage.h"
 #include "render/Document.h"
 #include "render/RenderEngine.h"
 #include "security/PageOps.h"
@@ -70,6 +71,7 @@ class TstQpdf : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase();
     void init();
 
     void pageCountRoundTrip();
@@ -94,6 +96,13 @@ private:
     QTemporaryDir dir_;
     QString in(const QString &name) const { return dir_.filePath(name); }
 };
+
+void TstQpdf::initTestCase()
+{
+    // The page-count error uses a %n plural, whose English forms come from the
+    // English catalog.
+    mervin::i18n::apply(QStringLiteral("en"));
+}
 
 void TstQpdf::init()
 {
@@ -292,11 +301,13 @@ void TstQpdf::mergeRejectsOutOfRangeIndex()
     int failed = -1;
     QCOMPARE(PageOps::merge({{a, {0, 9}, {}}}, out, &err, &failed), PageOps::Status::Failed);
     QCOMPARE(failed, 0);
-    QVERIFY2(err.contains(QStringLiteral("10")), qPrintable(err)); // names the 1-based page
-    QVERIFY2(err.contains(QStringLiteral("2 pages")), qPrintable(err));
-    // No Qt %n here: without a translator loaded it leaves the "(s)" verbatim,
-    // and this string reaches the user through MainWindow's failure box.
-    QVERIFY2(!err.contains(QStringLiteral("(s)")), qPrintable(err));
+    // Names the 1-based page, and the count reads as English, not "2 page(s)".
+    QCOMPARE(err, QStringLiteral("It has 2 pages; page 10 does not exist."));
+
+    const QString single = in(QStringLiteral("mo_single.pdf"));
+    makePdf(single, 1);
+    QCOMPARE(PageOps::merge({{single, {2}, {}}}, out, &err, &failed), PageOps::Status::Failed);
+    QCOMPARE(err, QStringLiteral("It has 1 page; page 3 does not exist."));
 }
 
 void TstQpdf::probeDistinguishesLockedFromUnreadable()

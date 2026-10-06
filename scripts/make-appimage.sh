@@ -47,9 +47,17 @@ export QMAKE="${QMAKE:-$(command -v qmake6 || command -v qmake)}"
 ./linuxdeploy \
   --appdir "$APPDIR" \
   --plugin qt \
-  --output appimage \
   --desktop-file "$APPDIR/usr/share/applications/mervin-pdf.desktop" \
   --icon-file "$APPDIR/usr/share/icons/hicolor/256x256/apps/mervin-pdf.png"
+
+# The Qt plugin copies Qt's own catalogs (qtbase_<id>.qm) into usr/translations
+# when the builder has them, which the build needs. Mervin compiles them into its
+# own catalogs instead, so the loose copies would only add size.
+rm -rf "$APPDIR/usr/translations"
+
+# Pack the deployed AppDir. linuxdeploy rechecks the libraries it already
+# deployed, then builds the AppImage.
+./linuxdeploy --appdir "$APPDIR" --output appimage
 
 # linuxdeploy names the output from the desktop "Name" (spaces -> underscores).
 produced="$(find . -maxdepth 1 -iname '*.AppImage' \

@@ -97,6 +97,8 @@ private:
     // Re-elide each measurement row's label to its current width, so the text
     // uses the full panel width (and only truncates what genuinely overflows).
     void reelideMeasurements();
+    // Widen the panel when `label`'s text no longer fits it. Never shrinks.
+    void growToFit(QLabel *label);
     // Re-tint the measure-toggle's dimension icon for its current state (its
     // QPainter pixmap isn't recoloured by QSS). Called on construct, on toggle,
     // and on palette/style change.
