@@ -1,0 +1,6 @@
+#pragma once
+
+// Generated from cmake/version.h.in by CMake configure_file(). Do not edit.
+#define MERVIN_VERSION_STRING "@MERVIN_VERSION@"
+#define MERVIN_APP_NAME "@MERVIN_APP_NAME@"
+#define MERVIN_ORG_NAME "@MERVIN_ORG_NAME@"

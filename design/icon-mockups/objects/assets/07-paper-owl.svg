@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title"><title id="title">Paper owl, Mervin image icon concept 07</title><defs>
+      <linearGradient id="owl-blue" x1="0" y1="0" x2=".8" y2="1"><stop stop-color="#42b7d1"/><stop offset=".65" stop-color="#1c7da8"/><stop offset="1" stop-color="#185283"/></linearGradient>
+      <linearGradient id="owl-ivory" x1="0" y1="0" x2=".4" y2="1"><stop stop-color="#ffffef"/><stop offset="1" stop-color="#dfdfc7"/></linearGradient>
+      <linearGradient id="owl-face" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fffef2"/><stop offset="1" stop-color="#f1ecda"/></linearGradient>
+    </defs>
+      <path d="M20 22L80 54Q128 36 176 54L236 22L225 157Q216 208 128 240Q40 208 31 157Z" fill="#194b73"/>
+      <path d="M20 18L80 50Q128 32 176 50L236 18L222 147Q215 199 128 233Q41 199 34 147Z" fill="url(#owl-blue)"/>
+      <path d="M20 18L80 50L45 95Z" fill="#69d2e0"/>
+      <path d="M236 18L176 50L211 95Z" fill="#40a1bb"/>
+      <path d="M80 50L128 86L176 50L128 37Z" fill="#62c2d3"/>
+      <path d="M45 95L80 70L128 103L176 70L211 95L205 149L178 182L128 207L78 182L51 149Z" fill="url(#owl-ivory)"/>
+      <path d="M45 95L80 70L128 103L102 146L65 146Z" fill="url(#owl-face)"/>
+      <path d="M211 95L176 70L128 103L154 146L191 146Z" fill="url(#owl-face)"/>
+      <path d="M45 95L65 146L78 182L51 149Z" fill="#bed1cc"/>
+      <path d="M211 95L191 146L178 182L205 149Z" fill="#a4c0bf"/>
+      <path d="M78 182L128 157L128 207Z" fill="#f9f5e6"/>
+      <path d="M178 182L128 157L128 207Z" fill="#dbdfc9"/>
+      <ellipse cx="82" cy="119" rx="22" ry="26" fill="#e3c879"/>
+      <ellipse cx="174" cy="119" rx="22" ry="26" fill="#e3c879"/>
+      <ellipse cx="84" cy="117" rx="14" ry="20" fill="#143446"/>
+      <ellipse cx="172" cy="117" rx="14" ry="20" fill="#143446"/>
+      <ellipse cx="80" cy="108" rx="5" ry="6" fill="#fff"/>
+      <ellipse cx="168" cy="108" rx="5" ry="6" fill="#fff"/>
+      <path d="M110 143L128 131L146 143L128 171Z" fill="#e59537"/>
+      <path d="M128 131L146 143L128 171Z" fill="#ad5c24"/>
+      <path d="M34 147L78 182L128 233Q48 204 34 147Z" fill="#3f9fb5"/>
+      <path d="M222 147L178 182L128 233Q208 204 222 147Z" fill="#126887"/>
+    </svg>

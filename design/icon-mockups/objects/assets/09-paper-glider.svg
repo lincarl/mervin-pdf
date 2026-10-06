@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title"><title id="title">Paper glider, Mervin image icon concept 09</title><defs>
+      <linearGradient id="glider-paper" x1="0" y1="0" x2="1" y2="1">
+        <stop stop-color="#ffffff"/><stop offset=".55" stop-color="#f6faf6"/><stop offset="1" stop-color="#acd7db"/>
+      </linearGradient>
+      <linearGradient id="glider-wing" x1="0" y1="0" x2=".8" y2="1">
+        <stop stop-color="#ffffff"/><stop offset="1" stop-color="#c7e7e7"/>
+      </linearGradient>
+      <linearGradient id="glider-fold" x2="1" y2="1">
+        <stop stop-color="#2eb1bb"/><stop offset="1" stop-color="#076476"/>
+      </linearGradient>
+      <linearGradient id="glider-orange" x2="1" y2="1">
+        <stop stop-color="#ffd077"/><stop offset="1" stop-color="#e87725"/>
+      </linearGradient></defs>
+      <path d="M20 105L237 22L172 232L123 161L70 199L89 131Z" fill="#183c4e" opacity=".18" transform="translate(0 4)"/>
+      <path d="M20 101L237 18L172 228L123 157L70 195L89 127Z" fill="#eaf6f3" stroke="#537f8c" stroke-width="2.5" stroke-linejoin="round"/>
+      <path d="M70 195L89 127L123 157Z" fill="url(#glider-orange)"/>
+      <path d="M89 127L237 18L123 157L70 195Z" fill="url(#glider-fold)"/>
+      <path d="M70 195L89 127L105 143Z" fill="url(#glider-orange)"/>
+      <path d="M20 101L237 18L89 127Z" fill="url(#glider-wing)" stroke="#8eb6bc" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M237 18L172 228L123 157Z" fill="url(#glider-paper)" stroke="#83adb5" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M230 27L127 158L170 218" fill="none" stroke="#ffffff" stroke-opacity=".8" stroke-width="3" stroke-linejoin="round"/>
+      <path d="M29 101L88 121L221 31" fill="none" stroke="#ffffff" stroke-opacity=".8" stroke-width="3" stroke-linecap="round"/></svg>

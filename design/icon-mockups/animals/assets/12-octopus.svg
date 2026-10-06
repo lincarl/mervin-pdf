@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title"><title id="title">Octopus, Mervin animal icon concept 12</title><defs>
+      <linearGradient id="octopus-head" x1=".1" y1="0" x2=".85" y2="1"><stop stop-color="#9387e4"/><stop offset=".5" stop-color="#566bc4"/><stop offset="1" stop-color="#188f9e"/></linearGradient>
+      <linearGradient id="octopus-left" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#8470d4"/><stop offset="1" stop-color="#3d69a7"/></linearGradient>
+      <linearGradient id="octopus-right" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#3b81be"/><stop offset="1" stop-color="#159fa5"/></linearGradient>
+    </defs>
+      <path d="M94 128C74 153 74 176 47 176C26 176 17 157 24 143Q29 134 37 135" fill="none" stroke="url(#octopus-left)" stroke-width="24" stroke-linecap="round"/>
+      <path d="M162 128C182 153 182 176 209 176C230 176 239 157 232 143Q227 134 219 135" fill="none" stroke="url(#octopus-right)" stroke-width="24" stroke-linecap="round"/>
+      <path d="M107 146C106 180 86 205 52 215Q37 219 31 207" fill="none" stroke="url(#octopus-left)" stroke-width="25" stroke-linecap="round"/>
+      <path d="M149 146C150 180 170 205 204 215Q219 219 225 207" fill="none" stroke="url(#octopus-right)" stroke-width="25" stroke-linecap="round"/>
+      <path d="M118 158C124 188 119 217 105 232" fill="none" stroke="#4569ac" stroke-width="25" stroke-linecap="round"/>
+      <path d="M138 158C132 188 137 217 151 232" fill="none" stroke="#2488a6" stroke-width="25" stroke-linecap="round"/>
+      <path d="M66 111L72 62L96 32L128 21L160 32L184 62L190 111L178 143L151 168H105L78 143Z" fill="url(#octopus-head)"/>
+      <path d="M72 62L96 32L128 21L128 82L94 105L66 111Z" fill="#9489dc"/>
+      <path d="M128 21L160 32L184 62L156 104L128 82Z" fill="#7383cf"/>
+      <path d="M184 62L190 111L178 143L151 168L156 104Z" fill="#318fae"/>
+      <path d="M66 111L94 105L105 168L78 143Z" fill="#6563b7"/>
+      <path d="M94 105L128 82L156 104L151 168H105Z" fill="#6193c3"/>
+      <path d="M128 82L156 104L151 168H128Z" fill="#498fb3"/>
+      <ellipse cx="104" cy="119" rx="16" ry="19" fill="#f7f7e6"/>
+      <ellipse cx="152" cy="119" rx="16" ry="19" fill="#f7f7e6"/>
+      <ellipse cx="107" cy="121" rx="8" ry="11" fill="#183f59"/>
+      <ellipse cx="149" cy="121" rx="8" ry="11" fill="#183f59"/>
+      <circle cx="105" cy="117" r="3" fill="#fff"/>
+      <circle cx="147" cy="117" r="3" fill="#fff"/>
+    </svg>

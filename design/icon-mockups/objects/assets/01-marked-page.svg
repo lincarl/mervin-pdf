@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title"><title id="title">Marked page, Mervin image icon concept 01</title><defs><linearGradient id="paper" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fffefa"/><stop offset="1" stop-color="#d9e3e6"/></linearGradient><linearGradient id="ribbon" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#41b9ff"/><stop offset="0.5" stop-color="#1685df"/><stop offset="1" stop-color="#0957ac"/></linearGradient><linearGradient id="fold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eef5f7"/><stop offset="1" stop-color="#a9becd"/></linearGradient></defs><path d="M52 22H165L216 72V225Q216 245 197 245H54Q39 245 39 229V39Q39 22 52 22Z" fill="#071b2d" opacity=".19"/>
+      <path d="M48 13H163L210 60V220Q210 236 194 236H48Q33 236 33 220V29Q33 13 48 13Z" fill="url(#paper)" stroke="#b8cbd3" stroke-width="2"/>
+      <path d="M163 15L163 57Q163 67 175 67H209V60Z" fill="#6a889b" opacity=".18"/>
+      <path d="M162 13V47Q162 61 176 61H210Z" fill="url(#fold)"/>
+      <path d="M40 31V216Q40 229 54 229" fill="none" stroke="#fff" stroke-opacity=".65" stroke-width="3"/>
+      <path d="M70 15H120V148L95 131L70 148Z" fill="#0c3857" opacity=".16" transform="translate(4 4)"/>
+      <path d="M69 13H120V143L94.5 124L69 143Z" fill="url(#ribbon)"/>
+      <path d="M73 17H77V131L73 134Z" fill="#b6eaff" opacity=".55"/>
+      <path d="M60 173H181M60 194H160" fill="none" stroke="#93aaba" stroke-width="9" stroke-linecap="round"/>
+      <path d="M139 95H181M139 116H175" fill="none" stroke="#b4c5ce" stroke-width="8" stroke-linecap="round"/></svg>

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title"><title id="title">Blueprint roll, Mervin image icon concept 03</title><defs><linearGradient id="plan" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#43b1e7"/><stop offset="0.5" stop-color="#238ac8"/><stop offset="1" stop-color="#1261a1"/></linearGradient><linearGradient id="roll" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8ddaf7"/><stop offset="0.38" stop-color="#4eb5e5"/><stop offset="1" stop-color="#14679e"/></linearGradient><linearGradient id="ruler" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffe6a2"/><stop offset="0.5" stop-color="#efc254"/><stop offset="1" stop-color="#bd872a"/></linearGradient><linearGradient id="curl" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#d5f2ff"/><stop offset="0.42" stop-color="#91d0ec"/><stop offset="1" stop-color="#479bc2"/></linearGradient></defs><g transform="rotate(-8 126 125)">
+      <path d="M43 28H188Q205 28 205 45V210H48Q26 210 26 191V49Q26 28 43 28Z" fill="#07273c" opacity=".2" transform="translate(4 5)"/>
+      <path d="M43 24H185Q201 24 201 40V205H42Q25 205 25 188V44Q25 24 43 24Z" fill="url(#plan)" stroke="#196793" stroke-width="2"/>
+      <path d="M53 27H182Q197 27 197 42" fill="none" stroke="#a1e0fa" stroke-opacity=".65" stroke-width="3"/>
+      <path d="M53 44V172M79 46V169M105 46V169M131 46V169M157 46V169M183 46V169M52 65H185M52 91H185M52 117H185M52 143H185" fill="none" stroke="#b2e2f4" stroke-opacity=".18" stroke-width="2"/>
+      <path d="M68 153V71H158V153H128V122H101V153Z" fill="none" stroke="#e2f7ff" stroke-width="7" stroke-linejoin="round"/>
+      <path d="M112 73V99H155" fill="none" stroke="#e2f7ff" stroke-width="5"/>
+      <path d="M43 24Q25 24 25 44V189Q25 172 43 172H55V41Q55 24 43 24Z" fill="url(#roll)"/>
+      <path d="M35 44V166" fill="none" stroke="#d9f7ff" stroke-width="4" stroke-opacity=".65"/>
+      <path d="M43 172H201V190Q201 208 184 208H43Q25 208 25 190Q25 172 43 172Z" fill="url(#curl)"/>
+      <ellipse cx="43" cy="190" rx="18" ry="18" fill="#296f99"/>
+      <ellipse cx="43" cy="190" rx="10" ry="11" fill="#104b78"/>
+      <path d="M54 181H186" stroke="#ecfbff" stroke-width="4" stroke-linecap="round" opacity=".75"/>
+      </g>
+      <g transform="rotate(-34 164 162)">
+        <rect x="143" y="79" width="44" height="164" rx="5" fill="#092235" opacity=".23" transform="translate(4 3)"/>
+        <rect x="140" y="76" width="44" height="164" rx="5" fill="url(#ruler)" stroke="#ab7a2b" stroke-width="2"/>
+        <path d="M144 84V232" fill="none" stroke="#fff2b9" stroke-width="3" opacity=".8"/>
+        <path d="M172 94H183M165 114H183M172 134H183M165 154H183M172 174H183M165 194H183M172 214H183" fill="none" stroke="#916627" stroke-width="4"/>
+        <circle cx="162" cy="228" r="4" fill="#9a6b28"/>
+      </g></svg>

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title"><title id="title">Chameleon, Mervin animal icon concept 10</title><defs>
+      <linearGradient id="chameleon-body" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#b5df71"/><stop offset=".48" stop-color="#56b886"/><stop offset="1" stop-color="#168b8c"/></linearGradient>
+      <linearGradient id="chameleon-tail" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#1da497"/><stop offset="1" stop-color="#21657f"/></linearGradient>
+      <linearGradient id="chameleon-head" x2=".7" y2="1"><stop stop-color="#d3e986"/><stop offset="1" stop-color="#61b67c"/></linearGradient>
+    </defs>
+      <path d="M105 143C80 132 56 133 39 148C19 165 16 191 31 208C46 226 74 231 88 214C98 202 92 185 78 182C69 180 61 185 60 193" fill="none" stroke="url(#chameleon-tail)" stroke-width="21" stroke-linecap="round"/>
+      <path d="M111 145L97 176L105 189L130 191L124 180H114L127 153Z" fill="#367e72"/>
+      <path d="M164 135L182 170L184 182L216 179L204 171L195 172L183 138Z" fill="#377f6b"/>
+      <path d="M80 113L96 79L127 63L161 73L184 97L188 137L165 162L126 172L96 160L77 142Z" fill="url(#chameleon-body)"/>
+      <path d="M96 79L127 63L161 73L139 103L80 113Z" fill="#b0de82"/>
+      <path d="M80 113L139 103L126 172L96 160L77 142Z" fill="#65c19a"/>
+      <path d="M139 103L184 97L188 137L165 162L126 172Z" fill="#279c8c"/>
+      <path d="M160 83L175 58L187 31L209 74L240 96L227 125L197 139L172 130L157 109Z" fill="url(#chameleon-head)"/>
+      <path d="M175 58L187 31L209 74L183 80Z" fill="#b7df76"/>
+      <path d="M183 80L209 74L240 96L214 108Z" fill="#d6e9a0"/>
+      <path d="M172 130L183 80L214 108L197 139Z" fill="#7dbe7e"/>
+      <path d="M214 108L240 96L227 125L197 139Z" fill="#459b76"/>
+      <path d="M220 114L235 109L227 125L215 128Z" fill="#387b65"/>
+      <circle cx="205" cy="95" r="15" fill="#ebedab"/>
+      <circle cx="209" cy="96" r="7" fill="#244b43"/>
+      <circle cx="211" cy="93" r="2.2" fill="#fffdf0"/>
+      <path d="M111 143L98 172L87 192L109 195L118 191L105 184L128 155Z" fill="#8bce98"/>
+      <path d="M163 139L174 163L193 190L216 187L222 180L203 180L188 151Z" fill="#9bd298"/>
+      <path d="M111 143L128 155L105 184L98 172Z" fill="#70ba8c"/>
+    </svg>

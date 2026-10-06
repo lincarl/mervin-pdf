@@ -1,0 +1,5 @@
+{
+  "version": "@MERVIN_VERSION@",
+  "msi_version": "@MERVIN_MSI_VERSION@",
+  "package_version": "@MERVIN_PACKAGE_VERSION@"
+}

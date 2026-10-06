@@ -1,0 +1,74 @@
+[
+  {
+    "id": "01",
+    "stem": "01-familiar",
+    "name": "Familiar blue",
+    "description": "The current blue gradient and proportions, with an M."
+  },
+  {
+    "id": "02",
+    "stem": "02-bold",
+    "name": "Bold geometric",
+    "description": "A larger custom M with broad stems and an open center."
+  },
+  {
+    "id": "03",
+    "stem": "03-compact",
+    "name": "Compact",
+    "description": "A tall, narrow M and tighter corners for a technical feel."
+  },
+  {
+    "id": "04",
+    "stem": "04-rounded",
+    "name": "Soft line",
+    "description": "One continuous rounded stroke, with a gentler shape."
+  },
+  {
+    "id": "05",
+    "stem": "05-paper",
+    "name": "White page",
+    "description": "A folded white page with a blue M makes the document link clear."
+  },
+  {
+    "id": "06",
+    "stem": "06-blue-page",
+    "name": "Blue page",
+    "description": "The same document silhouette in the existing blue palette."
+  },
+  {
+    "id": "07",
+    "stem": "07-folded",
+    "name": "Folded ribbon",
+    "description": "Folded strips form an M with a small amount of depth."
+  },
+  {
+    "id": "08",
+    "stem": "08-stack",
+    "name": "Page stack",
+    "description": "Two offset sheets suggest everyday work with documents."
+  },
+  {
+    "id": "09",
+    "stem": "09-book",
+    "name": "Open book",
+    "description": "The M doubles as an open book, with a visible central spine."
+  },
+  {
+    "id": "10",
+    "stem": "10-mono",
+    "name": "Monochrome",
+    "description": "A white M on charcoal, with no gradient or extra detail."
+  },
+  {
+    "id": "11",
+    "stem": "11-reversed",
+    "name": "White tile",
+    "description": "A blue M on white, with a subtle edge for light desktops."
+  },
+  {
+    "id": "12",
+    "stem": "12-teal",
+    "name": "Open teal",
+    "description": "A freestanding M with no tile, using a blue-to-teal gradient."
+  }
+]

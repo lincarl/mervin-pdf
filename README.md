@@ -1,0 +1,95 @@
+# Mervin PDF
+
+**A fast, private PDF reader built for people who work with documents, not just look at them.**
+
+Mervin PDF combines a focused native reader with practical tools for technical drawings and everyday document work. Measure scaled plans, OCR part of a scanned page, fill forms, annotate, reorganize pages, and manage PDF security without sending the document to an online service.
+
+> Mervin PDF is under active development. Please report bugs and feature requests through [GitHub Issues](https://github.com/lincarl/mervin-pdf/issues).
+
+## What makes Mervin different?
+
+Most lightweight PDF readers stop at viewing and annotation. Full PDF suites include more, but can feel heavy, account-driven, or cloud-first. Mervin aims for the useful space between them:
+
+| | Mervin PDF |
+|---|---|
+| **Technical drawings** | Detects embedded CAD scales or lets you calibrate a page, then measures distance, paths, area, perimeter, and angles with vertex and edge snapping. |
+| **Local-first tools** | Selection OCR, search, page operations, form filling, annotations, and security operations run on your computer. |
+| **Comfortable reading** | Traditional, inverted, and Comfort document themes are independent of the application theme. |
+| **Real document workflow** | Detachable and mergeable tabs, session restore, per-file view state, thumbnails, outlines, and continuous or spread layouts. |
+| **Document memory controls** | Restore tabs on demand, unload inactive documents after a configurable interval, and keep windows available from the system tray. |
+| **Open source** | The complete application source is available under the AGPL-3.0 license. |
+
+The measuring workflow is the main distinction. Mervin understands rectilinear PDF measurement metadata exported by CAD software, supports manual calibration when metadata is absent, and can preserve measurements for later editing or burn them into a portable PDF that any reader can display.
+
+## Features
+
+- Fast native rendering with MuPDF
+- Continuous, single-page, and two-page spread layouts
+- Zoom from 8% to 1000%, Fit Page, Fit Width, rotation, pan, and zoom-to-cursor
+- Text selection, document search, thumbnails, and outlines
+- Distance, path, area, perimeter, and angle measurement
+- Automatic scale detection, manual calibration, and CAD geometry snapping
+- Editable saved measurements, flattened measurement export, and measurement-aware printing
+- Local 300-DPI selection OCR with support for additional Tesseract languages
+- AcroForm filling for text fields, check boxes, radio buttons, combo boxes, and list boxes
+- Highlights, underlines, strikeouts, sticky notes, and a comments panel
+- Rotate, delete, extract, split, and merge pages
+- Inspect, add, change, or remove PDF encryption and permissions using qpdf
+- Multiple windows, detachable tabs, recent files, session recovery, and per-document resume
+- Inactive document unloading, lazy session restore, and Close to tray
+- Dark, light, and system UI themes plus independent document color themes
+
+The print dialog shows a live preview of the selected pages, including current form,
+annotation, and measurement edits. The preview always fits the output sheet. Paper
+size, orientation, scale, alignment, and colour settings apply to both the preview
+and the printout. Alignment defaults to centering on both axes, with vertical-only,
+horizontal-only, and top-left placement available within the printable area.
+Grayscale keeps shades of gray; Black and white converts them to pure black or white.
+
+## Privacy by default
+
+Documents, OCR, search, settings, recent-file history, and session data stay on the local machine. Mervin has no telemetry, account requirement, or login service. It does not upload documents.
+
+By default, Mervin unloads documents after 30 minutes of inactivity. Closing a window
+hides it in the system tray and unloads its documents. Tabs and unsaved edits remain
+available when you return. Edited documents use local recovery snapshots that keep
+the PDF's encryption; passwords stay in memory. Settings > General > Memory and tray
+offers a custom interval or Never, which disables unloading even in the tray.
+Close to tray can also be switched off. Use **Quit Mervin** in the tray menu to exit.
+If the system tray is unavailable, closing a window closes it normally.
+
+Opening a web URL is an explicit user action and downloads that PDF for local viewing.
+Paste an HTTP or HTTPS link into the Open dialog's file name field, including links
+without a `.pdf` extension. Downloads use browser-compatible request headers for
+document servers such as Littelfuse, Analog Devices, and onsemi.
+
+## Platforms
+
+Mervin PDF provides release packages for:
+
+- Windows 11 x64: NSIS installer and MSI
+- Linux x86-64: AppImage, DEB, and RPM (Ubuntu 26.04 or a compatible distribution is the current baseline)
+
+Download packaged versions from [GitHub Releases](https://github.com/lincarl/mervin-pdf/releases).
+Successful pushes to `main` also publish release candidates such as `1.64.10-rc1`
+for manual testing. Further candidates keep the same target version until its
+stable release. The in-app updater offers only stable releases.
+See the [release policy](docs/RELEASING.md) for versioning and publication rules.
+
+## Build from source
+
+Mervin is a C++20 and Qt 6 application. It uses MuPDF for rendering and OCR, qpdf for structural and security operations, and CMake for its build.
+
+The build requires Qt 6.6 or newer (including the Qt SVG module, which renders the Lucide icons), MuPDF 1.28.5 built from source, qpdf, and toml++. Windows uses MSVC and vcpkg; Linux uses CMake/Ninja and the corresponding development packages.
+
+See [docs/BUILDING.md](docs/BUILDING.md) for detailed Windows setup and build instructions.
+
+## Contributing
+
+Bug reports and focused pull requests are welcome. Before starting a substantial change, please open an issue so the intended behavior and scope can be discussed. Keep changes small, include tests where practical, and run the existing test suite before submitting.
+
+## License
+
+Mervin PDF is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+
+Mervin includes and links to third-party open-source components with their own licenses. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for details. MuPDF is used under the AGPL; distributors must comply with the licenses of Mervin and all bundled dependencies.

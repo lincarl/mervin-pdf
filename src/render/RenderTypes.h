@@ -1,0 +1,55 @@
+#pragma once
+
+#include <QImage>
+#include <QMetaType>
+#include <QRect>
+#include <QString>
+
+#include <cstdint>
+
+namespace mervin {
+
+class Document;
+
+// Light preserves authored pixels; Inverted applies the viewer colour negative; Comfort applies
+// the worker colour-aware dark transform (see ComfortTransform).
+enum class PageTheme { Light, Inverted, Comfort };
+
+// The document must be alive during submit(); queued jobs use its lifetime gate.
+struct RenderRequest
+{
+    Document *document = nullptr;
+    quint64 requester = 0; // id of the viewer that issued this request (echoed in the result)
+    int pageNo = 0;
+    double scale = 1.0;   // 1.0 == 72 DPI (one point per pixel)
+    int rotation = 0;     // 0 / 90 / 180 / 270 degrees, clockwise
+    quint64 epoch = 0;    // viewer generation, echoed in the result
+    quint64 token = 0;    // unique id for correlation
+    // Sub-region to render, in device pixels relative to the page's full
+    // (scaled+rotated) image top-left. Empty (the default) renders the whole
+    // page; a non-empty clip renders only that band for deep-zoom tiling.
+    QRect clip;
+    // Comfort is applied in the worker; Light/Inverted render identically here
+    // (the viewer inverts on receipt), so only Comfort changes the output.
+    PageTheme theme = PageTheme::Light;
+};
+
+// The result of a render, delivered to the UI thread via a queued signal.
+// resultReady is broadcast to every viewer, so `requester` identifies which one
+// issued the request; a viewer ignores results whose requester is not its own.
+struct RenderResult
+{
+    quint64 requester = 0; // viewer id copied from the originating request
+    int pageNo = 0;
+    double scale = 1.0;
+    int rotation = 0;
+    quint64 epoch = 0;
+    quint64 token = 0;
+    QImage image;
+    bool ok = false;
+    QString error;
+};
+
+} // namespace mervin
+
+Q_DECLARE_METATYPE(mervin::RenderResult)

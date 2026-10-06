@@ -1,0 +1,98 @@
+[
+  {
+    "id": "01",
+    "stem": "01-puffin",
+    "name": "Puffin",
+    "description": "An ivory and deep blue puffin with a broad orange beak."
+  },
+  {
+    "id": "02",
+    "stem": "02-hummingbird",
+    "name": "Hummingbird",
+    "description": "A turquoise hummingbird in flight, with a copper throat and plum wing."
+  },
+  {
+    "id": "03",
+    "stem": "03-otter",
+    "name": "Otter",
+    "description": "A copper otter with rounded ears, a broad ivory muzzle, and a calm expression."
+  },
+  {
+    "id": "04",
+    "stem": "04-badger",
+    "name": "Badger",
+    "description": "An ivory badger with long blue facial stripes and a strong tapered face."
+  },
+  {
+    "id": "05",
+    "stem": "05-bear",
+    "name": "Bear",
+    "description": "A broad teal bear with round ears and an ivory muzzle."
+  },
+  {
+    "id": "06",
+    "stem": "06-snow-leopard",
+    "name": "Snow leopard",
+    "description": "A broad snow leopard with rounded ears, ice-gray facets and amber eyes."
+  },
+  {
+    "id": "07",
+    "stem": "07-rabbit",
+    "name": "Rabbit",
+    "description": "A folded blue-gray rabbit with one upright ear and one gently bent ear."
+  },
+  {
+    "id": "08",
+    "stem": "08-squirrel",
+    "name": "Squirrel",
+    "description": "A copper squirrel in profile with a broad curled tail and a pale chest."
+  },
+  {
+    "id": "09",
+    "stem": "09-tortoise",
+    "name": "Tortoise",
+    "description": "A domed teal shell with broad green folds and a calm profile."
+  },
+  {
+    "id": "10",
+    "stem": "10-chameleon",
+    "name": "Chameleon",
+    "description": "A bright folded chameleon with a curled tail and a raised crest."
+  },
+  {
+    "id": "11",
+    "stem": "11-manta-ray",
+    "name": "Manta ray",
+    "description": "Wide blue paper wings and a sturdy tail form a graceful manta."
+  },
+  {
+    "id": "12",
+    "stem": "12-octopus",
+    "name": "Octopus",
+    "description": "An indigo and teal octopus with a folded head and six visible arms."
+  },
+  {
+    "id": "13",
+    "stem": "13-elephant",
+    "name": "Elephant",
+    "description": "Wide folded ears and a curled trunk give this elephant a calm, friendly character."
+  },
+  {
+    "id": "14",
+    "stem": "14-pangolin",
+    "name": "Pangolin",
+    "description": "Overlapping copper folds and a long curled tail make an unusual, compact animal mark."
+  },
+  {
+    "id": "15",
+    "stem": "15-stag",
+    "name": "Stag",
+    "description": "A composed teal stag with broad copper antlers and a simple folded face."
+  },
+  {
+    "id": "16",
+    "stem": "16-moth",
+    "name": "Moth",
+    "description": "Broad copper wings and blue folded edges form a vivid, balanced silhouette."
+  }
+]

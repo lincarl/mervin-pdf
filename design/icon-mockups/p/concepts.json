@@ -1,0 +1,74 @@
+[
+  {
+    "id": "01",
+    "stem": "01-familiar",
+    "name": "Familiar blue",
+    "description": "The current blue gradient and proportions, with a drawn P."
+  },
+  {
+    "id": "02",
+    "stem": "02-bold",
+    "name": "Bold geometric",
+    "description": "A broad P with a generous counter and a strong vertical stem."
+  },
+  {
+    "id": "03",
+    "stem": "03-compact",
+    "name": "Compact",
+    "description": "A tall angular P and tighter corners for a technical feel."
+  },
+  {
+    "id": "04",
+    "stem": "04-rounded",
+    "name": "Soft line",
+    "description": "A rounded stroke gives the P a gentler shape."
+  },
+  {
+    "id": "05",
+    "stem": "05-paper",
+    "name": "White page",
+    "description": "A folded white page with a blue P makes the document link clear."
+  },
+  {
+    "id": "06",
+    "stem": "06-blue-page",
+    "name": "Blue page",
+    "description": "The same document silhouette in the existing blue palette."
+  },
+  {
+    "id": "07",
+    "stem": "07-folded",
+    "name": "Folded ribbon",
+    "description": "An angular P with folded strips and a small amount of depth."
+  },
+  {
+    "id": "08",
+    "stem": "08-stack",
+    "name": "Page stack",
+    "description": "Two offset sheets and a bold P suggest work with documents."
+  },
+  {
+    "id": "09",
+    "stem": "09-book",
+    "name": "Open book",
+    "description": "A clear P sits above a small open book with a central spine."
+  },
+  {
+    "id": "10",
+    "stem": "10-mono",
+    "name": "Monochrome",
+    "description": "A white P on charcoal, with no gradient or extra detail."
+  },
+  {
+    "id": "11",
+    "stem": "11-reversed",
+    "name": "White tile",
+    "description": "A blue P on white, with a subtle edge for light desktops."
+  },
+  {
+    "id": "12",
+    "stem": "12-teal",
+    "name": "Open teal",
+    "description": "A freestanding P with no tile, using a blue-to-teal gradient."
+  }
+]

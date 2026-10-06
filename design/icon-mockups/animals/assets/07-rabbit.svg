@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title"><title id="title">Rabbit, Mervin animal icon concept 07</title><defs>
+      <linearGradient id="rabbit-fur" x1="0" y1="0" x2=".8" y2="1"><stop stop-color="#d9e5ed"/><stop offset="1" stop-color="#7595ae"/></linearGradient>
+      <linearGradient id="rabbit-ear" x1="0" y1="0" x2=".7" y2="1"><stop stop-color="#e7b6a6"/><stop offset="1" stop-color="#ba8275"/></linearGradient>
+    </defs>
+      <path d="M71 132L43 56L47 20L64 14L80 31L102 116Z" fill="#99b4c8"/>
+      <path d="M47 20L64 14L80 31L102 116L84 100L65 39Z" fill="#e4edf1"/>
+      <path d="M58 34L69 36L88 109L74 108L55 57Z" fill="url(#rabbit-ear)"/>
+      <path d="M151 119L161 46L181 17L212 23L222 50L205 73L187 105L184 135Z" fill="#7e9db7"/>
+      <path d="M161 46L181 17L212 23L191 48L173 120L151 119Z" fill="#d1e1e9"/>
+      <path d="M181 17L212 23L222 50L201 46Z" fill="#edf3f3"/>
+      <path d="M175 50L187 40L195 50L176 116L163 118Z" fill="url(#rabbit-ear)"/>
+      <path d="M191 48L212 23L222 50L205 73Z" fill="#7997ac"/>
+      <path d="M80 106L117 92L155 100L186 122L204 166L201 195L172 223L130 240L87 227L54 204L45 169L56 133Z" fill="url(#rabbit-fur)"/>
+      <path d="M80 106L117 92L155 100L130 148L78 158L56 133Z" fill="#dfe9ec"/>
+      <path d="M155 100L186 122L204 166L171 161L130 148Z" fill="#b4cbd8"/>
+      <path d="M45 169L78 158L92 193L87 227L54 204Z" fill="#a5bccd"/>
+      <path d="M204 166L171 161L161 194L172 223L201 195Z" fill="#6889a4"/>
+      <path d="M87 174L108 168L130 180L151 168L174 177L178 199L156 219L130 227L104 218L81 199Z" fill="#f6f3e8"/>
+      <path d="M130 180L151 168L174 177L178 199L156 219L130 227Z" fill="#e0e4da"/>
+      <path d="M112 179L130 173L148 179L130 195Z" fill="#bc8579"/>
+      <path d="M130 194V204L119 209M130 204L141 209" fill="none" stroke="#6d7581" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M79 146L96 141L105 151L99 166L84 166L76 156Z" fill="#254256"/>
+      <path d="M177 147L162 142L153 152L159 167L173 167L181 157Z" fill="#254256"/>
+      <circle cx="91" cy="149" r="3.3" fill="#f4faff"/>
+      <circle cx="166" cy="150" r="3.3" fill="#f4faff"/>
+      <path d="M87 227L104 218L130 227L156 219L172 223L130 240Z" fill="#7394ae"/>
+    </svg>

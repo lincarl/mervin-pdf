@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title"><title id="title">Puffin, Mervin animal icon concept 01</title><defs>
+      <linearGradient id="puffin-blue" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#397c9b"/><stop offset="1" stop-color="#143650"/></linearGradient>
+      <linearGradient id="puffin-ivory" x1="0" y1="0" x2=".7" y2="1"><stop stop-color="#fffdef"/><stop offset="1" stop-color="#d5e5df"/></linearGradient>
+      <linearGradient id="puffin-bill" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ffbf55"/><stop offset="1" stop-color="#e5652e"/></linearGradient>
+    </defs>
+      <path d="M76 194L63 223L37 236H100L111 204Z" fill="#e38235"/>
+      <path d="M130 197L134 223L114 235H177L159 223L151 195Z" fill="#f3a644"/>
+      <path d="M63 223L80 231H37Z" fill="#ffbd60"/>
+      <path d="M134 223L146 230L114 235Z" fill="#ffcf76"/>
+      <path d="M74 87L67 53L89 27L130 18L169 34L192 67L187 113L171 131L176 166L165 202L139 222L97 221L63 207L40 215L53 177L50 138Z" fill="url(#puffin-blue)"/>
+      <path d="M89 27L130 18L169 34L192 67L162 46L116 40L76 66Z" fill="#4f91a7"/>
+      <path d="M99 56L129 42L160 47L182 69L185 111L163 132L132 135L104 119L91 88Z" fill="url(#puffin-ivory)"/>
+      <path d="M129 42L160 47L182 69L155 65L119 74L91 88L99 56Z" fill="#fffef5"/>
+      <path d="M91 88L104 119L132 135L115 101Z" fill="#a9c5c4"/>
+      <path d="M127 131L164 128L176 166L165 202L139 222L108 217L114 178Z" fill="url(#puffin-ivory)"/>
+      <path d="M164 128L176 166L165 202L139 222L149 181Z" fill="#bfdbd5"/>
+      <path d="M74 108L112 123L129 157L109 195L70 208L53 177L56 138Z" fill="#286488"/>
+      <path d="M74 108L112 123L91 162L53 177L56 138Z" fill="#3a86a3"/>
+      <path d="M112 123L129 157L109 195L91 162Z" fill="#1e506e"/>
+      <path d="M53 177L91 162L109 195L70 208Z" fill="#193e5b"/>
+      <path d="M172 70L202 75L236 103L208 128L177 124L180 100Z" fill="url(#puffin-bill)"/>
+      <path d="M172 70L187 76L192 104L184 125L177 124L180 100Z" fill="#f8d879"/>
+      <path d="M202 75L212 85L215 118L208 128L202 105Z" fill="#be542f"/>
+      <path d="M192 104L236 103L208 128L184 125Z" fill="#d47533"/>
+      <path d="M186 103L236 103L231 108L188 109Z" fill="#913d27"/>
+      <path d="M143 71L157 89L143 103L132 86Z" fill="#dd7d43"/>
+      <ellipse cx="146" cy="84" rx="9" ry="11" fill="#132f40"/>
+      <circle cx="149" cy="80" r="3" fill="#fffdf1"/>
+    </svg>

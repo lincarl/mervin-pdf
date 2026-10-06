@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title"><title id="title">Hummingbird, Mervin animal icon concept 02</title><defs>
+      <linearGradient id="hummingbird-teal" x1="0" y1="0" x2=".8" y2="1"><stop stop-color="#69ddd4"/><stop offset=".5" stop-color="#26adba"/><stop offset="1" stop-color="#186f94"/></linearGradient>
+      <linearGradient id="hummingbird-plum" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#a998c9"/><stop offset="1" stop-color="#574a87"/></linearGradient>
+      <linearGradient id="hummingbird-copper" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ffc882"/><stop offset="1" stop-color="#c67453"/></linearGradient>
+    </defs>
+      <path d="M118 128L107 23L135 42L160 80L161 115Z" fill="url(#hummingbird-plum)"/>
+      <path d="M107 23L135 42L144 103Z" fill="#b5a8d8"/>
+      <path d="M107 23L144 103L118 128Z" fill="#716193"/>
+      <path d="M106 163L48 225L85 208L73 241L128 188L143 151Z" fill="#245379"/>
+      <path d="M106 163L48 225L85 208L128 175Z" fill="#4fa4af"/>
+      <path d="M85 208L73 241L128 188L128 175Z" fill="#173c61"/>
+      <path d="M91 170L114 128L137 102L147 82L163 72L180 78L191 93L187 116L169 130L159 153L137 178L108 193L85 193Z" fill="url(#hummingbird-teal)"/>
+      <path d="M147 82L163 72L180 78L191 93L167 87L144 95Z" fill="#8ce4d9"/>
+      <path d="M187 109L169 130L159 153L137 178L131 153L151 123L163 107Z" fill="url(#hummingbird-copper)"/>
+      <path d="M151 123L163 107L187 109L170 116Z" fill="#ffdab2"/>
+      <path d="M137 178L108 193L85 193L111 170L131 153Z" fill="#17798e"/>
+      <path d="M135 150L98 142L61 104L19 28L76 56L119 100L149 128Z" fill="url(#hummingbird-teal)"/>
+      <path d="M19 28L76 56L119 100L82 94Z" fill="#83e2dc"/>
+      <path d="M19 28L82 94L98 142L61 104Z" fill="#3fb9c5"/>
+      <path d="M82 94L119 100L149 128L135 150L98 142Z" fill="#1d88ac"/>
+      <path d="M19 28L82 94L135 150L110 104Z" fill="#5dd2d3"/>
+      <path d="M183 94L244 91L187 107Z" fill="#234a62"/>
+      <path d="M183 94L244 91L186 99Z" fill="#67a6b4"/>
+      <path d="M151 93L162 87L178 95L173 106L157 107Z" fill="#17778b"/>
+      <circle cx="169" cy="96" r="7.5" fill="#102f44"/>
+      <circle cx="171" cy="93" r="2.7" fill="#fffef4"/>
+    </svg>

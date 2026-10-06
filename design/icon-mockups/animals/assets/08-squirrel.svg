@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title"><title id="title">Squirrel, Mervin animal icon concept 08</title><defs>
+      <linearGradient id="squirrel-tail" x1="0" y1="0" x2=".8" y2="1"><stop stop-color="#f5b14f"/><stop offset=".5" stop-color="#d87c34"/><stop offset="1" stop-color="#9c4f2b"/></linearGradient>
+      <linearGradient id="squirrel-body" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#e4954d"/><stop offset="1" stop-color="#b75f32"/></linearGradient>
+    </defs>
+      <path d="M110 218Q44 226 24 180Q10 150 28 119Q13 93 23 61Q31 28 69 20Q107 12 126 41Q144 67 126 91Q114 107 97 101Q79 97 80 80Q82 65 94 66Q79 52 67 65Q48 84 68 106Q86 126 94 148Q104 178 120 186Z" fill="url(#squirrel-tail)"/>
+      <path d="M23 61Q31 28 69 20Q107 12 126 41L91 42L57 55L39 87L28 119Q13 93 23 61Z" fill="#f6b95b"/>
+      <path d="M126 41Q144 67 126 91Q114 107 97 101Q79 97 80 80Q82 65 94 66Q80 52 67 65L91 42Z" fill="#bd632d"/>
+      <path d="M28 119L68 106L94 148L78 178L24 180Q10 150 28 119Z" fill="#e99b4a"/>
+      <path d="M24 180L78 178L110 218Q44 226 24 180Z" fill="#ad562b"/>
+      <path d="M122 139L127 102L143 83L169 82L190 104L185 132L202 163L194 199L165 222H114L94 206L91 177Z" fill="url(#squirrel-body)"/>
+      <path d="M143 91L133 63L143 33L162 61L164 86Z" fill="#b4673a"/>
+      <path d="M143 33L162 61L164 86L151 75L145 53Z" fill="#e9a55d"/>
+      <path d="M144 60L151 54L156 78L146 77Z" fill="#754735"/>
+      <path d="M174 93L179 61L193 44L200 72L194 101Z" fill="#c47b43"/>
+      <path d="M129 107L145 85L174 80L195 94L203 114L233 126L225 141L197 146L177 137L146 144Z" fill="#e29a50"/>
+      <path d="M145 85L174 80L195 94L171 105L129 107Z" fill="#f2b363"/>
+      <path d="M171 105L195 94L203 114L233 126L202 130L177 137Z" fill="#d58543"/>
+      <path d="M224 122L238 128L229 139L222 136Z" fill="#384c51"/>
+      <path d="M182 111L188 105L197 110L194 121L186 123L181 117Z" fill="#233d49"/>
+      <circle cx="189" cy="111" r="2.3" fill="#f7fbf1"/>
+      <path d="M197 146L177 137L167 153L166 193L181 211L194 199L202 163Z" fill="#f7dfb3"/>
+      <path d="M167 153L150 160L146 185L166 193Z" fill="#ebc78f"/>
+      <path d="M152 148L159 160L186 168L195 162L207 167L200 178L182 182L153 176L136 160Z" fill="#b46734"/>
+      <path d="M110 159L133 151L156 170L159 194L138 218H108L94 206L91 177Z" fill="#d18343"/>
+      <path d="M110 159L133 151L156 170L124 185L91 177Z" fill="#eaa456"/>
+      <path d="M124 185L156 170L159 194L138 218H108Z" fill="#b86a35"/>
+      <path d="M139 206L159 211L181 217L203 221L204 231H113L105 222Z" fill="#7f4c32"/>
+      <path d="M139 206L159 211L181 217L203 221H127L113 231L105 222Z" fill="#cd8849"/>
+    </svg>

@@ -1,0 +1,118 @@
+#pragma once
+
+#include "render/AnnotTypes.h"
+
+#include <QByteArray>
+#include <QString>
+
+namespace mervin {
+
+// Application settings, persisted as TOML in %APPDATA%/MervinPDF/config.toml.
+// Defaults match the functional spec. Fields not yet consumed by the current
+// milestone are still loaded/saved so the file round-trips cleanly.
+struct Settings
+{
+    // View defaults
+    QString defaultZoom = QStringLiteral("fit-width"); // "fit-width" | "fit-page" | "<percent>"
+    // The two page-layout axes, kept apart so either can be chosen without
+    // giving up the other. `page_mode` used to carry a third value, "two-page",
+    // which is migrated on load to continuous + spread (see Settings::load).
+    QString pageMode = QStringLiteral("continuous");   // "continuous" | "single"
+    bool twoPageSpread = false;                        // facing pages in one row
+    // UI theme: the application chrome's light/dark scheme, chosen with the cards
+    // under Settings -> Appearance -> Application. New installs default to "dark".
+    // "system" follows the OS setting, including live auto-switches.
+    QString colorScheme = QStringLiteral("dark");      // "system" | "light" | "dark"
+    // Document theme is independent of chrome: light preserves pages, dark inverts, comfort
+    // applies the colour-aware dark transform, and legacy follow-ui follows the UI scheme.
+    // Migrate invert_colors true/false to dark/light; new installs default to light.
+    QString documentTheme = QStringLiteral("light"); // "light" | "dark" | "comfort" | "follow-ui"
+
+    // UI accent colour. Drives selected segments, tabs, focus rings, etc. via the
+    // central Theme. "system" (the default) follows the OS accent colour; set to a
+    // "#RRGGBB" value for a fixed custom accent.
+    QString accentColor = QStringLiteral("system");
+
+    // Open behaviour (consumed in M5)
+    QString openBehavior = QStringLiteral("new-tab");  // "new-tab" | "new-window"
+
+    // Zero disables document unloading, including when closing to the tray.
+    static constexpr int kMaxUnloadInactiveMinutes = 7 * 24 * 60;
+    int unloadInactiveMinutes = 30;
+    bool closeToTray = true;
+
+    // Recent files (consumed in M6)
+    int recentVisibleCount = 100;
+    int recentRetention = 500;
+    // Keep entries whose file was deleted or moved; they stay listed, greyed out,
+    // until cleared by hand. When false, WindowManager drops them from the history
+    // whenever the Recent list is shown, unless their drive or share is detached
+    // (see RecentStore::isRemovedFromDisk and WindowManager::pruneMissingRecent).
+    bool recentKeepMissing = true;
+
+    // Measuring tool defaults (seed each new tab's measure panel).
+    QString measurementUnit = QStringLiteral("mm");        // mm | cm | m | in | ft
+    QString measurementType = QStringLiteral("distance");  // distance | path | area | angle
+    int measurementPrecision = 2;                          // decimal places
+    double measurementLineWidth = 2.0;                     // stroke width (points)
+    bool measurementSnap = true;                           // snap to CAD vertices/edges
+
+    // Form filling: tint fillable AcroForm fields while in form-fill mode, and
+    // enter form-fill mode automatically when opening a PDF that has fields.
+    bool highlightFormFields = true;
+    bool autoFormFill = true;
+
+    // Document > Extract Pages: the dialog's "Open when done" box, remembered.
+    // True by default because the old "Open it now?" prompt defaulted to Yes.
+    bool extractOpenWhenDone = true;
+
+    // Selection OCR. This is a Tesseract language code (for example, "eng").
+    // If its model is not installed, the OCR picker falls back to the first
+    // installed language instead of asking Tesseract to load a missing model.
+    QString ocrDefaultLanguage = QStringLiteral("eng");
+
+    // Annotations (highlight / comment). The author stamps new marks' /T field;
+    // empty means "use the OS user name" (resolved at use). annotationColor is the
+    // default colour for new marks and sticky notes (one shared colour), chosen in
+    // the Settings dialog; existing marks are recoloured per-note from the swatches
+    // in their comment card. annotationStyle is the last markup style.
+    QString annotationAuthor;
+    // Derived from the markup presets rather than re-typed: this default and
+    // annot::palette()[0] have to be the same colour, and they were three separate
+    // literals before.
+    QString annotationColor = annot::defaultColor().name(QColor::HexRgb).toUpper();
+    QString annotationStyle = QStringLiteral("highlight"); // highlight | underline | strikeout
+
+    // Crash recovery / session restore (M11), on by default
+    bool restoreSession = true;
+
+    // Download new releases in the background and offer to install them (see
+    // Updater). On by default. A new key on purpose: the retired
+    // `check_updates_on_startup` defaulted to off and every saved config wrote
+    // it, so honouring it would have kept updates off for nearly everyone.
+    bool autoUpdate = true;
+
+    // First-run: whether we've already offered to make Mervin the default PDF
+    // viewer. The prompt is shown exactly once, on the first launch; after that
+    // the user is never asked again, regardless of how they answered.
+    bool promptedSetDefaultApp = false;
+
+    // Window geometry/state (base64 of QMainWindow::saveGeometry/saveState)
+    QByteArray windowGeometry;
+    QByteArray windowState;
+
+    static Settings load();
+    bool save(QString *error = nullptr) const;
+
+    // Equal when every saved value matches. The save baseline is not compared.
+    bool operator==(const Settings &other) const;
+    // Takes every value from `other` but keeps this copy's save baseline, so the
+    // next save() still compares with what this copy last loaded or saved.
+    void assignValues(const Settings &other);
+
+private:
+    mutable QByteArray baseline_; // serialized values at load/last successful save
+
+};
+
+} // namespace mervin

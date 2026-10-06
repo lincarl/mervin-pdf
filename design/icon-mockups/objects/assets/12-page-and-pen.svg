@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title"><title id="title">Page and pen, Mervin image icon concept 12</title><defs>
+      <linearGradient id="pen-paper" x1="0" y1="0" x2=".75" y2="1">
+        <stop stop-color="#fffef5"/><stop offset="1" stop-color="#e8e2ca"/>
+      </linearGradient>
+      <linearGradient id="pen-barrel" x1="0" y1="0" x2="1" y2="0">
+        <stop stop-color="#174f88"/><stop offset=".28" stop-color="#32a6d5"/><stop offset=".5" stop-color="#197db8"/><stop offset="1" stop-color="#123d73"/>
+      </linearGradient>
+      <linearGradient id="pen-brass" x1="0" y1="0" x2="1" y2=".5">
+        <stop stop-color="#a86f25"/><stop offset=".35" stop-color="#ffe5a0"/><stop offset=".58" stop-color="#edc367"/><stop offset="1" stop-color="#aa702c"/>
+      </linearGradient></defs>
+      <path d="M42 17H142L190 65V222Q190 238 174 238H42Q26 238 26 222V33Q26 17 42 17Z" fill="#273f48" opacity=".17" transform="translate(3 5)"/>
+      <path d="M42 14H142L190 62V220Q190 236 174 236H42Q26 236 26 220V30Q26 14 42 14Z" fill="url(#pen-paper)" stroke="#a9aa98" stroke-width="2.5"/>
+      <path d="M142 14V49Q142 62 155 62H190Z" fill="#d2d0b8"/>
+      <path d="M142 16V49Q142 61 155 61H186" fill="none" stroke="#f8f5df" stroke-width="3"/>
+      <path d="M51 83H137M51 106H121M51 129H100" fill="none" stroke="#9baea9" stroke-width="7" stroke-linecap="round"/>
+      <path d="M48 202Q55 188 65 194Q72 199 80 190" fill="none" stroke="#287797" stroke-width="5" stroke-linecap="round"/>
+      <g transform="translate(143 135) rotate(36)">
+        <path d="M-19-80Q-19-103 0-103Q19-103 19-80V30L23 39L16 65L0 107L-16 65L-23 39L-19 30Z" fill="#153a51" opacity=".19" transform="translate(4 3)"/>
+        <path d="M-19-80Q-19-103 0-103Q19-103 19-80V27H-19Z" fill="url(#pen-barrel)" stroke="#113d67" stroke-width="2"/>
+        <path d="M-10-77V10" fill="none" stroke="#72d6ee" stroke-width="4" stroke-linecap="round" opacity=".78"/>
+        <path d="M8-82V-39Q8-29 14-29" fill="none" stroke="#f1d28b" stroke-width="5" stroke-linecap="round"/>
+        <path d="M-22 30H22L23 42L15 68L0 107L-15 68L-23 42Z" fill="url(#pen-brass)" stroke="#9c6e2f" stroke-width="2" stroke-linejoin="round"/>
+        <path d="M-20 18H20V33H-20Z" fill="url(#pen-brass)" stroke="#a87c3b" stroke-width="1.5"/>
+        <path d="M0 59V103" fill="none" stroke="#785024" stroke-width="2.5"/>
+        <circle cy="58" r="5" fill="#6c522d"/>
+        <path d="M-13 42L-9 64L-2 85" fill="none" stroke="#fff1b8" stroke-width="3" stroke-linecap="round"/>
+      </g></svg>

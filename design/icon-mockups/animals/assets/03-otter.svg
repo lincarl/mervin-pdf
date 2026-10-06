@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title"><title id="title">Otter, Mervin animal icon concept 03</title><defs>
+      <linearGradient id="otter-fur" x1="0" y1="0" x2=".8" y2="1"><stop stop-color="#d79a67"/><stop offset=".5" stop-color="#b56d45"/><stop offset="1" stop-color="#744734"/></linearGradient>
+      <linearGradient id="otter-cream" x1="0" y1="0" x2=".4" y2="1"><stop stop-color="#fff0cf"/><stop offset="1" stop-color="#dfc397"/></linearGradient>
+      <linearGradient id="otter-nose" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#5a4238"/><stop offset="1" stop-color="#2e292a"/></linearGradient>
+    </defs>
+      <path d="M61 46Q42 30 30 45Q18 61 34 84L66 93L84 66Z" fill="#935b3e"/>
+      <path d="M195 46Q214 30 226 45Q238 61 222 84L190 93L172 66Z" fill="#85513a"/>
+      <path d="M56 50Q42 43 37 55Q34 66 47 74L62 71Z" fill="#e4b381"/>
+      <path d="M200 50Q214 43 219 55Q222 66 209 74L194 71Z" fill="#c69168"/>
+      <path d="M65 53L95 31Q128 19 161 31L191 53L217 92L230 133Q230 162 208 185L177 212Q153 232 128 233Q103 232 79 212L48 185Q26 162 26 133L39 92Z" fill="url(#otter-fur)"/>
+      <path d="M65 53L95 31Q128 19 161 31L191 53L163 67L128 52L93 67Z" fill="#e2ae78"/>
+      <path d="M39 92L65 53L93 67L76 112L46 145L26 133Z" fill="#c58152"/>
+      <path d="M217 92L191 53L163 67L180 112L210 145L230 133Z" fill="#995d40"/>
+      <path d="M93 67L128 52L163 67L153 118L128 140L103 118Z" fill="#c88857"/>
+      <path d="M26 133L46 145L79 187L128 220L128 233Q103 232 79 212L48 185Q26 162 26 133Z" fill="#86513a"/>
+      <path d="M230 133L210 145L177 187L128 220L128 233Q153 232 177 212L208 185Q230 162 230 133Z" fill="#694334"/>
+      <path d="M48 132L79 119L107 122L128 135L149 122L177 119L208 132L199 166L173 193L150 207Q128 220 106 207L83 193L57 166Z" fill="url(#otter-cream)"/>
+      <path d="M48 132L79 119L107 122L128 148L102 163L65 153Z" fill="#fff2d6"/>
+      <path d="M208 132L177 119L149 122L128 148L154 163L191 153Z" fill="#f2ddba"/>
+      <path d="M57 166L65 153L102 163L128 190L106 207L83 193Z" fill="#e3c79e"/>
+      <path d="M199 166L191 153L154 163L128 190L150 207L173 193Z" fill="#cdb087"/>
+      <path d="M72 103Q86 91 99 101" fill="none" stroke="#75472f" stroke-width="8" stroke-linecap="round"/>
+      <path d="M157 101Q171 91 184 103" fill="none" stroke="#71452f" stroke-width="8" stroke-linecap="round"/>
+      <ellipse cx="87" cy="110" rx="11" ry="13" fill="#292a2c"/>
+      <ellipse cx="169" cy="110" rx="11" ry="13" fill="#292a2c"/>
+      <circle cx="84" cy="106" r="3.8" fill="#fff9e6"/>
+      <circle cx="166" cy="106" r="3.8" fill="#fff9e6"/>
+      <path d="M108 138Q128 129 148 138L145 152L128 163L111 152Z" fill="url(#otter-nose)"/>
+      <path d="M115 140Q128 136 141 140" fill="none" stroke="#967567" stroke-width="4" stroke-linecap="round"/>
+      <path d="M128 160V173Q114 182 104 172M128 173Q142 182 152 172" fill="none" stroke="#715744" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>

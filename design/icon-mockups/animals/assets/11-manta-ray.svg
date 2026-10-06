@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title"><title id="title">Manta ray, Mervin animal icon concept 11</title><defs>
+      <linearGradient id="manta-blue" x1="0" y1="0" x2=".8" y2="1"><stop stop-color="#64d6ed"/><stop offset=".48" stop-color="#238fcb"/><stop offset="1" stop-color="#244c94"/></linearGradient>
+      <linearGradient id="manta-center" x2=".4" y2="1"><stop stop-color="#abe8ed"/><stop offset="1" stop-color="#3b9dca"/></linearGradient>
+      <linearGradient id="manta-tail" x2="1" y2="1"><stop stop-color="#245da1"/><stop offset="1" stop-color="#173b73"/></linearGradient>
+    </defs>
+      <path d="M115 157L135 160L137 201L148 233L137 242L125 223L117 193Z" fill="url(#manta-tail)"/>
+      <path d="M104 76L100 53Q99 43 108 43L121 68ZM152 76L156 53Q157 43 148 43L135 68Z" fill="#4dbdd8"/>
+      <path d="M104 73Q105 60 117 59H139Q151 60 152 73L158 87Q201 76 243 65Q217 119 173 145L146 173L128 181L110 173L83 145Q39 119 13 65Q55 76 98 87Z" fill="url(#manta-blue)"/>
+      <path d="M13 65L98 87L128 116L83 145Q39 119 13 65Z" fill="#56c4e3"/>
+      <path d="M13 65L83 145L63 116Z" fill="#93e0eb"/>
+      <path d="M243 65L158 87L128 116L173 145Q217 119 243 65Z" fill="#2b85be"/>
+      <path d="M243 65L173 145L202 108Z" fill="#4aabd4"/>
+      <path d="M98 87L104 73Q128 60 152 73L158 87L144 136L128 163L112 136Z" fill="url(#manta-center)"/>
+      <path d="M128 71L152 73L158 87L144 136L128 163Z" fill="#62bdd8"/>
+      <path d="M83 145L112 136L128 163L110 173Z" fill="#216ab1"/>
+      <path d="M173 145L144 136L128 163L146 173L128 181Z" fill="#204d93"/>
+      <path d="M110 91L128 103L146 91L139 115H117Z" fill="#d2f1ed"/>
+      <ellipse cx="106" cy="90" rx="5.5" ry="4.5" fill="#1a567d"/>
+      <ellipse cx="150" cy="90" rx="5.5" ry="4.5" fill="#1a567d"/>
+    </svg>
