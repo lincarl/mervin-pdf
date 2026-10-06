@@ -232,12 +232,33 @@ set_tests_properties(tst_theme PROPERTIES
 # keeps it building when MuPDF is not around. QTEST_MAIN because it is a QWidget.
 qt_add_executable(tst_find_bar tst_find_bar.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/FindBar.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/FindBar.h)
+    ${CMAKE_SOURCE_DIR}/src/ui/FindBar.h
+    ${CMAKE_SOURCE_DIR}/src/ui/SearchLineEdit.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/SearchLineEdit.h)
 target_include_directories(tst_find_bar PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(tst_find_bar PRIVATE mervin_icons Qt6::Test Qt6::Widgets)
 set_target_properties(tst_find_bar PROPERTIES WIN32_EXECUTABLE OFF)
 add_test(NAME tst_find_bar COMMAND tst_find_bar)
 set_tests_properties(tst_find_bar PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+
+# The floating find card: opening, closing, Enter and Escape, and the option
+# clicks that must leave the caret in the field. Like tst_find_bar it compiles the
+# widget in directly and talks to it only through signals, so it needs no
+# document; PanelStack comes along because the card asks it for its position.
+qt_add_executable(tst_find_card tst_find_card.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/FindCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/FindCard.h
+    ${CMAKE_SOURCE_DIR}/src/ui/PanelStack.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/PanelStack.h
+    ${CMAKE_SOURCE_DIR}/src/ui/SearchLineEdit.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/SearchLineEdit.h)
+target_include_directories(tst_find_card PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(tst_find_card PRIVATE mervin_icons Qt6::Test Qt6::Widgets)
+set_target_properties(tst_find_card PROPERTIES WIN32_EXECUTABLE OFF)
+add_test(NAME tst_find_card COMMAND tst_find_card)
+set_tests_properties(tst_find_card PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 

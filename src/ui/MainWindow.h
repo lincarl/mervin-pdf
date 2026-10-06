@@ -191,6 +191,7 @@ private:
     void syncComfortButton();       // moon/sun glyph + tooltip on the toolbar toggle
     void showRecentPanel();         // switch to Recent view (called by pill button)
     void setCommandBarMode(bool recentActive); // hide/show doc-only toolbar widget
+    void syncFindToggle();          // toolbar search button follows the current find card
     void updateRecentButton();      // sync pill button accent state
     void syncDocTabBar();           // rebuild docTabBar_ to match tabs_
     void updateTabGlyphs();         // tint each doc tab's glyph (accent on the active tab)
@@ -286,6 +287,7 @@ private:
     QAction *findAction_ = nullptr;
     QAction *findNextAction_ = nullptr;
     QAction *findPrevAction_ = nullptr;
+    QAction *findCardAction_ = nullptr; // toolbar toggle for the current tab's find card
     QAction *copyAction_ = nullptr;
     QAction *selectAllAction_ = nullptr;
     QAction *ocrAction_ = nullptr;
@@ -308,7 +310,7 @@ private:
     QAction *singleAction_ = nullptr;
     QAction *twoPageAction_ = nullptr;
 
-    // Global adaptive find/search bar (below the tab row, always visible).
+    // The Recent page's search row, below the tab row and shown only on Recent.
     mervin::FindBar *findBar_ = nullptr;
 
     // Tab row: always visible strip above find bar containing Recent pill + doc tabs.

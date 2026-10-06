@@ -36,6 +36,10 @@ public:
     // search inside file contents; false means filter by filename.
     void setSearch(const QString &text, bool contentSearch);
 
+    // Move keyboard focus to the list, keeping the filter (Escape in the search
+    // field). The first row becomes current if none is, so arrows and Enter work.
+    void focusList();
+
     // One-line summary of the current listing (e.g. "Your last 12 opened
     // documents"). Shown by the window in the status bar while Recent is active.
     QString statusSummary() const { return statusSummary_; }

@@ -78,6 +78,7 @@ const char *lucideName(Glyph id)
     case Glyph::PrevPage: return "chevron-left";
     case Glyph::NextPage: return "chevron-right";
     case Glyph::ChevronDown: return "chevron-down";
+    case Glyph::ChevronUp: return "chevron-up";
     case Glyph::Search: return "search";
     case Glyph::ZoomOut: return "minus";
     case Glyph::ZoomIn: return "plus";

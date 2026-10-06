@@ -1,13 +1,12 @@
 #include "ui/FindBar.h"
 
 #include "ui/Icons.h"
+#include "ui/SearchLineEdit.h"
 
 #include <QAction>
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
-#include <QClipboard>
-#include <QContextMenuEvent>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -15,68 +14,16 @@
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
-#include <QMenu>
 #include <QPainter>
 #include <QPalette>
 #include <QPixmap>
 #include <QTimer>
 #include <QToolButton>
 
-#include <memory>
-
 namespace mervin {
 
 namespace {
 constexpr int kDebounceMs = 200;
-
-class SearchLineEdit final : public QLineEdit
-{
-public:
-    using QLineEdit::QLineEdit;
-
-protected:
-    void keyPressEvent(QKeyEvent *event) override
-    {
-        if (event->matches(QKeySequence::Paste)) {
-            insertTrimmedClipboardText();
-            return;
-        }
-        QLineEdit::keyPressEvent(event);
-    }
-
-    void contextMenuEvent(QContextMenuEvent *event) override
-    {
-        std::unique_ptr<QMenu> menu(createStandardContextMenu());
-        const QList<QKeySequence> pasteKeys = QKeySequence::keyBindings(QKeySequence::Paste);
-        for (QAction *action : menu->actions()) {
-            bool isPaste = false;
-            for (const QKeySequence &shortcut : action->shortcuts()) {
-                for (const QKeySequence &key : pasteKeys) {
-                    if (shortcut.matches(key) == QKeySequence::ExactMatch) {
-                        isPaste = true;
-                        break;
-                    }
-                }
-                if (isPaste)
-                    break;
-            }
-            if (isPaste) {
-                QObject::disconnect(action, nullptr, nullptr, nullptr);
-                connect(action, &QAction::triggered, this,
-                        [this] { insertTrimmedClipboardText(); });
-                break;
-            }
-        }
-        menu->exec(event->globalPos());
-    }
-
-private:
-    void insertTrimmedClipboardText()
-    {
-        if (!isReadOnly())
-            insert(QApplication::clipboard()->text().trimmed());
-    }
-};
 
 // A monochrome magnifier, tinted to the caller's (muted) colour so it reads on
 // both light and dark themes.

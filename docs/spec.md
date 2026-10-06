@@ -22,7 +22,9 @@ This document describes the application's current user-facing behavior. See
 - Use a wide zoom range, Fit Page or Fit Width, rotate the view in 90-degree steps,
   pan with the middle mouse button, and zoom toward the pointer.
 - Select and copy text, or search the document with case-sensitive and whole-word
-  options. Search state is kept separately for each open tab.
+  options. Ctrl+F or the toolbar's search button opens a find card over the top
+  right of the page, and Escape closes it. Search state is kept separately for each
+  open tab.
 - Choose a light, dark, or system application theme. PDF pages have a separate
   Traditional, Inverted, or Comfort theme.
 - External web links in a PDF open in the system browser. An HTTP(S) URL entered

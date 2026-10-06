@@ -7,6 +7,7 @@
 #include "render/RenderEngine.h"
 #include "security/QpdfService.h"
 #include "security/DocumentOutput.h"
+#include "ui/FindCard.h"
 #include "ui/MainWindow.h"
 #include "ui/TabPage.h"
 #include "ui/ThumbnailSidebar.h"
@@ -107,6 +108,9 @@ private slots:
         QVERIFY(tab.open(QStringLiteral(MERVIN_FIXTURE_PDF)));
         ViewerWidget *viewer = tab.viewer();
         viewer->setZoomEaseMs(0);
+        // A search lives in the tab's find card; one restored behind a closed card
+        // is dropped (TabPage::restoreViewer), so open it as a user would.
+        tab.findCard()->open();
         viewer->startFind(QStringLiteral("STANDARD"), true, true);
         QTRY_COMPARE(viewer->matchCount(), 4);
         viewer->setLayoutMode({ViewLayout::Scroll::Single, true});
@@ -594,6 +598,7 @@ private slots:
         TabPage tab(&engine);
         showForLayout(tab);
         QVERIFY(tab.open(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        tab.findCard()->open(); // the search must survive each reload, as with the card open
         for (int i = 0; i < 6; ++i) {
             tab.viewer()->setScale(1.0 + i * 0.5);
             tab.viewer()->viewport()->repaint();

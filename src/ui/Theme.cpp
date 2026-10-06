@@ -621,9 +621,12 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
     // label: the viewport's QPalette::Dark background role makes Qt derive
     // QPalette::Light for child foregrounds, and a panel label that falls back to
     // the palette is invisible in both themes (see MeasurePanel's constructor).
-    add(QStringLiteral("QWidget#measurePanel { background:%1; border:1px solid %2;"
-                       " border-radius:10px; }")
-            .arg(css(t.popover), css(t.borderPopover)));
+    // The panels stack with the find card, so they share one surface and rim.
+    // The dark rim is borderStrong: the popover sits on the canvas at about 1.1:1,
+    // and the app draws no shadows to lift a floating panel.
+    add(QStringLiteral("QWidget#measurePanel, QWidget#findCard { background:%1;"
+                       " border:1px solid %2; border-radius:10px; }")
+            .arg(css(t.popover), css(dark ? t.borderStrong : t.borderPopover)));
     // The toolbar's buttons are deliberately borderless, but on a floating panel
     // over a document that leaves nine bare words with no hit target. Scope a
     // visible edge to the panel only.
@@ -677,6 +680,30 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
     add(QStringLiteral("QWidget#measurePanel QToolButton#measureClearX:hover {"
                        " color:%1; border-color:%2; }")
             .arg(css(t.inkPrimary), css(t.borderPopoverControl)));
+
+    // ── Find card ───────────────────────────────────────────────────────────
+    // Find in document floats over the page in the panel stack; its surface and
+    // rim come from the floating-panel rule above.
+    add(QStringLiteral("QWidget#findCard QToolButton { border:1px solid transparent;"
+                       " border-radius:%1; padding:0; background:transparent; color:%2; }")
+            .arg(rad, css(t.inkBody)));
+    add(QStringLiteral("QWidget#findCard QToolButton:hover { background:%1; }").arg(css(t.hover)));
+    add(QStringLiteral("QWidget#findCard QToolButton:pressed { background:%1; }")
+            .arg(css(t.pressed)));
+    add(QStringLiteral("QWidget#findCard QToolButton:disabled { background:transparent; color:%1; }")
+            .arg(css(t.inkDisabled)));
+    add(QStringLiteral("QWidget#findCard QToolButton#findCardClose { color:%1; }")
+            .arg(css(t.inkSoft)));
+    add(QStringLiteral("QWidget#findCard QCheckBox { color:%1; }")
+            .arg(css(dark ? t.inkSoft : t.ink)));
+    add(QStringLiteral("QFrame#findCardSep { background:%1; border:none; }").arg(css(t.border)));
+    add(QStringLiteral("QLabel#findCount { color:%1; }").arg(css(t.inkSoft)));
+    // The field: a control edge on the card at rest, and a 2px accent ring while
+    // it has focus. The ring takes 1px from the padding, so the text stays put.
+    add(QStringLiteral("QLineEdit#findField { border-color:%1; }")
+            .arg(css(t.borderPopoverControl)));
+    add(QStringLiteral("QLineEdit#findField:focus { border:2px solid %1; padding:3px 7px; }")
+            .arg(css(theme::legibleAccent(t.accent, dark))));
 
     // ── Merge dialog ────────────────────────────────────────────────────────
     // Its row list (RowList) is shared with the Extract dialog, so each list rule,

@@ -14,7 +14,9 @@ class QToolButton;
 namespace mervin {
 
 // Adaptive search: FindDocument shows navigation, count and match options; RecentSearch shows
-// name/content scope and hides document controls.
+// name/content scope and hides document controls. Documents now search with their FindCard, so
+// MainWindow shows this bar only on the Recent page; switching to FindDocument parks the Recent
+// query while a document is on screen.
 class FindBar : public QWidget
 {
     Q_OBJECT

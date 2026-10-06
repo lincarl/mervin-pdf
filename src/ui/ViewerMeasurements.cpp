@@ -576,7 +576,8 @@ void ViewerWidget::updateHoverScale(int page, QPointF pp)
 bool ViewerWidget::pressIsOverMeasurePanel(QMouseEvent *event) const
 {
     const QPoint g = event->globalPosition().toPoint();
-    for (QWidget *panel : {static_cast<QWidget *>(measurePanel_), static_cast<QWidget *>(annotPanel_)}) {
+    for (QWidget *panel : {static_cast<QWidget *>(measurePanel_), static_cast<QWidget *>(annotPanel_),
+                           static_cast<QWidget *>(findCard_)}) {
         if (panel && panel->isVisible() && panel->rect().contains(panel->mapFromGlobal(g)))
             return true;
     }

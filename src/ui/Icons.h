@@ -22,6 +22,7 @@ enum class Glyph {
     PrevPage,      // chevron-left
     NextPage,      // chevron-right
     ChevronDown,   // chevron-down: dropdown affordance
+    ChevronUp,     // chevron-up: previous match in the find card
     Search,        // search
     ZoomOut,       // minus
     ZoomIn,        // plus

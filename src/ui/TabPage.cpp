@@ -9,6 +9,7 @@
 #include "security/MeasureExport.h"
 #include "security/DocumentOutput.h"
 #include "ui/AnnotPanel.h"
+#include "ui/FindCard.h"
 #include "ui/MeasurePanel.h"
 #include "ui/PanelStack.h"
 #include "ui/ViewerWidget.h"
@@ -273,13 +274,32 @@ TabPage::TabPage(RenderEngine *engine, QWidget *parent)
     // by the measuring tool (annotSubModeChanged(Select)) or set programmatically.
     connect(viewer_, &ViewerWidget::annotSubModeChanged, annotPanel_, &AnnotPanel::setMode);
 
-    // Dock: stack the measure + comment panels vertically (measure on top), drag
-    // them as a group, top-right by default. Both can be open at once; show/hide is
-    // signal-driven so the dock reflows on any open/close order (incl. a document
-    // switch, which resets tool state and emits the *Changed signals below).
+    // Find in document: a card over the top right of the page. It only emits
+    // intent; the viewer owns the matches. Closing it ends the search, so the
+    // highlights go and typing returns to the page.
+    findCard_ = new FindCard(viewer_->viewport());
+    viewer_->setFindCard(findCard_);
+    connect(findCard_, &FindCard::searchChanged, viewer_, &ViewerWidget::startFind);
+    connect(findCard_, &FindCard::findNext, viewer_, &ViewerWidget::findNext);
+    connect(findCard_, &FindCard::findPrev, viewer_, &ViewerWidget::findPrev);
+    connect(viewer_, &ViewerWidget::findStatusChanged, findCard_, &FindCard::setResultCount);
+    connect(findCard_, &FindCard::openChanged, this, [this](bool open) {
+        if (open)
+            return;
+        viewer_->clearFind();
+        viewer_->setFocus();
+    });
+
+    // Dock: stack the find card and the measure + comment panels vertically (in
+    // that order), drag them as a group, top-right by default. Any of them can be
+    // open at once; show/hide is signal-driven so the dock reflows on any
+    // open/close order (incl. a document switch, which resets tool state and
+    // emits the *Changed signals below).
     panelStack_ = new PanelStack(viewer_->viewport(), this);
+    findCard_->setStack(panelStack_);
     measurePanel_->setStack(panelStack_);
     annotPanel_->setStack(panelStack_);
+    panelStack_->addPanel(findCard_);
     panelStack_->addPanel(measurePanel_);
     panelStack_->addPanel(annotPanel_);
     connect(viewer_, &ViewerWidget::measureModeChanged, this, [this](bool on) {
@@ -404,7 +424,13 @@ bool TabPage::open(const QString &path, const QString &password, QString *error,
             *error = result->error;
         return false;
     }
+    // Save writes the file and then opens it again in this tab. An open find card
+    // keeps its search across that, without moving the view.
+    const ViewerWidget::ResumeState before = saved_->viewer;
     installDocument(result);
+    if (findCard_->isOpen() && !before.query.isEmpty())
+        viewer_->restoreFind(before.query, before.caseSensitive, before.wholeWord,
+                             before.currentMatch);
     // Copy before setPath/clearRecovery, since callers may pass tab-owned strings.
     const QString verifiedPassword = password;
     setPath(path);
@@ -416,6 +442,16 @@ bool TabPage::open(const QString &path, const QString &password, QString *error,
     saved_->restoreTools = true;
     emit stateChanged();
     return true;
+}
+
+void TabPage::restoreViewer()
+{
+    viewer_->restoreResumeState(saved_->viewer);
+    // A search stays only while the find card is open. One restored behind a
+    // closed card (from a recovery checkpoint, say) would leave highlights that
+    // nothing on screen explains.
+    if (!findCard_->isOpen() && !viewer_->findQuery().isEmpty())
+        viewer_->clearFind();
 }
 
 bool TabPage::recoverSnapshot(const QString &snapshot, QString *error)
@@ -450,7 +486,7 @@ bool TabPage::recoverSnapshot(const QString &snapshot, QString *error)
         return false;
     }
     installDocument(result);
-    viewer_->restoreResumeState(saved_->viewer);
+    restoreViewer();
     retainedEdits_ = true;
     if (previousSnapshot.isEmpty() || QFile::remove(previousSnapshot)) {
         if (!previousManifest.isEmpty()) {
@@ -586,7 +622,7 @@ void TabPage::setSavedViewState(const ViewState &state)
         saved_->viewer = viewer_->captureResumeState();
     saved_->viewer.view = state;
     if (doc_)
-        viewer_->restoreResumeState(saved_->viewer);
+        restoreViewer();
 }
 
 bool TabPage::sourceChangedOnDisk() const
@@ -674,7 +710,7 @@ bool TabPage::finishResume(const std::shared_ptr<OpenResult> &result)
         saved_->viewer.layout = layout;
         saved_->restoreTools = true;
     }
-    viewer_->restoreResumeState(saved_->viewer);
+    restoreViewer();
     measurePanel_->setKind(saved_->viewer.measureKind);
     measurePanel_->setUnit(saved_->viewer.measureUnit);
     measurePanel_->setPrecision(saved_->viewer.measurePrecision);

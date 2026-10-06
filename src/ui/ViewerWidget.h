@@ -145,10 +145,12 @@ public:
 
     // Find-in-page.
     void startFind(const QString &query, bool caseSensitive, bool wholeWord);
+    // Search again for a query this view already had, keeping match `currentMatch`
+    // (0-based) current without moving the view. For reopened or resumed documents.
+    void restoreFind(const QString &query, bool caseSensitive, bool wholeWord, int currentMatch);
     void clearFind();
     int matchCount() const { return static_cast<int>(matches_.size()); }
-    // Per-tab search state, so the find bar can be restored when this tab is
-    // re-selected (search is individual to each document tab).
+    // This tab's search state (search is individual to each document tab).
     QString findQuery() const { return findQuery_; }
     bool findCaseSensitive() const { return findCaseSensitive_; }
     bool findWholeWord() const { return findWholeWord_; }
@@ -202,6 +204,9 @@ public:
     // The floating Comment panel (same guard purpose: a press over it must never
     // place an annotation). Non-owning.
     void setAnnotPanel(QWidget *panel) { annotPanel_ = panel; }
+    // The floating find card. Presses over it never reach the page tools, and
+    // scrolling to a match keeps the match out from under it. Non-owning.
+    void setFindCard(QWidget *card) { findCard_ = card; }
 
     // --- form filling (AcroForm) ---
     // The form-fill tool is active (Ctrl+Shift+F): fillable fields are highlighted
@@ -580,6 +585,7 @@ private:
     void rebuildMatchIndex();
     void scrollToMatch(int matchIndex);
     void ensureCanvasRectVisible(const QRectF &canvasRect);
+    void keepClearOfFindCard(const QRectF &canvasRect); // after scrolling to a match
 
     // Selection drag autoscroll.
     void maybeAutoScroll(QPoint viewportPos);
@@ -719,6 +725,7 @@ private:
     // Bug guard: clicks belonging to the floating panel must never place a point.
     QPointer<QWidget> measurePanel_;        // non-owning; the page-overlapping panel
     QPointer<QWidget> annotPanel_;          // non-owning; the Comment panel (press guard)
+    QPointer<QWidget> findCard_;            // non-owning; the find card (press guard, match scroll)
     QElapsedTimer sincePanelPopupClosed_;   // started when the unit dropdown closes
 
     // Form-fill (AcroForm) state. formModel_ is null for non-form documents.

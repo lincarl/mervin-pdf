@@ -493,6 +493,13 @@ void RecentFilesPanel::setVisibleCount(int count)
         rebuild();
 }
 
+void RecentFilesPanel::focusList()
+{
+    if (list_->currentRow() < 0 && list_->count() > 0)
+        list_->setCurrentRow(0);
+    list_->setFocus(Qt::ShortcutFocusReason);
+}
+
 void RecentFilesPanel::setSearch(const QString &text, bool contentSearch)
 {
     { QSignalBlocker b(filter_);       filter_->setText(text); }

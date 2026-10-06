@@ -15,12 +15,13 @@ struct GlyphEntry {
     const char *name;
 };
 
-inline constexpr std::array<GlyphEntry, 51> kGlyphs{{
+inline constexpr std::array<GlyphEntry, 52> kGlyphs{{
     // Toolbar
     {Glyph::Open, "Open"},
     {Glyph::PrevPage, "PrevPage"},
     {Glyph::NextPage, "NextPage"},
     {Glyph::ChevronDown, "ChevronDown"},
+    {Glyph::ChevronUp, "ChevronUp"},
     {Glyph::Search, "Search"},
     {Glyph::ZoomOut, "ZoomOut"},
     {Glyph::ZoomIn, "ZoomIn"},
@@ -74,6 +75,6 @@ inline constexpr std::array<GlyphEntry, 51> kGlyphs{{
     {Glyph::Star, "Star"},
 }};
 
-inline constexpr const std::array<GlyphEntry, 51> &allGlyphs() { return kGlyphs; }
+inline constexpr const std::array<GlyphEntry, 52> &allGlyphs() { return kGlyphs; }
 
 } // namespace mervin::icons
