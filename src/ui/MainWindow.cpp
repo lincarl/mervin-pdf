@@ -698,8 +698,10 @@ void MainWindow::changeEvent(QEvent *event)
 
 void MainWindow::createActions()
 {
+    // The text has no '&' mnemonic. The action sits only on the Open tool button, which
+    // shows no mnemonic, and a CJK translation's "(&O)" suffix would appear there as text.
     //: Toolbar button (verb): open a PDF file in a new tab.
-    openAction_ = new QAction(tr("&Open"), this);
+    openAction_ = new QAction(tr("Open"), this);
     openAction_->setShortcut(QKeySequence::Open); // Ctrl+O
     connect(openAction_, &QAction::triggered, this, &MainWindow::onOpen);
 
@@ -882,6 +884,10 @@ void MainWindow::createActions()
 
     //: Toggles the measuring tool (distances, areas and angles on the page).
     measureAction_ = new QAction(tr("&Measure"), this);
+    // The toolbar button needs its own tooltip. The default one is the menu text with
+    // only the '&' removed, so a CJK mnemonic suffix such as "(M)" would show.
+    //: Tooltip of the toolbar's measure button (verb).
+    measureAction_->setToolTip(tr("Measure"));
     measureAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_M));
     measureAction_->setCheckable(true);
     connect(measureAction_, &QAction::toggled, this, &MainWindow::toggleMeasure);
@@ -1011,6 +1017,9 @@ void MainWindow::createActions()
 
     //: Verb: print the document.
     printAction_ = new QAction(tr("&Print"), this);
+    // Own tooltip for the toolbar button, for the same reason as measureAction_.
+    //: Tooltip of the toolbar's print button (verb).
+    printAction_->setToolTip(tr("Print"));
     printAction_->setShortcut(QKeySequence::Print); // Ctrl+P
     connect(printAction_, &QAction::triggered, this, &MainWindow::printDocument);
 }

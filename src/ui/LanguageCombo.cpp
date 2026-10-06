@@ -209,6 +209,10 @@ void LanguageCombo::tintSearchIcon()
 void LanguageCombo::fitPopup()
 {
     list_->ensurePolished();
+    // Lay the rows out again with the stylesheet's item padding. Reparenting an
+    // ancestor (Settings moves each page into a scroll area) makes the list lay
+    // out at once, before it is polished, and those rows stay without padding.
+    list_->doItemsLayout();
     // Rows differ by a pixel or so when a script falls back to another font
     // (Chinese), so size for the tallest one.
     int rowHeight = 0;

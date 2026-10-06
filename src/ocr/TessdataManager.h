@@ -17,10 +17,14 @@ QString directory();
 // Installed language codes (the base names of *.traineddata), sorted.
 QStringList installedLanguages();
 
-// Friendly label for a Tesseract language code (for example, "English" for
-// "eng"). Unknown codes are returned unchanged. Only the five models QLocale
-// cannot name have translated labels; the rest are QLocale's English names.
+// Friendly label for a Tesseract language code in the UI language (for
+// example, "English" for "eng", "Engelska" in Swedish). Codes Mervin has no
+// name for get QLocale's English name, or are returned unchanged.
 QString languageName(const QString &code);
+
+// The same label in English whatever the UI language, so a search can match
+// either name.
+QString englishLanguageName(const QString &code);
 
 // Open the tessdata folder in Explorer.
 void openFolder();

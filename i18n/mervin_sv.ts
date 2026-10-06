@@ -222,7 +222,9 @@ Det redigerade dokumentet finns kvar i %2.
     </message>
     <message>
         <source>Print</source>
-        <extracomment>Title of the print dialog and of messages about printing.</extracomment>
+        <extracomment>Title of the print dialog and of messages about printing.
+----------
+Tooltip of the toolbar&apos;s print button (verb).</extracomment>
         <translation>Skriv ut</translation>
     </message>
     <message>
@@ -266,9 +268,9 @@ Det redigerade dokumentet finns kvar i %2.
         <translation>Mervin PDF</translation>
     </message>
     <message>
-        <source>&amp;Open</source>
+        <source>Open</source>
         <extracomment>Toolbar button (verb): open a PDF file in a new tab.</extracomment>
-        <translation>&amp;Öppna</translation>
+        <translation>Öppna</translation>
     </message>
     <message>
         <source>Open in New Window</source>
@@ -377,6 +379,11 @@ Det redigerade dokumentet finns kvar i %2.
         <source>&amp;Measure</source>
         <extracomment>Toggles the measuring tool (distances, areas and angles on the page).</extracomment>
         <translation>&amp;Mät</translation>
+    </message>
+    <message>
+        <source>Measure</source>
+        <extracomment>Tooltip of the toolbar&apos;s measure button (verb).</extracomment>
+        <translation>Mät</translation>
     </message>
     <message>
         <source>Fill &amp;Forms</source>
@@ -592,7 +599,7 @@ Det redigerade dokumentet finns kvar i %2.
 Open the language manager to add a language (e.g. English)?</source>
         <translation>Inga språkdata för OCR är installerade.
 
-Vill du öppna språkhanteraren och lägga till ett språk (t.ex. English)?</translation>
+Vill du lägga till ett språk i språkhanteraren (t.ex. engelska)?</translation>
     </message>
     <message>
         <source>Recognizing…</source>
@@ -899,6 +906,24 @@ Button: starts printing.</extracomment>
     </message>
 </context>
 <context>
+    <name>QShortcut</name>
+    <message>
+        <source>Home</source>
+        <extracomment>Key name in the keyboard shortcut list. Write it as printed on the key or as the OS documents it. Left unfinished, the English name shows.</extracomment>
+        <translation>Home</translation>
+    </message>
+    <message>
+        <source>Up</source>
+        <extracomment>Key name in the keyboard shortcut list: the up arrow key. Write it as the OS documents it. Left unfinished, the English name shows.</extracomment>
+        <translation>Uppil</translation>
+    </message>
+    <message>
+        <source>Down</source>
+        <extracomment>Key name in the keyboard shortcut list: the down arrow key. Write it as the OS documents it. Left unfinished, the English name shows.</extracomment>
+        <translation>Nedpil</translation>
+    </message>
+</context>
+<context>
     <name>SettingsDialog</name>
     <message>
         <source>Open</source>
@@ -1084,7 +1109,7 @@ Button: starts printing.</extracomment>
     <message>
         <source>Unload inactive documents after (minutes)</source>
         <extracomment>Label before a field for a number of minutes, followed by a &quot;Never&quot; checkbox.</extracomment>
-        <translation>Frigör inaktiva dokument från minnet efter (minuter)</translation>
+        <translation>Frigör inaktiva dokument efter (minuter)</translation>
     </message>
     <message>
         <source>Never</source>
@@ -2476,6 +2501,16 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <extracomment>Label of the Open dialog&apos;s file name field, which also accepts a web address.</extracomment>
         <translation>Fil&amp;namn eller URL:</translation>
     </message>
+    <message>
+        <source>&amp;Look in:</source>
+        <extracomment>Label of the folder picker at the top of the Open dialog.</extracomment>
+        <translation>&amp;Leta i:</translation>
+    </message>
+    <message>
+        <source>Files of &amp;type:</source>
+        <extracomment>Label of the file type filter at the bottom of the Open dialog.</extracomment>
+        <translation>Fil&amp;typ:</translation>
+    </message>
 </context>
 <context>
     <name>mervin::OutlineSidebar</name>
@@ -2819,11 +2854,11 @@ Den här filen finns inte längre på disken.</translation>
     </message>
     <message>
         <source>leave empty for no open password</source>
-        <translation>lämna tomt om inget öppningslösenord ska användas</translation>
+        <translation>lämna tomt så krävs inget lösenord</translation>
     </message>
     <message>
         <source>defaults to the open password</source>
-        <translation>öppningslösenordet används som standard</translation>
+        <translation>samma som öppningslösenordet</translation>
     </message>
     <message>
         <source>AES-256 (recommended)</source>
@@ -2913,7 +2948,7 @@ Den här filen finns inte längre på disken.</translation>
     <message>
         <source>&lt;b&gt;Encrypted&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;Printing: %3 · Copying: %4 · Modifying: %5 · Annotating: %6&lt;br&gt;&lt;i&gt;Note: Mervin never enforces these permission flags.&lt;/i&gt;</source>
         <extracomment>%1 is the encryption algorithm, such as AES-256. %2 is the key length in bits. %3 to %6 are Allowed or Not allowed.</extracomment>
-        <translation>&lt;b&gt;Krypterat&lt;/b&gt; · %1 (%2-bitars)&lt;br&gt;Utskrift: %3 · Kopiering: %4 · Ändring: %5 · Anteckningar: %6&lt;br&gt;&lt;i&gt;Obs! Mervin tillämpar aldrig de här behörighetsflaggorna.&lt;/i&gt;</translation>
+        <translation>&lt;b&gt;Krypterat&lt;/b&gt; · %1 (%2 bitar)&lt;br&gt;Utskrift: %3 · Kopiering: %4 · Ändring: %5 · Anteckningar: %6&lt;br&gt;&lt;i&gt;Obs! Mervin tillämpar aldrig de här behörighetsflaggorna.&lt;/i&gt;</translation>
     </message>
     <message>
         <source>Password Required</source>
@@ -3117,6 +3152,536 @@ Vill du öppna den nu?</translation>
         <extracomment>OCR model name. The model finds page orientation and writing system instead of reading a language.</extracomment>
         <translation>Identifiering av orientering och skriftsystem</translation>
     </message>
+    <message>
+        <source>Afrikaans</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Afrikaans</translation>
+    </message>
+    <message>
+        <source>Amharic</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Amhariska</translation>
+    </message>
+    <message>
+        <source>Arabic</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Arabiska</translation>
+    </message>
+    <message>
+        <source>Assamese</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Assamesiska</translation>
+    </message>
+    <message>
+        <source>Azerbaijani</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Azerbajdzjanska</translation>
+    </message>
+    <message>
+        <source>Belarusian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Belarusiska</translation>
+    </message>
+    <message>
+        <source>Bangla</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Bengali</translation>
+    </message>
+    <message>
+        <source>Tibetan</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Tibetanska</translation>
+    </message>
+    <message>
+        <source>Bosnian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Bosniska</translation>
+    </message>
+    <message>
+        <source>Breton</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Bretonska</translation>
+    </message>
+    <message>
+        <source>Bulgarian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Bulgariska</translation>
+    </message>
+    <message>
+        <source>Catalan</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Katalanska</translation>
+    </message>
+    <message>
+        <source>Cebuano</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Cebuano</translation>
+    </message>
+    <message>
+        <source>Czech</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Tjeckiska</translation>
+    </message>
+    <message>
+        <source>Cherokee</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Cherokesiska</translation>
+    </message>
+    <message>
+        <source>Corsican</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Korsikanska</translation>
+    </message>
+    <message>
+        <source>Welsh</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Walesiska</translation>
+    </message>
+    <message>
+        <source>Danish</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Danska</translation>
+    </message>
+    <message>
+        <source>German</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Tyska</translation>
+    </message>
+    <message>
+        <source>Divehi</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Divehi</translation>
+    </message>
+    <message>
+        <source>Dzongkha</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Dzongkha</translation>
+    </message>
+    <message>
+        <source>Greek</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Grekiska</translation>
+    </message>
+    <message>
+        <source>English</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Engelska</translation>
+    </message>
+    <message>
+        <source>Esperanto</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Esperanto</translation>
+    </message>
+    <message>
+        <source>Estonian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Estniska</translation>
+    </message>
+    <message>
+        <source>Basque</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Baskiska</translation>
+    </message>
+    <message>
+        <source>Faroese</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Färöiska</translation>
+    </message>
+    <message>
+        <source>Persian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Persiska</translation>
+    </message>
+    <message>
+        <source>Filipino</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Filippinska</translation>
+    </message>
+    <message>
+        <source>Finnish</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Finska</translation>
+    </message>
+    <message>
+        <source>French</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Franska</translation>
+    </message>
+    <message>
+        <source>Western Frisian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Västfrisiska</translation>
+    </message>
+    <message>
+        <source>Scottish Gaelic</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Skotsk gaeliska</translation>
+    </message>
+    <message>
+        <source>Irish</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Iriska</translation>
+    </message>
+    <message>
+        <source>Galician</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Galiciska</translation>
+    </message>
+    <message>
+        <source>Ancient Greek</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Forngrekiska</translation>
+    </message>
+    <message>
+        <source>Gujarati</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Gujarati</translation>
+    </message>
+    <message>
+        <source>Haitian Creole</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Haitiska</translation>
+    </message>
+    <message>
+        <source>Hebrew</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Hebreiska</translation>
+    </message>
+    <message>
+        <source>Hindi</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Hindi</translation>
+    </message>
+    <message>
+        <source>Croatian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Kroatiska</translation>
+    </message>
+    <message>
+        <source>Hungarian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Ungerska</translation>
+    </message>
+    <message>
+        <source>Armenian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Armeniska</translation>
+    </message>
+    <message>
+        <source>Inuktitut</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Inuktitut</translation>
+    </message>
+    <message>
+        <source>Indonesian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Indonesiska</translation>
+    </message>
+    <message>
+        <source>Icelandic</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Isländska</translation>
+    </message>
+    <message>
+        <source>Italian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Italienska</translation>
+    </message>
+    <message>
+        <source>Javanese</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Javanesiska</translation>
+    </message>
+    <message>
+        <source>Japanese</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Japanska</translation>
+    </message>
+    <message>
+        <source>Kannada</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Kannada</translation>
+    </message>
+    <message>
+        <source>Georgian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Georgiska</translation>
+    </message>
+    <message>
+        <source>Kazakh</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Kazakiska</translation>
+    </message>
+    <message>
+        <source>Khmer</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Kambodjanska</translation>
+    </message>
+    <message>
+        <source>Kyrgyz</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Kirgiziska</translation>
+    </message>
+    <message>
+        <source>Korean</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Koreanska</translation>
+    </message>
+    <message>
+        <source>Lao</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Laotiska</translation>
+    </message>
+    <message>
+        <source>Latin</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Latin</translation>
+    </message>
+    <message>
+        <source>Latvian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Lettiska</translation>
+    </message>
+    <message>
+        <source>Lithuanian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Litauiska</translation>
+    </message>
+    <message>
+        <source>Luxembourgish</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Luxemburgiska</translation>
+    </message>
+    <message>
+        <source>Malayalam</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Malayalam</translation>
+    </message>
+    <message>
+        <source>Marathi</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Marathi</translation>
+    </message>
+    <message>
+        <source>Macedonian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Makedonska</translation>
+    </message>
+    <message>
+        <source>Maltese</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Maltesiska</translation>
+    </message>
+    <message>
+        <source>Mongolian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Mongoliska</translation>
+    </message>
+    <message>
+        <source>Māori</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Maori</translation>
+    </message>
+    <message>
+        <source>Malay</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Malajiska</translation>
+    </message>
+    <message>
+        <source>Burmese</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Burmesiska</translation>
+    </message>
+    <message>
+        <source>Nepali</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Nepalesiska</translation>
+    </message>
+    <message>
+        <source>Dutch</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Nederländska</translation>
+    </message>
+    <message>
+        <source>Occitan</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Occitanska</translation>
+    </message>
+    <message>
+        <source>Odia</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Oriya</translation>
+    </message>
+    <message>
+        <source>Punjabi</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Punjabi</translation>
+    </message>
+    <message>
+        <source>Polish</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Polska</translation>
+    </message>
+    <message>
+        <source>Portuguese</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Portugisiska</translation>
+    </message>
+    <message>
+        <source>Pashto</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Afghanska</translation>
+    </message>
+    <message>
+        <source>Quechua</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Quechua</translation>
+    </message>
+    <message>
+        <source>Romanian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Rumänska</translation>
+    </message>
+    <message>
+        <source>Russian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Ryska</translation>
+    </message>
+    <message>
+        <source>Sanskrit</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Sanskrit</translation>
+    </message>
+    <message>
+        <source>Sinhala</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Singalesiska</translation>
+    </message>
+    <message>
+        <source>Slovak</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Slovakiska</translation>
+    </message>
+    <message>
+        <source>Slovenian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Slovenska</translation>
+    </message>
+    <message>
+        <source>Sindhi</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Sindhi</translation>
+    </message>
+    <message>
+        <source>Spanish</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Spanska</translation>
+    </message>
+    <message>
+        <source>Albanian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Albanska</translation>
+    </message>
+    <message>
+        <source>Serbian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Serbiska</translation>
+    </message>
+    <message>
+        <source>Sundanese</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Sundanesiska</translation>
+    </message>
+    <message>
+        <source>Swahili</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Swahili</translation>
+    </message>
+    <message>
+        <source>Swedish</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Svenska</translation>
+    </message>
+    <message>
+        <source>Syriac</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Syriska</translation>
+    </message>
+    <message>
+        <source>Tamil</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Tamil</translation>
+    </message>
+    <message>
+        <source>Tatar</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Tatariska</translation>
+    </message>
+    <message>
+        <source>Telugu</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Telugu</translation>
+    </message>
+    <message>
+        <source>Tajik</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Tadzjikiska</translation>
+    </message>
+    <message>
+        <source>Thai</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Thailändska</translation>
+    </message>
+    <message>
+        <source>Tigrinya</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Tigrinja</translation>
+    </message>
+    <message>
+        <source>Tongan</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Tonganska</translation>
+    </message>
+    <message>
+        <source>Turkish</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Turkiska</translation>
+    </message>
+    <message>
+        <source>Uyghur</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Uiguriska</translation>
+    </message>
+    <message>
+        <source>Ukrainian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Ukrainska</translation>
+    </message>
+    <message>
+        <source>Urdu</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Urdu</translation>
+    </message>
+    <message>
+        <source>Uzbek</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Uzbekiska</translation>
+    </message>
+    <message>
+        <source>Vietnamese</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Vietnamesiska</translation>
+    </message>
+    <message>
+        <source>Yiddish</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Jiddisch</translation>
+    </message>
+    <message>
+        <source>Yoruba</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>Yoruba</translation>
+    </message>
 </context>
 <context>
     <name>mervin::UiThemePicker</name>
@@ -3236,12 +3801,12 @@ Mervin PDF %1 är den senaste versionen.</translation>
     </message>
     <message>
         <source>Update Ready</source>
-        <translation>Uppdateringen är klar</translation>
+        <translation>Uppdateringen är redo</translation>
     </message>
     <message>
         <source>Mervin PDF %1 is ready to install.</source>
         <extracomment>%1 is the version number of the downloaded update.</extracomment>
-        <translation>Mervin PDF %1 är klar att installeras.</translation>
+        <translation>Mervin PDF %1 är redo att installeras.</translation>
     </message>
     <message>
         <source>You have %1. Click &lt;b&gt;Never&lt;/b&gt; to turn off automatic updates.</source>

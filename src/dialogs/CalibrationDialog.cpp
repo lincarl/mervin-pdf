@@ -70,6 +70,9 @@ CalibrationDialog::CalibrationDialog(Mode mode, double lineLengthPoints, Measure
         mervin::Theme::useTypedSpinBox(ratioSpin_); // typed, no stepper column
         grid->addWidget(ratioLabel, 0, 0);
         grid->addWidget(ratioSpin_, 0, 1);
+        // Spare width (a short label under a wider button row) goes to the field, so
+        // the label's "1 :" stays right next to the number.
+        grid->setColumnStretch(1, 1);
     }
 
     layout->addLayout(grid);

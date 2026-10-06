@@ -65,11 +65,14 @@ void selectByData(QComboBox *combo, const QString &value)
 }
 
 // FieldsStayAtSizeHint prevents platform styles stretching compact inputs while preserving
-// label alignment and mnemonic buddies.
+// label alignment and mnemonic buddies. WrapLongRows puts a field under its label when
+// the two don't fit side by side (a long translated label), so the page doesn't scroll
+// sideways. Pass nullptr for a form inside another layout.
 QFormLayout *snugForm(QWidget *parent)
 {
     auto *form = new QFormLayout(parent);
     form->setFieldGrowthPolicy(QFormLayout::FieldsStayAtSizeHint);
+    form->setRowWrapPolicy(QFormLayout::WrapLongRows);
     return form;
 }
 
@@ -214,8 +217,26 @@ constexpr ShortcutRow kShortcuts[] = {
     {QT_TRANSLATE_NOOP("SettingsDialog", "Full screen"), "F11"},
 };
 
+// Key names in kShortcuts that Qt's catalog writes unlike the key caps and the OS
+// ("Hem" for Home in Swedish). QKeySequence looks key names up in the "QShortcut"
+// context, and the build merges Mervin's catalog ahead of Qt's, so these entries
+// replace Qt's names. An unfinished entry also hides Qt's name and shows the English
+// one, so a language that is happy with Qt's name copies it.
+[[maybe_unused]] constexpr const char *kKeyNames[] = {
+    //: Key name in the keyboard shortcut list. Write it as printed on the key or as
+    //: the OS documents it. Left unfinished, the English name shows.
+    QT_TRANSLATE_NOOP("QShortcut", "Home"),
+    //: Key name in the keyboard shortcut list: the up arrow key. Write it as the OS
+    //: documents it. Left unfinished, the English name shows.
+    QT_TRANSLATE_NOOP("QShortcut", "Up"),
+    //: Key name in the keyboard shortcut list: the down arrow key. Write it as the OS
+    //: documents it. Left unfinished, the English name shows.
+    QT_TRANSLATE_NOOP("QShortcut", "Down"),
+};
+
 // A row's keys as the OS writes them. Key names follow the UI language through
-// Qt's catalog, which the build merges into ours ("Strg" in German).
+// Qt's catalog, which the build merges into ours ("Strg" in German), apart from
+// the ones kKeyNames overrides.
 QString nativeKeys(const char *keys)
 {
     QStringList bindings;
@@ -413,7 +434,6 @@ QWidget *SettingsDialog::buildGeneralPage()
 
     auto *openBox = groupBox(tr("Opening files"), page);
     auto *openForm = snugForm(openBox);
-    openForm->setRowWrapPolicy(QFormLayout::WrapLongRows);
     openBehaviorCombo_ = new QComboBox(openBox);
     openBehaviorCombo_->addItem(tr("New tab in current window"), QStringLiteral("new-tab"));
     //: Where a PDF opens: in a new window, not a new tab.
@@ -427,9 +447,7 @@ QWidget *SettingsDialog::buildGeneralPage()
 
     auto *memoryBox = groupBox(tr("Memory and tray"), page);
     auto *memoryLayout = new QVBoxLayout(memoryBox);
-    auto *memoryForm = new QFormLayout;
-    memoryForm->setFieldGrowthPolicy(QFormLayout::FieldsStayAtSizeHint);
-    memoryForm->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    auto *memoryForm = snugForm(nullptr);
     auto *durationRow = new QWidget(memoryBox);
     auto *durationLayout = new QHBoxLayout(durationRow);
     durationLayout->setContentsMargins(0, 0, 0, 0);
@@ -477,7 +495,6 @@ QWidget *SettingsDialog::buildGeneralPage()
 
     auto *recentBox = groupBox(tr("Recent files"), page);
     auto *recentForm = snugForm(recentBox);
-    recentForm->setRowWrapPolicy(QFormLayout::WrapLongRows);
     // Both counts are typed, not stepped: the useful values are round numbers
     // hundreds apart, so the stepper arrows were only ever visual noise (nudging
     // 500 by one at a time is not a real interaction). Typing, Up/Down and the

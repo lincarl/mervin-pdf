@@ -13,6 +13,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <iterator>
 
 namespace mervin {
@@ -28,6 +29,18 @@ void clearChecked(QButtonGroup *group)
         b->setChecked(false);
         group->setExclusive(true);
     }
+}
+
+// Give every button in the group the width of the widest one. The panel sizes
+// itself to its contents, so a row's stretch factors have no spare width to
+// share, and segments with labels of different length would differ in width.
+void equalizeWidths(QButtonGroup *group)
+{
+    int width = 0;
+    for (QAbstractButton *b : group->buttons())
+        width = std::max(width, b->sizeHint().width());
+    for (QAbstractButton *b : group->buttons())
+        b->setMinimumWidth(width);
 }
 } // namespace
 
@@ -127,10 +140,11 @@ AnnotPanel::AnnotPanel(QWidget *parent) : QWidget(parent)
                                         : i == styleCount - 1 ? QStringLiteral("last")
                                                               : QStringLiteral("mid"));
         styleGroup_->addButton(b, static_cast<int>(d.type));
-        styleRow->addWidget(b, 1); // equal-width segments across the row
+        styleRow->addWidget(b, 1); // shares any extra row width equally
         if (d.type == AnnotType::Highlight)
             b->setChecked(true);
     }
+    equalizeWidths(styleGroup_);
     connect(styleGroup_, &QButtonGroup::idClicked, this, [this](int id) {
         activeStyle_ = static_cast<AnnotType>(id);
         emit highlightStyleChanged(activeStyle_);
@@ -215,6 +229,7 @@ void AnnotPanel::mouseReleaseEvent(QMouseEvent *event)
 void AnnotPanel::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
+    equalizeWidths(styleGroup_); // a new app style sheet can change the button sizes
     adjustSize();
     if (stack_)
         stack_->relayout(); // dock places this panel (and re-stacks the others)

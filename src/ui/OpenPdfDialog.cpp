@@ -356,12 +356,87 @@ int OpenPdfDialog::exec()
 
 #else
 
+#include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QFontMetricsF>
+#include <QHeaderView>
+#include <QLayout>
 #include <QLineEdit>
+#include <QListView>
+#include <QLocale>
+#include <QMimeDatabase>
 #include <QPushButton>
+#include <QScreen>
+#include <QScrollBar>
+#include <QSplitter>
+#include <QStyle>
+#include <QTreeView>
+#include <QtMath>
 
 namespace mervin {
+namespace {
+
+// Width of a file list cell showing text, with the margin the item delegate keeps on
+// each side of it.
+int cellWidth(const QTreeView *view, const QString &text)
+{
+    const int margin = view->style()->pixelMetric(QStyle::PM_FocusFrameHMargin, nullptr, view) + 1;
+    return qCeil(QFontMetricsF(view->font()).horizontalAdvance(text)) + 2 * margin;
+}
+
+// Qt's widget file dialog sizes its sidebar from the first entry or from the width it
+// saved last time, and its Type and Date Modified columns from fixed English samples.
+// That clips "Computer", the home folder, PDF type names, dates and translated column
+// headers. This widens each part to fit its text, keeps any wider size Qt restored from
+// its settings, and widens the dialog so the file list still shows every column.
+void fitToText(QFileDialog *dialog)
+{
+    auto *sidebar = dialog->findChild<QListView *>(QStringLiteral("sidebar"));
+    auto *splitter = dialog->findChild<QSplitter *>(QStringLiteral("splitter"));
+    auto *view = dialog->findChild<QTreeView *>(QStringLiteral("treeView"));
+    if (!sidebar || !splitter || !view || !dialog->layout())
+        return;
+    // Fonts, frames and scroll bars from the app style sheet apply from here on.
+    dialog->ensurePolished();
+
+    // The cap makes a long bookmark name elide instead of widening the sidebar without limit.
+    const int sidebarCap = sidebar->fontMetrics().averageCharWidth() * 24;
+    sidebar->setMinimumWidth(
+        qMin(sidebar->sizeHintForColumn(0) + 2 * sidebar->frameWidth(), sidebarCap));
+
+    // Columns 0 to 3 are Name, Size, Type and Date Modified. The samples are formatted the
+    // way QFileSystemModel formats a PDF's type and date. Two-digit months, days and hours
+    // give the widest date.
+    QHeaderView *header = view->header();
+    const QString typeSample =
+        QMimeDatabase().mimeTypeForName(QStringLiteral("application/pdf")).comment();
+    const QString dateSample = QLocale::system().toString(
+        QDateTime(QDate(2026, 12, 28), QTime(22, 58)), QLocale::ShortFormat);
+    for (int column = 0; column < header->count(); ++column) {
+        int needed = header->sectionSizeHint(column);
+        if (column == 2)
+            needed = qMax(needed, cellWidth(view, typeSample));
+        else if (column == 3)
+            needed = qMax(needed, cellWidth(view, dateSample));
+        if (!header->isSectionHidden(column) && header->sectionSize(column) < needed)
+            header->resizeSection(column, needed);
+    }
+
+    // The file list needs its columns, frame and a vertical scroll bar, next to the sidebar.
+    const QMargins margins = dialog->layout()->contentsMargins();
+    const int needed = margins.left() + sidebar->minimumWidth() + splitter->handleWidth()
+                       + 2 * view->frameWidth() + header->length()
+                       + view->verticalScrollBar()->sizeHint().width() + margins.right();
+    if (needed > dialog->width()) {
+        int width = needed;
+        if (const QScreen *screen = dialog->screen())
+            width = qMin(width, screen->availableGeometry().width());
+        dialog->resize(width, dialog->height());
+    }
+}
+
+} // namespace
 
 OpenPdfDialog::OpenPdfDialog(QWidget *parent)
     : QFileDialog(parent, tr("Open PDF"), QString(),
@@ -374,6 +449,13 @@ OpenPdfDialog::OpenPdfDialog(QWidget *parent)
     setOption(QFileDialog::DontUseNativeDialog);
     //: Label of the Open dialog's file name field, which also accepts a web address.
     setLabelText(QFileDialog::FileName, tr("File &name or URL:"));
+    // Qt's own catalog misses these two labels in some languages, Chinese among them, so
+    // Mervin translates them itself.
+    //: Label of the folder picker at the top of the Open dialog.
+    setLabelText(QFileDialog::LookIn, tr("&Look in:"));
+    //: Label of the file type filter at the bottom of the Open dialog.
+    setLabelText(QFileDialog::FileType, tr("Files of &type:"));
+    fitToText(this);
 
     auto *nameEdit = findChild<QLineEdit *>(QStringLiteral("fileNameEdit"));
     auto *buttons = findChild<QDialogButtonBox *>();

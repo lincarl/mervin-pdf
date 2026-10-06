@@ -258,8 +258,11 @@ void ManageLanguagesDialog::applyFilter()
     const QString needle = search_->text().trimmed();
     int shown = 0;
     for (const Language &language : std::as_const(catalog_)) {
+        // The name in the UI language, its English name or the code.
         if (installed_.contains(language.code)
             || (!needle.isEmpty() && !language.name.contains(needle, Qt::CaseInsensitive)
+                && !TessdataManager::englishLanguageName(language.code)
+                        .contains(needle, Qt::CaseInsensitive)
                 && !language.code.contains(needle, Qt::CaseInsensitive)))
             continue;
         //: Button on an available OCR language. It downloads and installs it.

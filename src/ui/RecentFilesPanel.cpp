@@ -11,6 +11,7 @@
 #include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFontMetricsF>
 #include <QHBoxLayout>
 #include <QHideEvent>
 #include <QShowEvent>
@@ -26,6 +27,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QtMath>
 
 #include <algorithm>
 
@@ -46,7 +48,7 @@ constexpr int kContentDebounceMs = 400;
 constexpr int kRowHeight = 64;
 constexpr int kContentRowHeight = 88; // taller: fits name + snippet + path
 constexpr int kIconSize  = 34;
-constexpr int kMetaW     = 180; // right-column fixed width
+constexpr int kMetaW     = 180; // right-column minimum width
 constexpr int kHPad      = 16;  // left/right outer margin
 constexpr int kVPad      =  9;  // top/bottom inner padding
 constexpr int kStarW     = 20;  // star icon hit area
@@ -255,12 +257,22 @@ public:
             drawStar(p, starRegion(r), isFav);
         }
 
+        QFont smallF = opt.font;
+        smallF.setPointSizeF(smallF.pointSizeF() * 0.85);
+
         // ── Right meta column ─────────────────────────────────────────────
+        // At least kMetaW wide. A longer translation or date format, such as
+        // "För 21 dagar sedan · 2026-09-15", widens it up to 40% of the row,
+        // and the name and path columns, which elide, give up the space.
+        const qreal metaText =
+            std::max(QFontMetricsF(opt.font, p->device()).horizontalAdvance(date),
+                     QFontMetricsF(smallF, p->device()).horizontalAdvance(metaLine));
+        const int metaW = std::max(kMetaW, std::min(qCeil(metaText), r.width() * 2 / 5));
         const int starOff = hasEntry ? kStarW + kStarGap : 0;
-        const int rightX  = r.right() - kHPad - starOff - kMetaW;
+        const int rightX  = r.right() - kHPad - starOff - metaW;
         const int midY    = r.top() + r.height() / 2;
-        const QRect dateR(rightX, r.top() + kVPad,  kMetaW, midY - r.top() - kVPad);
-        const QRect sizeR(rightX, midY,              kMetaW, r.bottom() - midY - kVPad);
+        const QRect dateR(rightX, r.top() + kVPad,  metaW, midY - r.top() - kVPad);
+        const QRect sizeR(rightX, midY,              metaW, r.bottom() - midY - kVPad);
 
         // ── Left column: name (+ snippet) + path ──────────────────────────
         const int leftX = iconR.right() + 12;
@@ -294,9 +306,6 @@ public:
         p->setFont(boldF);
         drawHighlighted(p, nameR, Qt::ElideRight, name, query, textCol);
 
-        QFont smallF = opt.font;
-        smallF.setPointSizeF(smallF.pointSizeF() * 0.85);
-
         if (hasSnippet) {
             p->setFont(smallF);
             drawHighlighted(p, snippetR, Qt::ElideRight, snippet, query, textCol);
@@ -305,7 +314,7 @@ public:
         p->setFont(smallF);
         drawHighlighted(p, pathR, Qt::ElideLeft, pDisp, QString(), subCol);
 
-        // The meta column has a fixed width; a longer translation is elided.
+        // Text wider than the meta column's cap is elided.
         constexpr int kMetaFlags = Qt::AlignRight | Qt::AlignVCenter | Qt::TextSingleLine;
         p->setFont(opt.font);
         p->setPen(textCol);

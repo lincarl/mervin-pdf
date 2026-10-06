@@ -163,6 +163,9 @@ MeasurePanel::MeasurePanel(QWidget *parent)
                                           : i == kindCount - 1 ? QStringLiteral("last")
                                                                : QStringLiteral("mid"));
         kindGroup_->addButton(btn, static_cast<int>(d.kind));
+        // A QToolButton keeps a fixed width by default, which split the segments
+        // apart when a longer row below (a translation) made the panel wider.
+        btn->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
         kindRow->addWidget(btn, 1); // equal-width segments
     }
     if (auto *first = kindGroup_->button(static_cast<int>(MeasureKind::Distance)))

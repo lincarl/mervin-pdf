@@ -17,6 +17,14 @@
 
 namespace mervin {
 
+namespace {
+
+// A field's frame and padding around its text (Theme: 1px border, 8px padding,
+// plus the line edit's own 2px margin, on each side).
+constexpr int kFieldPadding = 24;
+
+} // namespace
+
 SecurityDialog::SecurityDialog(const QString &documentPath, const QString &password,
                                QWidget *parent)
     : QDialog(parent)
@@ -42,6 +50,11 @@ SecurityDialog::SecurityDialog(const QString &documentPath, const QString &passw
     ownerEdit_ = new QLineEdit(encBox);
     ownerEdit_->setEchoMode(QLineEdit::Password);
     ownerEdit_->setPlaceholderText(tr("defaults to the open password"));
+    // QLineEdit's size hint ignores the placeholder, so a narrow dialog cut it
+    // off. Make each field at least as wide as its placeholder.
+    for (QLineEdit *edit : {userEdit_, ownerEdit_})
+        edit->setMinimumWidth(edit->fontMetrics().horizontalAdvance(edit->placeholderText())
+                              + kFieldPadding);
     algoCombo_ = new QComboBox(encBox);
     //: Encryption algorithm choice. Keep the algorithm name as it is.
     algoCombo_->addItem(tr("AES-256 (recommended)"), int(QpdfService::Algorithm::AES256));

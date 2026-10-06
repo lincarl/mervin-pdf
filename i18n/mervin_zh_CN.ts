@@ -220,7 +220,9 @@ Edited document retained at %2.
     </message>
     <message>
         <source>Print</source>
-        <extracomment>Title of the print dialog and of messages about printing.</extracomment>
+        <extracomment>Title of the print dialog and of messages about printing.
+----------
+Tooltip of the toolbar&apos;s print button (verb).</extracomment>
         <translation>打印</translation>
     </message>
     <message>
@@ -264,9 +266,9 @@ Edited document retained at %2.
         <translation>Mervin PDF</translation>
     </message>
     <message>
-        <source>&amp;Open</source>
+        <source>Open</source>
         <extracomment>Toolbar button (verb): open a PDF file in a new tab.</extracomment>
-        <translation>打开(&amp;O)</translation>
+        <translation>打开</translation>
     </message>
     <message>
         <source>Open in New Window</source>
@@ -377,8 +379,13 @@ Edited document retained at %2.
         <translation>测量(&amp;M)</translation>
     </message>
     <message>
+        <source>Measure</source>
+        <extracomment>Tooltip of the toolbar&apos;s measure button (verb).</extracomment>
+        <translation>测量</translation>
+    </message>
+    <message>
         <source>Fill &amp;Forms</source>
-        <translation>填写表单(&amp;F)</translation>
+        <translation>填写表单(&amp;I)</translation>
     </message>
     <message>
         <source>Comme&amp;nt</source>
@@ -421,7 +428,7 @@ Edited document retained at %2.
     </message>
     <message>
         <source>&amp;Single Page Scroll</source>
-        <translation>单页滚动(&amp;S)</translation>
+        <translation>单页滚动(&amp;L)</translation>
     </message>
     <message>
         <source>&amp;Two-Page Spread</source>
@@ -433,7 +440,7 @@ Edited document retained at %2.
     </message>
     <message>
         <source>Always on &amp;Top</source>
-        <translation>始终置顶(&amp;T)</translation>
+        <translation>始终置顶(&amp;Y)</translation>
     </message>
     <message>
         <source>&amp;Settings</source>
@@ -484,7 +491,7 @@ Edited document retained at %2.
     </message>
     <message>
         <source>Fit &amp;Page</source>
-        <translation>适合页面(&amp;P)</translation>
+        <translation>适合页面(&amp;G)</translation>
     </message>
     <message>
         <source>Fit &amp;Width</source>
@@ -577,7 +584,7 @@ Edited document retained at %2.
     <message>
         <source>Comments</source>
         <extracomment>Side panel title (noun, plural): the list of the document&apos;s comments.</extracomment>
-        <translation>批注</translation>
+        <translation>批注列表</translation>
     </message>
     <message>
         <source>OCR Selection</source>
@@ -894,6 +901,24 @@ Button: starts printing.</extracomment>
         <source>PDF files (*.pdf)</source>
         <extracomment>File type filter. Keep &quot;(*.pdf)&quot;.</extracomment>
         <translation>PDF 文件 (*.pdf)</translation>
+    </message>
+</context>
+<context>
+    <name>QShortcut</name>
+    <message>
+        <source>Home</source>
+        <extracomment>Key name in the keyboard shortcut list. Write it as printed on the key or as the OS documents it. Left unfinished, the English name shows.</extracomment>
+        <translation>Home</translation>
+    </message>
+    <message>
+        <source>Up</source>
+        <extracomment>Key name in the keyboard shortcut list: the up arrow key. Write it as the OS documents it. Left unfinished, the English name shows.</extracomment>
+        <translation>上方向</translation>
+    </message>
+    <message>
+        <source>Down</source>
+        <extracomment>Key name in the keyboard shortcut list: the down arrow key. Write it as the OS documents it. Left unfinished, the English name shows.</extracomment>
+        <translation>下方向</translation>
     </message>
 </context>
 <context>
@@ -1339,7 +1364,7 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     <message>
         <source>&lt;p&gt;Mervin PDF is free software under the GNU AGPL v3, with no warranty.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Open-source components&lt;/b&gt;&lt;/p&gt;&lt;ul&gt;&lt;li&gt;&lt;b&gt;Qt 6&lt;/b&gt;: GNU LGPL v3 (dynamically linked; libraries may be replaced).&lt;/li&gt;&lt;li&gt;&lt;b&gt;MuPDF&lt;/b&gt; (Artifex): GNU AGPL v3 or commercial. Rendering, text, OCR.&lt;/li&gt;&lt;li&gt;&lt;b&gt;qpdf&lt;/b&gt;: Apache 2.0. Security &amp;amp; page operations.&lt;/li&gt;&lt;li&gt;&lt;b&gt;Tesseract&lt;/b&gt;: Apache 2.0, and &lt;b&gt;Leptonica&lt;/b&gt;: BSD. Selection OCR.&lt;/li&gt;&lt;li&gt;&lt;b&gt;toml++&lt;/b&gt;: MIT. Configuration file.&lt;/li&gt;&lt;li&gt;Bundled by MuPDF: FreeType, HarfBuzz, libjpeg-turbo, OpenJPEG, jbig2dec (AGPL), zlib.&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;See &lt;i&gt;THIRD_PARTY_LICENSES.md&lt;/i&gt; for full licence texts.&lt;/p&gt;</source>
         <extracomment>Licence notice. Keep the HTML tags, the component and licence names, and THIRD_PARTY_LICENSES.md as they are.</extracomment>
-        <translation>&lt;p&gt;Mervin PDF 是采用 GNU AGPL v3 许可证的自由软件，不提供任何担保。&lt;/p&gt;&lt;p&gt;&lt;b&gt;开源组件&lt;/b&gt;&lt;/p&gt;&lt;ul&gt;&lt;li&gt;&lt;b&gt;Qt 6&lt;/b&gt;：GNU LGPL v3（动态链接；库可替换）。&lt;/li&gt;&lt;li&gt;&lt;b&gt;MuPDF&lt;/b&gt;（Artifex）：GNU AGPL v3 或商业许可证。渲染、文本、OCR。&lt;/li&gt;&lt;li&gt;&lt;b&gt;qpdf&lt;/b&gt;：Apache 2.0。安全性 &amp;amp; 页面操作。&lt;/li&gt;&lt;li&gt;&lt;b&gt;Tesseract&lt;/b&gt;：Apache 2.0，&lt;b&gt;Leptonica&lt;/b&gt;：BSD。选区 OCR。&lt;/li&gt;&lt;li&gt;&lt;b&gt;toml++&lt;/b&gt;：MIT。配置文件。&lt;/li&gt;&lt;li&gt;MuPDF 附带：FreeType、HarfBuzz、libjpeg-turbo、OpenJPEG、jbig2dec（AGPL）、zlib。&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;有关完整的许可证文本，请参阅&lt;i&gt;THIRD_PARTY_LICENSES.md&lt;/i&gt;。&lt;/p&gt;</translation>
+        <translation>&lt;p&gt;Mervin PDF 是采用 GNU AGPL v3 许可证的自由软件，不提供任何担保。&lt;/p&gt;&lt;p&gt;&lt;b&gt;开源组件&lt;/b&gt;&lt;/p&gt;&lt;ul&gt;&lt;li&gt;&lt;b&gt;Qt 6&lt;/b&gt;：GNU LGPL v3（动态链接；库可替换）。&lt;/li&gt;&lt;li&gt;&lt;b&gt;MuPDF&lt;/b&gt;（Artifex）：GNU AGPL v3 或商业许可证。渲染、文本、OCR。&lt;/li&gt;&lt;li&gt;&lt;b&gt;qpdf&lt;/b&gt;：Apache 2.0。安全性与页面操作。&lt;/li&gt;&lt;li&gt;&lt;b&gt;Tesseract&lt;/b&gt;：Apache 2.0，&lt;b&gt;Leptonica&lt;/b&gt;：BSD。选区 OCR。&lt;/li&gt;&lt;li&gt;&lt;b&gt;toml++&lt;/b&gt;：MIT。配置文件。&lt;/li&gt;&lt;li&gt;MuPDF 附带：FreeType、HarfBuzz、libjpeg-turbo、OpenJPEG、jbig2dec（AGPL）、zlib。&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;有关完整的许可证文本，请参阅 &lt;i&gt;THIRD_PARTY_LICENSES.md&lt;/i&gt;。&lt;/p&gt;</translation>
     </message>
     <message>
         <source>Enter 1 to %1 whole minutes, or check Never.</source>
@@ -1497,7 +1522,7 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     </message>
     <message>
         <source>Enter the real length of the line you drew to set the drawing scale.</source>
-        <translation>请输入你绘制的线段的实际长度，以设置图纸比例。</translation>
+        <translation>输入所绘线段的实际长度，以设置图纸比例。</translation>
     </message>
     <message>
         <source>Known length:</source>
@@ -1782,7 +1807,7 @@ The exported file is viewable in any PDF viewer.</source>
     <message numerus="yes">
         <source>Result: %n page(s), in the order shown.</source>
         <translation>
-            <numerusform>结果：%n 页，按所示顺序。</numerusform>
+            <numerusform>结果：共 %n 页，按所示顺序排列。</numerusform>
         </translation>
     </message>
     <message numerus="yes">
@@ -2389,7 +2414,7 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <source>Result: %n page(s) from %1, in the order shown.</source>
         <extracomment>%1 is the number of files, like &quot;4 files&quot;.</extracomment>
         <translation>
-            <numerusform>结果：来自 %1 的 %n 页，按所示顺序。</numerusform>
+            <numerusform>结果：%1共 %n 页，按所示顺序排列。</numerusform>
         </translation>
     </message>
     <message>
@@ -2464,6 +2489,16 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <source>File &amp;name or URL:</source>
         <extracomment>Label of the Open dialog&apos;s file name field, which also accepts a web address.</extracomment>
         <translation>文件名或 URL(&amp;N)：</translation>
+    </message>
+    <message>
+        <source>&amp;Look in:</source>
+        <extracomment>Label of the folder picker at the top of the Open dialog.</extracomment>
+        <translation>查找范围(&amp;L)：</translation>
+    </message>
+    <message>
+        <source>Files of &amp;type:</source>
+        <extracomment>Label of the file type filter at the bottom of the Open dialog.</extracomment>
+        <translation>文件类型(&amp;T)：</translation>
     </message>
 </context>
 <context>
@@ -3099,6 +3134,536 @@ Open it now?</source>
         <extracomment>OCR model name. The model finds page orientation and writing system instead of reading a language.</extracomment>
         <translation>方向和文字检测</translation>
     </message>
+    <message>
+        <source>Afrikaans</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>南非荷兰语</translation>
+    </message>
+    <message>
+        <source>Amharic</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>阿姆哈拉语</translation>
+    </message>
+    <message>
+        <source>Arabic</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>阿拉伯语</translation>
+    </message>
+    <message>
+        <source>Assamese</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>阿萨姆语</translation>
+    </message>
+    <message>
+        <source>Azerbaijani</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>阿塞拜疆语</translation>
+    </message>
+    <message>
+        <source>Belarusian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>白俄罗斯语</translation>
+    </message>
+    <message>
+        <source>Bangla</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>孟加拉语</translation>
+    </message>
+    <message>
+        <source>Tibetan</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>藏语</translation>
+    </message>
+    <message>
+        <source>Bosnian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>波斯尼亚语</translation>
+    </message>
+    <message>
+        <source>Breton</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>布列塔尼语</translation>
+    </message>
+    <message>
+        <source>Bulgarian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>保加利亚语</translation>
+    </message>
+    <message>
+        <source>Catalan</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>加泰罗尼亚语</translation>
+    </message>
+    <message>
+        <source>Cebuano</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>宿务语</translation>
+    </message>
+    <message>
+        <source>Czech</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>捷克语</translation>
+    </message>
+    <message>
+        <source>Cherokee</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>切罗基语</translation>
+    </message>
+    <message>
+        <source>Corsican</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>科西嘉语</translation>
+    </message>
+    <message>
+        <source>Welsh</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>威尔士语</translation>
+    </message>
+    <message>
+        <source>Danish</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>丹麦语</translation>
+    </message>
+    <message>
+        <source>German</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>德语</translation>
+    </message>
+    <message>
+        <source>Divehi</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>迪维希语</translation>
+    </message>
+    <message>
+        <source>Dzongkha</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>宗卡语</translation>
+    </message>
+    <message>
+        <source>Greek</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>希腊语</translation>
+    </message>
+    <message>
+        <source>English</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>英语</translation>
+    </message>
+    <message>
+        <source>Esperanto</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>世界语</translation>
+    </message>
+    <message>
+        <source>Estonian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>爱沙尼亚语</translation>
+    </message>
+    <message>
+        <source>Basque</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>巴斯克语</translation>
+    </message>
+    <message>
+        <source>Faroese</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>法罗语</translation>
+    </message>
+    <message>
+        <source>Persian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>波斯语</translation>
+    </message>
+    <message>
+        <source>Filipino</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>菲律宾语</translation>
+    </message>
+    <message>
+        <source>Finnish</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>芬兰语</translation>
+    </message>
+    <message>
+        <source>French</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>法语</translation>
+    </message>
+    <message>
+        <source>Western Frisian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>西弗里西亚语</translation>
+    </message>
+    <message>
+        <source>Scottish Gaelic</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>苏格兰盖尔语</translation>
+    </message>
+    <message>
+        <source>Irish</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>爱尔兰语</translation>
+    </message>
+    <message>
+        <source>Galician</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>加利西亚语</translation>
+    </message>
+    <message>
+        <source>Ancient Greek</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>古希腊语</translation>
+    </message>
+    <message>
+        <source>Gujarati</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>古吉拉特语</translation>
+    </message>
+    <message>
+        <source>Haitian Creole</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>海地克里奥尔语</translation>
+    </message>
+    <message>
+        <source>Hebrew</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>希伯来语</translation>
+    </message>
+    <message>
+        <source>Hindi</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>印地语</translation>
+    </message>
+    <message>
+        <source>Croatian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>克罗地亚语</translation>
+    </message>
+    <message>
+        <source>Hungarian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>匈牙利语</translation>
+    </message>
+    <message>
+        <source>Armenian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>亚美尼亚语</translation>
+    </message>
+    <message>
+        <source>Inuktitut</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>因纽特语</translation>
+    </message>
+    <message>
+        <source>Indonesian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>印度尼西亚语</translation>
+    </message>
+    <message>
+        <source>Icelandic</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>冰岛语</translation>
+    </message>
+    <message>
+        <source>Italian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>意大利语</translation>
+    </message>
+    <message>
+        <source>Javanese</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>爪哇语</translation>
+    </message>
+    <message>
+        <source>Japanese</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>日语</translation>
+    </message>
+    <message>
+        <source>Kannada</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>卡纳达语</translation>
+    </message>
+    <message>
+        <source>Georgian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>格鲁吉亚语</translation>
+    </message>
+    <message>
+        <source>Kazakh</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>哈萨克语</translation>
+    </message>
+    <message>
+        <source>Khmer</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>高棉语</translation>
+    </message>
+    <message>
+        <source>Kyrgyz</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>柯尔克孜语</translation>
+    </message>
+    <message>
+        <source>Korean</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>韩语</translation>
+    </message>
+    <message>
+        <source>Lao</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>老挝语</translation>
+    </message>
+    <message>
+        <source>Latin</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>拉丁语</translation>
+    </message>
+    <message>
+        <source>Latvian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>拉脱维亚语</translation>
+    </message>
+    <message>
+        <source>Lithuanian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>立陶宛语</translation>
+    </message>
+    <message>
+        <source>Luxembourgish</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>卢森堡语</translation>
+    </message>
+    <message>
+        <source>Malayalam</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>马拉雅拉姆语</translation>
+    </message>
+    <message>
+        <source>Marathi</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>马拉地语</translation>
+    </message>
+    <message>
+        <source>Macedonian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>马其顿语</translation>
+    </message>
+    <message>
+        <source>Maltese</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>马耳他语</translation>
+    </message>
+    <message>
+        <source>Mongolian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>蒙古语</translation>
+    </message>
+    <message>
+        <source>Māori</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>毛利语</translation>
+    </message>
+    <message>
+        <source>Malay</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>马来语</translation>
+    </message>
+    <message>
+        <source>Burmese</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>缅甸语</translation>
+    </message>
+    <message>
+        <source>Nepali</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>尼泊尔语</translation>
+    </message>
+    <message>
+        <source>Dutch</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>荷兰语</translation>
+    </message>
+    <message>
+        <source>Occitan</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>奥克语</translation>
+    </message>
+    <message>
+        <source>Odia</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>奥里亚语</translation>
+    </message>
+    <message>
+        <source>Punjabi</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>旁遮普语</translation>
+    </message>
+    <message>
+        <source>Polish</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>波兰语</translation>
+    </message>
+    <message>
+        <source>Portuguese</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>葡萄牙语</translation>
+    </message>
+    <message>
+        <source>Pashto</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>普什图语</translation>
+    </message>
+    <message>
+        <source>Quechua</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>克丘亚语</translation>
+    </message>
+    <message>
+        <source>Romanian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>罗马尼亚语</translation>
+    </message>
+    <message>
+        <source>Russian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>俄语</translation>
+    </message>
+    <message>
+        <source>Sanskrit</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>梵语</translation>
+    </message>
+    <message>
+        <source>Sinhala</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>僧伽罗语</translation>
+    </message>
+    <message>
+        <source>Slovak</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>斯洛伐克语</translation>
+    </message>
+    <message>
+        <source>Slovenian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>斯洛文尼亚语</translation>
+    </message>
+    <message>
+        <source>Sindhi</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>信德语</translation>
+    </message>
+    <message>
+        <source>Spanish</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>西班牙语</translation>
+    </message>
+    <message>
+        <source>Albanian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>阿尔巴尼亚语</translation>
+    </message>
+    <message>
+        <source>Serbian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>塞尔维亚语</translation>
+    </message>
+    <message>
+        <source>Sundanese</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>巽他语</translation>
+    </message>
+    <message>
+        <source>Swahili</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>斯瓦希里语</translation>
+    </message>
+    <message>
+        <source>Swedish</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>瑞典语</translation>
+    </message>
+    <message>
+        <source>Syriac</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>叙利亚语</translation>
+    </message>
+    <message>
+        <source>Tamil</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>泰米尔语</translation>
+    </message>
+    <message>
+        <source>Tatar</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>鞑靼语</translation>
+    </message>
+    <message>
+        <source>Telugu</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>泰卢固语</translation>
+    </message>
+    <message>
+        <source>Tajik</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>塔吉克语</translation>
+    </message>
+    <message>
+        <source>Thai</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>泰语</translation>
+    </message>
+    <message>
+        <source>Tigrinya</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>提格利尼亚语</translation>
+    </message>
+    <message>
+        <source>Tongan</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>汤加语</translation>
+    </message>
+    <message>
+        <source>Turkish</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>土耳其语</translation>
+    </message>
+    <message>
+        <source>Uyghur</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>维吾尔语</translation>
+    </message>
+    <message>
+        <source>Ukrainian</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>乌克兰语</translation>
+    </message>
+    <message>
+        <source>Urdu</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>乌尔都语</translation>
+    </message>
+    <message>
+        <source>Uzbek</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>乌兹别克语</translation>
+    </message>
+    <message>
+        <source>Vietnamese</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>越南语</translation>
+    </message>
+    <message>
+        <source>Yiddish</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>意第绪语</translation>
+    </message>
+    <message>
+        <source>Yoruba</source>
+        <extracomment>OCR language name.</extracomment>
+        <translation>约鲁巴语</translation>
+    </message>
 </context>
 <context>
     <name>mervin::UiThemePicker</name>
@@ -3161,7 +3726,7 @@ Mervin PDF %1 is the latest version.</source>
         <extracomment>%1 is the version number of this copy.</extracomment>
         <translation>你使用的是最新版本。
 
-Mervin PDF %1 是最新版本。</translation>
+当前版本为 Mervin PDF %1。</translation>
     </message>
     <message>
         <source>Update Available</source>
@@ -3228,7 +3793,7 @@ Mervin PDF %1 是最新版本。</translation>
     <message>
         <source>You have %1. Click &lt;b&gt;Never&lt;/b&gt; to turn off automatic updates.</source>
         <extracomment>%1 is the version number of this copy. Never is the button of that name; keep the &lt;b&gt;&lt;/b&gt; tags around it.</extracomment>
-        <translation>当前版本为 %1。单击&lt;b&gt;从不&lt;/b&gt;可关闭自动更新。</translation>
+        <translation>当前版本为 %1。单击&lt;b&gt;“从不”&lt;/b&gt;即可关闭自动更新。</translation>
     </message>
     <message>
         <source>Install Now</source>
@@ -3318,22 +3883,22 @@ The new AppImage is saved at:
     <message>
         <source>No scale - Calibrate (paper · %1)</source>
         <extracomment>Shown when the page has no drawing scale. %1 is the unit symbol, such as mm. Values are measured on the paper until the user calibrates.</extracomment>
-        <translation>无比例 - 校准（纸面 · %1）</translation>
+        <translation>无比例 - 校准（纸面，%1）</translation>
     </message>
     <message>
         <source>Scale %1 · %2 · calibrated</source>
         <extracomment>%1 is the drawing scale, such as 1:100. %2 is the unit symbol, such as mm. The user set the scale by drawing a line of known length.</extracomment>
-        <translation>比例 %1 · %2 · 已校准</translation>
+        <translation>比例 %1（%2，已校准）</translation>
     </message>
     <message>
         <source>Scale %1 · %2 · manual</source>
         <extracomment>%1 is the drawing scale, such as 1:100. %2 is the unit symbol, such as mm. The user typed the scale.</extracomment>
-        <translation>比例 %1 · %2 · 手动</translation>
+        <translation>比例 %1（%2，手动）</translation>
     </message>
     <message>
         <source>Scale %1 · %2</source>
         <extracomment>%1 is the drawing scale, such as 1:100, read from the PDF. %2 is the unit symbol, such as mm.</extracomment>
-        <translation>比例 %1 · %2</translation>
+        <translation>比例 %1（%2）</translation>
     </message>
 </context>
 <context>
