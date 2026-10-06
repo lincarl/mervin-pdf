@@ -47,6 +47,10 @@ public:
     WindowManager();
     ~WindowManager() override;
 
+    // Force Qt's colour scheme for a "light"/"dark" setting, or follow the OS for
+    // "system". Before any window exists, call this and then Theme::applyApp().
+    static void applyColorSchemeToQt(const QString &scheme);
+
     RenderEngine *engine() const { return engine_.get(); }
 
     // Take ownership of the single-instance server (already listening) so opens
@@ -87,6 +91,10 @@ public:
     // Explicit Quit/update shutdown bypasses closing to the tray. Prompt before destroying
     // any window, so cancelling preserves every open tab.
     bool closeAllForQuit();
+    // Quit as above, then start Mervin again (see Relaunch.h); used after a change that
+    // only takes effect at startup. False when a save prompt was cancelled: nothing
+    // closes, and the change waits for the next start.
+    bool restart();
     bool canCloseToTray() const;
     void restoreFromTray();
     void applyMemorySettings(int minutes, bool closeToTray);
@@ -232,8 +240,6 @@ private:
     MainWindow *activeOrNewWindow();
     MainWindow *emptyWindow() const; // a document-less window, or nullptr
     void applyViewStateIfStored(const QString &canonicalPath);
-
-    static void applyColorSchemeToQt(const QString &scheme);
 
     // Rebuild the app-wide Theme stylesheet on the next event-loop turn. Deferred
     // (and coalesced) because the colour-scheme signals that drive it fire BEFORE

@@ -262,6 +262,19 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
     add(QStringLiteral("QComboBox QAbstractItemView { background:%1; border:1px solid %2;"
                        " selection-background-color:%3; selection-color:%4; }")
             .arg(css(t.popover), css(t.border), css(t.accent), css(t.onAccent)));
+    // The UI language picker's popup (LanguageCombo): a popover card holding a
+    // search field above a list with rounded rows.
+    add(QStringLiteral("QFrame#languagePopup { background:%1; border:1px solid %2;"
+                       " border-radius:10px; }")
+            .arg(css(t.popover), css(t.borderPopover)));
+    add(QStringLiteral("QListView#uiLanguageList { background:transparent; border:none; outline:0; }"));
+    add(QStringLiteral("QListView#uiLanguageList::item { padding:6px 8px; border-radius:6px;"
+                       " color:%1; }")
+            .arg(css(t.ink)));
+    add(QStringLiteral("QListView#uiLanguageList::item:hover { background:%1; }")
+            .arg(css(t.rowHover)));
+    add(QStringLiteral("QListView#uiLanguageList::item:selected { background:%1; color:%2; }")
+            .arg(css(t.accent), css(t.onAccent)));
     // A spin box embeds a QLineEdit too, and the shared rule above matches it by
     // type - so without this reset it drew its own border, radius and 8px padding
     // *inside* the spin box frame, squeezing the value.

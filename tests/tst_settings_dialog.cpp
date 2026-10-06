@@ -1,6 +1,8 @@
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
 #include "dialogs/SettingsDialog.h"
+#include "i18n/UiLanguage.h"
+#include "ui/LanguageCombo.h"
 #include "render/AnnotTypes.h"
 #include "ui/DocumentThemePicker.h"
 
@@ -67,6 +69,8 @@ private slots:
     void ocrPageShowsAnInstalledDefaultButKeepsTheSavedOne();
     void removingAnOcrLanguageAsksFirst();
     void theLastOcrLanguageStays();
+    void newUiLanguageRestartsOnApply();
+    void untouchedUiLanguageKeepsTheStoredValue();
 
 private:
     QString tessdataPath(const char *code) const;
@@ -856,6 +860,53 @@ void TstSettingsDialog::theLastOcrLanguageStays()
         dialog.findChildren<QToolButton *>(QStringLiteral("settingsListRemove"));
     QCOMPARE(buttons.size(), 1);
     QVERIFY(!buttons.first()->isEnabled());
+}
+
+// Picking a language other than the one Mervin shows says "Mervin will restart.";
+// Apply then hands it over and closes the dialog like OK, so the caller restarts.
+void TstSettingsDialog::newUiLanguageRestartsOnApply()
+{
+    SettingsDialog dialog(mervin::Settings{});
+    auto *combo = dialog.findChild<mervin::LanguageCombo *>(QStringLiteral("uiLanguage"));
+    QLabel *hint = labelStartingWith(&dialog, QStringLiteral("Mervin will restart"));
+    QPushButton *apply = dialogButton(&dialog, QDialogButtonBox::Apply);
+    QVERIFY(combo && hint && apply);
+    QCOMPARE(combo->language(), mervin::i18n::current());
+    QVERIFY(!dialog.restartNeeded());
+    QVERIFY(hint->isHidden());
+
+    QList<mervin::Settings> applied;
+    connect(&dialog, &SettingsDialog::applyRequested, this,
+            [&applied](const mervin::Settings &s) { applied.append(s); });
+    QSignalSpy accepted(&dialog, &QDialog::accepted);
+    combo->setLanguage(QStringLiteral("sv"));
+    QVERIFY(dialog.restartNeeded());
+    QVERIFY(!hint->isHidden());
+    QVERIFY(apply->isEnabled());
+    QCOMPARE(dialog.settings().uiLanguage, QStringLiteral("sv"));
+
+    // Back to the language shown: nothing to restart for.
+    combo->setLanguage(mervin::i18n::current());
+    QVERIFY(!dialog.restartNeeded());
+    QVERIFY(hint->isHidden());
+
+    combo->setLanguage(QStringLiteral("zh_CN"));
+    apply->click();
+    QCOMPARE(applied.size(), 1);
+    QCOMPARE(applied.first().uiLanguage, QStringLiteral("zh_CN"));
+    QCOMPARE(accepted.size(), 1);
+}
+
+// Opening and confirming Settings never rewrites the stored language: not an
+// empty one (no choice yet) and not one this build doesn't ship.
+void TstSettingsDialog::untouchedUiLanguageKeepsTheStoredValue()
+{
+    for (const QString &stored : {QString(), QStringLiteral("pt_BR"), QStringLiteral("sv")}) {
+        mervin::Settings in;
+        in.uiLanguage = stored;
+        SettingsDialog dialog(in);
+        QCOMPARE(dialog.settings().uiLanguage, stored);
+    }
 }
 
 QTEST_MAIN(TstSettingsDialog)

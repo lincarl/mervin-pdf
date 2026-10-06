@@ -2,11 +2,13 @@
 
 #include "config/ConfigPaths.h"
 #include "dialogs/ManageLanguagesDialog.h"
+#include "i18n/UiLanguage.h"
 #include "mervin_version.h"
 #include "ocr/TessdataManager.h"
 #include "render/AnnotTypes.h"
 #include "ui/DocumentThemePicker.h"
 #include "ui/Icons.h"
+#include "ui/LanguageCombo.h"
 #include "ui/Theme.h"
 #include "ui/ThemeTokens.h"
 #include "ui/UiThemePicker.h"
@@ -274,7 +276,11 @@ SettingsDialog::SettingsDialog(const mervin::Settings &current, const UpdateInfo
     applyButton_ = buttons->button(QDialogButtonBox::Apply);
     connect(buttons, &QDialogButtonBox::accepted, this, &SettingsDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    connect(applyButton_, &QPushButton::clicked, this, &SettingsDialog::applyChanges);
+    // Apply with a new language closes the dialog like OK: the caller restarts Mervin.
+    connect(applyButton_, &QPushButton::clicked, this, [this] {
+        if (applyChanges() && restartNeeded())
+            QDialog::accept();
+    });
     footerLayout->addWidget(buttons);
     outer->addWidget(footer);
     refreshUnloadHint();
@@ -324,6 +330,28 @@ QWidget *SettingsDialog::buildGeneralPage()
 {
     auto *page = new QWidget(this);
     auto *layout = pageLayout(page);
+
+    // The UI language. Windows set their text when they are built, so a new
+    // language takes effect when Mervin restarts, which OK and Apply then do.
+    auto *languageBox = groupBox(tr("Language"), page);
+    auto *languageForm = snugForm(languageBox);
+    languageCombo_ = new mervin::LanguageCombo(languageBox);
+    languageCombo_->setObjectName(QStringLiteral("uiLanguage"));
+    const QString storedLanguage =
+        mervin::i18n::normalized(base_.uiLanguage, mervin::i18n::availableLanguages());
+    languageCombo_->setLanguage(storedLanguage.isEmpty() ? mervin::i18n::current()
+                                                         : storedLanguage);
+    languageAtOpen_ = languageCombo_->language();
+    languageForm->addRow(tr("Display language:"), languageCombo_);
+    restartHint_ = hintLabel(tr("Mervin will restart."), languageBox);
+    restartHint_->setWordWrap(false);
+    languageForm->addRow(QString(), restartHint_);
+    const auto showRestartHint = [this, languageForm] {
+        languageForm->setRowVisible(restartHint_, restartNeeded());
+    };
+    connect(languageCombo_, &QComboBox::currentIndexChanged, this, showRestartHint);
+    showRestartHint();
+    layout->addWidget(languageBox);
 
     auto *openBox = groupBox(tr("Opening files"), page);
     auto *openForm = snugForm(openBox);
@@ -849,6 +877,9 @@ QWidget *SettingsDialog::buildAboutPage()
 mervin::Settings SettingsDialog::settings() const
 {
     mervin::Settings s = base_; // keep window geometry/state etc.
+    // An untouched picker keeps the stored value, even an empty or unknown one.
+    if (languageCombo_->language() != languageAtOpen_)
+        s.uiLanguage = languageCombo_->language();
     s.defaultZoom = zoomCombo_->currentData().toString();
     s.pageMode = pageModeCombo_->currentData().toString();
     s.twoPageSpread = twoPageSpreadCheck_->isChecked();
@@ -910,6 +941,11 @@ void SettingsDialog::refreshUnloadHint()
         unloadHint_->clear(); // a valid timeout needs no explanation
     }
     unloadHint_->setHidden(unloadHint_->text().isEmpty());
+}
+
+bool SettingsDialog::restartNeeded() const
+{
+    return languageCombo_->language() != mervin::i18n::current();
 }
 
 void SettingsDialog::accept()

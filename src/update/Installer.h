@@ -29,6 +29,10 @@ bool replaceAppImage(const QString &file, QString *error);
 // package manager is missing.
 QStringList packageInstallCommand(PackageKind kind, const QString &file);
 
+// Arguments that bring a relaunched copy back as this one: a --profile instance
+// (dev and test runs) returns to its profile rather than the user's real state.
+QStringList relaunchArguments();
+
 // Linux: starts `exe` (keeping --profile) as soon as this process has exited,
 // so the new copy becomes the single-instance primary instead of handing its
 // launch to this one while it shuts down. False if the helper shell could not

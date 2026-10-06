@@ -22,6 +22,7 @@ class QVBoxLayout;
 
 namespace mervin {
 class DocumentThemePicker;
+class LanguageCombo;
 class UiThemePicker;
 }
 
@@ -54,6 +55,10 @@ public:
                    QWidget *parent = nullptr);
 
     mervin::Settings settings() const;
+
+    // The language picked differs from the one Mervin is showing. It takes effect at
+    // startup, so OK or Apply then closes the dialog and the caller restarts Mervin.
+    bool restartNeeded() const;
 
     void showPage(Page page);
     Page currentPage() const;
@@ -118,6 +123,9 @@ private:
     QListWidget *nav_ = nullptr;
     QStackedWidget *stack_ = nullptr;
 
+    mervin::LanguageCombo *languageCombo_ = nullptr;
+    QString languageAtOpen_;      // what languageCombo_ showed when the dialog opened
+    QLabel *restartHint_ = nullptr; // "Mervin will restart." while restartNeeded()
     mervin::UiThemePicker *uiThemePicker_ = nullptr; // chrome light/dark scheme
     QComboBox *zoomCombo_ = nullptr;
     QComboBox *pageModeCombo_ = nullptr;

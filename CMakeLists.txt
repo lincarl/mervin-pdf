@@ -12,8 +12,15 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 # ---- Dependencies ----------------------------------------------------------
 # Network: QLocalServer/QLocalSocket (IPC + single-instance) live in QtNetwork.
 # PrintSupport: QPrinter/QPrintDialog for Document -> Print.
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network PrintSupport Svg)
-qt_standard_project_setup()
+# LinguistTools: lupdate/lrelease for the UI translations (see "Translations"
+# below). Qt 6.9 is the minimum because the build merges Qt's own catalogs into
+# ours (MERGE_QT_TRANSLATIONS).
+find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui Widgets Network PrintSupport Svg LinguistTools)
+# English is the source language; each translated language has a catalog
+# i18n/mervin_<id>.ts. The IDs follow Qt's own catalog names (qtbase_<id>.qm).
+qt_standard_project_setup(
+    I18N_SOURCE_LANGUAGE en
+    I18N_TRANSLATED_LANGUAGES sv zh_CN)
 find_package(MuPDF REQUIRED)
 # tomlplusplus is header-only. Prefer a system/vcpkg config package; fall back to
 # fetching the single-header release so distros without libtomlplusplus-dev (e.g.
@@ -155,6 +162,8 @@ add_library(mervin_core STATIC
     src/platform/PlatformIntegration.h
     src/platform/FileClipboard.cpp
     src/platform/FileClipboard.h
+    src/i18n/UiLanguage.cpp
+    src/i18n/UiLanguage.h
     # The colour vocabulary. Values only (QColor/QPalette, no widgets), so it
     # lives here rather than in the application target: the widget-level test
     # targets compile app sources that read it, and this way they get it from
@@ -219,8 +228,14 @@ target_link_libraries(mervin_viewer PUBLIC mervin_core mervin_icons Qt6::Widgets
 
 # ---- MervinPDF: the application --------------------------------------------
 add_library(mervin_app STATIC
+    src/app/Relaunch.cpp
+    src/app/Relaunch.h
     src/app/WindowManager.cpp
     src/app/WindowManager.h
+    src/dialogs/FirstRunDialog.cpp
+    src/dialogs/FirstRunDialog.h
+    src/ui/LanguageCombo.cpp
+    src/ui/LanguageCombo.h
     src/ui/DocumentActions.cpp
     src/ui/MainWindow.cpp
     src/ui/MainWindowLifecycle.cpp
@@ -334,6 +349,40 @@ option(MERVIN_WIN32_SUBSYSTEM "Build MervinPDF as a Windows GUI app (no console)
 if(WIN32)
     set_target_properties(MervinPDF PROPERTIES WIN32_EXECUTABLE ${MERVIN_WIN32_SUBSYSTEM})
 endif()
+
+# ---- Translations ------------------------------------------------------------
+# lupdate reads the app's sources into i18n/mervin_<id>.ts (run the
+# update_translations target by hand; see docs/TRANSLATING.md). The build turns
+# each .ts into a .qm and compiles it into mervin_core under :/i18n, so every
+# package format and the tests carry the catalogs without install rules.
+# mervin_en.ts holds only English plural forms ("%n pages"). Unfinished
+# messages are left out, so they show in English instead of as drafts.
+# Qt's own catalog for each language (qtbase_<id>.qm: standard buttons, file,
+# print and message dialogs) is merged in. Without it those stay English and
+# lrelease only warns, so a missing catalog stops the configure instead.
+if(QT_INTERNAL_ABSOLUTE_TRANSLATIONS_DIR)
+    set(MERVIN_QT_TRANSLATIONS_DIR "${QT_INTERNAL_ABSOLUTE_TRANSLATIONS_DIR}")
+else()
+    set(MERVIN_QT_TRANSLATIONS_DIR "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_TRANSLATIONS}")
+endif()
+foreach(lang IN LISTS QT_I18N_TRANSLATED_LANGUAGES)
+    if(NOT EXISTS "${MERVIN_QT_TRANSLATIONS_DIR}/qtbase_${lang}.qm")
+        message(FATAL_ERROR
+            "Qt's translation catalog qtbase_${lang}.qm is missing from "
+            "${MERVIN_QT_TRANSLATIONS_DIR}. Install Qt's translations: the qttranslations "
+            "module (aqt/online installer), qt6-translations-l10n (Debian/Ubuntu) or "
+            "qt6-qttranslations (Fedora).")
+    endif()
+endforeach()
+qt_add_translations(
+    TARGETS mervin_core
+    SOURCE_TARGETS mervin_core mervin_icons mervin_viewer mervin_app MervinPDF
+    TS_FILE_BASE mervin
+    TS_FILE_DIR i18n
+    MERGE_QT_TRANSLATIONS
+    QT_TRANSLATION_CATALOGS qtbase
+    LUPDATE_OPTIONS -locations none -no-obsolete
+    LRELEASE_OPTIONS -nounfinished)
 
 # ---- Tests -----------------------------------------------------------------
 if(MERVIN_BUILD_TESTS)

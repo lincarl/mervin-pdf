@@ -26,10 +26,6 @@
 
 namespace mervin::update {
 
-namespace {
-
-// Arguments that bring a relaunched copy back as this one: a --profile instance
-// (dev and test runs) returns to its profile rather than the user's real state.
 QStringList relaunchArguments()
 {
     const QString profile = ConfigPaths::overrideDir();
@@ -37,6 +33,8 @@ QStringList relaunchArguments()
         return {};
     return {QStringLiteral("--profile"), profile};
 }
+
+namespace {
 
 #ifdef Q_OS_WIN
 // Windows' System32, resolved directly: a bare "cmd.exe" or "msiexec.exe" would

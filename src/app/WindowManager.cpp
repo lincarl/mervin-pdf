@@ -1,5 +1,6 @@
 #include "app/WindowManager.h"
 
+#include "app/Relaunch.h"
 #include "config/Settings.h"
 #include "ipc/Message.h"
 #include "ipc/SingleInstanceServer.h"
@@ -735,6 +736,14 @@ bool WindowManager::closeAllForQuit()
         window->closeForQuit();
     if (copy.isEmpty())
         QCoreApplication::quit();
+    return true;
+}
+
+bool WindowManager::restart()
+{
+    if (!closeAllForQuit())
+        return false;
+    relaunch::request();
     return true;
 }
 

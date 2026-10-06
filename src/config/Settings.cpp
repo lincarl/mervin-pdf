@@ -84,6 +84,7 @@ static Settings loadValues()
         s.autoFormFill = boolean("auto_form_fill", s.autoFormFill);
         s.extractOpenWhenDone = boolean("extract_open_when_done", s.extractOpenWhenDone);
         s.ocrDefaultLanguage = str("ocr_default_language", s.ocrDefaultLanguage);
+        s.uiLanguage = str("ui_language", s.uiLanguage);
         s.annotationAuthor = str("annotation_author", s.annotationAuthor);
         s.annotationColor = str("annotation_color", s.annotationColor);
         s.annotationStyle = str("annotation_style", s.annotationStyle);
@@ -123,6 +124,7 @@ static toml::table settingsTable(const Settings &s)
     tbl.insert("auto_form_fill", s.autoFormFill);
     tbl.insert("extract_open_when_done", s.extractOpenWhenDone);
     tbl.insert("ocr_default_language", s.ocrDefaultLanguage.toStdString());
+    tbl.insert("ui_language", s.uiLanguage.toStdString());
     tbl.insert("annotation_author", s.annotationAuthor.toStdString());
     tbl.insert("annotation_color", s.annotationColor.toStdString());
     tbl.insert("annotation_style", s.annotationStyle.toStdString());

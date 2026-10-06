@@ -33,6 +33,11 @@ struct Settings
     // "#RRGGBB" value for a fixed custom accent.
     QString accentColor = QStringLiteral("system");
 
+    // UI text language: a translation catalog ID such as "sv" or "zh_CN" (see
+    // i18n::availableLanguages). Empty until the first-run window has stored
+    // the user's choice; an ID this build doesn't ship shows English.
+    QString uiLanguage;
+
     // Open behaviour (consumed in M5)
     QString openBehavior = QStringLiteral("new-tab");  // "new-tab" | "new-window"
 

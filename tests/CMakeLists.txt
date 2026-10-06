@@ -29,6 +29,7 @@ set(_mervin_tests
     tst_document_output
     tst_render_lifetime
     tst_settings_store
+    tst_ui_language
     tst_comfort_transform
     tst_ink_rects
     tst_preview_layer
@@ -108,7 +109,9 @@ target_sources(tst_settings_dialog PRIVATE
     ${CMAKE_SOURCE_DIR}/src/ui/ThemeCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/ThemeCard.h
     ${CMAKE_SOURCE_DIR}/src/ui/UiThemePicker.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/UiThemePicker.h)
+    ${CMAKE_SOURCE_DIR}/src/ui/UiThemePicker.h
+    ${CMAKE_SOURCE_DIR}/src/ui/LanguageCombo.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/LanguageCombo.h)
 target_link_libraries(tst_settings_dialog PRIVATE mervin_icons Qt6::Widgets)
 
 # Real picker-path guard rail: enter a URL into the visible file-name field and
@@ -414,6 +417,14 @@ target_link_libraries(tst_recent_panel PRIVATE mervin_app Qt6::Test)
 set_target_properties(tst_recent_panel PROPERTIES WIN32_EXECUTABLE OFF)
 add_test(NAME tst_recent_panel COMMAND tst_recent_panel)
 set_tests_properties(tst_recent_panel PROPERTIES ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+
+# The UI language picker, the first-run window and the restart program.
+qt_add_executable(tst_language_picker tst_language_picker.cpp)
+target_link_libraries(tst_language_picker PRIVATE mervin_app Qt6::Test)
+set_target_properties(tst_language_picker PROPERTIES WIN32_EXECUTABLE OFF)
+add_test(NAME tst_language_picker COMMAND tst_language_picker)
+set_tests_properties(tst_language_picker PROPERTIES ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
 qt_add_executable(tst_document_suspension tst_document_suspension.cpp)

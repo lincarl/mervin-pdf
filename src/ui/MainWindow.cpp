@@ -2127,6 +2127,12 @@ void MainWindow::openSettings(SettingsDialog::Page page)
     // Apply and OK both arrive here. Cancel keeps what an earlier Apply changed.
     connect(&dlg, &SettingsDialog::applyRequested, this, &MainWindow::applySettings);
     dlg.exec();
+    // A new UI language takes effect at startup, so OK or Apply with one restarts
+    // Mervin. Queued: the restart closes this window, which is still in this call.
+    if (dlg.result() == QDialog::Accepted && dlg.restartNeeded() && wm_) {
+        mervin::WindowManager *wm = wm_;
+        QMetaObject::invokeMethod(wm, [wm] { wm->restart(); }, Qt::QueuedConnection);
+    }
 }
 
 void MainWindow::applySettings(const mervin::Settings &next)

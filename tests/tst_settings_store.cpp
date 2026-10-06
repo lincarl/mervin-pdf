@@ -131,6 +131,30 @@ private slots:
         mervin::ConfigPaths::setOverrideDir({});
     }
 
+    // The UI language stays empty until the first-run window stores a choice,
+    // which is how startup tells a first run apart. A stored ID comes back as
+    // written, including one this build doesn't ship (a newer version's).
+    void uiLanguageStartsEmptyAndRoundTrips()
+    {
+        QTemporaryDir dir;
+        mervin::ConfigPaths::setOverrideDir(dir.path());
+        QVERIFY(mervin::Settings::load().uiLanguage.isEmpty());
+        auto s = mervin::Settings::load();
+        s.uiLanguage = QStringLiteral("zh_CN");
+        QVERIFY(s.save());
+        QCOMPARE(mervin::Settings::load().uiLanguage, QStringLiteral("zh_CN"));
+        QFile file(mervin::ConfigPaths::configFile());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray saved = file.readAll();
+        QVERIFY(saved.contains("ui_language = "));
+        QVERIFY(saved.contains("zh_CN"));
+
+        s.uiLanguage = QStringLiteral("pt_BR");
+        QVERIFY(s.save());
+        QCOMPARE(mervin::Settings::load().uiLanguage, QStringLiteral("pt_BR"));
+        mervin::ConfigPaths::setOverrideDir({});
+    }
+
     // Equality compares the saved values only, not what each copy was last
     // loaded or saved against.
     void equalityComparesValuesOnly()
