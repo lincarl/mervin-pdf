@@ -21,8 +21,10 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
+#include <QStyle>
 #include <QStyledItemDelegate>
 #include <QTimer>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -350,10 +352,21 @@ RecentFilesPanel::RecentFilesPanel(QWidget *parent)
     search_->setFixedWidth(kFieldWidth);
     search_->installEventFilter(this);
     searchRow->addWidget(search_);
+    // The status, and Stop while a scan runs, sit a little closer together.
+    auto *statusRow = new QHBoxLayout;
+    statusRow->setSpacing(10);
     status_ = new QLabel(this);
     status_->setObjectName(QStringLiteral("recentSearchStatus"));
     status_->setVisible(false);
-    searchRow->addWidget(status_);
+    statusRow->addWidget(status_);
+    stopBtn_ = new QToolButton(this);
+    stopBtn_->setObjectName(QStringLiteral("recentSearchStop"));
+    stopBtn_->setText(tr("Stop"));
+    stopBtn_->setFocusPolicy(Qt::TabFocus); // a click leaves the caret in the field
+    stopBtn_->setVisible(false);
+    connect(stopBtn_, &QToolButton::clicked, this, &RecentFilesPanel::stopSearch);
+    statusRow->addWidget(stopBtn_);
+    searchRow->addLayout(statusRow);
     searchRow->addStretch();
     layout->addLayout(searchRow);
     connect(search_, &QLineEdit::textChanged, this, &RecentFilesPanel::onSearchChanged);
@@ -569,11 +582,16 @@ void RecentFilesPanel::onSearchChanged()
     // Names (and All's name matches) are listed at once; contents after the pause.
     rebuild();
     if (!contentMode()) {
+        setRunning(false);
         status_->setVisible(false);
         return;
     }
-    status_->setText(tr("Searching contents…"));
+    // The line and the status show at once, so the search is visibly on its way
+    // during the pause too.
+    status_->setText(tr("Searching…"));
     status_->setVisible(true);
+    setRunning(true);
+    search_->setProgress(0);
     debounce_->start();
 }
 
@@ -596,9 +614,68 @@ void RecentFilesPanel::startContentSearch()
         paths.append(e.path);
     }
     searching_ = true;
-    status_->setText(tr("Searching contents…"));
+    scanned_ = 0;
+    scanTotal_ = paths.size();
     status_->setVisible(true);
+    setRunning(true);
+    showScanProgress(0);
     emit contentSearchRequested(needle(), paths);
+}
+
+void RecentFilesPanel::setRunning(bool running)
+{
+    if (status_->property("running").toBool() != running) {
+        status_->setProperty("running", running);
+        status_->style()->unpolish(status_);
+        status_->style()->polish(status_);
+    }
+    // While Stop shows, the status keeps the width of its longest text for this
+    // history, so Stop never moves as "Searching…" turns into "Searching file 9
+    // of 40" and the counts gain digits.
+    if (running) {
+        // A space of slack: QLabel sizes text by its bounding box, which can be a
+        // pixel wider than the advance.
+        const int n = std::max(1, int(entries_.size()));
+        const QFontMetrics fm = status_->fontMetrics();
+        const QString widest = tr("Searching file %1 of %2").arg(n).arg(n);
+        status_->setMinimumWidth(std::max(fm.horizontalAdvance(widest), fm.boundingRect(widest).width())
+                                 + fm.horizontalAdvance(QLatin1Char(' ')));
+    } else {
+        status_->setMinimumWidth(0);
+        search_->setProgress(-1);
+    }
+    stopBtn_->setVisible(running);
+}
+
+// "Searching file 3 of 40" names the file being read; the line also counts the
+// pages read in it, so it keeps moving through a large file.
+void RecentFilesPanel::showScanProgress(qreal withinFile)
+{
+    if (scanTotal_ <= 0)
+        return;
+    status_->setText(tr("Searching file %1 of %2")
+                         .arg(std::min(scanned_ + 1, scanTotal_))
+                         .arg(scanTotal_));
+    search_->setProgress((scanned_ + std::clamp<qreal>(withinFile, 0, 1)) / scanTotal_);
+}
+
+void RecentFilesPanel::stopSearch()
+{
+    if (!debounce_->isActive() && !searching_)
+        return;
+    debounce_->stop();
+    if (searching_) {
+        searching_ = false;
+        emit contentSearchCanceled();
+    }
+    rescanOnShow_ = false; // stopped on purpose: no restart on return
+    setRunning(false);
+    const int listed = favRows_ + recentRows_;
+    status_->setText(listed == 0   ? tr("Stopped")
+                     : listed == 1 ? tr("Stopped, 1 file found")
+                                   : tr("Stopped, %1 files found").arg(listed));
+    status_->setVisible(true);
+    updateSummary(listed);
 }
 
 void RecentFilesPanel::addContentHit(const QString &path, int page, const QString &snippet)
@@ -617,7 +694,16 @@ void RecentFilesPanel::setContentProgress(int scanned, int total)
 {
     if (!searching_)
         return;
-    status_->setText(tr("Searching contents… %1 of %2").arg(scanned).arg(total));
+    scanned_ = scanned;
+    scanTotal_ = total;
+    showScanProgress(0);
+}
+
+void RecentFilesPanel::setContentPageProgress(int page, int pageCount)
+{
+    if (!searching_ || pageCount <= 0)
+        return;
+    showScanProgress(qreal(page) / pageCount);
 }
 
 void RecentFilesPanel::endContentSearch(bool canceled, int matched)
@@ -627,6 +713,7 @@ void RecentFilesPanel::endContentSearch(bool canceled, int matched)
     if (!searching_)
         return;
     searching_ = false;
+    setRunning(false);
     if (canceled) {
         // Stopped from outside (the window left Recent): start again on return.
         status_->setVisible(false);

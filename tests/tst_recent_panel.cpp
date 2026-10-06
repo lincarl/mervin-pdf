@@ -37,6 +37,8 @@ private slots:
     void homeAndPageKeysStepOverCaptions();
     void historyChangesReachAnAllSearch();
     void aHiddenPageScansOnlyWhenShownAgain();
+    void theProgressLineFollowsTheScan();
+    void stopKeepsWhatWasFound();
 
 private:
     QString file(const QString &name) const { return dir_.filePath(name); }
@@ -298,6 +300,76 @@ void TstRecentPanel::aHiddenPageScansOnlyWhenShownAgain()
     panel_->show();
     QTRY_COMPARE(scans.count(), 1);
     QCOMPARE(scans.at(0).at(0).toString(), QStringLiteral("report"));
+}
+
+void TstRecentPanel::theProgressLineFollowsTheScan()
+{
+    panel_->setEntries({entry("report-2024.pdf", 40), entry("notes.pdf", 30), entry("plan.pdf", 20),
+                        entry("report-fav.pdf", 10, true)});
+    auto *status = panel_->findChild<QLabel *>(QStringLiteral("recentSearchStatus"));
+    auto *stop = panel_->findChild<QToolButton *>(QStringLiteral("recentSearchStop"));
+    QVERIFY(status && stop);
+    panel_->setDefaultScope(RecentSearchField::Scope::Contents);
+    QSignalSpy scans(panel_, &RecentFilesPanel::contentSearchRequested);
+
+    // The line and Stop show at once, before the pause runs out.
+    field_->setText(QStringLiteral("pressure"));
+    QCOMPARE(field_->progress(), 0.0);
+    QVERIFY(stop->isVisible());
+    QVERIFY(status->property("running").toBool());
+
+    QCoreApplication::processEvents(); // lay out the row with Stop showing
+    const int stopX = stop->mapTo(panel_, QPoint()).x();
+
+    QTRY_COMPARE(scans.count(), 1);
+    QCOMPARE(status->text(), QStringLiteral("Searching file 1 of 4"));
+    // "Searching…" became longer text: Stop must stay where the pointer found it.
+    QCoreApplication::processEvents();
+    QCOMPARE(stop->mapTo(panel_, QPoint()).x(), stopX);
+    panel_->setContentProgress(1, 4);
+    QCOMPARE(field_->progress(), 0.25);
+    QCOMPARE(status->text(), QStringLiteral("Searching file 2 of 4"));
+    // Halfway through the second file's pages, the line keeps moving.
+    panel_->setContentPageProgress(50, 100);
+    QCOMPARE(field_->progress(), 0.375);
+
+    panel_->addContentHit(file("notes.pdf"), 3, QStringLiteral("… pressure …"));
+    panel_->endContentSearch(false, 1);
+    QVERIFY(field_->progress() < 0);
+    QVERIFY(!stop->isVisible());
+    QVERIFY(!status->property("running").toBool());
+    QCOMPARE(status->text(), QStringLiteral("1 file found"));
+
+    // Back to Names: no scan, no line.
+    panel_->setDefaultScope(RecentSearchField::Scope::Names);
+    QVERIFY(field_->progress() < 0);
+}
+
+void TstRecentPanel::stopKeepsWhatWasFound()
+{
+    panel_->setEntries({entry("report-2024.pdf", 40), entry("notes.pdf", 30), entry("plan.pdf", 20)});
+    panel_->setDefaultScope(RecentSearchField::Scope::Contents);
+    QSignalSpy scans(panel_, &RecentFilesPanel::contentSearchRequested);
+    QSignalSpy canceled(panel_, &RecentFilesPanel::contentSearchCanceled);
+    field_->setText(QStringLiteral("pressure"));
+    QTRY_COMPARE(scans.count(), 1);
+    panel_->addContentHit(file("plan.pdf"), 2, QStringLiteral("… pressure …"));
+
+    auto *stop = panel_->findChild<QToolButton *>(QStringLiteral("recentSearchStop"));
+    QTest::mouseClick(stop, Qt::LeftButton);
+
+    QCOMPARE(canceled.count(), 1);
+    QCOMPARE(rows(), QStringList({"plan.pdf"}));
+    QCOMPARE(panel_->findChild<QLabel *>(QStringLiteral("recentSearchStatus"))->text(),
+             QStringLiteral("Stopped, 1 file found"));
+    QVERIFY(field_->progress() < 0);
+    QVERIFY(!stop->isVisible());
+
+    // Stopped on purpose: leaving and returning does not start it again.
+    panel_->hide();
+    panel_->show();
+    QTest::qWait(600);
+    QCOMPARE(scans.count(), 1);
 }
 
 QTEST_MAIN(TstRecentPanel)

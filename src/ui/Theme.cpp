@@ -627,6 +627,19 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
     add(QStringLiteral("QFrame#recentSearchRule { background:%1; border:none; }")
             .arg(css(t.borderStrong)));
     add(QStringLiteral("QLabel#recentSearchStatus { color:%1; }").arg(css(t.inkSoft)));
+    // While a content scan runs the status is in full ink, beside a Stop button.
+    add(QStringLiteral("QLabel#recentSearchStatus[running=\"true\"] { color:%1; }")
+            .arg(css(t.ink)));
+    add(QStringLiteral("QToolButton#recentSearchStop { border:1px solid %1; border-radius:%2;"
+                       " padding:2px 10px; background:transparent; color:%3; }")
+            .arg(css(t.borderPush), rad, css(t.ink)));
+    add(QStringLiteral("QToolButton#recentSearchStop:hover { background:%1; border-color:%2; }")
+            .arg(css(t.hover), css(t.borderStrong)));
+    add(QStringLiteral("QToolButton#recentSearchStop:pressed { background:%1; }")
+            .arg(css(t.pressed)));
+    // Reached with Tab: an accent edge, since the hover wash already means hover.
+    add(QStringLiteral("QToolButton#recentSearchStop:focus { border-color:%1; }")
+            .arg(css(theme::legibleAccent(t.accent, dark))));
 
     // ── Floating tool panels (Measure, Comment) ─────────────────────────────
     // These live on the viewer's viewport, so they get an explicit ink for every
@@ -704,6 +717,8 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
             .arg(css(t.pressed)));
     add(QStringLiteral("QWidget#findCard QToolButton:disabled { background:transparent; color:%1; }")
             .arg(css(t.inkDisabled)));
+    add(QStringLiteral("QWidget#findCard QToolButton:focus { border-color:%1; }")
+            .arg(css(theme::legibleAccent(t.accent, dark))));
     add(QStringLiteral("QWidget#findCard QToolButton#findCardClose { color:%1; }")
             .arg(css(t.inkSoft)));
     add(QStringLiteral("QWidget#findCard QCheckBox { color:%1; }")

@@ -44,7 +44,8 @@ The Recent screen provides:
 - recent files, with starred favourites in their own section at the top;
 - one search field that searches file names, the text inside recent documents, or
   both (names first, then contents). Settings chooses where it starts, Names by
-  default;
+  default. A search inside documents shows its progress as a line in the field
+  and can be stopped, keeping what it found;
 - page count, file size, and last-opened information;
 - recovery choices for files that were moved or deleted, which stay listed until
   cleared unless Settings is set to drop them automatically. Entries on a detached

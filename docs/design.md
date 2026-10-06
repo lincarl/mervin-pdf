@@ -171,7 +171,9 @@ owns a separate serial worker and text cache so changing queries leaves the UI r
 
 Recent-file content search runs on its own worker and opens files independently. It
 returns the first matching page and a short snippet for each file. The Recent page's
-All scope lists file-name matches at once and scans only the remaining files. Generation tokens are checked when queued results reach the UI.
+All scope lists file-name matches at once and scans only the remaining files. Besides
+per-file progress, the scan reports page progress inside the file being read at most
+about ten times a second, so the progress line keeps moving through large files. Generation tokens are checked when queued results reach the UI.
 A persistent worker takes the newest pending query; cancellation never joins on the
 UI thread, except when the service is destroyed.
 

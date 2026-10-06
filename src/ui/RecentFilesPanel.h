@@ -10,6 +10,7 @@
 
 class QLabel;
 class QListWidget;
+class QToolButton;
 class QListWidgetItem;
 class QTimer;
 
@@ -56,6 +57,8 @@ public slots:
     // `snippet` is a short preview of the matching text (may be empty).
     void addContentHit(const QString &path, int page, const QString &snippet); // page is 1-based
     void setContentProgress(int scanned, int total);
+    // Progress inside the file being read, so the line keeps moving in large files.
+    void setContentPageProgress(int page, int pageCount);
     void endContentSearch(bool canceled, int matched);
 
 signals:
@@ -95,6 +98,12 @@ private:
     void updateSummary(int listed);
     void onSearchChanged();
     void startContentSearch();
+    // Stop button: ends the scan and keeps what it found.
+    void stopSearch();
+    // While a scan is pending or running: the status in full ink, Stop shown and
+    // the progress line drawn in the field; off again when it ends.
+    void setRunning(bool running);
+    void showScanProgress(qreal withinFile);
     bool contentMode() const; // Contents or All with a query: a scan runs or ran
     QString needle() const;
     bool nameMatches(const RecentEntry &entry) const;
@@ -115,6 +124,7 @@ private:
 
     RecentSearchField *search_ = nullptr;
     QLabel *status_ = nullptr;
+    QToolButton *stopBtn_ = nullptr;
     QListWidget *list_ = nullptr;
     QTimer *debounce_ = nullptr;
     QList<RecentEntry> entries_;
@@ -133,6 +143,8 @@ private:
     QHash<QString, ContentHit> hits_;
     bool scanDone_ = false;     // the scan for the current search finished
     bool rescanOnShow_ = false; // a scan was stopped or held back while Recent was hidden
+    int scanned_ = 0;   // files finished in the running scan
+    int scanTotal_ = 0; // files it reads
     // A row whose star was just toggled stays in the section it was shown in
     // until the search changes or Recent is left, so it never jumps away from
     // the pointer. Maps path -> listed as a favourite.

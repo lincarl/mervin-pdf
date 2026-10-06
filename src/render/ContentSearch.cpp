@@ -5,8 +5,10 @@
 #include <mupdf/fitz.h>
 
 #include <QByteArray>
+#include <QElapsedTimer>
 
 #include <cstring>
+#include <memory>
 
 namespace mervin {
 
@@ -157,6 +159,16 @@ void ContentSearch::run(QStringList paths, QString query, quint64 generation, fz
 
     auto current = [&] { return generation_.load() == generation; };
 
+    // Paces pageProgress. Held through a pointer, so the page loop inside fz_try
+    // never changes a local that a MuPDF error could leave indeterminate.
+    struct Pace
+    {
+        QElapsedTimer sinceEmit;
+    };
+    const auto pace = std::make_unique<Pace>();
+    pace->sinceEmit.start();
+    constexpr qint64 kPageProgressMs = 100;
+
     if (ctx) {
         for (const QString &path : paths) {
             if (!current()) {
@@ -181,6 +193,13 @@ void ContentSearch::run(QStringList paths, QString query, quint64 generation, fz
                         matchPage = p + 1;
                         snippet = makeSnippet(text, query);
                         break; // first matching page is enough
+                    }
+                    if (pace->sinceEmit.elapsed() >= kPageProgressMs) {
+                        pace->sinceEmit.restart();
+                        QMetaObject::invokeMethod(this, [this, generation, page = p + 1, n] {
+                            if (generation_.load() == generation)
+                                emit pageProgress(page, n);
+                        }, Qt::QueuedConnection);
                     }
                 }
             }
