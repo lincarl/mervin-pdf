@@ -113,6 +113,24 @@ private slots:
         mervin::ConfigPaths::setOverrideDir({});
     }
 
+    // The Recent search starts in Names unless Settings says otherwise; a value
+    // the app does not know (a hand edit, a newer version) falls back to Names.
+    void recentSearchScopeDefaultsToNamesAndRoundTrips()
+    {
+        QTemporaryDir dir;
+        mervin::ConfigPaths::setOverrideDir(dir.path());
+        QCOMPARE(mervin::Settings::load().recentSearchScope, QStringLiteral("names"));
+        auto s = mervin::Settings::load();
+        s.recentSearchScope = QStringLiteral("all");
+        QVERIFY(s.save());
+        QCOMPARE(mervin::Settings::load().recentSearchScope, QStringLiteral("all"));
+
+        s.recentSearchScope = QStringLiteral("everything");
+        QVERIFY(s.save());
+        QCOMPARE(mervin::Settings::load().recentSearchScope, QStringLiteral("names"));
+        mervin::ConfigPaths::setOverrideDir({});
+    }
+
     // Equality compares the saved values only, not what each copy was last
     // loaded or saved against.
     void equalityComparesValuesOnly()

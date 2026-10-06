@@ -1,7 +1,9 @@
 #include "ui/FindCard.h"
 #include "ui/PanelStack.h"
 
+#include <QApplication>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QLabel>
 #include <QLineEdit>
 #include <QSignalSpy>
@@ -31,6 +33,8 @@ private slots:
     void openingTheCardKeepsOtherPanelsInPlace();
     void clickingAnOptionKeepsTheCaretInTheField();
     void countShowsMatchesOrNoResults();
+    void pasteTrimsOuterWhitespace();
+    void typingPreservesOuterWhitespace();
 
 private:
     QWidget *viewport_ = nullptr;
@@ -238,6 +242,27 @@ void TstFindCard::countShowsMatchesOrNoResults()
     QVERIFY(next->isEnabled());
     // The count sits inside the field, and typed text stops short of it.
     QVERIFY(field()->textMargins().right() > count->width());
+}
+
+// The field is a SearchLineEdit, shared with the Recent page: a pasted line
+// searches for its text, not for the newline copied with it.
+void TstFindCard::pasteTrimsOuterWhitespace()
+{
+    card_->open();
+    QApplication::clipboard()->setText(QStringLiteral("  annual report  \n"));
+    field()->setText(QStringLiteral("find: "));
+    field()->setCursorPosition(field()->text().size());
+    QTest::keyClick(field(), Qt::Key_V, Qt::ControlModifier);
+
+    QCOMPARE(field()->text(), QStringLiteral("find: annual report"));
+}
+
+void TstFindCard::typingPreservesOuterWhitespace()
+{
+    card_->open();
+    QTest::keyClicks(field(), QStringLiteral("  annual report  "));
+
+    QCOMPARE(field()->text(), QStringLiteral("  annual report  "));
 }
 
 QTEST_MAIN(TstFindCard)

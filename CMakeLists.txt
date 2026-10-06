@@ -257,10 +257,10 @@ add_library(mervin_app STATIC
     src/dialogs/ExportMeasureDialog.h
     src/ui/MeasurePanel.cpp
     src/ui/MeasurePanel.h
-    src/ui/FindBar.cpp
-    src/ui/FindBar.h
     src/ui/FindCard.cpp
     src/ui/FindCard.h
+    src/ui/RecentSearchField.cpp
+    src/ui/RecentSearchField.h
     src/ui/SearchLineEdit.cpp
     src/ui/SearchLineEdit.h
     src/ui/FileContextMenu.cpp

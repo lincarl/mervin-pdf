@@ -133,6 +133,9 @@ public:
     // whole on close, so each must hear of the change, and the Updater drops a
     // downloaded update when updates are switched off.
     void setAutoUpdate(bool on);
+    // Broadcast a new default Recent search scope ("names", "contents", "all")
+    // from Settings to every window.
+    void setRecentSearchScope(const QString &scope) { emit recentSearchScopeChanged(scope); }
 
     // ---- Recent files + view-state (M6), owned in-process ---------------------
     // Record that a file was opened (push to recent history). When
@@ -206,6 +209,7 @@ signals:
     void documentThemeChanged(const QString &theme);
     void autoUpdateChanged(bool on);
     void recentVisibleCountChanged(int count);
+    void recentSearchScopeChanged(const QString &scope);
     void annotationDefaultsChanged(const QString &color, const QString &author);
     void memorySettingsChanged(int minutes, bool closeToTray);
 

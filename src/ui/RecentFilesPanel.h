@@ -1,43 +1,50 @@
 #pragma once
 
 #include "recent/RecentEntry.h"
+#include "ui/RecentSearchField.h"
 
+#include <QHash>
 #include <QList>
 #include <QStringList>
 #include <QWidget>
 
-class QCheckBox;
 class QLabel;
-class QLineEdit;
 class QListWidget;
 class QListWidgetItem;
 class QTimer;
-class QToolButton;
 
 namespace mervin {
 
-// Recent history, newest first, with favorite toggles/filtering. Missing files offer
-// Locate/Remove/Cancel. The adaptive FindBar drives setSearch; internal filter controls remain
-// hidden. Content-search results stream through addContentHit().
+// Recent history, newest first. Starred files sit in a "Favourites" section at the
+// top, followed by the rest under "Recent" (no captions while nothing is starred).
+// The search field above the list searches file names, inside the documents, or
+// both (names first, then contents); content-search results stream in through
+// addContentHit(). Missing files offer Locate/Remove/Cancel.
 class RecentFilesPanel : public QWidget
 {
     Q_OBJECT
 
 public:
+    using Scope = RecentSearchField::Scope;
+
     explicit RecentFilesPanel(QWidget *parent = nullptr);
 
     // Replace the displayed history (entries most-recent first).
     void setEntries(const QList<RecentEntry> &entries);
 
-    // How many entries to show when the filter is empty (spec default 100).
+    // How many non-starred entries to show when the search is empty (spec default
+    // 100). Starred files are always shown.
     void setVisibleCount(int count);
 
-    // Drive filtering from the external FindBar. `contentSearch` true means
-    // search inside file contents; false means filter by filename.
-    void setSearch(const QString &text, bool contentSearch);
+    // The search scope from Settings: applied now, and kept until the user picks
+    // another one or the setting changes.
+    void setDefaultScope(Scope scope);
 
-    // Move keyboard focus to the list, keeping the filter (Escape in the search
-    // field). The first row becomes current if none is, so arrows and Enter work.
+    // Focus the search field with its text selected (opening Recent, Ctrl+F).
+    void focusSearch();
+
+    // Move keyboard focus to the list, keeping the search (Escape or Down in the
+    // field). The first file becomes current if none is, so arrows and Enter work.
     void focusList();
 
     // One-line summary of the current listing (e.g. "Your last 12 opened
@@ -55,11 +62,11 @@ signals:
     void openRequested(const QString &path);
     void openInNewWindowRequested(const QString &path);
     void removeRequested(const QString &path);
-    // favoritesOnly true when the Favorites view-mode is active, so the window
-    // scopes the content scan to starred files instead of the whole history.
-    void contentSearchRequested(const QString &query, bool favoritesOnly);
+    // Search inside the files at `paths` for `query`; hits come back through
+    // addContentHit().
+    void contentSearchRequested(const QString &query, const QStringList &paths);
     void contentSearchCanceled();
-    // Emitted after every rebuild so FindBar can update the file-count label.
+    // Emitted after every rebuild with the number of files listed.
     void countChanged(int count);
     // Emitted after every rebuild with the one-line listing summary, so the
     // window can display it in the status bar (where file paths appear).
@@ -71,36 +78,65 @@ signals:
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 
 private:
-    enum class Mode { Recent, Favorites };
+    struct ContentHit
+    {
+        int page = 0; // 1-based
+        QString snippet;
+    };
 
+    // Draws the whole list from entries_ and the content hits so far, so a history
+    // change (remove, clear missing, a star from another window) reaches every
+    // scope. Hits that arrive while a scan runs are added to the list directly.
     void rebuild();
-    void onFilterOrModeChanged();
+    void updateSummary(int listed);
+    void onSearchChanged();
     void startContentSearch();
-    bool contentMode() const;
+    bool contentMode() const; // Contents or All with a query: a scan runs or ran
+    QString needle() const;
+    bool nameMatches(const RecentEntry &entry) const;
+    bool listedAsFavourite(const RecentEntry &entry) const;
+    const RecentEntry *entryFor(const QString &path) const;
     void onItemActivated(QListWidgetItem *item);
     void handleMissingFile(const QString &path);
     void toggleItemFavorite(QListWidgetItem *item);
-    bool matchesCurrentFilter(const RecentEntry &entry) const;
     QStringList missingFilesInCurrentFilter() const;
 
-    // Internal filter widgets - functional but not shown in the layout;
-    // driven via setSearch() from the global FindBar.
-    QLineEdit *filter_ = nullptr;
-    QCheckBox *contentCheck_ = nullptr;
+    // Sections. rebuild() clears them; insertResult() adds a file row to its
+    // section, creating the caption on first use and dropping any empty-list note.
+    void clearList();
+    void insertResult(QListWidgetItem *item, bool favourite);
+    void showEmptyNote(const QString &text);
+    QListWidgetItem *makeFileItem(const RecentEntry &entry);
+    QListWidgetItem *makeHitItem(const RecentEntry &entry, const ContentHit &hit);
 
+    RecentSearchField *search_ = nullptr;
     QLabel *status_ = nullptr;
     QListWidget *list_ = nullptr;
     QTimer *debounce_ = nullptr;
     QList<RecentEntry> entries_;
     int visibleCount_ = 100;
     bool searching_ = false;
-    Mode mode_ = Mode::Recent;
     QString statusSummary_;
 
-    QToolButton *modeRecentBtn_ = nullptr;
-    QToolButton *modeFavoritesBtn_ = nullptr;
+    QListWidgetItem *favCaption_ = nullptr;
+    QListWidgetItem *recentCaption_ = nullptr;
+    QListWidgetItem *emptyNote_ = nullptr;
+    int favRows_ = 0;
+    int recentRows_ = 0;
+    int nameRows_ = 0; // name matches listed before a scan of the All scope
+    // Content hits for the current search, in the order they arrived.
+    QStringList hitOrder_;
+    QHash<QString, ContentHit> hits_;
+    bool scanDone_ = false;     // the scan for the current search finished
+    bool rescanOnShow_ = false; // a scan was stopped or held back while Recent was hidden
+    // A row whose star was just toggled stays in the section it was shown in
+    // until the search changes or Recent is left, so it never jumps away from
+    // the pointer. Maps path -> listed as a favourite.
+    QHash<QString, bool> stickySection_;
 };
 
 } // namespace mervin

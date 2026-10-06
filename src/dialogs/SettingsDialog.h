@@ -133,6 +133,7 @@ private:
     QPushButton *applyButton_ = nullptr;
     QSpinBox *visibleSpin_ = nullptr;
     QSpinBox *retentionSpin_ = nullptr;
+    QComboBox *recentSearchCombo_ = nullptr;
     QCheckBox *keepMissingCheck_ = nullptr;
     QCheckBox *updatesCheck_ = nullptr;
     QLabel *lastCheckLabel_ = nullptr;

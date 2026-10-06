@@ -35,7 +35,6 @@
 #include "ui/CommentsSidebar.h"
 #include "ui/DetachableTabBar.h"
 #include "ui/FileContextMenu.h"
-#include "ui/FindBar.h"
 #include "ui/FindCard.h"
 #include "ui/OutlineSidebar.h"
 #include "ui/OpenPdfDialog.h"
@@ -296,6 +295,8 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
     // Start page (recent files) shown when the window holds no document.
     recentPanel_ = new RecentFilesPanel;
     recentPanel_->setVisibleCount(settings_.recentVisibleCount);
+    recentPanel_->setDefaultScope(
+        mervin::RecentSearchField::scopeFromSetting(settings_.recentSearchScope));
     connect(recentPanel_, &RecentFilesPanel::openRequested, this,
             [this](const QString &path) { openFile(path); });
     connect(recentPanel_, &RecentFilesPanel::openInNewWindowRequested, this,
@@ -329,17 +330,7 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
     // view; this window owns the MuPDF-backed search and routes hits back to it.
     contentSearch_ = new mervin::ContentSearch(engine_, this);
     connect(recentPanel_, &RecentFilesPanel::contentSearchRequested, this,
-            [this](const QString &query, bool favoritesOnly) {
-                QStringList paths;
-                if (wm_) {
-                    const auto entries = wm_->recentEntries(); // full history, newest first
-                    paths.reserve(entries.size());
-                    for (const mervin::RecentEntry &e : entries) {
-                        if (favoritesOnly && !e.favorite)
-                            continue;
-                        paths.append(e.path);
-                    }
-                }
+            [this](const QString &query, const QStringList &paths) {
                 contentSearch_->start(paths, query);
             });
     connect(recentPanel_, &RecentFilesPanel::contentSearchCanceled,
@@ -355,19 +346,6 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
     stack_->addWidget(recentPanel_); // index 0
     stack_->addWidget(tabs_);        // index 1
 
-    // The Recent page's search row. Documents search with their own find card
-    // (TabPage), so updateStartPage shows this row only while Recent is active.
-    findBar_ = new mervin::FindBar(this);
-    findBar_->hide();
-    connect(findBar_, &mervin::FindBar::recentFilterChanged, this,
-            [this](const QString &text, bool contentSearch) {
-                recentPanel_->setSearch(text, contentSearch);
-            });
-    // Escape in the Recent search moves to the list and keeps the filter.
-    connect(findBar_, &mervin::FindBar::escapePressed, this, [this] {
-        if (recentActive_ && recentPanel_)
-            recentPanel_->focusList();
-    });
     // The recent listing's one-line summary ("Your last N opened documents")
     // lives in the status bar - the same place that shows the open file's path.
     // Only reflect it there while the Recent view is the active page.
@@ -495,8 +473,7 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
     auto *centralLayout = new QVBoxLayout(centralContainer);
     centralLayout->setContentsMargins(0, 0, 0, 0);
     centralLayout->setSpacing(0);
-    centralLayout->addWidget(tabRow_);   // tab row is always visible - above find bar
-    centralLayout->addWidget(findBar_);
+    centralLayout->addWidget(tabRow_);   // tab row is always visible
     centralLayout->addWidget(stack_, 1);
     setCentralWidget(centralContainer);
 
@@ -544,6 +521,12 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
             settings_.recentVisibleCount = count;
             recentPanel_->setVisibleCount(count);
         });
+        connect(wm_, &mervin::WindowManager::recentSearchScopeChanged, this,
+                [this](const QString &scope) {
+                    settings_.recentSearchScope = scope;
+                    recentPanel_->setDefaultScope(
+                        mervin::RecentSearchField::scopeFromSetting(scope));
+                });
         connect(wm_, &mervin::WindowManager::annotationDefaultsChanged, this,
                 [this](const QString &color, const QString &author) {
                     settings_.annotationColor = color;
@@ -806,8 +789,7 @@ void MainWindow::createActions()
         // Recent focuses its search field. A document opens its find card, seeded
         // from the current selection.
         if (recentActive_) {
-            if (findBar_)
-                findBar_->activate();
+            recentPanel_->focusSearch();
             return;
         }
         TabPage *t = currentTab();
@@ -1912,11 +1894,7 @@ void MainWindow::showRecentPanel()
     statusInfo_->setText(recentPanel_->statusSummary());
     updateRecentButton();
     setCommandBarMode(true);
-    if (findBar_) {
-        findBar_->show();
-        findBar_->setMode(mervin::FindBar::Mode::RecentSearch);
-        findBar_->activate(); // focus the search field
-    }
+    recentPanel_->focusSearch();
 }
 
 void MainWindow::updateRecentButton()
@@ -1973,18 +1951,9 @@ void MainWindow::updateStartPage()
             recentPanel_->setEntries(wm_->recentEntries());
             wm_->refreshRecent();
         }
-        if (findBar_) {
-            findBar_->show();
-            findBar_->setMode(mervin::FindBar::Mode::RecentSearch);
-        }
     } else {
         if (contentSearch_)
             contentSearch_->cancel();
-        // Documents search with their find card; the row is only Recent's.
-        if (findBar_) {
-            findBar_->hide();
-            findBar_->setMode(mervin::FindBar::Mode::FindDocument);
-        }
     }
     updateRecentButton();
     setCommandBarMode(recentActive_);
@@ -2086,7 +2055,7 @@ void MainWindow::onZoomComboActivated()
             v->setScale(pct / 100.0);
     }
     // Hand focus back to the document so the zoom box does not keep a caret after
-    // the value is committed (mirrors the find bar returning focus on Enter/Esc).
+    // the value is committed (as the find card returns focus on Esc).
     v->setFocus();
 }
 
@@ -2215,6 +2184,14 @@ void MainWindow::applySettings(const mervin::Settings &next)
             || settings_.recentKeepMissing != before.recentKeepMissing))
         wm_->applyRecentSettings(settings_.recentVisibleCount, settings_.recentRetention,
                                  settings_.recentKeepMissing);
+    // The default search scope applies to every window's Recent page now.
+    if (settings_.recentSearchScope != before.recentSearchScope) {
+        if (wm_)
+            wm_->setRecentSearchScope(settings_.recentSearchScope);
+        else
+            recentPanel_->setDefaultScope(
+                mervin::RecentSearchField::scopeFromSetting(settings_.recentSearchScope));
+    }
 
     // The current document takes the new defaults, but only those that changed:
     // re-applying an unchanged default zoom would throw away the zoom the user

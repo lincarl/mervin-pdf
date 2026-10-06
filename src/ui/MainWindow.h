@@ -18,7 +18,6 @@ class CommentsSidebar;
 class ContentSearch;
 class DetachableTabBar;
 class Document;
-class FindBar;
 class OutlineSidebar;
 class RecentFilesPanel;
 class RenderEngine;
@@ -175,7 +174,7 @@ private:
     mervin::MeasureDoc collectMeasureDoc(mervin::ViewerWidget *viewer) const;
     std::vector<mervin::RenderMeasurement> collectRenderMeasurements(
         mervin::ViewerWidget *viewer) const;
-    void applyControlStyle(); // theme-aware borders for toolbar / find-bar buttons
+    void applyControlStyle(); // re-tint palette-driven chrome: toolbar dividers, Recent pill, icons
     // Re-assert WA_Hover on the chrome buttons after a theme switch re-polishes
     // them (a dropped WA_Hover leaves a button stuck without its :hover highlight).
     void reassertHoverAttributes();
@@ -310,10 +309,7 @@ private:
     QAction *singleAction_ = nullptr;
     QAction *twoPageAction_ = nullptr;
 
-    // The Recent page's search row, below the tab row and shown only on Recent.
-    mervin::FindBar *findBar_ = nullptr;
-
-    // Tab row: always visible strip above find bar containing Recent pill + doc tabs.
+    // Tab row: always visible strip containing the Recent pill + doc tabs.
     QWidget *tabRow_ = nullptr;
     mervin::DetachableTabBar *docTabBar_ = nullptr; // visible tab bar, synced with tabs_
 

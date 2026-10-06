@@ -5,8 +5,6 @@
 #include "ui/Theme.h"
 #include "ui/ThemeTokens.h"
 
-#include <QButtonGroup>
-#include <QCheckBox>
 #include <QContextMenuEvent>
 #include <QDateTime>
 #include <QDir>
@@ -14,8 +12,10 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
+#include <QHideEvent>
+#include <QShowEvent>
+#include <QKeyEvent>
 #include <QLabel>
-#include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QMouseEvent>
@@ -23,7 +23,6 @@
 #include <QPushButton>
 #include <QStyledItemDelegate>
 #include <QTimer>
-#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -39,6 +38,7 @@ constexpr int kPageCountRole = Qt::UserRole + 3; // int pageCount (0 = unknown)
 constexpr int kFavoriteRole  = Qt::UserRole + 4; // bool favorite
 constexpr int kQueryRole     = Qt::UserRole + 5; // QString search term to highlight
 constexpr int kSnippetRole   = Qt::UserRole + 6; // QString content preview (content search)
+constexpr int kCaptionRole   = Qt::UserRole + 7; // bool: a section caption, not a file
 
 constexpr int kContentDebounceMs = 400;
 constexpr int kRowHeight = 64;
@@ -49,9 +49,10 @@ constexpr int kHPad      = 16;  // left/right outer margin
 constexpr int kVPad      =  9;  // top/bottom inner padding
 constexpr int kStarW     = 20;  // star icon hit area
 constexpr int kStarGap   =  8;  // gap between right meta column and star
+constexpr int kFieldWidth = 460; // the search field
 
 
-// Search-match highlight - the same yellow the in-page find bar paints over the
+// Search-match highlight - the same yellow find in document paints over the
 // page, so a match looks consistent wherever it appears.
 const QColor &kHighlightFill = theme::brand().searchMatch;
 
@@ -157,6 +158,10 @@ public:
 
     QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &idx) const override
     {
+        // A caption hugs the rows it names: shorter at the top of the list, with
+        // more air above it between sections.
+        if (idx.data(kCaptionRole).toBool())
+            return QSize(-1, idx.row() == 0 ? 26 : 36);
         if (idx.data(kPathRole).toString().isEmpty())
             return QSize(-1, 36);
         // Content-search rows carry a snippet and need a third line of height.
@@ -169,6 +174,20 @@ public:
     {
         const QString path = idx.data(kPathRole).toString();
 
+        if (idx.data(kCaptionRole).toBool()) {
+            // Small semibold soft ink at the icon column, baseline near the bottom.
+            QFont f = opt.font;
+            f.setPointSizeF(f.pointSizeF() * 0.85);
+            f.setWeight(QFont::DemiBold);
+            p->save();
+            p->setFont(f);
+            p->setPen(theme::chrome(opt.palette).inkSoft);
+            p->drawText(opt.rect.adjusted(kHPad, 0, -kHPad, -5),
+                        Qt::AlignLeft | Qt::AlignBottom | Qt::TextSingleLine,
+                        idx.data(Qt::DisplayRole).toString());
+            p->restore();
+            return;
+        }
         if (path.isEmpty()) {
             QStyledItemDelegate::paint(p, opt, idx);
             return;
@@ -280,93 +299,68 @@ public:
     }
 };
 
+// The list's keyboard navigation steps over the section captions, which are
+// disabled rows. Qt skips them for the arrow keys only; Home, Page Up and Page
+// Down would otherwise stop on one and leave the current row where it was.
+class RecentList final : public QListWidget
+{
+public:
+    using QListWidget::QListWidget;
+
+protected:
+    QModelIndex moveCursor(CursorAction action, Qt::KeyboardModifiers modifiers) override
+    {
+        const QModelIndex index = QListWidget::moveCursor(action, modifiers);
+        if (!index.isValid() || (model()->flags(index) & Qt::ItemIsEnabled))
+            return index;
+        // Page Up lands on the row above a caption; everything else, including a
+        // caption at the very top, on the row below it.
+        const int step = action == MovePageUp ? -1 : 1;
+        for (const int dir : {step, -step}) {
+            for (int row = index.row() + dir; row >= 0 && row < model()->rowCount(); row += dir) {
+                const QModelIndex candidate = model()->index(row, 0);
+                if (model()->flags(candidate) & Qt::ItemIsEnabled)
+                    return candidate;
+            }
+        }
+        return currentIndex();
+    }
+};
+
 } // namespace
 
 RecentFilesPanel::RecentFilesPanel(QWidget *parent)
     : QWidget(parent)
 {
-    filter_ = new QLineEdit(this);
-    filter_->hide();
-    connect(filter_, &QLineEdit::textChanged, this, &RecentFilesPanel::onFilterOrModeChanged);
-
-    contentCheck_ = new QCheckBox(this);
-    contentCheck_->hide();
-    connect(contentCheck_, &QCheckBox::toggled, this, [this](bool) { onFilterOrModeChanged(); });
-
     debounce_ = new QTimer(this);
     debounce_->setSingleShot(true);
     debounce_->setInterval(kContentDebounceMs);
     connect(debounce_, &QTimer::timeout, this, &RecentFilesPanel::startContentSearch);
 
     auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(24, 20, 24, 12);
+    layout->setContentsMargins(24, 16, 24, 12);
     layout->setSpacing(8);
 
-    // ── Heading ───────────────────────────────────────────────────────────
-    auto *heading = new QLabel(tr("Recent files"), this);
-    heading->setObjectName(QStringLiteral("recentHeading"));
-    QFont hf = heading->font();
-    hf.setPointSizeF(hf.pointSizeF() * 1.4);
-    hf.setBold(true);
-    heading->setFont(hf);
-    layout->addWidget(heading);
-
-    // ── View-mode toggle (Recent | Favorites), below the heading ───────────
-    // Styled via QWidget#viewModeBar CSS. Wrapped in a row with a trailing
-    // stretch so the segmented control hugs the left edge instead of stretching.
-    auto *viewModeBar = new QWidget(this);
-    viewModeBar->setObjectName(QStringLiteral("viewModeBar"));
-    auto *modeLayout = new QHBoxLayout(viewModeBar);
-    modeLayout->setContentsMargins(0, 0, 0, 0);
-    modeLayout->setSpacing(0);
-
-    modeRecentBtn_ = new QToolButton(viewModeBar);
-    modeRecentBtn_->setText(tr("All"));
-    modeRecentBtn_->setCheckable(true);
-    modeRecentBtn_->setChecked(true);
-    modeRecentBtn_->setAutoRaise(false);
-
-    modeFavoritesBtn_ = new QToolButton(viewModeBar);
-    modeFavoritesBtn_->setText(tr("Favourites"));
-    modeFavoritesBtn_->setCheckable(true);
-    modeFavoritesBtn_->setAutoRaise(false);
-
-    // Drives the segmented control's outer corner rounding (see mervin::Theme).
-    modeRecentBtn_->setProperty("segpos", "first");
-    modeFavoritesBtn_->setProperty("segpos", "last");
-
-    auto *modeGroup = new QButtonGroup(this);
-    modeGroup->setExclusive(true);
-    modeGroup->addButton(modeRecentBtn_);
-    modeGroup->addButton(modeFavoritesBtn_);
-
-    modeLayout->addWidget(modeRecentBtn_);
-    modeLayout->addWidget(modeFavoritesBtn_);
-
-    auto *modeRow = new QHBoxLayout;
-    modeRow->setContentsMargins(0, 0, 0, 4);
-    modeRow->setSpacing(0);
-    modeRow->addWidget(viewModeBar);
-    modeRow->addStretch();
-    layout->addLayout(modeRow);
-
-    // Route through onFilterOrModeChanged() (not rebuild() directly) so that
-    // switching the scope while a content search is active re-runs that search
-    // with the new scope, rather than dropping back to the name-filtered list.
-    connect(modeRecentBtn_, &QToolButton::toggled, this, [this](bool checked) {
-        if (checked) { mode_ = Mode::Recent;     onFilterOrModeChanged(); }
-    });
-    connect(modeFavoritesBtn_, &QToolButton::toggled, this, [this](bool checked) {
-        if (checked) { mode_ = Mode::Favorites;  onFilterOrModeChanged(); }
-    });
-
-    // ── Status label (content search progress) ────────────────────────────
+    // ── Search row: the field, then the content-search status ─────────────
+    // The status sits beside the field so the list never moves when a scan starts.
+    auto *searchRow = new QHBoxLayout;
+    searchRow->setContentsMargins(0, 0, 0, 4);
+    searchRow->setSpacing(16);
+    search_ = new RecentSearchField(this);
+    search_->setFixedWidth(kFieldWidth);
+    search_->installEventFilter(this);
+    searchRow->addWidget(search_);
     status_ = new QLabel(this);
+    status_->setObjectName(QStringLiteral("recentSearchStatus"));
     status_->setVisible(false);
-    layout->addWidget(status_);
+    searchRow->addWidget(status_);
+    searchRow->addStretch();
+    layout->addLayout(searchRow);
+    connect(search_, &QLineEdit::textChanged, this, &RecentFilesPanel::onSearchChanged);
+    connect(search_, &RecentSearchField::scopeChanged, this, &RecentFilesPanel::onSearchChanged);
 
     // ── List ──────────────────────────────────────────────────────────────
-    list_ = new QListWidget(this);
+    list_ = new RecentList(this);
     list_->setItemDelegate(new RecentItemDelegate(list_));
     list_->setAlternatingRowColors(false);
     list_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -381,7 +375,14 @@ RecentFilesPanel::RecentFilesPanel(QWidget *parent)
 
 bool RecentFilesPanel::eventFilter(QObject *obj, QEvent *event)
 {
-    if (obj == list_->viewport() && event->type() == QEvent::MouseButtonPress) {
+    if (obj == search_ && event->type() == QEvent::KeyPress) {
+        // Escape and Down move to the list and keep the search.
+        const int key = static_cast<QKeyEvent *>(event)->key();
+        if (key == Qt::Key_Escape || key == Qt::Key_Down) {
+            focusList();
+            return true;
+        }
+    } else if (obj == list_->viewport() && event->type() == QEvent::MouseButtonPress) {
         auto *me = static_cast<QMouseEvent *>(event);
         if (me->button() == Qt::LeftButton) {
             QListWidgetItem *item = list_->itemAt(me->pos());
@@ -424,57 +425,88 @@ bool RecentFilesPanel::eventFilter(QObject *obj, QEvent *event)
     return QWidget::eventFilter(obj, event);
 }
 
-void RecentFilesPanel::toggleItemFavorite(QListWidgetItem *item)
+void RecentFilesPanel::hideEvent(QHideEvent *event)
 {
-    const QString path  = item->data(kPathRole).toString();
-    const bool newFav   = !item->data(kFavoriteRole).toBool();
-
-    // Keep in-memory entries_ consistent so rebuild() doesn't undo the change
-    // before the IPC round-trip completes.
-    for (RecentEntry &e : entries_) {
-        if (e.path == path) { e.favorite = newFav; break; }
-    }
-
-    item->setData(kFavoriteRole, newFav);
-    list_->update(list_->indexFromItem(item));
-
-    // In favorites mode, removing the star should hide the entry immediately.
-    if (mode_ == Mode::Favorites && !newFav) {
-        delete list_->takeItem(list_->row(item));
-        if (list_->count() == 0) {
-            auto *empty = new QListWidgetItem(tr("No favourites yet"), list_);
-            empty->setFlags(Qt::NoItemFlags);
-            empty->setForeground(palette().color(QPalette::Disabled, QPalette::Text));
+    QWidget::hideEvent(event);
+    if (event->spontaneous())
+        return;
+    // Leaving Recent stops a pending or running scan; it starts again when Recent
+    // is shown, so the list never presents a cut-short scan as complete.
+    if (debounce_->isActive() || searching_) {
+        debounce_->stop();
+        if (searching_) {
+            searching_ = false;
+            emit contentSearchCanceled();
         }
-        emit countChanged(list_->count());
+        rescanOnShow_ = true;
     }
-
-    emit favoriteToggled(path, newFav);
+    // It also settles starred rows into their sections for the next visit.
+    if (!stickySection_.isEmpty()) {
+        stickySection_.clear();
+        rebuild();
+    }
 }
 
-bool RecentFilesPanel::matchesCurrentFilter(const RecentEntry &entry) const
+void RecentFilesPanel::showEvent(QShowEvent *event)
 {
-    if (mode_ == Mode::Favorites && !entry.favorite)
-        return false;
+    QWidget::showEvent(event);
+    if (rescanOnShow_ && !event->spontaneous()) {
+        rescanOnShow_ = false;
+        onSearchChanged();
+    }
+}
 
-    const QString needle = filter_->text().trimmed();
-    if (needle.isEmpty())
-        return true;
+void RecentFilesPanel::toggleItemFavorite(QListWidgetItem *item)
+{
+    const QString path = item->data(kPathRole).toString();
+    const bool wasFav  = item->data(kFavoriteRole).toBool();
 
-    if (contentCheck_->isChecked())
-        return false;
+    // The row stays in the section it is listed in until the search changes or
+    // Recent is left; rebuilds in between (the store echoes the change back
+    // through setEntries) keep it there.
+    if (!stickySection_.contains(path))
+        stickySection_.insert(path, wasFav);
 
-    return QFileInfo(entry.path).fileName().contains(needle, Qt::CaseInsensitive);
+    // Keep in-memory entries_ consistent so rebuild() doesn't undo the change
+    // before the store round-trip completes.
+    for (RecentEntry &e : entries_) {
+        if (e.path == path) { e.favorite = !wasFav; break; }
+    }
+    item->setData(kFavoriteRole, !wasFav);
+    list_->update(list_->indexFromItem(item));
+    emit favoriteToggled(path, !wasFav);
+}
+
+QString RecentFilesPanel::needle() const
+{
+    return search_->text().trimmed();
+}
+
+bool RecentFilesPanel::nameMatches(const RecentEntry &entry) const
+{
+    return QFileInfo(entry.path).fileName().contains(needle(), Qt::CaseInsensitive);
+}
+
+bool RecentFilesPanel::listedAsFavourite(const RecentEntry &entry) const
+{
+    return stickySection_.value(entry.path, entry.favorite);
+}
+
+const RecentEntry *RecentFilesPanel::entryFor(const QString &path) const
+{
+    for (const RecentEntry &e : entries_)
+        if (e.path == path)
+            return &e;
+    return nullptr;
 }
 
 QStringList RecentFilesPanel::missingFilesInCurrentFilter() const
 {
     QStringList paths;
-    for (const RecentEntry &e : entries_) {
-        if (!matchesCurrentFilter(e))
-            continue;
-        if (!QFileInfo::exists(e.path))
-            paths.append(e.path);
+    for (int i = 0; i < list_->count(); ++i) {
+        const QListWidgetItem *item = list_->item(i);
+        if (item->data(kMissingRole).toBool())
+            paths.append(item->data(kPathRole).toString());
     }
     return paths;
 }
@@ -482,159 +514,274 @@ QStringList RecentFilesPanel::missingFilesInCurrentFilter() const
 void RecentFilesPanel::setEntries(const QList<RecentEntry> &entries)
 {
     entries_ = entries;
-    if (!contentMode())
-        rebuild();
+    rebuild();
 }
 
 void RecentFilesPanel::setVisibleCount(int count)
 {
     visibleCount_ = count > 0 ? count : 100;
-    if (!contentMode())
-        rebuild();
+    rebuild();
+}
+
+void RecentFilesPanel::setDefaultScope(Scope scope)
+{
+    search_->setScope(scope);
+}
+
+void RecentFilesPanel::focusSearch()
+{
+    search_->setFocus(Qt::ShortcutFocusReason);
+    search_->selectAll();
 }
 
 void RecentFilesPanel::focusList()
 {
-    if (list_->currentRow() < 0 && list_->count() > 0)
-        list_->setCurrentRow(0);
+    const QListWidgetItem *current = list_->currentItem();
+    if (!current || !(current->flags() & Qt::ItemIsSelectable)) {
+        for (int i = 0; i < list_->count(); ++i) {
+            if (list_->item(i)->flags() & Qt::ItemIsSelectable) {
+                list_->setCurrentRow(i);
+                break;
+            }
+        }
+    }
     list_->setFocus(Qt::ShortcutFocusReason);
-}
-
-void RecentFilesPanel::setSearch(const QString &text, bool contentSearch)
-{
-    { QSignalBlocker b(filter_);       filter_->setText(text); }
-    { QSignalBlocker b(contentCheck_); contentCheck_->setChecked(contentSearch); }
-    onFilterOrModeChanged();
 }
 
 bool RecentFilesPanel::contentMode() const
 {
-    return contentCheck_->isChecked() && !filter_->text().trimmed().isEmpty();
+    return search_->scope() != Scope::Names && !needle().isEmpty();
 }
 
-void RecentFilesPanel::onFilterOrModeChanged()
+void RecentFilesPanel::onSearchChanged()
 {
-    if (contentMode()) {
-        status_->setText(tr("Type to search file contents…"));
-        status_->setVisible(true);
-        debounce_->start();
-        return;
-    }
+    // A new search settles starred rows into their sections.
+    stickySection_.clear();
+    rescanOnShow_ = false;
     debounce_->stop();
     if (searching_) {
         searching_ = false;
         emit contentSearchCanceled();
     }
-    status_->setVisible(false);
+    hitOrder_.clear();
+    hits_.clear();
+    scanDone_ = false;
+    // Names (and All's name matches) are listed at once; contents after the pause.
     rebuild();
+    if (!contentMode()) {
+        status_->setVisible(false);
+        return;
+    }
+    status_->setText(tr("Searching contents…"));
+    status_->setVisible(true);
+    debounce_->start();
 }
 
 void RecentFilesPanel::startContentSearch()
 {
-    if (!contentMode()) return;
-    list_->clear();
+    if (!contentMode())
+        return;
+    // Never scan for a hidden page (a Settings change, or the pause running out
+    // after Recent was left); showEvent starts it when Recent comes back.
+    if (!isVisible()) {
+        rescanOnShow_ = true;
+        return;
+    }
+    const bool all = search_->scope() == Scope::All;
+    QStringList paths;
+    paths.reserve(entries_.size());
+    for (const RecentEntry &e : std::as_const(entries_)) {
+        if (all && nameMatches(e))
+            continue; // already listed by name
+        paths.append(e.path);
+    }
     searching_ = true;
-    status_->setText(tr("Searching file contents…"));
+    status_->setText(tr("Searching contents…"));
     status_->setVisible(true);
-    emit contentSearchRequested(filter_->text().trimmed(), mode_ == Mode::Favorites);
+    emit contentSearchRequested(needle(), paths);
 }
 
 void RecentFilesPanel::addContentHit(const QString &path, int page, const QString &snippet)
 {
-    if (!searching_) return;
-    auto *item = new QListWidgetItem(QFileInfo(path).fileName(), list_);
-    item->setData(kPathRole,    path);
-    item->setData(kMissingRole, false);
-    item->setData(kSnippetRole, snippet);
-    item->setData(kQueryRole,   filter_->text().trimmed());
-    item->setToolTip(QDir::toNativeSeparators(path)
-                     + (page > 0 ? tr("\nMatch on page %1").arg(page) : QString()));
+    if (!searching_ || hits_.contains(path))
+        return;
+    const RecentEntry *entry = entryFor(path);
+    if (!entry)
+        return; // left the history while the scan ran
+    const ContentHit &hit = *hits_.insert(path, {page, snippet});
+    hitOrder_.append(path);
+    insertResult(makeHitItem(*entry, hit), listedAsFavourite(*entry));
 }
 
 void RecentFilesPanel::setContentProgress(int scanned, int total)
 {
-    if (!searching_) return;
-    status_->setText(tr("Searching file contents… %1 / %2").arg(scanned).arg(total));
+    if (!searching_)
+        return;
+    status_->setText(tr("Searching contents… %1 of %2").arg(scanned).arg(total));
 }
 
 void RecentFilesPanel::endContentSearch(bool canceled, int matched)
 {
-    if (!searching_) return;
+    Q_UNUSED(matched); // the rows listed are the count: hits for files that left
+                       // the history are not shown
+    if (!searching_)
+        return;
     searching_ = false;
-    if (canceled) { status_->setVisible(false); return; }
-    status_->setText(matched == 0
-                         ? tr("No files contain \"%1\"").arg(filter_->text().trimmed())
-                         : (matched == 1 ? tr("1 file found")
-                                         : tr("%1 files found").arg(matched)));
-    // Keep the window status bar in step with the in-panel result count.
-    statusSummary_ = (matched == 1) ? tr("1 result") : tr("%1 results").arg(matched);
-    emit statusSummaryChanged(statusSummary_);
+    if (canceled) {
+        // Stopped from outside (the window left Recent): start again on return.
+        status_->setVisible(false);
+        rescanOnShow_ = contentMode();
+        return;
+    }
+    scanDone_ = true;
+    int listed = favRows_ + recentRows_;
+    if (listed == 0)
+        rebuild(); // shows the "no documents contain" note
+    listed = favRows_ + recentRows_;
+    if (listed == 0)
+        status_->setVisible(false);
+    else
+        status_->setText(listed == 1 ? tr("1 file found") : tr("%1 files found").arg(listed));
+    updateSummary(listed);
 }
 
-void RecentFilesPanel::rebuild()
+void RecentFilesPanel::clearList()
 {
     list_->clear();
-    const QString needle   = filter_->text().trimmed();
-    const bool filtering   = !needle.isEmpty();
-    const bool favMode     = (mode_ == Mode::Favorites);
-    int shown = 0;
+    favCaption_ = nullptr;
+    recentCaption_ = nullptr;
+    emptyNote_ = nullptr;
+    favRows_ = 0;
+    recentRows_ = 0;
+}
 
-    // In Favorites mode, present entries sorted by name; otherwise keep the
-    // last-opened order supplied by the store.
-    QList<RecentEntry> ordered = entries_;
-    if (favMode) {
-        std::sort(ordered.begin(), ordered.end(),
-                  [](const RecentEntry &a, const RecentEntry &b) {
-                      return QFileInfo(a.path).fileName().compare(
-                                 QFileInfo(b.path).fileName(), Qt::CaseInsensitive) < 0;
-                  });
+// Sections show captions only while Favourites has a row: with nothing starred
+// the list is the plain history it always was.
+void RecentFilesPanel::insertResult(QListWidgetItem *item, bool favourite)
+{
+    if (emptyNote_) {
+        delete list_->takeItem(list_->row(emptyNote_));
+        emptyNote_ = nullptr;
     }
-
-    for (const RecentEntry &e : std::as_const(ordered)) {
-        if (favMode && !e.favorite)
-            continue;
-        const QFileInfo fi(e.path);
-        const QString name = fi.fileName();
-        if (filtering) {
-            if (!name.contains(needle, Qt::CaseInsensitive)) continue;
-        } else if (!favMode && shown >= visibleCount_) {
-            break;
+    const auto caption = [](const QString &text) {
+        auto *c = new QListWidgetItem(text);
+        c->setData(kCaptionRole, true);
+        c->setFlags(Qt::NoItemFlags);
+        return c;
+    };
+    if (favourite) {
+        if (!favCaption_) {
+            favCaption_ = caption(tr("Favourites"));
+            list_->insertItem(0, favCaption_);
+            if (recentRows_ > 0 && !recentCaption_) {
+                recentCaption_ = caption(tr("Recent"));
+                list_->insertItem(1, recentCaption_);
+            }
         }
-        ++shown;
+        list_->insertItem(list_->row(favCaption_) + 1 + favRows_, item);
+        ++favRows_;
+    } else {
+        if (favRows_ > 0 && !recentCaption_) {
+            recentCaption_ = caption(tr("Recent"));
+            list_->addItem(recentCaption_);
+        }
+        list_->addItem(item);
+        ++recentRows_;
+    }
+}
 
-        const bool missing = !fi.exists();
-        auto *item = new QListWidgetItem(list_);
-        item->setData(kPathRole,      e.path);
-        item->setData(kMissingRole,   missing);
-        item->setData(kEpochRole,     e.lastOpened);
-        item->setData(kPageCountRole, e.pageCount);
-        item->setData(kFavoriteRole,  e.favorite);
-        // When filtering by name, record the term so the delegate highlights
-        // the matching span in the file name.
-        if (filtering)
-            item->setData(kQueryRole, needle);
-        item->setToolTip(QDir::toNativeSeparators(e.path)
-                         + (missing ? tr("\nThis file is no longer on disk.") : QString()));
+void RecentFilesPanel::showEmptyNote(const QString &text)
+{
+    emptyNote_ = new QListWidgetItem(text, list_);
+    emptyNote_->setFlags(Qt::NoItemFlags);
+    emptyNote_->setForeground(palette().color(QPalette::Disabled, QPalette::Text));
+}
+
+QListWidgetItem *RecentFilesPanel::makeHitItem(const RecentEntry &entry, const ContentHit &hit)
+{
+    QListWidgetItem *item = makeFileItem(entry);
+    item->setData(kSnippetRole, hit.snippet);
+    item->setToolTip(QDir::toNativeSeparators(entry.path)
+                     + (hit.page > 0 ? tr("\nMatch on page %1").arg(hit.page) : QString()));
+    return item;
+}
+
+QListWidgetItem *RecentFilesPanel::makeFileItem(const RecentEntry &entry)
+{
+    const QFileInfo fi(entry.path);
+    const bool missing = !fi.exists();
+    auto *item = new QListWidgetItem(fi.fileName());
+    item->setData(kPathRole,      entry.path);
+    item->setData(kMissingRole,   missing);
+    item->setData(kEpochRole,     entry.lastOpened);
+    item->setData(kPageCountRole, entry.pageCount);
+    item->setData(kFavoriteRole,  entry.favorite);
+    // While searching, record the term so the delegate highlights it.
+    if (!needle().isEmpty())
+        item->setData(kQueryRole, needle());
+    item->setToolTip(QDir::toNativeSeparators(entry.path)
+                     + (missing ? tr("\nThis file is no longer on disk.") : QString()));
+    return item;
+}
+
+// Every file for an empty search (starred ones all, the rest up to the visible
+// count). With a search: the files whose name contains it (Names, and All
+// first), then the content hits so far (Contents, and All after the names).
+void RecentFilesPanel::rebuild()
+{
+    clearList();
+    const QString q = needle();
+    const bool filtering = !q.isEmpty();
+    const bool contentsOnly = filtering && search_->scope() == Scope::Contents;
+
+    if (!contentsOnly) {
+        QList<const RecentEntry *> favourites;
+        QList<const RecentEntry *> rest;
+        for (const RecentEntry &e : std::as_const(entries_)) {
+            if (filtering && !nameMatches(e))
+                continue;
+            (listedAsFavourite(e) ? favourites : rest).append(&e);
+        }
+        if (!filtering && rest.size() > visibleCount_)
+            rest.resize(visibleCount_);
+        for (const RecentEntry *e : std::as_const(favourites))
+            insertResult(makeFileItem(*e), true);
+        for (const RecentEntry *e : std::as_const(rest))
+            insertResult(makeFileItem(*e), false);
+    }
+    nameRows_ = favRows_ + recentRows_;
+    for (const QString &path : std::as_const(hitOrder_)) {
+        if (const RecentEntry *e = entryFor(path))
+            insertResult(makeHitItem(*e, hits_.value(path)), listedAsFavourite(*e));
     }
 
-    if (list_->count() == 0) {
-        const QString msg = favMode        ? tr("No favourites yet")
-                          : filtering      ? tr("No recent files match the filter")
-                                           : tr("No recent files yet");
-        auto *empty = new QListWidgetItem(msg, list_);
-        empty->setFlags(Qt::NoItemFlags);
-        empty->setForeground(palette().color(QPalette::Disabled, QPalette::Text));
+    const int listed = favRows_ + recentRows_;
+    if (listed == 0) {
+        if (!filtering)
+            showEmptyNote(tr("No recent files yet"));
+        else if (!contentMode())
+            showEmptyNote(tr("No file names contain \"%1\"").arg(q));
+        else if (scanDone_)
+            showEmptyNote(contentsOnly ? tr("No documents contain \"%1\"").arg(q)
+                                       : tr("No file names or documents contain \"%1\"").arg(q));
+        // Otherwise a scan is pending or running, and the status says so.
     }
+    updateSummary(listed);
+}
 
-    if (filtering)
-        statusSummary_ = (shown == 1) ? tr("1 result") : tr("%1 results").arg(shown);
-    else if (favMode)
-        statusSummary_ = tr("Your starred documents");
+// The window's status bar line for the list as it stands.
+void RecentFilesPanel::updateSummary(int listed)
+{
+    if (!needle().isEmpty())
+        statusSummary_ = (listed == 1) ? tr("1 result") : tr("%1 results").arg(listed);
+    else if (favRows_ > 0)
+        statusSummary_ = tr("%1 starred, %2 recent").arg(favRows_).arg(recentRows_);
+    else if (recentRows_ > 0)
+        statusSummary_ = tr("Your last %1 opened documents").arg(recentRows_);
     else
-        statusSummary_ = tr("Your last %1 opened documents").arg(shown);
+        statusSummary_ = tr("No recent files yet");
     emit statusSummaryChanged(statusSummary_);
-
-    emit countChanged(shown);
+    emit countChanged(listed);
 }
 
 void RecentFilesPanel::onItemActivated(QListWidgetItem *item)

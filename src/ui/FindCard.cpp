@@ -278,7 +278,7 @@ void FindCard::keyPressEvent(QKeyEvent *event)
 void FindCard::changeEvent(QEvent *event)
 {
     if (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange)
-        updateSearchIcon(); // the magnifier follows the card's placeholder ink, as in FindBar
+        updateSearchIcon(); // the magnifier follows the card's placeholder ink
     QWidget::changeEvent(event);
 }
 

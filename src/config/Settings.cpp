@@ -71,6 +71,10 @@ static Settings loadValues()
         s.recentVisibleCount = integer("recent_visible_count", s.recentVisibleCount);
         s.recentRetention = integer("recent_retention", s.recentRetention);
         s.recentKeepMissing = boolean("recent_keep_missing", s.recentKeepMissing);
+        const QString scope = str("recent_search_scope", s.recentSearchScope);
+        if (scope == QLatin1String("names") || scope == QLatin1String("contents")
+            || scope == QLatin1String("all"))
+            s.recentSearchScope = scope;
         s.measurementUnit = str("measurement_unit", s.measurementUnit);
         s.measurementType = str("measurement_type", s.measurementType);
         s.measurementPrecision = integer("measurement_precision", s.measurementPrecision);
@@ -109,6 +113,7 @@ static toml::table settingsTable(const Settings &s)
     tbl.insert("recent_visible_count", static_cast<int64_t>(s.recentVisibleCount));
     tbl.insert("recent_retention", static_cast<int64_t>(s.recentRetention));
     tbl.insert("recent_keep_missing", s.recentKeepMissing);
+    tbl.insert("recent_search_scope", s.recentSearchScope.toStdString());
     tbl.insert("measurement_unit", s.measurementUnit.toStdString());
     tbl.insert("measurement_type", s.measurementType.toStdString());
     tbl.insert("measurement_precision", static_cast<int64_t>(s.measurementPrecision));
