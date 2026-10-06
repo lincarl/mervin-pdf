@@ -108,16 +108,15 @@ private slots:
         QCOMPARE(picked.size(), 1);
     }
 
-    // The search also matches the name in the UI language, once a catalog
-    // provides it: in Swedish, "kinesiska" finds Chinese.
+    // The search also matches the name in the UI language: in Swedish,
+    // "kinesiska" finds Chinese.
     void searchMatchesTheNameInTheUiLanguage()
     {
         LanguageCombo combo;
         i18n::apply(QStringLiteral("sv"));
         const QString localName =
             QCoreApplication::translate("UiLanguage", "Chinese, Simplified");
-        if (localName == QStringLiteral("Chinese, Simplified"))
-            QSKIP("the Swedish catalog has no name for Chinese yet");
+        QVERIFY(localName.startsWith(QStringLiteral("kinesiska")));
         QCoreApplication::processEvents(); // LanguageChange is posted
         combo.show();
         QVERIFY(QTest::qWaitForWindowExposed(&combo));
@@ -160,9 +159,7 @@ private slots:
         QTest::keyClicks(combo->searchField(), QStringLiteral("svenska"));
         QTest::keyClick(combo->searchField(), Qt::Key_Return);
         QCOMPARE(i18n::current(), QStringLiteral("sv"));
-        const QString swedish =
-            QCoreApplication::translate("mervin::FirstRunDialog", "Welcome to Mervin PDF");
-        QTRY_COMPARE(heading->text(), swedish);
+        QTRY_COMPARE(heading->text(), QStringLiteral("Välkommen till Mervin PDF"));
 
         dialog.reject();
         QCOMPARE(dialog.language(), QStringLiteral("sv"));

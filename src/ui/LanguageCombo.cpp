@@ -209,7 +209,11 @@ void LanguageCombo::tintSearchIcon()
 void LanguageCombo::fitPopup()
 {
     list_->ensurePolished();
-    int rowHeight = model_->rowCount() > 0 && proxy_->rowCount() > 0 ? list_->sizeHintForRow(0) : 0;
+    // Rows differ by a pixel or so when a script falls back to another font
+    // (Chinese), so size for the tallest one.
+    int rowHeight = 0;
+    for (int row = 0; row < proxy_->rowCount(); ++row)
+        rowHeight = std::max(rowHeight, list_->sizeHintForRow(row));
     if (rowHeight <= 0)
         rowHeight = list_->fontMetrics().height() + 12;
     const int rows = std::clamp(model_->rowCount(), 1, kMaxVisibleRows);

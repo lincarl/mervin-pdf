@@ -22,7 +22,6 @@ FirstRunDialog::FirstRunDialog(bool offerDefaultApp, QWidget *parent)
     : QDialog(parent)
 {
     setWindowTitle(QStringLiteral(MERVIN_APP_NAME));
-    setMinimumWidth(500);
 
     auto *outer = new QVBoxLayout(this);
     outer->setContentsMargins(22, 22, 22, 16);
