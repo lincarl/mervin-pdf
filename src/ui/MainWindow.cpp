@@ -35,7 +35,7 @@
 #include "ui/CommentsSidebar.h"
 #include "ui/DetachableTabBar.h"
 #include "ui/FileContextMenu.h"
-#include "ui/FindBar.h"
+#include "ui/FindCard.h"
 #include "ui/OutlineSidebar.h"
 #include "ui/OpenPdfDialog.h"
 #include "ui/SidebarLayout.h"
@@ -295,6 +295,8 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
     // Start page (recent files) shown when the window holds no document.
     recentPanel_ = new RecentFilesPanel;
     recentPanel_->setVisibleCount(settings_.recentVisibleCount);
+    recentPanel_->setDefaultScope(
+        mervin::RecentSearchField::scopeFromSetting(settings_.recentSearchScope));
     connect(recentPanel_, &RecentFilesPanel::openRequested, this,
             [this](const QString &path) { openFile(path); });
     connect(recentPanel_, &RecentFilesPanel::openInNewWindowRequested, this,
@@ -328,17 +330,7 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
     // view; this window owns the MuPDF-backed search and routes hits back to it.
     contentSearch_ = new mervin::ContentSearch(engine_, this);
     connect(recentPanel_, &RecentFilesPanel::contentSearchRequested, this,
-            [this](const QString &query, bool favoritesOnly) {
-                QStringList paths;
-                if (wm_) {
-                    const auto entries = wm_->recentEntries(); // full history, newest first
-                    paths.reserve(entries.size());
-                    for (const mervin::RecentEntry &e : entries) {
-                        if (favoritesOnly && !e.favorite)
-                            continue;
-                        paths.append(e.path);
-                    }
-                }
+            [this](const QString &query, const QStringList &paths) {
                 contentSearch_->start(paths, query);
             });
     connect(recentPanel_, &RecentFilesPanel::contentSearchCanceled,
@@ -347,6 +339,8 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
             recentPanel_, &RecentFilesPanel::addContentHit);
     connect(contentSearch_, &mervin::ContentSearch::progress,
             recentPanel_, &RecentFilesPanel::setContentProgress);
+    connect(contentSearch_, &mervin::ContentSearch::pageProgress,
+            recentPanel_, &RecentFilesPanel::setContentPageProgress);
     connect(contentSearch_, &mervin::ContentSearch::finished, this,
             [this](bool canceled, int matched) { recentPanel_->endContentSearch(canceled, matched); });
 
@@ -354,12 +348,6 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
     stack_->addWidget(recentPanel_); // index 0
     stack_->addWidget(tabs_);        // index 1
 
-    // Global adaptive find/search bar.
-    findBar_ = new mervin::FindBar(this);
-    connect(findBar_, &mervin::FindBar::recentFilterChanged, this,
-            [this](const QString &text, bool contentSearch) {
-                recentPanel_->setSearch(text, contentSearch);
-            });
     // The recent listing's one-line summary ("Your last N opened documents")
     // lives in the status bar - the same place that shows the open file's path.
     // Only reflect it there while the Recent view is the active page.
@@ -487,8 +475,7 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
     auto *centralLayout = new QVBoxLayout(centralContainer);
     centralLayout->setContentsMargins(0, 0, 0, 0);
     centralLayout->setSpacing(0);
-    centralLayout->addWidget(tabRow_);   // tab row is always visible - above find bar
-    centralLayout->addWidget(findBar_);
+    centralLayout->addWidget(tabRow_);   // tab row is always visible
     centralLayout->addWidget(stack_, 1);
     setCentralWidget(centralContainer);
 
@@ -536,6 +523,12 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
             settings_.recentVisibleCount = count;
             recentPanel_->setVisibleCount(count);
         });
+        connect(wm_, &mervin::WindowManager::recentSearchScopeChanged, this,
+                [this](const QString &scope) {
+                    settings_.recentSearchScope = scope;
+                    recentPanel_->setDefaultScope(
+                        mervin::RecentSearchField::scopeFromSetting(scope));
+                });
         connect(wm_, &mervin::WindowManager::annotationDefaultsChanged, this,
                 [this](const QString &color, const QString &author) {
                     settings_.annotationColor = color;
@@ -795,36 +788,64 @@ void MainWindow::createActions()
     findAction_ = new QAction(tr("&Find"), this);
     findAction_->setShortcut(QKeySequence::Find); // Ctrl+F
     connect(findAction_, &QAction::triggered, this, [this] {
-        // In document mode, seed from the current selection; in recent mode
-        // just focus the field so the user can type a search query.
-        if (findBar_) {
-            QString preset;
-            if (!recentActive_) {
-                if (auto *t = currentTab()) {
-                    const QString sel = t->viewer()->selectedText();
-                    if (!sel.isEmpty()) {
-                        preset = sel.section(QLatin1Char('\n'), 0, 0).trimmed();
-                        if (preset.size() > 100)
-                            preset.clear();
-                    }
-                }
-            }
-            findBar_->activate(preset);
+        // Recent focuses its search field. A document opens its find card, seeded
+        // from the current selection.
+        if (recentActive_) {
+            recentPanel_->focusSearch();
+            return;
         }
+        TabPage *t = currentTab();
+        if (!t || !t->isLoaded())
+            return;
+        QString preset;
+        const QString sel = t->viewer()->selectedText();
+        if (!sel.isEmpty()) {
+            preset = sel.section(QLatin1Char('\n'), 0, 0).trimmed();
+            if (preset.size() > 100)
+                preset.clear();
+        }
+        t->findCard()->open(preset);
     });
 
+    // F3 and Shift+F3 step through the matches. With the card closed they open it
+    // first, which searches its kept query again.
     findNextAction_ = new QAction(tr("Find &Next"), this);
     findNextAction_->setShortcut(QKeySequence::FindNext); // F3
     connect(findNextAction_, &QAction::triggered, this, [this] {
-        if (auto *v = currentViewer())
-            v->findNext();
+        TabPage *t = currentTab();
+        if (recentActive_ || !t || !t->isLoaded())
+            return;
+        if (t->findCard()->isOpen())
+            t->findCard()->next();
+        else
+            t->findCard()->open();
     });
 
     findPrevAction_ = new QAction(tr("Find &Previous"), this);
     findPrevAction_->setShortcut(QKeySequence::FindPrevious); // Shift+F3
     connect(findPrevAction_, &QAction::triggered, this, [this] {
-        if (auto *v = currentViewer())
-            v->findPrev();
+        TabPage *t = currentTab();
+        if (recentActive_ || !t || !t->isLoaded())
+            return;
+        if (t->findCard()->isOpen())
+            t->findCard()->prev();
+        else
+            t->findCard()->open();
+    });
+
+    // The toolbar's search button opens and closes the current tab's find card.
+    // wireCurrentViewer keeps its checked state in step with the card.
+    findCardAction_ = new QAction(tr("Find"), this);
+    findCardAction_->setCheckable(true);
+    findCardAction_->setToolTip(tr("Find (Ctrl+F)"));
+    connect(findCardAction_, &QAction::triggered, this, [this](bool open) {
+        TabPage *t = currentTab();
+        if (!t || !t->isLoaded())
+            return;
+        if (open)
+            t->findCard()->open();
+        else
+            t->findCard()->dismiss();
     });
 
     copyAction_ = new QAction(tr("&Copy"), this);
@@ -1147,6 +1168,7 @@ void MainWindow::createToolBar()
     addDocAction(measureAction_);
     addDocAction(commentAction_); // opens the Comment window (highlight + comment)
     addDocAction(printAction_);
+    addDocAction(findCardAction_);
     addSep();
 
     // Comfort document-theme toggle: one button, two faces. A crescent moon
@@ -1414,6 +1436,7 @@ void MainWindow::applyActionIcons()
     rotateLeftAction_->setIcon(mervin::icons::glyph(Glyph::RotateLeft, col));
     rotateRightAction_->setIcon(mervin::icons::glyph(Glyph::RotateRight, col));
     printAction_->setIcon(mervin::icons::glyph(Glyph::Print, col));
+    findCardAction_->setIcon(mervin::icons::glyph(Glyph::Search, col));
     if (measureAction_)
         measureAction_->setIcon(mervin::icons::glyph(Glyph::Measure, col));
     if (formAction_)
@@ -1519,7 +1542,8 @@ void MainWindow::setUiEnabled(bool enabled)
     // setCommandBarMode separately styles the visible controls.
     const bool docEnabled = enabled && !recentActive_;
     for (QAction *a : {prevPageAction_, nextPageAction_, zoomInAction_, zoomOutAction_,
-                       fitModeAction_, rotateLeftAction_, rotateRightAction_, printAction_})
+                       fitModeAction_, rotateLeftAction_, rotateRightAction_, printAction_,
+                       findCardAction_})
         a->setEnabled(docEnabled);
     pageEdit_->setEnabled(docEnabled);
     zoomCombo_->setEnabled(docEnabled);
@@ -1531,9 +1555,11 @@ void MainWindow::setUiEnabled(bool enabled)
         documentButton_->setEnabled(docEnabled);
 
     closeTabAction_->setEnabled(currentTab() != nullptr);
-    // Selection / find / OCR stay tied to having a loaded document.
-    // Find also focuses the Recent search field, so it remains live on Recent.
-    for (QAction *a : {findAction_, findNextAction_, findPrevAction_,
+    // Selection / find / OCR stay tied to having a loaded document. Find itself
+    // stays enabled: it focuses the Recent search field, also with no document
+    // open, and its handler ignores a tab that is not loaded.
+    findAction_->setEnabled(true);
+    for (QAction *a : {findNextAction_, findPrevAction_,
                        copyAction_, selectAllAction_, ocrAction_, measureAction_})
         a->setEnabled(enabled);
     // Fill Forms is additionally gated on the document actually having fields.
@@ -1870,10 +1896,7 @@ void MainWindow::showRecentPanel()
     statusInfo_->setText(recentPanel_->statusSummary());
     updateRecentButton();
     setCommandBarMode(true);
-    if (findBar_) {
-        findBar_->setMode(mervin::FindBar::Mode::RecentSearch);
-        findBar_->activate(); // focus the search field
-    }
+    recentPanel_->focusSearch();
 }
 
 void MainWindow::updateRecentButton()
@@ -1899,6 +1922,18 @@ void MainWindow::setCommandBarMode(bool recentActive)
     // Keep document controls visible but disabled on Recent; action shortcuts are disabled separately.
     if (docControls_)
         docControls_->setEnabled(!recentActive);
+    syncFindToggle();
+}
+
+void MainWindow::syncFindToggle()
+{
+    // Checked while the current tab's find card is open. Recent has its own
+    // search row, and the disabled button there must not look pressed.
+    if (!findCardAction_)
+        return;
+    TabPage *t = currentTab();
+    QSignalBlocker block(findCardAction_);
+    findCardAction_->setChecked(!recentActive_ && t && t->findCard()->isOpen());
 }
 
 void MainWindow::updateStartPage()
@@ -1918,13 +1953,9 @@ void MainWindow::updateStartPage()
             recentPanel_->setEntries(wm_->recentEntries());
             wm_->refreshRecent();
         }
-        if (findBar_)
-            findBar_->setMode(mervin::FindBar::Mode::RecentSearch);
     } else {
         if (contentSearch_)
             contentSearch_->cancel();
-        if (findBar_)
-            findBar_->setMode(mervin::FindBar::Mode::FindDocument);
     }
     updateRecentButton();
     setCommandBarMode(recentActive_);
@@ -1963,13 +1994,6 @@ void MainWindow::updateForCurrentTab()
 
     updatePageLabels(v->currentPage() + 1, v->pageCount());
     syncZoomCombo(v);
-
-    // Search is per-tab: restore this tab's query, options and result count into
-    // the shared find bar (without re-running the search). Skipped in Recent
-    // mode, where the bar filters the recent list instead.
-    if (findBar_ && !recentActive_)
-        findBar_->restoreFindState(v->findQuery(), v->findCaseSensitive(), v->findWholeWord(),
-                                   v->currentMatchNumber(), v->matchCount());
 
     TabPage *t = currentTab();
     setWindowTitle(tr("%1 - Mervin PDF").arg(t->tabTitle()));
@@ -2033,7 +2057,7 @@ void MainWindow::onZoomComboActivated()
             v->setScale(pct / 100.0);
     }
     // Hand focus back to the document so the zoom box does not keep a caret after
-    // the value is committed (mirrors the find bar returning focus on Enter/Esc).
+    // the value is committed (as the find card returns focus on Esc).
     v->setFocus();
 }
 
@@ -2162,6 +2186,14 @@ void MainWindow::applySettings(const mervin::Settings &next)
             || settings_.recentKeepMissing != before.recentKeepMissing))
         wm_->applyRecentSettings(settings_.recentVisibleCount, settings_.recentRetention,
                                  settings_.recentKeepMissing);
+    // The default search scope applies to every window's Recent page now.
+    if (settings_.recentSearchScope != before.recentSearchScope) {
+        if (wm_)
+            wm_->setRecentSearchScope(settings_.recentSearchScope);
+        else
+            recentPanel_->setDefaultScope(
+                mervin::RecentSearchField::scopeFromSetting(settings_.recentSearchScope));
+    }
 
     // The current document takes the new defaults, but only those that changed:
     // re-applying an unchanged default zoom would throw away the zoom the user
@@ -2303,6 +2335,11 @@ void MainWindow::wireCurrentViewer(ViewerWidget *v)
     for (const QMetaObject::Connection &c : viewerConns_)
         QObject::disconnect(c);
     viewerConns_.clear();
+    // The toolbar's search button shows whether this tab's find card is open.
+    syncFindToggle();
+    if (TabPage *t = currentTab())
+        viewerConns_ << connect(t->findCard(), &mervin::FindCard::openChanged, this,
+                                &MainWindow::syncFindToggle);
     if (!v)
         return;
     viewerConns_ << connect(v, &ViewerWidget::pageChanged, this,
@@ -2443,17 +2480,6 @@ void MainWindow::wireCurrentViewer(ViewerWidget *v)
         if (thumbnailSidebar_)
             thumbnailSidebar_->setCurrentPage(current - 1); // current is 1-based
     });
-    // Wire the global find bar to this viewer.
-    if (findBar_) {
-        viewerConns_ << connect(findBar_, &mervin::FindBar::searchChanged,
-                                v, &ViewerWidget::startFind);
-        viewerConns_ << connect(findBar_, &mervin::FindBar::findNext,
-                                v, &ViewerWidget::findNext);
-        viewerConns_ << connect(findBar_, &mervin::FindBar::findPrev,
-                                v, &ViewerWidget::findPrev);
-        viewerConns_ << connect(v, &ViewerWidget::findStatusChanged,
-                                findBar_, &mervin::FindBar::setResultCount);
-    }
 }
 
 void MainWindow::createSidebars()

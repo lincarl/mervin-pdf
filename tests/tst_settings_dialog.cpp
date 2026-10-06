@@ -203,6 +203,7 @@ void TstSettingsDialog::defaultsComeBackUnchanged()
     QCOMPARE(out.recentVisibleCount, in.recentVisibleCount);
     QCOMPARE(out.recentRetention, in.recentRetention);
     QCOMPARE(out.recentKeepMissing, in.recentKeepMissing);
+    QCOMPARE(out.recentSearchScope, in.recentSearchScope);
     QCOMPARE(out.autoUpdate, in.autoUpdate);
     QCOMPARE(out.measurementSnap, in.measurementSnap);
     QCOMPARE(out.measurementType, in.measurementType);
@@ -234,6 +235,7 @@ void TstSettingsDialog::everyFieldRoundTrips()
     in.recentVisibleCount = 42;
     in.recentRetention = 900;
     in.recentKeepMissing = false;
+    in.recentSearchScope = QStringLiteral("contents"); // neither the default nor the first item
     in.autoUpdate = false;
     in.measurementSnap = false;
     in.measurementType = QStringLiteral("angle");
@@ -260,6 +262,7 @@ void TstSettingsDialog::everyFieldRoundTrips()
     QCOMPARE(out.recentVisibleCount, in.recentVisibleCount);
     QCOMPARE(out.recentRetention, in.recentRetention);
     QCOMPARE(out.recentKeepMissing, in.recentKeepMissing);
+    QCOMPARE(out.recentSearchScope, in.recentSearchScope);
     QCOMPARE(out.autoUpdate, in.autoUpdate);
     QCOMPARE(out.measurementSnap, in.measurementSnap);
     QCOMPARE(out.measurementType, in.measurementType);

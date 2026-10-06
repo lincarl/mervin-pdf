@@ -581,11 +581,8 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
                  css(t.accent),
                  dark ? QStringLiteral("400") : QStringLiteral("600")));
 
-    // Exclusive segmented choices use a solid accent fill: Recent scope/filter and
-    // Measure/Comment kinds.
-    const QString segSel = QStringLiteral("QWidget#viewModeBar QToolButton%1,"
-                                          " QWidget#recentScopeBar QToolButton%1,"
-                                          " QWidget#segmentBar QToolButton%1");
+    // Exclusive segmented choices use a solid accent fill: Measure/Comment kinds.
+    const QString segSel = QStringLiteral("QWidget#segmentBar QToolButton%1");
     add(segSel.arg(QString()) + QStringLiteral(" { border:1px solid %1; background:%2; color:%3;"
                                                " padding:5px 14px; border-radius:0; }")
                                     .arg(css(t.border), css(t.fill), css(t.ink)));
@@ -604,26 +601,57 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
     add(segSel.arg(QStringLiteral(":checked:hover")) + QStringLiteral(" { background:%1; }")
                                                           .arg(css(t.accentHover)));
 
-    // ── Find bar row ────────────────────────────────────────────────────────
-    if (dark) {
-        // The bar itself keeps the window chrome (palette) background; the row
-        // border and the muted find labels come from the design's find-bar spec.
-        add(QStringLiteral("QWidget#findBar { border-bottom:1px solid %1; }").arg(css(t.borderBar)));
-        add(QStringLiteral("QWidget#findBar QLabel, QWidget#findBar QCheckBox { color:%1; }")
-                .arg(css(t.inkSoft)));
-    }
-
-    // ── Recent start-screen heading ─────────────────────────────────────────
-    add(QStringLiteral("QLabel#recentHeading { font-weight:700; color:%1; }").arg(css(t.ink)));
+    // ── Recent page search ──────────────────────────────────────────────────
+    // The scope toggles inside the field's right end are plain text: faint at
+    // rest, the accent (and bold, set in code) when chosen.
+    add(QStringLiteral("QLineEdit#recentSearch QToolButton#recentScope { border:none;"
+                       " background:transparent; padding:0; color:%1; }")
+            .arg(css(t.inkFaint)));
+    add(QStringLiteral("QLineEdit#recentSearch QToolButton#recentScope:hover { color:%1; }")
+            .arg(css(t.ink)));
+    add(QStringLiteral("QLineEdit#recentSearch QToolButton#recentScope:checked { color:%1; }")
+            .arg(css(theme::legibleAccent(t.accent, dark))));
+    // Reached with Tab (a click never focuses them): a wash, not a colour, so the
+    // chosen toggle keeps its accent.
+    add(QStringLiteral("QLineEdit#recentSearch QToolButton#recentScope:focus {"
+                       " background:%1; border-radius:4px; }")
+            .arg(css(t.hover)));
+    // A quiet clear cross, like the find card's close button, in place of the
+    // platform's coloured clear icon.
+    add(QStringLiteral("QLineEdit#recentSearch QToolButton#recentSearchClear { border:none;"
+                       " border-radius:4px; padding:0; background:transparent; color:%1; }")
+            .arg(css(t.inkSoft)));
+    add(QStringLiteral("QLineEdit#recentSearch QToolButton#recentSearchClear:hover {"
+                       " background:%1; }")
+            .arg(css(t.hover)));
+    add(QStringLiteral("QFrame#recentSearchRule { background:%1; border:none; }")
+            .arg(css(t.borderStrong)));
+    add(QStringLiteral("QLabel#recentSearchStatus { color:%1; }").arg(css(t.inkSoft)));
+    // While a content scan runs the status is in full ink, beside a Stop button.
+    add(QStringLiteral("QLabel#recentSearchStatus[running=\"true\"] { color:%1; }")
+            .arg(css(t.ink)));
+    add(QStringLiteral("QToolButton#recentSearchStop { border:1px solid %1; border-radius:%2;"
+                       " padding:2px 10px; background:transparent; color:%3; }")
+            .arg(css(t.borderPush), rad, css(t.ink)));
+    add(QStringLiteral("QToolButton#recentSearchStop:hover { background:%1; border-color:%2; }")
+            .arg(css(t.hover), css(t.borderStrong)));
+    add(QStringLiteral("QToolButton#recentSearchStop:pressed { background:%1; }")
+            .arg(css(t.pressed)));
+    // Reached with Tab: an accent edge, since the hover wash already means hover.
+    add(QStringLiteral("QToolButton#recentSearchStop:focus { border-color:%1; }")
+            .arg(css(theme::legibleAccent(t.accent, dark))));
 
     // ── Floating tool panels (Measure, Comment) ─────────────────────────────
     // These live on the viewer's viewport, so they get an explicit ink for every
     // label: the viewport's QPalette::Dark background role makes Qt derive
     // QPalette::Light for child foregrounds, and a panel label that falls back to
     // the palette is invisible in both themes (see MeasurePanel's constructor).
-    add(QStringLiteral("QWidget#measurePanel { background:%1; border:1px solid %2;"
-                       " border-radius:10px; }")
-            .arg(css(t.popover), css(t.borderPopover)));
+    // The panels stack with the find card, so they share one surface and rim.
+    // The dark rim is borderStrong: the popover sits on the canvas at about 1.1:1,
+    // and the app draws no shadows to lift a floating panel.
+    add(QStringLiteral("QWidget#measurePanel, QWidget#findCard { background:%1;"
+                       " border:1px solid %2; border-radius:10px; }")
+            .arg(css(t.popover), css(dark ? t.borderStrong : t.borderPopover)));
     // The toolbar's buttons are deliberately borderless, but on a floating panel
     // over a document that leaves nine bare words with no hit target. Scope a
     // visible edge to the panel only.
@@ -677,6 +705,33 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
     add(QStringLiteral("QWidget#measurePanel QToolButton#measureClearX:hover {"
                        " color:%1; border-color:%2; }")
             .arg(css(t.inkPrimary), css(t.borderPopoverControl)));
+
+    // ── Find card ───────────────────────────────────────────────────────────
+    // Find in document floats over the page in the panel stack; its surface and
+    // rim come from the floating-panel rule above.
+    add(QStringLiteral("QWidget#findCard QToolButton { border:1px solid transparent;"
+                       " border-radius:%1; padding:0; background:transparent; color:%2; }")
+            .arg(rad, css(t.inkBody)));
+    add(QStringLiteral("QWidget#findCard QToolButton:hover { background:%1; }").arg(css(t.hover)));
+    add(QStringLiteral("QWidget#findCard QToolButton:pressed { background:%1; }")
+            .arg(css(t.pressed)));
+    add(QStringLiteral("QWidget#findCard QToolButton:disabled { background:transparent; color:%1; }")
+            .arg(css(t.inkDisabled)));
+    add(QStringLiteral("QWidget#findCard QToolButton:focus { border-color:%1; }")
+            .arg(css(theme::legibleAccent(t.accent, dark))));
+    add(QStringLiteral("QWidget#findCard QToolButton#findCardClose { color:%1; }")
+            .arg(css(t.inkSoft)));
+    add(QStringLiteral("QWidget#findCard QCheckBox { color:%1; }")
+            .arg(css(dark ? t.inkSoft : t.ink)));
+    add(QStringLiteral("QFrame#findCardSep { background:%1; border:none; }").arg(css(t.border)));
+    add(QStringLiteral("QLabel#findCount { color:%1; }").arg(css(t.inkSoft)));
+    // The field: a control edge on the card at rest, and a 2px accent ring while
+    // it has focus. The ring takes 1px from the padding, so the text stays put.
+    add(QStringLiteral("QLineEdit#findField { border-color:%1; }")
+            .arg(css(t.borderPopoverControl)));
+    add(QStringLiteral("QLineEdit#findField:focus, QLineEdit#recentSearch:focus {"
+                       " border:2px solid %1; padding:3px 7px; }")
+            .arg(css(theme::legibleAccent(t.accent, dark))));
 
     // ── Merge dialog ────────────────────────────────────────────────────────
     // Its row list (RowList) is shared with the Extract dialog, so each list rule,

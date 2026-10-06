@@ -49,6 +49,9 @@ struct Settings
     // whenever the Recent list is shown, unless their drive or share is detached
     // (see RecentStore::isRemovedFromDisk and WindowManager::pruneMissingRecent).
     bool recentKeepMissing = true;
+    // Where the Recent page's search looks when a window opens: "names" (file
+    // names), "contents" (inside the documents), or "all" (names, then contents).
+    QString recentSearchScope = QStringLiteral("names");
 
     // Measuring tool defaults (seed each new tab's measure panel).
     QString measurementUnit = QStringLiteral("mm");        // mm | cm | m | in | ft

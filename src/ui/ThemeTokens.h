@@ -177,7 +177,7 @@ struct Brand
     QColor starEdge;
     QColor starEmptyEdge;
     // Search-match highlight in the Recent list. Deliberately the same yellow the
-    // find bar paints over a page, so a match looks the same wherever it appears.
+    // find card highlights on a page, so a match looks the same wherever it appears.
     QColor searchMatch;
 };
 

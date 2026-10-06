@@ -314,12 +314,18 @@ void ViewerWidget::restoreResumeState(const ResumeState &state)
     }
     emitMeasurementsChanged();
 
-    findQuery_ = state.query;
-    findCaseSensitive_ = state.caseSensitive;
-    findWholeWord_ = state.wholeWord;
+    restoreFind(state.query, state.caseSensitive, state.wholeWord, state.currentMatch);
+}
+
+void ViewerWidget::restoreFind(const QString &query, bool caseSensitive, bool wholeWord,
+                               int currentMatch)
+{
+    findQuery_ = query;
+    findCaseSensitive_ = caseSensitive;
+    findWholeWord_ = wholeWord;
     // Rebuild search results without moving the restored reading position.
-    documentSearch_->start(doc_, state.query, state.caseSensitive, state.wholeWord,
-                           [this, match = state.currentMatch](std::vector<TextMatch> matches) {
+    documentSearch_->start(doc_, query, caseSensitive, wholeWord,
+                           [this, match = currentMatch](std::vector<TextMatch> matches) {
         matches_ = std::move(matches);
         rebuildMatchIndex();
         currentMatch_ = matches_.empty() ? -1
@@ -1958,8 +1964,37 @@ void ViewerWidget::scrollToMatch(int matchIndex)
         canvasRect = canvasRect.isNull() ? c : canvasRect.united(c);
     }
     ensureCanvasRectVisible(canvasRect);
+    keepClearOfFindCard(canvasRect);
     if (layoutMode_.scroll != ViewLayout::Scroll::Single)
         updateCurrentPage();
+}
+
+void ViewerWidget::keepClearOfFindCard(const QRectF &canvasRect)
+{
+    // A match that is on screen but under the find card counts as hidden. Scroll
+    // it just clear of the card: below it while the card sits in the top half of
+    // the view (its usual place), above it otherwise. With no vertical room left,
+    // as at the top of a page in single-page mode, move it left of the card.
+    if (!findCard_ || !findCard_->isVisible())
+        return;
+    constexpr int kClear = 8;
+    const QRectF card(findCard_->geometry());
+    QRectF onScreen = canvasRect.translated(-contentOffset());
+    if (!onScreen.intersects(card))
+        return;
+    QScrollBar *vb = verticalScrollBar();
+    const bool cardHigh = card.center().y() < viewport()->height() / 2.0;
+    const double wantTop = cardHigh ? card.bottom() + kClear : card.top() - kClear - onScreen.height();
+    vb->setValue(std::clamp(vb->value() + static_cast<int>(std::lround(onScreen.top() - wantTop)),
+                            vb->minimum(), vb->maximum()));
+    onScreen = canvasRect.translated(-contentOffset());
+    if (!onScreen.intersects(card))
+        return;
+    QScrollBar *hb = horizontalScrollBar();
+    const double overlap = onScreen.right() - (card.left() - kClear);
+    if (overlap > 0)
+        hb->setValue(std::clamp(hb->value() + static_cast<int>(std::lround(overlap)),
+                                hb->minimum(), hb->maximum()));
 }
 
 void ViewerWidget::ensureCanvasRectVisible(const QRectF &c)
@@ -2125,8 +2160,10 @@ bool ViewerWidget::eventFilter(QObject *watched, QEvent *event)
 bool ViewerWidget::focusNextPrevChild(bool next)
 {
     // In form mode Tab / Shift+Tab walk the fillable fields (incl. toggles) rather
-    // than Qt's default child-focus chain.
-    if (toolMode_ == ToolMode::FillForms) {
+    // than Qt's default child-focus chain - except inside the find card, whose
+    // controls keep their own Tab order.
+    const bool inFindCard = findCard_ && findCard_->isAncestorOf(QApplication::focusWidget());
+    if (toolMode_ == ToolMode::FillForms && !inFindCard) {
         advanceFormFocus(next ? +1 : -1);
         return true;
     }

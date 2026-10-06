@@ -223,21 +223,23 @@ set_tests_properties(tst_theme PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
-# Guard rails for the shared find bar's two search contexts (document find vs the
-# recent-list filter), which used to leak into each other across a view switch.
-# FindBar.cpp belongs to the application target, so it is compiled in here (as
-# tst_icons does); it links mervin_icons because the bar paints its magnifier
-# glyph through it. The bar talks to the rest of the app only through signals, so
-# nothing else is needed and this test does not link mervin_core - which also
-# keeps it building when MuPDF is not around. QTEST_MAIN because it is a QWidget.
-qt_add_executable(tst_find_bar tst_find_bar.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/FindBar.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/FindBar.h)
-target_include_directories(tst_find_bar PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(tst_find_bar PRIVATE mervin_icons Qt6::Test Qt6::Widgets)
-set_target_properties(tst_find_bar PROPERTIES WIN32_EXECUTABLE OFF)
-add_test(NAME tst_find_bar COMMAND tst_find_bar)
-set_tests_properties(tst_find_bar PROPERTIES
+# The floating find card: opening, closing, Enter and Escape, the option clicks
+# that must leave the caret in the field, and the field's paste trimming. It
+# compiles the widget in directly and talks to it only through signals, so it
+# needs no document (or MuPDF); PanelStack comes along because the card asks it
+# for its position. It links mervin_icons for the card's glyphs.
+qt_add_executable(tst_find_card tst_find_card.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/FindCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/FindCard.h
+    ${CMAKE_SOURCE_DIR}/src/ui/PanelStack.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/PanelStack.h
+    ${CMAKE_SOURCE_DIR}/src/ui/SearchLineEdit.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/SearchLineEdit.h)
+target_include_directories(tst_find_card PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(tst_find_card PRIVATE mervin_icons Qt6::Test Qt6::Widgets)
+set_target_properties(tst_find_card PROPERTIES WIN32_EXECUTABLE OFF)
+add_test(NAME tst_find_card COMMAND tst_find_card)
+set_tests_properties(tst_find_card PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
@@ -403,6 +405,16 @@ foreach(_t tst_print_dialog tst_print_output)
 endforeach()
 
 target_link_libraries(tst_print_output PRIVATE qpdf::libqpdf)
+
+# The Recent page: Favourites and Recent sections, rows that keep their place when
+# starred, and the Names, Contents and All search scopes (content hits are fed in
+# by hand, as the window's ContentSearch would).
+qt_add_executable(tst_recent_panel tst_recent_panel.cpp)
+target_link_libraries(tst_recent_panel PRIVATE mervin_app Qt6::Test)
+set_target_properties(tst_recent_panel PROPERTIES WIN32_EXECUTABLE OFF)
+add_test(NAME tst_recent_panel COMMAND tst_recent_panel)
+set_tests_properties(tst_recent_panel PROPERTIES ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
 qt_add_executable(tst_document_suspension tst_document_suspension.cpp)
 target_link_libraries(tst_document_suspension PRIVATE mervin_app Qt6::Test)

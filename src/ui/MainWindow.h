@@ -18,7 +18,6 @@ class CommentsSidebar;
 class ContentSearch;
 class DetachableTabBar;
 class Document;
-class FindBar;
 class OutlineSidebar;
 class RecentFilesPanel;
 class RenderEngine;
@@ -175,7 +174,7 @@ private:
     mervin::MeasureDoc collectMeasureDoc(mervin::ViewerWidget *viewer) const;
     std::vector<mervin::RenderMeasurement> collectRenderMeasurements(
         mervin::ViewerWidget *viewer) const;
-    void applyControlStyle(); // theme-aware borders for toolbar / find-bar buttons
+    void applyControlStyle(); // re-tint palette-driven chrome: toolbar dividers, Recent pill, icons
     // Re-assert WA_Hover on the chrome buttons after a theme switch re-polishes
     // them (a dropped WA_Hover leaves a button stuck without its :hover highlight).
     void reassertHoverAttributes();
@@ -191,6 +190,7 @@ private:
     void syncComfortButton();       // moon/sun glyph + tooltip on the toolbar toggle
     void showRecentPanel();         // switch to Recent view (called by pill button)
     void setCommandBarMode(bool recentActive); // hide/show doc-only toolbar widget
+    void syncFindToggle();          // toolbar search button follows the current find card
     void updateRecentButton();      // sync pill button accent state
     void syncDocTabBar();           // rebuild docTabBar_ to match tabs_
     void updateTabGlyphs();         // tint each doc tab's glyph (accent on the active tab)
@@ -286,6 +286,7 @@ private:
     QAction *findAction_ = nullptr;
     QAction *findNextAction_ = nullptr;
     QAction *findPrevAction_ = nullptr;
+    QAction *findCardAction_ = nullptr; // toolbar toggle for the current tab's find card
     QAction *copyAction_ = nullptr;
     QAction *selectAllAction_ = nullptr;
     QAction *ocrAction_ = nullptr;
@@ -308,10 +309,7 @@ private:
     QAction *singleAction_ = nullptr;
     QAction *twoPageAction_ = nullptr;
 
-    // Global adaptive find/search bar (below the tab row, always visible).
-    mervin::FindBar *findBar_ = nullptr;
-
-    // Tab row: always visible strip above find bar containing Recent pill + doc tabs.
+    // Tab row: always visible strip containing the Recent pill + doc tabs.
     QWidget *tabRow_ = nullptr;
     mervin::DetachableTabBar *docTabBar_ = nullptr; // visible tab bar, synced with tabs_
 

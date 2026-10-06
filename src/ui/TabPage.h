@@ -15,11 +15,12 @@ class Document;
 class ViewerWidget;
 class MeasurePanel;
 class AnnotPanel;
+class FindCard;
 class PanelStack;
 
 // One open document in a tab: owns the Document and contains its ViewerWidget.
 // Created with the window's shared RenderEngine (which must outlive the page).
-// The find bar lives in MainWindow (shared, adaptive), not here.
+// Its find card floats over the viewer, so each tab keeps its own search.
 class TabPage : public QWidget
 {
     Q_OBJECT
@@ -65,6 +66,7 @@ public:
     ViewerWidget *viewer() const { return viewer_; }
     MeasurePanel *measurePanel() const { return measurePanel_; }
     AnnotPanel *annotPanel() const { return annotPanel_; }
+    FindCard *findCard() const { return findCard_; }
     QString path() const { return path_; }
     QString canonicalPath() const { return canonicalPath_; }
     QString tabTitle() const;      // file name
@@ -92,13 +94,15 @@ private:
     bool adoptRecovery();
     void setPath(const QString &path);
     void stopLoading();
+    void restoreViewer(); // restoreResumeState from saved_, without a search the card hides
 
     RenderEngine *engine_;
     std::unique_ptr<Document> doc_;
     ViewerWidget *viewer_ = nullptr;
     MeasurePanel *measurePanel_ = nullptr;
     AnnotPanel *annotPanel_ = nullptr;
-    PanelStack *panelStack_ = nullptr; // docks measurePanel_ + annotPanel_ as a group
+    FindCard *findCard_ = nullptr;
+    PanelStack *panelStack_ = nullptr; // docks findCard_, measurePanel_ and annotPanel_
     QString path_;
     QString canonicalPath_;
     QString recoveryPath_;

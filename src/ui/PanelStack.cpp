@@ -27,13 +27,8 @@ void PanelStack::addPanel(QWidget *panel)
 
 void PanelStack::anchorTopRight()
 {
-    if (!viewport_)
-        return;
-    int maxW = 0;
-    for (const QPointer<QWidget> &p : panels_)
-        if (p && p->isVisible())
-            maxW = std::max(maxW, p->sizeHint().width());
-    anchor_ = QPoint(viewport_->width() - maxW - kMargin, kMargin);
+    if (viewport_)
+        anchor_ = QPoint(viewport_->width() - kMargin, kMargin);
 }
 
 void PanelStack::relayout()
@@ -60,7 +55,7 @@ void PanelStack::relayout()
 
     const int vw = viewport_->width();
     const int vh = viewport_->height();
-    int x = anchor_.x();
+    int x = anchor_.x(); // the stack's right edge
     int y = anchor_.y();
     // Keep the stack on-screen: clamp the anchor so the group fits (or, if it's
     // taller/wider than the viewport, pin to the top-left margin).
@@ -68,15 +63,16 @@ void PanelStack::relayout()
     for (const QPointer<QWidget> &p : panels_)
         if (p && p->isVisible())
             maxW = std::max(maxW, p->width());
-    x = std::clamp(x, kMargin, std::max(kMargin, vw - maxW - kMargin));
+    x = std::clamp(x, kMargin + maxW, std::max(kMargin + maxW, vw - kMargin));
     y = std::clamp(y, kMargin, std::max(kMargin, vh - totalH - kMargin));
     anchor_ = QPoint(x, y);
 
+    // Right-aligned, so a panel keeps its place when a wider one opens above it.
     int cy = y;
     for (const QPointer<QWidget> &p : panels_) {
         if (!p || !p->isVisible())
             continue;
-        p->move(x, cy);
+        p->move(x - p->width(), cy);
         p->raise();
         cy += p->height() + kGap;
     }

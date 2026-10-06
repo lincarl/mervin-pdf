@@ -401,6 +401,15 @@ QWidget *SettingsDialog::buildGeneralPage()
     retentionSpin_->setValue(base_.recentRetention);
     mervin::Theme::useTypedSpinBox(retentionSpin_);
     recentForm->addRow(tr("Recent history kept:"), retentionSpin_);
+    // The scope the Recent page's search starts in; the field's own toggles
+    // change it for the moment.
+    recentSearchCombo_ = new QComboBox(recentBox);
+    recentSearchCombo_->setObjectName(QStringLiteral("recentSearchScope"));
+    recentSearchCombo_->addItem(tr("Names"), QStringLiteral("names"));
+    recentSearchCombo_->addItem(tr("Contents"), QStringLiteral("contents"));
+    recentSearchCombo_->addItem(tr("All (names, then contents)"), QStringLiteral("all"));
+    selectByData(recentSearchCombo_, base_.recentSearchScope);
+    recentForm->addRow(tr("Default search:"), recentSearchCombo_);
     keepMissingCheck_ = new QCheckBox(tr("Keep removed files in list"), recentBox);
     keepMissingCheck_->setChecked(base_.recentKeepMissing);
     recentForm->addRow(QString(), keepMissingCheck_);
@@ -853,6 +862,7 @@ mervin::Settings SettingsDialog::settings() const
     s.recentVisibleCount = visibleSpin_->value();
     s.recentRetention = retentionSpin_->value();
     s.recentKeepMissing = keepMissingCheck_->isChecked();
+    s.recentSearchScope = recentSearchCombo_->currentData().toString();
     s.autoUpdate = updatesCheck_->isChecked();
     s.measurementSnap = snapCheck_->isChecked();
     s.measurementType = measureTypeCombo_->currentData().toString();

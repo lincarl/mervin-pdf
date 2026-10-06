@@ -10,8 +10,8 @@ class QWidget;
 namespace mervin {
 
 // Own floating tool-panel geometry without reparenting them. Visible panels stack in
-// registration order near the viewport's top-right. nudge() moves the group and preserves that
-// anchor on resize; all positions remain clamped to the viewport. Panels call relayout() after
+// registration order near the viewport's top-right, right-aligned. nudge() moves the group and
+// preserves that anchor on resize; all positions remain clamped to the viewport. Panels call relayout() after
 // visibility/size changes; viewport resizes are watched here.
 class PanelStack : public QObject
 {
@@ -34,10 +34,10 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
-    void anchorTopRight(); // recompute the default top-right anchor (widest panel)
+    void anchorTopRight(); // recompute the default top-right anchor
     QVector<QPointer<QWidget>> panels_;
     QPointer<QWidget> viewport_;
-    QPoint anchor_;          // top-left of the stack, in viewport coordinates
+    QPoint anchor_;          // top-right corner of the stack, in viewport coordinates
     bool userMoved_ = false; // once dragged, stop re-pinning to the top-right
 };
 
