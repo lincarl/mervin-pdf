@@ -124,7 +124,7 @@ private:
     QStackedWidget *stack_ = nullptr;
 
     mervin::LanguageCombo *languageCombo_ = nullptr;
-    QString languageAtOpen_;      // the language on screen when the dialog opened
+    QString languageAtOpen_;      // the language the picker showed when the dialog opened
     QLabel *restartHint_ = nullptr; // "Mervin will restart." while restartNeeded()
     mervin::UiThemePicker *uiThemePicker_ = nullptr; // chrome light/dark scheme
     QComboBox *zoomCombo_ = nullptr;

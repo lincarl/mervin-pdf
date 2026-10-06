@@ -41,6 +41,8 @@ signals:
     // The user chose a language, from the list, the keyboard or the mouse wheel.
     // setLanguage() doesn't emit it.
     void languagePicked(const QString &code);
+    // The user chose from the open list (Enter or a click), after languagePicked.
+    void pickedFromList();
 
 protected:
     void changeEvent(QEvent *event) override;

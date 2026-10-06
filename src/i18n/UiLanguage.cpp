@@ -218,6 +218,20 @@ QString current()
     return currentLanguage();
 }
 
+namespace {
+bool g_oneRunOverride = false;
+} // namespace
+
+void setOneRunOverride(bool on)
+{
+    g_oneRunOverride = on;
+}
+
+bool oneRunOverride()
+{
+    return g_oneRunOverride;
+}
+
 QString displayName(const QString &code)
 {
     const QString native = nativeName(code);

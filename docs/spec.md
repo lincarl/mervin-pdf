@@ -211,12 +211,13 @@ code, ignoring case and accents. Choosing a language other than the one shown ad
 the note "Mervin will restart." OK or Apply then saves the choice, closes Settings,
 and restarts Mervin. The restart closes windows as Quit does, so unsaved documents
 still offer Save, Discard, or Cancel; cancelling one cancels the restart, and the
-saved language applies at the next start. With session restore on, the new copy
-reopens the documents that were open.
+saved language applies at the next start. Until then Settings shows the saved
+language with the restart note, and picking the language on screen takes the change
+back. With session restore on, the new copy reopens the documents that were open.
 
 Starting Mervin with `--language <code>` (or `--language=<code>`), such as
 `--language sv`, shows that language for that run only. It skips the welcome window
-and leaves the saved setting unchanged. The codes are `en`, `sv`, and `zh_CN`;
+and leaves the saved setting unchanged; Settings shows the language on screen. The codes are `en`, `sv`, and `zh_CN`;
 case and `-` or `_` do not matter, and an unknown code shows English. If Mervin is
 already running, the new launch hands its files to the running copy and the flag
 has no effect.

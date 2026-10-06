@@ -8,6 +8,7 @@
 #include <QCoreApplication>
 #include <QEvent>
 #include <QFrame>
+#include <QGuiApplication>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QListView>
@@ -126,8 +127,15 @@ void LanguageCombo::showPopup()
 
 void LanguageCombo::hidePopup()
 {
+    // Hiding the popup while its search field has focus moves focus to the next
+    // widget inside the popup, which then keeps it. Hand it back to the combo.
+    const bool hadFocus = popup_->isAncestorOf(QApplication::focusWidget());
     popup_->hide();
     QComboBox::hidePopup();
+    if (hadFocus) {
+        window()->activateWindow();
+        setFocus(Qt::PopupFocusReason);
+    }
 }
 
 bool LanguageCombo::isPopupVisible() const
@@ -172,7 +180,6 @@ bool LanguageCombo::eventFilter(QObject *watched, QEvent *event)
         return true;
     case Qt::Key_Escape:
         hidePopup();
-        setFocus(Qt::PopupFocusReason);
         return true;
     default:
         if (watched == list_ && !key->text().isEmpty() && key->text().at(0).isPrint()) {
@@ -237,7 +244,11 @@ void LanguageCombo::fitPopup()
 // Below the combo, or above it when the screen has no room below.
 void LanguageCombo::placePopup()
 {
-    const QRect area = screen() ? screen()->availableGeometry() : QRect();
+    // The screen under the combo, which can differ from its window's screen.
+    QScreen *under = QGuiApplication::screenAt(mapToGlobal(rect().center()));
+    if (!under)
+        under = screen();
+    const QRect area = under ? under->availableGeometry() : QRect();
     const QPoint below = mapToGlobal(QPoint(0, height() + kPopupGap));
     QPoint pos = below;
     if (area.isValid()) {
@@ -252,11 +263,11 @@ void LanguageCombo::pick(const QModelIndex &proxyIndex)
 {
     const int row = proxy_->mapToSource(proxyIndex).row();
     hidePopup();
-    setFocus(Qt::PopupFocusReason);
     if (row < 0)
         return;
     setCurrentIndex(row);
     emit activated(row);
+    emit pickedFromList();
 }
 
 } // namespace mervin

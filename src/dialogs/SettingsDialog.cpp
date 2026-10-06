@@ -417,9 +417,16 @@ QWidget *SettingsDialog::buildGeneralPage()
     auto *languageForm = snugForm(languageBox);
     languageCombo_ = new mervin::LanguageCombo(languageBox);
     languageCombo_->setObjectName(QStringLiteral("uiLanguage"));
-    // The picker starts at the language on screen, which differs from the stored one
-    // only for a --language run; settings() keeps the stored value until it changes.
-    languageCombo_->setLanguage(mervin::i18n::current());
+    // The picker starts at the language the next start uses: the stored one. It
+    // differs from the one on screen when a restart for it was cancelled at a save
+    // prompt, and then the restart note shows too. A --language run starts at the
+    // language on screen instead. settings() keeps the stored value until the
+    // picker changes.
+    const QString storedLanguage =
+        mervin::i18n::normalized(base_.uiLanguage, mervin::i18n::availableLanguages());
+    languageCombo_->setLanguage(storedLanguage.isEmpty() || mervin::i18n::oneRunOverride()
+                                    ? mervin::i18n::current()
+                                    : storedLanguage);
     languageAtOpen_ = languageCombo_->language();
     languageForm->addRow(tr("Display language:"), languageCombo_);
     restartHint_ = hintLabel(tr("Mervin will restart."), languageBox);
@@ -1083,7 +1090,8 @@ void SettingsDialog::refreshButtons()
         return; // the pages are still being built
     const bool valid = unloadMinutes().has_value();
     okButton_->setEnabled(valid);
-    applyButton_->setEnabled(valid && settings() != applied_);
+    // A pending language restart also counts: Apply then restarts, as OK does.
+    applyButton_->setEnabled(valid && (settings() != applied_ || restartNeeded()));
 }
 
 void SettingsDialog::watchForEdits()

@@ -178,6 +178,7 @@ bool startUiLanguage(const CliOptions &cli, SingleInstanceServer *server, QStrin
             std::fprintf(stderr, "MervinPDF: unknown --language '%s' (available: %s)\n",
                          qPrintable(cli.language), qPrintable(available.join(QStringLiteral(", "))));
         i18n::apply(cli.language);
+        i18n::setOneRunOverride(true);
         return false;
     }
     mervin::Settings settings = mervin::Settings::load();

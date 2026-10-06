@@ -77,6 +77,7 @@ private slots:
     void theLastOcrLanguageStays();
     void newUiLanguageRestartsOnApply();
     void untouchedUiLanguageKeepsTheStoredValue();
+    void pendingUiLanguageShowsUntilChanged();
     void menuFitsLongerPageTitles();
     void shortcutKeysFollowTheUiLanguage();
 
@@ -986,6 +987,40 @@ void TstSettingsDialog::shortcutKeysFollowTheUiLanguage()
 
     StubCatalog german({{"QShortcut|Ctrl", QStringLiteral("Strg")}});
     QCOMPARE(firstRowKeys(), QStringLiteral("Strg+O"));
+}
+
+// A stored language other than the one on screen (its restart was cancelled at a
+// save prompt) shows with the restart note, and picking the language on screen
+// takes it back without a restart. A --language run shows the language on screen.
+void TstSettingsDialog::pendingUiLanguageShowsUntilChanged()
+{
+    mervin::Settings in;
+    in.uiLanguage = QStringLiteral("sv"); // the tests run in English
+    {
+        SettingsDialog dialog(in);
+        auto *combo = dialog.findChild<mervin::LanguageCombo *>(QStringLiteral("uiLanguage"));
+        QLabel *hint = labelStartingWith(&dialog, QStringLiteral("Mervin will restart"));
+        QPushButton *apply = dialogButton(&dialog, QDialogButtonBox::Apply);
+        QVERIFY(combo && hint && apply);
+        QCOMPARE(combo->language(), QStringLiteral("sv"));
+        QVERIFY(dialog.restartNeeded());
+        QVERIFY(!hint->isHidden());
+        QVERIFY(apply->isEnabled()); // Apply restarts, as OK does
+
+        combo->setLanguage(QStringLiteral("en"));
+        QVERIFY(!dialog.restartNeeded());
+        QVERIFY(hint->isHidden());
+        QCOMPARE(dialog.settings().uiLanguage, QStringLiteral("en"));
+    }
+
+    mervin::i18n::setOneRunOverride(true);
+    SettingsDialog dialog(in);
+    mervin::i18n::setOneRunOverride(false);
+    auto *combo = dialog.findChild<mervin::LanguageCombo *>(QStringLiteral("uiLanguage"));
+    QVERIFY(combo);
+    QCOMPARE(combo->language(), mervin::i18n::current());
+    QVERIFY(!dialog.restartNeeded());
+    QCOMPARE(dialog.settings().uiLanguage, QStringLiteral("sv"));
 }
 
 QTEST_MAIN(TstSettingsDialog)

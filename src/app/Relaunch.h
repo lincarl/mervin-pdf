@@ -13,10 +13,12 @@ namespace mervin::relaunch {
 void request();
 bool requested();
 
-// The program that starts a copy of this one: the AppImage file when running
-// from one (the binary inside its mount disappears with this process),
-// otherwise this executable.
-QString program(const QString &appImage, const QString &applicationFile);
+// The program that starts a copy of this one: the AppImage file when this
+// executable runs from that image's mount, `appDir` (the binary inside the mount
+// disappears with this process), otherwise this executable. A program started
+// from inside any AppImage inherits APPIMAGE and APPDIR, so the variables alone
+// don't mean this copy is an AppImage.
+QString program(const QString &appImage, const QString &appDir, const QString &applicationFile);
 
 // Starts the new copy with this run's --profile. Linux waits for this process
 // to exit first; Windows starts it at once, so call this after the instance

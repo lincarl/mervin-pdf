@@ -1372,11 +1372,15 @@ void MainWindow::syncComfortButton()
     const QColor ink = mervin::Theme::iconInk(palette()); // same ink as the other toolbar glyphs
     comfortButton_->setIcon(mervin::icons::glyph(
         comfort ? mervin::icons::Glyph::Sun : mervin::icons::Glyph::UiTheme, ink));
-    comfortButton_->setToolTip(comfort
+    // Separate statements: lupdate before Qt 6.11 drops a //: comment placed in
+    // front of the ':' branch of a ternary.
+    if (comfort) {
         //: Traditional and Comfort are the document theme names in Settings > Appearance.
-        ? tr("Switch to the traditional document theme")
+        comfortButton_->setToolTip(tr("Switch to the traditional document theme"));
+    } else {
         //: Traditional and Comfort are the document theme names in Settings > Appearance.
-        : tr("Switch to the comfort (dark) document theme"));
+        comfortButton_->setToolTip(tr("Switch to the comfort (dark) document theme"));
+    }
 }
 
 void MainWindow::applyControlStyle()

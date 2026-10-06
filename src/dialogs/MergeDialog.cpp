@@ -546,14 +546,18 @@ void MergeDialog::accept()
     if (st != PageOps::Status::Ok) {
         // Name the input that stopped it when the backend can tell; otherwise
         // it was the write.
-        writeError_ = failed >= 0 && failed < inputs.size()
-                          //: %1 is the name of the file being merged when it failed.
-                          ? tr("The merge failed on \"%1\".")
-                                .arg(QFileInfo(inputs.at(failed).path).fileName())
-                          //: %1 is the merged file's name.
-                          : tr("Could not write \"%1\". If another program has it open, close "
-                               "it and press Merge again, or choose another name.")
-                                .arg(QFileInfo(out).fileName());
+        // Separate statements: lupdate before Qt 6.11 drops a //: comment placed in
+        // front of the ':' branch of a ternary.
+        if (failed >= 0 && failed < inputs.size()) {
+            //: %1 is the name of the file being merged when it failed.
+            writeError_ = tr("The merge failed on \"%1\".")
+                              .arg(QFileInfo(inputs.at(failed).path).fileName());
+        } else {
+            //: %1 is the merged file's name.
+            writeError_ = tr("Could not write \"%1\". If another program has it open, close "
+                             "it and press Merge again, or choose another name.")
+                              .arg(QFileInfo(out).fileName());
+        }
         writeErrorDetail_ = QDir::toNativeSeparators(err);
         refreshFooter();
         return;

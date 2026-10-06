@@ -212,11 +212,16 @@ void SecurityDialog::doDecrypt(bool stripRestrictions)
 void SecurityDialog::reportResult(QpdfService::Status st, const QString &error, const QString &outPath)
 {
     if (st != QpdfService::Status::Ok) {
-        QMessageBox::warning(this, tr("Operation failed"),
-                             st == QpdfService::Status::NeedsPassword
-                                 ? tr("The correct password is required.")
-                                 //: %1 is the reason.
-                                 : tr("The operation failed.\n\n%1").arg(error));
+        // Separate statements: lupdate before Qt 6.11 drops a //: comment placed in
+        // front of the ':' branch of a ternary.
+        QString message;
+        if (st == QpdfService::Status::NeedsPassword) {
+            message = tr("The correct password is required.");
+        } else {
+            //: %1 is the reason.
+            message = tr("The operation failed.\n\n%1").arg(error);
+        }
+        QMessageBox::warning(this, tr("Operation failed"), message);
         return;
     }
     refreshInfo();

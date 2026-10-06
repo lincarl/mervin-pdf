@@ -88,11 +88,11 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
                                     ? QPrinterInfo::defaultPrinterName()
                                     : printer_->printerName();
     for (const QPrinterInfo &info : printers) {
-        const QString label =
-            (info.description().isEmpty() || info.description() == info.printerName())
-                ? info.printerName()
-                //: A printer in the list: %1 is its name, %2 its description.
-                : tr("%1 (%2)").arg(info.printerName(), info.description());
+        QString label = info.printerName();
+        if (!info.description().isEmpty() && info.description() != info.printerName()) {
+            //: A printer in the list: %1 is its name, %2 its description.
+            label = tr("%1 (%2)").arg(info.printerName(), info.description());
+        }
         printerCombo_->addItem(label, info.printerName());
         if (info.printerName() == currentName)
             printerCombo_->setCurrentIndex(printerCombo_->count() - 1);

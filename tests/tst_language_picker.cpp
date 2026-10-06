@@ -5,6 +5,7 @@
 #include "i18n/UiLanguage.h"
 #include "ui/LanguageCombo.h"
 
+#include <QApplication>
 #include <QCheckBox>
 #include <QLabel>
 #include <QLineEdit>
@@ -148,7 +149,7 @@ private slots:
     {
         FirstRunDialog dialog(true);
         dialog.show();
-        QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+        QVERIFY(QTest::qWaitForWindowActive(&dialog));
         auto *heading = dialog.findChild<QLabel *>(QStringLiteral("firstRunHeading"));
         QVERIFY(heading);
         QCOMPARE(heading->text(), QStringLiteral("Welcome to Mervin PDF"));
@@ -161,20 +162,67 @@ private slots:
         QCOMPARE(i18n::current(), QStringLiteral("sv"));
         QTRY_COMPARE(heading->text(), QStringLiteral("Välkommen till Mervin PDF"));
 
+        // Enter after a pick continues (on Linux, Enter on the combo would reopen it).
+        auto *continueButton = dialog.findChild<QPushButton *>();
+        QVERIFY(continueButton);
+        QCOMPARE(continueButton->text(), QStringLiteral("Fortsätt"));
+        QTRY_COMPARE(QApplication::focusWidget(), continueButton);
+
         dialog.reject();
         QCOMPARE(dialog.language(), QStringLiteral("sv"));
     }
 
-    // A restart launches the AppImage file when there is one: the binary inside
-    // its mount goes away with this process.
+    // Arrow keys on the closed combo apply each language and keep the focus, so
+    // the next arrow press reaches the next language.
+    void arrowKeysStepThroughLanguages()
+    {
+        FirstRunDialog dialog(false);
+        dialog.show();
+        QVERIFY(QTest::qWaitForWindowActive(&dialog));
+        LanguageCombo *combo = dialog.languageCombo();
+        combo->setFocus();
+        QTest::keyClick(combo, Qt::Key_Down);
+        QCOMPARE(i18n::current(), QStringLiteral("sv"));
+        QCOMPARE(QApplication::focusWidget(), combo);
+        QTest::keyClick(combo, Qt::Key_Down);
+        QCOMPARE(i18n::current(), QStringLiteral("zh_CN"));
+        QCOMPARE(QApplication::focusWidget(), combo);
+    }
+
+    // Closing the window with Esc keeps the language it shows.
+    void escapeKeepsTheShownLanguage()
+    {
+        i18n::apply(QStringLiteral("zh_CN"));
+        FirstRunDialog dialog(false);
+        dialog.show();
+        QVERIFY(QTest::qWaitForWindowActive(&dialog));
+        QTest::keyClick(&dialog, Qt::Key_Escape);
+        QCOMPARE(dialog.result(), int(QDialog::Rejected));
+        QCOMPARE(dialog.language(), QStringLiteral("zh_CN"));
+    }
+
+    // A restart launches the AppImage file when this copy runs from its mount
+    // (the binary inside goes away with this process), and this executable
+    // otherwise, even when another AppImage's variables were inherited.
     void restartLaunchesTheAppImageFile()
     {
-        const QString exe = QStringLiteral("/opt/mervin/MervinPDF");
-        QCOMPARE(mervin::relaunch::program(QString(), exe), exe);
-        QCOMPARE(mervin::relaunch::program(QStringLiteral("/no/such/Mervin.AppImage"), exe), exe);
+        using mervin::relaunch::program;
         QTemporaryFile image;
         QVERIFY(image.open());
-        QCOMPARE(mervin::relaunch::program(image.fileName(), exe), image.fileName());
+        const QString mount = QStringLiteral("/tmp/.mount_MervinXYZ");
+        const QString inside = mount + QStringLiteral("/usr/bin/MervinPDF");
+        QCOMPARE(program(image.fileName(), mount, inside), image.fileName());
+        QCOMPARE(program(image.fileName(), mount + QLatin1Char('/'), inside), image.fileName());
+
+        const QString deb = QStringLiteral("/usr/bin/MervinPDF");
+        QCOMPARE(program(QString(), QString(), deb), deb);
+        // Started from another AppImage's terminal: its variables don't apply.
+        QCOMPARE(program(image.fileName(), QStringLiteral("/tmp/.mount_Cursor123"), deb), deb);
+        QCOMPARE(program(image.fileName(), QString(), deb), deb);
+        // A mount whose name only starts the same.
+        QCOMPARE(program(image.fileName(), mount, mount + QStringLiteral("2/usr/bin/MervinPDF")),
+                 mount + QStringLiteral("2/usr/bin/MervinPDF"));
+        QCOMPARE(program(QStringLiteral("/no/such/Mervin.AppImage"), mount, inside), inside);
         QVERIFY(!mervin::relaunch::requested());
     }
 };

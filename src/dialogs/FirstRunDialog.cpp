@@ -86,6 +86,11 @@ FirstRunDialog::FirstRunDialog(bool offerDefaultApp, QWidget *parent)
         if (code != i18n::current())
             i18n::apply(code);
     });
+    // After a pick from the list, Enter continues: on Linux desktops Enter on a
+    // focused combo box would open its list again. Arrow keys on the closed combo
+    // keep stepping through the languages.
+    connect(combo_, &LanguageCombo::pickedFromList, this,
+            [this] { continueButton_->setFocus(Qt::OtherFocusReason); });
 
     retranslate();
     combo_->setFocus(Qt::OtherFocusReason);

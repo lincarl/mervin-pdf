@@ -40,6 +40,11 @@ void apply(const QString &code);
 // The language the last apply() installed, English before any.
 QString current();
 
+// Marks the language on screen as a one-run choice (--language) rather than
+// the stored setting, so Settings shows it instead of the stored one.
+void setOneRunOverride(bool on);
+bool oneRunOverride();
+
 // "Svenska (Swedish)": the name in its own language, then in English.
 QString displayName(const QString &code);
 
