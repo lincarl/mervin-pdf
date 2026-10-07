@@ -2203,6 +2203,11 @@ Wyeksportowany plik można wyświetlić w dowolnej przeglądarce plików PDF.</t
         <translation>Język wyświetlacza</translation>
     </message>
     <message>
+        <source>Download OCR</source>
+        <extracomment>First-run checkbox. Download the best OCR language models for the selected display language and OS language after Continue. OCR means text recognition.</extracomment>
+        <translation>Pobierz OCR</translation>
+    </message>
+    <message>
         <source>Make Mervin PDF my default PDF viewer</source>
         <translation>Ustaw Mervin PDF jako moją domyślną przeglądarkę plików PDF</translation>
     </message>

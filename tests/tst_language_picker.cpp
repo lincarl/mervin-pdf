@@ -135,6 +135,22 @@ private slots:
                  QStringLiteral("简体中文 (Chinese, Simplified)"));
     }
 
+    void downloadOcrDefaultsOnAndKeepsChoiceAcrossLanguages()
+    {
+        for (const bool offerDefault : {false, true}) {
+            FirstRunDialog dialog(offerDefault);
+            auto *check = dialog.findChild<QCheckBox *>(QStringLiteral("downloadOcr"));
+            QVERIFY(check);
+            QVERIFY(dialog.downloadOcr());
+            check->setChecked(false);
+            i18n::apply(QStringLiteral("sv"));
+            QCoreApplication::processEvents();
+            QCOMPARE(check->text(), QStringLiteral("Ladda ned OCR"));
+            QVERIFY(!dialog.downloadOcr());
+            i18n::apply(QStringLiteral("en"));
+        }
+    }
+
     void defaultAppCheckboxOnlyWhenOffered()
     {
         FirstRunDialog plain(false);

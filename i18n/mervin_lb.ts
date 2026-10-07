@@ -2198,6 +2198,11 @@ Déi exportéiert Datei ass an all PDF Viewer ze gesinn.</translation>
         <translation>Display Sprooch</translation>
     </message>
     <message>
+        <source>Download OCR</source>
+        <extracomment>First-run checkbox. Download the best OCR language models for the selected display language and OS language after Continue. OCR means text recognition.</extracomment>
+        <translation>OCR eroflueden</translation>
+    </message>
+    <message>
         <source>Make Mervin PDF my default PDF viewer</source>
         <translation>Maacht Mervin PDF mäi Standard PDF Viewer</translation>
     </message>

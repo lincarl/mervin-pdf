@@ -7,10 +7,8 @@
 # Produces MervinPDF-<VERSION>-x86_64.AppImage in the current directory and prints
 # its name. Build this on Ubuntu 26.04, the minimum supported release: building on
 # an older one and relying on glibc forward-compatibility did not work in practice,
-# so the bundle is made on the same release it targets. eng.traineddata is already
-# inside the AppDir
-# (cmake installs it to usr/share/mervin-pdf/tessdata); TessdataManager finds it at
-# runtime via $APPDIR, so OCR works out of the box.
+# so the bundle is made on the same release it targets. OCR language models
+# are downloaded into the user profile and are not part of the AppDir.
 set -euo pipefail
 
 VERSION="${1:?usage: make-appimage.sh <VERSION> [APPDIR]}"

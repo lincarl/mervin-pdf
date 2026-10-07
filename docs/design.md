@@ -136,6 +136,11 @@ language before the first main window. As the only window open, it follows a
 change at once through `LanguageChange`, and it acknowledges launches that arrive
 meanwhile and opens their files with the first main window.
 
+The first-run window also offers **Download OCR**, checked by default. Continue
+saves the display language before scheduling one background download attempt for
+each matching OCR model. This first-run choice takes effect without a restart.
+Closing the first-run window keeps the display language but skips the downloads.
+
 The other windows never retranslate. When Settings picks a different language,
 OK or Apply saves it and `WindowManager::restart()` closes every window as Quit
 does, so unsaved documents still prompt and cancelling one cancels the restart.
@@ -263,6 +268,23 @@ and edits the result, while the caller retains the selected page rectangle so a
 language change can submit the recognition again. OCR captures a display list under the
 document lock, then recognizes on a private context in a serial background worker.
 Closing the popup or changing languages invalidates results and signals Tesseract cancellation.
+
+Installers include the OCR engine but no language models. When enabled in the
+first-run window, `OcrProvisioner` downloads the official `tessdata_best` files for
+the selected display language and the OS's primary display language. The fixed
+`OcrLanguageMapping` table matches language and script, deduplicates model codes,
+and skips unsupported languages without a fallback download. Bokmål and Nynorsk
+both use `nor`; Montenegrin and Romansh have no matching model. The selected
+language's model becomes the initial OCR default, or the OS model when only that
+one matches.
+
+Saving `ui_language` consumes the first-run offer before any network request.
+Downloads fail silently, stop after 30 seconds without data, and are cancelled
+on application exit. There is no retry or resume on a later launch, including
+after a failed download or a later display-language change. If saving the choice
+fails, no download starts. Completed files are validated before atomic installation;
+failed downloads never replace an existing model. The language manager remains
+available for manual installation.
 
 ### Forms and annotations
 

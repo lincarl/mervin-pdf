@@ -111,6 +111,10 @@ add_library(mervin_core STATIC
     src/ocr/TessdataManager.h
     src/ocr/TessdataFile.cpp
     src/ocr/TessdataFile.h
+    src/ocr/OcrLanguageMapping.cpp
+    src/ocr/OcrLanguageMapping.h
+    src/ocr/OcrProvisioner.cpp
+    src/ocr/OcrProvisioner.h
     src/session/SessionStore.cpp
     src/session/SessionStore.h
     src/session/StartupPlan.cpp
@@ -425,7 +429,7 @@ endif()
 # ---- Linux install rules + packaging (.deb / .rpm via CPack) ----------------
 # The CI jobs build with -DMERVIN_WIN32_SUBSYSTEM unused here and run
 # `cpack -G DEB` / `cpack -G RPM` (generator chosen at pack time). Desktop entry,
-# icon, MIME, AppStream metainfo and the bundled OCR language all install under
+# icon, MIME and AppStream metainfo all install under
 # /usr so file managers, menus, and "Open with" pick Mervin up.
 if(UNIX AND NOT APPLE)
     include(GNUInstallDirs)
@@ -452,10 +456,6 @@ if(UNIX AND NOT APPLE)
             DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/mervin-pdf)
     install(DIRECTORY licenses/
             DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/mervin-pdf/licenses)
-    if(EXISTS ${CMAKE_SOURCE_DIR}/resources/tessdata/eng.traineddata)
-        install(FILES resources/tessdata/eng.traineddata
-                DESTINATION ${CMAKE_INSTALL_DATADIR}/mervin-pdf/tessdata)
-    endif()
 
     # ---- Shared package metadata (sourced from cmake/Version.cmake) ----------
     set(CPACK_PACKAGE_NAME "mervin-pdf")

@@ -2203,6 +2203,11 @@ Exportovaný súbor je možné zobraziť v ľubovoľnom prehliadači PDF.</trans
         <translation>Jazyk zobrazenia</translation>
     </message>
     <message>
+        <source>Download OCR</source>
+        <extracomment>First-run checkbox. Download the best OCR language models for the selected display language and OS language after Continue. OCR means text recognition.</extracomment>
+        <translation>Stiahnuť OCR</translation>
+    </message>
+    <message>
         <source>Make Mervin PDF my default PDF viewer</source>
         <translation>Nastaviť Mervin PDF ako môj predvolený prehliadač PDF</translation>
     </message>

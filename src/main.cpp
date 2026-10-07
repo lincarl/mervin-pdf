@@ -4,6 +4,7 @@
 #include <QFileInfo>
 #include <QLocalSocket>
 #include <QLockFile>
+#include <QLocale>
 #include <QSettings>
 #include <QSet>
 #include <QTimer>
@@ -17,6 +18,9 @@
 #include "ipc/Message.h"
 #include "ipc/PipeName.h"
 #include "ipc/SingleInstanceServer.h"
+#include "ocr/OcrLanguageMapping.h"
+#include "ocr/OcrProvisioner.h"
+#include "ocr/TessdataManager.h"
 #include "ui/Icons.h"
 #include "ui/MainWindow.h"
 #include "mervin_version.h"
@@ -164,12 +168,19 @@ bool handOffToPrimary(const QStringList &paths, const QString &behavior)
     return false; // no ack - treat as unreachable and try to become primary
 }
 
+struct FirstRunChoices
+{
+    bool makeDefaultApp = false;
+    QStringList ocrModels;
+};
+
 // Install the UI language before any window exists: windows set their text once, when they
 // are built. The first start, before a language is stored, shows the first-run window, which
-// on Windows also offers to make Mervin the default PDF viewer; returns whether the user asked
-// for that. Launches that arrive while the window is open are acknowledged and their files
+// also offers OCR downloads and, on Windows, the default PDF viewer registration.
+// Launches that arrive while the window is open are acknowledged and their files
 // added to `paths`, so they open with the first window instead of starting a second process.
-bool startUiLanguage(const CliOptions &cli, SingleInstanceServer *server, QStringList &paths)
+FirstRunChoices startUiLanguage(const CliOptions &cli, SingleInstanceServer *server,
+                               QStringList &paths)
 {
     namespace i18n = mervin::i18n;
     const QStringList available = i18n::availableLanguages();
@@ -179,13 +190,13 @@ bool startUiLanguage(const CliOptions &cli, SingleInstanceServer *server, QStrin
                          qPrintable(cli.language), qPrintable(available.join(QStringLiteral(", "))));
         i18n::apply(cli.language);
         i18n::setOneRunOverride(true);
-        return false;
+        return {};
     }
     mervin::Settings settings = mervin::Settings::load();
     // Timing runs never stop for input, and a build without translations has nothing to offer.
     if (!settings.uiLanguage.isEmpty() || cli.quitAfterStartup || available.size() < 2) {
         i18n::apply(settings.uiLanguage);
-        return false;
+        return {};
     }
 
     i18n::apply(i18n::suggestedLanguage());
@@ -219,12 +230,26 @@ bool startUiLanguage(const CliOptions &cli, SingleInstanceServer *server, QStrin
     QObject::disconnect(gate);
 
     settings.uiLanguage = dialog.language();
+    FirstRunChoices choices;
+    choices.makeDefaultApp = accepted && dialog.makeDefaultApp();
+    if (accepted && dialog.downloadOcr()) {
+        // Use the OS's primary display language, not a later fallback language
+        // that Qt adds. Unsupported languages do not cause an English download.
+        choices.ocrModels = mervin::ocr::initialModels(
+            settings.uiLanguage, QLocale::system().uiLanguages().value(0));
+        if (!choices.ocrModels.isEmpty())
+            settings.ocrDefaultLanguage = choices.ocrModels.first();
+    }
 #ifdef Q_OS_WIN
     if (realProfile)
         settings.promptedSetDefaultApp = true; // asked once, whatever the answer
 #endif
-    settings.save();
-    return accepted && dialog.makeDefaultApp();
+    // Saving ui_language consumes the first-run offer before networking starts.
+    // Failed, stalled or interrupted downloads never create work for a later launch.
+    // If saving fails, make no attempt that could be repeated next time.
+    if (!settings.save())
+        choices.ocrModels.clear();
+    return choices;
 }
 
 #ifdef Q_OS_WIN
@@ -250,7 +275,7 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
 {
     app.setQuitOnLastWindowClosed(false); // WindowManager drives process exit
     QStringList paths = cliPaths;
-    const bool setDefaultApp = startUiLanguage(cli, server.get(), paths);
+    const FirstRunChoices firstRun = startUiLanguage(cli, server.get(), paths);
     mervin::WindowManager wm;
     if (server)
         wm.adoptInstanceServer(std::move(server));
@@ -262,7 +287,7 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
     // used to freeze the process with nothing on screen at all.
     MainWindow *firstWindow = wm.createWindow();
     // Windows' Default Apps page opens over the first window.
-    if (setDefaultApp)
+    if (firstRun.makeDefaultApp)
         mervin::FirstRunDialog::setAsDefaultPdfApp(firstWindow);
 
     // Crash recovery / session restore (M11): reopen the documents that were
@@ -302,6 +327,15 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
     if (cli.quitAfterStartup)
         onDone = [] { QCoreApplication::quit(); };
     wm.openStaged(batch, restore, onDone);
+
+    // The first-run picker applies its language live, so no restart is needed.
+    // Start once the main window can paint and stop with this process.
+    mervin::ocr::OcrProvisioner ocrProvisioner;
+    if (!firstRun.ocrModels.isEmpty()) {
+        QTimer::singleShot(0, &ocrProvisioner, [&ocrProvisioner, models = firstRun.ocrModels] {
+            ocrProvisioner.start(models, mervin::TessdataManager::directory());
+        });
+    }
 
     // Start asynchronous update handling after first paint in the primary process; skip startup
     // timing runs. Settings changes cancel background work through WindowManager.

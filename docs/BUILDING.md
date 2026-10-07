@@ -124,11 +124,10 @@ The script copies the active MSVC toolchain's redistributable runtime DLLs besid
 the app. No separate Visual C++ runtime installation or administrator access is
 needed. Runtime security updates must ship in new Mervin releases.
 `packaging/wix/mervin.wxs` installs to `%LOCALAPPDATA%\Mervin PDF` by default,
-adds a Start menu shortcut and an Installed apps entry, and seeds
-`eng.traineddata` into `%APPDATA%\MervinPDF\tessdata`. The bundled
-`resources/tessdata/eng.traineddata` provides English OCR out of the box. The
-interactive wizard lets users choose the installation folder and launch the app
-when installation finishes. Silent installs do not launch the app. See
+adds a Start menu shortcut and an Installed apps entry. Installers and Linux
+packages include no OCR language models. The application downloads models into
+the writable user profile. The interactive wizard lets users choose the installation
+folder and launch the app when installation finishes. Silent installs do not launch the app. See
 [WiX packaging](../packaging/wix/README.md) for install, repair, and uninstall
 commands.
 
@@ -143,12 +142,17 @@ compiler, and Python 3. Build the pinned MuPDF with `scripts/build-mupdf-linux.s
 export MUPDF_DIR=/path/to/mupdf-1.28.5-source
 cmake --preset linux-release
 cmake --build --preset linux-release --parallel 2
+python3 scripts/fetch-test-tessdata.py build/linux-release/test-tessdata
 QT_QPA_PLATFORM=offscreen ctest --test-dir build/linux-release --output-on-failure -LE optional-corpus
 ```
 
 CMake generates required PDF fixtures from `tests/generate_fixtures.py`. No personal
-documents or fixture downloads are needed. Encryption/form tests generate their own
-inputs. The optional photographic corpus is described in `examples/README.md`.
+documents are needed. Encryption/form tests generate their own inputs. Real OCR
+tests use a pinned English `tessdata_best` model fetched by
+`scripts/fetch-test-tessdata.py` into the build directory. CI fetches this test-only
+model on both platforms. Set `MERVIN_TEST_TESSDATA_DIR` to use a different test
+model directory. Test data is never included in application packages. The optional
+photographic corpus is described in `examples/README.md`.
 Run `ctest -R tst_perf -V` to inspect performance measurements; use the same machine,
 build configuration, and workload for comparisons.
 

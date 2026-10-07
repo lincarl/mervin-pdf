@@ -5,7 +5,6 @@
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDir>
-#include <QFile>
 #include <QFileInfo>
 #include <QLocale>
 #include <QUrl>
@@ -13,48 +12,6 @@
 namespace mervin {
 
 namespace {
-
-#ifndef Q_OS_WIN
-// Read-only locations that may ship language data with the app: the bundle next
-// to the executable, an AppImage ($APPDIR) or snap ($SNAP) mount, and the system
-// package dir used by the .deb/.rpm. These are searched only to seed the writable
-// per-user dir on first run (on Windows the installer seeds %APPDATA% instead).
-QStringList bundledTessdataDirs()
-{
-    QStringList dirs;
-    const QString appDir = QCoreApplication::applicationDirPath();
-    dirs << QDir(appDir).filePath(QStringLiteral("../share/mervin-pdf/tessdata"));
-    if (const QString snap = qEnvironmentVariable("SNAP"); !snap.isEmpty())
-        dirs << QDir(snap).filePath(QStringLiteral("usr/share/mervin-pdf/tessdata"));
-    if (const QString appimg = qEnvironmentVariable("APPDIR"); !appimg.isEmpty())
-        dirs << QDir(appimg).filePath(QStringLiteral("usr/share/mervin-pdf/tessdata"));
-    dirs << QStringLiteral("/usr/share/mervin-pdf/tessdata");
-    dirs << QStringLiteral("/usr/local/share/mervin-pdf/tessdata");
-    return dirs;
-}
-
-// First run only (no *.traineddata yet in the writable dir): copy whatever the
-// app bundle / system package shipped so OCR works out of the box. Keeps the
-// single-datadir contract - callers still pass directory() to the OCR engine,
-// and the user can drop more languages into that same writable folder.
-void seedFromBundleIfEmpty(const QString &writableDir)
-{
-    QDir wdir(writableDir);
-    if (!wdir.entryList({QStringLiteral("*.traineddata")}, QDir::Files).isEmpty())
-        return; // already has at least one language
-    for (const QString &cand : bundledTessdataDirs()) {
-        QDir src(cand);
-        if (!src.exists())
-            continue;
-        const QStringList langs = src.entryList({QStringLiteral("*.traineddata")}, QDir::Files);
-        if (langs.isEmpty())
-            continue;
-        for (const QString &f : langs)
-            QFile::copy(src.filePath(f), wdir.filePath(f));
-        return; // first bundle that has data wins
-    }
-}
-#endif
 
 // English names for Tesseract model codes, marked for translation. QLocale can
 // name most of these languages, but only in English. A code without an entry
@@ -298,9 +255,6 @@ QString TessdataManager::directory()
 {
     const QString dir = QDir(ConfigPaths::configDir()).filePath(QStringLiteral("tessdata"));
     QDir().mkpath(dir);
-#ifndef Q_OS_WIN
-    seedFromBundleIfEmpty(dir);
-#endif
     return dir;
 }
 

@@ -2193,6 +2193,11 @@ Dışa aktarılan dosya herhangi bir PDF görüntüleyicide görüntülenebilir.
         <translation>Ekran dili</translation>
     </message>
     <message>
+        <source>Download OCR</source>
+        <extracomment>First-run checkbox. Download the best OCR language models for the selected display language and OS language after Continue. OCR means text recognition.</extracomment>
+        <translation>OCR indir</translation>
+    </message>
+    <message>
         <source>Make Mervin PDF my default PDF viewer</source>
         <translation>Mervin PDF&apos;yi varsayılan PDF görüntüleyicim yap</translation>
     </message>

@@ -2198,6 +2198,11 @@ The exported file is viewable in any PDF viewer.</source>
         <translation>Ցուցադրման լեզուն</translation>
     </message>
     <message>
+        <source>Download OCR</source>
+        <extracomment>First-run checkbox. Download the best OCR language models for the selected display language and OS language after Continue. OCR means text recognition.</extracomment>
+        <translation>Ներբեռնել OCR</translation>
+    </message>
+    <message>
         <source>Make Mervin PDF my default PDF viewer</source>
         <translation>Դարձրեք Mervin PDF-ն իմ լռելյայն PDF դիտիչ</translation>
     </message>

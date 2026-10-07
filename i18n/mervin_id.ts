@@ -2193,6 +2193,11 @@ File yang diekspor dapat dilihat di penampil PDF mana pun.</translation>
         <translation>Bahasa tampilan</translation>
     </message>
     <message>
+        <source>Download OCR</source>
+        <extracomment>First-run checkbox. Download the best OCR language models for the selected display language and OS language after Continue. OCR means text recognition.</extracomment>
+        <translation>Unduh OCR</translation>
+    </message>
+    <message>
         <source>Make Mervin PDF my default PDF viewer</source>
         <translation>Jadikan Mervin PDF penampil PDF default saya</translation>
     </message>

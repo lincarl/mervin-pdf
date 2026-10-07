@@ -11,7 +11,7 @@ namespace mervin {
 class LanguageCombo;
 
 // The window Mervin shows the first time it starts, before any other window:
-// pick the UI language and, on Windows, whether to make Mervin the default PDF
+// pick the UI language, optionally download OCR models and, on Windows, make Mervin the default PDF
 // viewer. Picking a language applies it to the whole app at once, so this
 // window switches to it while open. Closing it keeps the language shown.
 class FirstRunDialog : public QDialog
@@ -26,6 +26,8 @@ public:
     QString language() const;
     // True when the default-viewer checkbox is shown and ticked.
     bool makeDefaultApp() const;
+    // Whether to attempt the matching best OCR model downloads after Continue.
+    bool downloadOcr() const;
 
     LanguageCombo *languageCombo() const { return combo_; }
 
@@ -42,6 +44,7 @@ private:
     LanguageCombo *combo_ = nullptr;
     QLabel *heading_ = nullptr;
     QLabel *languageLabel_ = nullptr;
+    QCheckBox *downloadOcrCheck_ = nullptr;
     QCheckBox *defaultAppCheck_ = nullptr;
     QLabel *defaultAppHint_ = nullptr;
     QPushButton *continueButton_ = nullptr;

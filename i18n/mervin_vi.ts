@@ -2193,6 +2193,11 @@ Có thể xem được tệp đã xuất trong bất kỳ trình xem PDF nào.</
         <translation>Ngôn ngữ hiển thị</translation>
     </message>
     <message>
+        <source>Download OCR</source>
+        <extracomment>First-run checkbox. Download the best OCR language models for the selected display language and OS language after Continue. OCR means text recognition.</extracomment>
+        <translation>Tải xuống OCR</translation>
+    </message>
+    <message>
         <source>Make Mervin PDF my default PDF viewer</source>
         <translation>Đặt Mervin PDF làm trình xem PDF mặc định của tôi</translation>
     </message>

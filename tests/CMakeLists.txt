@@ -49,6 +49,7 @@ set(_mervin_tests
     tst_ocr_popup
     tst_settings_dialog
     tst_tessdata
+    tst_ocr_provisioner
     tst_session_store
     tst_startup_plan
     tst_closed_tab_stack
@@ -321,18 +322,12 @@ target_compile_definitions(tst_document PRIVATE
 target_compile_definitions(tst_content_search PRIVATE
     MERVIN_SEARCH_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
 
-# tst_tessdata validates the language model the installers ship, and checks that
-# the validator rejects the damage classes that would otherwise abort the process
-# inside Tesseract. Needs only the file - no OCR run, no language installed.
-target_compile_definitions(tst_tessdata PRIVATE
-    MERVIN_TESSDATA_ENG="${CMAKE_SOURCE_DIR}/resources/tessdata/eng.traineddata")
-
-# tst_ocr runs real OCR. The source tree's tessdata folder is preferred over the
-# developer's own so the test exercises the model we package; the PDF fixture is
-# optional and local.
+# tst_tessdata validates generated model containers without a network dependency.
+# Real OCR uses a pinned model downloaded only for tests, never for packaging.
+# MERVIN_TEST_TESSDATA_DIR can override the default at runtime.
 target_compile_definitions(tst_ocr PRIVATE
     MERVIN_OCR_PDF="${MERVIN_FIXTURES_DIR}/images.pdf"
-    MERVIN_TESSDATA_DIR="${CMAKE_SOURCE_DIR}/resources/tessdata")
+    MERVIN_TEST_TESSDATA_DIR="${CMAKE_BINARY_DIR}/test-tessdata")
 
 # tst_measure_export builds fixture PDFs and inspects flatten/annotate output
 # with qpdf, so it links it explicitly too. Its data-gated case round-trips the

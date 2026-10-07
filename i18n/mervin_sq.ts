@@ -2198,6 +2198,11 @@ Skedari i eksportuar mund të shikohet në çdo shikues PDF.</translation>
         <translation>Gjuha e shfaqjes</translation>
     </message>
     <message>
+        <source>Download OCR</source>
+        <extracomment>First-run checkbox. Download the best OCR language models for the selected display language and OS language after Continue. OCR means text recognition.</extracomment>
+        <translation>Shkarko OCR</translation>
+    </message>
+    <message>
         <source>Make Mervin PDF my default PDF viewer</source>
         <translation>Bëje Mervin PDF shikuesin tim të parazgjedhur PDF</translation>
     </message>

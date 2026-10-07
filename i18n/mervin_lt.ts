@@ -2203,6 +2203,11 @@ Eksportuotą failą galima peržiūrėti bet kurioje PDF peržiūros priemonėje
         <translation>Ekrano kalba</translation>
     </message>
     <message>
+        <source>Download OCR</source>
+        <extracomment>First-run checkbox. Download the best OCR language models for the selected display language and OS language after Continue. OCR means text recognition.</extracomment>
+        <translation>Atsisiųsti OCR</translation>
+    </message>
+    <message>
         <source>Make Mervin PDF my default PDF viewer</source>
         <translation>Padarykite Mervin PDF kaip numatytąją PDF peržiūros programą</translation>
     </message>
