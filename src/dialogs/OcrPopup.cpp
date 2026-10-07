@@ -1,6 +1,7 @@
 #include "dialogs/OcrPopup.h"
 
 #include "ocr/TessdataManager.h"
+#include "ui/TextLayout.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -31,6 +32,7 @@ OcrPopup::OcrPopup(const QStringList &installedLanguages, const QString &preferr
     langCombo_ = new QComboBox(this);
     langCombo_->setObjectName(QStringLiteral("ocrLanguageCombo"));
     langCombo_->setEditable(false);
+    langCombo_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     populateLanguages(installedLanguages, preferredLanguage, false);
     connect(langCombo_, &QComboBox::currentIndexChanged, this, [this](int) {
         if (!selectedLanguages().isEmpty())
@@ -96,6 +98,7 @@ void OcrPopup::populateLanguages(const QStringList &installedLanguages,
                                              : langCombo_->findData(target);
     langCombo_->setCurrentIndex(targetIndex);
     langCombo_->setEnabled(langCombo_->count() > 0);
+    fitComboText(*langCombo_);
 
     const QString current = langCombo_->currentData().toString();
     if (requestRecognition && !current.isEmpty() && current != previous)

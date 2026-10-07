@@ -28,6 +28,14 @@ ExportMeasureDialog::ExportMeasureDialog(QWidget *parent)
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(buttons);
+
+    // Keep every sentence visible with longer translations and larger fonts.
+    // Qt's automatic dialog width cap can otherwise add lines without height.
+    ensurePolished();
+    const QSize preferred = sizeHint();
+    setMinimumSize(preferred.width(),
+                   qMax(preferred.height(), layout->totalHeightForWidth(preferred.width())));
+    resize(minimumSize());
 }
 
 } // namespace mervin

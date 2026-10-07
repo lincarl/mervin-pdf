@@ -66,15 +66,21 @@ QWidget *makeRow(const QString &name, const QString &code, const QString &size,
 
 void addRow(QListWidget *list, QWidget *row)
 {
+    // The styled controls determine the row height and full text width. A
+    // narrower list can scroll horizontally instead of squeezing its labels.
+    row->ensurePolished();
+    QSize rowSize = row->sizeHint();
+    rowSize.setHeight(qMax(39, rowSize.height()));
     auto *item = new QListWidgetItem(list);
-    item->setSizeHint(QSize(100, 39));
+    item->setSizeHint(rowSize);
     list->setItemWidget(item, row);
 }
 
 } // namespace
 
-ManageLanguagesDialog::ManageLanguagesDialog(const QString &defaultLanguage, QWidget *parent)
-    : QDialog(parent), network_(new QNetworkAccessManager(this)),
+ManageLanguagesDialog::ManageLanguagesDialog(const QString &defaultLanguage, QWidget *parent,
+                                           QNetworkAccessManager *network)
+    : QDialog(parent), network_(network ? network : new QNetworkAccessManager(this)),
       initialDefaultLanguage_(defaultLanguage)
 {
     setWindowTitle(tr("Manage OCR Languages"));

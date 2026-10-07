@@ -427,6 +427,23 @@ add_test(NAME tst_language_picker COMMAND tst_language_picker)
 set_tests_properties(tst_language_picker PROPERTIES ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
+# Check real translated dialogs, plus positive and negative cases for the
+# geometry checker. These run in the ordinary Linux and Windows CI test jobs.
+qt_add_executable(tst_text_fit tst_text_fit.cpp TextFit.h)
+target_link_libraries(tst_text_fit PRIVATE Qt6::Widgets Qt6::Test)
+qt_add_executable(tst_translation_layout tst_translation_layout.cpp TextFit.h)
+target_link_libraries(tst_translation_layout PRIVATE mervin_app Qt6::Test)
+target_compile_definitions(tst_translation_layout PRIVATE
+    MERVIN_FIXTURES_DIR="${MERVIN_FIXTURES_DIR}"
+    MERVIN_TRANSLATIONS_DIR="${CMAKE_SOURCE_DIR}/i18n")
+foreach(_t tst_text_fit tst_translation_layout)
+    set_target_properties(${_t} PROPERTIES WIN32_EXECUTABLE OFF)
+    add_test(NAME ${_t} COMMAND ${_t})
+    set_tests_properties(${_t} PROPERTIES
+        ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+        SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+endforeach()
+
 qt_add_executable(tst_document_suspension tst_document_suspension.cpp)
 target_link_libraries(tst_document_suspension PRIVATE mervin_app Qt6::Test)
 set_target_properties(tst_document_suspension PROPERTIES WIN32_EXECUTABLE OFF)

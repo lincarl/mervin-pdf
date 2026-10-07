@@ -328,6 +328,8 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     pageLabel_ = new QLabel(this);
     pageLabel_->setObjectName(QStringLiteral("printPageLabel"));
     pageLabel_->setAlignment(Qt::AlignCenter);
+    // Large page numbers and translated selection summaries may need two lines.
+    pageLabel_->setWordWrap(true);
     pageLabel_->setMinimumWidth(140);
     navigation->addWidget(pageLabel_);
     nextButton_ = new QPushButton(this);

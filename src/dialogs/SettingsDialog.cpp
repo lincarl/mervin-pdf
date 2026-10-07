@@ -9,6 +9,7 @@
 #include "ui/DocumentThemePicker.h"
 #include "ui/Icons.h"
 #include "ui/LanguageCombo.h"
+#include "ui/TextLayout.h"
 #include "ui/Theme.h"
 #include "ui/ThemeTokens.h"
 #include "ui/UiThemePicker.h"
@@ -527,10 +528,13 @@ QWidget *SettingsDialog::buildGeneralPage()
     //: Where the Recent page's search looks first: in the text inside the files.
     recentSearchCombo_->addItem(tr("Contents"), QStringLiteral("contents"));
     recentSearchCombo_->addItem(tr("All (names, then contents)"), QStringLiteral("all"));
+    mervin::fitComboText(*recentSearchCombo_);
     selectByData(recentSearchCombo_, base_.recentSearchScope);
     recentForm->addRow(tr("Default search:"), recentSearchCombo_);
     keepMissingCheck_ = new QCheckBox(tr("Keep removed files in list"), recentBox);
     keepMissingCheck_->setChecked(base_.recentKeepMissing);
+    keepMissingCheck_->ensurePolished();
+    keepMissingCheck_->setMinimumWidth(keepMissingCheck_->sizeHint().width());
     recentForm->addRow(QString(), keepMissingCheck_);
     layout->addWidget(recentBox);
 
@@ -772,6 +776,7 @@ QWidget *SettingsDialog::buildOcrPage()
     auto *defaultForm = snugForm(defaultBox);
     ocrLanguageCombo_ = new QComboBox(defaultBox);
     ocrLanguageCombo_->setObjectName(QStringLiteral("ocrDefaultLanguage"));
+    ocrLanguageCombo_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     ocrLanguageCombo_->setMinimumWidth(200);
     connect(ocrLanguageCombo_, &QComboBox::activated, this, [this](int index) {
         ocrLanguage_ = ocrLanguageCombo_->itemData(index).toString();
@@ -1192,6 +1197,7 @@ void SettingsDialog::refreshOcrLanguages(int focusRow)
             ocrLanguageCombo_->addItem(tr("None"));
         ocrLanguageCombo_->setEnabled(!installed.isEmpty());
         selectByData(ocrLanguageCombo_, ocrLanguage_);
+        mervin::fitComboText(*ocrLanguageCombo_);
     }
 
     while (QLayoutItem *item = ocrInstalledLayout_->takeAt(0)) {

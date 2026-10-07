@@ -1,4 +1,5 @@
 #include "ui/MeasurePanel.h"
+#include "ui/TextLayout.h"
 
 #include "render/MeasureMath.h"
 #include "ui/Icons.h"
@@ -330,6 +331,8 @@ MeasurePanel::MeasurePanel(QWidget *parent)
     resetBtn_ = new QToolButton(this);
     //: Button (verb): drop the scale the user set and use the scale stored in the PDF.
     resetBtn_->setText(tr("Reset"));
+    //: Reset button tooltip. Removes the user's scale override from this page
+    //: and restores its embedded PDF scale. Does not remove drawn measurements.
     resetBtn_->setToolTip(tr("Discard the manual calibration and use the scale embedded in the PDF"));
     resetBtn_->hide();
     connect(resetBtn_, &QToolButton::clicked, this, &MeasurePanel::resetRequested);
@@ -464,8 +467,9 @@ void MeasurePanel::setMeasurements(const QStringList &items)
     if (!measureList_)
         return;
 
-    constexpr int kRowHeight = 26; // px per row
+    constexpr int kMinRowHeight = 26;
     constexpr int kMaxRows = 10;   // cap the visible height; scroll beyond this
+    int visibleHeight = 0;
 
     measureItems_ = items;
     measureLabels_.clear();
@@ -525,15 +529,18 @@ void MeasurePanel::setMeasurements(const QStringList &items)
         rowHoverIndex_.insert(label, i);
         rowHoverIndex_.insert(del, i);
 
+        row->ensurePolished();
+        const int rowHeight = qMax(kMinRowHeight, row->sizeHint().height());
         auto *item = new QListWidgetItem(measureList_);
-        item->setSizeHint(QSize(0, kRowHeight));
+        item->setSizeHint(QSize(0, rowHeight));
+        if (i < kMaxRows)
+            visibleHeight += rowHeight;
         measureList_->addItem(item);
         measureList_->setItemWidget(item, row);
     }
 
-    const int rows = std::min(static_cast<int>(items.size()), kMaxRows);
     const int frame = 2 * measureList_->frameWidth();
-    measureList_->setFixedHeight(any ? rows * kRowHeight + frame : 0);
+    measureList_->setFixedHeight(any ? visibleHeight + frame : 0);
 
     // The panel grew/shrank with the list; keep it sized and let the dock re-stack.
     adjustSize();
@@ -553,8 +560,7 @@ void MeasurePanel::reelideMeasurements()
             continue;
         const int avail = label->width();
         const QFontMetrics fm(label->font());
-        label->setText(avail > 8 ? fm.elidedText(measureItems_[i], Qt::ElideRight, avail)
-                                 : measureItems_[i]);
+        label->setText(elidedLabelText(fm, measureItems_[i], Qt::ElideRight, avail));
     }
 }
 

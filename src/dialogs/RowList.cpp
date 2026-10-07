@@ -212,8 +212,11 @@ void RowList::addRow(const Fill &fill)
     });
     h->addWidget(x);
 
+    // Inputs need room for the current font and stylesheet padding. A fixed
+    // 30-pixel row cuts their text when the user increases the UI font size.
+    row->ensurePolished();
     auto *item = new QListWidgetItem(this);
-    item->setSizeHint(QSize(0, kRowHeight));
+    item->setSizeHint(QSize(0, qMax(kRowHeight, row->sizeHint().height())));
     setItemWidget(item, row);
 }
 

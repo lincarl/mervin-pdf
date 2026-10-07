@@ -2208,6 +2208,7 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     </message>
     <message>
         <source>Discard the manual calibration and use the scale embedded in the PDF</source>
+        <extracomment>Reset button tooltip. Removes the user&apos;s scale override from this page and restores its embedded PDF scale. Does not remove drawn measurements.</extracomment>
         <translation>放弃手动校准，使用 PDF 中嵌入的比例</translation>
     </message>
     <message>
@@ -2844,10 +2845,12 @@ This file is no longer on disk.</source>
     </message>
     <message>
         <source>leave empty for no open password</source>
+        <extracomment>Placeholder in the open-password field. An empty value means the saved PDF can be opened without entering a password.</extracomment>
         <translation>留空则不设置打开密码</translation>
     </message>
     <message>
         <source>defaults to the open password</source>
+        <extracomment>Placeholder in the owner-password field. If empty, use the open password to protect the PDF permission settings. The user can enter a different one.</extracomment>
         <translation>默认与打开密码相同</translation>
     </message>
     <message>
@@ -3140,7 +3143,7 @@ Open it now?</source>
     <message>
         <source>Orientation and script detection</source>
         <extracomment>OCR model name. The model finds page orientation and writing system instead of reading a language.</extracomment>
-        <translation>方向和文字检测</translation>
+        <translation>页面方向和书写系统检测</translation>
     </message>
     <message>
         <source>Afrikaans</source>

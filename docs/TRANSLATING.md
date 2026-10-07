@@ -9,6 +9,65 @@ language.
 
 The translations are drafted with AI and reviewed before they are marked finished.
 
+## English is the source of truth
+
+Base every existing translation, revision and new language directly on the current
+English source text and its translator notes. Do not translate from another
+translation. If the English wording or intended behavior is unclear, clarify it
+in the source before translating it. Preserve conditions such as "if left empty"
+and "defaults to", and distinguish actions such as removing a setting from merely
+ignoring it.
+
+Prefer short, clear UI text and translations. Use concise labels and remove
+unnecessary words. Preserve the meaning, conditions and established terminology;
+do not force a translation to match the English character count. If a correct,
+concise translation needs more room, fix the layout rather than omit information.
+
+The authoritative English strings live in C++ translation calls such as
+`tr("Reset")`. `lupdate` copies them into each catalog's `<source>` fields. Edit
+the C++ source to change the English text, then regenerate the catalogs.
+`mervin_en.ts` contains only English plural forms, not a complete English catalog.
+
+## Explain purpose and intent in the source
+
+Add a `//:` translator comment immediately before the translation call when adding
+or changing ambiguous wording, technical terms, placeholders, destructive actions
+or security text. Review the existing comment when revising a translation. A class
+name identifies the component but does not explain what the user sees or does.
+
+Explain where the text appears, what action or state it describes, and any
+distinction that affects its meaning. For each placeholder, describe its value
+and give a representative example when useful. For destructive actions, state
+what is removed and what remains. For security text, explain the password or
+permission involved and what an empty field means. Straightforward labels need
+no comment that merely repeats their text.
+
+```cpp
+//: Placeholder in the owner-password field. If empty, use the open password
+//: to protect the PDF permission settings. The user can enter a different one.
+ownerEdit_->setPlaceholderText(tr("defaults to the open password"));
+```
+
+`lupdate` copies these comments into `<extracomment>`. Keep explanations specific
+to a string in its source comment rather than editing the extracted comment in
+the catalog. When a fix reveals a reusable translation lesson, add it to this
+guide in the same change so later translators and agents can apply it.
+
+## Terminology
+
+Use the same term for the same concept throughout each language. These meanings
+guide the choice of words, even when the English term has several translations.
+
+| English term | Meaning in Mervin |
+| --- | --- |
+| Open password | Password needed to open an encrypted PDF. An empty value means no open password is required. |
+| Owner password | Password guarding the PDF permission settings. An empty field uses the open password. It does not refer to an account owner. |
+| Permissions | PDF flags for printing, copying, modifying and annotating. Mervin does not enforce these flags. |
+| Scale | Drawing scale, such as 1:100, used to convert page distances to real distances. Distinguish it from the viewer's zoom level. |
+| Calibrate | Set the drawing scale using a line of known real length. |
+| Reset calibration | Remove the user's scale override and restore the scale embedded in the PDF. |
+| OCR script | A writing system, such as Latin or Cyrillic, rather than a program or text detection. |
+
 ## Update the catalogs after a code change
 
 The normal build never changes `i18n/*.ts`. After adding or changing UI text, build
@@ -109,6 +168,70 @@ It fails when:
 file would make the catalogs differ between platforms and fail the test on one of
 them. Keep it in shared files; `lupdate` reads both branches of an `#ifdef`.
 
+## Check text in the interface
+
+Catalog checks establish that messages are extracted and finished. They do not
+prove that a translation preserves the English meaning or fits where it appears.
+Review translated wording against the English text and notes, then check its
+actual interface context. Do not shorten a translation by dropping a condition or
+changing an action just to make it fit.
+
+Run the translation and layout checks after building the test targets. For a
+local Linux run, set `mervin_build_dir` to your existing isolated build directory:
+
+```bash
+mervin_build_dir=/absolute/path/to/isolated/build
+python3 scripts/fetch-test-font.py "$HOME/dev/mervin-layout-fonts"
+MERVIN_TEST_FONT="$HOME/dev/mervin-layout-fonts/NotoSansCJKsc-Regular.otf" \
+QT_QPA_PLATFORM=offscreen ctest --test-dir "$mervin_build_dir" \
+  -R 'i18n_catalogs|tst_text_fit|tst_translation_layout' --output-on-failure
+```
+
+GitHub Actions supplies the same pinned Noto Sans CJK SC font on Linux and
+Windows. The fetch script verifies the font and its license by SHA-256.
+`MERVIN_TEST_FONT` points to the downloaded font, which Qt loads for the tests.
+A locally installed Noto Sans CJK SC is also accepted when that variable is unset.
+Using one font with Latin and Simplified Chinese coverage makes failures
+reproducible and avoids missing Chinese glyphs passing as empty space.
+The suite also checks glyph coverage for all English source strings and
+translations in the application catalogs, including every plural form. It does
+not scan Qt's built-in catalogs or text that is not extracted for translation.
+
+`tst_translation_layout` opens the ten custom dialogs in `src/dialogs/`, plus
+the measurement and annotation panels, using real Qt widgets and the default
+dark stylesheet. It discovers every compiled language through
+`i18n::availableLanguages()` and repeats each scenario at the default and minimum
+layout dimensions with 10-point and 15-point base fonts. Text with a fixed pixel
+font size in the stylesheet retains that size.
+
+The scenarios include both calibration modes, all Settings pages, long filenames,
+populated lists, document security states, print range validation and selected
+input, file and network errors. The OCR language catalog uses a fake network
+reply so the test exercises the real dialog without external requests.
+`tst_text_fit` checks that the fitting helper accepts valid layouts and rejects
+deliberate clipping. Both tests run through CTest in GitHub Actions without AI.
+
+When adding a dialog or a state with different text, extend
+`tests/tst_translation_layout.cpp` with a representative scenario. Add a test
+slot and a matching `_data` slot that calls `addLanguageMatrix()`. Include long
+placeholder values, error messages and the smallest supported size where they
+affect layout. When fixing a clipping problem, add a focused regression case.
+Editable values may scroll horizontally, and scrollable lists may extend beyond
+their viewport. For other intentional text clipping, record a specific allowance
+and its reason in the test. Do not exempt a whole dialog to hide one failure.
+
+For widgets embedded in list items, derive the item's size from its polished
+layout. Verify that the item contains its controls and that scrolling can reach
+the full content. A child's own text can fit while the list still hides it or
+overlaps it with the next row.
+
+Layout checks cover only the states and widgets the tests exercise. Inspect
+custom rendering, native platform dialogs, the separate open-file picker and
+untested states manually, and record any remaining verification limits with the
+change. These checks do not compare screenshots or establish fitting with every
+theme, system font or display scale. Automated checks cannot judge translation
+meaning.
+
 ## Add a language
 
 1. Check that Qt ships its own catalog for the language, `qtbase_<id>.qm` in Qt's
@@ -132,3 +255,6 @@ them. Keep it in shared files; `lupdate` reads both branches of an `#ifdef`.
    adds an installed Simplified Chinese font as the fallback for Han text. A
    Traditional Chinese (`zh_TW`) or Japanese UI needs its own font list there, for
    example Microsoft JhengHei and Noto Sans CJK TC for Traditional Chinese.
+6. Run the translation and layout checks above with fonts covering the new
+   language. Review representative dialogs and states in that language. Keep any
+   missing font coverage or untested rendering explicit in the review.
