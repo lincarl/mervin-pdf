@@ -447,11 +447,12 @@ private:
     // viewportCenter(), so a zoom with no cursor behind it holds the middle of
     // the view still instead of jumping to the top of the page.
     void zoomAtViewportPos(double newScale, QPointF viewportPos);
-    // The shared core of every zoom: re-lay the document out at `newScale` with
-    // the document point under `viewportPos` pinned there. Leaves zoomMode_ alone
-    // and emits nothing - its three callers own both.
+    // Re-lay the document out at `newScale`, centering the current row for Fit Page
+    // or keeping the document point under `viewportPos` pinned there for other modes.
+    // Leaves zoomMode_ alone and emits nothing. Its three callers own both.
     void rescaleKeeping(double newScale, QPointF viewportPos, bool keepCenter = false);
     QPointF viewportCenter() const;
+    void centerCurrentRow();
 
     bool zoomEaseAllowed() const;
     bool captureZoomEase(double newScale, ZoomAnimation::Snapshot *out) const;

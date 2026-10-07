@@ -301,7 +301,7 @@ void TstViewerPreview::stepZoomHoldsTheViewportCentre()
     }
 }
 
-// Fit Width / Fit Page are menu zooms too, so they hold the centre as well. This
+// Fit Width holds the reading point at the viewport center. This
 // needs a multi-page document to mean anything: the old code kept the raw scroll
 // value through a layout of a different height, which after a deep zoom left the
 // reader on a different page.
