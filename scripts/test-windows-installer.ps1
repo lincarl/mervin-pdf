@@ -47,11 +47,14 @@ function Find-MervinRegistration([string]$Root) {
 }
 
 # Refuse any existing installation, state, or handler before creating test data.
-foreach ($path in @($dataDir, $shortcut, $installKey, $capabilitiesKey, $progIdKey,
+foreach ($path in @($dataDir, $shortcut, $capabilitiesKey, $progIdKey,
                     (Join-Path $env:LOCALAPPDATA 'Mervin PDF'),
                     (Join-Path $env:LOCALAPPDATA 'MervinPDF'))) {
     Assert-Installer (-not (Test-Path -LiteralPath $path)) "Existing Mervin path prevents testing: $path"
 }
+# QSettings can create an empty key while unit tests inspect installation state.
+# A recorded directory, rather than that empty key, identifies an installation.
+Assert-Installer ($null -eq (Read-RegistryValue $installKey 'InstallDir')) 'Mervin already has an installation directory.'
 foreach ($root in @('HKCU:', 'HKLM:', 'HKLM:\Software\WOW6432Node')) {
     $key = if ($root -like '*WOW6432Node') { 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall' } else { "$root\$uninstallKey" }
     $existing = @(Get-ChildItem -LiteralPath $key -ErrorAction SilentlyContinue |
