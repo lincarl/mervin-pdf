@@ -33,6 +33,28 @@ Packaging runs no tests, so the successful CI run must precede a stable tag push
 Installed copies offer only stable releases as updates. A copy running
 `1.64.10-rc2` can update to `1.64.10` when that stable release becomes available.
 
+## Release retention
+
+After publishing a stable release and all its assets successfully, the packaging
+workflow keeps the three newest stable releases by version and deletes older
+release entries and their downloads. It also deletes superseded prereleases whose
+target version is at or below the published stable version. Candidates for higher
+versions, drafts, and releases with unrecognized tags remain untouched.
+
+Cleanup never deletes Git tags. The version allocator depends on that history,
+including the legacy numeric prerelease tags. Failed builds and prerelease
+publication do not trigger cleanup. Rerunning an older stable release skips
+cleanup if that release is no longer the newest stable version. Candidates
+published after cleanup are considered during the next stable release cleanup.
+
+Preview the cleanup with the default dry run:
+
+```bash
+python3 scripts/prune-releases.py --released-tag v1.64.15
+```
+
+Add `--apply` to delete the selected GitHub release entries and their downloads.
+
 ## Package versions
 
 The application, GitHub release, and artifact filenames retain the public
