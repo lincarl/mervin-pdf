@@ -340,7 +340,10 @@ jobs:
         # qt6-qttools-devel: Qt's LinguistTools CMake package; it requires
         # qt6-linguist (lupdate, lrelease). qt6-qttranslations: Qt's own catalogs,
         # listed so the build does not depend on dnf installing weak dependencies.
+        # The container image installs files for en_US only (%_install_langs), so
+        # it would skip the Swedish and Chinese catalogs, which are %lang files.
         run: |
+          echo '%_install_langs all' > /etc/rpm/macros.image-language-conf
           dnf install -y gcc-c++ make cmake ninja-build rpm-build \
             qt6-qtbase-devel qt6-qtsvg-devel qt6-qttools-devel qt6-qttranslations \
             qpdf-devel git tar curl findutils which python3
