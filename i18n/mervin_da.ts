@@ -493,10 +493,12 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     </message>
     <message>
         <source>Fit &amp;Page</source>
+        <extracomment>Zoom command that fits the whole page in the window. The ampersand marks the menu keyboard access key.</extracomment>
         <translation>Tilpas &amp;side</translation>
     </message>
     <message>
         <source>Fit &amp;Width</source>
+        <extracomment>Zoom command that fits the page width in the window. The ampersand marks the menu keyboard access key.</extracomment>
         <translation>Tilpas &amp;bredde</translation>
     </message>
     <message>

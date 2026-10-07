@@ -946,6 +946,8 @@ void MainWindow::createActions()
 
     // Separate actions serve the toolbar and menu. Repeating a fit command
     // keeps that mode; the Home shortcut below still toggles between the two.
+    //: Zoom command that fits the whole page in the window.
+    //: The ampersand marks the menu keyboard access key.
     fitPageAction_ = new QAction(tr("Fit &Page"), this);
     //: Zoom choice: scale the page so the whole page fits the window.
     fitPageAction_->setToolTip(tr("Fit Page"));
@@ -954,6 +956,8 @@ void MainWindow::createActions()
         if (auto *v = currentViewer())
             v->setZoomMode(ViewerWidget::ZoomMode::FitPage);
     });
+    //: Zoom command that fits the page width in the window.
+    //: The ampersand marks the menu keyboard access key.
     fitWidthAction_ = new QAction(tr("Fit &Width"), this);
     //: Zoom choice: scale the page so its width fits the window.
     fitWidthAction_->setToolTip(tr("Fit Width"));
