@@ -148,10 +148,11 @@ jobs:
             packaging/linux/rpm-post.sh packaging/linux/rpm-postun.sh
           python3 resources/icons/export_icon_frames.py --check
 
-      - name: Test release versions and prerelease tag allocation
+      - name: Test release scripts
         run: |
           python3 -B scripts/test_prepare_prerelease.py
           python3 -B scripts/test_release_versions.py
+          python3 -B scripts/test_prune_releases.py
 
   linux-tests:
     runs-on: ubuntu-24.04
