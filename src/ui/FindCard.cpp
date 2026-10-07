@@ -68,8 +68,11 @@ FindCard::FindCard(QWidget *viewport)
     count_->setObjectName(QStringLiteral("findCount"));
     count_->setAttribute(Qt::WA_TransparentForMouseEvents); // clicks reach the field
 
+    //: Go to the previous occurrence of the search text. Match means a search result.
     prevBtn_ = makeIconButton(this, icons::Glyph::ChevronUp, tr("Previous match (Shift+Enter)"));
+    //: Go to the next occurrence of the search text. Match means a search result.
     nextBtn_ = makeIconButton(this, icons::Glyph::ChevronDown, tr("Next match (Enter)"));
+    //: Search option. Distinguish uppercase and lowercase letters.
     caseCheck_ = new QCheckBox(tr("Match case"), this);
     wordCheck_ = new QCheckBox(tr("Whole word"), this);
     closeBtn_ = makeIconButton(this, icons::Glyph::Close, tr("Close (Esc)"));

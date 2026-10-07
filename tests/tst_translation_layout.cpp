@@ -18,6 +18,7 @@
 #include "render/RenderEngine.h"
 #include "security/QpdfService.h"
 #include "ui/AnnotPanel.h"
+#include "ui/LanguageCombo.h"
 #include "ui/MeasurePanel.h"
 #include "ui/Theme.h"
 #include "ui/ThemeTokens.h"
@@ -67,13 +68,21 @@ namespace {
 
 namespace i18n = mervin::i18n;
 
+// CTest runs one process per language to keep each check within its timeout.
+// Running the executable directly still exercises every shipped language.
+QStringList layoutLanguages()
+{
+    const QString requested = qEnvironmentVariable("MERVIN_TEST_LANGUAGE");
+    return requested.isEmpty() ? i18n::availableLanguages() : QStringList{requested};
+}
+
 // Every new compiled catalog automatically enters the same layout matrix.
 void addLanguageMatrix()
 {
     QTest::addColumn<QString>("language");
     QTest::addColumn<double>("fontScale");
     QTest::addColumn<bool>("minimumSize");
-    for (const QString &language : i18n::availableLanguages()) {
+    for (const QString &language : layoutLanguages()) {
         for (const double scale : {1.0, 1.5}) {
             for (const bool minimum : {false, true}) {
                 const QByteArray name = QStringLiteral("%1-%2pt-%3")
@@ -198,6 +207,8 @@ private slots:
     void extract();
     void firstRun_data() { addLanguageMatrix(); }
     void firstRun();
+    void languagePicker_data() { addLanguageMatrix(); }
+    void languagePicker();
     void manageLanguages_data() { addLanguageMatrix(); }
     void manageLanguages();
     void merge_data() { addLanguageMatrix(); }
@@ -242,20 +253,58 @@ void TstTranslationLayout::initTestCase()
     originalLanguage_ = i18n::current();
     mervin::ConfigPaths::setOverrideDir(profile_.path());
 
-    // A shared Latin/CJK font prevents missing-glyph boxes from making Chinese
-    // strings appear to fit. CI supplies the same pinned font on both platforms.
+    for (const QString &language : layoutLanguages())
+        QVERIFY2(i18n::availableLanguages().contains(language), qPrintable(language));
+
+    // Load the same pinned fonts on Linux and Windows. Checking only Latin
+    // and Chinese allowed missing glyphs in the other languages to go unseen.
     const QString fontPath = qEnvironmentVariable("MERVIN_TEST_FONT");
+    const QStringList filenames{
+        QStringLiteral("NotoSans-Regular.ttf"),
+        QStringLiteral("NotoSansArabic-Regular.ttf"),
+        QStringLiteral("NotoSansArmenian-Regular.ttf"),
+        QStringLiteral("NotoSansGeorgian-Regular.ttf"),
+        QStringLiteral("NotoSansDevanagari-Regular.ttf"),
+        QStringLiteral("NotoSansThai-Regular.ttf"),
+        QStringLiteral("NotoSansCJKsc-Regular.otf"),
+        QStringLiteral("NotoSansCJKjp-Regular.otf"),
+        QStringLiteral("NotoSansCJKkr-Regular.otf")};
     if (!fontPath.isEmpty()) {
-        const int id = QFontDatabase::addApplicationFont(fontPath);
-        QVERIFY2(id >= 0, qPrintable(QStringLiteral("Could not load %1").arg(fontPath)));
-        const QStringList families = QFontDatabase::applicationFontFamilies(id);
-        QVERIFY(!families.isEmpty());
-        fontFamily_ = families.first();
-    } else {
-        fontFamily_ = QStringLiteral("Noto Sans CJK SC");
-        QVERIFY2(QFontDatabase::families().contains(fontFamily_),
-                 "Install Noto Sans CJK SC or set MERVIN_TEST_FONT to its font file.");
+        const QDir directory = QFileInfo(fontPath).absoluteDir();
+        for (const QString &name : filenames) {
+            const QString path = directory.filePath(name);
+            QVERIFY2(QFontDatabase::addApplicationFont(path) >= 0,
+                     qPrintable(QStringLiteral("Could not load %1. Run scripts/fetch-test-font.py.")
+                                    .arg(path)));
+        }
     }
+    const QStringList families{
+        QStringLiteral("Noto Sans"), QStringLiteral("Noto Sans Arabic"),
+        QStringLiteral("Noto Sans Armenian"), QStringLiteral("Noto Sans Georgian"),
+        QStringLiteral("Noto Sans Devanagari"), QStringLiteral("Noto Sans Thai"),
+        QStringLiteral("Noto Sans CJK SC"), QStringLiteral("Noto Sans CJK JP"),
+        QStringLiteral("Noto Sans CJK KR")};
+    for (const QString &family : families)
+        QVERIFY2(QFontDatabase::families().contains(family), qPrintable(family));
+    fontFamily_ = QStringLiteral("Noto Sans");
+    QFontDatabase::addApplicationFallbackFontFamily(QChar::Script_Arabic,
+                                                    QStringLiteral("Noto Sans Arabic"));
+    QFontDatabase::addApplicationFallbackFontFamily(QChar::Script_Armenian,
+                                                    QStringLiteral("Noto Sans Armenian"));
+    QFontDatabase::addApplicationFallbackFontFamily(QChar::Script_Georgian,
+                                                    QStringLiteral("Noto Sans Georgian"));
+    QFontDatabase::addApplicationFallbackFontFamily(QChar::Script_Devanagari,
+                                                    QStringLiteral("Noto Sans Devanagari"));
+    QFontDatabase::addApplicationFallbackFontFamily(QChar::Script_Thai,
+                                                    QStringLiteral("Noto Sans Thai"));
+    QFontDatabase::addApplicationFallbackFontFamily(QChar::Script_Han,
+                                                    QStringLiteral("Noto Sans CJK SC"));
+    QFontDatabase::addApplicationFallbackFontFamily(QChar::Script_Hangul,
+                                                    QStringLiteral("Noto Sans CJK KR"));
+    QFontDatabase::addApplicationFallbackFontFamily(QChar::Script_Hiragana,
+                                                    QStringLiteral("Noto Sans CJK JP"));
+    QFontDatabase::addApplicationFallbackFontFamily(QChar::Script_Katakana,
+                                                    QStringLiteral("Noto Sans CJK JP"));
 
     const QString fixtures = QStringLiteral(MERVIN_FIXTURES_DIR);
     plain_ = profile_.filePath(QStringLiteral("structural-engineering-report-revised-for-construction.pdf"));
@@ -283,12 +332,12 @@ void TstTranslationLayout::init()
     QFETCH(double, fontScale);
     QFETCH(bool, minimumSize);
     minimumSize_ = minimumSize;
-    i18n::apply(language);
     // The UI language does not change regional formats in Mervin.
     QLocale::setDefault(QLocale::c());
     QFont font(fontFamily_);
     font.setPointSizeF(10 * fontScale);
     QApplication::setFont(font);
+    i18n::apply(language);
     QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Dark);
     qApp->setPalette(mervin::theme::darkPalette(QColor()));
     mervin::Theme::applyApp();
@@ -322,7 +371,7 @@ void TstTranslationLayout::catalogGlyphs_data()
     QTest::addColumn<QString>("language");
     QTest::addColumn<double>("fontScale");
     QTest::addColumn<bool>("minimumSize");
-    for (const QString &language : i18n::availableLanguages())
+    for (const QString &language : layoutLanguages())
         QTest::newRow(qPrintable(language)) << language << 1.0 << false;
 }
 
@@ -332,53 +381,78 @@ void TstTranslationLayout::catalogGlyphs_data()
 void TstTranslationLayout::catalogGlyphs()
 {
     QFETCH(QString, language);
-    const QString path = QDir(QStringLiteral(MERVIN_TRANSLATIONS_DIR))
-                             .filePath(QStringLiteral("mervin_%1.ts").arg(language));
-    QFile file(path);
-    QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable(path));
-    QXmlStreamReader xml(&file);
-    const QFontMetrics metrics(QApplication::font());
-    QString context;
-    QString source;
-    QStringList missing;
-    int messages = 0;
-    while (!xml.atEnd()) {
-        xml.readNext();
-        if (!xml.isStartElement())
-            continue;
-        if (xml.name() == QLatin1String("name")) {
-            context = xml.readElementText();
-        } else if (xml.name() == QLatin1String("source")
-                   || xml.name() == QLatin1String("translation")) {
-            const bool isSource = xml.name() == QLatin1String("source");
-            // IncludeChildElements includes every <numerusform>, so each
-            // plural form contributes its code points to this check.
-            QString text = xml.readElementText(QXmlStreamReader::IncludeChildElements);
-            if (isSource) {
-                source = text;
-                ++messages;
-            }
-            if (Qt::mightBeRichText(text)) {
-                QTextDocument document;
-                document.setHtml(text);
-                text = document.toPlainText();
-            }
-            for (const char32_t codePoint : text.toUcs4()) {
-                const auto category = QChar::category(codePoint);
-                if (QChar::isSpace(codePoint) || category == QChar::Other_Control
-                    || category == QChar::Other_Format || metrics.inFontUcs4(codePoint))
-                    continue;
-                missing.append(QStringLiteral("%1, source '%2', %3 has no glyph for U+%4")
-                                   .arg(context, source,
-                                        isSource ? QStringLiteral("English") : language,
-                                        QString::number(codePoint, 16).toUpper().rightJustified(4, '0')));
+    const QDir directory(QStringLiteral(MERVIN_TRANSLATIONS_DIR));
+    QStringList paths{directory.filePath(QStringLiteral("mervin_%1.ts").arg(language))};
+    const QString supplement = directory.filePath(QStringLiteral("qt/qtbase_%1.ts").arg(language));
+    if (QFileInfo::exists(supplement))
+        paths.append(supplement);
+    for (const QString &path : paths) {
+        QFile file(path);
+        QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable(path));
+        QXmlStreamReader xml(&file);
+        const QFontMetrics metrics(QApplication::font());
+        QString context;
+        QString source;
+        QStringList missing;
+        int messages = 0;
+        while (!xml.atEnd()) {
+            xml.readNext();
+            if (!xml.isStartElement())
+                continue;
+            if (xml.name() == QLatin1String("name")) {
+                context = xml.readElementText();
+            } else if (xml.name() == QLatin1String("source")
+                       || xml.name() == QLatin1String("translation")) {
+                const bool isSource = xml.name() == QLatin1String("source");
+                // IncludeChildElements includes every <numerusform>, so each
+                // plural form contributes its code points to this check.
+                QString text = xml.readElementText(QXmlStreamReader::IncludeChildElements);
+                if (isSource) {
+                    source = text;
+                    ++messages;
+                }
+                if (Qt::mightBeRichText(text)) {
+                    QTextDocument document;
+                    document.setHtml(text);
+                    text = document.toPlainText();
+                }
+                for (const char32_t codePoint : text.toUcs4()) {
+                    const auto category = QChar::category(codePoint);
+                    if (QChar::isSpace(codePoint) || category == QChar::Other_Control
+                        || category == QChar::Other_Format || metrics.inFontUcs4(codePoint))
+                        continue;
+                    missing.append(QStringLiteral("%1, source '%2', %3 has no glyph for U+%4")
+                                       .arg(context, source,
+                                            isSource ? QStringLiteral("English") : language,
+                                            QString::number(codePoint, 16).toUpper().rightJustified(4, '0')));
+                }
             }
         }
+        QVERIFY2(!xml.hasError(), qPrintable(xml.errorString()));
+        QVERIFY(messages > 0);
+        missing.removeDuplicates();
+        QVERIFY2(missing.isEmpty(), qPrintable(path + QLatin1Char('\n') + missing.join(QLatin1Char('\n'))));
     }
-    QVERIFY2(!xml.hasError(), qPrintable(xml.errorString()));
-    QVERIFY(messages > 0);
-    missing.removeDuplicates();
-    QVERIFY2(missing.isEmpty(), qPrintable(missing.join(QLatin1Char('\n'))));
+}
+
+void TstTranslationLayout::languagePicker()
+{
+    mervin::LanguageCombo combo;
+    inspect(combo, QStringLiteral("Closed language picker"));
+    combo.showPopup();
+    QTest::qWait(1);
+    QListView *list = combo.listView();
+    for (int row = 0; row < list->model()->rowCount(); ++row) {
+        const QModelIndex index = list->model()->index(row, 0);
+        list->scrollTo(index);
+        QCoreApplication::processEvents();
+        const QString text = index.data().toString();
+        const QSize needed = QFontMetrics(list->font()).size(Qt::TextSingleLine, text);
+        const QRect available = list->visualRect(index);
+        QVERIFY2(available.height() >= needed.height(), qPrintable(text));
+        QVERIFY2(available.width() >= needed.width(), qPrintable(text));
+    }
+    combo.hidePopup();
 }
 
 void TstTranslationLayout::inspect(QWidget &widget, const QString &state)
@@ -476,6 +550,12 @@ void TstTranslationLayout::extract()
     QVERIFY(range->text().isEmpty());
     QVERIFY(!error->text().isEmpty());
     inspect(dialog, QStringLiteral("Extract empty range"));
+    const auto *rows = dialog.findChild<QListWidget *>(QStringLiteral("extractList"));
+    QVERIFY(rows && rows->count() > 0);
+    const QWidget *row = rows->itemWidget(rows->item(0));
+    QVERIFY(row);
+    QVERIFY2(row->width() >= row->minimumSizeHint().width(),
+             "Extract row allocation must include all column controls");
 
     source.path = encrypted_;
     mervin::ExtractDialog locked(source);
@@ -612,6 +692,10 @@ void TstTranslationLayout::print()
     QTRY_VERIFY(confirm->isEnabled());
     QTRY_VERIFY(preview->isReady());
     inspect(dialog, QStringLiteral("Print custom page order"));
+    const auto *pageLabel = dialog.findChild<QLabel *>(QStringLiteral("printPageLabel"));
+    QVERIFY(pageLabel);
+    QVERIFY2(preview->geometry().bottom() < pageLabel->geometry().top(),
+             "Print navigation overlaps the preview at the selected dialog size");
     pages->setText(QStringLiteral("10001"));
     QTRY_VERIFY(!confirm->isEnabled());
     QVERIFY(!preview->isReady());

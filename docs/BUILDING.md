@@ -159,10 +159,10 @@ for the prebuilt Qt/dependency binaries; address and undefined-behavior checks r
 
 ## Qt modules for the UI translations
 
-The build compiles the UI catalogs in `i18n/` into the binary and merges Qt's own
-catalog for each language into them. It therefore needs Qt's LinguistTools
-(`lupdate`, `lrelease`) and Qt's translation catalogs (`qtbase_<id>.qm`). Configure
-stops with an error naming the missing `qtbase_<id>.qm` when the catalogs are absent.
+The build embeds the UI catalogs in `i18n/`, Qt's own catalogs and the standard
+widget supplements in `i18n/qt/`. It needs Qt's LinguistTools (`lupdate`, `lrelease`)
+and Qt's translation catalogs (`qtbase_<id>.qm`). Configure stops with an error
+when a language has neither an installed Qt catalog nor a maintained supplement.
 Packages and installers need neither at run time.
 
 | Qt install | What to add |

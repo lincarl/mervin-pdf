@@ -72,6 +72,7 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
 
     auto *hint = new QLabel(tr("Files are merged top to bottom, in the order shown."), this);
     hint->setObjectName(QStringLiteral("mergeHint"));
+    hint->setWordWrap(true);
     layout->addWidget(hint);
 
     // ── List + button column ─────────────────────────────────────────────────
@@ -224,6 +225,8 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
         plan_.append(e);
     }
     rebuild(plan_.isEmpty() ? -1 : 0);
+    ensurePolished();
+    setMinimumSize(minimumSize().expandedTo(minimumSizeHint()));
 }
 
 MergePlan::Entry MergeDialog::probeEntry(const QString &path, const QString &password)

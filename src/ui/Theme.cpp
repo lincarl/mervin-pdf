@@ -370,7 +370,7 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
     add(QStringLiteral("QListWidget#settingsNav { background:%1; border:none;"
                        " border-right:1px solid %2; outline:0; padding:10px 8px; }")
             .arg(css(t.status), css(t.borderBar)));
-    add(QStringLiteral("QListWidget#settingsNav::item { height:32px; padding:0 8px;"
+    add(QStringLiteral("QListWidget#settingsNav::item { min-height:32px; padding:0 8px;"
                        " margin:1px 0; border:1px solid transparent; border-radius:6px; color:%1; }")
             .arg(css(t.inkBody)));
     add(QStringLiteral("QListWidget#settingsNav::item:hover { background:%1; }").arg(css(t.rowHover)));

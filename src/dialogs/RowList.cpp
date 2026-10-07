@@ -14,6 +14,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QShortcut>
+#include <QScrollBar>
 #include <QTimer>
 #include <QToolButton>
 
@@ -156,6 +157,24 @@ QWidget *RowList::makeHeader(const Fill &fill)
     return header;
 }
 
+QSize RowList::minimumSizeHint() const
+{
+    QSize minimum = QListWidget::minimumSizeHint();
+    int rowWidth = 0;
+    for (int i = 0; i < count(); ++i) {
+        if (const QWidget *row = itemWidget(item(i)))
+            rowWidth = qMax(rowWidth, row->minimumSizeHint().width());
+    }
+    // Item widgets do not contribute to QListWidget's normal minimum. Keep all
+    // columns visible, including when added rows require a vertical scrollbar.
+    if (rowWidth > 0) {
+        const QMargins margins = contentsMargins() + viewportMargins();
+        minimum.setWidth(qMax(minimum.width(), rowWidth + margins.left() + margins.right()
+                              + verticalScrollBar()->sizeHint().width()));
+    }
+    return minimum;
+}
+
 void RowList::addRow(const Fill &fill)
 {
     const int i = count();
@@ -218,6 +237,7 @@ void RowList::addRow(const Fill &fill)
     auto *item = new QListWidgetItem(this);
     item->setSizeHint(QSize(0, qMax(kRowHeight, row->sizeHint().height())));
     setItemWidget(item, row);
+    updateGeometry();
 }
 
 void RowList::setRowTexts(int row, const QString &count, const QString &output)

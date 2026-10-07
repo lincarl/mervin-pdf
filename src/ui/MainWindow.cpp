@@ -1295,6 +1295,7 @@ void MainWindow::createMenus()
     // Select & Annotate - selection plus the annotate / OCR / measure / forms tools.
     //: Section heading in the main menu: selecting text and the comment, OCR, measuring
     //: and form tools.
+    //: Plain menu section heading. The ampersand means "and", not a keyboard mnemonic.
     addSectionHeader(mainMenu, tr("Select & Annotate"));
     mainMenu->addAction(selectAllAction_);
     mainMenu->addAction(commentAction_);

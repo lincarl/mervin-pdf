@@ -436,11 +436,20 @@ target_link_libraries(tst_translation_layout PRIVATE mervin_app Qt6::Test)
 target_compile_definitions(tst_translation_layout PRIVATE
     MERVIN_FIXTURES_DIR="${MERVIN_FIXTURES_DIR}"
     MERVIN_TRANSLATIONS_DIR="${CMAKE_SOURCE_DIR}/i18n")
-foreach(_t tst_text_fit tst_translation_layout)
+foreach(_t tst_text_fit)
     set_target_properties(${_t} PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME ${_t} COMMAND ${_t})
     set_tests_properties(${_t} PROPERTIES
         ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+        SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+endforeach()
+
+set_target_properties(tst_translation_layout PROPERTIES WIN32_EXECUTABLE OFF)
+foreach(lang IN ITEMS ${QT_I18N_SOURCE_LANGUAGE} ${QT_I18N_TRANSLATED_LANGUAGES})
+    add_test(NAME tst_translation_layout_${lang} COMMAND tst_translation_layout)
+    set_tests_properties(tst_translation_layout_${lang} PROPERTIES
+        ENVIRONMENT_MODIFICATION "${_mervin_test_env};MERVIN_TEST_LANGUAGE=set:${lang}"
+        TIMEOUT 180
         SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 endforeach()
 
@@ -481,3 +490,8 @@ add_test(NAME i18n_catalogs
         "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/i18n_catalogs"
         -P "${CMAKE_SOURCE_DIR}/cmake/CheckTranslations.cmake")
 set_tests_properties(i18n_catalogs PROPERTIES ENVIRONMENT_MODIFICATION "${_mervin_test_env}")
+add_test(NAME i18n_content
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/scripts/check-translation-content.py"
+            "${CMAKE_SOURCE_DIR}/i18n")
+add_test(NAME tst_translation_content
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/scripts/test_translation_content.py")

@@ -317,7 +317,6 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     previewColumn->addWidget(preview_, 1);
 
     auto *navigation = new QHBoxLayout;
-    navigation->addStretch();
     previousButton_ = new QPushButton(this);
     previousButton_->setObjectName(QStringLiteral("printPreviousPage"));
     previousButton_->setAccessibleName(tr("Previous preview page"));
@@ -331,7 +330,7 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     // Large page numbers and translated selection summaries may need two lines.
     pageLabel_->setWordWrap(true);
     pageLabel_->setMinimumWidth(140);
-    navigation->addWidget(pageLabel_);
+    navigation->addWidget(pageLabel_, 1);
     nextButton_ = new QPushButton(this);
     nextButton_->setObjectName(QStringLiteral("printNextPage"));
     nextButton_->setAccessibleName(tr("Next preview page"));
@@ -339,18 +338,17 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     nextButton_->setAutoDefault(false);
     mervin::icons::setButtonGlyph(nextButton_, mervin::icons::Glyph::NextPage, 16);
     navigation->addWidget(nextButton_);
-    navigation->addStretch();
     previewColumn->addLayout(navigation);
 
-    auto *previewFooter = new QHBoxLayout;
+    auto *previewFooter = new QVBoxLayout;
     paperLabel_ = new QLabel(this);
     paperLabel_->setObjectName(QStringLiteral("printPaperLabel"));
     paperLabel_->setWordWrap(true);
-    previewFooter->addWidget(paperLabel_, 1);
+    previewFooter->addWidget(paperLabel_);
     auto *marginNote = new QLabel(tr("Dashed line shows the printable area"), this);
     marginNote->setWordWrap(true);
-    marginNote->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    previewFooter->addWidget(marginNote, 1);
+    marginNote->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    previewFooter->addWidget(marginNote);
     previewColumn->addLayout(previewFooter);
 
     auto *buttons = new QHBoxLayout;
@@ -422,9 +420,12 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
         }
     });
 
+    ensurePolished();
+    setMinimumSize(minimumSize().expandedTo(minimumSizeHint()));
     const QRect screenArea = screen() ? screen()->availableGeometry() : QRect(0, 0, 1280, 900);
     resize(qMin(1180, screenArea.width() - 60), qMin(800, screenArea.height() - 80));
     refreshPreview();
+    setMinimumHeight(qMax(minimumHeight(), layout->totalHeightForWidth(minimumWidth())));
 }
 
 mervin::printing::Settings PrintDialog::printSettings() const
@@ -580,6 +581,8 @@ void PrintDialog::updateNavigation()
                                 .arg(pages_.at(previewIndex_)).arg(previewIndex_ + 1)
                                 .arg(pages_.size()));
     }
+    // Wrapped selection captions must not push navigation over the preview.
+    setMinimumHeight(qMax(minimumHeight(), layout()->totalHeightForWidth(minimumWidth())));
 }
 
 void PrintDialog::accept()

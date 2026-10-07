@@ -30,6 +30,9 @@ public:
     // Selects `code`; an ID this build doesn't ship selects English.
     void setLanguage(const QString &code);
 
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
+
     void showPopup() override;
     void hidePopup() override;
 
@@ -49,6 +52,7 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
+    QSize fitLabelHeight(QSize hint) const;
     void retranslate();
     void tintSearchIcon();
     void fitPopup();

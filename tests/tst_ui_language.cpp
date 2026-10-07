@@ -1,8 +1,12 @@
 // The UI language module: which catalogs ship, matching the OS language list to
-// one of them, and installing a catalog (with Qt's own strings merged in).
+// one of them, and installing application and standard-widget catalogs.
 #include "i18n/UiLanguage.h"
 
 #include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
+#include <QFont>
+#include <QFontDatabase>
 #include <QGuiApplication>
 #include <QLocale>
 #include <QTest>
@@ -20,7 +24,9 @@ private slots:
     void availableLanguagesListTheCatalogs()
     {
         QCOMPARE(i18n::availableLanguages(),
-                 (QStringList{QStringLiteral("en"), QStringLiteral("sv"), QStringLiteral("zh_CN")}));
+                 QStringLiteral("en ar az be bg bs ca cnr cs da de el es et fi fr ga hi hr hu hy "
+                                "id is it ja ka kk ko lb lt lv mk mt nb nl nn pl pt_BR pt_PT rm "
+                                "ro ru sk sl sq sr sv th tr uk vi zh_CN").split(QLatin1Char(' ')));
     }
 
     void normalizedAcceptsCaseAndSeparatorVariants_data()
@@ -31,7 +37,7 @@ private slots:
         QTest::newRow("upper case") << "SV" << "sv";
         QTest::newRow("hyphen") << "zh-cn" << "zh_CN";
         QTest::newRow("spaces") << " zh_CN " << "zh_CN";
-        QTest::newRow("not shipped") << "de" << "";
+        QTest::newRow("not shipped") << "he" << "";
         QTest::newRow("base of a regional catalog") << "zh" << "";
         QTest::newRow("other script") << "zh_TW" << "";
         QTest::newRow("empty") << "" << "";
@@ -101,7 +107,96 @@ private slots:
         QCOMPARE(i18n::suggestedLanguage(os, available), expected);
     }
 
-    // The catalogs carry Qt's own strings, so standard buttons follow the UI
+    void newLocalesMatchWithoutCrossingWrittenStandards()
+    {
+        const QStringList shipped = i18n::availableLanguages();
+        QCOMPARE(i18n::suggestedLanguage({"nb-NO"}, shipped), QStringLiteral("nb"));
+        QCOMPARE(i18n::suggestedLanguage({"nn-NO"}, shipped), QStringLiteral("nn"));
+        QCOMPARE(i18n::suggestedLanguage({"pt-PT"}, shipped), QStringLiteral("pt_PT"));
+        QCOMPARE(i18n::suggestedLanguage({"pt-BR"}, shipped), QStringLiteral("pt_BR"));
+        QCOMPARE(i18n::suggestedLanguage({"ja-JP"}, shipped), QStringLiteral("ja"));
+        QCOMPARE(i18n::suggestedLanguage({"ar-EG"}, shipped), QStringLiteral("ar"));
+        QCOMPARE(i18n::suggestedLanguage({"cnr-Latn-ME"}, shipped), QStringLiteral("cnr"));
+        QCOMPARE(i18n::suggestedLanguage({"cnr-ME"}, shipped), QStringLiteral("cnr"));
+        QCOMPARE(i18n::suggestedLanguage({"cnr-Cyrl-ME", "en"}, shipped), QStringLiteral("en"));
+        QCOMPARE(i18n::suggestedLanguage({"cnr-Cyrl-ME", "cnr", "ja"}, shipped), QStringLiteral("ja"));
+        QCOMPARE(i18n::suggestedLanguage({"sr-Cyrl-ME"}, shipped), QStringLiteral("sr"));
+        QCOMPARE(i18n::suggestedLanguage({"zh-Hant-TW", "ja-JP"}, shipped), QStringLiteral("ja"));
+        QVERIFY(!shipped.contains(QStringLiteral("zh_TW")));
+    }
+
+    void everyLanguageLoadsApplicationAndWidgetText_data()
+    {
+        QTest::addColumn<QString>("language");
+        for (const QString &language : i18n::availableLanguages()) {
+            if (language != QLatin1String("en"))
+                QTest::newRow(qPrintable(language)) << language;
+        }
+    }
+
+    void everyLanguageLoadsApplicationAndWidgetText()
+    {
+        QFETCH(QString, language);
+        i18n::apply(language);
+        QCOMPARE(i18n::current(), language);
+        const QString welcome = QCoreApplication::translate("mervin::FirstRunDialog",
+                                                            "Welcome to Mervin PDF");
+        QVERIFY2(!welcome.isEmpty() && welcome != QLatin1String("Welcome to Mervin PDF"),
+                 qPrintable(language));
+        const QString cancel = QCoreApplication::translate("QPlatformTheme", "Cancel");
+        QVERIFY2(!cancel.isEmpty() && cancel != QLatin1String("Cancel"), qPrintable(language));
+        if (language == QLatin1String("ar")) {
+            const QString folder = QCoreApplication::translate("QAbstractFileIconProvider", "Folder");
+            QVERIFY(!folder.isEmpty() && folder != QLatin1String("Folder"));
+        }
+        // Exercise every plural category used by the shipped Qt locales.
+        for (int count : {0, 1, 2, 3, 5, 11, 21, 100}) {
+            const QString pages = QCoreApplication::translate("mervin::RecentFilesPanel",
+                                                               "%n page(s)", nullptr, count);
+            QVERIFY2(!pages.isEmpty() && !pages.contains(QLatin1String("page(s)")),
+                     qPrintable(language + QStringLiteral(" plural %1").arg(count)));
+        }
+        QCOMPARE(QGuiApplication::layoutDirection(),
+                 language == QLatin1String("ar") ? Qt::RightToLeft : Qt::LeftToRight);
+    }
+
+    void cjkFontsSwitchWithTheLanguage()
+    {
+        const QString fontPath = qEnvironmentVariable("MERVIN_TEST_FONT");
+        if (!fontPath.isEmpty()) {
+            const QDir directory = QFileInfo(fontPath).absoluteDir();
+            for (const QString &name : {QStringLiteral("NotoSansCJKsc-Regular.otf"),
+                                        QStringLiteral("NotoSansCJKjp-Regular.otf"),
+                                        QStringLiteral("NotoSansCJKkr-Regular.otf")})
+                QVERIFY(QFontDatabase::addApplicationFont(directory.filePath(name)) >= 0);
+        }
+        const QStringList original = QFontDatabase::applicationFallbackFontFamilies(QChar::Script_Han);
+        const QFont originalFont = QGuiApplication::font();
+        i18n::apply(QStringLiteral("zh_CN"));
+        const QStringList chinese = QFontDatabase::applicationFallbackFontFamilies(QChar::Script_Han);
+        QVERIFY(!chinese.isEmpty());
+        i18n::apply(QStringLiteral("ja"));
+        const QStringList japanese = QFontDatabase::applicationFallbackFontFamilies(QChar::Script_Han);
+        QVERIFY(!japanese.isEmpty());
+        QVERIFY(japanese.first() != chinese.first());
+        QCOMPARE(QGuiApplication::font().family(), japanese.first());
+        QCOMPARE(QGuiApplication::font().pointSizeF(), originalFont.pointSizeF());
+        QVERIFY(QFontDatabase::applicationFallbackFontFamilies(QChar::Script_Hiragana)
+                    .contains(japanese.first()));
+        i18n::apply(QStringLiteral("ko"));
+        const QStringList korean = QFontDatabase::applicationFallbackFontFamilies(QChar::Script_Han);
+        QVERIFY(!korean.isEmpty());
+        QVERIFY(korean.first() != japanese.first());
+        QVERIFY(QFontDatabase::applicationFallbackFontFamilies(QChar::Script_Hangul)
+                    .contains(korean.first()));
+        QVERIFY(!QFontDatabase::applicationFallbackFontFamilies(QChar::Script_Hiragana)
+                     .contains(japanese.first()));
+        i18n::apply(QStringLiteral("en"));
+        QCOMPARE(QFontDatabase::applicationFallbackFontFamilies(QChar::Script_Han), original);
+        QCOMPARE(QGuiApplication::font(), originalFont);
+    }
+
+    // Standard-widget catalogs make buttons follow the UI
     // language; an unknown ID shows English.
     void applyInstallsTheCatalogWithQtStrings()
     {

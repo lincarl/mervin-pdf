@@ -42,6 +42,7 @@ public:
     // frame, padding and vertical scrollbar, so the captions stay over their
     // columns. Call once.
     QWidget *makeHeader(const Fill &fill);
+    QSize minimumSizeHint() const override;
     // Append a row. Every focusable widget `fill` adds makes the row current when
     // it takes focus, so the side buttons act on the row being typed in.
     void addRow(const Fill &fill);

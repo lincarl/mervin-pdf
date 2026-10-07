@@ -2,12 +2,24 @@
 
 Mervin's UI text is written in English in the source code. Every other language
 has a Qt Linguist catalog in `i18n/`, named `mervin_<id>.ts`, where `<id>` is Qt's
-own catalog ID: `sv` for Swedish and `zh_CN` for Simplified Chinese. The build
+locale ID, such as `sv` for Swedish and `zh_CN` for Simplified Chinese.
+Montenegrin uses the explicit app ID `cnr`, described below. The build
 compiles the catalogs into the application, so there are no translation files to
 install. [design.md](design.md#ui-languages) explains how Mervin picks and loads a
 language.
 
-The translations are drafted with AI and reviewed before they are marked finished.
+The translations are drafted with AI or machine translation and reviewed against
+the English source before they are marked finished. Structural checks do not
+replace linguistic review. Native-speaker review remains useful for terminology
+and natural phrasing.
+
+The app ships 52 UI languages. European coverage includes national and EU official
+languages, both Norwegian written standards, European Portuguese, Romansh, and
+national languages of transcontinental countries. Regional and minority languages
+are outside this expansion, except languages that are national elsewhere, such as
+Catalan in Andorra. Japanese, Korean, Arabic, Hindi, Indonesian, Vietnamese, Thai,
+Brazilian Portuguese and the existing Simplified Chinese are also included.
+Traditional Chinese remains available for OCR, but is not a UI language.
 
 ## English is the source of truth
 
@@ -68,6 +80,23 @@ guide the choice of words, even when the English term has several translations.
 | Reset calibration | Remove the user's scale override and restore the scale embedded in the PDF. |
 | OCR script | A writing system, such as Latin or Cyrillic, rather than a program or text detection. |
 
+Short labels need their interface context. A search "match" is an occurrence of
+the query, and "Match case" distinguishes uppercase and lowercase letters.
+"Close to tray" describes keeping the application running in the notification
+area. "Strip Owner Restrictions" removes PDF permission restrictions. Font names
+such as "Light" and "Black" describe weight, while "Sat" in a color dialog means
+saturation. Review these senses against the English notes.
+
+Distinguish access-key ampersands from literal conjunctions. The plain menu
+heading "Select & Annotate" means "Select and Annotate". A translation that spells
+out the conjunction must not gain an access-key marker.
+
+When a translation service batches strings, verify each source-to-target pairing.
+Matching output counts or separator counts do not prove alignment. Redraft broken
+entries individually. Preserve product names, command-line switches, file-filter
+patterns and license identifiers. Use the local written standard deliberately,
+including Bokmål versus Nynorsk and European versus Brazilian Portuguese.
+
 ## Update the catalogs after a code change
 
 The normal build never changes `i18n/*.ts`. After adding or changing UI text, build
@@ -117,6 +146,11 @@ that `lupdate` writes as `&quot;` or `&apos;`, or over indentation.
 - A plural message (`numerus="yes"`) has one `<numerusform>` per plural form of
   the language, two for Swedish and one for Chinese. Qt Linguist shows the right
   number of fields.
+
+Fill every plural slot required by Qt even when the translated wording is
+identical. Georgian and Kazakh require two slots and Macedonian three. Missing
+slots can make the whole message fall back to English without an `lrelease`
+warning. The UI-language test probes representative counts in the compiled files.
 
 ## English plural forms
 
@@ -184,24 +218,33 @@ mervin_build_dir=/absolute/path/to/isolated/build
 python3 scripts/fetch-test-font.py "$HOME/dev/mervin-layout-fonts"
 MERVIN_TEST_FONT="$HOME/dev/mervin-layout-fonts/NotoSansCJKsc-Regular.otf" \
 QT_QPA_PLATFORM=offscreen ctest --test-dir "$mervin_build_dir" \
-  -R 'i18n_catalogs|tst_text_fit|tst_translation_layout' --output-on-failure
+  -R 'i18n_catalogs|i18n_content|tst_text_fit|tst_translation_layout' --output-on-failure
 ```
 
-GitHub Actions supplies the same pinned Noto Sans CJK SC font on Linux and
-Windows. The fetch script verifies the font and its license by SHA-256.
-`MERVIN_TEST_FONT` points to the downloaded font, which Qt loads for the tests.
-A locally installed Noto Sans CJK SC is also accepted when that variable is unset.
-Using one font with Latin and Simplified Chinese coverage makes failures
-reproducible and avoids missing Chinese glyphs passing as empty space.
-The suite also checks glyph coverage for all English source strings and
-translations in the application catalogs, including every plural form. It does
-not scan Qt's built-in catalogs or text that is not extracted for translation.
+GitHub Actions supplies the same pinned Noto Sans fonts on Linux and Windows.
+The fetch script verifies every font and its SIL OFL license by SHA-256. The set
+covers extended Latin, Greek, Cyrillic, Armenian, Georgian, Arabic, Devanagari,
+Thai and CJK scripts. It includes separate Simplified Chinese, Japanese and Korean
+fonts to preserve their Han glyph shapes.
+
+`MERVIN_TEST_FONT` continues to point to `NotoSansCJKsc-Regular.otf`; the test loads
+the complete set from the same directory. When the variable is unset, install all
+families listed in the test. The suite checks glyph coverage for every application
+and supplemental Qt catalog, including all plural forms. Missing glyphs must fail instead of occupying
+less space and appearing to fit.
+
+The fonts are test dependencies, not bundled application fonts. At runtime the
+app uses installed system fonts. Linux installations need fonts covering the
+selected language, such as Noto Sans and the corresponding Noto CJK families.
 
 `tst_translation_layout` opens the ten custom dialogs in `src/dialogs/`, plus
 the measurement and annotation panels, using real Qt widgets and the default
 dark stylesheet. It discovers every compiled language through
 `i18n::availableLanguages()` and repeats each scenario at the default and minimum
-layout dimensions with 10-point and 15-point base fonts. Text with a fixed pixel
+layout dimensions with 10-point and 15-point base fonts. CTest runs a separate
+`tst_translation_layout_<id>` test for each language to keep failures and timeouts
+independent. `MERVIN_TEST_LANGUAGE=<id>` selects one language when invoking the
+executable directly; without it the executable checks them all. Text with a fixed pixel
 font size in the stylesheet retains that size.
 
 The scenarios include both calibration modes, all Settings pages, long filenames,
@@ -220,6 +263,11 @@ Editable values may scroll horizontally, and scrollable lists may extend beyond
 their viewport. For other intentional text clipping, record a specific allowance
 and its reason in the test. Do not exempt a whole dialog to hide one failure.
 
+Wrapped labels need enough height at the dialog's minimum width, including after
+their text changes. Check sibling overlap as well as each label's own text area.
+A preview and its navigation can overlap even when both pass individual fitting
+checks, so these cases need geometry assertions and screenshot inspection.
+
 For widgets embedded in list items, derive the item's size from its polished
 layout. Verify that the item contains its controls and that scrolling can reach
 the full content. A child's own text can fit while the list still hides it or
@@ -234,27 +282,45 @@ meaning.
 
 ## Add a language
 
-1. Check that Qt ships its own catalog for the language, `qtbase_<id>.qm` in Qt's
-   `translations` folder, and use that ID. Qt 6.12 has `ar bg ca cs da de es fa
-   fi fr gd he hr hu it ja ka kk ko lg lv nl nn pl pt_BR ru sk sv tr uk zh_CN
-   zh_TW`; Ubuntu 26.04 and Fedora 44 lack `kk`. Configure stops when the catalog
-   is missing, because Qt's buttons and dialogs would stay English.
-2. Add the ID to `I18N_TRANSLATED_LANGUAGES` in the `qt_standard_project_setup`
-   call in `CMakeLists.txt`. The next configure creates an empty
-   `i18n/mervin_<id>.ts`.
-3. Add a line to `kNames` in `src/i18n/UiLanguage.cpp` with the ID, the
-   language's name in that language (UTF-8), and its English name inside
-   `QT_TRANSLATE_NOOP("UiLanguage", ...)`. Without it the picker falls back to
-   Qt's name for the language. The English name is a new message in every
-   catalog.
-4. Build `update_translations`, translate every message, and commit the new
-   catalog with the other changes.
-5. Check the fonts. Han characters are drawn differently in Simplified Chinese,
-   Traditional Chinese and Japanese, and the OS may fall back to a font for the
-   wrong one. While the UI is `zh_CN`, `preferChineseFont()` in `UiLanguage.cpp`
-   adds an installed Simplified Chinese font as the fallback for Han text. A
-   Traditional Chinese (`zh_TW`) or Japanese UI needs its own font list there, for
-   example Microsoft JhengHei and Noto Sans CJK TC for Traditional Chinese.
-6. Run the translation and layout checks above with fonts covering the new
-   language. Review representative dialogs and states in that language. Keep any
-   missing font coverage or untested rendering explicit in the review.
+1. Add the ID to `I18N_TRANSLATED_LANGUAGES` in `CMakeLists.txt` and a native and
+   English name to `kNames` in `src/i18n/UiLanguage.cpp`. The English name must use
+   `QT_TRANSLATE_NOOP("UiLanguage", ...)` so search works in the selected language.
+2. Provide standard widget translations. Prefer Qt's `qtbase_<id>.qm`. If Qt does
+   not provide one or it lacks current dialog contexts, translate `i18n/qt/qt_ui_source.ts` into
+   `i18n/qt/qtbase_<id>.ts`. Keep its exact contexts, sources and disambiguation
+   comments. Configure fails when neither catalog exists. Kazakh also has a
+   supplement because supported Linux distributions omit Qt's Kazakh catalog.
+   Arabic and Slovak fill missing current contexts in Qt's supplied catalogs. Supplements
+   load after upstream text, preserving its translations outside the reference.
+3. Build `update_translations`, translate every application message directly from
+   English and its comments, then run that target again to normalize the files.
+4. Keep the required plural forms. Montenegrin is not a Qt locale, so its files
+   are named with `cnr` but their TS language is `sr_Latn_ME` for Qt's compatible
+   plural rules. This does not substitute a Serbian translation. The picker uses
+   Montenegrin text and an explicit `cnr` language tag selects it. An OS that drops
+   unrecognized locale tags may require manual selection. The catalog is Latin;
+   an explicit `cnr-Cyrl` preference does not select it.
+5. Check font coverage and CJK fallback. `preferLanguageFont()` chooses installed
+   Simplified Chinese, Japanese or Korean fonts and removes its previous fallback
+   when the UI language changes. It also selects a primary font for these languages
+   and Arabic and Thai so controls size themselves for
+   the script's height. It preserves size and weight and restores the original
+   font families when returning to other languages. Add pinned test fonts if a
+   new script needs them.
+6. Run the catalog, content, picker and layout checks. Inspect representative
+   dialogs and smallest supported sizes. Record native-platform or linguistic
+   verification that could not be performed.
+
+`i18n_content` compares supplemental catalogs with their checked-in English
+reference and rejects missing messages, drafts, empty translations, changed
+placeholders, lost line breaks and altered HTML. It performs the same structural
+checks on application catalogs. The existing `i18n_catalogs` check still uses
+`lupdate` to verify application source extraction and canonical formatting.
+
+Application and Qt catalogs are embedded separately. The loader installs Qt's
+catalog first, then the application's, preserving app overrides and Swedish OK
+capitalization. Supplements cover the standard controls and dialogs in their
+reference, not Qt's complete internal error-message catalog. Some low-level Qt
+errors can therefore remain English. OS-owned dialogs can follow the operating
+system's language, including the native Windows file picker. See
+`i18n/qt/README.md` for the reference's source and maintenance.

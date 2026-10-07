@@ -509,7 +509,7 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     </message>
     <message>
         <source>Select &amp; Annotate</source>
-        <extracomment>Section heading in the main menu: selecting text and the comment, OCR, measuring and form tools.</extracomment>
+        <extracomment>Section heading in the main menu: selecting text and the comment, OCR, measuring and form tools. Plain menu section heading. The ampersand means &quot;and&quot;, not a keyboard mnemonic.</extracomment>
         <translation>选择 &amp; 注释</translation>
     </message>
     <message>
@@ -1434,9 +1434,254 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>英语</translation>
     </message>
     <message>
+        <source>Arabic</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>阿拉伯语</translation>
+    </message>
+    <message>
+        <source>Azerbaijani</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>阿塞拜疆语</translation>
+    </message>
+    <message>
+        <source>Belarusian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>白俄罗斯语</translation>
+    </message>
+    <message>
+        <source>Bulgarian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>保加利亚语</translation>
+    </message>
+    <message>
+        <source>Bosnian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>波斯尼亚语</translation>
+    </message>
+    <message>
+        <source>Catalan</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>加泰罗尼亚语</translation>
+    </message>
+    <message>
+        <source>Montenegrin</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>黑山语</translation>
+    </message>
+    <message>
+        <source>Czech</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>捷克语</translation>
+    </message>
+    <message>
+        <source>Danish</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>丹麦语</translation>
+    </message>
+    <message>
+        <source>German</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>德语</translation>
+    </message>
+    <message>
+        <source>Greek</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>希腊语</translation>
+    </message>
+    <message>
+        <source>Spanish</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>西班牙语</translation>
+    </message>
+    <message>
+        <source>Estonian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>爱沙尼亚语</translation>
+    </message>
+    <message>
+        <source>Finnish</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>芬兰语</translation>
+    </message>
+    <message>
+        <source>French</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>法语</translation>
+    </message>
+    <message>
+        <source>Irish</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>爱尔兰语</translation>
+    </message>
+    <message>
+        <source>Hindi</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>印地语</translation>
+    </message>
+    <message>
+        <source>Croatian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>克罗地亚语</translation>
+    </message>
+    <message>
+        <source>Hungarian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>匈牙利语</translation>
+    </message>
+    <message>
+        <source>Armenian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>亚美尼亚语</translation>
+    </message>
+    <message>
+        <source>Indonesian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>印度尼西亚语</translation>
+    </message>
+    <message>
+        <source>Icelandic</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>冰岛语</translation>
+    </message>
+    <message>
+        <source>Italian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>意大利语</translation>
+    </message>
+    <message>
+        <source>Japanese</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>日语</translation>
+    </message>
+    <message>
+        <source>Georgian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>格鲁吉亚语</translation>
+    </message>
+    <message>
+        <source>Kazakh</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>哈萨克语</translation>
+    </message>
+    <message>
+        <source>Korean</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>韩语</translation>
+    </message>
+    <message>
+        <source>Luxembourgish</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>卢森堡语</translation>
+    </message>
+    <message>
+        <source>Lithuanian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>立陶宛语</translation>
+    </message>
+    <message>
+        <source>Latvian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>拉脱维亚语</translation>
+    </message>
+    <message>
+        <source>Macedonian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>马其顿语</translation>
+    </message>
+    <message>
+        <source>Maltese</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>马耳他语</translation>
+    </message>
+    <message>
+        <source>Norwegian Bokmål</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>挪威语（书面语）</translation>
+    </message>
+    <message>
+        <source>Dutch</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>荷兰语</translation>
+    </message>
+    <message>
+        <source>Norwegian Nynorsk</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>挪威语（新挪威语）</translation>
+    </message>
+    <message>
+        <source>Polish</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>波兰语</translation>
+    </message>
+    <message>
+        <source>Portuguese, Brazil</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>葡萄牙语（巴西）</translation>
+    </message>
+    <message>
+        <source>Portuguese, Portugal</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>葡萄牙语（葡萄牙）</translation>
+    </message>
+    <message>
+        <source>Romansh</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>罗曼什语</translation>
+    </message>
+    <message>
+        <source>Romanian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>罗马尼亚语</translation>
+    </message>
+    <message>
+        <source>Russian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>俄语</translation>
+    </message>
+    <message>
+        <source>Slovak</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>斯洛伐克语</translation>
+    </message>
+    <message>
+        <source>Slovenian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>斯洛文尼亚语</translation>
+    </message>
+    <message>
+        <source>Albanian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>阿尔巴尼亚语</translation>
+    </message>
+    <message>
+        <source>Serbian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>塞尔维亚语</translation>
+    </message>
+    <message>
         <source>Swedish</source>
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>瑞典语</translation>
+    </message>
+    <message>
+        <source>Thai</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>泰语</translation>
+    </message>
+    <message>
+        <source>Turkish</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>土耳其语</translation>
+    </message>
+    <message>
+        <source>Ukrainian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>乌克兰语</translation>
+    </message>
+    <message>
+        <source>Vietnamese</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>越南语</translation>
     </message>
     <message>
         <source>Chinese, Simplified</source>
@@ -1901,14 +2146,17 @@ The exported file is viewable in any PDF viewer.</source>
     </message>
     <message>
         <source>Previous match (Shift+Enter)</source>
+        <extracomment>Go to the previous occurrence of the search text. Match means a search result.</extracomment>
         <translation>上一个匹配项 (Shift+Enter)</translation>
     </message>
     <message>
         <source>Next match (Enter)</source>
+        <extracomment>Go to the next occurrence of the search text. Match means a search result.</extracomment>
         <translation>下一个匹配项 (Enter)</translation>
     </message>
     <message>
         <source>Match case</source>
+        <extracomment>Search option. Distinguish uppercase and lowercase letters.</extracomment>
         <translation>区分大小写</translation>
     </message>
     <message>
