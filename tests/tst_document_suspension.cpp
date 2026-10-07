@@ -416,6 +416,62 @@ private slots:
         QVERIFY(ocr->isChecked());
     }
 
+    void ocrActionStaysInactiveOnRecent_data()
+    {
+        QTest::addColumn<bool>("armed");
+        QTest::newRow("marking-tool-active") << true;
+        QTest::newRow("marking-tool-inactive") << false;
+    }
+
+    void ocrActionStaysInactiveOnRecent()
+    {
+        QFETCH(bool, armed);
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        auto *tab = window.findChild<TabPage *>();
+        auto *recent = window.findChild<QPushButton *>(QStringLiteral("recentPillBtn"));
+        auto *bar = window.findChild<QTabBar *>(QStringLiteral("docTabBar"));
+        QVERIFY(tab);
+        QVERIFY(recent);
+        QVERIFY(bar);
+        QAction *ocr = nullptr;
+        for (QAction *action : window.findChildren<QAction *>())
+            if (action->shortcut() == QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O))
+                ocr = action;
+        QVERIFY(ocr);
+        auto *viewer = tab->viewer();
+        viewer->setOcrMode(armed);
+        QCOMPARE(ocr->isChecked(), armed);
+        QVERIFY(ocr->isEnabled());
+
+        QTest::mouseClick(recent, Qt::LeftButton);
+        QVERIFY(recent->property("recentActive").toBool());
+        QVERIFY(!ocr->isEnabled());
+        QVERIFY(!ocr->isChecked());
+        QCOMPARE(viewer->ocrMode(), armed);
+        ocr->trigger();
+        QTest::keyClick(&window, Qt::Key_O, Qt::ControlModifier | Qt::ShiftModifier);
+        QCOMPARE(viewer->ocrMode(), armed);
+        QVERIFY(!ocr->isChecked());
+
+        // Changes in the hidden viewer must not reactivate the Recent view's action.
+        viewer->setOcrMode(!armed);
+        QVERIFY(!ocr->isEnabled());
+        QVERIFY(!ocr->isChecked());
+        viewer->setOcrMode(armed);
+        QVERIFY(!ocr->isEnabled());
+        QVERIFY(!ocr->isChecked());
+
+        // Returning through the same tab does not emit currentChanged.
+        QTest::mouseClick(bar, Qt::LeftButton, Qt::NoModifier, bar->tabRect(0).center());
+        QVERIFY(!recent->property("recentActive").toBool());
+        QVERIFY(ocr->isEnabled());
+        QCOMPARE(ocr->isChecked(), armed);
+        QCOMPARE(viewer->ocrMode(), armed);
+    }
+
     void backgroundRestoreRemainsUnloadedUntilRequested()
     {
         RenderEngine engine;

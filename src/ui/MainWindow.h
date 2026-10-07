@@ -193,6 +193,7 @@ private:
     void showRecentPanel();         // switch to Recent view (called by pill button)
     void setCommandBarMode(bool recentActive); // hide/show doc-only toolbar widget
     void syncFindToggle();          // toolbar search button follows the current find card
+    void syncOcrAction();           // OCR follows the visible document and stays inactive on Recent
     void updateRecentButton();      // sync pill button accent state
     void syncDocTabBar();           // rebuild docTabBar_ to match tabs_
     void updateTabGlyphs();         // tint each doc tab's glyph (accent on the active tab)
