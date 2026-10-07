@@ -197,13 +197,14 @@ restore and automatic updates are enabled by default. Copies that cannot update
 themselves (portable and development builds) show no automatic-update switch, only
 Check for Updates.
 
-The interface is available in English, Swedish, and Simplified Chinese. The first
-time Mervin starts without a saved display language (a new install, or the first
+The interface is available in 53 languages, including English, Swedish, Simplified
+Chinese and Traditional Chinese. See [TRANSLATING.md](TRANSLATING.md) for coverage.
+The first time Mervin starts without a saved display language (a new install, or the first
 start after updating from a version without language support), a welcome window
 appears before any other. Its display language picker starts at the first
 language in the OS preference list that Mervin offers in the same script, or
-English, so Traditional Chinese systems start at English, and picking
-another switches the window to it at once. On Windows, when Mervin is not the
+English. Traditional Chinese systems select 繁體中文 (`zh_TW`), and picking
+another language switches the window to it at once. On Windows, when Mervin is not the
 default PDF viewer and has not offered this before, the window also has a ticked
 "Make Mervin PDF my default PDF viewer" checkbox; Continue then opens the system
 Default Apps settings to confirm. An offer made by an earlier version on its first
@@ -224,8 +225,9 @@ back. With session restore on, the new copy reopens the documents that were open
 
 Starting Mervin with `--language <code>` (or `--language=<code>`), such as
 `--language sv`, shows that language for that run only. It skips the welcome window
-and leaves the saved setting unchanged; Settings shows the language on screen. The codes are `en`, `sv`, and `zh_CN`;
-case and `-` or `_` do not matter, and an unknown code shows English. If Mervin is
+and leaves the saved setting unchanged; Settings shows the language on screen.
+Use a shipped catalog code, such as `en`, `sv`, `zh_CN` or `zh_TW`.
+Case and `-` or `_` do not matter, and an unknown code shows English. If Mervin is
 already running, the new launch hands its files to the running copy and the flag
 has no effect.
 

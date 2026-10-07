@@ -13,13 +13,16 @@ the English source before they are marked finished. Structural checks do not
 replace linguistic review. Native-speaker review remains useful for terminology
 and natural phrasing.
 
-The app ships 52 UI languages. European coverage includes national and EU official
+The app ships 53 UI languages. European coverage includes national and EU official
 languages, both Norwegian written standards, European Portuguese, Romansh, and
 national languages of transcontinental countries. Regional and minority languages
 are outside this expansion, except languages that are national elsewhere, such as
 Catalan in Andorra. Japanese, Korean, Arabic, Hindi, Indonesian, Vietnamese, Thai,
-Brazilian Portuguese and the existing Simplified Chinese are also included.
-Traditional Chinese remains available for OCR, but is not a UI language.
+Brazilian Portuguese, Simplified Chinese and Traditional Chinese are also included.
+Traditional Chinese uses `zh_TW` and Taiwan terminology. Taiwan, Hong Kong, Macao
+and explicit Traditional Han OS preferences select this catalog. Its first-run
+OCR model is `chi_tra.traineddata`, following the existing language and script
+mapping rules.
 
 ## English is the source of truth
 
@@ -87,6 +90,11 @@ area. "Strip Owner Restrictions" removes PDF permission restrictions. Font names
 such as "Light" and "Black" describe weight, while "Sat" in a color dialog means
 saturation. Review these senses against the English notes.
 
+In print dialogs, "Collate" groups pages into complete copies, and "facing pages"
+means pairs of pages shown together. In font dialogs, preserve the distinction
+between writing systems, such as Malayalam and Malay. Review reused Qt text
+against these meanings as well.
+
 Distinguish access-key ampersands from literal conjunctions. The plain menu
 heading "Select & Annotate" means "Select and Annotate". A translation that spells
 out the conjunction must not gain an access-key marker.
@@ -96,6 +104,9 @@ Matching output counts or separator counts do not prove alignment. Redraft broke
 entries individually. Preserve product names, command-line switches, file-filter
 patterns and license identifiers. Use the local written standard deliberately,
 including Bokmål versus Nynorsk and European versus Brazilian Portuguese.
+Translate Chinese written standards independently from English. Use Traditional
+Chinese terminology consistently, such as 檔案 for file, 儲存 for save and 列印
+for print, rather than converting Simplified Chinese characters mechanically.
 
 ## Update the catalogs after a code change
 
@@ -224,8 +235,8 @@ QT_QPA_PLATFORM=offscreen ctest --test-dir "$mervin_build_dir" \
 GitHub Actions supplies the same pinned Noto Sans fonts on Linux and Windows.
 The fetch script verifies every font and its SIL OFL license by SHA-256. The set
 covers extended Latin, Greek, Cyrillic, Armenian, Georgian, Arabic, Devanagari,
-Thai and CJK scripts. It includes separate Simplified Chinese, Japanese and Korean
-fonts to preserve their Han glyph shapes.
+Thai and CJK scripts. It includes separate Simplified Chinese, Traditional Chinese,
+Japanese and Korean fonts to preserve their Han glyph shapes.
 
 `MERVIN_TEST_FONT` continues to point to `NotoSansCJKsc-Regular.otf`; the test loads
 the complete set from the same directory. When the variable is unset, install all
@@ -290,8 +301,9 @@ meaning.
    `i18n/qt/qtbase_<id>.ts`. Keep its exact contexts, sources and disambiguation
    comments. Configure fails when neither catalog exists. Kazakh also has a
    supplement because supported Linux distributions omit Qt's Kazakh catalog.
-   Arabic and Slovak fill missing current contexts in Qt's supplied catalogs. Supplements
-   load after upstream text, preserving its translations outside the reference.
+   Arabic, Slovak and Traditional Chinese fill missing current contexts in Qt's
+   supplied catalogs. Supplements load after upstream text, preserving its
+   translations outside the reference.
 3. Build `update_translations`, translate every application message directly from
    English and its comments, then run that target again to normalize the files.
 4. Keep the required plural forms. Montenegrin is not a Qt locale, so its files
@@ -301,8 +313,8 @@ meaning.
    unrecognized locale tags may require manual selection. The catalog is Latin;
    an explicit `cnr-Cyrl` preference does not select it.
 5. Check font coverage and CJK fallback. `preferLanguageFont()` chooses installed
-   Simplified Chinese, Japanese or Korean fonts and removes its previous fallback
-   when the UI language changes. It also selects a primary font for these languages
+   Simplified Chinese, Traditional Chinese, Japanese or Korean fonts and removes
+   its previous fallback when the UI language changes. It also selects a primary font for these languages
    and Arabic and Thai so controls size themselves for
    the script's height. It preserves size and weight and restores the original
    font families when returning to other languages. Add pinned test fonts if a

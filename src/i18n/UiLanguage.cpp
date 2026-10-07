@@ -132,6 +132,8 @@ constexpr LanguageNames kNames[] = {
     {"vi", "Tiếng Việt", QT_TRANSLATE_NOOP("UiLanguage", "Vietnamese")},
     //: Language name. The language picker's search finds a language by this name too.
     {"zh_CN", "简体中文", QT_TRANSLATE_NOOP("UiLanguage", "Chinese, Simplified")},
+    //: Language name. The language picker's search finds a language by this name too.
+    {"zh_TW", "繁體中文", QT_TRANSLATE_NOOP("UiLanguage", "Chinese, Traditional")},
 };
 
 const LanguageNames *namesFor(const QString &code)
@@ -196,6 +198,10 @@ void preferLanguageFont(const QString &language)
         families = {QStringLiteral("Microsoft YaHei UI"), QStringLiteral("Microsoft YaHei"),
                     QStringLiteral("Noto Sans CJK SC"), QStringLiteral("Source Han Sans SC"),
                     QStringLiteral("Source Han Sans CN"), QStringLiteral("WenQuanYi Micro Hei")};
+    } else if (language == QLatin1String("zh_TW")) {
+        families = {QStringLiteral("Microsoft JhengHei UI"), QStringLiteral("Microsoft JhengHei"),
+                    QStringLiteral("Noto Sans CJK TC"), QStringLiteral("Source Han Sans TC"),
+                    QStringLiteral("Source Han Sans TW")};
     } else if (language == QLatin1String("ja")) {
         families = {QStringLiteral("Yu Gothic UI"), QStringLiteral("Yu Gothic"),
                     QStringLiteral("Meiryo"), QStringLiteral("Noto Sans CJK JP"),

@@ -1688,6 +1688,11 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>简体中文</translation>
     </message>
+    <message>
+        <source>Chinese, Traditional</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>繁体中文</translation>
+    </message>
 </context>
 <context>
     <name>mervin::AnnotPanel</name>

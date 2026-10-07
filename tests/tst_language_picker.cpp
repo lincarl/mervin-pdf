@@ -40,6 +40,8 @@ private slots:
         }
         combo.setLanguage(QStringLiteral("zh-CN"));
         QCOMPARE(combo.language(), QStringLiteral("zh_CN"));
+        combo.setLanguage(QStringLiteral("zh-TW"));
+        QCOMPARE(combo.language(), QStringLiteral("zh_TW"));
         combo.setLanguage(QStringLiteral("xx"));
         QCOMPARE(combo.language(), QStringLiteral("en"));
     }
@@ -48,22 +50,28 @@ private slots:
     {
         QTest::addColumn<QString>("typed");
         QTest::addColumn<QString>("expected"); // empty: nothing matches
-        QTest::newRow("English name") << "chinese" << "zh_CN";
-        QTest::newRow("native name") << "svenska" << "sv";
-        QTest::newRow("case") << "SVENSKA" << "sv";
-        QTest::newRow("Chinese characters") << "简体" << "zh_CN";
-        QTest::newRow("code") << "zh_cn" << "zh_CN";
-        QTest::newRow("Japanese native name") << "日本語" << "ja";
-        QTest::newRow("accent folding") << "francais" << "fr";
-        QTest::newRow("Portuguese region") << "portugal" << "pt_PT";
-        QTest::newRow("Arabic native name") << "العربية" << "ar";
-        QTest::newRow("no match") << "klingon" << "";
+        QTest::addColumn<int>("matches");
+        QTest::newRow("English name") << "chinese" << "zh_CN" << 2;
+        QTest::newRow("Simplified English name") << "simplified" << "zh_CN" << 1;
+        QTest::newRow("Traditional English name") << "traditional" << "zh_TW" << 1;
+        QTest::newRow("native name") << "svenska" << "sv" << 1;
+        QTest::newRow("case") << "SVENSKA" << "sv" << 1;
+        QTest::newRow("Simplified Chinese characters") << "简体" << "zh_CN" << 1;
+        QTest::newRow("Traditional Chinese characters") << "繁體" << "zh_TW" << 1;
+        QTest::newRow("Simplified code") << "zh_cn" << "zh_CN" << 1;
+        QTest::newRow("Traditional code") << "zh_tw" << "zh_TW" << 1;
+        QTest::newRow("Japanese native name") << "日本語" << "ja" << 1;
+        QTest::newRow("accent folding") << "francais" << "fr" << 1;
+        QTest::newRow("Portuguese region") << "portugal" << "pt_PT" << 1;
+        QTest::newRow("Arabic native name") << "العربية" << "ar" << 1;
+        QTest::newRow("no match") << "klingon" << "" << 0;
     }
 
     void searchFiltersAndEnterPicks()
     {
         QFETCH(QString, typed);
         QFETCH(QString, expected);
+        QFETCH(int, matches);
         LanguageCombo combo;
         combo.show();
         QVERIFY(QTest::qWaitForWindowExposed(&combo));
@@ -78,7 +86,7 @@ private slots:
             QTest::keyClicks(combo.searchField(), typed);
         else
             combo.searchField()->insert(typed);
-        QCOMPARE(combo.listView()->model()->rowCount(), expected.isEmpty() ? 0 : 1);
+        QCOMPARE(combo.listView()->model()->rowCount(), matches);
         QTest::keyClick(combo.searchField(), Qt::Key_Return);
         if (expected.isEmpty()) {
             // Enter on an empty list picks nothing and leaves the list open.
@@ -117,7 +125,7 @@ private slots:
     }
 
     // The search also matches the name in the UI language: in Swedish,
-    // "kinesiska" finds Chinese.
+    // "kinesiska" finds both Chinese written standards.
     void searchMatchesTheNameInTheUiLanguage()
     {
         LanguageCombo combo;
@@ -130,9 +138,11 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(&combo));
         combo.showPopup();
         QTest::keyClicks(combo.searchField(), localName.left(4));
-        QCOMPARE(combo.listView()->model()->rowCount(), 1);
+        QCOMPARE(combo.listView()->model()->rowCount(), 2);
         QCOMPARE(combo.listView()->model()->index(0, 0).data().toString(),
                  QStringLiteral("简体中文 (Chinese, Simplified)"));
+        QCOMPARE(combo.listView()->model()->index(1, 0).data().toString(),
+                 QStringLiteral("繁體中文 (Chinese, Traditional)"));
     }
 
     void downloadOcrDefaultsOnAndKeepsChoiceAcrossLanguages()
@@ -168,8 +178,24 @@ private slots:
 
     // Picking a language applies it to the app at once, and the open window
     // follows; closing it keeps the language shown.
+    void firstRunWindowSwitchesLanguageLive_data()
+    {
+        QTest::addColumn<QString>("search");
+        QTest::addColumn<QString>("language");
+        QTest::addColumn<QString>("welcome");
+        QTest::addColumn<QString>("continueText");
+        QTest::newRow("Swedish")
+            << "svenska" << "sv" << "Välkommen till Mervin PDF" << "Fortsätt";
+        QTest::newRow("Traditional Chinese")
+            << "traditional" << "zh_TW" << "歡迎使用 Mervin PDF" << "繼續";
+    }
+
     void firstRunWindowSwitchesLanguageLive()
     {
+        QFETCH(QString, search);
+        QFETCH(QString, language);
+        QFETCH(QString, welcome);
+        QFETCH(QString, continueText);
         FirstRunDialog dialog(true);
         dialog.show();
         QVERIFY(QTest::qWaitForWindowActive(&dialog));
@@ -180,19 +206,19 @@ private slots:
 
         LanguageCombo *combo = dialog.languageCombo();
         combo->showPopup();
-        QTest::keyClicks(combo->searchField(), QStringLiteral("svenska"));
+        QTest::keyClicks(combo->searchField(), search);
         QTest::keyClick(combo->searchField(), Qt::Key_Return);
-        QCOMPARE(i18n::current(), QStringLiteral("sv"));
-        QTRY_COMPARE(heading->text(), QStringLiteral("Välkommen till Mervin PDF"));
+        QCOMPARE(i18n::current(), language);
+        QTRY_COMPARE(heading->text(), welcome);
 
         // Enter after a pick continues (on Linux, Enter on the combo would reopen it).
         auto *continueButton = dialog.findChild<QPushButton *>();
         QVERIFY(continueButton);
-        QCOMPARE(continueButton->text(), QStringLiteral("Fortsätt"));
+        QCOMPARE(continueButton->text(), continueText);
         QTRY_COMPARE(QApplication::focusWidget(), continueButton);
 
         dialog.reject();
-        QCOMPARE(dialog.language(), QStringLiteral("sv"));
+        QCOMPARE(dialog.language(), language);
     }
 
     // Arrow keys on the closed combo apply each language and keep the focus, so

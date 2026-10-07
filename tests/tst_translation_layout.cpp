@@ -267,6 +267,7 @@ void TstTranslationLayout::initTestCase()
         QStringLiteral("NotoSansDevanagari-Regular.ttf"),
         QStringLiteral("NotoSansThai-Regular.ttf"),
         QStringLiteral("NotoSansCJKsc-Regular.otf"),
+        QStringLiteral("NotoSansCJKtc-Regular.otf"),
         QStringLiteral("NotoSansCJKjp-Regular.otf"),
         QStringLiteral("NotoSansCJKkr-Regular.otf")};
     if (!fontPath.isEmpty()) {
@@ -282,8 +283,8 @@ void TstTranslationLayout::initTestCase()
         QStringLiteral("Noto Sans"), QStringLiteral("Noto Sans Arabic"),
         QStringLiteral("Noto Sans Armenian"), QStringLiteral("Noto Sans Georgian"),
         QStringLiteral("Noto Sans Devanagari"), QStringLiteral("Noto Sans Thai"),
-        QStringLiteral("Noto Sans CJK SC"), QStringLiteral("Noto Sans CJK JP"),
-        QStringLiteral("Noto Sans CJK KR")};
+        QStringLiteral("Noto Sans CJK SC"), QStringLiteral("Noto Sans CJK TC"),
+        QStringLiteral("Noto Sans CJK JP"), QStringLiteral("Noto Sans CJK KR")};
     for (const QString &family : families)
         QVERIFY2(QFontDatabase::families().contains(family), qPrintable(family));
     fontFamily_ = QStringLiteral("Noto Sans");

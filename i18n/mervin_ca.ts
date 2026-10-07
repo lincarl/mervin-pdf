@@ -1690,6 +1690,11 @@ Obriu la configuració del vostre sistema → Aplicacions predeterminades (o feu
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>Xinès, simplificat</translation>
     </message>
+    <message>
+        <source>Chinese, Traditional</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>Xinès, tradicional</translation>
+    </message>
 </context>
 <context>
     <name>mervin::AnnotPanel</name>

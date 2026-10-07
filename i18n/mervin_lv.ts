@@ -1692,6 +1692,11 @@ Atveriet sistēmas Iestatījumi → Noklusējuma lietojumprogrammas (vai ar pele
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>Ķīniešu, vienkāršotā</translation>
     </message>
+    <message>
+        <source>Chinese, Traditional</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>Ķīniešu, tradicionālā</translation>
+    </message>
 </context>
 <context>
     <name>mervin::AnnotPanel</name>
