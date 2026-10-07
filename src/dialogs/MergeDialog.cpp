@@ -1,4 +1,5 @@
 #include "dialogs/MergeDialog.h"
+#include "ui/TextLayout.h"
 
 #include "dialogs/RowList.h"
 #include "print/PageRange.h"
@@ -188,6 +189,7 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
     outputEdit_ = new QLineEdit(this);
     outputEdit_->setObjectName(QStringLiteral("mergeOutput"));
     outputEdit_->setPlaceholderText(tr("Choose where to write the merged PDF"));
+    fitPlaceholder(*outputEdit_);
     connect(outputEdit_, &QLineEdit::textEdited, this, [this](const QString &) {
         // Latch on any edit, including the one that empties the field. Tracking
         // emptiness instead would refill the field the instant the user cleared
@@ -434,7 +436,7 @@ void MergeDialog::reelideNames()
         // ElideMiddle, not ElideRight: the disambiguating " (folder)" suffix
         // displayName() appends is the whole point of the label when two rows
         // share a file name, and eliding from the right would eat it first.
-        l->setText(l->fontMetrics().elidedText(nameTexts_.at(i), Qt::ElideMiddle, w));
+        l->setText(elidedLabelText(l->fontMetrics(), nameTexts_.at(i), Qt::ElideMiddle, w));
     }
 }
 

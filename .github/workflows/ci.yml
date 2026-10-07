@@ -160,6 +160,7 @@ jobs:
         build: [release, sanitize]
     env:
       QT_QPA_PLATFORM: offscreen
+      MERVIN_TEST_FONT: ${{ github.workspace }}/build/test-fonts/NotoSansCJKsc-Regular.otf
       ASAN_OPTIONS: detect_leaks=0
       UBSAN_OPTIONS: halt_on_error=1
     steps:
@@ -187,6 +188,7 @@ jobs:
       - name: Configure
         shell: bash
         run: |
+          python3 scripts/fetch-test-font.py build/test-fonts
           flags=()
           if [ "${{ matrix.build }}" = sanitize ]; then
             flags+=("-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer")
@@ -206,6 +208,7 @@ jobs:
       MUPDF_VERSION: "1.28.5"
       MUPDF_SHA256: "98a5c10cda20c3992cdf76ff6b2a1149c32bd79cc796d3f703230b1185b7e934"
       QT_QPA_PLATFORM: offscreen
+      MERVIN_TEST_FONT: ${{ github.workspace }}/build/test-fonts/NotoSansCJKsc-Regular.otf
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Set up MSVC (x64)
@@ -218,6 +221,9 @@ jobs:
 
       - name: Install Ninja
         run: choco install ninja -y
+
+      - name: Fetch layout test font
+        run: python scripts/fetch-test-font.py build/test-fonts
 
       - name: Install Qt 6.12.0
         uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1

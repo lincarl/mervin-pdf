@@ -1,5 +1,7 @@
 #include "dialogs/SecurityDialog.h"
 
+#include "ui/TextLayout.h"
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -46,9 +48,13 @@ SecurityDialog::SecurityDialog(const QString &documentPath, const QString &passw
     auto *form = new QFormLayout(encBox);
     userEdit_ = new QLineEdit(encBox);
     userEdit_->setEchoMode(QLineEdit::Password);
+    //: Placeholder in the open-password field. An empty value means the saved
+    //: PDF can be opened without entering a password.
     userEdit_->setPlaceholderText(tr("leave empty for no open password"));
     ownerEdit_ = new QLineEdit(encBox);
     ownerEdit_->setEchoMode(QLineEdit::Password);
+    //: Placeholder in the owner-password field. If empty, use the open password
+    //: to protect the PDF permission settings. The user can enter a different one.
     ownerEdit_->setPlaceholderText(tr("defaults to the open password"));
     // QLineEdit's size hint ignores the placeholder, so a narrow dialog cut it
     // off. Make each field at least as wide as its placeholder.
@@ -62,6 +68,7 @@ SecurityDialog::SecurityDialog(const QString &documentPath, const QString &passw
     algoCombo_->addItem(tr("AES-128"), int(QpdfService::Algorithm::AES128));
     //: Encryption algorithm choice. Keep the algorithm name as it is.
     algoCombo_->addItem(tr("RC4-128 (weak)"), int(QpdfService::Algorithm::RC4_128));
+    fitComboText(*algoCombo_);
     allowPrint_ = new QCheckBox(tr("Allow printing"), encBox);
     allowCopy_ = new QCheckBox(tr("Allow copying text"), encBox);
     allowModify_ = new QCheckBox(tr("Allow modifying"), encBox);

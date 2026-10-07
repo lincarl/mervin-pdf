@@ -81,6 +81,14 @@ CalibrationDialog::CalibrationDialog(Mode mode, double lineLengthPoints, Measure
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(buttons);
+
+    // Wrapped text needs the height for this width, not the layout's
+    // width-independent minimum, which can squeeze the explanation and buttons.
+    ensurePolished();
+    const QSize preferred = sizeHint();
+    setMinimumSize(preferred.width(),
+                   qMax(preferred.height(), layout->totalHeightForWidth(preferred.width())));
+    resize(minimumSize());
 }
 
 MeasureScale CalibrationDialog::result() const

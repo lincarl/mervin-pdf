@@ -2214,7 +2214,8 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     </message>
     <message>
         <source>Discard the manual calibration and use the scale embedded in the PDF</source>
-        <translation>Ignorera den manuella kalibreringen och använd skalan som är inbäddad i PDF-filen</translation>
+        <extracomment>Reset button tooltip. Removes the user&apos;s scale override from this page and restores its embedded PDF scale. Does not remove drawn measurements.</extracomment>
+        <translation>Ta bort den manuella kalibreringen och använd skalan som är inbäddad i PDF-filen</translation>
     </message>
     <message>
         <source>Measurements</source>
@@ -2862,11 +2863,13 @@ Den här filen finns inte längre på disken.</translation>
     </message>
     <message>
         <source>leave empty for no open password</source>
+        <extracomment>Placeholder in the open-password field. An empty value means the saved PDF can be opened without entering a password.</extracomment>
         <translation>lämna tomt så krävs inget lösenord</translation>
     </message>
     <message>
         <source>defaults to the open password</source>
-        <translation>samma som öppningslösenordet</translation>
+        <extracomment>Placeholder in the owner-password field. If empty, use the open password to protect the PDF permission settings. The user can enter a different one.</extracomment>
+        <translation>öppningslösenordet används om fältet lämnas tomt</translation>
     </message>
     <message>
         <source>AES-256 (recommended)</source>

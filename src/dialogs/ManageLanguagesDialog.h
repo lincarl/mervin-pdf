@@ -18,8 +18,11 @@ class ManageLanguagesDialog : public QDialog
 {
     Q_OBJECT
 public:
+    // An injected network manager remains owned by the caller and must outlive
+    // the dialog. Omit it to use the dialog's own manager.
     explicit ManageLanguagesDialog(const QString &defaultLanguage,
-                                   QWidget *parent = nullptr);
+                                   QWidget *parent = nullptr,
+                                   QNetworkAccessManager *network = nullptr);
 
     // The language selected for the next OCR selection. Empty means that no
     // language remains installed.
