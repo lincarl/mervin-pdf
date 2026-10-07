@@ -164,14 +164,18 @@ restore_session = true
 
     # Start the installed payload with its own state and a bounded normal exit.
     $launchEnvironment = @{}
-    foreach ($name in @('PATH', 'QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH')) {
+    foreach ($name in @('PATH', 'QT_QPA_PLATFORM', 'QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH')) {
         $launchEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
     }
     try {
         $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+        $env:QT_QPA_PLATFORM = 'windows'
         $env:QT_PLUGIN_PATH = ''
         $env:QT_QPA_PLATFORM_PLUGIN_PATH = ''
-        $app = Start-Process $exe -PassThru -ArgumentList @('--profile', "`"$work\profile`"", '--language', 'en', '--quit-after-startup')
+        $app = Start-Process $exe -PassThru `
+            -RedirectStandardOutput (Join-Path $work 'app-stdout.log') `
+            -RedirectStandardError (Join-Path $work 'app-stderr.log') `
+            -ArgumentList @('--profile', "`"$work\profile`"", '--language', 'en', '--quit-after-startup')
     } finally {
         foreach ($name in $launchEnvironment.Keys) {
             [Environment]::SetEnvironmentVariable($name, $launchEnvironment[$name], 'Process')
