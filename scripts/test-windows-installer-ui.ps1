@@ -49,10 +49,18 @@ public static class MervinInstallerUi
     }
     [StructLayout(LayoutKind.Sequential)]
     public struct Rect { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GuiThreadInfo
+    {
+        public uint Size, Flags;
+        public IntPtr Active, Focus, Capture, MenuOwner, MoveSize, Caret;
+        public Rect CaretRect;
+    }
     private delegate bool EnumCallback(IntPtr hwnd, IntPtr argument);
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumCallback callback, IntPtr argument);
     [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr parent, EnumCallback callback, IntPtr argument);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+    [DllImport("user32.dll")] private static extern bool GetGUIThreadInfo(uint threadId, ref GuiThreadInfo info);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern bool IsWindowEnabled(IntPtr hwnd);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int capacity);
@@ -112,6 +120,21 @@ public static class MervinInstallerUi
         IntPtr result;
         if (SendTextTimeout(hwnd, 0x000C, IntPtr.Zero, text, 2, 5000, out result) == IntPtr.Zero || result == IntPtr.Zero)
             throw new InvalidOperationException("The folder field did not accept its value.");
+    }
+    public static void FocusControl(IntPtr dialog, IntPtr control)
+    {
+        SetForegroundWindow(dialog);
+        uint owner;
+        uint thread = GetWindowThreadProcessId(dialog, out owner);
+        if (!PostMessage(dialog, 0x0028, control, new IntPtr(1)))
+            throw new InvalidOperationException("The dialog did not accept a focus change.");
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        while (watch.ElapsedMilliseconds < 5000) {
+            var info = new GuiThreadInfo { Size = (uint)Marshal.SizeOf(typeof(GuiThreadInfo)) };
+            if (GetGUIThreadInfo(thread, ref info) && info.Focus == control) return;
+            System.Threading.Thread.Sleep(25);
+        }
+        throw new InvalidOperationException("The dialog did not focus the requested control.");
     }
 }
 '@
@@ -200,6 +223,7 @@ function Wait-InstallerPage([string]$Name, [string]$TextPattern, [string]$Button
 function Click-Control($State, [string]$TextPattern) {
     $buttons = @(Get-EnabledButtons $State $TextPattern)
     if ($buttons.Count -ne 1) { throw "Expected one enabled button matching $TextPattern, found $($buttons.Count)." }
+    [MervinInstallerUi]::FocusControl($State.Window.Handle, $buttons[0].Handle)
     if (-not [MervinInstallerUi]::PostMessage($buttons[0].Handle, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)) {
         throw "Could not click $TextPattern."
     }
@@ -234,6 +258,9 @@ close_to_tray = false
     $state = Wait-InstallerPage 'Destination folder' 'Destination Folder' '^Next\s*>?$'
     $edits = @($state.Controls | Where-Object { $_.ClassName -in @('Edit', 'RichEdit20W') -and $_.Enabled })
     if ($edits.Count -ne 1) { throw "Expected one destination field, found $($edits.Count)." }
+    # MSI commits PathEdit on focus loss. Editing a field that never received
+    # focus changes its displayed text without updating the directory property.
+    [MervinInstallerUi]::FocusControl($state.Window.Handle, $edits[0].Handle)
     [MervinInstallerUi]::SetText($edits[0].Handle, "$installDir\")
     $writtenField = [MervinInstallerUi]::Children($state.Window.Handle) |
         Where-Object { $_.Handle -eq $edits[0].Handle }
