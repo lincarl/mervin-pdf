@@ -81,7 +81,8 @@ LanguageCombo::LanguageCombo(QWidget *parent)
     list_->setFrameShape(QFrame::NoFrame);
     list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     list_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    list_->setUniformItemSizes(true);
+    // Fallback fonts for different writing systems can have different heights.
+    list_->setUniformItemSizes(false);
     list_->viewport()->setAutoFillBackground(false);
     cardLayout->addWidget(list_);
 
@@ -109,6 +110,28 @@ void LanguageCombo::setLanguage(const QString &code)
 {
     const int row = findData(i18n::normalized(code, i18n::availableLanguages()), kCodeRole);
     setCurrentIndex(row >= 0 ? row : 0);
+}
+
+QSize LanguageCombo::fitLabelHeight(QSize hint) const
+{
+    const QFontMetrics metrics(font());
+    int textHeight = metrics.height();
+    for (int row = 0; row < count(); ++row)
+        textHeight = std::max(textHeight, metrics.size(Qt::TextSingleLine, itemText(row)).height());
+    // QComboBox sizes the closed field from the primary font. Preserve its
+    // style padding while allowing taller fallback fonts in every choice.
+    hint.rheight() += textHeight - metrics.height();
+    return hint;
+}
+
+QSize LanguageCombo::sizeHint() const
+{
+    return fitLabelHeight(QComboBox::sizeHint());
+}
+
+QSize LanguageCombo::minimumSizeHint() const
+{
+    return fitLabelHeight(QComboBox::minimumSizeHint());
 }
 
 void LanguageCombo::showPopup()
@@ -220,8 +243,7 @@ void LanguageCombo::fitPopup()
     // ancestor (Settings moves each page into a scroll area) makes the list lay
     // out at once, before it is polished, and those rows stay without padding.
     list_->doItemsLayout();
-    // Rows differ by a pixel or so when a script falls back to another font
-    // (Chinese), so size for the tallest one.
+    // Size for the tallest writing system's fallback font.
     int rowHeight = 0;
     for (int row = 0; row < proxy_->rowCount(); ++row)
         rowHeight = std::max(rowHeight, list_->sizeHintForRow(row));

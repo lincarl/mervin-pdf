@@ -1119,8 +1119,14 @@ void SettingsDialog::watchForEdits()
 {
     // The swatches, accent and OCR language keep their state outside these
     // controls and call refreshButtons themselves.
-    for (auto *combo : findChildren<QComboBox *>())
+    for (auto *combo : findChildren<QComboBox *>()) {
+        mervin::fitComboText(*combo);
         connect(combo, &QComboBox::currentIndexChanged, this, &SettingsDialog::refreshButtons);
+    }
+    for (auto *check : findChildren<QCheckBox *>()) {
+        check->ensurePolished();
+        check->setMinimumWidth(check->sizeHint().width());
+    }
     for (auto *button : findChildren<QAbstractButton *>())
         if (button->isCheckable())
             connect(button, &QAbstractButton::toggled, this, &SettingsDialog::refreshButtons);

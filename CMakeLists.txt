@@ -13,14 +13,17 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 # Network: QLocalServer/QLocalSocket (IPC + single-instance) live in QtNetwork.
 # PrintSupport: QPrinter/QPrintDialog for Document -> Print.
 # LinguistTools: lupdate/lrelease for the UI translations (see "Translations"
-# below). Qt 6.9 is the minimum because the build merges Qt's own catalogs into
-# ours (MERGE_QT_TRANSLATIONS).
+# below). Keep Qt 6.9 as the supported minimum for the translation toolchain.
 find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui Widgets Network PrintSupport Svg LinguistTools)
 # English is the source language; each translated language has a catalog
-# i18n/mervin_<id>.ts. The IDs follow Qt's own catalog names (qtbase_<id>.qm).
+# i18n/mervin_<id>.ts. Qt widget catalogs are bundled separately below.
 qt_standard_project_setup(
     I18N_SOURCE_LANGUAGE en
-    I18N_TRANSLATED_LANGUAGES sv zh_CN)
+    I18N_TRANSLATED_LANGUAGES
+        ar az be bg bs ca cnr cs da de el es et fi
+        fr ga hi hr hu hy id is it ja ka kk ko lb
+        lt lv mk mt nb nl nn pl pt_BR pt_PT rm ro ru sk
+        sl sq sr sv th tr uk vi zh_CN)
 find_package(MuPDF REQUIRED)
 # tomlplusplus is header-only. Prefer a system/vcpkg config package; fall back to
 # fetching the single-header release so distros without libtomlplusplus-dev (e.g.
@@ -357,23 +360,52 @@ endif()
 # package format and the tests carry the catalogs without install rules.
 # mervin_en.ts holds only English plural forms ("%n pages"). Unfinished
 # messages are left out, so they show in English instead of as drafts.
-# Qt's own catalog for each language (qtbase_<id>.qm: standard buttons, file,
-# print and message dialogs) is merged in. Without it those stay English and
-# lrelease only warns, so a missing catalog stops the configure instead.
+# Standard widget text comes from Qt where available. Missing upstream
+# languages have maintained supplements for Qt's controls and dialogs.
 if(QT_INTERNAL_ABSOLUTE_TRANSLATIONS_DIR)
     set(MERVIN_QT_TRANSLATIONS_DIR "${QT_INTERNAL_ABSOLUTE_TRANSLATIONS_DIR}")
 else()
     set(MERVIN_QT_TRANSLATIONS_DIR "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_TRANSLATIONS}")
 endif()
+set(MERVIN_QT_CATALOGS "")
+set(MERVIN_QT_SUPPLEMENTS "")
 foreach(lang IN LISTS QT_I18N_TRANSLATED_LANGUAGES)
-    if(NOT EXISTS "${MERVIN_QT_TRANSLATIONS_DIR}/qtbase_${lang}.qm")
+    set(qt_catalog "${MERVIN_QT_TRANSLATIONS_DIR}/qtbase_${lang}.qm")
+    set(supplement "${CMAKE_CURRENT_SOURCE_DIR}/i18n/qt/qtbase_${lang}.ts")
+    if(EXISTS "${qt_catalog}")
+        list(APPEND MERVIN_QT_CATALOGS "${qt_catalog}")
+    endif()
+    if(EXISTS "${supplement}")
+        list(APPEND MERVIN_QT_SUPPLEMENTS "${supplement}")
+    elseif(NOT EXISTS "${qt_catalog}")
         message(FATAL_ERROR
-            "Qt's translation catalog qtbase_${lang}.qm is missing from "
-            "${MERVIN_QT_TRANSLATIONS_DIR}. Install Qt's translations: the qttranslations "
-            "module (aqt/online installer), qt6-translations-l10n (Debian/Ubuntu) or "
-            "qt6-qttranslations (Fedora).")
+            "No standard-widget translation for ${lang}. Install Qt's translation "
+            "catalog qtbase_${lang}.qm, or provide the reviewed supplement "
+            "${supplement}. See docs/TRANSLATING.md.")
     endif()
 endforeach()
+foreach(qt_catalog IN LISTS MERVIN_QT_CATALOGS)
+    get_filename_component(qt_name "${qt_catalog}" NAME)
+    set_source_files_properties("${qt_catalog}" PROPERTIES QT_RESOURCE_ALIAS "${qt_name}")
+endforeach()
+if(MERVIN_QT_SUPPLEMENTS)
+    qt_add_lrelease(
+        TS_FILES ${MERVIN_QT_SUPPLEMENTS}
+        LRELEASE_TARGET mervin_qt_lrelease
+        OPTIONS -nounfinished
+        QM_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/i18n-qt"
+        QM_FILES_OUTPUT_VARIABLE supplement_qms)
+    # Retain upstream internal diagnostics while filling gaps in dialog text.
+    foreach(qt_catalog IN LISTS supplement_qms)
+        get_filename_component(qt_name "${qt_catalog}" NAME)
+        string(REPLACE "qtbase_" "qtbase_supplement_" qt_name "${qt_name}")
+        set_source_files_properties("${qt_catalog}" PROPERTIES QT_RESOURCE_ALIAS "${qt_name}")
+    endforeach()
+    list(APPEND MERVIN_QT_CATALOGS ${supplement_qms})
+endif()
+qt_add_resources(mervin_core mervin_qt_translations
+    PREFIX "/i18n"
+    FILES ${MERVIN_QT_CATALOGS})
 # tests/CMakeLists.txt runs lupdate the same way for its catalog check.
 set(MERVIN_LUPDATE_OPTIONS -locations none -no-obsolete)
 qt_add_translations(
@@ -381,8 +413,6 @@ qt_add_translations(
     SOURCE_TARGETS mervin_core mervin_icons mervin_viewer mervin_app MervinPDF
     TS_FILE_BASE mervin
     TS_FILE_DIR i18n
-    MERGE_QT_TRANSLATIONS
-    QT_TRANSLATION_CATALOGS qtbase
     LUPDATE_OPTIONS ${MERVIN_LUPDATE_OPTIONS}
     LRELEASE_OPTIONS -nounfinished)
 

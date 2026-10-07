@@ -113,12 +113,15 @@ manual checks use it to avoid touching normal user state.
 ## UI languages
 
 The UI text is written in English. Every other language has a Qt Linguist catalog,
-`i18n/mervin_<id>.ts`, named by Qt's own catalog ID (`sv`, `zh_CN`). In
+`i18n/mervin_<id>.ts`, named by locale ID (`sv`, `zh_CN`) or the explicit
+Montenegrin app ID `cnr`. In
 `CMakeLists.txt`, `qt_add_translations` compiles each catalog into `mervin_core`
 as `:/i18n/mervin_<id>.qm`, so every package and test carries them without install
-rules. The build merges Qt's own catalog for the language (`qtbase_<id>.qm`, with
-the standard buttons and the file, print and message dialogs) into Mervin's, so one
-`QTranslator` covers both. Configure stops when Qt's catalog is missing. `lrelease`
+rules. The build embeds a separate standard-widget catalog (`qtbase_<id>.qm`).
+It uses Qt's catalog where available and reviewed `i18n/qt/` supplements for missing
+languages or widget contexts. Configure stops when neither exists. The loader
+installs Qt's catalog, its supplement, then the app catalog, so app translations
+take precedence while upstream internal diagnostics remain available. `lrelease`
 runs with `-nounfinished`, so a message not yet marked finished shows in English
 rather than as a draft. `mervin_en.ts` holds only the English plural forms of `%n`
 strings. [TRANSLATING.md](TRANSLATING.md) covers updating catalogs and adding a
@@ -155,10 +158,13 @@ their dates and file sizes with it. The annotation card shows its date as
 `yyyy-MM-dd` in every language. Measurement values, zoom and page ranges keep
 their fixed, locale-independent format, and unit symbols, settings keys, log
 output and text written into PDFs stay as they are. `apply()` also sets the layout
-direction from the language. While the UI is Simplified Chinese it adds the first
-installed Simplified Chinese font (Microsoft YaHei, Noto Sans CJK SC, Source Han
-Sans, WenQuanYi Micro Hei) as the fallback for Han text, which otherwise can fall
-back to a Japanese font with different glyph shapes.
+direction from the language. For Simplified Chinese, Japanese and Korean, it adds
+an installed font for that language as the fallback for Han text and the relevant
+kana or Hangul script. Otherwise Han text can fall back to a Japanese font with
+different glyph shapes. These languages and Arabic and Thai also use an installed
+primary font for their script, preventing standard
+controls from sizing taller text with Latin-only font metrics. Font size and
+weight remain unchanged; switching back restores the original font families.
 
 ## Inactive documents and memory
 
@@ -442,8 +448,8 @@ model downloads, and update checks/downloads.
 
 The project supports Windows x64 and Linux x86-64. CMake builds the targets; the
 platform release pipeline adds a Windows MSI installer and Linux
-AppImage/DEB/RPM artifacts. Windows uses Qt 6.12.0; Linux requires Qt 6.9 or newer,
-the first release that merges Qt's own catalogs into the app's at build time.
+AppImage/DEB/RPM artifacts. Windows uses Qt 6.12.0; Linux requires Qt 6.9 or newer
+for the supported translation toolchain.
 MuPDF 1.28.5 is built from source with OCR support.
 
 QtTest targets cover the core stores, IPC, rendering helpers, document tools,

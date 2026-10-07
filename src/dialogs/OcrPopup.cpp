@@ -46,6 +46,10 @@ OcrPopup::OcrPopup(const QStringList &installedLanguages, const QString &preferr
 
     edit_ = new QPlainTextEdit(this);
     edit_->setPlaceholderText(tr("Recognised text will appear here; you can edit it before copying."));
+    // Keep the complete empty-state hint visible at the smallest popup size.
+    edit_->setMinimumHeight(5 * edit_->fontMetrics().lineSpacing()
+                            + 2 * static_cast<int>(edit_->document()->documentMargin())
+                            + 2 * edit_->frameWidth());
     layout->addWidget(edit_, 1);
 
     auto *optRow = new QHBoxLayout;

@@ -3,6 +3,7 @@
 #include "net/UrlOpen.h"
 #include "ocr/TessdataFile.h"
 #include "ocr/TessdataManager.h"
+#include "ui/TextLayout.h"
 
 #include <QDialogButtonBox>
 #include <QComboBox>
@@ -132,6 +133,7 @@ ManageLanguagesDialog::ManageLanguagesDialog(const QString &defaultLanguage, QWi
     search_->setObjectName(QStringLiteral("ocrLanguageSearch"));
     search_->setClearButtonEnabled(true);
     search_->setPlaceholderText(tr("Search languages or codes"));
+    fitPlaceholder(*search_);
     search_->setAccessibleName(tr("Search available OCR languages"));
     availableColumn->addWidget(search_);
     availableList_ = new QListWidget(this);
@@ -178,11 +180,13 @@ void ManageLanguagesDialog::fetchCatalog()
             //: %1 is the network error message.
             availableStatus_->setText(tr("Check your connection, then reopen this dialog. %1")
                                           .arg(detail));
+            setMinimumHeight(qMax(minimumHeight(), layout()->totalHeightForWidth(minimumWidth())));
             return;
         }
         const QJsonDocument doc = QJsonDocument::fromJson(payload);
         if (!doc.isArray()) {
             availableStatus_->setText(tr("The language catalog returned an invalid response."));
+            setMinimumHeight(qMax(minimumHeight(), layout()->totalHeightForWidth(minimumWidth())));
             return;
         }
         for (const QJsonValue &value : doc.array()) {

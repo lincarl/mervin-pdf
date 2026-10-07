@@ -4,6 +4,7 @@
 #include "dialogs/RowList.h"
 #include "security/PageOps.h"
 #include "ui/Icons.h"
+#include "ui/TextLayout.h"
 #include "ui/Theme.h"
 
 #include <QAction>
@@ -178,8 +179,8 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
     // ── Summary and the reserved error line ──────────────────────────────────
     summary_ = new QLabel(this);
     summary_->setObjectName(QStringLiteral("extractSummary"));
-    // Ignored: a long line clips instead of widening the dialog. At the minimum
-    // width even the longest summary fits.
+    // Summaries can include an unsaved-changes warning in a long translation.
+    summary_->setWordWrap(true);
     summary_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     layout->addWidget(summary_);
     layout->addSpacing(2);
@@ -272,7 +273,9 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
     rebuild(0, Focus::SelectAll);
 
     resize(kWidth, kHeight);
-    setMinimumSize(kMinWidth, qMax(kMinHeight, minimumSizeHint().height()));
+    ensurePolished();
+    setMinimumSize(QSize(kMinWidth, kMinHeight).expandedTo(minimumSizeHint()));
+    setMinimumHeight(qMax(minimumHeight(), layout->totalHeightForWidth(minimumWidth())));
 }
 
 bool ExtractDialog::openWhenDone() const
@@ -297,6 +300,7 @@ void ExtractDialog::rebuild(int selectRow, Focus focus)
             auto *spec = new QLineEdit(plan_.spec(i), rowWidget);
             spec->setObjectName(QStringLiteral("extractRowSpec"));
             spec->setPlaceholderText(tr("e.g. 5-7"));
+            fitPlaceholder(*spec);
             spec->setToolTip(tr("One page or range, like 5 or 5-7."));
             // Rebuilt wholesale on every change of rows, so this build-time index
             // is valid while the field's generation is current.

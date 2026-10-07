@@ -511,7 +511,7 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     </message>
     <message>
         <source>Select &amp; Annotate</source>
-        <extracomment>Section heading in the main menu: selecting text and the comment, OCR, measuring and form tools.</extracomment>
+        <extracomment>Section heading in the main menu: selecting text and the comment, OCR, measuring and form tools. Plain menu section heading. The ampersand means &quot;and&quot;, not a keyboard mnemonic.</extracomment>
         <translation>Markera &amp; anteckna</translation>
     </message>
     <message>
@@ -1436,9 +1436,254 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>engelska</translation>
     </message>
     <message>
+        <source>Arabic</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>arabiska</translation>
+    </message>
+    <message>
+        <source>Azerbaijani</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>azerbajdzjanska</translation>
+    </message>
+    <message>
+        <source>Belarusian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>belarusiska</translation>
+    </message>
+    <message>
+        <source>Bulgarian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>bulgariska</translation>
+    </message>
+    <message>
+        <source>Bosnian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>bosniska</translation>
+    </message>
+    <message>
+        <source>Catalan</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>katalanska</translation>
+    </message>
+    <message>
+        <source>Montenegrin</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>montenegrinska</translation>
+    </message>
+    <message>
+        <source>Czech</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>tjeckiska</translation>
+    </message>
+    <message>
+        <source>Danish</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>danska</translation>
+    </message>
+    <message>
+        <source>German</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>tyska</translation>
+    </message>
+    <message>
+        <source>Greek</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>grekiska</translation>
+    </message>
+    <message>
+        <source>Spanish</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>spanska</translation>
+    </message>
+    <message>
+        <source>Estonian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>estniska</translation>
+    </message>
+    <message>
+        <source>Finnish</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>finska</translation>
+    </message>
+    <message>
+        <source>French</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>franska</translation>
+    </message>
+    <message>
+        <source>Irish</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>iriska</translation>
+    </message>
+    <message>
+        <source>Hindi</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>hindi</translation>
+    </message>
+    <message>
+        <source>Croatian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>kroatiska</translation>
+    </message>
+    <message>
+        <source>Hungarian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>ungerska</translation>
+    </message>
+    <message>
+        <source>Armenian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>armeniska</translation>
+    </message>
+    <message>
+        <source>Indonesian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>indonesiska</translation>
+    </message>
+    <message>
+        <source>Icelandic</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>isländska</translation>
+    </message>
+    <message>
+        <source>Italian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>italienska</translation>
+    </message>
+    <message>
+        <source>Japanese</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>japanska</translation>
+    </message>
+    <message>
+        <source>Georgian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>georgiska</translation>
+    </message>
+    <message>
+        <source>Kazakh</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>kazakiska</translation>
+    </message>
+    <message>
+        <source>Korean</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>koreanska</translation>
+    </message>
+    <message>
+        <source>Luxembourgish</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>luxemburgiska</translation>
+    </message>
+    <message>
+        <source>Lithuanian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>litauiska</translation>
+    </message>
+    <message>
+        <source>Latvian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>lettiska</translation>
+    </message>
+    <message>
+        <source>Macedonian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>makedonska</translation>
+    </message>
+    <message>
+        <source>Maltese</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>maltesiska</translation>
+    </message>
+    <message>
+        <source>Norwegian Bokmål</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>norska (bokmål)</translation>
+    </message>
+    <message>
+        <source>Dutch</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>nederländska</translation>
+    </message>
+    <message>
+        <source>Norwegian Nynorsk</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>norska (nynorska)</translation>
+    </message>
+    <message>
+        <source>Polish</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>polska</translation>
+    </message>
+    <message>
+        <source>Portuguese, Brazil</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>portugisiska (Brasilien)</translation>
+    </message>
+    <message>
+        <source>Portuguese, Portugal</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>portugisiska (Portugal)</translation>
+    </message>
+    <message>
+        <source>Romansh</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>rätoromanska</translation>
+    </message>
+    <message>
+        <source>Romanian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>rumänska</translation>
+    </message>
+    <message>
+        <source>Russian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>ryska</translation>
+    </message>
+    <message>
+        <source>Slovak</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>slovakiska</translation>
+    </message>
+    <message>
+        <source>Slovenian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>slovenska</translation>
+    </message>
+    <message>
+        <source>Albanian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>albanska</translation>
+    </message>
+    <message>
+        <source>Serbian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>serbiska</translation>
+    </message>
+    <message>
         <source>Swedish</source>
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>svenska</translation>
+    </message>
+    <message>
+        <source>Thai</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>thailändska</translation>
+    </message>
+    <message>
+        <source>Turkish</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>turkiska</translation>
+    </message>
+    <message>
+        <source>Ukrainian</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>ukrainska</translation>
+    </message>
+    <message>
+        <source>Vietnamese</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>vietnamesiska</translation>
     </message>
     <message>
         <source>Chinese, Simplified</source>
@@ -1906,14 +2151,17 @@ Den exporterade filen kan visas i alla PDF-läsare.</translation>
     </message>
     <message>
         <source>Previous match (Shift+Enter)</source>
+        <extracomment>Go to the previous occurrence of the search text. Match means a search result.</extracomment>
         <translation>Föregående träff (Shift+Enter)</translation>
     </message>
     <message>
         <source>Next match (Enter)</source>
+        <extracomment>Go to the next occurrence of the search text. Match means a search result.</extracomment>
         <translation>Nästa träff (Enter)</translation>
     </message>
     <message>
         <source>Match case</source>
+        <extracomment>Search option. Distinguish uppercase and lowercase letters.</extracomment>
         <translation>Matcha gemener/versaler</translation>
     </message>
     <message>

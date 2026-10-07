@@ -31,10 +31,13 @@ private slots:
     void listsTheShippedLanguages()
     {
         LanguageCombo combo;
-        QCOMPARE(combo.count(), 3);
+        QCOMPARE(combo.count(), i18n::availableLanguages().size());
         QCOMPARE(combo.itemText(0), QStringLiteral("English"));
-        QCOMPARE(combo.itemText(1), QStringLiteral("Svenska (Swedish)"));
-        QCOMPARE(combo.itemText(2), QStringLiteral("简体中文 (Chinese, Simplified)"));
+        for (const QString &code : i18n::availableLanguages()) {
+            combo.setLanguage(code);
+            QCOMPARE(combo.language(), code);
+            QCOMPARE(combo.currentText(), i18n::displayName(code));
+        }
         combo.setLanguage(QStringLiteral("zh-CN"));
         QCOMPARE(combo.language(), QStringLiteral("zh_CN"));
         combo.setLanguage(QStringLiteral("xx"));
@@ -45,11 +48,15 @@ private slots:
     {
         QTest::addColumn<QString>("typed");
         QTest::addColumn<QString>("expected"); // empty: nothing matches
-        QTest::newRow("English name") << "chi" << "zh_CN";
+        QTest::newRow("English name") << "chinese" << "zh_CN";
         QTest::newRow("native name") << "svenska" << "sv";
         QTest::newRow("case") << "SVENSKA" << "sv";
         QTest::newRow("Chinese characters") << "简体" << "zh_CN";
         QTest::newRow("code") << "zh_cn" << "zh_CN";
+        QTest::newRow("Japanese native name") << "日本語" << "ja";
+        QTest::newRow("accent folding") << "francais" << "fr";
+        QTest::newRow("Portuguese region") << "portugal" << "pt_PT";
+        QTest::newRow("Arabic native name") << "العربية" << "ar";
         QTest::newRow("no match") << "klingon" << "";
     }
 
@@ -105,7 +112,7 @@ private slots:
         QVERIFY(combo.searchField()->text().isEmpty()); // a fresh search each time
         QTest::keyClick(combo.searchField(), Qt::Key_Down);
         QTest::keyClick(combo.searchField(), Qt::Key_Return);
-        QCOMPARE(combo.language(), QStringLiteral("sv"));
+        QCOMPARE(combo.language(), i18n::availableLanguages().at(1));
         QCOMPARE(picked.size(), 1);
     }
 
@@ -182,10 +189,10 @@ private slots:
         LanguageCombo *combo = dialog.languageCombo();
         combo->setFocus();
         QTest::keyClick(combo, Qt::Key_Down);
-        QCOMPARE(i18n::current(), QStringLiteral("sv"));
+        QCOMPARE(i18n::current(), i18n::availableLanguages().at(1));
         QCOMPARE(QApplication::focusWidget(), combo);
         QTest::keyClick(combo, Qt::Key_Down);
-        QCOMPARE(i18n::current(), QStringLiteral("zh_CN"));
+        QCOMPARE(i18n::current(), i18n::availableLanguages().at(2));
         QCOMPARE(QApplication::focusWidget(), combo);
     }
 

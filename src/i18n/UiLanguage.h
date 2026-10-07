@@ -5,11 +5,10 @@
 
 // The UI text language: which translation catalogs ship, which one suits the
 // user's OS, and installing one. A language is identified by its catalog ID,
-// the suffix of its .qm file ("en", "sv", "zh_CN"); Qt's own catalogs use the
-// same IDs, which is what lets the build merge them into ours. The catalogs
-// are compiled into the binary under :/i18n (see qt_add_translations in
-// CMakeLists.txt). English is the source language: its catalog only holds
-// plural forms.
+// the suffix of its .qm file ("en", "sv", "zh_CN"). Application and standard
+// Qt widget catalogs are compiled into the binary under :/i18n. Languages
+// without a Qt catalog use our supplemental widget translations. English is
+// the source language and its catalog only holds plural forms.
 namespace mervin::i18n {
 
 inline constexpr char kEnglish[] = "en";
