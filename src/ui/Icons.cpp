@@ -71,6 +71,7 @@ double strokeFor(double stroke, int sizePx)
 constexpr int kSizes[] = {16, 20, 24, 32, 48};
 
 // The Lucide file each glyph is drawn from, under resources/icons/lucide.
+// Fit glyphs add a square around this arrow when rasterized.
 const char *lucideName(Glyph id)
 {
     switch (id) {
@@ -82,7 +83,8 @@ const char *lucideName(Glyph id)
     case Glyph::Search: return "search";
     case Glyph::ZoomOut: return "minus";
     case Glyph::ZoomIn: return "plus";
-    case Glyph::FitMode: return "fullscreen";
+    case Glyph::FitPage: return "move-vertical";
+    case Glyph::FitWidth: return "move-horizontal";
     case Glyph::RotateLeft: return "rotate-ccw";
     case Glyph::RotateRight: return "rotate-cw";
     case Glyph::Print: return "printer";
@@ -93,8 +95,6 @@ const char *lucideName(Glyph id)
     case Glyph::Measure: return "ruler-dimension-line";
     case Glyph::Document: return "file";
     case Glyph::Menu: return "menu";
-    case Glyph::FitPage: return "shrink";
-    case Glyph::FitWidth: return "move-horizontal";
     case Glyph::FullScreen: return "maximize";
     case Glyph::ContinuousScroll: return "gallery-vertical";
     case Glyph::SinglePage: return "rectangle-vertical";
@@ -164,14 +164,27 @@ QByteArray tinted(const char *name, const QColor &color, double strokeWidth,
     return svg;
 }
 
-QPixmap rasterize(QSvgRenderer &renderer, const QColor &color, int sz)
+QPixmap rasterize(Glyph id, const QColor &color, int sz, double strokeWidth,
+                  const QColor &fill = QColor())
 {
     QPixmap pm(sz, sz);
     pm.fill(Qt::transparent);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing, true);
     p.setOpacity(color.alphaF());
-    renderer.render(&p, QRectF(0, 0, sz, sz));
+    QRectF bounds(0, 0, sz, sz);
+    if (id == Glyph::FitPage || id == Glyph::FitWidth) {
+        QSvgRenderer square(tinted("square", color, strokeWidth, fill));
+        square.render(&p, bounds);
+        // Inset the arrow geometry while keeping its stroke as heavy as the
+        // square. Render both SVGs natively at each requested device size.
+        constexpr double arrowScale = 0.65;
+        const double inset = sz * (1.0 - arrowScale) / 2.0;
+        bounds.adjust(inset, inset, -inset, -inset);
+        strokeWidth /= arrowScale;
+    }
+    QSvgRenderer renderer(tinted(lucideName(id), color, strokeWidth, fill));
+    renderer.render(&p, bounds);
     return pm;
 }
 
@@ -180,10 +193,8 @@ QPixmap rasterize(QSvgRenderer &renderer, const QColor &color, int sz)
 QIcon glyph(Glyph id, const QColor &color)
 {
     QIcon icon;
-    for (int sz : kSizes) {
-        QSvgRenderer renderer(tinted(lucideName(id), color, strokeFor(kStroke, sz)));
-        icon.addPixmap(rasterize(renderer, color, sz));
-    }
+    for (int sz : kSizes)
+        icon.addPixmap(rasterize(id, color, sz, strokeFor(kStroke, sz)));
     return icon;
 }
 
@@ -227,14 +238,12 @@ QPixmap glyphPixmap(Glyph id, const QColor &color, int sizePx, double strokeWidt
                           : qGuiApp       ? qGuiApp->devicePixelRatio()
                                           : 1.0;
         const int device = qMax(1, qRound(sz * dpr));
-        QSvgRenderer renderer(tinted(lucideName(id), color, strokeFor(kStroke, device)));
-        QPixmap pm = rasterize(renderer, color, device);
+        QPixmap pm = rasterize(id, color, device, strokeFor(kStroke, device));
         pm.setDevicePixelRatio(dpr);
         return pm;
     }
-    QSvgRenderer renderer(tinted(lucideName(id), color,
-                                 strokeWidth > 0 ? strokeWidth : strokeFor(kStroke, sz), fill));
-    return rasterize(renderer, color, sz);
+    return rasterize(id, color, sz,
+                     strokeWidth > 0 ? strokeWidth : strokeFor(kStroke, sz), fill);
 }
 
 namespace {
@@ -298,8 +307,8 @@ void setButtonGlyph(QAbstractButton *button, Glyph glyph, int iconPx)
 QPixmap spinChevron(bool down, const QColor &color, int sizePx)
 {
     const int sz = qMax(1, sizePx);
-    QSvgRenderer renderer(tinted(down ? "chevron-down" : "chevron-up", color, strokeFor(kStroke, sz)));
-    return rasterize(renderer, color, sz);
+    return rasterize(down ? Glyph::ChevronDown : Glyph::ChevronUp, color, sz,
+                     strokeFor(kStroke, sz));
 }
 
 } // namespace mervin::icons

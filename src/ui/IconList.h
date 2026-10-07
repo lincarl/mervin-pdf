@@ -15,7 +15,7 @@ struct GlyphEntry {
     const char *name;
 };
 
-inline constexpr std::array<GlyphEntry, 52> kGlyphs{{
+inline constexpr std::array<GlyphEntry, 51> kGlyphs{{
     // Toolbar
     {Glyph::Open, "Open"},
     {Glyph::PrevPage, "PrevPage"},
@@ -25,7 +25,8 @@ inline constexpr std::array<GlyphEntry, 52> kGlyphs{{
     {Glyph::Search, "Search"},
     {Glyph::ZoomOut, "ZoomOut"},
     {Glyph::ZoomIn, "ZoomIn"},
-    {Glyph::FitMode, "FitMode"},
+    {Glyph::FitPage, "FitPage"},
+    {Glyph::FitWidth, "FitWidth"},
     {Glyph::RotateLeft, "RotateLeft"},
     {Glyph::RotateRight, "RotateRight"},
     {Glyph::Print, "Print"},
@@ -37,8 +38,6 @@ inline constexpr std::array<GlyphEntry, 52> kGlyphs{{
     {Glyph::Document, "Document"},
     {Glyph::Menu, "Menu"},
     // Hamburger menu
-    {Glyph::FitPage, "FitPage"},
-    {Glyph::FitWidth, "FitWidth"},
     {Glyph::FullScreen, "FullScreen"},
     {Glyph::ContinuousScroll, "ContinuousScroll"},
     {Glyph::SinglePage, "SinglePage"},
@@ -75,6 +74,6 @@ inline constexpr std::array<GlyphEntry, 52> kGlyphs{{
     {Glyph::Star, "Star"},
 }};
 
-inline constexpr const std::array<GlyphEntry, 52> &allGlyphs() { return kGlyphs; }
+inline constexpr const std::array<GlyphEntry, 51> &allGlyphs() { return kGlyphs; }
 
 } // namespace mervin::icons

@@ -413,7 +413,7 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     </message>
     <message>
         <source>Fit Page / Fit Width</source>
-        <extracomment>Toolbar button that switches between fitting the whole page and the page width to the window.</extracomment>
+        <extracomment>Keyboard command that switches between fitting the whole page and the page width to the window.</extracomment>
         <translation>Mahuta lehekülg / laius</translation>
     </message>
     <message>

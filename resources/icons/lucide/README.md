@@ -7,8 +7,13 @@ Licence: ISC, with the icons Lucide derives from Feather under MIT; the full tex
 ships as `licenses/lucide-LICENSE.txt`.
 
 At run time `src/ui/Icons.cpp` replaces Lucide's `stroke="currentColor"` with the
-theme's ink and its `stroke-width="2"` with the app's lighter 1.75 (heavier for a
-few small stylesheet indicators), so these files never need editing.
+theme's ink and its `stroke-width="2"` with the app's lighter 1.5, with a minimum
+of 1.07 device pixels to preserve round caps at small sizes. Some stylesheet
+indicators request a heavier stroke. These files stay unchanged.
+
+Fit page and fit width combine `square` with `move-vertical` and `move-horizontal`,
+respectively. Each arrow is centered at 65% of its original size, with its stroke
+compensated to match the square.
 
 ## Adding or changing an icon
 
