@@ -121,6 +121,9 @@ foreach ($name in @('PATH', 'QT_QPA_PLATFORM', 'QT_PLUGIN_PATH', 'QT_QPA_PLATFOR
 
 # Save the actual window and its native control text for visual and failure review.
 function Save-WindowEvidence($Window, [string]$Name) {
+    [MervinInstallerUi]::Children($Window.Handle) |
+        Select-Object Text, ClassName, Enabled |
+        ConvertTo-Json -Depth 3 | Set-Content (Join-Path $OutputDir "$Name.controls.json")
     [MervinInstallerUi]::SetForegroundWindow($Window.Handle) | Out-Null
     $rect = New-Object MervinInstallerUi+Rect
     if (-not [MervinInstallerUi]::GetWindowRect($Window.Handle, [ref]$rect)) {
@@ -141,9 +144,6 @@ function Save-WindowEvidence($Window, [string]$Name) {
         $graphics.Dispose()
         $bitmap.Dispose()
     }
-    [MervinInstallerUi]::Children($Window.Handle) |
-        Select-Object Text, ClassName, Enabled |
-        ConvertTo-Json -Depth 3 | Set-Content (Join-Path $OutputDir "$Name.controls.json")
     Write-Host "Captured $Name."
 }
 
@@ -155,15 +155,34 @@ function Get-InstallerState {
     }
 }
 
-function Wait-InstallerPage([string]$Name, [string]$TextPattern, [int]$Seconds = 45) {
+function Get-EnabledButtons($State, [string]$TextPattern) {
+    $State.Controls | Where-Object {
+        $_.ClassName -eq 'Button' -and $_.Enabled -and ($_.Text -replace '&', '') -match $TextPattern
+    }
+}
+
+function Wait-InstallerPage([string]$Name, [string]$TextPattern, [string]$ButtonPattern, [int]$Seconds = 45) {
     $watch = [Diagnostics.Stopwatch]::StartNew()
+    $readyHandle = [IntPtr]::Zero
     while ($watch.Elapsed.TotalSeconds -lt $Seconds) {
+        $candidate = $null
         foreach ($state in @(Get-InstallerState)) {
             $script:currentDialog = $state.Window
-            if ($state.Text -match $TextPattern) { return $state }
+            if ($state.Text -match $TextPattern -and @(Get-EnabledButtons $state $ButtonPattern).Count -eq 1) {
+                $candidate = $state
+                break
+            }
             if ($state.Text -match 'ended prematurely|installation failed|Could not|Error [0-9]') {
                 throw "The installer reported an error while waiting for $Name. $($state.Text)"
             }
+        }
+        # PrepareDlg shares WelcomeDlg's title but its Next button is disabled.
+        # Require a ready button and a stable window before taking its screenshot.
+        if ($candidate) {
+            if ($candidate.Window.Handle -eq $readyHandle) { return $candidate }
+            $readyHandle = $candidate.Window.Handle
+        } else {
+            $readyHandle = [IntPtr]::Zero
         }
         if ($setup.HasExited) { throw "The installer exited with $($setup.ExitCode) while waiting for $Name." }
         Start-Sleep -Milliseconds 150
@@ -172,9 +191,7 @@ function Wait-InstallerPage([string]$Name, [string]$TextPattern, [int]$Seconds =
 }
 
 function Click-Control($State, [string]$TextPattern) {
-    $buttons = @($State.Controls | Where-Object {
-        $_.ClassName -eq 'Button' -and $_.Enabled -and ($_.Text -replace '&', '') -match $TextPattern
-    })
+    $buttons = @(Get-EnabledButtons $State $TextPattern)
     if ($buttons.Count -ne 1) { throw "Expected one enabled button matching $TextPattern, found $($buttons.Count)." }
     if (-not [MervinInstallerUi]::PostMessage($buttons[0].Handle, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)) {
         throw "Could not click $TextPattern."
@@ -203,18 +220,18 @@ close_to_tray = false
     $installAttempted = $true
     Write-Host "Installer process $($setup.Id), session $($setup.SessionId)."
 
-    $state = Wait-InstallerPage 'Welcome' 'Welcome to'
+    $state = Wait-InstallerPage 'Welcome' 'Welcome to' '^Next\s*>?$'
     Save-WindowEvidence $state.Window '01-welcome'
     Click-Control $state '^Next\s*>?$'
 
-    $state = Wait-InstallerPage 'Destination folder' 'Destination Folder'
+    $state = Wait-InstallerPage 'Destination folder' 'Destination Folder' '^Next\s*>?$'
     $edits = @($state.Controls | Where-Object { $_.ClassName -eq 'Edit' -and $_.Enabled })
     if ($edits.Count -ne 1) { throw "Expected one destination field, found $($edits.Count)." }
     [MervinInstallerUi]::SetText($edits[0].Handle, "$installDir\")
     Save-WindowEvidence $state.Window '02-destination'
     Click-Control $state '^Next\s*>?$'
 
-    $state = Wait-InstallerPage 'Ready to install' 'Ready to install'
+    $state = Wait-InstallerPage 'Ready to install' 'Ready to install' '^Install$'
     Save-WindowEvidence $state.Window '03-ready'
     Click-Control $state '^Install$'
 
@@ -223,7 +240,10 @@ close_to_tray = false
     while ($watch.Elapsed.TotalSeconds -lt 180 -and -not $finish) {
         foreach ($state in @(Get-InstallerState)) {
             $currentDialog = $state.Window
-            if ($state.Text -match 'Launch Mervin PDF') { $finish = $state; break }
+            if ($state.Text -match 'Launch Mervin PDF' -and @(Get-EnabledButtons $state '^Finish$').Count -eq 1) {
+                $finish = $state
+                break
+            }
             if (-not $progressSeen -and $state.Text -match 'Installing Mervin|Please wait while') {
                 Save-WindowEvidence $state.Window '04-progress'
                 $progressSeen = $true
@@ -281,6 +301,10 @@ close_to_tray = false
     } | ConvertTo-Json | Set-Content (Join-Path $OutputDir 'result.json')
     Write-Host 'Native wizard navigation, destination selection, checked launch option and application launch passed.'
 } catch {
+    if ($setup -and -not $setup.HasExited) {
+        $visibleState = Get-InstallerState | Select-Object -First 1
+        if ($visibleState) { $currentDialog = $visibleState.Window }
+    }
     if ($currentDialog) {
         try { Save-WindowEvidence $currentDialog 'failure' }
         catch { Write-Warning "Could not capture the failed dialog. $_" }
