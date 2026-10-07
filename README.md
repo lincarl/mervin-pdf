@@ -1,10 +1,8 @@
 # Mervin PDF
 
-**A fast, private PDF reader built for people who work with documents, not just look at them.**
+**A fast, private PDF reader built for people who often opens PDF docuemnts**
 
 Mervin PDF combines a focused native reader with practical tools for technical drawings and everyday document work. Measure scaled plans, OCR part of a scanned page, fill forms, annotate, reorganize pages, and manage PDF security without sending the document to an online service.
-
-> Mervin PDF is under active development. Please report bugs and feature requests through [GitHub Issues](https://github.com/lincarl/mervin-pdf/issues).
 
 ## What makes Mervin different?
 
@@ -23,23 +21,28 @@ The measuring workflow is the main distinction. Mervin understands rectilinear P
 
 ## Features
 
+- Privacy by default. No telemetry or accounts. All data stays local.
 - Fast native rendering with MuPDF
+- Comfort document view (dark mode for PDF) - Under development
+- Zoom from 8% to 1000%
+- Open PDF from URL
+- Close to taskbar. with document unload to save memory
+- Recent list with search for files and content
 - Continuous, single-page, and two-page spread layouts
 - Zoom from 8% to 1000%, Fit Page, Fit Width, rotation, pan, and zoom-to-cursor
 - Text selection, document search, thumbnails, and outlines
 - Distance, path, area, perimeter, and angle measurement
 - Automatic scale detection, manual calibration, and CAD geometry snapping
 - Editable saved measurements, flattened measurement export, and measurement-aware printing
-- Local 300-DPI selection OCR with support for additional Tesseract languages
+- OCR with support for additional Tesseract languages
 - AcroForm filling for text fields, check boxes, radio buttons, combo boxes, and list boxes
 - Highlights, underlines, strikeouts, sticky notes, and a comments panel
 - Rotate, delete, extract, split, and merge pages
 - Inspect, add, change, or remove PDF encryption and permissions using qpdf
 - Multiple windows, detachable tabs, recent files, session recovery, and per-document resume
 - Inactive document unloading, lazy session restore, and Close to tray
-- Dark, light, and system UI themes plus independent document color themes
-- English, Swedish, and Simplified Chinese user interface, chosen on first start
-  and changeable in Settings
+- Dark, light UI themes
+- Multiple languge user interface
 
 The print dialog shows a live preview of the selected pages, including current form,
 annotation, and measurement edits. The preview always fits the output sheet. Paper
@@ -47,23 +50,6 @@ size, orientation, scale, alignment, and colour settings apply to both the previ
 and the printout. Alignment defaults to centering on both axes, with vertical-only,
 horizontal-only, and top-left placement available within the printable area.
 Grayscale keeps shades of gray; Black and white converts them to pure black or white.
-
-## Privacy by default
-
-Documents, OCR, search, settings, recent-file history, and session data stay on the local machine. Mervin has no telemetry, account requirement, or login service. It does not upload documents.
-
-By default, Mervin unloads documents after 30 minutes of inactivity. Closing a window
-hides it in the system tray and unloads its documents. Tabs and unsaved edits remain
-available when you return. Edited documents use local recovery snapshots that keep
-the PDF's encryption; passwords stay in memory. Settings > General > Memory and tray
-offers a custom interval or Never, which disables unloading even in the tray.
-Close to tray can also be switched off. Use **Quit Mervin** in the tray menu to exit.
-If the system tray is unavailable, closing a window closes it normally.
-
-Opening a web URL is an explicit user action and downloads that PDF for local viewing.
-Paste an HTTP or HTTPS link into the Open dialog's file name field, including links
-without a `.pdf` extension. Downloads use browser-compatible request headers for
-document servers such as Littelfuse, Analog Devices, and onsemi.
 
 ## Platforms
 
@@ -73,10 +59,6 @@ Mervin PDF provides release packages for:
 - Linux x86-64: AppImage, DEB, and RPM (Ubuntu 26.04 or a compatible distribution is the current baseline)
 
 Download packaged versions from [GitHub Releases](https://github.com/lincarl/mervin-pdf/releases).
-Successful pushes to `main` also publish release candidates such as `1.64.10-rc1`
-for manual testing. Further candidates keep the same target version until its
-stable release. The in-app updater offers only stable releases.
-See the [release policy](docs/RELEASING.md) for versioning and publication rules.
 
 ## Build from source
 
