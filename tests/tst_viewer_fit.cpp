@@ -67,6 +67,8 @@ private slots:
     void fitNeverRaisesHorizontalScrollbar();
     void fitWidthFillsTheWindow();
     void fitPageFitsTheWholeRow();
+    void fitPageCentersTheCurrentRow_data();
+    void fitPageCentersTheCurrentRow();
     void refitIsIdempotent();
     void singleModeStaysPageLocal();
     void spreadTogglesOffAndKeepsTheScrollMode();
@@ -212,6 +214,7 @@ ViewLayout TstViewerFit::mirror(mervin::Document *d, ViewLayout::Mode mode) cons
     ViewLayout l;
     l.setDocument(d);
     l.setMode(mode);
+    l.setCurrentPage(viewer_->currentPage());
     l.setRotation(viewer_->rotation());
     l.setScale(viewer_->scale());
     return l;
@@ -301,6 +304,105 @@ void TstViewerFit::fitPageFitsTheWholeRow()
         QVERIFY2(rowH <= viewer_->viewport()->height() - 32,
                  qPrintable(QStringLiteral("page %1: its row is %2 px in a %3 px viewport")
                                 .arg(p + 1).arg(rowH).arg(viewer_->viewport()->height())));
+    }
+}
+
+void TstViewerFit::fitPageCentersTheCurrentRow_data()
+{
+    QTest::addColumn<ViewLayout::Mode>("mode");
+    QTest::addColumn<bool>("unequal");
+    QTest::addColumn<int>("rotation");
+    QTest::addColumn<int>("page");
+    QTest::addColumn<bool>("reselect");
+
+    QTest::newRow("landscape") << kContinuous << false << 0 << 2 << false;
+    QTest::newRow("rotated") << kContinuous << false << 90 << 2 << false;
+    QTest::newRow("spread-short-page") << kSpread << true << 0 << 2 << false;
+    QTest::newRow("spread-tall-page") << kSpread << true << 0 << 3 << false;
+    QTest::newRow("single-page") << kSingle << false << 0 << 2 << false;
+    QTest::newRow("single-spread-rotated") << kSingleSpread << true << 90 << 3 << false;
+    QTest::newRow("reselect-after-scrolling") << kContinuous << false << 0 << 2 << true;
+}
+
+// Fit Page must position the whole row inside the viewport. Preserving the old
+// reading point can leave the bottom clipped even when the fitted size is right.
+void TstViewerFit::fitPageCentersTheCurrentRow()
+{
+    QFETCH(ViewLayout::Mode, mode);
+    QFETCH(bool, unequal);
+    QFETCH(int, rotation);
+    QFETCH(int, page);
+    QFETCH(bool, reselect);
+
+    mervin::Document *doc = unequal ? unequal_.get() : schematic_.get();
+    use(doc, 1000, 400);
+    viewer_->setLayoutMode(mode);
+    viewer_->setRotation(rotation);
+    viewer_->setScale(3.0);
+    QCoreApplication::processEvents();
+    viewer_->goToPage(page);
+    QCoreApplication::processEvents();
+    QVERIFY2(viewer_->horizontalScrollBar()->maximum() > 0,
+             "the starting zoom must require a horizontal scrollbar");
+
+    if (reselect) {
+        viewer_->setZoomMode(ViewerWidget::ZoomMode::FitPage);
+        QCoreApplication::processEvents();
+    }
+
+    const auto rowRect = [page](const ViewLayout &layout) {
+        QRect row;
+        for (int p = layout.rowStart(page); p < layout.rowEnd(page); ++p)
+            row = row.united(layout.pageRect(p));
+        return row;
+    };
+    const QRect before = rowRect(mirror(doc, mode));
+    // Put the viewport center one third down the row, away from the page center.
+    viewer_->verticalScrollBar()->setValue(qRound(before.top() + before.height() / 3.0
+                                                  - viewer_->viewport()->height() / 2.0));
+    QCOMPARE(viewer_->currentPage(), page);
+    QVERIFY2(qAbs(QRectF(before).center().y() - viewer_->verticalScrollBar()->value()
+                  - viewer_->viewport()->height() / 2.0) > 16.0,
+             "the starting row must be off center");
+    const double previousScale = viewer_->scale();
+
+    viewer_->setZoomMode(ViewerWidget::ZoomMode::FitPage);
+    QCoreApplication::processEvents();
+
+    QCOMPARE(viewer_->currentPage(), page);
+    QCOMPARE(viewer_->horizontalScrollBar()->maximum(), 0);
+    if (reselect)
+        QVERIFY(qFuzzyCompare(viewer_->scale(), previousScale));
+
+    for (bool resized : {false, true}) {
+        if (resized) {
+            viewer_->resize(900, 480);
+            QCoreApplication::processEvents();
+        }
+        QCOMPARE(viewer_->currentPage(), page);
+        const ViewLayout layout = mirror(doc, mode);
+        const QSize viewport = viewer_->viewport()->size();
+        const QPoint centering(std::max(0, (viewport.width() - layout.totalSize().width()) / 2),
+                               std::max(0, (viewport.height() - layout.totalSize().height()) / 2));
+        const QPoint offset(viewer_->horizontalScrollBar()->value(),
+                            viewer_->verticalScrollBar()->value());
+        const QRect row = rowRect(layout);
+        const QRect visibleRow = row.translated(centering - offset);
+        QVERIFY2(QRect(QPoint(), viewport).contains(visibleRow),
+                 qPrintable(QStringLiteral("resized=%1: row (%2,%3 %4x%5) is clipped by viewport %6x%7")
+                                .arg(resized).arg(visibleRow.x()).arg(visibleRow.y())
+                                .arg(visibleRow.width()).arg(visibleRow.height())
+                                .arg(viewport.width()).arg(viewport.height())));
+
+        // Document boundaries can clamp the centered position. Everywhere else the
+        // fitted row should have equal space above and below, within pixel rounding.
+        const double targetScroll = QRectF(row).center().y() - viewport.height() / 2.0
+                                    + centering.y();
+        const QScrollBar *bar = viewer_->verticalScrollBar();
+        if (targetScroll >= bar->minimum() && targetScroll <= bar->maximum()) {
+            QVERIFY2(qAbs(QRectF(visibleRow).center().y() - viewport.height() / 2.0) <= 1.0,
+                     "the fitted row is not vertically centered");
+        }
     }
 }
 

@@ -35,6 +35,7 @@
 #include <QPolygonF>
 #include <QResizeEvent>
 #include <QRubberBand>
+#include <QScopedValueRollback>
 #include <QScrollBar>
 #include <QSet>
 #include <QShowEvent>
@@ -301,6 +302,7 @@ void ViewerWidget::restoreResumeState(const ResumeState &state)
     // Opening a form can create editors automatically. Remove them if this tab's saved tool
     // was something else, even when its form fields still exist.
     syncFormEditors();
+    emit ocrModeChanged(ocrMode());
     emit measureModeChanged(measureToolEnabled_);
     emit measureCursorActiveChanged(measureMode());
     emit commentToolEnabledChanged(commentToolEnabled_);
@@ -381,6 +383,7 @@ void ViewerWidget::setDocument(Document *doc)
         rubberBand_->hide();
     sincePanelPopupClosed_.invalidate();
     viewport()->setCursor(Qt::IBeamCursor);
+    emit ocrModeChanged(false);
     emit measureModeChanged(false);
     emit measurementReadout(QString());
 
@@ -943,6 +946,10 @@ void ViewerWidget::resizeEvent(QResizeEvent *event)
     // The captured rects are viewport-space, so a resize invalidates them - and the
     // re-fit below writes scale_ directly rather than going through rescaleKeeping.
     endZoomEase();
+    const bool centerRow = zoomMode_ == ZoomMode::FitPage && !pendingRestore_;
+    // A scrollbar disappearing can resize the viewport after the fit command.
+    // Keep its selected page through range clamping and center the final layout.
+    const QScopedValueRollback<bool> navigating(navigating_, navigating_ || centerRow);
     // A re-fit can change the scroll range and clamp the value; while a resume is
     // pending, shield that from scrollContentsBy and re-anchor at the new size.
     const bool wasRestoring = restoring_;
@@ -964,6 +971,8 @@ void ViewerWidget::resizeEvent(QResizeEvent *event)
     }
     if (pendingRestore_)
         applyPendingRestore();
+    else if (centerRow)
+        centerCurrentRow();
     restoring_ = wasRestoring;
 
     // Reposition inline editors after every resize, including centering changes at the same scale.
@@ -1248,6 +1257,8 @@ void ViewerWidget::updateCurrentPage()
 void ViewerWidget::setZoomMode(ZoomMode mode)
 {
     zoomMode_ = mode;
+    if (mode == ZoomMode::FitPage)
+        pendingRestore_ = false;
     // applyFitScale() writes the fitted value straight into scale_, but the anchor
     // has to be read at the OLD scale - so take the fitted value and put the old
     // one back for rescaleKeeping to apply.
@@ -1256,10 +1267,8 @@ void ViewerWidget::setZoomMode(ZoomMode mode)
         applyFitScale();
     const double fitted = scale_;
     scale_ = previous;
-    // A fit mode is chosen from the toolbar or the menu, so it holds the middle of
-    // the view. Without that the raw scroll value survives into a layout of a
-    // different height, which after a deep zoom lands the reader on a different
-    // page entirely.
+    // Fit Width keeps the reading point in the middle of the view. Fit Page
+    // centers the current row so the whole page or spread is visible.
     rescaleKeeping(fitted, viewportCenter(), true);
     emit zoomModeChanged(zoomMode_);
     emit scaleChanged(scale_);
@@ -1301,6 +1310,10 @@ void ViewerWidget::zoomAtViewportPos(double newScale, QPointF viewportPos)
 
 void ViewerWidget::rescaleKeeping(double newScale, QPointF viewportPos, bool keepCenter)
 {
+    const bool centerRow = zoomMode_ == ZoomMode::FitPage;
+    // Fitting can clamp the old scroll position onto another page before we
+    // install the centered position. Keep the selected page through that change.
+    const QScopedValueRollback<bool> navigating(navigating_, navigating_ || centerRow);
     // Snapshot where the pages are DRAWN right now, before anything moves, then
     // arm the ease as the very LAST statement. That ordering is load-bearing: the
     // scrollbar writes below (and relayout's range clamp) both land in
@@ -1322,7 +1335,9 @@ void ViewerWidget::rescaleKeeping(double newScale, QPointF viewportPos, bool kee
     if (keepCenter)
         viewportPos = viewportCenter(); // scrollbar visibility can change the viewport size
 
-    if (pg >= 0) {
+    if (centerRow) {
+        centerCurrentRow();
+    } else if (pg >= 0) {
         // Want: canvasAfter - contentOffset == viewportPos, and
         //       scrollOffset == contentOffset + centerDelta.
         const QPointF canvasAfter = pagePointToCanvas(pg, anchorPage);
@@ -1338,6 +1353,22 @@ void ViewerWidget::rescaleKeeping(double newScale, QPointF viewportPos, bool kee
     updateCurrentPage();
     if (wantEase)
         startZoomEase(std::move(ease));
+}
+
+void ViewerWidget::centerCurrentRow()
+{
+    if (!doc_ || pageCount() == 0)
+        return;
+    QRect row;
+    for (int page = layout_.rowStart(currentPage_); page < layout_.rowEnd(currentPage_); ++page)
+        row = row.united(layout_.pageRect(page));
+    if (!row.isValid())
+        return;
+
+    const QPointF target = QRectF(row).center() - viewportCenter() + QPointF(centerDelta());
+    // The bars clamp at the document boundaries, where outer margins can limit centering.
+    horizontalScrollBar()->setValue(qRound(target.x()));
+    verticalScrollBar()->setValue(qRound(target.y()));
 }
 
 void ViewerWidget::zoomIn()
@@ -2080,11 +2111,13 @@ void ViewerWidget::setOcrMode(bool on)
         selecting_ = false;
         viewport()->setCursor(Qt::CrossCursor);
         viewport()->update();
+        emit ocrModeChanged(true);
     } else if (toolMode_ == ToolMode::Ocr) {
         toolMode_ = ToolMode::None;
         viewport()->setCursor(Qt::IBeamCursor);
         if (rubberBand_)
             rubberBand_->hide();
+        emit ocrModeChanged(false);
     }
 }
 

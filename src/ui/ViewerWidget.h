@@ -95,6 +95,7 @@ public:
     ViewLayout::Mode layoutMode() const { return layoutMode_; }
     PageTheme pageTheme() const { return pageTheme_; }
     int rotation() const { return rotation_; } // 0 / 90 / 180 / 270 degrees
+    bool ocrMode() const { return toolMode_ == ToolMode::Ocr; }
 
     // The resume anchor: the page under the viewport's top-left corner, plus that
     // corner's position within the page as a fraction of its displayed size.
@@ -350,6 +351,7 @@ signals:
     void zoomModeChanged(ViewerWidget::ZoomMode mode);
     void layoutModeChanged(ViewLayout::Mode mode);
     void findStatusChanged(int current, int total); // current 1-based (0 = none)
+    void ocrModeChanged(bool on);
     void ocrRegionSelected(int pageNo, const QRectF &pageRect); // page-point rect
     // Right-click on the viewer. `page` is the page under the pointer (0-based),
     // or -1 in the gaps around pages; from the keyboard it is the current page.
@@ -447,11 +449,12 @@ private:
     // viewportCenter(), so a zoom with no cursor behind it holds the middle of
     // the view still instead of jumping to the top of the page.
     void zoomAtViewportPos(double newScale, QPointF viewportPos);
-    // The shared core of every zoom: re-lay the document out at `newScale` with
-    // the document point under `viewportPos` pinned there. Leaves zoomMode_ alone
-    // and emits nothing - its three callers own both.
+    // Re-lay the document out at `newScale`, centering the current row for Fit Page
+    // or keeping the document point under `viewportPos` pinned there for other modes.
+    // Leaves zoomMode_ alone and emits nothing. Its three callers own both.
     void rescaleKeeping(double newScale, QPointF viewportPos, bool keepCenter = false);
     QPointF viewportCenter() const;
+    void centerCurrentRow();
 
     bool zoomEaseAllowed() const;
     bool captureZoomEase(double newScale, ZoomAnimation::Snapshot *out) const;
