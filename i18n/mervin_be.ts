@@ -1169,8 +1169,9 @@ Button: starts printing.</extracomment>
         <translation>Абнаўленні</translation>
     </message>
     <message>
-        <source>Check for updates at start (every 30 days)</source>
-        <translation>Праверце наяўнасць абнаўленняў у пачатку (кожныя 30 дзён)</translation>
+        <source>Update automatically at start (every 30 days)</source>
+        <extracomment>Settings checkbox. At startup, if 30 days have passed since the last completed check, download and install any new release automatically, then restart the app.</extracomment>
+        <translation>Аўтаматычна абнаўляць пры запуску (кожныя 30 дзён)</translation>
     </message>
     <message>
         <source>This copy can&apos;t update itself. Check for Updates shows where to download a new version.</source>
@@ -4075,34 +4076,6 @@ Mervin PDF %1 - апошняя версія.</translation>
     <message>
         <source>Couldn&apos;t save the update.</source>
         <translation>Не ўдалося захаваць абнаўленне.</translation>
-    </message>
-    <message>
-        <source>Update Ready</source>
-        <translation>Абнаўленне гатова</translation>
-    </message>
-    <message>
-        <source>Mervin PDF %1 is ready to install.</source>
-        <extracomment>%1 is the version number of the downloaded update.</extracomment>
-        <translation>Mervin PDF %1 гатовы да ўсталявання.</translation>
-    </message>
-    <message>
-        <source>You have %1. Click &lt;b&gt;Never&lt;/b&gt; to turn off automatic updates.</source>
-        <extracomment>%1 is the version number of this copy. Never is the button of that name; keep the &lt;b&gt;&lt;/b&gt; tags around it.</extracomment>
-        <translation>У вас ёсць %1. Націсніце &lt;b&gt;ніколі&lt;/b&gt; каб адключыць аўтаматычнае абнаўленне.</translation>
-    </message>
-    <message>
-        <source>Install Now</source>
-        <translation>Усталяваць зараз</translation>
-    </message>
-    <message>
-        <source>Later</source>
-        <extracomment>Button: ask about the update again on the next start.</extracomment>
-        <translation>Пазней</translation>
-    </message>
-    <message>
-        <source>Never</source>
-        <extracomment>Button: discard the update and turn off automatic updates.</extracomment>
-        <translation>ніколі</translation>
     </message>
     <message>
         <source>Couldn&apos;t start the installer. It is saved at:

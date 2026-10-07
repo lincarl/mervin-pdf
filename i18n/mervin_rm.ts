@@ -1167,8 +1167,9 @@ Button: starts printing.</extracomment>
         <translation>Actualisaziuns</translation>
     </message>
     <message>
-        <source>Check for updates at start (every 30 days)</source>
-        <translation>Tschertgar actualisaziuns a l&apos;avertura (mintga 30 dis)</translation>
+        <source>Update automatically at start (every 30 days)</source>
+        <extracomment>Settings checkbox. At startup, if 30 days have passed since the last completed check, download and install any new release automatically, then restart the app.</extracomment>
+        <translation>Actualisar automaticamain a l&apos;avertura (mintga 30 dis)</translation>
     </message>
     <message>
         <source>This copy can&apos;t update itself. Check for Updates shows where to download a new version.</source>
@@ -4057,34 +4058,6 @@ Mervin PDF %1 è la pli nova versiun.</translation>
     <message>
         <source>Couldn&apos;t save the update.</source>
         <translation>Impussibel da memorisar l&apos;actualisaziun.</translation>
-    </message>
-    <message>
-        <source>Update Ready</source>
-        <translation>Actualisaziun pronta</translation>
-    </message>
-    <message>
-        <source>Mervin PDF %1 is ready to install.</source>
-        <extracomment>%1 is the version number of the downloaded update.</extracomment>
-        <translation>Mervin PDF %1 è pront per l&apos;installaziun.</translation>
-    </message>
-    <message>
-        <source>You have %1. Click &lt;b&gt;Never&lt;/b&gt; to turn off automatic updates.</source>
-        <extracomment>%1 is the version number of this copy. Never is the button of that name; keep the &lt;b&gt;&lt;/b&gt; tags around it.</extracomment>
-        <translation>Ti has %1. Clicca sin &lt;b&gt;Mai&lt;/b&gt; per deactivar las actualisaziuns automaticas.</translation>
-    </message>
-    <message>
-        <source>Install Now</source>
-        <translation>Installar ussa</translation>
-    </message>
-    <message>
-        <source>Later</source>
-        <extracomment>Button: ask about the update again on the next start.</extracomment>
-        <translation>Pli tard</translation>
-    </message>
-    <message>
-        <source>Never</source>
-        <extracomment>Button: discard the update and turn off automatic updates.</extracomment>
-        <translation>Mai</translation>
     </message>
     <message>
         <source>Couldn&apos;t start the installer. It is saved at:

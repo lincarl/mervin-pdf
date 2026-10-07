@@ -1171,8 +1171,9 @@ Button: starts printing.</extracomment>
         <translation>Aġġornamenti</translation>
     </message>
     <message>
-        <source>Check for updates at start (every 30 days)</source>
-        <translation>Iċċekkja għal aġġornamenti fil-bidu (kull 30 jum)</translation>
+        <source>Update automatically at start (every 30 days)</source>
+        <extracomment>Settings checkbox. At startup, if 30 days have passed since the last completed check, download and install any new release automatically, then restart the app.</extracomment>
+        <translation>Aġġorna awtomatikament mal-bidu (kull 30 jum)</translation>
     </message>
     <message>
         <source>This copy can&apos;t update itself. Check for Updates shows where to download a new version.</source>
@@ -4093,34 +4094,6 @@ Mervin PDF %1 hija l-aħħar verżjoni.</translation>
     <message>
         <source>Couldn&apos;t save the update.</source>
         <translation>Ma setgħetx issalva l-aġġornament.</translation>
-    </message>
-    <message>
-        <source>Update Ready</source>
-        <translation>Aġġornament Lest</translation>
-    </message>
-    <message>
-        <source>Mervin PDF %1 is ready to install.</source>
-        <extracomment>%1 is the version number of the downloaded update.</extracomment>
-        <translation>Mervin PDF %1 huwa lest biex jiġi installat.</translation>
-    </message>
-    <message>
-        <source>You have %1. Click &lt;b&gt;Never&lt;/b&gt; to turn off automatic updates.</source>
-        <extracomment>%1 is the version number of this copy. Never is the button of that name; keep the &lt;b&gt;&lt;/b&gt; tags around it.</extracomment>
-        <translation>Għandek %1. Ikklikkja &lt;b&gt;Qatt&lt;/b&gt; biex itfi aġġornamenti awtomatiċi.</translation>
-    </message>
-    <message>
-        <source>Install Now</source>
-        <translation>Installa Issa</translation>
-    </message>
-    <message>
-        <source>Later</source>
-        <extracomment>Button: ask about the update again on the next start.</extracomment>
-        <translation>Aktar tard</translation>
-    </message>
-    <message>
-        <source>Never</source>
-        <extracomment>Button: discard the update and turn off automatic updates.</extracomment>
-        <translation>Qatt</translation>
     </message>
     <message>
         <source>Couldn&apos;t start the installer. It is saved at:

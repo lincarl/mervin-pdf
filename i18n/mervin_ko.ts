@@ -1165,8 +1165,9 @@ Button: starts printing.</extracomment>
         <translation>업데이트</translation>
     </message>
     <message>
-        <source>Check for updates at start (every 30 days)</source>
-        <translation>시작 시 업데이트 확인(30일마다)</translation>
+        <source>Update automatically at start (every 30 days)</source>
+        <extracomment>Settings checkbox. At startup, if 30 days have passed since the last completed check, download and install any new release automatically, then restart the app.</extracomment>
+        <translation>시작 시 자동 업데이트(30일마다)</translation>
     </message>
     <message>
         <source>This copy can&apos;t update itself. Check for Updates shows where to download a new version.</source>
@@ -4039,34 +4040,6 @@ Mervin PDF %1이(가) 최신 버전입니다.</translation>
     <message>
         <source>Couldn&apos;t save the update.</source>
         <translation>업데이트를 저장할 수 없습니다.</translation>
-    </message>
-    <message>
-        <source>Update Ready</source>
-        <translation>업데이트 준비 완료</translation>
-    </message>
-    <message>
-        <source>Mervin PDF %1 is ready to install.</source>
-        <extracomment>%1 is the version number of the downloaded update.</extracomment>
-        <translation>Mervin PDF %1을(를) 설치할 준비가 되었습니다.</translation>
-    </message>
-    <message>
-        <source>You have %1. Click &lt;b&gt;Never&lt;/b&gt; to turn off automatic updates.</source>
-        <extracomment>%1 is the version number of this copy. Never is the button of that name; keep the &lt;b&gt;&lt;/b&gt; tags around it.</extracomment>
-        <translation>현재 버전은 %1입니다. &lt;b&gt;사용 안 함&lt;/b&gt;을 클릭하면 자동 업데이트를 끕니다.</translation>
-    </message>
-    <message>
-        <source>Install Now</source>
-        <translation>지금 설치</translation>
-    </message>
-    <message>
-        <source>Later</source>
-        <extracomment>Button: ask about the update again on the next start.</extracomment>
-        <translation>나중에</translation>
-    </message>
-    <message>
-        <source>Never</source>
-        <extracomment>Button: discard the update and turn off automatic updates.</extracomment>
-        <translation>사용 안 함</translation>
     </message>
     <message>
         <source>Couldn&apos;t start the installer. It is saved at:

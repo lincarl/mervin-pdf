@@ -1167,8 +1167,9 @@ Button: starts printing.</extracomment>
         <translation>Oppdateringar</translation>
     </message>
     <message>
-        <source>Check for updates at start (every 30 days)</source>
-        <translation>Sjå etter oppdateringar ved oppstart (kvar 30. dag)</translation>
+        <source>Update automatically at start (every 30 days)</source>
+        <extracomment>Settings checkbox. At startup, if 30 days have passed since the last completed check, download and install any new release automatically, then restart the app.</extracomment>
+        <translation>Oppdater automatisk ved oppstart (kvar 30. dag)</translation>
     </message>
     <message>
         <source>This copy can&apos;t update itself. Check for Updates shows where to download a new version.</source>
@@ -4057,34 +4058,6 @@ Mervin PDF %1 er den nyaste versjonen.</translation>
     <message>
         <source>Couldn&apos;t save the update.</source>
         <translation>Klarte ikkje å lagre oppdateringa.</translation>
-    </message>
-    <message>
-        <source>Update Ready</source>
-        <translation>Oppdateringa er klar</translation>
-    </message>
-    <message>
-        <source>Mervin PDF %1 is ready to install.</source>
-        <extracomment>%1 is the version number of the downloaded update.</extracomment>
-        <translation>Mervin PDF %1 er klar til installasjon.</translation>
-    </message>
-    <message>
-        <source>You have %1. Click &lt;b&gt;Never&lt;/b&gt; to turn off automatic updates.</source>
-        <extracomment>%1 is the version number of this copy. Never is the button of that name; keep the &lt;b&gt;&lt;/b&gt; tags around it.</extracomment>
-        <translation>Du har %1. Klikk på &lt;b&gt;Aldri&lt;/b&gt; for å slå av automatiske oppdateringar.</translation>
-    </message>
-    <message>
-        <source>Install Now</source>
-        <translation>Installer no</translation>
-    </message>
-    <message>
-        <source>Later</source>
-        <extracomment>Button: ask about the update again on the next start.</extracomment>
-        <translation>Seinare</translation>
-    </message>
-    <message>
-        <source>Never</source>
-        <extracomment>Button: discard the update and turn off automatic updates.</extracomment>
-        <translation>Aldri</translation>
     </message>
     <message>
         <source>Couldn&apos;t start the installer. It is saved at:
