@@ -46,18 +46,22 @@ See [the release policy](../../docs/RELEASING.md) for the mapping and limits.
 
 ## Toolchain
 
-The build uses WiX Toolset 7.0.0 and its matching UI extension. The source uses
-WiX v6/v7 syntax. Install the CLI and extension:
+The build uses WiX Toolset 7.0.0 and its matching UI and Util extensions. The
+source uses WiX v6/v7 syntax. Install the CLI and extensions:
 
 ```powershell
 winget install -e --id WiXToolset.WiXCLI --version 7.0.0.0
 wix eula accept wix7
 wix extension add --global WixToolset.UI.wixext/7.0.0
+wix extension add --global WixToolset.Util.wixext/7.0.0
 ```
 
-The deployment script passes `-ext WixToolset.UI.wixext` to `wix build`.
-Launching the application uses a Windows Installer executable action, so the
-package does not need a utility extension or a separate bootstrapper.
+The deployment script passes `-ext WixToolset.UI.wixext` and
+`-ext WixToolset.Util.wixext` to `wix build`. The Finish button uses
+[WixShellExec](https://docs.firegiant.com/wix/tools/wixext/util/) to launch the
+installed application as the installing user without waiting for it to close.
+The utility action expands the chosen installation folder when it runs and
+uses that folder as the application's working directory.
 
 The navigation uses the native dialogs described in the
 [WiX UI documentation](https://docs.firegiant.com/wix/tools/wixext/wixui/).

@@ -119,13 +119,13 @@ Get-ChildItem $deploy | Select-Object Name | Format-Table -AutoSize
 
 if ($Installer) {
     # The per-user MSI supports interactive and silent installation without
-    # elevation. Built with WiX 7 and its matching UI extension.
+    # elevation. Built with WiX 7 and its matching UI and utility extensions.
     $wix = (Get-Command wix.exe -ErrorAction SilentlyContinue).Source
     if (-not $wix -and (Test-Path "C:\Program Files\WiX Toolset v7.0\bin\wix.exe")) {
         $wix = "C:\Program Files\WiX Toolset v7.0\bin\wix.exe"
     }
     if (-not $wix) {
-        throw "WiX CLI (wix.exe) not found. Install WiX 7 and its UI extension as described in docs/BUILDING.md."
+        throw "WiX CLI (wix.exe) not found. Install WiX 7 and its UI and utility extensions as described in docs/BUILDING.md."
     }
     # WiX 7 gates use behind the OSMF EULA. Accepting is persisted per-user,
     # so this is idempotent; it encodes the project's decision to accept (see
@@ -150,6 +150,7 @@ if ($Installer) {
     $cleanup += '</Include>'
     Set-Content -Path $cleanupFile -Value $cleanup -Encoding utf8
     $wixArgs = @("build", "-arch", "x64", "-ext", "WixToolset.UI.wixext",
+                 "-ext", "WixToolset.Util.wixext",
                  "-d", "Version=$msiVersion", "-d", "DisplayVersion=$Version",
                  "-d", "DeployDir=$deploy", "-d", "IconFile=$icon",
                  "-d", "DirectoryCleanup=$cleanupFile")

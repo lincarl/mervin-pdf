@@ -111,7 +111,7 @@ try {
     $upgradeVersion = '{0}.{1}.{2}' -f $version.Major, $version.Minor, ($version.Build + 1)
     $upgradeMsi = Join-Path $work 'MervinPDF-upgrade-test.msi'
     $bundledModel = Join-Path $repository 'resources\tessdata\eng.traineddata'
-    & wix build -arch x64 -ext WixToolset.UI.wixext `
+    & wix build -arch x64 -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext `
         -d "Version=$upgradeVersion" -d "DisplayVersion=$($metadata.version) upgrade verification" `
         -d "DeployDir=$build\deploy" -d "IconFile=$repository\resources\icons\mervin-icon.ico" `
         -d "DirectoryCleanup=$build\generated\installer-remove-folders.wxi" -d "TessData=$bundledModel" `

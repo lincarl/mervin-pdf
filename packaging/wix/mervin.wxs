@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Mervin PDF per-user MSI, built with WiX v6/v7 and WixToolset.UI.wixext.
+  Mervin PDF per-user MSI, built with WiX v6/v7 and its UI and Util extensions.
 
   Interactive installs use native Windows Installer dialogs. Silent deployment
   uses the same package with `msiexec /i MervinPDF-<ver>.msi /qn`. Both install
@@ -54,9 +54,10 @@
 
     <!-- Only the successful, full-UI finish button calls this action. Passive
          in-app updates already relaunch through the application's updater. -->
-    <CustomAction Id="LaunchMervin" Directory="INSTALLFOLDER"
-                  ExeCommand="&quot;[INSTALLFOLDER]MervinPDF.exe&quot;"
-                  Execute="immediate" Return="asyncNoWait" />
+    <Property Id="WixShellExecTarget" Value="[INSTALLFOLDER]MervinPDF.exe" />
+    <CustomAction Id="LaunchMervin" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
+                  DllEntry="WixShellExec" Execute="immediate"
+                  Impersonate="yes" Return="check" />
 
     <Feature Id="Main" Title="Mervin PDF" Level="1">
       <ComponentGroupRef Id="AppPayload" />

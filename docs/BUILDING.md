@@ -20,6 +20,7 @@ winget install --id Ninja-build.Ninja --source winget --accept-source-agreements
 winget install --id WiXToolset.WiXCLI --version 7.0.0.0 --source winget --accept-source-agreements --accept-package-agreements
 wix eula accept wix7
 wix extension add --global WixToolset.UI.wixext/7.0.0
+wix extension add --global WixToolset.Util.wixext/7.0.0
 winget install --id Python.Python.3.12 --source winget --accept-source-agreements --accept-package-agreements
 
 # Qt 6.12.0 (official prebuilt dynamic DLLs, no Qt account)
