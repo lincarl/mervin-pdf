@@ -1688,6 +1688,11 @@ Nyissa meg a rendszer Beállítások → Alapértelmezett alkalmazások menüpon
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>Kínai, egyszerűsítve</translation>
     </message>
+    <message>
+        <source>Chinese, Traditional</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>Kínai, hagyományos</translation>
+    </message>
 </context>
 <context>
     <name>mervin::AnnotPanel</name>

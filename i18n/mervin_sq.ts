@@ -1690,6 +1690,11 @@ Hapni Cilësimet e sistemit tuaj → Aplikacionet e parazgjedhura (ose kliko me 
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>kinezisht (i thjeshtuar)</translation>
     </message>
+    <message>
+        <source>Chinese, Traditional</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>kinezisht (tradicional)</translation>
+    </message>
 </context>
 <context>
     <name>mervin::AnnotPanel</name>

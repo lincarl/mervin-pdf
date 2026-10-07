@@ -1692,6 +1692,11 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>китайский (упрощенная)</translation>
     </message>
+    <message>
+        <source>Chinese, Traditional</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>китайский (традиционное письмо)</translation>
+    </message>
 </context>
 <context>
     <name>mervin::AnnotPanel</name>

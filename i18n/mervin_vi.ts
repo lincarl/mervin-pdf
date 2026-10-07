@@ -1688,6 +1688,11 @@ Mở Cài đặt của hệ thống → Ứng dụng mặc định (hoặc nhấ
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>Tiếng Trung (Giản thể)</translation>
     </message>
+    <message>
+        <source>Chinese, Traditional</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>Tiếng Trung (Phồn thể)</translation>
+    </message>
 </context>
 <context>
     <name>mervin::AnnotPanel</name>

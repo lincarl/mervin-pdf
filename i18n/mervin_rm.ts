@@ -1690,6 +1690,11 @@ Avra ils Parameters → Applicaziuns predefinidas dal sistem (u clicca cun la ta
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>Chinais, simplifitgà</translation>
     </message>
+    <message>
+        <source>Chinese, Traditional</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>Chinais, tradiziunal</translation>
+    </message>
 </context>
 <context>
     <name>mervin::AnnotPanel</name>

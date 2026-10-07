@@ -1690,6 +1690,11 @@ Open de instellingen van uw systeem → Standaardtoepassingen (of klik met de re
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>Chinees, vereenvoudigd</translation>
     </message>
+    <message>
+        <source>Chinese, Traditional</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>Chinees, traditioneel</translation>
+    </message>
 </context>
 <context>
     <name>mervin::AnnotPanel</name>

@@ -10,8 +10,8 @@ application catalogs, so running `update_translations` does not delete Qt messag
 Only the English source, source comments and disambiguation were used as the
 translation reference. German translations were removed. The Kazakh supplement
 reuses the matching finished translations from the same release's `qtbase_kk.ts`.
-The Arabic and Slovak supplements likewise reuse exact matches from Qt 6.12's
-catalogs, with corrections reviewed against English.
+The Arabic, Slovak and Traditional Chinese supplements likewise reuse matching
+translations from Qt 6.12's catalogs, with corrections reviewed against English.
 Other supplements were translated from English.
 
 The extracted Qt text and reused translations are covered by Qt's LGPL-3.0-only,
@@ -31,8 +31,10 @@ layout checks after editing. `lconvert -i FILE -o FILE` normalizes a supplementa
 catalog without scanning application sources. The build compiles every available
 supplement and loads it after the installed Qt catalog, retaining upstream
 translations outside the reference. Kazakh is present here because some supported
-Linux distributions omit it. Arabic and Slovak fill current widget contexts
-missing from Qt's supplied catalogs.
+Linux distributions omit it. Arabic, Slovak and Traditional Chinese fill current
+widget contexts missing from Qt's supplied catalogs. Traditional Chinese also
+corrects upstream meanings for collated printing, facing pages, font weights and
+writing systems. Its paper-size names retain standard identifiers.
 
 These supplements do not cover all internal Qt diagnostic messages. Native
 operating-system dialogs may use the system display language.

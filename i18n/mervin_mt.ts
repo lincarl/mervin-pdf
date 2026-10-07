@@ -1694,6 +1694,11 @@ Iftaħ is-Settings tas-sistema tiegħek → Applikazzjonijiet Default (jew ikkli
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>Ċiniż, Simplifikat</translation>
     </message>
+    <message>
+        <source>Chinese, Traditional</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>Ċiniż, tradizzjonali</translation>
+    </message>
 </context>
 <context>
     <name>mervin::AnnotPanel</name>

@@ -1692,6 +1692,11 @@ Otevřete Nastavení systému → Výchozí aplikace (nebo klepněte pravým tla
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>Čínština, zjednodušená</translation>
     </message>
+    <message>
+        <source>Chinese, Traditional</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>Čínština, tradiční</translation>
+    </message>
 </context>
 <context>
     <name>mervin::AnnotPanel</name>

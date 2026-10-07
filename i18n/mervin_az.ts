@@ -1690,6 +1690,11 @@ Sisteminizin Parametrlər → Defolt Proqramları açın (və ya PDF-i sağ klik
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>Çin, Sadələşdirilmiş</translation>
     </message>
+    <message>
+        <source>Chinese, Traditional</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>Çin, ənənəvi</translation>
+    </message>
 </context>
 <context>
     <name>mervin::AnnotPanel</name>

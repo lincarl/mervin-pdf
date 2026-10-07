@@ -1692,6 +1692,11 @@ Deschideți Setările sistemului dvs. → Aplicații implicite (sau faceți clic
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>chineză (simplificată)</translation>
     </message>
+    <message>
+        <source>Chinese, Traditional</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>chineză (tradițională)</translation>
+    </message>
 </context>
 <context>
     <name>mervin::AnnotPanel</name>

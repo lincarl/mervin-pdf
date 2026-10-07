@@ -133,7 +133,7 @@ const QMap<QString, QString> kUiModels = {
     {"nn", "nor"}, {"pl", "pol"}, {"pt_BR", "por"}, {"pt_PT", "por"}, {"rm", ""},
     {"ro", "ron"}, {"ru", "rus"}, {"sk", "slk"}, {"sl", "slv"}, {"sq", "sqi"},
     {"sr", "srp"}, {"sv", "swe"}, {"th", "tha"}, {"tr", "tur"}, {"uk", "ukr"},
-    {"vi", "vie"}, {"zh_CN", "chi_sim"},
+    {"vi", "vie"}, {"zh_CN", "chi_sim"}, {"zh_TW", "chi_tra"},
 };
 
 } // namespace
@@ -200,6 +200,9 @@ void TstOcrProvisioner::selectedAndOsModels()
     QCOMPARE(initialModels("sv", "en-US"), QStringList({"swe", "eng"}));
     QCOMPARE(initialModels("nb", "nn-NO"), QStringList({"nor"}));
     QCOMPARE(initialModels("pt_BR", "pt-PT"), QStringList({"por"}));
+    QCOMPARE(initialModels("zh_TW", "zh-HK"), QStringList({"chi_tra"}));
+    QCOMPARE(initialModels("zh_TW", "zh-CN"), QStringList({"chi_tra", "chi_sim"}));
+    QCOMPARE(initialModels("zh_CN", "zh-TW"), QStringList({"chi_sim", "chi_tra"}));
     QCOMPARE(initialModels("cnr", "sv-SE"), QStringList({"swe"}));
     QCOMPARE(initialModels("sv", "zz-ZZ"), QStringList({"swe"}));
     QCOMPARE(initialModels("cnr", "rm-CH"), QStringList());

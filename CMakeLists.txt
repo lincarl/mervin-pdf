@@ -23,7 +23,7 @@ qt_standard_project_setup(
         ar az be bg bs ca cnr cs da de el es et fi
         fr ga hi hr hu hy id is it ja ka kk ko lb
         lt lv mk mt nb nl nn pl pt_BR pt_PT rm ro ru sk
-        sl sq sr sv th tr uk vi zh_CN)
+        sl sq sr sv th tr uk vi zh_CN zh_TW)
 find_package(MuPDF REQUIRED)
 # tomlplusplus is header-only. Prefer a system/vcpkg config package; fall back to
 # fetching the single-header release so distros without libtomlplusplus-dev (e.g.

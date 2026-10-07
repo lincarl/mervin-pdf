@@ -1690,6 +1690,11 @@ Apri le Impostazioni del sistema → Applicazioni predefinite (o fai clic con il
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>Cinese semplificato</translation>
     </message>
+    <message>
+        <source>Chinese, Traditional</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>Cinese tradizionale</translation>
+    </message>
 </context>
 <context>
     <name>mervin::AnnotPanel</name>

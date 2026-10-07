@@ -26,7 +26,7 @@ private slots:
         QCOMPARE(i18n::availableLanguages(),
                  QStringLiteral("en ar az be bg bs ca cnr cs da de el es et fi fr ga hi hr hu hy "
                                 "id is it ja ka kk ko lb lt lv mk mt nb nl nn pl pt_BR pt_PT rm "
-                                "ro ru sk sl sq sr sv th tr uk vi zh_CN").split(QLatin1Char(' ')));
+                                "ro ru sk sl sq sr sv th tr uk vi zh_CN zh_TW").split(QLatin1Char(' ')));
     }
 
     void normalizedAcceptsCaseAndSeparatorVariants_data()
@@ -39,7 +39,9 @@ private slots:
         QTest::newRow("spaces") << " zh_CN " << "zh_CN";
         QTest::newRow("not shipped") << "he" << "";
         QTest::newRow("base of a regional catalog") << "zh" << "";
-        QTest::newRow("other script") << "zh_TW" << "";
+        QTest::newRow("Traditional Chinese") << "zh_TW" << "zh_TW";
+        QTest::newRow("Traditional Chinese variant") << " ZH-tw " << "zh_TW";
+        QTest::newRow("regional alias is not a catalog ID") << "zh_HK" << "";
         QTest::newRow("empty") << "" << "";
     }
 
@@ -55,7 +57,7 @@ private slots:
         QTest::addColumn<QStringList>("os");
         QTest::addColumn<QStringList>("available");
         QTest::addColumn<QString>("expected");
-        const QStringList shipped{"en", "sv", "zh_CN"};
+        const QStringList shipped{"en", "sv", "zh_CN", "zh_TW"};
         QTest::newRow("Swedish") << QStringList{"sv-SE"} << shipped << "sv";
         QTest::newRow("Swedish in Finland") << QStringList{"sv-FI"} << shipped << "sv";
         // An English UI with Swedish regional formats lists English first.
@@ -64,32 +66,45 @@ private slots:
         QTest::newRow("Chinese, China") << QStringList{"zh-CN"} << shipped << "zh_CN";
         QTest::newRow("Simplified in Singapore") << QStringList{"zh-Hans-SG"} << shipped << "zh_CN";
         QTest::newRow("bare zh is Simplified") << QStringList{"zh"} << shipped << "zh_CN";
-        // Traditional Chinese readers don't get the Simplified catalog.
-        QTest::newRow("Hong Kong") << QStringList{"zh-HK"} << shipped << "en";
-        QTest::newRow("Taiwan, then Swedish") << QStringList{"zh-TW", "sv"} << shipped << "sv";
-        // The lists as Qt makes them end with the bare "zh", which alone means
-        // Simplified. After a Traditional tag it must not pick Simplified.
+        QTest::newRow("Hong Kong") << QStringList{"zh-HK"} << shipped << "zh_TW";
+        QTest::newRow("Macao") << QStringList{"zh-MO"} << shipped << "zh_TW";
+        QTest::newRow("Taiwan, then Swedish") << QStringList{"zh-TW", "sv"} << shipped << "zh_TW";
+        QTest::newRow("Traditional script") << QStringList{"zh-Hant"} << shipped << "zh_TW";
+        QTest::newRow("Traditional in China") << QStringList{"zh-Hant-CN"} << shipped << "zh_TW";
+        QTest::newRow("Simplified in Taiwan") << QStringList{"zh-Hans-TW"} << shipped << "zh_CN";
+        // Qt may append Simplified aliases after the requested Traditional tag.
         const auto qtList = [](QLocale::Script script, QLocale::Territory territory) {
             return QLocale(QLocale::Chinese, script, territory).uiLanguages();
         };
         QTest::newRow("Qt's Taiwan list")
-            << qtList(QLocale::TraditionalHanScript, QLocale::Taiwan) << shipped << "en";
+            << qtList(QLocale::TraditionalHanScript, QLocale::Taiwan) << shipped << "zh_TW";
         QTest::newRow("Qt's Hong Kong list")
-            << qtList(QLocale::TraditionalHanScript, QLocale::HongKong) << shipped << "en";
+            << qtList(QLocale::TraditionalHanScript, QLocale::HongKong) << shipped << "zh_TW";
         QTest::newRow("Qt's Singapore list")
             << qtList(QLocale::SimplifiedHanScript, QLocale::Singapore) << shipped << "zh_CN";
         // Debian's default LANGUAGE=zh_TW:zh, where Qt expands "zh" to zh-Hans-CN.
-        QTest::newRow("Debian's Taiwan list")
-            << QStringList{"zh-Hant-TW", "zh-TW", "zh-Hant", "zh-Hans-CN", "zh-CN", "zh-Hans", "zh"}
-            << shipped << "en";
+        const QStringList debianTaiwan{
+            "zh-Hant-TW", "zh-TW", "zh-Hant", "zh-Hans-CN", "zh-CN", "zh-Hans", "zh"};
+        QTest::newRow("Debian's Taiwan list") << debianTaiwan << shipped << "zh_TW";
         // The first Chinese tag decides the script, whichever comes first.
         QTest::newRow("Traditional, then Simplified")
-            << QStringList{"zh-Hant-TW", "zh-Hans-CN"} << shipped << "en";
+            << QStringList{"zh-Hant-TW", "zh-Hans-CN"} << shipped << "zh_TW";
         QTest::newRow("Simplified, then Traditional")
             << QStringList{"zh-Hans-CN", "zh-Hant-TW"} << shipped << "zh_CN";
         QTest::newRow("not shipped") << QStringList{"nb-NO", "fr-FR"} << shipped << "en";
         QTest::newRow("C locale") << QStringList{"C"} << shipped << "en";
         QTest::newRow("empty list") << QStringList{} << shipped << "en";
+        // Missing catalogs must not make aliases cross written standards.
+        const QStringList simplifiedOnly{"en", "sv", "zh_CN"};
+        QTest::newRow("Traditional unavailable, then Swedish")
+            << QStringList{"zh-TW", "sv"} << simplifiedOnly << "sv";
+        QTest::newRow("Traditional unavailable, Qt Taiwan aliases")
+            << qtList(QLocale::TraditionalHanScript, QLocale::Taiwan) << simplifiedOnly << "en";
+        QTest::newRow("Traditional unavailable, Debian aliases")
+            << debianTaiwan << simplifiedOnly << "en";
+        QTest::newRow("Simplified unavailable, then Traditional")
+            << QStringList{"zh-Hans-CN", "zh-Hant-TW", "sv"}
+            << QStringList{"en", "sv", "zh_TW"} << "sv";
         // Regional variants reach a base catalog, and the territory breaks ties.
         const QStringList more{"en", "de", "pt_BR", "pt_PT"};
         QTest::newRow("Austrian German") << QStringList{"de-AT"} << more << "de";
@@ -121,8 +136,8 @@ private slots:
         QCOMPARE(i18n::suggestedLanguage({"cnr-Cyrl-ME", "en"}, shipped), QStringLiteral("en"));
         QCOMPARE(i18n::suggestedLanguage({"cnr-Cyrl-ME", "cnr", "ja"}, shipped), QStringLiteral("ja"));
         QCOMPARE(i18n::suggestedLanguage({"sr-Cyrl-ME"}, shipped), QStringLiteral("sr"));
-        QCOMPARE(i18n::suggestedLanguage({"zh-Hant-TW", "ja-JP"}, shipped), QStringLiteral("ja"));
-        QVERIFY(!shipped.contains(QStringLiteral("zh_TW")));
+        QCOMPARE(i18n::suggestedLanguage({"zh-Hant-TW", "ja-JP"}, shipped), QStringLiteral("zh_TW"));
+        QVERIFY(shipped.contains(QStringLiteral("zh_TW")));
     }
 
     void everyLanguageLoadsApplicationAndWidgetText_data()
@@ -145,7 +160,7 @@ private slots:
                  qPrintable(language));
         const QString cancel = QCoreApplication::translate("QPlatformTheme", "Cancel");
         QVERIFY2(!cancel.isEmpty() && cancel != QLatin1String("Cancel"), qPrintable(language));
-        if (language == QLatin1String("ar")) {
+        if (language == QLatin1String("ar") || language == QLatin1String("zh_TW")) {
             const QString folder = QCoreApplication::translate("QAbstractFileIconProvider", "Folder");
             QVERIFY(!folder.isEmpty() && folder != QLatin1String("Folder"));
         }
@@ -166,6 +181,7 @@ private slots:
         if (!fontPath.isEmpty()) {
             const QDir directory = QFileInfo(fontPath).absoluteDir();
             for (const QString &name : {QStringLiteral("NotoSansCJKsc-Regular.otf"),
+                                        QStringLiteral("NotoSansCJKtc-Regular.otf"),
                                         QStringLiteral("NotoSansCJKjp-Regular.otf"),
                                         QStringLiteral("NotoSansCJKkr-Regular.otf")})
                 QVERIFY(QFontDatabase::addApplicationFont(directory.filePath(name)) >= 0);
@@ -175,6 +191,16 @@ private slots:
         i18n::apply(QStringLiteral("zh_CN"));
         const QStringList chinese = QFontDatabase::applicationFallbackFontFamilies(QChar::Script_Han);
         QVERIFY(!chinese.isEmpty());
+        i18n::apply(QStringLiteral("zh_TW"));
+        const QStringList traditional = QFontDatabase::applicationFallbackFontFamilies(QChar::Script_Han);
+        QVERIFY(!traditional.isEmpty());
+        QVERIFY(traditional.first() != chinese.first());
+        QCOMPARE(QGuiApplication::font().family(), traditional.first());
+        QCOMPARE(QGuiApplication::font().pointSizeF(), originalFont.pointSizeF());
+        QVERIFY(!traditional.contains(chinese.first()));
+        i18n::apply(QStringLiteral("zh_CN"));
+        QCOMPARE(QFontDatabase::applicationFallbackFontFamilies(QChar::Script_Han), chinese);
+        QCOMPARE(QGuiApplication::font().family(), chinese.first());
         i18n::apply(QStringLiteral("ja"));
         const QStringList japanese = QFontDatabase::applicationFallbackFontFamilies(QChar::Script_Han);
         QVERIFY(!japanese.isEmpty());
@@ -213,6 +239,11 @@ private slots:
         QCOMPARE(cancel(), QStringLiteral("取消"));
         QCOMPARE(QGuiApplication::layoutDirection(), Qt::LeftToRight);
 
+        i18n::apply(QStringLiteral("zh-TW"));
+        QCOMPARE(i18n::current(), QStringLiteral("zh_TW"));
+        QCOMPARE(cancel(), QStringLiteral("取消"));
+        QCOMPARE(QGuiApplication::layoutDirection(), Qt::LeftToRight);
+
         i18n::apply(QStringLiteral("xx"));
         QCOMPARE(i18n::current(), QStringLiteral("en"));
         QCOMPARE(cancel(), QStringLiteral("Cancel"));
@@ -224,10 +255,16 @@ private slots:
         QCOMPARE(i18n::displayName(QStringLiteral("sv")), QStringLiteral("Svenska (Swedish)"));
         QCOMPARE(i18n::displayName(QStringLiteral("zh_CN")),
                  QStringLiteral("简体中文 (Chinese, Simplified)"));
+        QCOMPARE(i18n::displayName(QStringLiteral("zh_TW")),
+                 QStringLiteral("繁體中文 (Chinese, Traditional)"));
         const QString search = i18n::searchText(QStringLiteral("zh_CN"));
         QVERIFY(search.contains(QStringLiteral("简体中文")));
         QVERIFY(search.contains(QStringLiteral("Chinese")));
         QVERIFY(search.contains(QStringLiteral("zh_CN")));
+        const QString traditional = i18n::searchText(QStringLiteral("zh_TW"));
+        QVERIFY(traditional.contains(QStringLiteral("繁體中文")));
+        QVERIFY(traditional.contains(QStringLiteral("Chinese, Traditional")));
+        QVERIFY(traditional.contains(QStringLiteral("zh_TW")));
     }
 };
 

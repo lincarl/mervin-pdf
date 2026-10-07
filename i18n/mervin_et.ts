@@ -1690,6 +1690,11 @@ Avage oma süsteemi Seaded → Vaikerakendused (või paremklõpsake PDF-i → Av
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>Hiina, lihtsustatud</translation>
     </message>
+    <message>
+        <source>Chinese, Traditional</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>Hiina, traditsiooniline</translation>
+    </message>
 </context>
 <context>
     <name>mervin::AnnotPanel</name>

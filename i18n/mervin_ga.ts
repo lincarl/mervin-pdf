@@ -1692,6 +1692,11 @@ Oscail Socruithe do chórais → Feidhmchláir Réamhshocraithe (nó deaschlice�
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>Sínis, Simplithe</translation>
     </message>
+    <message>
+        <source>Chinese, Traditional</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>Sínis, thraidisiúnta</translation>
+    </message>
 </context>
 <context>
     <name>mervin::AnnotPanel</name>

@@ -1690,6 +1690,11 @@ Abra Configurações → Aplicativos padrão do seu sistema (ou clique com o bot
         <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
         <translation>chinês (simplificado)</translation>
     </message>
+    <message>
+        <source>Chinese, Traditional</source>
+        <extracomment>Language name. The language picker&apos;s search finds a language by this name too.</extracomment>
+        <translation>chinês (tradicional)</translation>
+    </message>
 </context>
 <context>
     <name>mervin::AnnotPanel</name>

@@ -113,7 +113,7 @@ manual checks use it to avoid touching normal user state.
 ## UI languages
 
 The UI text is written in English. Every other language has a Qt Linguist catalog,
-`i18n/mervin_<id>.ts`, named by locale ID (`sv`, `zh_CN`) or the explicit
+`i18n/mervin_<id>.ts`, named by locale ID (`sv`, `zh_CN`, `zh_TW`) or the explicit
 Montenegrin app ID `cnr`. In
 `CMakeLists.txt`, `qt_add_translations` compiles each catalog into `mervin_core`
 as `:/i18n/mervin_<id>.qm`, so every package and test carries them without install
@@ -150,7 +150,7 @@ the AppImage file, and a `--profile` run keeps its profile.
 
 `i18n::suggestedLanguage()` pre-selects the first-run language. It walks
 `QLocale::uiLanguages()` in order and takes the first catalog with the same
-language and script, preferring the same territory, so zh-HK would pick a zh_TW
+language and script, preferring the same territory, so zh-HK picks the zh_TW
 catalog and de-AT a de one. The first tag of a language decides its script. Qt
 ends a Taiwan list with a bare "zh" (zh-Hant-TW, zh-TW, zh-Hant, zh) and turns the
 "zh" in Debian's and Ubuntu's `LANGUAGE=zh_TW:zh` into zh-Hans-CN. Both mean
@@ -163,8 +163,8 @@ their dates and file sizes with it. The annotation card shows its date as
 `yyyy-MM-dd` in every language. Measurement values, zoom and page ranges keep
 their fixed, locale-independent format, and unit symbols, settings keys, log
 output and text written into PDFs stay as they are. `apply()` also sets the layout
-direction from the language. For Simplified Chinese, Japanese and Korean, it adds
-an installed font for that language as the fallback for Han text and the relevant
+direction from the language. For Simplified Chinese, Traditional Chinese, Japanese
+and Korean, it adds an installed font for that language as the fallback for Han text and the relevant
 kana or Hangul script. Otherwise Han text can fall back to a Japanese font with
 different glyph shapes. These languages and Arabic and Thai also use an installed
 primary font for their script, preventing standard
@@ -274,9 +274,11 @@ first-run window, `OcrProvisioner` downloads the official `tessdata_best` files 
 the selected display language and the OS's primary display language. The fixed
 `OcrLanguageMapping` table matches language and script, deduplicates model codes,
 and skips unsupported languages without a fallback download. Bokmål and Nynorsk
-both use `nor`; Montenegrin and Romansh have no matching model. The selected
-language's model becomes the initial OCR default, or the OS model when only that
-one matches.
+both use `nor`; Montenegrin and Romansh have no matching model. Simplified Chinese
+uses `chi_sim.traineddata`, and Traditional Chinese (`zh_TW`, including OS matches
+for Hong Kong and Macao) uses `chi_tra.traineddata`. Explicit Hans or Hant scripts
+take precedence over territory. The selected language's model becomes the initial
+OCR default, or the OS model when only that one matches.
 
 Saving `ui_language` consumes the first-run offer before any network request.
 Downloads fail silently, stop after 30 seconds without data, and are cancelled

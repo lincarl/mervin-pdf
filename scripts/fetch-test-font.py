@@ -14,6 +14,11 @@ FILES = (
         "NotoSansCJKsc-Regular.otf",
         "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b",
     ),
+    (
+        "Sans/OTF/TraditionalChinese/NotoSansCJKtc-Regular.otf",
+        "NotoSansCJKtc-Regular.otf",
+        "dce08bd4fd91aa8aa76ed8fea4b694c2dfb8550f67871e326843212ddbeb88b4",
+    ),
     ("LICENSE", "LICENSE", "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2"),
     # Noto Sans covers European scripts, Arabic, Devanagari and Thai.
     (
