@@ -1077,11 +1077,25 @@ bool SettingsDialog::applyChanges()
     }
     const mervin::Settings pending = settings();
     if (pending != applied_) {
-        applied_ = pending;
+        saveError_.reset();
         emit applyRequested(pending);
+        if (saveError_) {
+            // Still pending, so OK or Apply saves again. No restart either,
+            // because the new language would be lost.
+            QMessageBox::warning(this, windowTitle(),
+                                 tr("Couldn't save the settings.\n\n%1").arg(*saveError_));
+            refreshButtons();
+            return false;
+        }
+        applied_ = pending;
     }
     refreshButtons();
     return true;
+}
+
+void SettingsDialog::reportSaveFailure(const QString &error)
+{
+    saveError_ = error;
 }
 
 void SettingsDialog::refreshButtons()

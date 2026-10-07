@@ -143,7 +143,11 @@ the AppImage file, and a `--profile` run keeps its profile.
 `i18n::suggestedLanguage()` pre-selects the first-run language. It walks
 `QLocale::uiLanguages()` in order and takes the first catalog with the same
 language and script, preferring the same territory, so zh-HK would pick a zh_TW
-catalog and de-AT a de one. Nothing matching gives English.
+catalog and de-AT a de one. The first tag of a language decides its script. Qt
+ends a Taiwan list with a bare "zh" (zh-Hant-TW, zh-TW, zh-Hant, zh) and turns the
+"zh" in Debian's and Ubuntu's `LANGUAGE=zh_TW:zh` into zh-Hans-CN. Both mean
+Simplified Chinese, so they are skipped after a Traditional tag. Nothing matching
+gives English.
 
 Only text is translated. Mervin never calls `QLocale::setDefault`, so `QLocale()`
 stays the OS regional format whatever the UI language. Recent and Settings format

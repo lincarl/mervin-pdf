@@ -166,8 +166,9 @@ Settings Settings::load()
 bool Settings::save(QString *error) const
 {
     if (unloadInactiveMinutes < 0 || unloadInactiveMinutes > kMaxUnloadInactiveMinutes) {
-        // Untranslated because the Settings dialog keeps the value in range and no
-        // caller shows this text. Translate it if a caller starts to.
+        // Untranslated because the Settings dialog checks the timeout before it
+        // saves, so its save error message never shows this text. Translate it if
+        // another caller that shows save errors can pass an unchecked value.
         if (error)
             *error = QStringLiteral("The document inactivity timeout must be from 0 to %1 minutes.")
                          .arg(kMaxUnloadInactiveMinutes);

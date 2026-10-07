@@ -147,7 +147,7 @@ private slots:
         s.uiLanguage = QStringLiteral("pt_BR");
         QVERIFY(s.save());
         QCOMPARE(mervin::Settings::load().uiLanguage, QStringLiteral("pt_BR"));
-        // Read last: Windows won't replace a file that is open.
+        // Read it last, because Windows won't replace a file that is open.
         QFile file(mervin::ConfigPaths::configFile());
         QVERIFY(file.open(QIODevice::ReadOnly));
         const QByteArray saved = file.readAll();

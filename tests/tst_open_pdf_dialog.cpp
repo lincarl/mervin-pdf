@@ -5,6 +5,7 @@
 #include <QElapsedTimer>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTest>
 #include <QTranslator>
@@ -60,9 +61,6 @@ void TstOpenPdfDialog::acceptsTypedUrlImmediately()
 // files it under, rather than in QFileDialog's, where no translation is found.
 void TstOpenPdfDialog::textComesFromItsOwnContext()
 {
-#ifdef Q_OS_WIN
-    QSKIP("The native Windows picker shows its title outside Qt's widgets.");
-#else
     class Catalog : public QTranslator
     {
     public:
@@ -75,8 +73,11 @@ void TstOpenPdfDialog::textComesFromItsOwnContext()
         bool isEmpty() const override { return false; }
     } catalog;
     QCoreApplication::installTranslator(&catalog);
+    const auto removeCatalog = qScopeGuard([&] { QCoreApplication::removeTranslator(&catalog); });
+    QCOMPARE(OpenPdfDialog::tr("Open PDF"), QStringLiteral("Öppna PDF"));
+#ifndef Q_OS_WIN
+    // The native Windows picker shows its title outside Qt's widgets.
     OpenPdfDialog dialog;
-    QCoreApplication::removeTranslator(&catalog);
     QCOMPARE(dialog.windowTitle(), QStringLiteral("Öppna PDF"));
 #endif
 }

@@ -70,11 +70,15 @@ public slots:
     // prompt) while this dialog is open. Keeps OK from writing the old value back.
     void setAutoUpdate(bool on);
     void setLastUpdateCheck(const QDateTime &utc);
+    // The applyRequested receiver couldn't save the settings. OK and Apply then
+    // show `error` and keep the dialog open, so no restart happens either.
+    void reportSaveFailure(const QString &error);
 
 signals:
     void checkForUpdatesRequested();
     // Apply, or OK with changes pending: save `settings` and put them into effect
-    // now. Later edits are compared with these values.
+    // now. Later edits are compared with these values. A receiver that can't save
+    // calls reportSaveFailure before returning and leaves everything as it was.
     void applyRequested(const mervin::Settings &settings);
 
 protected:
@@ -114,6 +118,7 @@ private:
 
     mervin::Settings base_; // preserves fields not exposed in the UI
     mervin::Settings applied_; // settings() as last applied, or as opened
+    std::optional<QString> saveError_; // set by reportSaveFailure during applyRequested
     UpdateInfo updates_;
     QColor accent_;         // current accent choice ("#RRGGBB")
     QColor annotColor_;     // current default highlight/comment colour

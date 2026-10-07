@@ -1376,6 +1376,14 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>文档保持加载状态，在托盘中时也是如此。</translation>
     </message>
     <message>
+        <source>Couldn&apos;t save the settings.
+
+%1</source>
+        <translation>无法保存设置。
+
+%1</translation>
+    </message>
+    <message>
         <source>Never checked</source>
         <translation>从未检查</translation>
     </message>

@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFontDatabase>
 #include <QGuiApplication>
+#include <QHash>
 #include <QLocale>
 #include <QPointer>
 #include <QTranslator>
@@ -151,9 +152,19 @@ QString normalized(const QString &code, const QStringList &available)
 
 QString suggestedLanguage(const QStringList &osLanguages, const QStringList &available)
 {
+    // The first tag of each language decides its script. A later tag of that
+    // language in another script is a fallback that Qt added. Qt ends a Taiwan
+    // list with a bare "zh", and turns the "zh" in Debian's and Ubuntu's
+    // LANGUAGE=zh_TW:zh into zh-Hans-CN. Both mean Simplified Chinese.
+    QHash<QLocale::Language, QLocale::Script> scripts;
     for (const QString &tag : osLanguages) {
         const QLocale os(tag);
         if (os.language() == QLocale::C || os.language() == QLocale::AnyLanguage)
+            continue;
+        const auto first = scripts.constFind(os.language());
+        if (first == scripts.cend())
+            scripts.insert(os.language(), os.script());
+        else if (*first != os.script())
             continue;
         QString best;
         bool sameTerritory = false;

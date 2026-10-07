@@ -185,8 +185,10 @@ installed languages), Measuring (snapping and the defaults new tabs start from),
 Forms, Keyboard shortcuts, and About (version and licences). The main menu opens
 Settings; Keyboard shortcuts and About are available in its page menu. OK applies
 the changes and closes Settings. Apply puts them into effect and keeps Settings
-open; it is available only while a change is pending. Cancel discards changes made
-since the last Apply. Removing or adding OCR languages takes effect at once. Session
+open; it is available only while a change is pending. If the settings file can't
+be written, OK and Apply say why and keep Settings open, and nothing changes until
+a save works. Cancel discards changes made since the last Apply. Removing or adding
+OCR languages takes effect at once. Session
 restore and automatic updates are enabled by default. Copies that cannot update
 themselves (portable and development builds) show no automatic-update switch, only
 Check for Updates.
@@ -195,7 +197,8 @@ The interface is available in English, Swedish, and Simplified Chinese. The firs
 time Mervin starts without a saved display language (a new install, or the first
 start after updating from a version without language support), a welcome window
 appears before any other. Its display language picker starts at the first
-language in the OS preference list that Mervin offers, or English, and picking
+language in the OS preference list that Mervin offers in the same script, or
+English, so Traditional Chinese systems start at English, and picking
 another switches the window to it at once. On Windows, when Mervin is not the
 default PDF viewer and has not offered this before, the window also has a ticked
 "Make Mervin PDF my default PDF viewer" checkbox; Continue then opens the system
