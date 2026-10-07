@@ -50,9 +50,9 @@ function Find-MervinRegistration {
         if ($name -like 'Mervin PDF*') {
             [pscustomobject]@{
                 Name = $name
-                ProductCode = $product.ProductCode
-                Context = $product.Context
-                State = $product.State
+                ProductCode = $product.GetType().InvokeMember('ProductCode', 'GetProperty', $null, $product, $null)
+                Context = $product.GetType().InvokeMember('Context', 'GetProperty', $null, $product, $null)
+                State = $product.GetType().InvokeMember('State', 'GetProperty', $null, $product, $null)
                 Version = $product.InstallProperty('VersionString')
             }
         }
