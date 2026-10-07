@@ -282,16 +282,19 @@ PdfPropertiesPopup::PdfPropertiesPopup(QWidget *parent) : QWidget(parent)
 
     auto *headerRow = new QHBoxLayout;
     headerRow->setSpacing(6);
+    //: Title of a popup that lists the properties of a part or net in a schematic
+    //: or circuit board drawing, read from the PDF (noun, plural).
     headerLabel_ = new QLabel(tr("Properties"), this);
     headerLabel_->setStyleSheet(QStringLiteral("font-weight:600;"));
     headerRow->addWidget(headerLabel_, 1);
 
     auto *closeBtn = new QToolButton(this);
     closeBtn->setObjectName(QStringLiteral("pdfPropsClose")); // styled by popupStyleSheet
-    closeBtn->setText(QStringLiteral("x"));
+    closeBtn->setText(QStringLiteral("x")); // a close glyph, not a word
     closeBtn->setAutoRaise(true);
     closeBtn->setCursor(Qt::PointingHandCursor);
     closeBtn->setFixedSize(24, 24);
+    //: Tooltip of the button that closes this popup (verb).
     closeBtn->setToolTip(tr("Close"));
     connect(closeBtn, &QToolButton::clicked, this, [this] { hide(); });
     headerRow->addWidget(closeBtn);

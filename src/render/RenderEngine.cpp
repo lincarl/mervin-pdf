@@ -466,7 +466,7 @@ std::unique_ptr<Document> RenderEngine::openDocument(const QString &path, const 
     fz_context *ctx = fz_clone_context(base_);
     if (!ctx) {
         if (error)
-            *error = QStringLiteral("Could not allocate a document context.");
+            *error = tr("Could not allocate a document context.");
         return nullptr;
     }
     const QByteArray utf8 = path.toUtf8();
@@ -496,7 +496,7 @@ std::unique_ptr<Document> RenderEngine::openDocument(const QString &path, const 
             if (needsPassword)
                 *needsPassword = true;
             if (error)
-                *error = QStringLiteral("This document is password-protected.");
+                *error = tr("This document is password-protected.");
             return nullptr;
         }
     }

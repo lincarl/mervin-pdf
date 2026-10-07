@@ -3,6 +3,7 @@
 #include "render/Document.h"
 #include "security/MeasureExport.h"
 
+#include <QCoreApplication>
 #include <QFile>
 #include <QSaveFile>
 #include <QTemporaryDir>
@@ -14,7 +15,8 @@ bool DocumentOutput::snapshot(const Document &document, const MeasureDoc &measur
     QTemporaryDir stage;
     if (!stage.isValid()) {
         if (error)
-            *error = QStringLiteral("Could not create a temporary document.");
+            *error = QCoreApplication::translate("mervin::DocumentOutput",
+                                                 "Could not create a temporary document.");
         return false;
     }
     const QString live = stage.filePath(QStringLiteral("live.pdf"));

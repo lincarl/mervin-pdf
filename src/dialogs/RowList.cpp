@@ -7,6 +7,7 @@
 #include <QDrag>
 #include <QDragMoveEvent>
 #include <QDropEvent>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMimeData>
@@ -54,12 +55,42 @@ QHBoxLayout *columnsLayout()
     return h;
 }
 
+// Column captions, shared by makeHeader() and the constructor that sizes their
+// columns.
+QString countCaption()
+{
+    //: Column caption: how many pages the row contributes.
+    return RowList::tr("Count");
+}
+
+QString outputCaption()
+{
+    //: Column caption: where the row's pages land in the new file, like "13-16".
+    return RowList::tr("Output");
+}
+
 } // namespace
+
+int RowList::widthFor(int minimum, const QFont &font, const QStringList &texts, int padding)
+{
+    const QFontMetrics fm(font);
+    int width = minimum;
+    for (const QString &text : texts)
+        width = qMax(width, fm.horizontalAdvance(text) + padding);
+    return width;
+}
+
+QFont RowList::captionFont(const QFont &base)
+{
+    QFont f = base;
+    f.setWeight(QFont::DemiBold); // Theme: QWidget#rowListHeader QLabel { font-weight:600 }
+    return f;
+}
 
 RowList::RowList(int countWidth, int outputWidth, QWidget *parent)
     : QListWidget(parent)
-    , countWidth_(countWidth)
-    , outputWidth_(outputWidth)
+    , countWidth_(widthFor(countWidth, captionFont(font()), {countCaption()}, 4))
+    , outputWidth_(widthFor(outputWidth, captionFont(font()), {outputCaption()}, 4))
 {
     setSelectionMode(QAbstractItemView::SingleSelection);
     setUniformItemSizes(true);
@@ -116,10 +147,10 @@ QWidget *RowList::makeHeader(const Fill &fill)
     fill(header, columns);
     headerRow_->addLayout(columns, 1);
     auto *count = fixedLabel(header, countWidth_, Qt::AlignRight);
-    count->setText(tr("Count"));
+    count->setText(countCaption());
     headerRow_->addWidget(count);
     auto *output = fixedLabel(header, outputWidth_, Qt::AlignRight);
-    output->setText(tr("Output"));
+    output->setText(outputCaption());
     headerRow_->addWidget(output);
     headerRow_->addSpacing(kColX + kSpacing);
     return header;

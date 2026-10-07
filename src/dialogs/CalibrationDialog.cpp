@@ -24,6 +24,7 @@ CalibrationDialog::CalibrationDialog(Mode mode, double lineLengthPoints, Measure
     auto *grid = new QGridLayout;
 
     if (mode_ == Mode::Calibrate) {
+        //: Window title (verb): set the drawing scale from a line of known length.
         setWindowTitle(tr("Calibrate"));
 
         auto *intro = new QLabel(
@@ -32,6 +33,8 @@ CalibrationDialog::CalibrationDialog(Mode mode, double lineLengthPoints, Measure
         layout->addWidget(intro);
 
         // ── Known length row ──
+        //: Label before a number field and a unit picker: the real length of the
+        //: line the user drew.
         auto *lengthLabel = new QLabel(tr("Known length:"), this);
         lengthSpin_ = new QDoubleSpinBox(this);
         lengthSpin_->setRange(0.001, 1.0e9);
@@ -39,17 +42,17 @@ CalibrationDialog::CalibrationDialog(Mode mode, double lineLengthPoints, Measure
         lengthSpin_->setValue(1000.0);
         mervin::Theme::useTypedSpinBox(lengthSpin_); // typed, no stepper column
         unitCombo_ = new QComboBox(this);
-        unitCombo_->addItem(tr("mm"), static_cast<int>(MeasureUnit::Millimeter));
-        unitCombo_->addItem(tr("cm"), static_cast<int>(MeasureUnit::Centimeter));
-        unitCombo_->addItem(tr("m"), static_cast<int>(MeasureUnit::Meter));
-        unitCombo_->addItem(tr("in"), static_cast<int>(MeasureUnit::Inch));
-        unitCombo_->addItem(tr("ft"), static_cast<int>(MeasureUnit::Foot));
+        // Unit symbols are not translated (see measure::unitSuffix).
+        for (const MeasureUnit u : {MeasureUnit::Millimeter, MeasureUnit::Centimeter,
+                                    MeasureUnit::Meter, MeasureUnit::Inch, MeasureUnit::Foot})
+            unitCombo_->addItem(measure::unitSuffix(u), static_cast<int>(u));
         if (const int idx = unitCombo_->findData(static_cast<int>(defaultUnit)); idx >= 0)
             unitCombo_->setCurrentIndex(idx);
         grid->addWidget(lengthLabel, 0, 0);
         grid->addWidget(lengthSpin_, 0, 1);
         grid->addWidget(unitCombo_, 0, 2);
     } else {
+        //: Window title (verb): type the drawing scale as a ratio.
         setWindowTitle(tr("Set Scale"));
 
         auto *intro = new QLabel(tr("Set the drawing scale by typing a scale ratio."), this);
@@ -57,6 +60,9 @@ CalibrationDialog::CalibrationDialog(Mode mode, double lineLengthPoints, Measure
         layout->addWidget(intro);
 
         // ── Ratio row ──
+        //: Label directly before a number field N. Together they read as the ratio
+        //: "1 : N", such as "Scale ratio 1 : 100" (1 unit on paper is N real units).
+        //: Keep "1 :" at the end so the number follows it.
         auto *ratioLabel = new QLabel(tr("Scale ratio 1 :"), this);
         ratioSpin_ = new QSpinBox(this);
         ratioSpin_->setRange(1, 1000000);
@@ -64,6 +70,9 @@ CalibrationDialog::CalibrationDialog(Mode mode, double lineLengthPoints, Measure
         mervin::Theme::useTypedSpinBox(ratioSpin_); // typed, no stepper column
         grid->addWidget(ratioLabel, 0, 0);
         grid->addWidget(ratioSpin_, 0, 1);
+        // Spare width (a short label under a wider button row) goes to the field, so
+        // the label's "1 :" stays right next to the number.
+        grid->setColumnStretch(1, 1);
     }
 
     layout->addLayout(grid);

@@ -4,7 +4,6 @@
 #include "print/PageRange.h"
 #include "recent/PathKey.h"
 
-#include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QRegularExpression>
@@ -14,11 +13,6 @@
 namespace mervin {
 
 namespace {
-QString tr(const char *s)
-{
-    return QCoreApplication::translate("ExtractPlan", s);
-}
-
 // "a-b", or "a" for one page: 1-based text for a run of 0-based pages.
 QString rangeText(int first, int last)
 {
@@ -201,13 +195,15 @@ bool ExtractPlan::isValid() const
 QString ExtractPlan::summaryText() const
 {
     // Empty while invalid: the error line says why, so a second sentence would
-    // only repeat it. Plurals are spelled out for the reason given in
-    // MergePlan::summaryText.
+    // only repeat it.
     if (!isValid())
         return {};
     const int pages = pageTotal();
-    return pages == 1 ? tr("Result: 1 page.")
-                      : tr("Result: %1 pages, in the order shown.").arg(pages);
+    // One page has no order to speak of, so it gets its own sentence. %n still
+    // carries the rest: some languages have more than one plural form.
+    if (pages == 1)
+        return tr("Result: 1 page.");
+    return tr("Result: %n page(s), in the order shown.", nullptr, pages);
 }
 
 QString ExtractPlan::errorText() const
@@ -216,8 +212,10 @@ QString ExtractPlan::errorText() const
         return tr("Add a range of pages to extract.");
     for (int i = 0; i < count(); ++i) {
         const QString &e = rows_.at(i).error;
-        if (!e.isEmpty())
-            return count() > 1 ? tr("Row %1: %2").arg(QString::number(i + 1), e) : e;
+        if (e.isEmpty())
+            continue;
+        //: %1 is the row number, %2 the sentence saying what is wrong with it.
+        return count() > 1 ? tr("Row %1: %2").arg(QString::number(i + 1), e) : e;
     }
     return {};
 }
@@ -350,13 +348,17 @@ QString ExtractPlan::describe(const Cell &cell) const
 {
     switch (cell.kind) {
     case Cell::Kind::Page:
-        if (cell.position == 0)
+        if (cell.position == 0) {
+            //: Tooltip of a page in the extract strip: %1 is its page number.
             return tr("Page %1").arg(cell.page + 1);
+        }
+        //: %1 is the page number in the source document, %2 its position in the new file.
         return tr("Page %1 becomes page %2 of the extract.").arg(cell.page + 1).arg(cell.position);
     case Cell::Kind::Fold:
-        return tr("Pages %1 (%2 pages). Click to show them.")
-            .arg(rangeText(cell.page, cell.lastPage))
-            .arg(cell.lastPage - cell.page + 1);
+        //: Tooltip of a tile standing in for hidden pages: %1 is their range, like "14-30".
+        return tr("Pages %1 (%n page(s)). Click to show them.", nullptr,
+                  cell.lastPage - cell.page + 1)
+            .arg(rangeText(cell.page, cell.lastPage));
     case Cell::Kind::Bad:
         return rowError(cell.row);
     }
@@ -461,9 +463,13 @@ ExtractPlan::Job ExtractPlan::job(const QString &destination) const
 QString ExtractPlan::doneText(const Job &job)
 {
     const QString name = QFileInfo(job.path).fileName();
-    if (job.pages.size() == 1)
+    // One page is named by its number, so it gets its own sentence.
+    if (job.pages.size() == 1) {
+        //: %1 is the page number, %2 the new file's name.
         return tr("Extracted page %1 to %2").arg(QString::number(job.pages.first() + 1), name);
-    return tr("Extracted %1 pages to %2").arg(QString::number(job.pages.size()), name);
+    }
+    //: %1 is the new file's name.
+    return tr("Extracted %n page(s) to %1", nullptr, int(job.pages.size())).arg(name);
 }
 
 } // namespace mervin

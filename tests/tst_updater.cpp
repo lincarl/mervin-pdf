@@ -1,4 +1,5 @@
 #include "config/ConfigPaths.h"
+#include "i18n/UiLanguage.h"
 #include "ui/Theme.h"
 #include "ui/ThemeTokens.h"
 #include "update/Updater.h"
@@ -165,6 +166,8 @@ private:
 
 void TestUpdater::initTestCase()
 {
+    // PromptObserver finds the update prompt by its English title.
+    i18n::apply(QStringLiteral("en"));
     QVERIFY(profile_.isValid());
     previousProfile_ = ConfigPaths::overrideDir();
     ConfigPaths::setOverrideDir(profile_.path());

@@ -2,11 +2,13 @@
 
 #include "config/ConfigPaths.h"
 #include "dialogs/ManageLanguagesDialog.h"
+#include "i18n/UiLanguage.h"
 #include "mervin_version.h"
 #include "ocr/TessdataManager.h"
 #include "render/AnnotTypes.h"
 #include "ui/DocumentThemePicker.h"
 #include "ui/Icons.h"
+#include "ui/LanguageCombo.h"
 #include "ui/Theme.h"
 #include "ui/ThemeTokens.h"
 #include "ui/UiThemePicker.h"
@@ -29,6 +31,7 @@
 #include <QKeyEvent>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -36,6 +39,7 @@
 #include <QMessageBox>
 #include <QPalette>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScreen>
 #include <QScrollArea>
 #include <QSizePolicy>
@@ -61,11 +65,14 @@ void selectByData(QComboBox *combo, const QString &value)
 }
 
 // FieldsStayAtSizeHint prevents platform styles stretching compact inputs while preserving
-// label alignment and mnemonic buddies.
+// label alignment and mnemonic buddies. WrapLongRows puts a field under its label when
+// the two don't fit side by side (a long translated label), so the page doesn't scroll
+// sideways. Pass nullptr for a form inside another layout.
 QFormLayout *snugForm(QWidget *parent)
 {
     auto *form = new QFormLayout(parent);
     form->setFieldGrowthPolicy(QFormLayout::FieldsStayAtSizeHint);
+    form->setRowWrapPolicy(QFormLayout::WrapLongRows);
     return form;
 }
 
@@ -132,6 +139,20 @@ QString formattedSize(qint64 bytes)
     return QLocale().formattedDataSize(bytes, 1, QLocale::DataSizeTraditionalFormat);
 }
 
+// The day in the OS regional long format without the weekday, such as
+// "2 October 2026" or "October 2, 2026". Qt has no long format without it, so
+// this drops the weekday field and the literal text up to the next field.
+QString longDateWithoutWeekday(QDate day)
+{
+    const QLocale locale;
+    static const QRegularExpression weekday(QStringLiteral("dddd?[^dMy']*"));
+    // A weekday at the end leaves a space or comma (Latin, Arabic or ideographic).
+    static const QRegularExpression trailing(QStringLiteral("[\\s,\u060C\u3001]+$"));
+    QString format = locale.dateFormat(QLocale::LongFormat);
+    format.remove(weekday).remove(trailing);
+    return locale.toString(day, format);
+}
+
 mervin::icons::Glyph pageGlyph(Page page)
 {
     using mervin::icons::Glyph;
@@ -151,35 +172,82 @@ mervin::icons::Glyph pageGlyph(Page page)
 
 // The bindings MainWindow::createActions sets up. Menu rows carry no shortcut
 // hints (see MainWindow::hideShortcutHints), so this page is the only place they
-// are written down - keep it in step with the actions.
+// are written down - keep it in step with the actions. The keys are written in
+// Qt's portable form; " / " separates two bindings on one row.
 struct ShortcutRow
 {
     const char *action;
     const char *keys;
 };
+// The action names are short commands in a two-column list of keyboard shortcuts.
 constexpr ShortcutRow kShortcuts[] = {
+    //: Keyboard shortcut list (verb): open a PDF file.
     {QT_TRANSLATE_NOOP("SettingsDialog", "Open"), "Ctrl+O"},
     {QT_TRANSLATE_NOOP("SettingsDialog", "Save edits"), "Ctrl+S"},
+    //: Keyboard shortcut list (command): open a new window.
     {QT_TRANSLATE_NOOP("SettingsDialog", "New window"), "Ctrl+N"},
     {QT_TRANSLATE_NOOP("SettingsDialog", "New tab"), "Ctrl+T"},
     {QT_TRANSLATE_NOOP("SettingsDialog", "Close tab"), "Ctrl+W"},
     {QT_TRANSLATE_NOOP("SettingsDialog", "Reopen closed tab"), "Ctrl+Shift+T"},
+    //: Keyboard shortcut list: switch to the next or previous tab.
     {QT_TRANSLATE_NOOP("SettingsDialog", "Cycle tabs"), "Ctrl+Tab / Ctrl+Shift+Tab"},
+    //: Keyboard shortcut list (verb): search the document's text.
     {QT_TRANSLATE_NOOP("SettingsDialog", "Find"), "Ctrl+F"},
     {QT_TRANSLATE_NOOP("SettingsDialog", "Find next / previous"), "F3 / Shift+F3"},
     {QT_TRANSLATE_NOOP("SettingsDialog", "Previous / next page"), "Ctrl+Up / Ctrl+Down"},
     {QT_TRANSLATE_NOOP("SettingsDialog", "Zoom in / out"), "Ctrl+= / Ctrl+-"},
+    //: Keyboard shortcut list: fit the whole page, or the page width, to the window.
     {QT_TRANSLATE_NOOP("SettingsDialog", "Fit page / width"), "Ctrl+1 / Ctrl+2"},
+    //: Keyboard shortcut list: switch between fitting the page and the page width.
     {QT_TRANSLATE_NOOP("SettingsDialog", "Toggle fit page / width"), "Home"},
     {QT_TRANSLATE_NOOP("SettingsDialog", "Rotate left / right"), "Ctrl+Shift+L / Ctrl+Shift+R"},
+    //: Keyboard shortcut list (verbs): copy the selected text / select all text.
     {QT_TRANSLATE_NOOP("SettingsDialog", "Copy / Select all"), "Ctrl+C / Ctrl+A"},
+    //: Keyboard shortcut list: turn the comment tool on or off.
     {QT_TRANSLATE_NOOP("SettingsDialog", "Comment"), "Ctrl+Shift+N"},
+    //: Keyboard shortcut list: recognise the text in a selected region.
+    //: OCR is optical character recognition.
     {QT_TRANSLATE_NOOP("SettingsDialog", "OCR selection"), "Ctrl+Shift+O"},
+    //: Keyboard shortcut list: turn the measuring tool on or off.
     {QT_TRANSLATE_NOOP("SettingsDialog", "Measure"), "Ctrl+Shift+M"},
+    //: Keyboard shortcut list: turn the form filling tool on or off.
     {QT_TRANSLATE_NOOP("SettingsDialog", "Fill forms"), "Ctrl+Shift+F"},
+    //: Keyboard shortcut list (verb): print the document.
     {QT_TRANSLATE_NOOP("SettingsDialog", "Print"), "Ctrl+P"},
     {QT_TRANSLATE_NOOP("SettingsDialog", "Full screen"), "F11"},
 };
+
+// Key names in kShortcuts that Qt's catalog writes unlike the key caps and the OS
+// ("Hem" for Home in Swedish). QKeySequence looks key names up in the "QShortcut"
+// context, and the build merges Mervin's catalog ahead of Qt's, so these entries
+// replace Qt's names. An unfinished entry also hides Qt's name and shows the English
+// one, so a language that is happy with Qt's name copies it.
+[[maybe_unused]] constexpr const char *kKeyNames[] = {
+    //: Key name in the keyboard shortcut list. Write it as printed on the key or as
+    //: the OS documents it. Left unfinished, the English name shows.
+    QT_TRANSLATE_NOOP("QShortcut", "Home"),
+    //: Key name in the keyboard shortcut list: the up arrow key. Write it as the OS
+    //: documents it. Left unfinished, the English name shows.
+    QT_TRANSLATE_NOOP("QShortcut", "Up"),
+    //: Key name in the keyboard shortcut list: the down arrow key. Write it as the OS
+    //: documents it. Left unfinished, the English name shows.
+    QT_TRANSLATE_NOOP("QShortcut", "Down"),
+};
+
+// A row's keys as the OS writes them. Key names follow the UI language through
+// Qt's catalog, which the build merges into ours ("Strg" in German), apart from
+// the ones kKeyNames overrides.
+QString nativeKeys(const char *keys)
+{
+    QStringList bindings;
+    for (const QString &binding : QString::fromLatin1(keys).split(QStringLiteral(" / ")))
+        bindings.append(QKeySequence(binding, QKeySequence::PortableText)
+                            .toString(QKeySequence::NativeText));
+    return bindings.join(QStringLiteral(" / "));
+}
+
+// The settings menu is at least this wide; longer page titles widen it.
+constexpr int kMinNavWidth = 196;
 
 } // namespace
 
@@ -222,7 +290,7 @@ SettingsDialog::SettingsDialog(const mervin::Settings &current, const UpdateInfo
 
     nav_ = new QListWidget(this);
     nav_->setObjectName(QStringLiteral("settingsNav"));
-    nav_->setFixedWidth(196);
+    nav_->setFixedWidth(kMinNavWidth);
     nav_->setIconSize(QSize(16, 16));
     nav_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     nav_->setFrameShape(QFrame::NoFrame);
@@ -231,12 +299,19 @@ SettingsDialog::SettingsDialog(const mervin::Settings &current, const UpdateInfo
     stack_ = new QStackedWidget(this);
     body->addWidget(stack_, 1);
 
+    // The page titles are the rows of the menu on the left of Settings.
+    //: Settings page title: general settings.
     addPage(Page::General, tr("General"), buildGeneralPage());
     addPage(Page::Appearance, tr("Appearance"), buildAppearancePage());
+    //: Settings page title: how documents are shown (zoom, scrolling).
     addPage(Page::Viewing, tr("Viewing"), buildViewingPage());
+    //: Settings page title: highlights and comments added to documents.
     addPage(Page::Annotations, tr("Annotations"), buildAnnotationsPage());
+    //: Settings page title. OCR is optical character recognition (text from images).
     addPage(Page::Ocr, tr("OCR"), buildOcrPage());
+    //: Settings page title: the measuring tool.
     addPage(Page::Measuring, tr("Measuring"), buildMeasuringPage());
+    //: Settings page title: fillable PDF forms.
     addPage(Page::Forms, tr("Forms"), buildFormsPage());
 
     // A divider between the settings and the two reference pages. It is a
@@ -256,6 +331,12 @@ SettingsDialog::SettingsDialog(const mervin::Settings &current, const UpdateInfo
     addPage(Page::Shortcuts, tr("Keyboard shortcuts"), buildShortcutsPage());
     addPage(Page::About, tr("About"), buildAboutPage());
     refreshNavIcons();
+    // Wide enough for the longest page title in the UI language, with its icon
+    // and the stylesheet's padding. The menu does not scroll sideways.
+    nav_->ensurePolished();
+    const QMargins navFrame = nav_->contentsMargins();
+    nav_->setFixedWidth(std::max(kMinNavWidth, nav_->sizeHintForColumn(0) + navFrame.left()
+                                                   + navFrame.right()));
 
     connect(nav_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *item) {
         if (item)
@@ -274,7 +355,11 @@ SettingsDialog::SettingsDialog(const mervin::Settings &current, const UpdateInfo
     applyButton_ = buttons->button(QDialogButtonBox::Apply);
     connect(buttons, &QDialogButtonBox::accepted, this, &SettingsDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    connect(applyButton_, &QPushButton::clicked, this, &SettingsDialog::applyChanges);
+    // Apply with a new language closes the dialog like OK: the caller restarts Mervin.
+    connect(applyButton_, &QPushButton::clicked, this, [this] {
+        if (applyChanges() && restartNeeded())
+            QDialog::accept();
+    });
     footerLayout->addWidget(buttons);
     outer->addWidget(footer);
     refreshUnloadHint();
@@ -325,12 +410,41 @@ QWidget *SettingsDialog::buildGeneralPage()
     auto *page = new QWidget(this);
     auto *layout = pageLayout(page);
 
+    // The UI language. Windows set their text when they are built, so a new
+    // language takes effect when Mervin restarts, which OK and Apply then do.
+    //: Group title: the language of Mervin's own text.
+    auto *languageBox = groupBox(tr("Language"), page);
+    auto *languageForm = snugForm(languageBox);
+    languageCombo_ = new mervin::LanguageCombo(languageBox);
+    languageCombo_->setObjectName(QStringLiteral("uiLanguage"));
+    // The picker starts at the language the next start uses: the stored one. It
+    // differs from the one on screen when a restart for it was cancelled at a save
+    // prompt, and then the restart note shows too. A --language run starts at the
+    // language on screen instead. settings() keeps the stored value until the
+    // picker changes.
+    const QString storedLanguage =
+        mervin::i18n::normalized(base_.uiLanguage, mervin::i18n::availableLanguages());
+    languageCombo_->setLanguage(storedLanguage.isEmpty() || mervin::i18n::oneRunOverride()
+                                    ? mervin::i18n::current()
+                                    : storedLanguage);
+    languageAtOpen_ = languageCombo_->language();
+    languageForm->addRow(tr("Display language:"), languageCombo_);
+    restartHint_ = hintLabel(tr("Mervin will restart."), languageBox);
+    restartHint_->setWordWrap(false);
+    languageForm->addRow(QString(), restartHint_);
+    const auto showRestartHint = [this, languageForm] {
+        languageForm->setRowVisible(restartHint_, restartNeeded());
+    };
+    connect(languageCombo_, &QComboBox::currentIndexChanged, this, showRestartHint);
+    showRestartHint();
+    layout->addWidget(languageBox);
+
     auto *openBox = groupBox(tr("Opening files"), page);
     auto *openForm = snugForm(openBox);
-    openForm->setRowWrapPolicy(QFormLayout::WrapLongRows);
     openBehaviorCombo_ = new QComboBox(openBox);
     openBehaviorCombo_->addItem(tr("New tab in current window"), QStringLiteral("new-tab"));
-    openBehaviorCombo_->addItem(tr("New window"), QStringLiteral("new-window"));
+    //: Where a PDF opens: in a new window, not a new tab.
+    openBehaviorCombo_->addItem(tr("New window", "where a PDF opens"), QStringLiteral("new-window"));
     selectByData(openBehaviorCombo_, base_.openBehavior);
     openForm->addRow(tr("When opening a PDF:"), openBehaviorCombo_);
     restoreSessionCheck_ = new QCheckBox(tr("Reopen my tabs when Mervin starts"), openBox);
@@ -340,9 +454,7 @@ QWidget *SettingsDialog::buildGeneralPage()
 
     auto *memoryBox = groupBox(tr("Memory and tray"), page);
     auto *memoryLayout = new QVBoxLayout(memoryBox);
-    auto *memoryForm = new QFormLayout;
-    memoryForm->setFieldGrowthPolicy(QFormLayout::FieldsStayAtSizeHint);
-    memoryForm->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    auto *memoryForm = snugForm(nullptr);
     auto *durationRow = new QWidget(memoryBox);
     auto *durationLayout = new QHBoxLayout(durationRow);
     durationLayout->setContentsMargins(0, 0, 0, 0);
@@ -353,12 +465,14 @@ QWidget *SettingsDialog::buildGeneralPage()
     unloadInactiveSpin_->setValue(base_.unloadInactiveMinutes > 0 ? base_.unloadInactiveMinutes : 30);
     unloadInactiveSpin_->setAccessibleName(tr("Unload inactive documents after (minutes)"));
     mervin::Theme::useTypedSpinBox(unloadInactiveSpin_);
+    //: Checkbox after the minutes field: never unload inactive documents.
     neverUnloadCheck_ = new QCheckBox(tr("Never"), durationRow);
     neverUnloadCheck_->setObjectName(QStringLiteral("neverUnloadDocuments"));
     neverUnloadCheck_->setChecked(base_.unloadInactiveMinutes == 0);
     unloadInactiveSpin_->setEnabled(!neverUnloadCheck_->isChecked());
     durationLayout->addWidget(unloadInactiveSpin_);
     durationLayout->addWidget(neverUnloadCheck_);
+    //: Label before a field for a number of minutes, followed by a "Never" checkbox.
     auto *durationLabel = new QLabel(tr("Unload inactive documents after (minutes)"), memoryBox);
     durationLabel->setBuddy(unloadInactiveSpin_);
     memoryForm->addRow(durationLabel, durationRow);
@@ -367,10 +481,12 @@ QWidget *SettingsDialog::buildGeneralPage()
     unloadHint_->setObjectName(QStringLiteral("unloadHint"));
     memoryLayout->addWidget(unloadHint_);
     memoryLayout->addSpacing(4);
+    //: Checkbox: closing the window keeps Mervin running in the system tray instead of quitting.
     closeToTrayCheck_ = new QCheckBox(tr("Close to tray"), memoryBox);
     closeToTrayCheck_->setObjectName(QStringLiteral("closeToTray"));
     closeToTrayCheck_->setChecked(base_.closeToTray);
     memoryLayout->addWidget(closeToTrayCheck_);
+    //: Quit Mervin is the tray menu item of that name.
     auto *trayHint = hintLabel(tr("Keep Mervin running when you close the window. "
                                  "Use Quit Mervin from the tray menu to exit."), memoryBox);
     trayHint->setContentsMargins(20, 0, 0, 0);
@@ -386,7 +502,6 @@ QWidget *SettingsDialog::buildGeneralPage()
 
     auto *recentBox = groupBox(tr("Recent files"), page);
     auto *recentForm = snugForm(recentBox);
-    recentForm->setRowWrapPolicy(QFormLayout::WrapLongRows);
     // Both counts are typed, not stepped: the useful values are round numbers
     // hundreds apart, so the stepper arrows were only ever visual noise (nudging
     // 500 by one at a time is not a real interaction). Typing, Up/Down and the
@@ -395,17 +510,21 @@ QWidget *SettingsDialog::buildGeneralPage()
     visibleSpin_->setRange(1, 100000);
     visibleSpin_->setValue(base_.recentVisibleCount);
     mervin::Theme::useTypedSpinBox(visibleSpin_);
+    //: Label before a number: how many recent files the Recent page lists.
     recentForm->addRow(tr("Recent files shown:"), visibleSpin_);
     retentionSpin_ = new QSpinBox(recentBox);
     retentionSpin_->setRange(1, 1000000);
     retentionSpin_->setValue(base_.recentRetention);
     mervin::Theme::useTypedSpinBox(retentionSpin_);
+    //: Label before a number: how many recent files Mervin remembers.
     recentForm->addRow(tr("Recent history kept:"), retentionSpin_);
     // The scope the Recent page's search starts in; the field's own toggles
     // change it for the moment.
     recentSearchCombo_ = new QComboBox(recentBox);
     recentSearchCombo_->setObjectName(QStringLiteral("recentSearchScope"));
+    //: Where the Recent page's search looks first: in file names.
     recentSearchCombo_->addItem(tr("Names"), QStringLiteral("names"));
+    //: Where the Recent page's search looks first: in the text inside the files.
     recentSearchCombo_->addItem(tr("Contents"), QStringLiteral("contents"));
     recentSearchCombo_->addItem(tr("All (names, then contents)"), QStringLiteral("all"));
     selectByData(recentSearchCombo_, base_.recentSearchScope);
@@ -427,6 +546,7 @@ QWidget *SettingsDialog::buildGeneralPage()
         // so there is no switch to show. The saved value is kept for an
         // installed copy that shares this profile.
         updatesCheck_->hide();
+        //: Check for Updates is the button below.
         updateLayout->addWidget(hintLabel(tr("This copy can't update itself. Check for Updates "
                                              "shows where to download a new version."),
                                           updateBox));
@@ -460,6 +580,7 @@ QWidget *SettingsDialog::buildGeneralPage()
     // registration - it would point the .pdf handler at the dev executable.
     if (!mervin::ConfigPaths::overrideDir().isEmpty()) {
         defaultBtn->setEnabled(false);
+        //: --profile is a command-line option; keep it as it is.
         defaultBtn->setToolTip(tr("Disabled while running with --profile"));
     }
     connect(defaultBtn, &QPushButton::clicked, this, [this] {
@@ -487,6 +608,7 @@ QWidget *SettingsDialog::buildAppearancePage()
     auto *page = new QWidget(this);
     auto *layout = pageLayout(page);
 
+    //: Group title: the look of Mervin's windows, as opposed to the document pages.
     auto *appBox = groupBox(tr("Application"), page);
     auto *appLayout = new QVBoxLayout(appBox);
     // UI theme: the application chrome's light/dark scheme. Dark is the default
@@ -511,6 +633,7 @@ QWidget *SettingsDialog::buildAppearancePage()
     accentBtn_->setAutoDefault(false);
     accentBtn_->setToolTip(tr("Choose accent colour"));
     connect(accentBtn_, &QPushButton::clicked, this, &SettingsDialog::pickAccent);
+    //: Button (verb): go back to the default accent colour.
     auto *accentReset = new QPushButton(tr("Reset"), appBox);
     accentReset->setAutoDefault(false);
     connect(accentReset, &QPushButton::clicked, this, [this] {
@@ -541,11 +664,13 @@ QWidget *SettingsDialog::buildAppearancePage()
 
     // How pages are tinted, independent of the UI light/dark scheme. The
     // toolbar's moon/sun button still flips Traditional and Comfort while reading.
+    //: Group title: how document pages are coloured.
     auto *documentBox = groupBox(tr("Document"), page);
     auto *documentLayout = new QVBoxLayout(documentBox);
     docThemePicker_ = new mervin::DocumentThemePicker(documentBox);
     docThemePicker_->setTheme(base_.documentTheme);
     documentLayout->addWidget(docThemePicker_);
+    //: Comfort is the name of a document theme above.
     documentLayout->addWidget(hintLabel(tr("Comfort darkens the page and keeps photos readable."),
                                        documentBox));
     layout->addWidget(documentBox);
@@ -562,7 +687,9 @@ QWidget *SettingsDialog::buildViewingPage()
     auto *form = snugForm(box);
 
     zoomCombo_ = new QComboBox(box);
+    //: Default zoom choice: scale the page so its width fits the window.
     zoomCombo_->addItem(tr("Fit Width"), QStringLiteral("fit-width"));
+    //: Default zoom choice: scale the page so the whole page fits the window.
     zoomCombo_->addItem(tr("Fit Page"), QStringLiteral("fit-page"));
     for (const char *p : {"50", "75", "100", "125", "150", "200"})
         zoomCombo_->addItem(QStringLiteral("%1%").arg(p), QString::fromLatin1(p));
@@ -651,6 +778,7 @@ QWidget *SettingsDialog::buildOcrPage()
         ocrLanguagePicked_ = true;
         refreshButtons();
     });
+    //: The language OCR reads text in unless the user picks another.
     defaultForm->addRow(tr("Default language:"), ocrLanguageCombo_);
     layout->addWidget(defaultBox);
 
@@ -670,6 +798,7 @@ QWidget *SettingsDialog::buildOcrPage()
     addButton->setObjectName(QStringLiteral("addOcrLanguagesButton"));
     addButton->setAutoDefault(false);
     connect(addButton, &QPushButton::clicked, this, &SettingsDialog::manageOcrLanguages);
+    //: Button: open the folder that holds the OCR language files.
     auto *folderButton = new QPushButton(tr("Open Folder"), installedBox);
     folderButton->setAutoDefault(false);
     connect(folderButton, &QPushButton::clicked, this, [] { mervin::TessdataManager::openFolder(); });
@@ -691,6 +820,7 @@ QWidget *SettingsDialog::buildMeasuringPage()
     auto *box = groupBox(QString(), page);
     auto *form = snugForm(box);
 
+    //: "&&" shows as a single "&".
     snapCheck_ = new QCheckBox(tr("Snap to vertices && edges"), box);
     snapCheck_->setToolTip(
         tr("Snap endpoints to the drawing's lines for precise picks on CAD geometry"));
@@ -701,19 +831,25 @@ QWidget *SettingsDialog::buildMeasuringPage()
     // change them per tab. Choices and spellings match MeasurePanel and the
     // parsers in TabPage (kindFromString) and MeasureMath (unitFromString).
     measureTypeCombo_ = new QComboBox(box);
+    //: Measurement type (noun): a straight distance between two points.
     measureTypeCombo_->addItem(tr("Distance"), QStringLiteral("distance"));
+    //: Measurement type (noun): the length of a line with several segments.
     measureTypeCombo_->addItem(tr("Path"), QStringLiteral("path"));
+    //: Measurement type (noun): the area of a polygon.
     measureTypeCombo_->addItem(tr("Area"), QStringLiteral("area"));
+    //: Measurement type (noun): the angle between two lines.
     measureTypeCombo_->addItem(tr("Angle"), QStringLiteral("angle"));
     QString type = base_.measurementType.trimmed().toLower();
     if (type == QLatin1String("polyline"))
         type = QStringLiteral("path");
     selectByData(measureTypeCombo_, type);
+    //: The measurement type a new measuring tool starts with.
     form->addRow(tr("Default type:"), measureTypeCombo_);
 
     measureUnitCombo_ = new QComboBox(box);
+    // Unit symbols are not translated (see measure::unitSuffix).
     for (const char *unit : {"mm", "cm", "m", "in", "ft"})
-        measureUnitCombo_->addItem(tr(unit), QString::fromLatin1(unit));
+        measureUnitCombo_->addItem(QString::fromLatin1(unit), QString::fromLatin1(unit));
     // TabPage also accepts these long spellings (measure::unitFromString).
     QString unit = base_.measurementUnit.trimmed().toLower();
     if (unit == QLatin1String("inch"))
@@ -732,8 +868,9 @@ QWidget *SettingsDialog::buildMeasuringPage()
     measureLineWidthCombo_ = new QComboBox(box);
     int widthIndex = 0;
     double bestDelta = 1e9;
+    // "pt" is a unit symbol, so it is not translated.
     for (double w : {0.5, 1.0, 1.5, 2.0, 3.0, 4.0}) {
-        measureLineWidthCombo_->addItem(tr("%1 pt").arg(w, 0, 'g', 2), w);
+        measureLineWidthCombo_->addItem(QStringLiteral("%1 pt").arg(w, 0, 'g', 2), w);
         // Land a hand-edited width on the nearest offered one, as MeasurePanel does.
         const double delta = std::abs(w - base_.measurementLineWidth);
         if (delta < bestDelta) {
@@ -785,7 +922,7 @@ QWidget *SettingsDialog::buildShortcutsPage()
         rowLayout->setContentsMargins(0, 6, 0, 6);
         auto *action = new QLabel(tr(r.action), row);
         action->setObjectName(QStringLiteral("shortcutAction"));
-        auto *keys = new QLabel(QString::fromLatin1(r.keys), row);
+        auto *keys = new QLabel(nativeKeys(r.keys), row);
         keys->setObjectName(QStringLiteral("shortcutKeys"));
         rowLayout->addWidget(action);
         rowLayout->addStretch(1);
@@ -810,6 +947,7 @@ QWidget *SettingsDialog::buildAboutPage()
     names->setSpacing(0);
     auto *name = new QLabel(QStringLiteral(MERVIN_APP_NAME), page);
     name->setObjectName(QStringLiteral("aboutName"));
+    //: %1 is the version number, such as 1.64.13.
     auto *version = new QLabel(tr("Version %1").arg(QStringLiteral(MERVIN_VERSION_STRING)), page);
     version->setObjectName(QStringLiteral("aboutVersion"));
     version->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -825,6 +963,8 @@ QWidget *SettingsDialog::buildAboutPage()
     // Required open-source notices (LGPL for Qt, AGPL/commercial for MuPDF), plus
     // the other direct and bundled components, after Mervin's own licence.
     auto *licenses = new QLabel(
+        //: Licence notice. Keep the HTML tags, the component and licence names, and
+        //: THIRD_PARTY_LICENSES.md as they are.
         tr("<p>Mervin PDF is free software under the GNU AGPL v3, with no warranty.</p>"
            "<p><b>Open-source components</b></p>"
            "<ul>"
@@ -849,6 +989,9 @@ QWidget *SettingsDialog::buildAboutPage()
 mervin::Settings SettingsDialog::settings() const
 {
     mervin::Settings s = base_; // keep window geometry/state etc.
+    // An untouched picker keeps the stored value, even an empty or unknown one.
+    if (languageCombo_->language() != languageAtOpen_)
+        s.uiLanguage = languageCombo_->language();
     s.defaultZoom = zoomCombo_->currentData().toString();
     s.pageMode = pageModeCombo_->currentData().toString();
     s.twoPageSpread = twoPageSpreadCheck_->isChecked();
@@ -902,6 +1045,7 @@ void SettingsDialog::refreshUnloadHint()
 {
     const auto minutes = unloadMinutes();
     if (!minutes) {
+        //: %1 is the largest number of minutes allowed. Never is the checkbox of that name.
         unloadHint_->setText(tr("Enter 1 to %1 whole minutes, or check Never.")
                                  .arg(mervin::Settings::kMaxUnloadInactiveMinutes));
     } else if (*minutes == 0) {
@@ -910,6 +1054,11 @@ void SettingsDialog::refreshUnloadHint()
         unloadHint_->clear(); // a valid timeout needs no explanation
     }
     unloadHint_->setHidden(unloadHint_->text().isEmpty());
+}
+
+bool SettingsDialog::restartNeeded() const
+{
+    return languageCombo_->language() != mervin::i18n::current();
 }
 
 void SettingsDialog::accept()
@@ -941,7 +1090,8 @@ void SettingsDialog::refreshButtons()
         return; // the pages are still being built
     const bool valid = unloadMinutes().has_value();
     okButton_->setEnabled(valid);
-    applyButton_->setEnabled(valid && settings() != applied_);
+    // A pending language restart also counts: Apply then restarts, as OK does.
+    applyButton_->setEnabled(valid && (settings() != applied_ || restartNeeded()));
 }
 
 void SettingsDialog::watchForEdits()
@@ -1000,8 +1150,8 @@ void SettingsDialog::refreshLastCheck()
         return;
     }
     const QDate day = updates_.lastCheck.toLocalTime().date();
-    lastCheckLabel_->setText(
-        tr("Last checked %1").arg(QLocale().toString(day, QStringLiteral("d MMMM yyyy"))));
+    //: %1 is the date of the last update check, such as "2 October 2026".
+    lastCheckLabel_->setText(tr("Last checked %1").arg(longDateWithoutWeekday(day)));
 }
 
 bool SettingsDialog::selfUpdating() const
@@ -1024,6 +1174,7 @@ void SettingsDialog::refreshOcrLanguages(int focusRow)
         for (const QString &code : installed)
             ocrLanguageCombo_->addItem(mervin::TessdataManager::languageName(code), code);
         if (installed.isEmpty())
+            //: Shown in the OCR language picker when no language is installed.
             ocrLanguageCombo_->addItem(tr("None"));
         ocrLanguageCombo_->setEnabled(!installed.isEmpty());
         selectByData(ocrLanguageCombo_, ocrLanguage_);
@@ -1058,6 +1209,7 @@ void SettingsDialog::refreshOcrLanguages(int focusRow)
             removeButton->setToolTip(tr("OCR needs at least one language"));
         } else {
             removeButton->setToolTip(
+                //: Tooltip of a delete button. %1 is the name of an OCR language, such as Swedish.
                 tr("Remove %1").arg(mervin::TessdataManager::languageName(code)));
         }
         connect(removeButton, &QToolButton::clicked, this, [this, code] { removeOcrLanguage(code); });
@@ -1102,6 +1254,7 @@ void SettingsDialog::removeOcrLanguage(const QString &code)
     const QString name = mervin::TessdataManager::languageName(code);
     const auto answer = QMessageBox::question(
         this, tr("Remove OCR Language"),
+        //: %1 is the name of an OCR language. Add Languages is the button of that name.
         tr("Remove %1? You can download it again with Add Languages.").arg(name),
         QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
     if (answer != QMessageBox::Yes)
@@ -1111,6 +1264,7 @@ void SettingsDialog::removeOcrLanguage(const QString &code)
         QDir(mervin::TessdataManager::directory()).filePath(code + QStringLiteral(".traineddata"));
     if (!QFile::remove(path)) {
         QMessageBox::warning(this, tr("Remove OCR Language"),
+                             //: %1 is the name of an OCR language.
                              tr("Could not remove %1 from the OCR language folder.").arg(name));
         return;
     }

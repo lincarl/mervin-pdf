@@ -85,6 +85,7 @@ ManageLanguagesDialog::ManageLanguagesDialog(const QString &defaultLanguage, QWi
     layout->setSpacing(10);
 
     auto *defaultRow = new QHBoxLayout;
+    //: Label for the OCR language that new OCR selections start with.
     auto *defaultLabel = new QLabel(tr("Default language"), this);
     defaultLanguage_ = new QComboBox(this);
     defaultLanguage_->setObjectName(QStringLiteral("ocrDefaultLanguage"));
@@ -117,6 +118,7 @@ ManageLanguagesDialog::ManageLanguagesDialog(const QString &defaultLanguage, QWi
 
     auto *availableColumn = new QVBoxLayout;
     availableColumn->setSpacing(7);
+    //: Column heading. The list holds Tesseract's best-quality OCR models.
     auto *heading = new QLabel(tr("Available - best models"), this);
     heading->setObjectName(QStringLiteral("ocrLanguageHeading"));
     availableColumn->addWidget(heading);
@@ -138,6 +140,7 @@ ManageLanguagesDialog::ManageLanguagesDialog(const QString &defaultLanguage, QWi
     layout->addLayout(columns, 1);
 
     auto *buttons = new QDialogButtonBox(this);
+    //: Button that opens the OCR language folder in the file manager.
     auto *openFolder = buttons->addButton(tr("Open Folder"), QDialogButtonBox::ActionRole);
     buttons->addButton(QDialogButtonBox::Close);
     connect(openFolder, &QPushButton::clicked, this, [] { TessdataManager::openFolder(); });
@@ -166,6 +169,7 @@ void ManageLanguagesDialog::fetchCatalog()
         reply->deleteLater();
         if (error != QNetworkReply::NoError) {
             availableList_->addItem(tr("Language catalog unavailable"));
+            //: %1 is the network error message.
             availableStatus_->setText(tr("Check your connection, then reopen this dialog. %1")
                                           .arg(detail));
             return;
@@ -230,15 +234,20 @@ void ManageLanguagesDialog::rebuildLists()
         const qint64 size = QFileInfo(QDir(TessdataManager::directory())
                                          .filePath(code + QStringLiteral(".traineddata"))).size();
         total += size;
+        //: Button on an installed OCR language. It deletes the language data.
+        const QString removeText = tr("Remove");
+        //: Button text while a language downloads.
         addRow(installedList_, makeRow(TessdataManager::languageName(code), code, formattedSize(size),
-            code == busyCode_ ? tr("Working...") : tr("Remove"), installedList_,
+            code == busyCode_ ? tr("Working...") : removeText, installedList_,
             [this, code] { remove(code); }, busyCode_.isEmpty()));
     }
     if (installed_.isEmpty()) {
         auto *empty = new QListWidgetItem(tr("No OCR languages installed"), installedList_);
         empty->setFlags(Qt::NoItemFlags);
     }
+    //: Column heading. %1 is the number of installed OCR languages.
     installedHeading_->setText(tr("Installed (%1)").arg(installed_.size()));
+    //: %1 is the combined size of the installed OCR languages, such as "48.2 MB".
     installedTotal_->setText(tr("%1 total").arg(formattedSize(total)));
     applyFilter();
 }
@@ -249,12 +258,17 @@ void ManageLanguagesDialog::applyFilter()
     const QString needle = search_->text().trimmed();
     int shown = 0;
     for (const Language &language : std::as_const(catalog_)) {
+        // The name in the UI language, its English name or the code.
         if (installed_.contains(language.code)
             || (!needle.isEmpty() && !language.name.contains(needle, Qt::CaseInsensitive)
+                && !TessdataManager::englishLanguageName(language.code)
+                        .contains(needle, Qt::CaseInsensitive)
                 && !language.code.contains(needle, Qt::CaseInsensitive)))
             continue;
+        //: Button on an available OCR language. It downloads and installs it.
+        const QString addText = tr("Add");
         addRow(availableList_, makeRow(language.name, language.code,
-            formattedSize(language.size), language.code == busyCode_ ? tr("Working...") : tr("Add"),
+            formattedSize(language.size), language.code == busyCode_ ? tr("Working...") : addText,
             availableList_, [this, language] { install(language); }, busyCode_.isEmpty()));
         ++shown;
     }
@@ -264,7 +278,8 @@ void ManageLanguagesDialog::applyFilter()
         auto *empty = new QListWidgetItem(tr("No matching languages"), availableList_);
         empty->setFlags(Qt::NoItemFlags);
     }
-    availableStatus_->setText(tr("%1 best-quality model(s) available").arg(shown));
+    //: %n is the number of OCR language models listed.
+    availableStatus_->setText(tr("%n best-quality model(s) available", nullptr, shown));
 }
 
 void ManageLanguagesDialog::install(const Language &language)
@@ -279,6 +294,7 @@ void ManageLanguagesDialog::install(const Language &language)
         if (error != QNetworkReply::NoError) {
             setBusy(language.code, false);
             QMessageBox::warning(this, tr("OCR Language Download"),
+                //: %1 is an OCR language name, %2 the network error message.
                 tr("Could not download %1.\n\n%2").arg(language.name, detail));
             return;
         }
@@ -289,6 +305,7 @@ void ManageLanguagesDialog::install(const Language &language)
             || !output.commit()) {
             setBusy(language.code, false);
             QMessageBox::warning(this, tr("OCR Language Download"),
+                //: %1 is an OCR language name.
                 tr("Could not save %1 in the OCR language folder.").arg(language.name));
             return;
         }
@@ -298,6 +315,7 @@ void ManageLanguagesDialog::install(const Language &language)
             QFile::remove(path);
             setBusy(language.code, false);
             QMessageBox::warning(this, tr("OCR Language Download"),
+                //: %1 explains what is wrong with the file.
                 tr("The downloaded model is not valid and was removed.\n\n%1")
                     .arg(validationError));
             return;
@@ -313,6 +331,7 @@ void ManageLanguagesDialog::remove(const QString &code)
         .filePath(code + QStringLiteral(".traineddata"));
     if (!QFile::remove(path)) {
         QMessageBox::warning(this, tr("Remove OCR Language"),
+            //: %1 is an OCR language name.
             tr("Could not remove %1 from the OCR language folder.")
                 .arg(TessdataManager::languageName(code)));
         return;

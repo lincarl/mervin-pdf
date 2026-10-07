@@ -6,6 +6,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
@@ -15,6 +16,8 @@
 
 namespace mervin {
 
+// A free function has no tr(), so each string names its context,
+// "mervin::FileContextMenu".
 void showFileContextMenu(QWidget *parent, const QString &path, const QPoint &globalPos,
                          const QList<FileMenuItem> &surfaceItems)
 {
@@ -33,19 +36,22 @@ void showFileContextMenu(QWidget *parent, const QString &path, const QPoint &glo
     // text" reads distinctly from the plain two-page Copy mark on "Copy file".
     using icons::Glyph;
     const QColor ink = Theme::iconInk(parent ? parent->palette() : QApplication::palette());
-    QAction *copyFile = menu.addAction(icons::glyph(Glyph::Copy, ink),
-                                       QObject::tr("Copy file"));
+    //: Menu item that puts the file itself on the clipboard, to paste in a file manager.
+    const QString copyFileText = QCoreApplication::translate("mervin::FileContextMenu", "Copy file");
+    QAction *copyFile = menu.addAction(icons::glyph(Glyph::Copy, ink), copyFileText);
     copyFile->setEnabled(fi.isFile());
-    QAction *openFolder = menu.addAction(icons::glyph(Glyph::Open, ink),
-                                         QObject::tr("Open folder"));
+    //: Menu item that shows the folder holding the file.
+    QAction *openFolder = menu.addAction(
+        icons::glyph(Glyph::Open, ink),
+        QCoreApplication::translate("mervin::FileContextMenu", "Open folder"));
     openFolder->setEnabled(!folder.isEmpty() && QFileInfo::exists(folder));
     menu.addSeparator();
     QAction *copyFilePath = menu.addAction(
         icons::glyphBadged(Glyph::Document, Glyph::Copy, ink),
-        QObject::tr("Copy file path"));
+        QCoreApplication::translate("mervin::FileContextMenu", "Copy file path"));
     QAction *copyFolderPath = menu.addAction(
         icons::glyphBadged(Glyph::Open, Glyph::Copy, ink),
-        QObject::tr("Copy folder path"));
+        QCoreApplication::translate("mervin::FileContextMenu", "Copy folder path"));
 
     // Surface items; their QActions are kept so the chosen one can be run
     // after exec() returns.
@@ -77,8 +83,11 @@ void showFileContextMenu(QWidget *parent, const QString &path, const QPoint &glo
         // vanish while the menu is up, in which case the helper leaves the
         // clipboard untouched - do not let that look like a successful copy.
         if (!copyFileToClipboard(fi.absoluteFilePath())) {
-            QMessageBox::warning(parent, QObject::tr("Copy file"),
-                                 QObject::tr("Could not copy \"%1\": the file no longer exists.")
+            //: %1 is the file's path.
+            QMessageBox::warning(parent, copyFileText,
+                                 QCoreApplication::translate(
+                                     "mervin::FileContextMenu",
+                                     "Could not copy \"%1\": the file no longer exists.")
                                      .arg(fileNative));
         }
     }

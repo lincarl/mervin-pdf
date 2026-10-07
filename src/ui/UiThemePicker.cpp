@@ -157,7 +157,14 @@ UiThemePicker::UiThemePicker(QWidget *parent) : QWidget(parent)
     choices_ = new QButtonGroup(this);
     choices_->setExclusive(true);
 
-    const std::array<QString, 3> labels = {tr("Dark"), tr("Light"), tr("Follow system")};
+    // The labels name the look of Mervin's windows (the UI theme).
+    const std::array<QString, 3> labels = {
+        //: UI theme name: dark windows.
+        tr("Dark"),
+        //: UI theme name: light windows.
+        tr("Light"),
+        //: UI theme choice: dark or light as the operating system is set.
+        tr("Follow system")};
     const std::array<QString, 3> descriptions = {
         tr("Dark window, toolbars and dialogs"),
         tr("Light window, toolbars and dialogs"),

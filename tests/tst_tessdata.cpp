@@ -1,3 +1,4 @@
+#include "i18n/UiLanguage.h"
 #include "ocr/TessdataFile.h"
 #include "ocr/TessdataManager.h"
 
@@ -26,6 +27,7 @@ class TstTessdata : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase();
     void shippedEngModelIsLoadable();
     void rejectsEmDashPurgedModel();
     void rejectsTruncatedModel();
@@ -60,14 +62,33 @@ QString writeModel(const QString &dir, const QByteArray &bytes)
 
 } // namespace
 
+// The checks below read English messages and names.
+void TstTessdata::initTestCase()
+{
+    mervin::i18n::apply(QStringLiteral("en"));
+}
+
 void TstTessdata::languageNamesAreFriendly()
 {
+    // Mervin's own table names every tessdata_best model, in the UI language.
     QCOMPARE(mervin::TessdataManager::languageName(QStringLiteral("eng")),
              QStringLiteral("English"));
     QCOMPARE(mervin::TessdataManager::languageName(QStringLiteral("swe")),
              QStringLiteral("Swedish"));
+    QCOMPARE(mervin::TessdataManager::languageName(QStringLiteral("osd")),
+             QStringLiteral("Orientation and script detection"));
+    // A code missing from the table is returned unchanged unless QLocale knows it.
     QCOMPARE(mervin::TessdataManager::languageName(QStringLiteral("unknown_model")),
              QStringLiteral("unknown_model"));
+
+    // In Swedish the names are translated, and the English name stays available
+    // for the search.
+    mervin::i18n::apply(QStringLiteral("sv"));
+    QCOMPARE(mervin::TessdataManager::languageName(QStringLiteral("swe")),
+             QStringLiteral("Svenska"));
+    QCOMPARE(mervin::TessdataManager::englishLanguageName(QStringLiteral("swe")),
+             QStringLiteral("Swedish"));
+    mervin::i18n::apply(QStringLiteral("en"));
 }
 
 // The file every installer seeds into the user's tessdata folder must be data

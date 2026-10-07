@@ -11,6 +11,7 @@ Mervin is a C++20 desktop application built with CMake.
 | Component | Responsibility |
 | --- | --- |
 | Qt 6 Core, GUI, Widgets, Network, and PrintSupport | Native UI, printing, networking, and local IPC |
+| Qt Linguist tools (lupdate, lrelease) | UI translation catalogs |
 | MuPDF | Document parsing, rendering, text extraction, forms, annotations, and OCR |
 | qpdf | Page operations, encryption, permissions, and measurement PDF output |
 | toml++ | Settings serialization |
@@ -33,6 +34,7 @@ src/
   config/        paths and TOML settings
   dialogs/       application dialogs
   extract/       extract-plan model
+  i18n/          UI language list, OS language matching, and catalog loading
   ipc/           process lock, local socket, and message framing
   merge/         merge-plan model
   net/           safe URL request and download helpers
@@ -107,6 +109,52 @@ hidden window back without creating a second copy of its document.
 The development-only `--profile <directory>` option redirects application files and
 Qt settings, and gives the process a separate single-instance identity. Tests and
 manual checks use it to avoid touching normal user state.
+
+## UI languages
+
+The UI text is written in English. Every other language has a Qt Linguist catalog,
+`i18n/mervin_<id>.ts`, named by Qt's own catalog ID (`sv`, `zh_CN`). In
+`CMakeLists.txt`, `qt_add_translations` compiles each catalog into `mervin_core`
+as `:/i18n/mervin_<id>.qm`, so every package and test carries them without install
+rules. The build merges Qt's own catalog for the language (`qtbase_<id>.qm`, with
+the standard buttons and the file, print and message dialogs) into Mervin's, so one
+`QTranslator` covers both. Configure stops when Qt's catalog is missing. `lrelease`
+runs with `-nounfinished`, so a message not yet marked finished shows in English
+rather than as a draft. `mervin_en.ts` holds only the English plural forms of `%n`
+strings. [TRANSLATING.md](TRANSLATING.md) covers updating catalogs and adding a
+language.
+
+`i18n::availableLanguages()` lists the compiled catalogs and `i18n::apply()`
+installs one. `main()` applies the language before it builds any window, because
+widgets set their text once, when they are built. It takes `--language <id>` for
+that run, otherwise the `ui_language` setting; an unknown ID shows English. While
+`ui_language` is empty, the first-run window (`FirstRunDialog`) asks for the
+language before the first main window. As the only window open, it follows a
+change at once through `LanguageChange`, and it acknowledges launches that arrive
+meanwhile and opens their files with the first main window.
+
+The other windows never retranslate. When Settings picks a different language,
+OK or Apply saves it and `WindowManager::restart()` closes every window as Quit
+does, so unsaved documents still prompt and cancelling one cancels the restart.
+`relaunch` then starts the new copy from `main()` once the single-instance server
+is gone. On Linux it waits until this process has exited. From an AppImage it starts
+the AppImage file, and a `--profile` run keeps its profile.
+
+`i18n::suggestedLanguage()` pre-selects the first-run language. It walks
+`QLocale::uiLanguages()` in order and takes the first catalog with the same
+language and script, preferring the same territory, so zh-HK would pick a zh_TW
+catalog and de-AT a de one. Nothing matching gives English.
+
+Only text is translated. Mervin never calls `QLocale::setDefault`, so `QLocale()`
+stays the OS regional format whatever the UI language. Recent and Settings format
+their dates and file sizes with it. The annotation card shows its date as
+`yyyy-MM-dd` in every language. Measurement values, zoom and page ranges keep
+their fixed, locale-independent format, and unit symbols, settings keys, log
+output and text written into PDFs stay as they are. `apply()` also sets the layout
+direction from the language. While the UI is Simplified Chinese it adds the first
+installed Simplified Chinese font (Microsoft YaHei, Noto Sans CJK SC, Source Han
+Sans, WenQuanYi Micro Hei) as the fallback for Han text, which otherwise can fall
+back to a Japanese font with different glyph shapes.
 
 ## Inactive documents and memory
 
@@ -390,7 +438,8 @@ model downloads, and update checks/downloads.
 
 The project supports Windows x64 and Linux x86-64. CMake builds the targets; the
 platform release pipeline adds Windows NSIS/MSI installers and Linux
-AppImage/DEB/RPM artifacts. Windows uses Qt 6.12.0; Linux requires Qt 6.6 or newer.
+AppImage/DEB/RPM artifacts. Windows uses Qt 6.12.0; Linux requires Qt 6.9 or newer,
+the first release that merges Qt's own catalogs into the app's at build time.
 MuPDF 1.28.5 is built from source with OCR support.
 
 QtTest targets cover the core stores, IPC, rendering helpers, document tools,

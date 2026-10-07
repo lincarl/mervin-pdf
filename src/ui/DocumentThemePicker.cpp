@@ -86,7 +86,13 @@ DocumentThemePicker::DocumentThemePicker(QWidget *parent) : QWidget(parent)
     choices_ = new QButtonGroup(this);
     choices_->setExclusive(true);
 
-    const std::array<QString, 3> labels = {tr("Traditional"), tr("Comfort"), tr("Inverted")};
+    const std::array<QString, 3> labels = {
+        //: Document theme name: pages as authored, on white paper.
+        tr("Traditional"),
+        //: Document theme name: dark grey pages that are easy on the eyes, with readable photos.
+        tr("Comfort"),
+        //: Document theme name: black pages with all colours inverted.
+        tr("Inverted")};
     const std::array<QString, 3> descriptions = {
         tr("White paper, dark text and pictures in their original colours"),
         tr("Dark grey paper, light text and readable photos"),
@@ -106,6 +112,7 @@ DocumentThemePicker::DocumentThemePicker(QWidget *parent) : QWidget(parent)
         row->addWidget(choice, 1);
     }
 
+    //: Document theme choice: dark pages with a dark UI theme, light pages with a light one.
     followUi_ = new QRadioButton(tr("Follow UI theme"), this);
     followUi_->setObjectName(QStringLiteral("documentThemeFollowUi"));
     choices_->addButton(followUi_, 3);

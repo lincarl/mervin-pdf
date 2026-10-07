@@ -8,22 +8,25 @@
 #include <QSet>
 #include <QTimer>
 
+#include "app/Relaunch.h"
 #include "app/WindowManager.h"
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
+#include "dialogs/FirstRunDialog.h"
+#include "i18n/UiLanguage.h"
 #include "ipc/Message.h"
 #include "ipc/PipeName.h"
 #include "ipc/SingleInstanceServer.h"
 #include "ui/Icons.h"
+#include "ui/MainWindow.h"
 #include "mervin_version.h"
 #include "session/StartupPlan.h"
 #include "ui/TabPage.h"
+#include "ui/Theme.h"
 #include "update/Updater.h"
 
 #ifdef Q_OS_WIN
 #  include "platform/PlatformIntegration.h"
-#  include <QAbstractButton>
-#  include <QMessageBox>
 #endif
 
 #include <cstdio>
@@ -46,14 +49,28 @@ namespace {
 
 // Non-flags are paths; unknown flags are ignored. --profile <dir> (or =<dir>) redirects
 // persistent state and isolates single-instance/session handling. --quit-after-startup exits
-// once startup completes, for process timing.
+// once startup completes, for process timing. --language <id> (or =<id>) shows the UI in that
+// language for this run only, without the first-run window.
 struct CliOptions
 {
     QString profileDir;
     bool profileError = false; // --profile present but its directory missing
     bool quitAfterStartup = false;
+    QString language;
     QStringList paths;
 };
+
+// The value of `--name <value>` or `--name=<value>` at args[i], advancing i past a separate
+// value. Empty when the flag has no value.
+QString flagValue(const QStringList &args, int &i, const QString &name)
+{
+    const QString &a = args.at(i);
+    if (a.startsWith(name + QLatin1Char('=')))
+        return a.mid(name.size() + 1);
+    if (i + 1 < args.size() && !args.at(i + 1).startsWith(QLatin1String("--")))
+        return args.at(++i);
+    return {};
+}
 
 CliOptions parseCli(const QStringList &args)
 {
@@ -61,11 +78,7 @@ CliOptions parseCli(const QStringList &args)
     for (int i = 1; i < args.size(); ++i) {
         const QString &a = args.at(i);
         if (a == QLatin1String("--profile") || a.startsWith(QLatin1String("--profile="))) {
-            QString value;
-            if (a.startsWith(QLatin1String("--profile=")))
-                value = a.mid(QStringLiteral("--profile=").size());
-            else if (i + 1 < args.size() && !args.at(i + 1).startsWith(QLatin1String("--")))
-                value = args.at(++i);
+            const QString value = flagValue(args, i, QStringLiteral("--profile"));
             // A malformed --profile must hard-fail (see main): silently
             // proceeding would read/write the REAL user state - the exact
             // thing the flag exists to prevent.
@@ -75,6 +88,8 @@ CliOptions parseCli(const QStringList &args)
                 opt.profileDir = value;
         } else if (a == QLatin1String("--quit-after-startup")) {
             opt.quitAfterStartup = true;
+        } else if (a == QLatin1String("--language") || a.startsWith(QLatin1String("--language="))) {
+            opt.language = flagValue(args, i, QStringLiteral("--language"));
         } else if (a.startsWith(QLatin1String("--"))) {
             continue;
         } else {
@@ -149,57 +164,68 @@ bool handOffToPrimary(const QStringList &paths, const QString &behavior)
     return false; // no ack - treat as unreachable and try to become primary
 }
 
-#ifdef Q_OS_WIN
-// Offer default-handler setup once on Windows; register as a candidate and open Default Apps
-// for user confirmation. Persist the prompt flag before constructing windows so they load the
-// updated setting.
-void maybePromptSetDefaultPdfApp()
+// Install the UI language before any window exists: windows set their text once, when they
+// are built. The first start, before a language is stored, shows the first-run window, which
+// on Windows also offers to make Mervin the default PDF viewer; returns whether the user asked
+// for that. Launches that arrive while the window is open are acknowledged and their files
+// added to `paths`, so they open with the first window instead of starting a second process.
+bool startUiLanguage(const CliOptions &cli, SingleInstanceServer *server, QStringList &paths)
 {
-    mervin::Settings s = mervin::Settings::load();
-    if (s.promptedSetDefaultApp)
-        return; // One-time check already done - don't touch the registry again.
+    namespace i18n = mervin::i18n;
+    const QStringList available = i18n::availableLanguages();
+    if (!cli.language.isEmpty()) {
+        if (i18n::normalized(cli.language, available).isEmpty())
+            std::fprintf(stderr, "MervinPDF: unknown --language '%s' (available: %s)\n",
+                         qPrintable(cli.language), qPrintable(available.join(QStringLiteral(", "))));
+        i18n::apply(cli.language);
+        i18n::setOneRunOverride(true);
+        return false;
+    }
+    mervin::Settings settings = mervin::Settings::load();
+    // Timing runs never stop for input, and a build without translations has nothing to offer.
+    if (!settings.uiLanguage.isEmpty() || cli.quitAfterStartup || available.size() < 2) {
+        i18n::apply(settings.uiLanguage);
+        return false;
+    }
 
-    // Record that the one-time check has now happened (whatever its outcome) so
-    // subsequent launches skip both the registry read and the prompt entirely.
-    s.promptedSetDefaultApp = true;
-    s.save();
+    i18n::apply(i18n::suggestedLanguage());
+    // WindowManager applies these too, but this window comes first.
+    mervin::WindowManager::applyColorSchemeToQt(settings.colorScheme);
+    mervin::Theme::applyApp();
 
-    // Nothing to offer if Mervin is already the user's default PDF viewer.
-    if (mervin::PlatformIntegration::isDefaultPdfHandler())
-        return;
-
-    QMessageBox box;
-    box.setWindowTitle(QStringLiteral("Mervin PDF"));
-    box.setIcon(QMessageBox::Question);
-    box.setText(QStringLiteral("Make Mervin PDF your default PDF viewer?"));
-    box.setInformativeText(
-        QStringLiteral("Mervin will then open PDF files when you double-click them. "
-                       "You can change this any time from Settings."));
-    box.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
-    box.setDefaultButton(QMessageBox::Yes);
-    box.button(QMessageBox::No)->setText(QStringLiteral("Not Now"));
-
-    if (box.exec() != QMessageBox::Yes)
-        return;
-
-    if (mervin::PlatformIntegration::registerPdfHandlerAndPromptDefault())
-        return;
-
-    // The sandboxed Snap (and any environment where the association can't be
-    // changed from inside the app) can't do this automatically - guide the user
-    // to finish it once from the desktop's settings. The Snap-exported .desktop
-    // advertises MimeType=application/pdf, so Mervin shows up there as a choice.
-    QMessageBox info;
-    info.setWindowTitle(QStringLiteral("Mervin PDF"));
-    info.setIcon(QMessageBox::Information);
-    info.setText(QStringLiteral("Finish setting Mervin PDF as your default viewer"));
-    info.setInformativeText(
-        QStringLiteral("Open your system's Settings → Default Applications (or "
-                       "right-click a PDF → Open With) and choose Mervin PDF for "
-                       "PDF files."));
-    info.exec();
-}
+    bool offerDefaultApp = false;
+#ifdef Q_OS_WIN
+    // A --profile run (dev and test) must not touch the machine's file-type registration.
+    const bool realProfile = mervin::ConfigPaths::overrideDir().isEmpty();
+    offerDefaultApp = realProfile && !settings.promptedSetDefaultApp
+        && !mervin::PlatformIntegration::isDefaultPdfHandler();
 #endif
+    mervin::FirstRunDialog dialog(offerDefaultApp);
+    QMetaObject::Connection gate;
+    if (server) {
+        gate = QObject::connect(
+            server, &SingleInstanceServer::messageReceived, &dialog,
+            [&paths, &dialog](QLocalSocket *socket, const Message &msg) {
+                if (msg.cmd != Message::Cmd::Open)
+                    return;
+                SingleInstanceServer::send(socket, Message::ack(QStringLiteral("open")));
+                paths.append(msg.paths);
+                dialog.raise();
+                dialog.activateWindow();
+            });
+    }
+    // Closing the window keeps the language it shows.
+    const bool accepted = dialog.exec() == QDialog::Accepted;
+    QObject::disconnect(gate);
+
+    settings.uiLanguage = dialog.language();
+#ifdef Q_OS_WIN
+    if (realProfile)
+        settings.promptedSetDefaultApp = true; // asked once, whatever the answer
+#endif
+    settings.save();
+    return accepted && dialog.makeDefaultApp();
+}
 
 #ifdef Q_OS_WIN
 // GUI-subsystem builds create no console. Attach to an existing parent console and reopen
@@ -219,28 +245,25 @@ void attachParentConsole()
 // Primary instance: own the renderer + windows, accept opens from later
 // launches (if given the instance server), restore the previous session, and
 // open the initial files.
-int runUi(QApplication &app, const CliOptions &cli, const QStringList &paths,
+int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
           std::unique_ptr<SingleInstanceServer> server)
 {
     app.setQuitOnLastWindowClosed(false); // WindowManager drives process exit
+    QStringList paths = cliPaths;
+    const bool setDefaultApp = startUiLanguage(cli, server.get(), paths);
     mervin::WindowManager wm;
     if (server)
         wm.adoptInstanceServer(std::move(server));
-
-    // Windows-only first-run prompt (once ever). Before windows exist - see the
-    // note above. Skipped for --profile runs: a fresh profile would re-trigger
-    // it, and a dev/test instance must not touch file-type registration.
-#ifdef Q_OS_WIN
-    if (mervin::ConfigPaths::overrideDir().isEmpty())
-        maybePromptSetDefaultPdfApp();
-#endif
 
     // Create the window BEFORE reading any document, so the event loop's first
     // turn paints it. Every open below is then staged onto later turns (see
     // WindowManager::openStaged): a cold-cache open is mostly disk reads and the
     // virus scanner's first pass on the file, and doing a whole session inline
     // used to freeze the process with nothing on screen at all.
-    wm.createWindow();
+    MainWindow *firstWindow = wm.createWindow();
+    // Windows' Default Apps page opens over the first window.
+    if (setDefaultApp)
+        mervin::FirstRunDialog::setAsDefaultPdfApp(firstWindow);
 
     // Crash recovery / session restore (M11): reopen the documents that were
     // open last time (still-existing files only). On by default.
@@ -331,13 +354,21 @@ int main(int argc, char *argv[])
     const QStringList paths = toAbsolute(cli.paths);
     const QString behavior = mervin::Settings::load().openBehavior;
 
+    // A restart asked for while running (a new UI language) starts the new copy here,
+    // after runUi has released the single-instance pipe.
+    const auto finish = [](int code) {
+        if (mervin::relaunch::requested() && !mervin::relaunch::start())
+            std::fprintf(stderr, "MervinPDF: could not restart\n");
+        return code;
+    };
+
     // Single-instance: the first launch owns the pipe and becomes the primary UI
     // process; later launches hand their files to it and exit. A primary hidden in the
     // tray remains available for those opens. Explicit Quit ends that same process.
     auto server = std::make_unique<SingleInstanceServer>();
     for (int attempt = 0; attempt < 2; ++attempt) {
         if (server->start())
-            return runUi(app, cli, paths, std::move(server)); // we are the primary
+            return finish(runUi(app, cli, paths, std::move(server))); // we are the primary
         if (handOffToPrimary(paths, behavior))
             return 0; // delivered to the running instance
         // The primary released the pipe between our failed start and the connect
@@ -346,5 +377,5 @@ int main(int argc, char *argv[])
 
     // Could not coordinate (extremely unlikely). Open standalone so the user
     // still gets their file; this launch simply isn't the single-instance owner.
-    return runUi(app, cli, paths, nullptr);
+    return finish(runUi(app, cli, paths, nullptr));
 }

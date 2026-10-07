@@ -28,7 +28,7 @@ QpdfService::Status open(QPDF &q, const QString &path, const QString &password, 
     } catch (const QPDFExc &e) {
         if (e.getErrorCode() == qpdf_e_password) {
             if (error)
-                *error = QStringLiteral("A password is required to open this document.");
+                *error = QpdfService::tr("A password is required to open this document.");
             return QpdfService::Status::NeedsPassword;
         }
         if (error)
@@ -51,11 +51,13 @@ QString methodName(QPDF::encryption_method_e m)
     case QPDF::e_rc4:
         return QStringLiteral("RC4");
     case QPDF::e_none:
-        return QStringLiteral("None");
+        //: Shown as the encryption algorithm when there is none.
+        return QpdfService::tr("None");
     case QPDF::e_unknown:
         break;
     }
-    return QStringLiteral("Unknown");
+    //: Shown as the encryption algorithm when qpdf cannot identify it.
+    return QpdfService::tr("Unknown");
 }
 
 } // namespace
@@ -72,7 +74,7 @@ QpdfService::Status QpdfService::readInfo(const QString &path, const QString &pa
         out = Info{};
         out.encrypted = q.isEncrypted();
         if (!out.encrypted) {
-            out.algorithm = QStringLiteral("None");
+            out.algorithm = methodName(QPDF::e_none);
             return Status::Ok;
         }
 

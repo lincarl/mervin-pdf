@@ -186,6 +186,8 @@ void FindCard::setResultCount(int current, int total)
     else if (total <= 0)
         count_->setText(tr("No results"));
     else
+        //: Match counter in the find field. %1 is the current match, %2 the number
+        //: of matches.
         count_->setText(tr("%1 of %2").arg(current).arg(total));
     const bool hasMatches = total > 0;
     prevBtn_->setEnabled(hasMatches);

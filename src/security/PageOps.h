@@ -2,6 +2,7 @@
 
 #include "security/QpdfService.h"
 
+#include <QCoreApplication>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -15,6 +16,8 @@ namespace mervin {
 // source is user-password encrypted and no password is supplied).
 class PageOps
 {
+    Q_DECLARE_TR_FUNCTIONS(mervin::PageOps)
+
 public:
     using Status = QpdfService::Status;
 

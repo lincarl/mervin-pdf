@@ -1,6 +1,7 @@
 #include "dialogs/MergeDialog.h"
 
 #include "dialogs/RowList.h"
+#include "print/PageRange.h"
 #include "recent/PathKey.h"
 #include "ui/Icons.h"
 #include "ui/Theme.h"
@@ -42,10 +43,20 @@ QString canonicalOrAbsolute(const QString &path)
 }
 
 // Merge's own column widths; RowList owns the rest. Sized so the longest values
-// ("Unreadable", "12 of 999") still fit at 125% Windows text scaling.
+// ("Unreadable", "12 of 999") still fit at 125% Windows text scaling. A longer
+// translation widens its column instead (see RowList::widthFor).
 constexpr int kColSpec = 124;
 constexpr int kColCount = 92;
 constexpr int kColOutput = 74;
+// A field's frame and padding around its text (Theme: 1px border, 8px padding,
+// plus the line edit's own 2px margin, on each side).
+constexpr int kFieldPadding = 24;
+
+QString specPlaceholder()
+{
+    //: Placeholder of an empty page range field in the merge list.
+    return MergeDialog::tr("e.g. 1-3, 5");
+}
 } // namespace
 
 MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
@@ -73,12 +84,21 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
 
     // Column captions over a QListWidget of row widgets, rather than a
     // QTableWidget; RowList explains why.
-    list_ = new RowList(kColCount, kColOutput, this);
+    //: Column caption over the page range fields.
+    const QString specCaption = tr("Pages, in order");
+    specWidth_ = qMax(
+        RowList::widthFor(kColSpec, RowList::captionFont(font()), {specCaption}, 4),
+        RowList::widthFor(kColSpec, font(), {specPlaceholder(), PageRange::allKeyword()},
+                          kFieldPadding));
+    list_ = new RowList(RowList::widthFor(kColCount, font(), MergePlan::widestCountTexts(), 4),
+                        kColOutput, this);
     list_->setObjectName(QStringLiteral("mergeList"));
-    listSide->addWidget(list_->makeHeader([](QWidget *header, QHBoxLayout *columns) {
+    listSide->addWidget(list_->makeHeader([this, &specCaption](QWidget *header,
+                                                               QHBoxLayout *columns) {
+        //: Column caption over the file names.
         columns->addWidget(new QLabel(tr("File"), header), 1);
-        auto *spec = new QLabel(tr("Pages, in order"), header);
-        spec->setFixedWidth(kColSpec);
+        auto *spec = new QLabel(specCaption, header);
+        spec->setFixedWidth(specWidth_);
         columns->addWidget(spec);
     }));
     list_->onRowDropped = [this](int from, int gap) {
@@ -96,9 +116,13 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
     connect(list_, &QListWidget::currentRowChanged, this, [this] { refreshFooter(); });
     listSide->addWidget(list_, 1);
 
+    //: %1 is the word for every page (PageRange "All"), which can be typed
+    //: instead of a range. "The Pages column" is the column captioned
+    //: "Pages, in order".
     auto *specHint = new QLabel(tr("Type a page range in the Pages column, for example "
-                                   "1-3, 5, 8-10 - or All. Pages are taken in the order "
-                                   "you type them."),
+                                   "1-3, 5, 8-10 - or %1. Pages are taken in the order "
+                                   "you type them.")
+                                    .arg(PageRange::allKeyword()),
                                 this);
     specHint->setWordWrap(true);
     specHint->setObjectName(QStringLiteral("mergeHint"));
@@ -125,10 +149,12 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
 
     side->addSpacing(6);
 
+    //: Button: adds a copy of the selected row below it.
     duplicateBtn_ = new QPushButton(icons::glyph(icons::Glyph::Copy, ink), tr("Duplicate"), this);
     connect(duplicateBtn_, &QPushButton::clicked, this, &MergeDialog::duplicateCurrent);
     side->addWidget(duplicateBtn_);
 
+    //: Button: removes the selected row from the list.
     removeBtn_ = new QPushButton(icons::glyph(icons::Glyph::Delete, ink), tr("Remove"), this);
     connect(removeBtn_, &QPushButton::clicked, this, &MergeDialog::removeCurrent);
     side->addWidget(removeBtn_);
@@ -179,6 +205,7 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
     layout->addLayout(outRow);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
+    //: Button: writes the merged PDF.
     mergeBtn_ = buttons->addButton(tr("Merge"), QDialogButtonBox::AcceptRole);
     mergeBtn_->setObjectName(QStringLiteral("mergeAccept"));
     mergeBtn_->setDefault(true);
@@ -222,6 +249,8 @@ MergePlan::Entry MergeDialog::probeEntry(const QString &path, const QString &pas
         // copy under a new name, so both of those steps have to be spelled out -
         // "use Document > Security" alone sends the user to a menu that does not
         // act on the file they just picked here.
+        //: "Document > Security" is the Security item in the Document menu. Use
+        //: the same translated names as the menu.
         e.loadError = tr("This PDF is encrypted. Open it in Mervin, use "
                          "Document > Security to save an unlocked copy, then add "
                          "that copy instead.");
@@ -246,8 +275,10 @@ QString MergeDialog::startDirectory() const
 
 void MergeDialog::addFiles()
 {
-    const QStringList picked = QFileDialog::getOpenFileNames(
-        this, tr("Add PDFs to Merge"), startDirectory(), tr("PDF documents (*.pdf)"));
+    //: File type filter. Keep "(*.pdf)" as it is.
+    const QString filter = tr("PDF documents (*.pdf)");
+    const QStringList picked = QFileDialog::getOpenFileNames(this, tr("Add PDFs to Merge"),
+                                                             startDirectory(), filter);
     addPaths(picked);
 }
 
@@ -261,8 +292,10 @@ void MergeDialog::addPaths(const QStringList &paths)
     QApplication::setOverrideCursor(Qt::WaitCursor);
     for (const QString &p : paths) {
         const MergePlan::Entry e = probeEntry(p);
-        if (e.load != MergePlan::Load::Ok)
+        if (e.load != MergePlan::Load::Ok) {
+            //: One line of the "cannot be merged" list: %1 is a file name, %2 why.
             problems << tr("%1 - %2").arg(QFileInfo(p).fileName(), e.loadError);
+        }
         plan_.append(e);
     }
     QApplication::restoreOverrideCursor();
@@ -272,8 +305,11 @@ void MergeDialog::addPaths(const QStringList &paths)
     // either way, marked and blocking, so the user can see and remove them.
     if (!problems.isEmpty())
         QMessageBox::warning(this, tr("Merge PDFs"),
-                             tr("These files cannot be merged:\n\n%1").arg(problems.join(
-                                 QStringLiteral("\n"))));
+                             //: %1 is a list of files, one per line. The number of
+                             //: files picks the singular or plural form.
+                             tr("These files cannot be merged:\n\n%1", nullptr,
+                                int(problems.size()))
+                                 .arg(problems.join(QStringLiteral("\n"))));
 }
 
 void MergeDialog::removeCurrent()
@@ -357,11 +393,11 @@ void MergeDialog::rebuild(int selectRow)
 
             auto *spec = new QLineEdit(e.spec, row);
             spec->setObjectName(QStringLiteral("mergeRowSpec"));
-            spec->setFixedWidth(kColSpec);
+            spec->setFixedWidth(specWidth_);
             // A format prompt, not "All": a greyed placeholder identical to the
             // default value made an emptied cell look like the default was in
             // force while it was actually blocking the merge.
-            spec->setPlaceholderText(tr("e.g. 1-3, 5"));
+            spec->setPlaceholderText(specPlaceholder());
             spec->setEnabled(e.load == MergePlan::Load::Ok);
             // The list is rebuilt wholesale on every mutation, so this build-time
             // index stays valid for as long as the widget it is captured in exists.
@@ -490,6 +526,7 @@ void MergeDialog::accept()
             }
         }
         if (QMessageBox::question(this, tr("Merge PDFs"),
+                                  //: %1 is a file path.
                                   tr("\"%1\" already exists. Replace it?")
                                       .arg(QDir::toNativeSeparators(out)),
                                   QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
@@ -509,12 +546,18 @@ void MergeDialog::accept()
     if (st != PageOps::Status::Ok) {
         // Name the input that stopped it when the backend can tell; otherwise
         // it was the write.
-        writeError_ = failed >= 0 && failed < inputs.size()
-                          ? tr("The merge failed on \"%1\".")
-                                .arg(QFileInfo(inputs.at(failed).path).fileName())
-                          : tr("Could not write \"%1\". If another program has it open, close "
-                               "it and press Merge again, or choose another name.")
-                                .arg(QFileInfo(out).fileName());
+        // Separate statements: lupdate before Qt 6.11 drops a //: comment placed in
+        // front of the ':' branch of a ternary.
+        if (failed >= 0 && failed < inputs.size()) {
+            //: %1 is the name of the file being merged when it failed.
+            writeError_ = tr("The merge failed on \"%1\".")
+                              .arg(QFileInfo(inputs.at(failed).path).fileName());
+        } else {
+            //: %1 is the merged file's name.
+            writeError_ = tr("Could not write \"%1\". If another program has it open, close "
+                             "it and press Merge again, or choose another name.")
+                              .arg(QFileInfo(out).fileName());
+        }
         writeErrorDetail_ = QDir::toNativeSeparators(err);
         refreshFooter();
         return;

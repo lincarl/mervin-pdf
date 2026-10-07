@@ -31,6 +31,9 @@ inline double mmPerUnit(MeasureUnit u)
     return 1.0;
 }
 
+// The unit's symbol. Unit symbols are never translated: they are the same in
+// every UI language, and they also appear in burned-in PDF labels and the
+// saved measurement data.
 inline QString unitSuffix(MeasureUnit u)
 {
     switch (u) {
@@ -140,7 +143,8 @@ namespace detail {
 
 // (millimetres per one unit, suffix) ascending in size. Kept independent of the
 // MeasureUnit enum so the ladder can reach km/mi, which the unit picker does not
-// expose but which keep huge values readable.
+// expose but which keep huge values readable. Like unitSuffix(), the symbols are
+// not translated.
 struct LadderUnit
 {
     double mmPer;

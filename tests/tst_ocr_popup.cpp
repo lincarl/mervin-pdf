@@ -2,6 +2,7 @@
 #include "config/Settings.h"
 #include "dialogs/ManageLanguagesDialog.h"
 #include "dialogs/OcrPopup.h"
+#include "i18n/UiLanguage.h"
 
 #include <QComboBox>
 #include <QDir>
@@ -48,6 +49,7 @@ class TstOcrPopup : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase();
     void startsWithConfiguredDefault();
     void changingLanguageRequestsRecognition();
     void refreshAddsLanguagesWithoutLosingSelection();
@@ -57,6 +59,12 @@ private slots:
     void defaultLanguagePersistsInSettings();
     void managerShowsDefaultAndEqualWidthLists();
 };
+
+// Some checks read English UI text.
+void TstOcrPopup::initTestCase()
+{
+    mervin::i18n::apply(QStringLiteral("en"));
+}
 
 void TstOcrPopup::startsWithConfiguredDefault()
 {

@@ -17,12 +17,17 @@ namespace {
 constexpr int kPageRole = Qt::UserRole;
 constexpr int kIdRole = Qt::UserRole + 1;
 
+// The kind of an annotation, shown for one without comment text.
 QString kindLabel(AnnotType t)
 {
     switch (t) {
+    //: Noun naming an annotation kind, highlighted text.
     case AnnotType::Highlight: return CommentsSidebar::tr("Highlight");
+    //: Noun naming an annotation kind, underlined text.
     case AnnotType::Underline: return CommentsSidebar::tr("Underline");
+    //: Noun naming an annotation kind, struck-out text.
     case AnnotType::StrikeOut: return CommentsSidebar::tr("Strike-out");
+    //: Noun naming an annotation kind, a sticky note.
     case AnnotType::Text:      return CommentsSidebar::tr("Note");
     default:                   return CommentsSidebar::tr("Annotation");
     }
@@ -60,6 +65,8 @@ CommentsSidebar::CommentsSidebar(QWidget *parent) : QWidget(parent)
     });
     stack_->addWidget(list_);
 
+    //: "Comment" names the toolbar tool for highlights and sticky notes, and
+    //: "Highlight" a style in it. Use their translations here.
     empty_ = new QLabel(tr("No annotations yet.\n\nUse the Highlight or Comment tool to add some."),
                         this);
     empty_->setAlignment(Qt::AlignCenter);
@@ -78,9 +85,18 @@ void CommentsSidebar::setAnnotations(const std::vector<Annotation> &annots)
         QString text = a.contents.simplified();
         if (text.isEmpty())
             text = QStringLiteral("[%1]").arg(kindLabel(a.type));
-        const QString who = a.author.isEmpty() ? QString() : (a.author + QStringLiteral(" · "));
-        auto *it = new QListWidgetItem(colorChip(a.color),
-                                       tr("p.%1  %2%3").arg(a.page + 1).arg(who, text));
+        const QString page = QString::number(a.page + 1);
+        QString label;
+        if (a.author.isEmpty()) {
+            //: A row in the comments list. "p." is short for page. %1 is the page
+            //: number, %2 the comment text.
+            label = tr("p.%1  %2").arg(page, text);
+        } else {
+            //: A row in the comments list. "p." is short for page. %1 is the page
+            //: number, %2 the comment's author, %3 the comment text.
+            label = tr("p.%1  %2 · %3").arg(page, a.author, text);
+        }
+        auto *it = new QListWidgetItem(colorChip(a.color), label);
         it->setData(kPageRole, a.page);
         it->setData(kIdRole, a.id);
         it->setToolTip(a.contents.isEmpty() ? kindLabel(a.type) : a.contents);

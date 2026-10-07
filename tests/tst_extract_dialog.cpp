@@ -1,5 +1,6 @@
 #include "dialogs/ExtractDialog.h"
 #include "dialogs/ExtractStrip.h"
+#include "i18n/UiLanguage.h"
 #include "security/PageOps.h"
 #include "security/QpdfService.h"
 
@@ -186,6 +187,9 @@ private:
 
 void TstExtractDialog::initTestCase()
 {
+    // The English plural forms ("7 pages") come from the English catalog;
+    // without it Qt would show "7 page(s)".
+    mervin::i18n::apply(QStringLiteral("en"));
     QVERIFY(dir_.isValid());
     plain_ = dir_.filePath(QStringLiteral("annual-report.pdf"));
     encrypted_ = dir_.filePath(QStringLiteral("annual-report-locked.pdf"));
@@ -218,6 +222,14 @@ void TstExtractDialog::opensWithOneRowOnTheCurrentPage()
     closed.openWhenDone = false; // the last choice, from Settings
     ExtractDialog e(closed);
     QVERIFY(!e.openWhenDone());
+
+    // qpdf writes from the file on disk, so the summary warns about edits in the tab.
+    ExtractDialog::Source edited = source(plain_);
+    edited.hasUnsavedEdits = true;
+    ExtractDialog u(edited);
+    prepare(u);
+    QCOMPARE(child<QLabel>(u, "extractSummary")->text(),
+             QStringLiteral("Result: 1 page. Unsaved changes are not included."));
 }
 
 void TstExtractDialog::typedCommaStartsANewRow()

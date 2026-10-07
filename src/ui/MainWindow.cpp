@@ -365,6 +365,7 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
     tabRowLayout->setContentsMargins(8, 6, 8, 6);
     tabRowLayout->setSpacing(0);
 
+    //: Button left of the document tabs that shows the recently opened files.
     recentBtn_ = new QPushButton(tr("Recent"), tabRow_);
     recentBtn_->setObjectName(QStringLiteral("recentPillBtn"));
     recentBtn_->setFlat(true);
@@ -535,6 +536,7 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
                 });
     }
 
+    //: Window title while no document is open. The product name.
     setWindowTitle(tr("Mervin PDF"));
     if (!settings_.windowGeometry.isEmpty())
         restoreGeometry(settings_.windowGeometry);
@@ -696,7 +698,10 @@ void MainWindow::changeEvent(QEvent *event)
 
 void MainWindow::createActions()
 {
-    openAction_ = new QAction(tr("&Open"), this);
+    // The text has no '&' mnemonic. The action sits only on the Open tool button, which
+    // shows no mnemonic, and a CJK translation's "(&O)" suffix would appear there as text.
+    //: Toolbar button (verb): open a PDF file in a new tab.
+    openAction_ = new QAction(tr("Open"), this);
     openAction_->setShortcut(QKeySequence::Open); // Ctrl+O
     connect(openAction_, &QAction::triggered, this, &MainWindow::onOpen);
 
@@ -769,6 +774,7 @@ void MainWindow::createActions()
     addAction(nextTabAction_);
     addAction(prevTabAction_);
 
+    //: Toolbar button: go to the previous page.
     prevPageAction_ = new QAction(tr("Previous"), this);
     prevPageAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Up));
     connect(prevPageAction_, &QAction::triggered, this, [this] {
@@ -776,6 +782,7 @@ void MainWindow::createActions()
             v->prevPage();
     });
 
+    //: Toolbar button: go to the next page.
     nextPageAction_ = new QAction(tr("Next"), this);
     nextPageAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Down));
     connect(nextPageAction_, &QAction::triggered, this, [this] {
@@ -783,6 +790,7 @@ void MainWindow::createActions()
             v->nextPage();
     });
 
+    //: Verb: search the document's text.
     findAction_ = new QAction(tr("&Find"), this);
     findAction_->setShortcut(QKeySequence::Find); // Ctrl+F
     connect(findAction_, &QAction::triggered, this, [this] {
@@ -833,9 +841,12 @@ void MainWindow::createActions()
 
     // The toolbar's search button opens and closes the current tab's find card.
     // wireCurrentViewer keeps its checked state in step with the card.
+    //: Toolbar button (verb): open the find field over the document.
     findCardAction_ = new QAction(tr("Find"), this);
     findCardAction_->setCheckable(true);
-    findCardAction_->setToolTip(tr("Find (Ctrl+F)"));
+    //: Tooltip of the toolbar's find button. %1 is its keyboard shortcut, such as Ctrl+F.
+    findCardAction_->setToolTip(tr("Find (%1)").arg(
+        findAction_->shortcut().toString(QKeySequence::NativeText)));
     connect(findCardAction_, &QAction::triggered, this, [this](bool open) {
         TabPage *t = currentTab();
         if (!t || !t->isLoaded())
@@ -846,6 +857,7 @@ void MainWindow::createActions()
             t->findCard()->dismiss();
     });
 
+    //: Verb: copy the selected text.
     copyAction_ = new QAction(tr("&Copy"), this);
     copyAction_->setShortcut(QKeySequence::Copy); // Ctrl+C
     connect(copyAction_, &QAction::triggered, this, [this] {
@@ -860,6 +872,8 @@ void MainWindow::createActions()
             v->selectAll();
     });
 
+    //: OCR is optical character recognition: turning an image of text into text.
+    //: This tool recognises the text in a region the user selects.
     ocrAction_ = new QAction(tr("&OCR Selection"), this);
     ocrAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
     ocrAction_->setToolTip(tr("OCR Selection: drag a region to recognise its text"));
@@ -868,7 +882,12 @@ void MainWindow::createActions()
             v->setOcrMode(true); // next drag rubber-bands a region to OCR
     });
 
+    //: Toggles the measuring tool (distances, areas and angles on the page).
     measureAction_ = new QAction(tr("&Measure"), this);
+    // The toolbar button needs its own tooltip. The default one is the menu text with
+    // only the '&' removed, so a CJK mnemonic suffix such as "(M)" would show.
+    //: Tooltip of the toolbar's measure button (verb).
+    measureAction_->setToolTip(tr("Measure"));
     measureAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_M));
     measureAction_->setCheckable(true);
     connect(measureAction_, &QAction::toggled, this, &MainWindow::toggleMeasure);
@@ -885,6 +904,7 @@ void MainWindow::createActions()
     // highlight (markup style + colour) and sticky-note (colour) settings and a
     // mode selector. Ctrl+Shift+N keeps the Ctrl+Shift tool family and avoids the
     // AltGr = Ctrl+Alt collision.
+    //: Toggles the comment tool, which highlights text and adds sticky-note comments.
     commentAction_ = new QAction(tr("Comme&nt"), this);
     commentAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
     commentAction_->setCheckable(true);
@@ -892,6 +912,7 @@ void MainWindow::createActions()
     connect(commentAction_, &QAction::toggled, this, &MainWindow::toggleComment);
     addAction(commentAction_); // keep the shortcut live even outside any menu
 
+    //: Menu toggle: tint the fillable form fields of the document.
     highlightFormFieldsAction_ = new QAction(tr("Highlight Form Fields"), this);
     highlightFormFieldsAction_->setCheckable(true);
     highlightFormFieldsAction_->setProperty("rightCheck", true); // see RightCheckMenu
@@ -922,6 +943,8 @@ void MainWindow::createActions()
 
     // One-tap toggle between the two fit modes (the current mode is also shown
     // in the adjacent zoom combo). Any custom zoom snaps to Fit Page first.
+    //: Toolbar button that switches between fitting the whole page and the page
+    //: width to the window.
     fitModeAction_ = new QAction(tr("Fit Page / Fit Width"), this);
     // Home toggles the two fit modes. (The viewer's bare-Home "go to first page"
     // moved to Ctrl+Home; this window-level shortcut intercepts the plain key.)
@@ -992,13 +1015,18 @@ void MainWindow::createActions()
     settingsAction_->setShortcut(QKeySequence::Preferences);
     connect(settingsAction_, &QAction::triggered, this, [this] { openSettings(); });
 
+    //: Verb: print the document.
     printAction_ = new QAction(tr("&Print"), this);
+    // Own tooltip for the toolbar button, for the same reason as measureAction_.
+    //: Tooltip of the toolbar's print button (verb).
+    printAction_->setToolTip(tr("Print"));
     printAction_->setShortcut(QKeySequence::Print); // Ctrl+P
     connect(printAction_, &QAction::triggered, this, &MainWindow::printDocument);
 }
 
 void MainWindow::createToolBar()
 {
+    //: Name of the main toolbar, listed when the user right-clicks the toolbar area.
     QToolBar *bar = addToolBar(tr("Main"));
     mainToolBar_ = bar;
     bar->setObjectName(QStringLiteral("mainToolBar")); // for saveState/restoreState
@@ -1024,6 +1052,7 @@ void MainWindow::createToolBar()
     moreButton_->setToolButtonStyle(Qt::ToolButtonIconOnly);
     moreButton_->setIconSize(QSize(20, 20));
     moreButton_->setPopupMode(QToolButton::InstantPopup);
+    //: Tooltip of the toolbar button that opens the main menu.
     moreButton_->setToolTip(tr("Menu"));
     bar->addWidget(moreButton_);
     bar->addWidget(makeToolSep(bar)); // divider between the hamburger and Open
@@ -1049,6 +1078,7 @@ void MainWindow::createToolBar()
     // reserves the 18px strip for it, exactly as on Open.
     saveButton_ = new SplitToolButton(this);
     saveButton_->setObjectName(QStringLiteral("saveButton")); // scopes the menu-section QSS
+    //: Toolbar button (verb) that opens a menu of ways to save.
     saveButton_->setText(tr("Save"));
     saveButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     saveButton_->setIconSize(QSize(20, 20));
@@ -1077,6 +1107,7 @@ void MainWindow::createToolBar()
     // class toolbar button. createDocumentMenu() builds and attaches the menu.
     documentButton_ = new SplitToolButton(this);
     documentButton_->setObjectName(QStringLiteral("documentButton")); // scopes the menu-section QSS
+    //: Toolbar button (noun) that opens a menu of page operations and document security.
     documentButton_->setText(tr("Document"));
     documentButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     documentButton_->setIconSize(QSize(20, 20));
@@ -1136,11 +1167,15 @@ void MainWindow::createToolBar()
     // system font instead of clipping "Fit Width".
     zoomCombo_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     zoomCombo_->setMinimumWidth(96);
-    zoomCombo_->addItems({tr("Fit Page"), tr("Fit Width"),
-                          QStringLiteral("50%"), QStringLiteral("75%"),
-                          QStringLiteral("100%"), QStringLiteral("125%"),
-                          QStringLiteral("150%"), QStringLiteral("200%")});
-    zoomCombo_->setCurrentText(tr("Fit Width"));
+    // The fit modes carry their mode as item data, so picking one never depends
+    // on comparing translated text. The percentages need none: their text parses.
+    //: Zoom choice: scale the page so the whole page fits the window.
+    zoomCombo_->addItem(tr("Fit Page"), QStringLiteral("fit-page"));
+    //: Zoom choice: scale the page so its width fits the window.
+    zoomCombo_->addItem(tr("Fit Width"), QStringLiteral("fit-width"));
+    for (const char *percent : {"50%", "75%", "100%", "125%", "150%", "200%"})
+        zoomCombo_->addItem(QString::fromLatin1(percent));
+    zoomCombo_->setCurrentIndex(zoomCombo_->findData(QStringLiteral("fit-width")));
     connect(zoomCombo_, &QComboBox::activated, this, &MainWindow::onZoomComboActivated);
     connect(zoomCombo_->lineEdit(), &QLineEdit::returnPressed,
             this, &MainWindow::onZoomComboActivated);
@@ -1219,6 +1254,7 @@ void MainWindow::createMenus()
     mainMenu->addSeparator();
 
     // View - fit presets, then the two window-level view toggles.
+    //: Section heading in the main menu (noun): how the document is shown.
     addSectionHeader(mainMenu, tr("View"));
     fitPageAction_ = mainMenu->addAction(tr("Fit &Page"), QKeySequence(Qt::CTRL | Qt::Key_1), this, [this] {
         if (auto *v = currentViewer())
@@ -1237,12 +1273,15 @@ void MainWindow::createMenus()
     mainMenu->addSeparator();
 
     // Scroll - how pages advance, independent of the spread toggle above.
+    //: Section heading in the main menu (noun): how the pages scroll, continuously or
+    //: one page at a time.
     addSectionHeader(mainMenu, tr("Scroll"));
     mainMenu->addAction(continuousAction_);
     mainMenu->addAction(singleAction_);
     mainMenu->addSeparator();
 
     // Panels - the navigation docks (icon + right-side check when shown).
+    //: Section heading in the main menu: the side panels (outline, thumbnails, comments).
     addSectionHeader(mainMenu, tr("Panels"));
     for (QDockWidget *d : {outlineDock_, thumbnailDock_, commentsDock_}) {
         if (!d)
@@ -1254,6 +1293,8 @@ void MainWindow::createMenus()
     mainMenu->addSeparator();
 
     // Select & Annotate - selection plus the annotate / OCR / measure / forms tools.
+    //: Section heading in the main menu: selecting text and the comment, OCR, measuring
+    //: and form tools.
     addSectionHeader(mainMenu, tr("Select & Annotate"));
     mainMenu->addAction(selectAllAction_);
     mainMenu->addAction(commentAction_);
@@ -1331,9 +1372,15 @@ void MainWindow::syncComfortButton()
     const QColor ink = mervin::Theme::iconInk(palette()); // same ink as the other toolbar glyphs
     comfortButton_->setIcon(mervin::icons::glyph(
         comfort ? mervin::icons::Glyph::Sun : mervin::icons::Glyph::UiTheme, ink));
-    comfortButton_->setToolTip(comfort
-        ? tr("Switch to the traditional document theme")
-        : tr("Switch to the comfort (dark) document theme"));
+    // Separate statements: lupdate before Qt 6.11 drops a //: comment placed in
+    // front of the ':' branch of a ternary.
+    if (comfort) {
+        //: Traditional and Comfort are the document theme names in Settings > Appearance.
+        comfortButton_->setToolTip(tr("Switch to the traditional document theme"));
+    } else {
+        //: Traditional and Comfort are the document theme names in Settings > Appearance.
+        comfortButton_->setToolTip(tr("Switch to the comfort (dark) document theme"));
+    }
 }
 
 void MainWindow::applyControlStyle()
@@ -1614,9 +1661,10 @@ bool MainWindow::openFile(const QString &path, bool allowDuplicate, int atIndex,
     }
     while (!ok && needsPassword) {
         bool got = false;
+        //: %1 is the file name.
+        const QString prompt = tr("\"%1\" is password-protected. Enter the password:");
         password = QInputDialog::getText(
-            this, tr("Password Required"),
-            tr("\"%1\" is password-protected. Enter the password:").arg(fi.fileName()),
+            this, tr("Password Required"), prompt.arg(fi.fileName()),
             QLineEdit::Password, QString(), &got);
         if (!got) { // user cancelled
             delete page;
@@ -1627,9 +1675,10 @@ bool MainWindow::openFile(const QString &path, bool allowDuplicate, int atIndex,
     }
     if (!ok) {
         delete page;
+        //: %1 is the file path, %2 the reason the file could not be opened.
+        const QString message = tr("Could not open \"%1\".\n\n%2");
         QMessageBox::warning(this, tr("Mervin PDF"),
-                             tr("Could not open \"%1\".\n\n%2")
-                                 .arg(QDir::toNativeSeparators(path), error));
+                             message.arg(QDir::toNativeSeparators(path), error));
         return false;
     }
 
@@ -1717,8 +1766,9 @@ void MainWindow::openUrl(const QUrl &url, bool inNewWindow)
         return;
     }
 
-    auto *progress = new QProgressDialog(tr("Downloading %1...").arg(fileName), tr("Cancel"),
-                                         0, 0, this);
+    //: %1 is the name of the file being downloaded.
+    const QString downloading = tr("Downloading %1...").arg(fileName);
+    auto *progress = new QProgressDialog(downloading, tr("Cancel"), 0, 0, this);
     progress->setWindowTitle(tr("Open from URL"));
     progress->setWindowModality(Qt::WindowModal);
     progress->setMinimumWidth(420);
@@ -1975,6 +2025,7 @@ void MainWindow::updateForCurrentTab()
     syncViewActions(v);
 
     if (!v) {
+        //: Window title. %1 is the name of the document shown.
         setWindowTitle(currentTab() ? tr("%1 - Mervin PDF").arg(currentTab()->tabTitle())
                                     : tr("Mervin PDF"));
         // No document: show the recent listing summary while the Recent view is
@@ -1994,6 +2045,7 @@ void MainWindow::updateForCurrentTab()
     syncZoomCombo(v);
 
     TabPage *t = currentTab();
+    //: Window title. %1 is the name of the document shown.
     setWindowTitle(tr("%1 - Mervin PDF").arg(t->tabTitle()));
     statusInfo_->setText(QDir::toNativeSeparators(t->path()));
     v->setFocus();
@@ -2016,10 +2068,10 @@ void MainWindow::syncZoomCombo(ViewerWidget *viewer)
     QSignalBlocker blocker(zoomCombo_);
     switch (viewer->zoomMode()) {
     case ViewerWidget::ZoomMode::FitPage:
-        zoomCombo_->setCurrentText(tr("Fit Page"));
+        zoomCombo_->setCurrentIndex(zoomCombo_->findData(QStringLiteral("fit-page")));
         break;
     case ViewerWidget::ZoomMode::FitWidth:
-        zoomCombo_->setCurrentText(tr("Fit Width"));
+        zoomCombo_->setCurrentIndex(zoomCombo_->findData(QStringLiteral("fit-width")));
         break;
     case ViewerWidget::ZoomMode::Custom:
         zoomCombo_->setCurrentText(QStringLiteral("%1%").arg(qRound(viewer->scale() * 100)));
@@ -2041,10 +2093,14 @@ void MainWindow::onZoomComboActivated()
     ViewerWidget *v = currentViewer();
     if (!v)
         return;
+    // Typed text that names an item (in any case) counts as that item. The current
+    // index alone can't tell: typing a percentage leaves it on the previous item.
     const QString text = zoomCombo_->currentText().trimmed();
-    if (text.compare(tr("Fit Page"), Qt::CaseInsensitive) == 0) {
+    const int item = zoomCombo_->findText(text, Qt::MatchFixedString);
+    const QString mode = item >= 0 ? zoomCombo_->itemData(item).toString() : QString();
+    if (mode == QLatin1String("fit-page")) {
         v->setZoomMode(ViewerWidget::ZoomMode::FitPage);
-    } else if (text.compare(tr("Fit Width"), Qt::CaseInsensitive) == 0) {
+    } else if (mode == QLatin1String("fit-width")) {
         v->setZoomMode(ViewerWidget::ZoomMode::FitWidth);
     } else {
         QString num = text;
@@ -2127,6 +2183,12 @@ void MainWindow::openSettings(SettingsDialog::Page page)
     // Apply and OK both arrive here. Cancel keeps what an earlier Apply changed.
     connect(&dlg, &SettingsDialog::applyRequested, this, &MainWindow::applySettings);
     dlg.exec();
+    // A new UI language takes effect at startup, so OK or Apply with one restarts
+    // Mervin. Queued: the restart closes this window, which is still in this call.
+    if (dlg.result() == QDialog::Accepted && dlg.restartNeeded() && wm_) {
+        mervin::WindowManager *wm = wm_;
+        QMetaObject::invokeMethod(wm, [wm] { wm->restart(); }, Qt::QueuedConnection);
+    }
 }
 
 void MainWindow::applySettings(const mervin::Settings &next)
@@ -2447,6 +2509,7 @@ void MainWindow::wireCurrentViewer(ViewerWidget *v)
                                     savePage = menu.addAction(
                                         mervin::icons::glyph(mervin::icons::Glyph::ExtractPages,
                                                              mervin::Theme::iconInk(palette())),
+                                        //: Context menu item: save the clicked page as a new PDF.
                                         tr("Save Page As"));
                                 }
                                 // Four of these rows are the ☰ menu's own actions
@@ -2494,6 +2557,7 @@ void MainWindow::createSidebars()
         QDockWidget::DockWidgetClosable;
 
     outlineSidebar_ = new mervin::OutlineSidebar(this);
+    //: Side panel title: the document's table of contents (bookmarks).
     outlineDock_ = new QDockWidget(tr("Outline"), this);
     outlineDock_->setObjectName(QStringLiteral("outlineDock")); // for saveState/restoreState
     outlineDock_->setAllowedAreas(Qt::LeftDockWidgetArea);
@@ -2507,6 +2571,7 @@ void MainWindow::createSidebars()
     });
 
     thumbnailSidebar_ = new mervin::ThumbnailSidebar(engine_, this);
+    //: Side panel title: small page previews.
     thumbnailDock_ = new QDockWidget(tr("Thumbnails"), this);
     thumbnailDock_->setObjectName(QStringLiteral("thumbnailDock"));
     thumbnailDock_->setAllowedAreas(Qt::LeftDockWidgetArea);
@@ -2521,6 +2586,7 @@ void MainWindow::createSidebars()
     });
 
     commentsSidebar_ = new mervin::CommentsSidebar(this);
+    //: Side panel title (noun, plural): the list of the document's comments.
     commentsDock_ = new QDockWidget(tr("Comments"), this);
     commentsDock_->setObjectName(QStringLiteral("commentsDock")); // for saveState/restoreState
     commentsDock_->setAllowedAreas(Qt::LeftDockWidgetArea);
@@ -2580,6 +2646,7 @@ void MainWindow::onOcrRegionSelected(int pageNo, const QRectF &pageRect)
     QStringList installed = mervin::TessdataManager::installedLanguages();
     if (installed.isEmpty()) {
         const auto choice = QMessageBox::question(
+            //: Message box title. OCR is optical character recognition.
             this, tr("OCR Selection"),
             tr("No OCR language data is installed.\n\nOpen the language manager to add a "
                "language (e.g. English)?"),
@@ -2615,8 +2682,10 @@ void MainWindow::onOcrRegionSelected(int pageNo, const QRectF &pageRect)
             const QString text = ocr.recognize(lifetime, pageNo, pageRect, langs,
                                                tessdata, &error, token.get());
             QMetaObject::invokeMethod(&popup, [&, token, text, error] {
+                //: Shown in place of the recognised text. %1 is the error message.
+                const QString failed = tr("[OCR failed: %1]");
                 if (!token->load())
-                    popup.setRawText(error.isEmpty() ? text : tr("[OCR failed: %1]").arg(error));
+                    popup.setRawText(error.isEmpty() ? text : failed.arg(error));
             }, Qt::QueuedConnection);
         });
     };

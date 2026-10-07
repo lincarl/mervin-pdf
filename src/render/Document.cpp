@@ -4,7 +4,7 @@
 #include <mupdf/pdf.h>
 
 #include <QByteArray>
-#include <QObject>
+#include <QCoreApplication>
 
 #include <array>
 #include <cmath>
@@ -832,7 +832,8 @@ bool Document::savePdfTo(const QString &tmpPath, QString *error) const
     });
     if (!ran || !wrote) {
         if (error)
-            *error = QObject::tr("Could not write the PDF.");
+            *error = QCoreApplication::translate("mervin::Document", // not a QObject, so no tr()
+                                                 "Could not write the PDF.");
         return false;
     }
     return true;

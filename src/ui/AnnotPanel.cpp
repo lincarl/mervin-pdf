@@ -13,6 +13,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <iterator>
 
 namespace mervin {
@@ -28,6 +29,18 @@ void clearChecked(QButtonGroup *group)
         b->setChecked(false);
         group->setExclusive(true);
     }
+}
+
+// Give every button in the group the width of the widest one. The panel sizes
+// itself to its contents, so a row's stretch factors have no spare width to
+// share, and segments with labels of different length would differ in width.
+void equalizeWidths(QButtonGroup *group)
+{
+    int width = 0;
+    for (QAbstractButton *b : group->buttons())
+        width = std::max(width, b->sizeHint().width());
+    for (QAbstractButton *b : group->buttons())
+        b->setMinimumWidth(width);
 }
 } // namespace
 
@@ -47,6 +60,8 @@ AnnotPanel::AnnotPanel(QWidget *parent) : QWidget(parent)
     // Header: title (drag handle) + close.
     auto *header = new QHBoxLayout;
     header->setContentsMargins(0, 0, 0, 0);
+    //: Title of the comment tool panel, and its button that drops a sticky-note
+    //: comment on the page.
     auto *title = new QLabel(tr("Comment"), this);
     title->setObjectName(QStringLiteral("measureTitle")); // same panel-title ink
     QFont tf = title->font();
@@ -73,6 +88,7 @@ AnnotPanel::AnnotPanel(QWidget *parent) : QWidget(parent)
     modeGroup_->setExclusive(true);
     struct ModeDef { AnnotSubMode mode; const char *label; const char *tip; };
     const ModeDef modes[] = {
+        //: Mode button (a verb). Clicks select text and make no annotation.
         {AnnotSubMode::Select, QT_TR_NOOP("Select"),
          QT_TR_NOOP("Pointer: select and copy text (no annotation)")},
         {AnnotSubMode::Note, QT_TR_NOOP("Comment"),
@@ -103,8 +119,11 @@ AnnotPanel::AnnotPanel(QWidget *parent) : QWidget(parent)
     styleGroup_->setExclusive(true);
     struct StyleDef { AnnotType type; const char *label; const char *tip; };
     const StyleDef styles[] = {
+        //: Markup style button (a verb).
         {AnnotType::Highlight, QT_TR_NOOP("Highlight"), QT_TR_NOOP("Highlight the selected text")},
+        //: Markup style button (a verb).
         {AnnotType::Underline, QT_TR_NOOP("Underline"), QT_TR_NOOP("Underline the selected text")},
+        //: Markup style button (a verb).
         {AnnotType::StrikeOut, QT_TR_NOOP("Strike out"), QT_TR_NOOP("Strike out the selected text")},
     };
     const int styleCount = static_cast<int>(std::size(styles));
@@ -121,10 +140,11 @@ AnnotPanel::AnnotPanel(QWidget *parent) : QWidget(parent)
                                         : i == styleCount - 1 ? QStringLiteral("last")
                                                               : QStringLiteral("mid"));
         styleGroup_->addButton(b, static_cast<int>(d.type));
-        styleRow->addWidget(b, 1); // equal-width segments across the row
+        styleRow->addWidget(b, 1); // shares any extra row width equally
         if (d.type == AnnotType::Highlight)
             b->setChecked(true);
     }
+    equalizeWidths(styleGroup_);
     connect(styleGroup_, &QButtonGroup::idClicked, this, [this](int id) {
         activeStyle_ = static_cast<AnnotType>(id);
         emit highlightStyleChanged(activeStyle_);
@@ -209,6 +229,7 @@ void AnnotPanel::mouseReleaseEvent(QMouseEvent *event)
 void AnnotPanel::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
+    equalizeWidths(styleGroup_); // a new app style sheet can change the button sizes
     adjustSize();
     if (stack_)
         stack_->relayout(); // dock places this panel (and re-stacks the others)

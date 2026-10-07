@@ -29,6 +29,7 @@ set(_mervin_tests
     tst_document_output
     tst_render_lifetime
     tst_settings_store
+    tst_ui_language
     tst_comfort_transform
     tst_ink_rects
     tst_preview_layer
@@ -108,7 +109,9 @@ target_sources(tst_settings_dialog PRIVATE
     ${CMAKE_SOURCE_DIR}/src/ui/ThemeCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/ThemeCard.h
     ${CMAKE_SOURCE_DIR}/src/ui/UiThemePicker.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/UiThemePicker.h)
+    ${CMAKE_SOURCE_DIR}/src/ui/UiThemePicker.h
+    ${CMAKE_SOURCE_DIR}/src/ui/LanguageCombo.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/LanguageCombo.h)
 target_link_libraries(tst_settings_dialog PRIVATE mervin_icons Qt6::Widgets)
 
 # Real picker-path guard rail: enter a URL into the visible file-name field and
@@ -416,6 +419,14 @@ add_test(NAME tst_recent_panel COMMAND tst_recent_panel)
 set_tests_properties(tst_recent_panel PROPERTIES ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
+# The UI language picker, the first-run window and the restart program.
+qt_add_executable(tst_language_picker tst_language_picker.cpp)
+target_link_libraries(tst_language_picker PRIVATE mervin_app Qt6::Test)
+set_target_properties(tst_language_picker PROPERTIES WIN32_EXECUTABLE OFF)
+add_test(NAME tst_language_picker COMMAND tst_language_picker)
+set_tests_properties(tst_language_picker PROPERTIES ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+
 qt_add_executable(tst_document_suspension tst_document_suspension.cpp)
 target_link_libraries(tst_document_suspension PRIVATE mervin_app Qt6::Test)
 set_target_properties(tst_document_suspension PROPERTIES WIN32_EXECUTABLE OFF)
@@ -431,3 +442,25 @@ target_compile_definitions(tst_document_output PRIVATE MERVIN_INHERITED_PDF="${M
 qt_add_executable(mervin_benchmark benchmark_corpus.cpp)
 target_link_libraries(mervin_benchmark PRIVATE mervin_core)
 set_target_properties(mervin_benchmark PROPERTIES WIN32_EXECUTABLE OFF)
+
+# Checks that lupdate reads every string in the app's sources without a warning,
+# that i18n/*.ts match what update_translations writes, and that every message
+# is finished (see docs/TRANSLATING.md). The script runs the same lupdate project
+# as update_translations, on copies in the build tree.
+get_property(_mervin_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+set(_mervin_lupdate_project "${CMAKE_BINARY_DIR}/.lupdate/${PROJECT_NAME}_lupdate_project")
+if(_mervin_multi_config)
+    string(APPEND _mervin_lupdate_project ".$<CONFIG>")
+endif()
+list(JOIN MERVIN_LUPDATE_OPTIONS " " _mervin_lupdate_options)
+add_test(NAME i18n_catalogs
+    COMMAND ${CMAKE_COMMAND}
+        "-DLUPDATE=$<TARGET_FILE:Qt6::lupdate>"
+        "-DLCONVERT=$<TARGET_FILE:Qt6::lconvert>"
+        "-DGENERATE_PROJECT=${Qt6LinguistTools_DIR}/GenerateLUpdateProject.cmake"
+        "-DPROJECT_FILE=${_mervin_lupdate_project}.cmake"
+        "-DSOURCE_LANGUAGE=${QT_I18N_SOURCE_LANGUAGE}"
+        "-DLUPDATE_OPTIONS=${_mervin_lupdate_options}"
+        "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/i18n_catalogs"
+        -P "${CMAKE_SOURCE_DIR}/cmake/CheckTranslations.cmake")
+set_tests_properties(i18n_catalogs PROPERTIES ENVIRONMENT_MODIFICATION "${_mervin_test_env}")

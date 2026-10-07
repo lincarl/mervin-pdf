@@ -24,6 +24,8 @@ winget install --id Python.Python.3.12 --source winget --accept-source-agreement
 # aqtinstall 3.3.0 cannot read Qt 6.11+ Windows repository paths; use the same
 # merged fix as the release workflow until it ships in an aqtinstall release.
 & "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m pip install --user --upgrade "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
+# Without --archives aqt installs every archive, including the qttools,
+# qtdeclarative and qttranslations ones the UI translations need (see below).
 & "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m aqt install-qt windows desktop 6.12.0 win64_msvc2022_64 --outputdir C:\dev\Qt
 # => C:\dev\Qt\6.12.0\msvc2022_64
 
@@ -113,6 +115,8 @@ version mapping.
 
 `scripts/deploy.ps1` runs `windeployqt` (Qt DLLs/plugins + VC runtime) and copies
 the vcpkg dependency DLLs (qpdf + zlib/jpeg/toml++); MuPDF is statically linked.
+It skips Qt's translation files, because the UI catalogs, Qt's own strings
+included, are compiled into `MervinPDF.exe`.
 `packaging/nsis/mervin.nsi` installs to `%LOCALAPPDATA%\Mervin PDF`, adds a Start
 Menu shortcut + Apps & Features entry + uninstaller, and seeds `eng.traineddata`
 into `%APPDATA%\MervinPDF\tessdata`. The bundled
@@ -121,9 +125,9 @@ into `%APPDATA%\MervinPDF\tessdata`. The bundled
 
 ## Linux development and verification
 
-Install Qt 6.6+ (Core, Gui, Widgets, Network, PrintSupport, Svg, Test), qpdf development
-headers, toml++, CMake, Ninja, a C++20 compiler, and Python 3. Build the pinned MuPDF
-with `scripts/build-mupdf-linux.sh`, then:
+Install Qt 6.9+ (Core, Gui, Widgets, Network, PrintSupport, Svg, Test, LinguistTools,
+and Qt's translation catalogs), qpdf development headers, toml++, CMake, Ninja, a C++20
+compiler, and Python 3. Build the pinned MuPDF with `scripts/build-mupdf-linux.sh`, then:
 
 ```bash
 export MUPDF_DIR=/path/to/mupdf-1.28.5-source
@@ -142,6 +146,31 @@ For memory and undefined-behavior checks, configure a separate Debug build with
 `-DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"` and
 `-DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"`. CI disables leak detection
 for the prebuilt Qt/dependency binaries; address and undefined-behavior checks remain enabled.
+
+## Qt modules for the UI translations
+
+The build compiles the UI catalogs in `i18n/` into the binary and merges Qt's own
+catalog for each language into them. It therefore needs Qt's LinguistTools
+(`lupdate`, `lrelease`) and Qt's translation catalogs (`qtbase_<id>.qm`). Configure
+stops with an error naming the missing `qtbase_<id>.qm` when the catalogs are absent.
+Packages and installers need neither at run time.
+
+| Qt install | What to add |
+| --- | --- |
+| aqtinstall | Nothing for a plain `install-qt`, which installs every archive. With `--archives`, include `qttools`, `qtdeclarative` (`lupdate` and `lrelease` link Qt Qml) and `qttranslations`. |
+| Ubuntu 26.04 | `qt6-tools-dev`, which pulls `qt6-tools-dev-tools` and `qt6-l10n-tools` (`lprodump`, `lupdate`, `lrelease`; `qt6-l10n-tools` alone lacks the CMake package), and `qt6-translations-l10n`. |
+| Fedora 44 | `qt6-qttools-devel`, which requires `qt6-linguist`, and `qt6-qttranslations`. |
+
+The normal build never changes `i18n/*.ts`. After changing UI text, rewrite them
+from the sources (use `--preset x64-release` on Windows):
+
+```bash
+cmake --build --preset linux-release --target update_translations
+```
+
+Then translate the new strings as described in [TRANSLATING.md](TRANSLATING.md).
+The `i18n_catalogs` test fails until the catalogs match the sources and every
+message is finished.
 
 ## Repeatable corpus profiling
 

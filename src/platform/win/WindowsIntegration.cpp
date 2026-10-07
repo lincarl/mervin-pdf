@@ -30,6 +30,8 @@ bool PlatformIntegration::registerPdfHandlerAndPromptDefault()
         QSettings progid(
             QStringLiteral("HKEY_CURRENT_USER\\Software\\Classes\\%1").arg(QLatin1String(kProgId)),
             QSettings::NativeFormat);
+        // The file type name Windows shows. It outlives any UI language change in
+        // the registry, so it stays English rather than translated.
         progid.setValue(QStringLiteral("."), QStringLiteral("PDF Document"));
         progid.setValue(QStringLiteral("shell/open/command/."), openCmd);
         progid.setValue(QStringLiteral("DefaultIcon/."), QStringLiteral("\"%1\",0").arg(exe));
@@ -51,6 +53,8 @@ bool PlatformIntegration::registerPdfHandlerAndPromptDefault()
         QSettings caps(QStringLiteral("HKEY_CURRENT_USER\\Software\\MervinPDF\\Capabilities"),
                        QSettings::NativeFormat);
         caps.setValue(QStringLiteral("ApplicationName"), QStringLiteral("Mervin PDF"));
+        // Shown in Default Apps. It outlives any UI language change in the
+        // registry, so it stays English rather than translated.
         caps.setValue(QStringLiteral("ApplicationDescription"),
                       QStringLiteral("Lightweight PDF reader"));
         // Icon shown in Settings -> Default Apps and the "open with" picker;

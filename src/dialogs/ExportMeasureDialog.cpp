@@ -14,6 +14,7 @@ ExportMeasureDialog::ExportMeasureDialog(QWidget *parent)
     auto *layout = new QVBoxLayout(this);
 
     auto *label = new QLabel(
+        //: One sentence per line. Keep the line breaks.
         tr("This document contains Mervin PDF measurements.\n"
            "When you export a copy, the measurements are added to the PDF.\n"
            "These exported measurements are non-editable.\n"

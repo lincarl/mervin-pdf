@@ -31,6 +31,7 @@ RecentSearchField::RecentSearchField(QWidget *parent)
     clearBtn_->setFixedSize(kClearSize, kClearSize);
     clearBtn_->setFocusPolicy(Qt::NoFocus);
     clearBtn_->setCursor(Qt::ArrowCursor);
+    //: Tooltip of the button that empties the search field.
     clearBtn_->setToolTip(tr("Clear"));
     icons::setButtonGlyph(clearBtn_, icons::Glyph::Close, kClearGlyph);
     clearBtn_->hide();
@@ -51,8 +52,11 @@ RecentSearchField::RecentSearchField(QWidget *parent)
         const char *label;
         const char *tip;
     } defs[] = {
+        //: Search scope toggle that searches the file names.
         {Scope::Names, QT_TR_NOOP("Names"), QT_TR_NOOP("Search file names")},
+        //: Search scope toggle that searches the text inside the documents.
         {Scope::Contents, QT_TR_NOOP("Contents"), QT_TR_NOOP("Search inside documents")},
+        //: Search scope toggle that searches file names, then inside the documents.
         {Scope::All, QT_TR_NOOP("All"), QT_TR_NOOP("Search file names, then inside documents")},
     };
     scopeGroup_ = new QButtonGroup(this);

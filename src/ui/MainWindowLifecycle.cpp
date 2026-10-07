@@ -40,9 +40,10 @@ void MainWindow::wireTabLifecycle(TabPage *tab)
             if (!needsPassword || currentTab() != tab || !isVisible() || isMinimized())
                 return;
             bool accepted = false;
+            //: %1 is the name of the document.
+            const QString prompt = tr("Enter the password for %1.").arg(tab->tabTitle());
             const QString password = QInputDialog::getText(
-                this, tr("Password required"), tr("Enter the password for %1.").arg(tab->tabTitle()),
-                QLineEdit::Password, {}, &accepted);
+                this, tr("Password required"), prompt, QLineEdit::Password, {}, &accepted);
             if (accepted) {
                 tab->setPassword(password);
                 tab->resumeAsync();
@@ -118,6 +119,8 @@ bool MainWindow::suspendTab(TabPage *tab)
             refreshCommentsSidebar();
         }
         if (!error.isEmpty()) {
+            //: Shown when an inactive document could not be unloaded from memory.
+            //: %1 is the document name, %2 the reason.
             const QString message = tr("%1 remains loaded. %2").arg(tab->tabTitle(), error);
             statusBar()->showMessage(message);
             if (wm_ && hiddenToTray_)

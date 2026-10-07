@@ -31,8 +31,10 @@ void OutlineSidebar::addItems(QTreeWidgetItem *parent, const std::vector<Outline
         auto *node = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(tree_);
         node->setText(0, it.title);
         node->setData(0, kPageRole, it.page);
-        if (it.page >= 0)
+        if (it.page >= 0) {
+            //: Tooltip of an outline entry. %1 is the page number it leads to.
             node->setToolTip(0, tr("Page %1").arg(it.page + 1));
+        }
         if (!it.children.empty())
             addItems(node, it.children);
     }
@@ -43,6 +45,7 @@ void OutlineSidebar::setOutline(const std::vector<OutlineItem> &items)
     tree_->clear();
     if (items.empty()) {
         auto *empty = new QTreeWidgetItem(tree_);
+        //: Shown in the Outline sidebar when the document has no outline.
         empty->setText(0, tr("(no outline)"));
         empty->setData(0, kPageRole, -1);
         empty->setDisabled(true);

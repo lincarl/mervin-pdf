@@ -111,6 +111,7 @@ public:
     BusyNote(const QString &text, QWidget *parent)
         : QDialog(parent, Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowTitleHint)
     {
+        //: Window title (noun): the software update.
         setWindowTitle(Updater::tr("Update"));
         setWindowModality(Qt::ApplicationModal);
         setMinimumWidth(420);
@@ -122,6 +123,7 @@ public:
 
 void warn(const QString &text)
 {
+    //: Window title (noun): the software update.
     QMessageBox::warning(dialogParent(), Updater::tr("Update"), text);
 }
 
@@ -241,6 +243,7 @@ void Updater::onReleaseReply(QNetworkReply *reply)
 
     if (reply->error() != QNetworkReply::NoError) {
         if (manual_ && reply->error() != QNetworkReply::OperationCanceledError)
+            //: %1 is the network error message.
             warn(tr("Couldn't check for updates right now.\n\n%1").arg(reply->errorString()));
         endOperation();
         return;
@@ -252,6 +255,7 @@ void Updater::onReleaseReply(QNetworkReply *reply)
         markChecked();
         if (manual_) {
             QMessageBox::information(dialogParent(), tr("Check for Updates"),
+                                     //: %1 is the version number of this copy.
                                      tr("You're up to date.\n\nMervin PDF %1 is the latest version.")
                                          .arg(QStringLiteral(MERVIN_VERSION_STRING)));
         }
@@ -270,7 +274,9 @@ void Updater::onReleaseReply(QNetworkReply *reply)
             QMessageBox box(dialogParent());
             box.setWindowTitle(tr("Update Available"));
             box.setIcon(QMessageBox::Information);
+            //: %1 is the version number of the new release.
             box.setText(tr("Mervin PDF %1 is available.").arg(release->version.toString()));
+            //: %1 is the version number of this copy.
             box.setInformativeText(tr("You have %1.").arg(QStringLiteral(MERVIN_VERSION_STRING)));
             QPushButton *open = box.addButton(tr("Open Download Page"), QMessageBox::AcceptRole);
             box.addButton(QMessageBox::Close);
@@ -304,6 +310,7 @@ void Updater::download(const update::ReleaseAsset &asset, const QString &version
                       this);
     if (!part_->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         if (manual_)
+            //: %1 is the file error message.
             warn(tr("Couldn't save the update.\n\n%1").arg(part_->errorString()));
         delete part_;
         part_ = nullptr;
@@ -330,8 +337,10 @@ void Updater::download(const update::ReleaseAsset &asset, const QString &version
 
 void Updater::showProgress()
 {
+    //: %1 is the version number being downloaded.
     progress_ = new QProgressDialog(tr("Downloading Mervin PDF %1…").arg(downloadVersion_),
                                     tr("Cancel"), 0, 100, dialogParent());
+    //: Window title (noun): the software update.
     progress_->setWindowTitle(tr("Update"));
     progress_->setWindowModality(Qt::WindowModal);
     progress_->setMinimumWidth(420);
@@ -376,6 +385,7 @@ void Updater::onDownloadFinished()
         if (manual_ && !written)
             warn(tr("Couldn't save the update.\n\n%1").arg(writeError));
         else if (manual_ && reply->error() != QNetworkReply::OperationCanceledError)
+            //: %1 is the network error message.
             warn(tr("The update download failed.\n\n%1").arg(reply->errorString()));
         endOperation();
         return;
@@ -450,11 +460,16 @@ void Updater::askToInstall()
     box.setWindowTitle(tr("Update Ready"));
     box.setIcon(QMessageBox::Information);
     box.setTextFormat(Qt::RichText);
+    //: %1 is the version number of the downloaded update.
     box.setText(tr("Mervin PDF %1 is ready to install.").arg(pending.version.toString()));
+    //: %1 is the version number of this copy. Never is the button of that name; keep
+    //: the <b></b> tags around it.
     box.setInformativeText(tr("You have %1. Click <b>Never</b> to turn off automatic updates.")
                                .arg(QStringLiteral(MERVIN_VERSION_STRING)));
     QPushButton *installButton = box.addButton(tr("Install Now"), QMessageBox::AcceptRole);
+    //: Button: ask about the update again on the next start.
     QPushButton *laterButton = box.addButton(tr("Later"), QMessageBox::RejectRole);
+    //: Button: discard the update and turn off automatic updates.
     QPushButton *neverButton = box.addButton(tr("Never"), QMessageBox::DestructiveRole);
     box.setDefaultButton(installButton);
     box.setEscapeButton(laterButton); // closing the box is a Later too
@@ -482,6 +497,7 @@ void Updater::install(const QString &file, const QString &version)
         if (!closeWindows())
             return;
         if (!update::startWindowsInstaller(kind_, file)) {
+            //: %1 is the path of the downloaded installer.
             warn(tr("Couldn't start the installer. It is saved at:\n\n%1\n\n"
                     "Run it to finish updating.")
                      .arg(QDir::toNativeSeparators(file)));
@@ -491,6 +507,7 @@ void Updater::install(const QString &file, const QString &version)
     case update::PackageKind::AppImage: {
         QString error;
         if (!update::replaceAppImage(file, &error)) {
+            //: %1 is the reason, %2 the path of the downloaded AppImage file.
             warn(tr("Couldn't install the update. %1\n\nThe new AppImage is saved at:\n\n%2")
                      .arg(error, file));
             return;
@@ -518,6 +535,7 @@ void Updater::installWithPackageManager(const QString &file, const QString &vers
     }
 
     // pkexec asks for the password in its own window.
+    //: %1 is the version number being installed.
     auto *note = new BusyNote(tr("Installing Mervin PDF %1…").arg(version), dialogParent());
     note->show();
 
@@ -530,6 +548,7 @@ void Updater::installWithPackageManager(const QString &file, const QString &vers
         if (ok)
             restart(exePath_);
         else if (!failure.isEmpty())
+            //: %1 is the package manager's error output.
             warn(tr("The update could not be installed.\n\n%1").arg(failure));
     };
     connect(proc, &QProcess::finished, this, [proc, done](int code, QProcess::ExitStatus status) {

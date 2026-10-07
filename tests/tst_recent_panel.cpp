@@ -1,3 +1,4 @@
+#include "i18n/UiLanguage.h"
 #include "ui/RecentFilesPanel.h"
 
 #include <QDir>
@@ -16,12 +17,14 @@ using mervin::RecentSearchField;
 // The Recent page lists starred files in a Favourites section above the rest, keeps
 // a just-starred row where it is until the search changes, and searches file names,
 // contents, or names then contents. Content hits are fed in by hand, as the
-// window's ContentSearch would deliver them.
+// window's ContentSearch would deliver them. Counts use the English catalog's
+// plural forms ("1 file found", "2 files found").
 class TstRecentPanel : public QObject
 {
     Q_OBJECT
 
 private slots:
+    void initTestCase();
     void init();
     void cleanup();
 
@@ -39,6 +42,7 @@ private slots:
     void aHiddenPageScansOnlyWhenShownAgain();
     void statusAndStopFollowTheScan();
     void stopKeepsWhatWasFound();
+    void summaryCountsWhatIsListed();
 
 private:
     QString file(const QString &name) const { return dir_.filePath(name); }
@@ -77,6 +81,11 @@ private:
     RecentSearchField *field_ = nullptr;
     QListWidget *list_ = nullptr;
 };
+
+void TstRecentPanel::initTestCase()
+{
+    mervin::i18n::apply(QStringLiteral("en"));
+}
 
 void TstRecentPanel::init()
 {
@@ -365,6 +374,20 @@ void TstRecentPanel::stopKeepsWhatWasFound()
     panel_->show();
     QTest::qWait(600);
     QCOMPARE(scans.count(), 1);
+}
+
+void TstRecentPanel::summaryCountsWhatIsListed()
+{
+    panel_->setEntries({entry("report-2024.pdf", 40), entry("report-fav.pdf", 30),
+                        entry("notes.pdf", 20)});
+    QCOMPARE(panel_->statusSummary(), QStringLiteral("Your last 3 opened documents"));
+
+    field_->setText(QStringLiteral("report"));
+    QCOMPARE(panel_->statusSummary(), QStringLiteral("2 results"));
+    field_->setText(QStringLiteral("notes"));
+    QCOMPARE(panel_->statusSummary(), QStringLiteral("1 result"));
+    field_->setText(QStringLiteral("nothing"));
+    QCOMPARE(panel_->statusSummary(), QStringLiteral("0 results"));
 }
 
 QTEST_MAIN(TstRecentPanel)

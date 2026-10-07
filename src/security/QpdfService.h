@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QCoreApplication>
 #include <QString>
 
 namespace mervin {
@@ -7,9 +8,12 @@ namespace mervin {
 // Wraps qpdf for the document-security operations (Document -> Security). All
 // qpdf usage is confined to the .cpp so this header stays dependency-free and
 // the class is unit-testable. Every method operates on file paths and never
-// modifies the source in place - operations write a new file.
+// modifies the source in place - operations write a new file. Error texts of its
+// own are translated; qpdf's messages pass through unchanged.
 class QpdfService
 {
+    Q_DECLARE_TR_FUNCTIONS(mervin::QpdfService)
+
 public:
     enum class Status {
         Ok,
@@ -40,7 +44,7 @@ public:
     struct Info
     {
         bool encrypted = false;
-        QString algorithm;     // "AES-256" | "AES-128" | "RC4" | "None"
+        QString algorithm;     // "AES-256" | "AES-128" | "RC4", or a translated "None" | "Unknown"
         int keyLengthBits = 0; // 0 when not encrypted
         int revision = 0;      // R
         Permissions permissions; // all true when not encrypted

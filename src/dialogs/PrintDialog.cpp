@@ -25,6 +25,7 @@
 #include <QRadioButton>
 #include <QScreen>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QTimer>
@@ -33,6 +34,11 @@
 using mervin::printing::Alignment;
 using mervin::printing::ColourMode;
 using mervin::printing::ScaleMode;
+
+namespace {
+// The settings column fits English at this width. A longer translation widens it.
+constexpr int kSettingsWidth = 390;
+} // namespace
 
 PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
                          mervin::Document *document, int rotation,
@@ -45,6 +51,7 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     , suggestedFileName_(suggestedFileName)
     , preferredMargins_(printer->pageLayout().margins(QPageLayout::Point))
 {
+    //: Dialog title.
     setWindowTitle(tr("Print"));
     setObjectName(QStringLiteral("printDialog"));
     setMinimumSize(800, 480);
@@ -63,7 +70,7 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     settingsScroll->setWidgetResizable(true);
     settingsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     settingsScroll->setFrameShape(QFrame::NoFrame);
-    settingsScroll->setFixedWidth(390);
+    settingsScroll->setFixedWidth(kSettingsWidth); // widened below if the settings need it
     auto *settings = new QWidget(settingsScroll);
     auto *settingsLayout = new QVBoxLayout(settings);
     settingsLayout->setContentsMargins(0, 0, 10, 0);
@@ -81,16 +88,18 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
                                     ? QPrinterInfo::defaultPrinterName()
                                     : printer_->printerName();
     for (const QPrinterInfo &info : printers) {
-        const QString label =
-            (info.description().isEmpty() || info.description() == info.printerName())
-                ? info.printerName()
-                : tr("%1 (%2)").arg(info.printerName(), info.description());
+        QString label = info.printerName();
+        if (!info.description().isEmpty() && info.description() != info.printerName()) {
+            //: A printer in the list: %1 is its name, %2 its description.
+            label = tr("%1 (%2)").arg(info.printerName(), info.description());
+        }
         printerCombo_->addItem(label, info.printerName());
         if (info.printerName() == currentName)
             printerCombo_->setCurrentIndex(printerCombo_->count() - 1);
     }
     if (printers.isEmpty())
         printerCombo_->addItem(tr("No printers available"));
+    //: Label of the printer list.
     printerForm->addRow(tr("Name:"), printerCombo_);
 
     paperSizeCombo_ = new QComboBox(printerBox);
@@ -143,19 +152,31 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
         portraitRadio_->setChecked(true);
     settingsLayout->addWidget(orientationBox);
 
+    //: Group heading over the choice of which pages to print.
     auto *pagesBox = new QGroupBox(tr("Pages"), settings);
     auto *pagesLayout = new QVBoxLayout(pagesBox);
-    const QString allLabel = pageCount_ > 1 ? tr("All pages (page 1-%1)").arg(pageCount_)
-                                          : tr("All pages (page 1)");
+    // A one-page document names its page rather than a range.
+    QString allLabel;
+    if (pageCount_ > 1) {
+        //: %1 is the document's last page.
+        allLabel = tr("All pages (page 1-%1)").arg(pageCount_);
+    } else {
+        allLabel = tr("All pages (page 1)");
+    }
     allPagesRadio_ = new QRadioButton(allLabel, pagesBox);
     allPagesRadio_->setObjectName(QStringLiteral("printAllPages"));
     allPagesRadio_->setChecked(true);
     pagesLayout->addWidget(allPagesRadio_);
+    //: %1 is the page number shown in the viewer.
     currentPageRadio_ = new QRadioButton(tr("Current page (page %1)").arg(currentPage_), pagesBox);
     currentPageRadio_->setObjectName(QStringLiteral("printCurrentPage"));
     pagesLayout->addWidget(currentPageRadio_);
 
     auto *rangeRow = new QHBoxLayout;
+    // The row reads "Pages from [first] to [last]": a radio button, a spin box,
+    // a label and another spin box, so the sentence comes in two pieces.
+    //: Radio button followed by a page number field, then "to" and another
+    //: page number field: "Pages from [1] to [12]".
     rangeRadio_ = new QRadioButton(tr("Pages from"), pagesBox);
     rangeRadio_->setObjectName(QStringLiteral("printPageRange"));
     fromSpin_ = new QSpinBox(pagesBox);
@@ -170,6 +191,7 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     mervin::Theme::useSteppedSpinBox(toSpin_);
     rangeRow->addWidget(rangeRadio_);
     rangeRow->addWidget(fromSpin_);
+    //: Between the two page number fields of "Pages from [1] to [12]".
     rangeRow->addWidget(new QLabel(tr("to"), pagesBox));
     rangeRow->addWidget(toSpin_);
     rangeRow->addStretch();
@@ -188,7 +210,8 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     });
 
     auto *customRow = new QHBoxLayout;
-    customRadio_ = new QRadioButton(tr("Custom"), pagesBox);
+    //: Page selection option: print the pages typed in the field next to it.
+    customRadio_ = new QRadioButton(tr("Custom", "page selection"), pagesBox);
     customRadio_->setObjectName(QStringLiteral("printCustomPages"));
     customEdit_ = new QLineEdit(pagesBox);
     customEdit_->setObjectName(QStringLiteral("printPages"));
@@ -212,6 +235,7 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
 
     colorCombo_ = new QComboBox(optionsBox);
     colorCombo_->setObjectName(QStringLiteral("printColour"));
+    //: Colour mode option: print in colour.
     colorCombo_->addItem(tr("Colour"), static_cast<int>(ColourMode::Colour));
     colorCombo_->addItem(tr("Grayscale"), static_cast<int>(ColourMode::Grayscale));
     colorCombo_->addItem(tr("Black and white"), static_cast<int>(ColourMode::BlackAndWhite));
@@ -220,6 +244,7 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
 
     qualityCombo_ = new QComboBox(optionsBox);
     qualityCombo_->setObjectName(QStringLiteral("printQuality"));
+    //: Print quality option. dpi is dots per inch.
     qualityCombo_->addItem(tr("Draft (150 dpi)"), 150);
     qualityCombo_->addItem(tr("Normal (300 dpi)"), 300);
     qualityCombo_->addItem(tr("High (600 dpi)"), 600);
@@ -231,12 +256,13 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     scaleCombo_->setObjectName(QStringLiteral("printScale"));
     scaleCombo_->addItem(tr("Fit to page"), static_cast<int>(ScaleMode::FitToPage));
     scaleCombo_->addItem(tr("Actual size"), static_cast<int>(ScaleMode::ActualSize));
-    scaleCombo_->addItem(tr("Custom"), static_cast<int>(ScaleMode::Custom));
+    //: Scale option: print at the percentage set next to it.
+    scaleCombo_->addItem(tr("Custom", "scale"), static_cast<int>(ScaleMode::Custom));
     scalePercentSpin_ = new QSpinBox(optionsBox);
     scalePercentSpin_->setObjectName(QStringLiteral("printScalePercent"));
     scalePercentSpin_->setRange(10, 400);
     scalePercentSpin_->setValue(100);
-    scalePercentSpin_->setSuffix(tr(" %"));
+    scalePercentSpin_->setSuffix(QStringLiteral(" %")); // a unit symbol, not translated
     mervin::Theme::useSteppedSpinBox(scalePercentSpin_);
     scalePercentSpin_->setEnabled(false);
     scaleRow->addWidget(scaleCombo_, 1);
@@ -265,12 +291,20 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     optionsForm->addRow(tr("Two-sided:"), twoSidedCheck_);
     settingsLayout->addWidget(optionsBox);
     settingsLayout->addStretch();
+    // The column is fixed so the preview gets the rest. When a translation makes
+    // the settings wider than it, widen it rather than clip them, keeping room for
+    // the vertical scroll bar.
+    settingsScroll->ensurePolished();
+    const int scrollBarWidth = settingsScroll->verticalScrollBar()->sizeHint().width();
+    settingsScroll->setFixedWidth(
+        qMax(kSettingsWidth, settings->minimumSizeHint().width() + scrollBarWidth));
 
     auto *divider = new QFrame(this);
     divider->setFrameShape(QFrame::VLine);
     body->addWidget(divider);
     auto *previewColumn = new QVBoxLayout;
     body->addLayout(previewColumn, 1);
+    //: Heading over the print preview.
     auto *previewTitle = new QLabel(tr("Preview"), this);
     QFont titleFont = previewTitle->font();
     titleFont.setBold(true);
@@ -325,6 +359,7 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     cancelButton->setObjectName(QStringLiteral("printCancel"));
     cancelButton->setAutoDefault(false);
     buttons->addWidget(cancelButton);
+    //: Button: starts printing.
     printButton_ = new QPushButton(tr("Print"), this);
     printButton_->setObjectName(QStringLiteral("printConfirm"));
     printButton_->setDefault(true);
@@ -508,11 +543,16 @@ bool PrintDialog::refreshPreview()
     const auto dimension = [&locale](double value) {
         return locale.toString(value, 'f', qAbs(value - qRound(value)) < 0.05 ? 0 : 1);
     };
-    paperLabel_->setText(tr("%1 · %2 · %3 × %4 mm")
-                            .arg(pageLayout.pageSize().name(),
-                                 pageLayout.orientation() == QPageLayout::Landscape
-                                     ? tr("Landscape") : tr("Portrait"),
-                                 dimension(size.width()), dimension(size.height())));
+    // "A4 · Portrait · 210 × 297 mm". Only the paper name and orientation are
+    // words; the unit symbol and the separators are not translated.
+    const QString paperSize =
+        QStringLiteral("%1 × %2 mm").arg(dimension(size.width()), dimension(size.height()));
+    paperLabel_->setText(QStringList{pageLayout.pageSize().name(),
+                                     pageLayout.orientation() == QPageLayout::Landscape
+                                         ? tr("Landscape")
+                                         : tr("Portrait"),
+                                     paperSize}
+                             .join(QStringLiteral(" · ")));
     auto previewSettings = printSettings();
     if (printer_->resolution() > 0)
         previewSettings.qualityDpi = qMin(previewSettings.qualityDpi, printer_->resolution());
@@ -529,8 +569,11 @@ void PrintDialog::updateNavigation()
     if (pages_.isEmpty()) {
         pageLabel_->setText(tr("No pages selected"));
     } else if (allPagesRadio_->isChecked()) {
+        //: Under the preview: %1 is the page shown, %2 the document's page count.
         pageLabel_->setText(tr("Page %1 of %2").arg(pages_.at(previewIndex_)).arg(pageCount_));
     } else {
+        //: Under the preview: %1 is the page shown, which is number %2 of the
+        //: %3 pages selected for printing.
         pageLabel_->setText(tr("Page %1 · %2 of %3 selected")
                                 .arg(pages_.at(previewIndex_)).arg(previewIndex_ + 1)
                                 .arg(pages_.size()));
@@ -549,9 +592,11 @@ void PrintDialog::accept()
         QString directory = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
         if (directory.isEmpty())
             directory = QDir::homePath();
+        //: Default file name, without ".pdf", when the document has none.
         const QString base = suggestedFileName_.isEmpty() ? tr("document") : suggestedFileName_;
         const QString suggested = QDir(directory).filePath(base + QStringLiteral(".pdf"));
         const QString path = QFileDialog::getSaveFileName(this, tr("Print to file"), suggested,
+                                                         //: File type filter. Keep "(*.pdf)".
                                                          tr("PDF files (*.pdf)"));
         if (path.isEmpty())
             return;

@@ -1,8 +1,12 @@
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
 #include "dialogs/SettingsDialog.h"
+#include "i18n/UiLanguage.h"
+#include "ui/LanguageCombo.h"
 #include "render/AnnotTypes.h"
 #include "ui/DocumentThemePicker.h"
+#include "ui/Theme.h"
+#include "ui/ThemeTokens.h"
 
 #include <QCheckBox>
 #include <QClipboard>
@@ -10,6 +14,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
+#include <QHash>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
@@ -19,6 +24,8 @@
 #include <QMetaEnum>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QScopeGuard>
+#include <QScrollBar>
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QStackedWidget>
@@ -27,6 +34,7 @@
 #include <QTimeZone>
 #include <QTimer>
 #include <QToolButton>
+#include <QTranslator>
 
 #include <functional>
 
@@ -67,6 +75,11 @@ private slots:
     void ocrPageShowsAnInstalledDefaultButKeepsTheSavedOne();
     void removingAnOcrLanguageAsksFirst();
     void theLastOcrLanguageStays();
+    void newUiLanguageRestartsOnApply();
+    void untouchedUiLanguageKeepsTheStoredValue();
+    void pendingUiLanguageShowsUntilChanged();
+    void menuFitsLongerPageTitles();
+    void shortcutKeysFollowTheUiLanguage();
 
 private:
     QString tessdataPath(const char *code) const;
@@ -99,10 +112,33 @@ QPushButton *dialogButton(QWidget *dialog, QDialogButtonBox::StandardButton whic
     return buttons ? buttons->button(which) : nullptr;
 }
 
+// A catalog holding only the given texts, standing in for a language whose
+// text differs from English. Installed for the lifetime of the object.
+class StubCatalog : public QTranslator
+{
+public:
+    explicit StubCatalog(QHash<QByteArray, QString> texts) : texts_(std::move(texts))
+    {
+        QCoreApplication::installTranslator(this);
+    }
+    ~StubCatalog() override { QCoreApplication::removeTranslator(this); }
+
+    QString translate(const char *context, const char *source, const char *, int) const override
+    {
+        return texts_.value(QByteArray(context) + '|' + source);
+    }
+    bool isEmpty() const override { return false; }
+
+private:
+    QHash<QByteArray, QString> texts_; // "context|source" -> text
+};
+
 } // namespace
 
 void TstSettingsDialog::initTestCase()
 {
+    // The assertions below read the English UI text.
+    mervin::i18n::apply(QStringLiteral("en"));
     QVERIFY(profile_.isValid());
     mervin::ConfigPaths::setOverrideDir(profile_.path());
     QVERIFY(QDir().mkpath(QDir(profile_.path()).filePath(QStringLiteral("tessdata"))));
@@ -744,6 +780,9 @@ void TstSettingsDialog::updateControlsFollowTheUpdater()
         QLabel *date = labelStartingWith(&dialog, QStringLiteral("Last checked "));
         QVERIFY(date);
         QVERIFY(date->text().contains(QStringLiteral("2026")));
+        // The OS long date, without the weekday it normally carries.
+        const QDate shown = QDateTime(QDate(2026, 10, 2), QTime(12, 0), QTimeZone::UTC).toLocalTime().date();
+        QVERIFY(!date->text().contains(QLocale().dayName(shown.dayOfWeek())));
         QVERIFY(checkBox(&dialog, QStringLiteral("Check for updates at start (every 30 days)"))->isEnabled());
     }
 
@@ -856,6 +895,132 @@ void TstSettingsDialog::theLastOcrLanguageStays()
         dialog.findChildren<QToolButton *>(QStringLiteral("settingsListRemove"));
     QCOMPARE(buttons.size(), 1);
     QVERIFY(!buttons.first()->isEnabled());
+}
+
+// Picking a language other than the one Mervin shows says "Mervin will restart.";
+// Apply then hands it over and closes the dialog like OK, so the caller restarts.
+void TstSettingsDialog::newUiLanguageRestartsOnApply()
+{
+    SettingsDialog dialog(mervin::Settings{});
+    auto *combo = dialog.findChild<mervin::LanguageCombo *>(QStringLiteral("uiLanguage"));
+    QLabel *hint = labelStartingWith(&dialog, QStringLiteral("Mervin will restart"));
+    QPushButton *apply = dialogButton(&dialog, QDialogButtonBox::Apply);
+    QVERIFY(combo && hint && apply);
+    QCOMPARE(combo->language(), mervin::i18n::current());
+    QVERIFY(!dialog.restartNeeded());
+    QVERIFY(hint->isHidden());
+
+    QList<mervin::Settings> applied;
+    connect(&dialog, &SettingsDialog::applyRequested, this,
+            [&applied](const mervin::Settings &s) { applied.append(s); });
+    QSignalSpy accepted(&dialog, &QDialog::accepted);
+    combo->setLanguage(QStringLiteral("sv"));
+    QVERIFY(dialog.restartNeeded());
+    QVERIFY(!hint->isHidden());
+    QVERIFY(apply->isEnabled());
+    QCOMPARE(dialog.settings().uiLanguage, QStringLiteral("sv"));
+
+    // Back to the language shown: nothing to restart for.
+    combo->setLanguage(mervin::i18n::current());
+    QVERIFY(!dialog.restartNeeded());
+    QVERIFY(hint->isHidden());
+
+    combo->setLanguage(QStringLiteral("zh_CN"));
+    apply->click();
+    QCOMPARE(applied.size(), 1);
+    QCOMPARE(applied.first().uiLanguage, QStringLiteral("zh_CN"));
+    QCOMPARE(accepted.size(), 1);
+}
+
+// Opening and confirming Settings never rewrites the stored language: not an
+// empty one (no choice yet) and not one this build doesn't ship.
+void TstSettingsDialog::untouchedUiLanguageKeepsTheStoredValue()
+{
+    for (const QString &stored : {QString(), QStringLiteral("pt_BR"), QStringLiteral("sv")}) {
+        mervin::Settings in;
+        in.uiLanguage = stored;
+        SettingsDialog dialog(in);
+        QCOMPARE(dialog.settings().uiLanguage, stored);
+    }
+}
+
+// The menu on the left keeps its 196 px for the English page titles and widens
+// for a longer one, which would otherwise be cut off: it never scrolls sideways.
+void TstSettingsDialog::menuFitsLongerPageTitles()
+{
+    const QString previousStyle = qApp->styleSheet();
+    const auto restoreStyle = qScopeGuard([&] { qApp->setStyleSheet(previousStyle); });
+    const QPalette palette = mervin::theme::darkPalette(QColor(QStringLiteral("#4f8cff")));
+    qApp->setStyleSheet(mervin::Theme::buildStyleSheet(palette, QStringLiteral("#4f8cff")));
+
+    {
+        SettingsDialog dialog(mervin::Settings{});
+        auto *nav = dialog.findChild<QListWidget *>(QStringLiteral("settingsNav"));
+        QVERIFY(nav);
+        QCOMPARE(nav->width(), 196);
+    }
+
+    const QString longTitle = QStringLiteral("Tangentbordsgenvägar och kortkommandon för alla verktyg");
+    StubCatalog catalog({{"SettingsDialog|Keyboard shortcuts", longTitle}});
+    SettingsDialog dialog(mervin::Settings{}, {}, Page::Shortcuts);
+    auto *nav = dialog.findChild<QListWidget *>(QStringLiteral("settingsNav"));
+    QVERIFY(nav);
+    QCOMPARE(nav->currentItem()->text(), longTitle);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    QVERIFY(nav->width() > 196);
+    QVERIFY(!nav->verticalScrollBar()->isVisible());
+    const int needed = nav->iconSize().width() + nav->fontMetrics().horizontalAdvance(longTitle);
+    QVERIFY2(nav->viewport()->width() >= needed, "The longest page title must fit the menu.");
+}
+
+// The shortcuts page writes keys the way the OS does, with key names from the UI
+// language's catalog ("Strg" in German), not fixed English text.
+void TstSettingsDialog::shortcutKeysFollowTheUiLanguage()
+{
+    const auto firstRowKeys = [] {
+        SettingsDialog dialog(mervin::Settings{}, {}, Page::Shortcuts);
+        const auto keys = dialog.findChildren<QLabel *>(QStringLiteral("shortcutKeys"));
+        return keys.isEmpty() ? QString() : keys.first()->text();
+    };
+    QCOMPARE(firstRowKeys(), QStringLiteral("Ctrl+O"));
+
+    StubCatalog german({{"QShortcut|Ctrl", QStringLiteral("Strg")}});
+    QCOMPARE(firstRowKeys(), QStringLiteral("Strg+O"));
+}
+
+// A stored language other than the one on screen (its restart was cancelled at a
+// save prompt) shows with the restart note, and picking the language on screen
+// takes it back without a restart. A --language run shows the language on screen.
+void TstSettingsDialog::pendingUiLanguageShowsUntilChanged()
+{
+    mervin::Settings in;
+    in.uiLanguage = QStringLiteral("sv"); // the tests run in English
+    {
+        SettingsDialog dialog(in);
+        auto *combo = dialog.findChild<mervin::LanguageCombo *>(QStringLiteral("uiLanguage"));
+        QLabel *hint = labelStartingWith(&dialog, QStringLiteral("Mervin will restart"));
+        QPushButton *apply = dialogButton(&dialog, QDialogButtonBox::Apply);
+        QVERIFY(combo && hint && apply);
+        QCOMPARE(combo->language(), QStringLiteral("sv"));
+        QVERIFY(dialog.restartNeeded());
+        QVERIFY(!hint->isHidden());
+        QVERIFY(apply->isEnabled()); // Apply restarts, as OK does
+
+        combo->setLanguage(QStringLiteral("en"));
+        QVERIFY(!dialog.restartNeeded());
+        QVERIFY(hint->isHidden());
+        QCOMPARE(dialog.settings().uiLanguage, QStringLiteral("en"));
+    }
+
+    mervin::i18n::setOneRunOverride(true);
+    SettingsDialog dialog(in);
+    mervin::i18n::setOneRunOverride(false);
+    auto *combo = dialog.findChild<mervin::LanguageCombo *>(QStringLiteral("uiLanguage"));
+    QVERIFY(combo);
+    QCOMPARE(combo->language(), mervin::i18n::current());
+    QVERIFY(!dialog.restartNeeded());
+    QCOMPARE(dialog.settings().uiLanguage, QStringLiteral("sv"));
 }
 
 QTEST_MAIN(TstSettingsDialog)

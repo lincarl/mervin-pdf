@@ -7,7 +7,9 @@ candidates until the stable version is released. For example, `v1.64.10-rc1` and
 `v1.64.10-rc2` both lead to stable `v1.64.10`.
 
 The CI workflow runs all required checks, then calls the packaging workflow.
-Failed checks and pushes to other branches do not publish prereleases. Each main
+Failed checks and pushes to other branches do not publish prereleases. The checks
+include the `i18n_catalogs` test, so changed UI text must be translated in every
+catalog before the push can publish a candidate (see [TRANSLATING.md](TRANSLATING.md)). Each main
 push keeps its own run. Retrying a run reuses its annotated tag, provided the tag
 still points to that run's commit. Concurrent runs allocate distinct RC numbers.
 

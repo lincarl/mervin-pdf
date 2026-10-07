@@ -1,9 +1,12 @@
 #pragma once
 
+#include "print/PageRange.h"
 #include "security/PageOps.h"
 
+#include <QCoreApplication>
 #include <QList>
 #include <QString>
+#include <QStringList>
 
 namespace mervin {
 
@@ -11,6 +14,8 @@ namespace mervin {
 // errors. MergeDialog displays this model and writes edits back to it.
 class MergePlan
 {
+    Q_DECLARE_TR_FUNCTIONS(mervin::MergePlan)
+
 public:
     enum class Load {
         Ok,        // opened; pageCount is meaningful
@@ -21,8 +26,8 @@ public:
     struct Entry
     {
         QString path;
-        QString spec = QStringLiteral("All"); // as typed; "all" means every page
-        int pageCount = 0;                    // pages in the source; 0 unless load == Ok
+        QString spec = PageRange::allKeyword(); // as typed; PageRange::isAll() means every page
+        int pageCount = 0;                      // pages in the source; 0 unless load == Ok
         Load load = Load::Ok;
         QString loadError;  // backend message, shown as the row's tooltip
         QString password;   // only ever non-empty once a caller unlocks the row
@@ -62,6 +67,9 @@ public:
     // "12" for a whole file, "4 of 31" for a subset, "Locked" / "Unreadable" for
     // a row that could not be read, "-" when the range does not parse.
     QString countText(int i) const;
+    // The widest texts countText() gives in the UI language ("Locked",
+    // "Unreadable", "998 of 999"), for sizing the Count column.
+    static QStringList widestCountTexts();
 
     // Where row `i` lands in the finished document: "13-16", or "25" for a single
     // page. Empty when this row or any row above it is invalid, because then the

@@ -10,11 +10,14 @@
 #include <qpdf/QPDFWriter.hh>
 
 #include <QByteArray>
+#include <QCoreApplication>
 #include <QFileInfo>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTranslator>
 
 #include <string>
+#include <vector>
 
 using namespace mervin;
 
@@ -88,6 +91,20 @@ RenderMeasurement render(const Measurement &m, const QString &label)
     return rm;
 }
 
+// Knows only the "(paper)" note, so a test can tell translated value text from
+// English without depending on what a real catalog holds.
+class PaperNoteTranslator : public QTranslator
+{
+public:
+    QString translate(const char *context, const char *sourceText, const char *, int) const override
+    {
+        if (qstrcmp(context, "MeasureContent") == 0 && qstrcmp(sourceText, "%1 (paper)") == 0)
+            return QStringLiteral("%1 (translated)");
+        return {};
+    }
+    bool isEmpty() const override { return false; }
+};
+
 } // namespace
 
 class TstMeasureExport : public QObject
@@ -102,6 +119,7 @@ private slots:
     void embedReadRoundTrip();
     void catalogGateMatchesBlobPresence();
     void embedKeyIsPrivateToCatalog();
+    void valueLabelsWithoutScale();
     void flattenAppendsContent();
     void transformMapsCornersIntoMediaBox();
     void roundTripsThroughRealDrawing();
@@ -239,6 +257,40 @@ void TstMeasureExport::embedKeyIsPrivateToCatalog()
     QCOMPARE(static_cast<int>(pages.size()), 3); // page count unchanged
     for (auto &page : pages)
         QVERIFY(!page.getObjectHandle().hasKey("/Mervin_Measurements")); // not on pages
+}
+
+void TstMeasureExport::valueLabelsWithoutScale()
+{
+    const MeasureScale none; // no scale: values fall back to the size on paper
+    const MeasureUnit mm = MeasureUnit::Millimeter;
+    const std::vector<QPointF> inch = {QPointF(0, 0), QPointF(72, 0)};
+    const std::vector<QPointF> square = {QPointF(0, 0), QPointF(72, 0), QPointF(72, 72),
+                                         QPointF(0, 72)};
+    const std::vector<QPointF> rightAngle = {QPointF(72, 0), QPointF(0, 0), QPointF(0, 72)};
+
+    for (const MeasureLabelText text : {MeasureLabelText::Ui, MeasureLabelText::Pdf}) {
+        QCOMPARE(formatMeasurementValue(MeasureKind::Distance, inch, none, mm, 2, text),
+                 QStringLiteral("25.40 mm (paper)"));
+        // Area above, perimeter below; the note ends the last line.
+        QCOMPARE(formatMeasurementValue(MeasureKind::Area, square, none, mm, 2, text),
+                 QString::fromUtf8("645.16 mm\xC2\xB2\n101.60 mm (paper)"));
+        // An angle does not depend on the scale, so it carries no note.
+        QCOMPARE(formatMeasurementValue(MeasureKind::Angle, rightAngle, none, mm, 1, text),
+                 QString::fromUtf8("90.0\xC2\xB0"));
+        QVERIFY(formatMeasurementValue(MeasureKind::Distance, {QPointF(0, 0)}, none, mm, 2, text)
+                    .isEmpty());
+    }
+
+    // A translation reaches the screen text only. The default (what the export path
+    // uses) stays English: the label font covers Latin-1 only.
+    PaperNoteTranslator translator;
+    QVERIFY(QCoreApplication::installTranslator(&translator));
+    const QString ui =
+        formatMeasurementValue(MeasureKind::Distance, inch, none, mm, 2, MeasureLabelText::Ui);
+    const QString pdf = formatMeasurementValue(MeasureKind::Distance, inch, none, mm, 2);
+    QCoreApplication::removeTranslator(&translator);
+    QCOMPARE(ui, QStringLiteral("25.40 mm (translated)"));
+    QCOMPARE(pdf, QStringLiteral("25.40 mm (paper)"));
 }
 
 void TstMeasureExport::flattenAppendsContent()

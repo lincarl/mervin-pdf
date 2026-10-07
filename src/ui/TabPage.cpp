@@ -64,7 +64,7 @@ QString createRecoveryFile(QString *error)
     const QString directory = recoveryDirectory();
     if (!QDir().mkpath(directory)) {
         if (error)
-            *error = QObject::tr("Could not create the document recovery folder.");
+            *error = TabPage::tr("Could not create the document recovery folder.");
         return {};
     }
     QFile::setPermissions(directory, QFileDevice::ReadOwner | QFileDevice::WriteOwner
@@ -206,6 +206,7 @@ TabPage::TabPage(RenderEngine *engine, QWidget *parent)
     placeholderLabel_->setWordWrap(true);
     placeholderLabel_->setTextFormat(Qt::PlainText);
     placeholderLayout->addWidget(placeholderLabel_);
+    //: Button that tries to load the document again.
     auto *retry = new QPushButton(tr("Retry"), placeholder_);
     retry->setObjectName(QStringLiteral("retryDocumentLoad"));
     retryButton_ = retry;
@@ -740,6 +741,7 @@ void TabPage::resumeAsync()
         return;
     loading_ = true;
     const quint64 generation = ++loadGeneration_;
+    //: Shown in place of the page while the document loads.
     showPlaceholder(tr("Loading"), false);
     emit stateChanged();
     const QString source = recoveryPath_.isEmpty() ? path_ : recoveryPath_;

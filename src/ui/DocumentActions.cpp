@@ -59,7 +59,8 @@ namespace {
 
 using mervin::PageOps;
 
-// Retry once with a prompted password and remember it only on success.
+// Retry once with a prompted password and remember it only on success. Its
+// strings belong to the window that runs it (context "MainWindow").
 bool runWriteOp(QWidget *parent, TabPage *tab,
                 const std::function<PageOps::Status(const QString &, QString *)> &op)
 {
@@ -68,8 +69,8 @@ bool runWriteOp(QWidget *parent, TabPage *tab,
     if (st == PageOps::Status::NeedsPassword) {
         bool ok = false;
         const QString pw = QInputDialog::getText(
-            parent, QObject::tr("Password Required"),
-            QObject::tr("Enter the document password:"), QLineEdit::Password, QString(), &ok);
+            parent, MainWindow::tr("Password Required"),
+            MainWindow::tr("Enter the document password:"), QLineEdit::Password, QString(), &ok);
         if (ok) {
             st = op(pw, &err);
             if (st == PageOps::Status::Ok)
@@ -77,10 +78,10 @@ bool runWriteOp(QWidget *parent, TabPage *tab,
         }
     }
     if (st != PageOps::Status::Ok) {
-        QMessageBox::warning(parent, QObject::tr("Operation failed"),
+        QMessageBox::warning(parent, MainWindow::tr("Operation failed"),
                              st == PageOps::Status::NeedsPassword
-                                 ? QObject::tr("A password is required.")
-                                 : QObject::tr("The operation failed.\n\n%1").arg(err));
+                                 ? MainWindow::tr("A password is required.")
+                                 : MainWindow::tr("The operation failed.\n\n%1").arg(err));
         return false;
     }
     return true;
@@ -92,10 +93,13 @@ bool runWriteOp(QWidget *parent, TabPage *tab,
 QList<int> MainWindow::askPageRange(const QString &title, int pageCount)
 {
     bool ok = false;
+    // Lower case, since it sits inside the hint. PageRange::isAll() ignores case.
+    const QString all = PageRange::allKeyword().toLower();
     const QString spec = QInputDialog::getText(
         this, title,
-        tr("Pages (e.g. \"all\", \"1-%1\", \"1,3,5-9\"):").arg(pageCount),
-        QLineEdit::Normal, QStringLiteral("all"), &ok);
+        //: %1 is the word for every page (PageRange "All"), %2 the page count.
+        tr("Pages (e.g. \"%1\", \"1-%2\", \"1,3,5-9\"):").arg(all, QString::number(pageCount)),
+        QLineEdit::Normal, all, &ok);
     if (!ok)
         return {};
     QString error;
@@ -114,6 +118,7 @@ QList<int> MainWindow::askPageRange(const QString &title, int pageCount)
 void MainWindow::offerToOpen(const QString &path, const QString &password)
 {
     const auto open = QMessageBox::information(
+        //: Title of the message after a new file was written.
         this, tr("Done"), tr("Saved to:\n%1\n\nOpen it now?").arg(QDir::toNativeSeparators(path)),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
     if (open == QMessageBox::Yes)
@@ -154,6 +159,7 @@ void MainWindow::createDocumentMenu()
                              &MainWindow::splitDocument);
     documentMenu_->addAction(tr("&Merge PDFs"), this, &MainWindow::mergeDocuments);
     documentMenu_->addSeparator();
+    //: Menu item that opens the document's password and permission settings.
     documentMenu_->addAction(tr("&Security"), this, &MainWindow::openSecurity);
     // Save / Save as copy / Export with measurements live on the toolbar's
     // dropdown-only Save button (see createToolBar), not in this menu.
@@ -184,11 +190,15 @@ void MainWindow::saveAsCopy()
     const QString suggested = fi.absolutePath() + QLatin1Char('/') + fi.completeBaseName()
                               + QStringLiteral("-copy.pdf");
     const QString out = QFileDialog::getSaveFileName(this, tr("Save as Copy"), suggested,
+                                                     //: File type filter. Keep the pattern
+                                                     //: in parentheses.
                                                      tr("PDF documents (*.pdf)"));
     if (out.isEmpty())
         return;
     if (QFileInfo(out) == fi) {
         QMessageBox::warning(this, tr("Save as Copy"),
+                             //: "Save edits" is a command in the Save menu. Use its
+                             //: translation here.
                              tr("Choose a different file name - use Save edits to write back to "
                                 "the original."));
         return;
@@ -267,7 +277,9 @@ bool MainWindow::saveTab(TabPage *t)
         while (needsPassword) {
             bool accepted = false;
             const QString password = QInputDialog::getText(
-                this, tr("Password required"), tr("Enter the password for %1.").arg(t->tabTitle()),
+                this, tr("Password required"),
+                //: %1 is the file name.
+                tr("Enter the password for %1.").arg(t->tabTitle()),
                 QLineEdit::Password, {}, &accepted);
             if (!accepted)
                 return false;
@@ -276,6 +288,7 @@ bool MainWindow::saveTab(TabPage *t)
                 break;
         }
         if (!t->isLoaded()) {
+            //: Title of messages about saving the document.
             QMessageBox::warning(this, tr("Save"), openError);
             return false;
         }
@@ -293,6 +306,7 @@ bool MainWindow::saveTab(TabPage *t)
 
     if (t->sourceChangedOnDisk()
         && QMessageBox::question(this, tr("File changed"),
+            //: %1 is the file name.
             tr("%1 changed on disk since it was opened. Replace it with your edited copy?")
                 .arg(t->tabTitle()),
             QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
@@ -332,10 +346,13 @@ bool MainWindow::saveTab(TabPage *t)
     if (!saved || !t->open(path, t->password(), &openError)) {
         // Keep all edits editable and retain the staged file if recovery also fails.
         retainSnapshot = true;
-        if (!t->recoverSnapshot(snapshot, &openError))
-            error += tr("\nEdited document retained at %1.\n%2").arg(snapshot, openError);
-        else if (saved)
+        if (!t->recoverSnapshot(snapshot, &openError)) {
+            //: %1 is why saving failed (may be empty), %2 the path of the kept
+            //: copy, %3 why that copy could not be opened.
+            error = tr("%1\nEdited document retained at %2.\n%3").arg(error, snapshot, openError);
+        } else if (saved) {
             error = tr("The file was saved, but could not be reopened. The edited copy remains open.");
+        }
         applyViewStateToViewer(v, state);
         updateForCurrentTab();
         QMessageBox::warning(this, tr("Save"), error);
@@ -345,6 +362,7 @@ bool MainWindow::saveTab(TabPage *t)
     if (formMode && v->hasFormFields())
         v->setFormMode(true);
     updateForCurrentTab();
+    //: Status bar text. %1 is the saved file's path.
     statusInfo_->setText(tr("Saved %1").arg(QDir::toNativeSeparators(path)));
     return true;
 }
@@ -358,7 +376,9 @@ bool MainWindow::confirmClose(TabPage *tab)
     if (!tab->hasUnsavedEdits())
         return true;
     const auto answer = QMessageBox::question(
-        this, tr("Unsaved changes"), tr("Save changes to %1?").arg(tab->tabTitle()),
+        this, tr("Unsaved changes"),
+        //: %1 is the file name.
+        tr("Save changes to %1?").arg(tab->tabTitle()),
         QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
     return answer == QMessageBox::Discard
         || (answer == QMessageBox::Save && saveTab(tab));
@@ -389,6 +409,7 @@ void MainWindow::exportMeasuredCopy()
         return;
 
     if (wm_ && wm_->isOpenAnywhere(QFileInfo(out).canonicalFilePath())) {
+        //: Title of messages about exporting with measurements.
         QMessageBox::warning(this, tr("Export"), tr("The destination is open in a tab."));
         return;
     }
@@ -420,7 +441,9 @@ void MainWindow::rotatePagesOp()
     const QList<int> pages = askPageRange(tr("Rotate Pages"), v->pageCount());
     if (pages.isEmpty())
         return;
-    const QStringList angles{tr("90° clockwise"), tr("180°"), tr("90° counter-clockwise")};
+    // "180°" is a number and a unit symbol, so it is not translated.
+    const QStringList angles{tr("90° clockwise"), QStringLiteral("180°"),
+                             tr("90° counter-clockwise")};
     bool ok = false;
     const QString choice = QInputDialog::getItem(this, tr("Rotate Pages"), tr("Rotation:"), angles,
                                                  0, false, &ok);
@@ -535,12 +558,11 @@ void MainWindow::splitDocument()
     if (runWriteOp(this, t, [&](const QString &pw, QString *err) {
             return PageOps::split(in, dir, base, pw, &written, err);
         })) {
-        // Not tr("%n file(s)", ..., n): with no translator loaded Qt substitutes
-        // the number but leaves the "(s)", so this used to read "Wrote 3 file(s)".
-        const QString what = written.size() == 1 ? tr("1 file") : tr("%1 files").arg(written.size());
+        // The English catalog supplies "file" and "files" for "%n file(s)".
         QMessageBox::information(this, tr("Split Pages"),
-                                 tr("Wrote %1 to:\n%2")
-                                     .arg(what, QDir::toNativeSeparators(dir)));
+                                 //: %1 is the folder the files were written to.
+                                 tr("Wrote %n file(s) to:\n%1", nullptr, int(written.size()))
+                                     .arg(QDir::toNativeSeparators(dir)));
     }
 }
 
@@ -591,6 +613,7 @@ void MainWindow::printDocument()
             || MeasureExport::flatten(live, flat, collectRenderMeasurements(v),
                                       t->password(), &error) != MeasureExport::Status::Ok
             || !(flatDoc = engine_->openDocument(flat, t->password(), &error))) {
+            //: Title of the print dialog and of messages about printing.
             QMessageBox::warning(this, tr("Print"), tr("Could not prepare the document:\n%1").arg(error));
             return;
         }
