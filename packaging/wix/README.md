@@ -66,6 +66,24 @@ uses that folder as the application's working directory.
 The navigation uses the native dialogs described in the
 [WiX UI documentation](https://docs.firegiant.com/wix/tools/wixext/wixui/).
 
+## Installer images
+
+The wizard uses the existing Mervin PDF logo in place of WiX's stock images.
+`dialog.bmp` is 493 by 312 pixels, with the 128-pixel icon centered in the left
+164-pixel column. `banner.bmp` is 493 by 58 pixels, with the 48-pixel icon on the
+right. Both use white backgrounds to match the native dialogs and leave their
+text areas clear.
+
+The dimensions match WiX 7's `dlgbmp.bmp` and `bannrbmp.bmp`. The committed bitmaps
+are generated from `resources/icons/mervin-icon/128.png` and `48.png` without
+resizing or redrawing the logo. To regenerate them with Python and Pillow:
+
+```sh
+python packaging/wix/generate-branding.py
+```
+
+Installer builds use the committed bitmaps and do not require Pillow.
+
 ## Licensing note (OSMF)
 
 WiX v6/v7 gate use behind the **Open Source Maintenance Fee (OSMF)** EULA. Per the
