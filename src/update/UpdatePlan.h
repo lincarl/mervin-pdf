@@ -17,7 +17,7 @@ namespace mervin::update {
 // How this copy of Mervin was installed. It decides which release asset replaces
 // it and how that asset is installed. None covers dev builds, portable copies
 // and source installs, which never update themselves.
-enum class PackageKind { None, NsisSetup, Msi, AppImage, Deb, Rpm };
+enum class PackageKind { None, Msi, AppImage, Deb, Rpm };
 
 inline constexpr int kDaysPerCheck = 30;
 
@@ -57,11 +57,9 @@ std::optional<Release> parseRelease(const QByteArray &json);
 std::optional<ReleaseAsset> assetFor(const QList<ReleaseAsset> &assets, PackageKind kind,
                                      const QString &osVersion);
 
-// Classifies a Windows copy. Both installers record their folder under
-// HKCU\Software\Mervin PDF\InstallDir (the MSI with a trailing backslash); only
-// that registered copy updates, and only NSIS leaves uninstall.exe beside the exe.
-PackageKind windowsPackageKind(const QString &exeDir, const QString &registeredInstallDir,
-                               bool hasUninstaller);
+// Only the MSI copy running from HKCU\Software\Mervin PDF\InstallDir updates.
+// Build trees and copies of the installation folder never update themselves.
+PackageKind windowsPackageKind(const QString &exeDir, const QString &registeredInstallDir);
 
 // Classifies a Linux copy. `appImage` is $APPIMAGE when it names a file and
 // `appDir` is $APPDIR; the AppImage runtime exports both, and every program

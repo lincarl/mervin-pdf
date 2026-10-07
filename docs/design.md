@@ -441,7 +441,7 @@ model downloads, and update checks/downloads.
 ## Build and verification
 
 The project supports Windows x64 and Linux x86-64. CMake builds the targets; the
-platform release pipeline adds Windows NSIS/MSI installers and Linux
+platform release pipeline adds a Windows MSI installer and Linux
 AppImage/DEB/RPM artifacts. Windows uses Qt 6.12.0; Linux requires Qt 6.9 or newer,
 the first release that merges Qt's own catalogs into the app's at build time.
 MuPDF 1.28.5 is built from source with OCR support.

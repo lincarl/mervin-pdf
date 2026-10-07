@@ -1,18 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Mervin PDF - per-user MSI (WiX v4+ / built with WiX v6/v7 `wix build`).
+  Mervin PDF per-user MSI, built with WiX v6/v7 and WixToolset.UI.wixext.
 
-  The MSI is the managed/silent-deployment counterpart to the friendly NSIS .exe
-  (packaging/nsis/mervin.nsi); both are produced by scripts/deploy.ps1 from the
-  same staged `deploy` tree. Like the NSIS installer this is PER-USER (Scope
-  perUser -> installs to %LOCALAPPDATA%, registers under HKCU, no UAC) so it also
-  works under `msiexec /i MervinPDF-<ver>.msi /qn` without elevation.
+  Interactive installs use native Windows Installer dialogs. Silent deployment
+  uses the same package with `msiexec /i MervinPDF-<ver>.msi /qn`. Both install
+  under the current user without elevation.
 
   Required preprocessor defines (passed by scripts/deploy.ps1):
     -d Version=<x.y.z>     numeric MSI upgrade version from CMake
     -d DisplayVersion=<version> public version, including an optional -rcN
     -d DeployDir=<dir>     staged application tree (exe + Qt/qpdf DLLs)
     -d IconFile=<file>     mervin-icon.ico for the ARP entry + Start-menu shortcut
+    -d DirectoryCleanup=<file> generated empty-directory removal entries
   Optional:
     -d TessData=<file>     eng.traineddata to seed %APPDATA%\MervinPDF\tessdata
 -->
@@ -34,8 +33,33 @@
     <Property Id="ARPPRODUCTICON" Value="MervinIcon.ico" />
     <Property Id="ARPNOMODIFY" Value="1" />
 
+    <!-- Preserve a custom destination across upgrades without overriding an
+         INSTALLFOLDER supplied on the command line. AppSearch runs before the
+         directory table is resolved and before either UI or silent installs. -->
+    <Property Id="INSTALLFOLDER" Secure="yes" />
+    <Property Id="PREVIOUSINSTALLFOLDER">
+      <RegistrySearch Id="PreviousInstallDirectory" Root="HKCU"
+                      Key="Software\Mervin PDF" Name="InstallDir" Type="raw" />
+    </Property>
+    <SetProperty Id="INSTALLFOLDER" Value="[PREVIOUSINSTALLFOLDER]"
+                 After="AppSearch" Sequence="both"
+                 Condition="NOT INSTALLFOLDER AND PREVIOUSINSTALLFOLDER" />
+
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch Mervin PDF" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <UIRef Id="MervinInstallDir" />
+    <UIRef Id="WixUI_ErrorProgressText" />
+
+    <!-- Only the successful, full-UI finish button calls this action. Passive
+         in-app updates already relaunch through the application's updater. -->
+    <CustomAction Id="LaunchMervin" Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]MervinPDF.exe&quot;"
+                  Execute="immediate" Return="asyncNoWait" />
+
     <Feature Id="Main" Title="Mervin PDF" Level="1">
       <ComponentGroupRef Id="AppPayload" />
+      <ComponentGroupRef Id="PdfRegistration" />
 <?ifdef TessData ?>
       <ComponentGroupRef Id="UserData" />
 <?endif?>
@@ -45,7 +69,7 @@
   <!-- == Directory layout (all per-user) == -->
   <Fragment>
     <StandardDirectory Id="LocalAppDataFolder">
-      <!-- %LOCALAPPDATA%\Mervin PDF  (matches the NSIS InstallDir) -->
+      <!-- Default destination. The UI and INSTALLFOLDER can change it. -->
       <Directory Id="INSTALLFOLDER" Name="Mervin PDF" />
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder" />
@@ -66,9 +90,8 @@
 
       <!-- Per-user Start-menu shortcut. It targets the harvested exe by its
            installed path so it needs no reference to the auto-generated file
-           component; the HKCU value is the component key path so the per-user
-           shortcut component is well-formed (and mirrors the NSIS installer's
-           HKCU Software\Mervin PDF\InstallDir record). -->
+           component; the HKCU value is the component key path and lets upgrades
+           and the in-app updater find the installed copy. -->
       <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder" Guid="*">
         <Shortcut Id="MervinShortcut"
                   Name="Mervin PDF"
@@ -79,6 +102,37 @@
         <RegistryValue Root="HKCU" Key="Software\Mervin PDF"
                        Name="InstallDir" Type="string" Value="[INSTALLFOLDER]"
                        KeyPath="yes" />
+        <?include $(var.DirectoryCleanup) ?>
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- Own the same PDF-handler registration that the app can refresh when the
+       user opens Default Apps. Installing an available handler does not change
+       the user's default. MSI removes its individual values from shared keys. -->
+  <Fragment>
+    <ComponentGroup Id="PdfRegistration" Directory="INSTALLFOLDER">
+      <Component Id="PdfHandlerRegistration" Guid="*">
+        <RegistryValue Root="HKCU" Key="Software\MervinPDF\Capabilities"
+                       Name="ApplicationName" Type="string" Value="Mervin PDF" KeyPath="yes" />
+        <RegistryValue Root="HKCU" Key="Software\MervinPDF\Capabilities"
+                       Name="ApplicationDescription" Type="string" Value="Lightweight PDF reader" />
+        <RegistryValue Root="HKCU" Key="Software\MervinPDF\Capabilities"
+                       Name="ApplicationIcon" Type="string" Value="&quot;[INSTALLFOLDER]MervinPDF.exe&quot;,0" />
+        <RegistryValue Root="HKCU" Key="Software\MervinPDF\Capabilities\FileAssociations"
+                       Name=".pdf" Type="string" Value="MervinPDF.Document" />
+        <RegistryValue Root="HKCU" Key="Software\RegisteredApplications"
+                       Name="MervinPDF" Type="string" Value="Software\MervinPDF\Capabilities" />
+        <RegistryValue Root="HKCU" Key="Software\Classes\MervinPDF.Document"
+                       Type="string" Value="PDF Document" />
+        <RegistryValue Root="HKCU" Key="Software\Classes\MervinPDF.Document\DefaultIcon"
+                       Type="string" Value="&quot;[INSTALLFOLDER]MervinPDF.exe&quot;,0" />
+        <RegistryValue Root="HKCU" Key="Software\Classes\MervinPDF.Document\shell\open\command"
+                       Type="string" Value="&quot;[INSTALLFOLDER]MervinPDF.exe&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKCU" Key="Software\Classes\.pdf\OpenWithProgids"
+                       Name="MervinPDF.Document" Type="string" Value="" />
+        <RemoveRegistryKey Root="HKCU" Key="Software\MervinPDF" Action="removeOnUninstall" />
+        <RemoveRegistryKey Root="HKCU" Key="Software\Classes\MervinPDF.Document" Action="removeOnUninstall" />
       </Component>
     </ComponentGroup>
   </Fragment>
@@ -87,15 +141,72 @@
 <?ifdef TessData ?>
   <Fragment>
     <ComponentGroup Id="UserData">
-      <Component Id="TessdataEng" Directory="AppDataTessdata" Guid="*">
+      <Component Id="TessdataEng" Directory="AppDataTessdata" Guid="*"
+                 Permanent="yes" NeverOverwrite="yes">
         <File Id="EngTraineddata" Source="$(var.TessData)" KeyPath="yes" />
-        <!-- On uninstall remove the seeded file and the folders, but only if
-             empty - any extra languages the user added are left untouched, and
-             config/recent under %APPDATA%\MervinPDF are not tracked so survive. -->
-        <RemoveFolder Id="RemoveTessdataDir" Directory="AppDataTessdata" On="uninstall" />
-        <RemoveFolder Id="RemoveMervinData" Directory="AppDataMervin" On="uninstall" />
+        <!-- OCR models are user data. Preserve existing English data, downloaded
+             languages, settings and recent files on upgrade and uninstall. -->
       </Component>
     </ComponentGroup>
   </Fragment>
 <?endif?>
+
+  <!-- Reuse WixUI's native dialogs with our own navigation. No license
+       acceptance page is needed; license texts ship with the application. -->
+  <Fragment>
+    <UI Id="MervinInstallDir">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+
+      <DialogRef Id="BrowseDlg" />
+      <DialogRef Id="DiskCostDlg" />
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog"
+               Value="InstallDirDlg" Condition="NOT Installed" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog"
+               Value="VerifyReadyDlg" Condition="Installed AND PATCH" />
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="CheckTargetPath"
+               Value="[WIXUI_INSTALLDIR]" Order="1" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="SetTargetPath"
+               Value="[WIXUI_INSTALLDIR]" Order="3" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog"
+               Value="VerifyReadyDlg" Order="4" />
+      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Property="_BrowseProperty"
+               Value="[WIXUI_INSTALLDIR]" Order="1" />
+      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Event="SpawnDialog"
+               Value="BrowseDlg" Order="2" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="CheckTargetPath"
+               Value="[_BrowseProperty]" Order="1" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="SetTargetPath"
+               Value="[_BrowseProperty]" Order="3" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="EndDialog" Value="Return" Order="4" />
+
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog"
+               Value="InstallDirDlg" Order="1" Condition="NOT Installed" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog"
+               Value="MaintenanceTypeDlg" Order="2" Condition="Installed AND NOT PATCH" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog"
+               Value="WelcomeDlg" Order="2" Condition="Installed AND PATCH" />
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchMervin"
+               Order="1" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed AND UILevel = 5" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+    </UI>
+    <UIRef Id="WixUI_Common" />
+  </Fragment>
 </Wix>

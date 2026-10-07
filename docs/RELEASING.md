@@ -1,7 +1,7 @@
 # Release policy
 
 Every successful push to `main` publishes a release candidate with the Windows
-installers and Linux packages. Use `vMAJOR.MINOR.PATCH-rcN` tags for prereleases,
+MSI installer and Linux packages. Use `vMAJOR.MINOR.PATCH-rcN` tags for prereleases,
 starting at `rc1`. Keep the same target version for `rc2`, `rc3`, and subsequent
 candidates until the stable version is released. For example, `v1.64.10-rc1` and
 `v1.64.10-rc2` both lead to stable `v1.64.10`.
@@ -41,7 +41,7 @@ rules so a stable release upgrades every candidate for its version.
 
 | Package | `1.64.10-rc1` | `1.64.10-rc2` | `1.64.10` |
 |---|---|---|---|
-| Application and NSIS display version | `1.64.10-rc1` | `1.64.10-rc2` | `1.64.10` |
+| Application display version | `1.64.10-rc1` | `1.64.10-rc2` | `1.64.10` |
 | Debian and RPM package version | `1.64.10~rc1` | `1.64.10~rc2` | `1.64.10` |
 | MSI product version | `1.64.1001` | `1.64.1002` | `1.64.1099` |
 

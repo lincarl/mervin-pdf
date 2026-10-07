@@ -58,8 +58,7 @@ PackageKind installedPackageKind()
     const QString exeDir = QCoreApplication::applicationDirPath();
     const QSettings reg(QStringLiteral("HKEY_CURRENT_USER\\Software\\Mervin PDF"),
                         QSettings::NativeFormat);
-    return windowsPackageKind(exeDir, reg.value(QStringLiteral("InstallDir")).toString(),
-                              QFileInfo::exists(QDir(exeDir).filePath(QStringLiteral("uninstall.exe"))));
+    return windowsPackageKind(exeDir, reg.value(QStringLiteral("InstallDir")).toString());
 #elif defined(Q_OS_LINUX)
     const QString appImage = qEnvironmentVariable("APPIMAGE");
     return linuxPackageKind(QCoreApplication::applicationFilePath(),
@@ -70,34 +69,29 @@ PackageKind installedPackageKind()
 #endif
 }
 
-bool startWindowsInstaller(PackageKind kind, const QString &file)
+bool startWindowsInstaller(const QString &file)
 {
 #ifdef Q_OS_WIN
     const QString installer = QDir::toNativeSeparators(file);
     const QString workDir = QFileInfo(file).absolutePath(); // not wherever Mervin was started
-    if (kind == PackageKind::NsisSetup)
-        return QProcess::startDetached(installer, {QStringLiteral("/S")}, workDir);
-    if (kind == PackageKind::Msi) {
-        // cmd's /s strips just the outer quotes, leaving every quoted path intact.
-        // "&" (not "&&") relaunches even after a failed or cancelled install, so
-        // the user always gets a running Mervin back.
-        QString relaunch = QStringLiteral("start \"\" \"%1\"")
-                               .arg(QDir::toNativeSeparators(QCoreApplication::applicationFilePath()));
-        const QStringList args = relaunchArguments();
-        if (!args.isEmpty())
-            relaunch += QStringLiteral(" %1 \"%2\"").arg(args.at(0), QDir::toNativeSeparators(args.at(1)));
-        const QDir system(systemDir());
-        QProcess cmd;
-        cmd.setProgram(system.filePath(QStringLiteral("cmd.exe")));
-        cmd.setWorkingDirectory(workDir);
-        cmd.setNativeArguments(
-            QStringLiteral("/d /s /c \"start \"\" /wait \"%1\" /i \"%2\" /passive /norestart & %3\"")
-                .arg(QDir::toNativeSeparators(system.filePath(QStringLiteral("msiexec.exe"))),
-                     installer, relaunch));
-        return cmd.startDetached();
-    }
+    // cmd's /s strips just the outer quotes, leaving every quoted path intact.
+    // "&" (not "&&") relaunches even after a failed or cancelled install, so
+    // the user always gets a running Mervin back.
+    QString relaunch = QStringLiteral("start \"\" \"%1\"")
+                           .arg(QDir::toNativeSeparators(QCoreApplication::applicationFilePath()));
+    const QStringList args = relaunchArguments();
+    if (!args.isEmpty())
+        relaunch += QStringLiteral(" %1 \"%2\"").arg(args.at(0), QDir::toNativeSeparators(args.at(1)));
+    const QDir system(systemDir());
+    QProcess cmd;
+    cmd.setProgram(system.filePath(QStringLiteral("cmd.exe")));
+    cmd.setWorkingDirectory(workDir);
+    cmd.setNativeArguments(
+        QStringLiteral("/d /s /c \"start \"\" /wait \"%1\" /i \"%2\" /passive /norestart & %3\"")
+            .arg(QDir::toNativeSeparators(system.filePath(QStringLiteral("msiexec.exe"))),
+                 installer, relaunch));
+    return cmd.startDetached();
 #else
-    Q_UNUSED(kind);
     Q_UNUSED(file);
 #endif
     return false;

@@ -259,7 +259,7 @@ Network access follows an explicit action or the automatic update setting:
   Successful manual checks also reset the interval. Failed scheduled checks retry
   on the next start after network or download transfer errors. An installed copy
   downloads the new release in the same package format it was installed from
-  (NSIS or MSI installer, AppImage, .deb, or .rpm) in the background, then asks
+  (MSI installer, AppImage, .deb, or .rpm) in the background, then asks
   before installing. The choices are Install Now,
   Later (asked again on every start), or Never (turns automatic updates off and
   deletes the download). Copies that cannot update themselves, such as dev builds,

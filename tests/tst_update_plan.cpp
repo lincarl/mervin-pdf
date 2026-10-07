@@ -29,9 +29,6 @@ const QByteArray kRelease163 = R"({
     {"name": "MervinPDF-1.63.3.msi",
      "digest": "sha256:52abec9c86b9772acc69f5bb2b9c2d333ba0952becc9d017d1af74121f57144b",
      "browser_download_url": "https://github.com/lincarl/mervin-pdf/releases/download/v1.63.3/MervinPDF-1.63.3.msi"},
-    {"name": "MervinPDF-Setup-1.63.3.exe",
-     "digest": "sha256:9181bb65e1e0297a30012fd62735a8996e32df0986af2acbdaca31bf21fbd7e0",
-     "browser_download_url": "https://github.com/lincarl/mervin-pdf/releases/download/v1.63.3/MervinPDF-Setup-1.63.3.exe"},
     {"name": "SHA256SUMS",
      "browser_download_url": "https://github.com/lincarl/mervin-pdf/releases/download/v1.63.3/SHA256SUMS"}
   ]
@@ -159,7 +156,7 @@ void TestUpdatePlan::parsesTheRealRelease()
     QVERIFY(!(r->version > QVersionNumber(1, 63, 3)));
     QCOMPARE(r->pageUrl,
              QStringLiteral("https://github.com/lincarl/mervin-pdf/releases/tag/v1.63.3"));
-    QCOMPARE(r->assets.size(), 6);
+    QCOMPARE(r->assets.size(), 5);
 
     // Digests lose their "sha256:" prefix and are lower-cased to compare with
     // QCryptographicHash's hex; an asset without one keeps an empty digest.
@@ -167,7 +164,7 @@ void TestUpdatePlan::parsesTheRealRelease()
     QCOMPARE(appImage.name, QStringLiteral("MervinPDF-1.63.3-x86_64.AppImage"));
     QCOMPARE(appImage.sha256,
              QStringLiteral("fe0a990b4585645a2689adf4e856bde2d823fb69ddf3712f01fe832ffa32f760"));
-    QVERIFY(r->assets.at(5).sha256.isEmpty());
+    QVERIFY(r->assets.at(4).sha256.isEmpty());
 }
 
 void TestUpdatePlan::rejectsReleasesWithoutAVersion_data()
@@ -195,7 +192,6 @@ void TestUpdatePlan::assetForEachKind_data()
 {
     QTest::addColumn<PackageKind>("kind");
     QTest::addColumn<QString>("expected"); // empty: no asset
-    QTest::newRow("NSIS") << PackageKind::NsisSetup << "MervinPDF-Setup-1.63.3.exe";
     QTest::newRow("MSI") << PackageKind::Msi << "MervinPDF-1.63.3.msi";
     QTest::newRow("AppImage") << PackageKind::AppImage << "MervinPDF-1.63.3-x86_64.AppImage";
     QTest::newRow("deb") << PackageKind::Deb << "mervin-pdf_1.63.3_ubuntu26.04_amd64.deb";
@@ -223,8 +219,7 @@ void TestUpdatePlan::assetForIgnoresOtherArchitectures_data()
     QTest::newRow("AppImage") << PackageKind::AppImage << "MervinPDF-1.64.0-aarch64.AppImage";
     QTest::newRow("deb") << PackageKind::Deb << "mervin-pdf_1.64.0_ubuntu26.04_arm64.deb";
     QTest::newRow("rpm") << PackageKind::Rpm << "mervin-pdf-1.64.0.aarch64.rpm";
-    QTest::newRow("NSIS is not the MSI") << PackageKind::NsisSetup << "MervinPDF-1.64.0.msi";
-    QTest::newRow("MSI is not the NSIS") << PackageKind::Msi << "MervinPDF-Setup-1.64.0.exe";
+    QTest::newRow("MSI is not an executable") << PackageKind::Msi << "MervinPDF-1.64.0.exe";
     QTest::newRow("rpm is not the deb") << PackageKind::Rpm << "mervin-pdf_1.64.0_ubuntu26.04_amd64.deb";
 }
 
@@ -252,53 +247,53 @@ void TestUpdatePlan::debPrefersThisUbuntuRelease()
 
 void TestUpdatePlan::assetForNeedsADigestAndAPlainName()
 {
-    const QString name = QStringLiteral("MervinPDF-Setup-1.64.0.exe");
-    QVERIFY(assetFor({named(name)}, PackageKind::NsisSetup, {}));
+    const QString name = QStringLiteral("MervinPDF-1.64.0.msi");
+    QVERIFY(assetFor({named(name)}, PackageKind::Msi, {}));
 
     // Nothing unverifiable gets run as an installer.
     ReleaseAsset undigested = named(name);
     undigested.sha256.clear();
-    QVERIFY(!assetFor({undigested}, PackageKind::NsisSetup, {}));
+    QVERIFY(!assetFor({undigested}, PackageKind::Msi, {}));
 
     // The name becomes a path under the updates folder, so it must stay there.
-    QVERIFY(!assetFor({named(QStringLiteral("MervinPDF-Setup-/../../evil.exe"))},
-                      PackageKind::NsisSetup, {}));
-    QVERIFY(!assetFor({named(QStringLiteral("MervinPDF-Setup-..\\..\\evil.exe"))},
-                      PackageKind::NsisSetup, {}));
+    QVERIFY(!assetFor({named(QStringLiteral("MervinPDF-/../../evil.msi"))},
+                      PackageKind::Msi, {}));
+    QVERIFY(!assetFor({named(QStringLiteral("MervinPDF-..\\..\\evil.msi"))},
+                      PackageKind::Msi, {}));
 }
 
 void TestUpdatePlan::windowsPackageKind_data()
 {
     QTest::addColumn<QString>("exeDir");
     QTest::addColumn<QString>("registered");
-    QTest::addColumn<bool>("hasUninstaller");
     QTest::addColumn<PackageKind>("expected");
 
     // applicationDirPath() uses forward slashes; the registry holds native paths.
     const QString exeDir = QStringLiteral("C:/Users/ana/AppData/Local/Mervin PDF");
-    QTest::newRow("NSIS") << exeDir << "C:\\Users\\ana\\AppData\\Local\\Mervin PDF" << true
-                          << PackageKind::NsisSetup;
     // WiX writes [INSTALLFOLDER], which ends in a backslash.
-    QTest::newRow("MSI") << exeDir << "C:\\Users\\ana\\AppData\\Local\\Mervin PDF\\" << false
+    QTest::newRow("MSI") << exeDir << "C:/Users/ana/AppData/Local/Mervin PDF/"
                          << PackageKind::Msi;
-    QTest::newRow("path case differs") << exeDir << "c:\\users\\ANA\\appdata\\local\\mervin pdf\\"
-                                       << false << PackageKind::Msi;
-    QTest::newRow("dev build") << QStringLiteral("C:/projects/mervin-pdf/build/x64-release")
-                               << "C:\\Users\\ana\\AppData\\Local\\Mervin PDF\\" << false
+    QTest::newRow("native registry path") << exeDir << "C:\\Users\\ana\\AppData\\Local\\Mervin PDF\\"
+                                         << PackageKind::Msi;
+    QTest::newRow("path case differs") << exeDir << "c:/users/ANA/appdata/local/mervin pdf/"
+                                       << PackageKind::Msi;
+    QTest::newRow("custom install folder") << "D:/Tools/Mervin PDF" << "D:/Tools/Mervin PDF/"
+                                           << PackageKind::Msi;
+    QTest::newRow("dev build") << "C:/projects/mervin-pdf/build/x64-release"
+                               << "C:/Users/ana/AppData/Local/Mervin PDF/"
                                << PackageKind::None;
-    QTest::newRow("copied install folder") << QStringLiteral("D:/Tools/Mervin PDF")
-                                           << "C:\\Users\\ana\\AppData\\Local\\Mervin PDF" << true
+    QTest::newRow("copied install folder") << "D:/Tools/Mervin PDF"
+                                           << "C:/Users/ana/AppData/Local/Mervin PDF"
                                            << PackageKind::None;
-    QTest::newRow("never installed") << exeDir << QString() << true << PackageKind::None;
+    QTest::newRow("never installed") << exeDir << QString() << PackageKind::None;
 }
 
 void TestUpdatePlan::windowsPackageKind()
 {
     QFETCH(QString, exeDir);
     QFETCH(QString, registered);
-    QFETCH(bool, hasUninstaller);
     QFETCH(PackageKind, expected);
-    QCOMPARE(mervin::update::windowsPackageKind(exeDir, registered, hasUninstaller), expected);
+    QCOMPARE(mervin::update::windowsPackageKind(exeDir, registered), expected);
 }
 
 void TestUpdatePlan::linuxPackageKind_data()

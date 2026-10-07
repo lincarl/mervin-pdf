@@ -79,10 +79,6 @@ std::optional<ReleaseAsset> assetFor(const QList<ReleaseAsset> &assets, PackageK
     switch (kind) {
     case PackageKind::None:
         return std::nullopt;
-    case PackageKind::NsisSetup: // MervinPDF-Setup-1.64.0.exe
-        prefix = QLatin1StringView("MervinPDF-Setup-");
-        suffix = QLatin1StringView(".exe");
-        break;
     case PackageKind::Msi: // MervinPDF-1.64.0.msi
         prefix = QLatin1StringView("MervinPDF-");
         suffix = QLatin1StringView(".msi");
@@ -115,8 +111,7 @@ std::optional<ReleaseAsset> assetFor(const QList<ReleaseAsset> &assets, PackageK
     return match;
 }
 
-PackageKind windowsPackageKind(const QString &exeDir, const QString &registeredInstallDir,
-                               bool hasUninstaller)
+PackageKind windowsPackageKind(const QString &exeDir, const QString &registeredInstallDir)
 {
     if (exeDir.isEmpty() || registeredInstallDir.isEmpty())
         return PackageKind::None;
@@ -127,7 +122,7 @@ PackageKind windowsPackageKind(const QString &exeDir, const QString &registeredI
     };
     if (clean(exeDir).compare(clean(registeredInstallDir), Qt::CaseInsensitive) != 0)
         return PackageKind::None;
-    return hasUninstaller ? PackageKind::NsisSetup : PackageKind::Msi;
+    return PackageKind::Msi;
 }
 
 PackageKind linuxPackageKind(const QString &exePath, const QString &appImage,

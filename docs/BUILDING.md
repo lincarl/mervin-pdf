@@ -17,7 +17,8 @@ winget install --id Microsoft.VisualStudio.2022.BuildTools --source winget --acc
   --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.Windows11SDK.22621"
 winget install --id Kitware.CMake     --scope machine --source winget --accept-source-agreements --accept-package-agreements
 winget install --id Ninja-build.Ninja --source winget --accept-source-agreements --accept-package-agreements
-winget install --id NSIS.NSIS         --source winget --accept-source-agreements --accept-package-agreements
+winget install --id WiXToolset.WiXCLI --version 7.0.0.0 --source winget --accept-source-agreements --accept-package-agreements
+wix extension add --global WixToolset.UI.wixext/7.0.0
 winget install --id Python.Python.3.12 --source winget --accept-source-agreements --accept-package-agreements
 
 # Qt 6.12.0 (official prebuilt dynamic DLLs, no Qt account)
@@ -89,7 +90,7 @@ $env:Path = "build\x64-release\vcpkg_installed\x64-windows\bin;" + $env:Path
 
 ## Package
 
-Build a self-contained tree and the per-user installer. The release build is the
+Build a self-contained tree and the per-user MSI installer. The release build is the
 GUI subsystem (no console window) by default, so no extra flag is needed - just
 run the deploy script from a VS Dev Shell with `QT6_DIR` set:
 
@@ -98,7 +99,7 @@ cmake --preset x64-release -DMERVIN_VERSION=1.2.3
 cmake --build --preset x64-release
 powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1 -Installer -Version 1.2.3
 # => build\x64-release\deploy\           (self-contained: runs with nothing on PATH)
-# => build\x64-release\MervinPDF-Setup-<version>.exe   (per-user, no UAC)
+# => build\x64-release\MervinPDF-<version>.msi       (per-user, no UAC)
 ```
 
 Stable releases derive this value from a `vMAJOR.MINOR.PATCH` Git tag. Automatic
@@ -113,14 +114,21 @@ including the stable version that succeeds an installed candidate with the same
 base version. See [RELEASING.md](RELEASING.md) for the full policy and package
 version mapping.
 
-`scripts/deploy.ps1` runs `windeployqt` (Qt DLLs/plugins + VC runtime) and copies
+`scripts/deploy.ps1` runs `windeployqt` (Qt DLLs/plugins) and copies
 the vcpkg dependency DLLs (qpdf + zlib/jpeg/toml++); MuPDF is statically linked.
 It skips Qt's translation files, because the UI catalogs, Qt's own strings
 included, are compiled into `MervinPDF.exe`.
-`packaging/nsis/mervin.nsi` installs to `%LOCALAPPDATA%\Mervin PDF`, adds a Start
-Menu shortcut + Apps & Features entry + uninstaller, and seeds `eng.traineddata`
-into `%APPDATA%\MervinPDF\tessdata`. The bundled
-`resources/tessdata/eng.traineddata` provides English OCR out of the box.
+The script copies the active MSVC toolchain's redistributable runtime DLLs beside
+the app. No separate Visual C++ runtime installation or administrator access is
+needed. Runtime security updates must ship in new Mervin releases.
+`packaging/wix/mervin.wxs` installs to `%LOCALAPPDATA%\Mervin PDF` by default,
+adds a Start menu shortcut and an Installed apps entry, and seeds
+`eng.traineddata` into `%APPDATA%\MervinPDF\tessdata`. The bundled
+`resources/tessdata/eng.traineddata` provides English OCR out of the box. The
+interactive wizard lets users choose the installation folder and launch the app
+when installation finishes. Silent installs do not launch the app. See
+[WiX packaging](../packaging/wix/README.md) for install, repair, and uninstall
+commands.
 
 
 ## Linux development and verification
