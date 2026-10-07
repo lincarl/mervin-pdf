@@ -45,6 +45,7 @@ ui_*.h
 
 # Tooling logs
 aqtinstall.log
+/state.lock
 /.codex-tmp/
 __pycache__/
 *.pyc
