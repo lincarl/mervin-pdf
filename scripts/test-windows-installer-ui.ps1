@@ -64,6 +64,8 @@ public static class MervinInstallerUi
     [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint message, IntPtr wparam, IntPtr lparam, uint flags, uint timeout, out IntPtr result);
     [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr SendTextTimeout(IntPtr hwnd, uint message, IntPtr wparam, string text, uint flags, uint timeout, out IntPtr result);
+    [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr ReadTextTimeout(IntPtr hwnd, uint message, IntPtr wparam, StringBuilder text, uint flags, uint timeout, out IntPtr result);
 
     private static WindowInfo Describe(IntPtr hwnd)
     {
@@ -71,6 +73,11 @@ public static class MervinInstallerUi
         var name = new StringBuilder(256);
         GetWindowText(hwnd, text, text.Capacity);
         GetClassName(hwnd, name, name.Capacity);
+        if (name.ToString() == "Edit" || name.ToString() == "RichEdit20W") {
+            // GetWindowText cannot retrieve another process's edit contents.
+            IntPtr result;
+            ReadTextTimeout(hwnd, 0x000D, new IntPtr(text.Capacity), text, 2, 5000, out result);
+        }
         return new WindowInfo { Handle = hwnd, Text = text.ToString(), ClassName = name.ToString(), Enabled = IsWindowEnabled(hwnd) };
     }
     public static WindowInfo[] Windows(int processId)
@@ -225,9 +232,12 @@ close_to_tray = false
     Click-Control $state '^Next\s*>?$'
 
     $state = Wait-InstallerPage 'Destination folder' 'Destination Folder' '^Next\s*>?$'
-    $edits = @($state.Controls | Where-Object { $_.ClassName -eq 'Edit' -and $_.Enabled })
+    $edits = @($state.Controls | Where-Object { $_.ClassName -in @('Edit', 'RichEdit20W') -and $_.Enabled })
     if ($edits.Count -ne 1) { throw "Expected one destination field, found $($edits.Count)." }
     [MervinInstallerUi]::SetText($edits[0].Handle, "$installDir\")
+    $writtenField = [MervinInstallerUi]::Children($state.Window.Handle) |
+        Where-Object { $_.Handle -eq $edits[0].Handle }
+    if ($writtenField.Text.TrimEnd('\') -ne $installDir) { throw 'The destination field did not retain the chosen path.' }
     Save-WindowEvidence $state.Window '02-destination'
     Click-Control $state '^Next\s*>?$'
 
