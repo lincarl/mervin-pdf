@@ -452,8 +452,7 @@ the same ICO. Linux packages and AppImages install the PNG frames and scalable
 SVG under the existing `mervin-pdf` desktop icon name.
 
 See the [icon asset notes](../resources/icons/README.md) for geometry, export
-sizes, and verification. The darker small-icon, wider taskbar, no-fold, and
-charcoal designs remain mockup alternatives.
+sizes, and verification.
 
 ## Platform integration and networking
 
