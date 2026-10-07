@@ -879,8 +879,10 @@ void MainWindow::createActions()
     ocrAction_->setToolTip(tr("OCR Selection: drag a region to recognise its text"));
     ocrAction_->setCheckable(true);
     connect(ocrAction_, &QAction::triggered, this, [this](bool on) {
-        if (auto *v = currentViewer())
+        if (auto *v = currentViewer(); v && !recentActive_)
             v->setOcrMode(on); // next drag rubber-bands a region to OCR
+        else
+            syncOcrAction();
     });
 
     //: Toggles the measuring tool (distances, areas and angles on the page).
@@ -1602,13 +1604,14 @@ void MainWindow::setUiEnabled(bool enabled)
         documentButton_->setEnabled(docEnabled);
 
     closeTabAction_->setEnabled(currentTab() != nullptr);
-    // Selection / find / OCR stay tied to having a loaded document. Find itself
+    // Selection / find stay tied to having a loaded document. Find itself
     // stays enabled: it focuses the Recent search field, also with no document
     // open, and its handler ignores a tab that is not loaded.
     findAction_->setEnabled(true);
     for (QAction *a : {findNextAction_, findPrevAction_,
-                       copyAction_, selectAllAction_, ocrAction_, measureAction_})
+                       copyAction_, selectAllAction_, measureAction_})
         a->setEnabled(enabled);
+    syncOcrAction();
     // Fill Forms is additionally gated on the document actually having fields.
     ViewerWidget *v = currentViewer();
     if (formAction_)
@@ -1973,6 +1976,17 @@ void MainWindow::setCommandBarMode(bool recentActive)
     if (docControls_)
         docControls_->setEnabled(!recentActive);
     syncFindToggle();
+    syncOcrAction();
+}
+
+void MainWindow::syncOcrAction()
+{
+    if (!ocrAction_)
+        return;
+    ViewerWidget *v = recentActive_ ? nullptr : currentViewer();
+    QSignalBlocker block(ocrAction_);
+    ocrAction_->setEnabled(v != nullptr);
+    ocrAction_->setChecked(v && v->ocrMode());
 }
 
 void MainWindow::syncFindToggle()
@@ -2414,16 +2428,10 @@ void MainWindow::wireCurrentViewer(ViewerWidget *v)
     if (TabPage *t = currentTab())
         viewerConns_ << connect(t->findCard(), &mervin::FindCard::openChanged, this,
                                 &MainWindow::syncFindToggle);
-    if (ocrAction_) {
-        QSignalBlocker block(ocrAction_);
-        ocrAction_->setChecked(v && v->ocrMode());
-    }
+    syncOcrAction();
     if (!v)
         return;
-    viewerConns_ << connect(v, &ViewerWidget::ocrModeChanged, this, [this](bool on) {
-        QSignalBlocker block(ocrAction_);
-        ocrAction_->setChecked(on);
-    });
+    viewerConns_ << connect(v, &ViewerWidget::ocrModeChanged, this, &MainWindow::syncOcrAction);
     viewerConns_ << connect(v, &ViewerWidget::pageChanged, this,
                             [this](int current, int total) { updatePageLabels(current, total); });
     viewerConns_ << connect(v, &ViewerWidget::scaleChanged, this,
