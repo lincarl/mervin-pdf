@@ -41,9 +41,22 @@ function Read-RegistryValue([string]$Key, [string]$Name) {
     if (Test-Path -LiteralPath $Key) { (Get-Item -LiteralPath $Key).GetValue($Name, $null) }
 }
 
-function Find-MervinRegistration([string]$Root) {
-    Get-ChildItem -LiteralPath "$Root\$uninstallKey" -ErrorAction SilentlyContinue |
-        Where-Object { $_.GetValue('DisplayName', '') -like 'Mervin PDF*' }
+# Per-user MSI registration can live in Installer\UserData rather than the
+# conventional Uninstall key. Query Windows Installer's supported product API.
+$msiEngine = New-Object -ComObject WindowsInstaller.Installer
+function Find-MervinRegistration {
+    foreach ($product in $msiEngine.ProductsEx('', '', 7)) {
+        $name = $product.InstallProperty('ProductName')
+        if ($name -like 'Mervin PDF*') {
+            [pscustomobject]@{
+                Name = $name
+                ProductCode = $product.ProductCode
+                Context = $product.Context
+                State = $product.State
+                Version = $product.InstallProperty('VersionString')
+            }
+        }
+    }
 }
 
 # Refuse any existing installation, state, or handler before creating test data.
@@ -61,6 +74,7 @@ foreach ($root in @('HKCU:', 'HKLM:', 'HKLM:\Software\WOW6432Node')) {
         Where-Object { $_.GetValue('DisplayName', '') -like 'Mervin PDF*' })
     Assert-Installer ($existing.Count -eq 0) "Existing Mervin uninstall entry prevents testing: $key"
 }
+Assert-Installer (@(Find-MervinRegistration).Count -eq 0) 'Mervin is already registered with Windows Installer.'
 Assert-Installer ($null -eq (Read-RegistryValue $registeredApps 'MervinPDF')) 'Mervin is already registered.'
 Assert-Installer ($null -eq (Read-RegistryValue $openWith 'MervinPDF.Document')) 'Mervin PDF handler already exists.'
 Assert-Installer (-not (Get-Process MervinPDF -ErrorAction SilentlyContinue)) 'Mervin is already running.'
@@ -137,8 +151,9 @@ restore_session = true
     $link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
     Assert-Installer ($link.TargetPath -eq $exe) 'Start menu shortcut targets the wrong application.'
     Assert-Installer ((Read-RegistryValue $installKey 'InstallDir').TrimEnd('\') -eq $installDir) 'Custom installation folder was not recorded.'
-    Assert-Installer (@(Find-MervinRegistration 'HKCU:').Count -eq 1) 'Per-user Installed apps entry is missing.'
-    Assert-Installer (@(Find-MervinRegistration 'HKLM:').Count -eq 0) 'Installation registered for all users.'
+    $registration = @(Find-MervinRegistration)
+    Assert-Installer ($registration.Count -eq 1 -and $registration[0].Context -eq 2 -and $registration[0].State -eq 5) 'Per-user Installed apps entry is missing.'
+    $registration | ConvertTo-Json | Set-Content (Join-Path $work 'installed-product.json')
     Assert-Installer ((Read-RegistryValue $registeredApps 'MervinPDF') -eq 'Software\MervinPDF\Capabilities') 'Default Apps registration is missing.'
     Assert-Installer ((Read-RegistryValue "$capabilitiesKey\Capabilities\FileAssociations" '.pdf') -eq 'MervinPDF.Document') 'PDF capabilities are missing.'
     Assert-Installer ((Read-RegistryValue "$progIdKey\shell\open\command" '') -eq "`"$exe`" `"%1`"") 'PDF open command does not quote the installed path.'
@@ -173,8 +188,8 @@ restore_session = true
     Assert-Installer ((Read-RegistryValue $installKey 'InstallDir').TrimEnd('\') -eq $installDir) 'Upgrade lost the custom destination.'
     Assert-Installer (Test-Path -LiteralPath $exe) 'Upgrade did not install to the recorded destination.'
     Assert-Installer (-not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Mervin PDF'))) 'Upgrade created a second default installation.'
-    $registration = @(Find-MervinRegistration 'HKCU:')
-    Assert-Installer ($registration.Count -eq 1 -and $registration[0].GetValue('DisplayVersion') -eq $upgradeVersion) 'Upgrade left an incorrect product registration.'
+    $registration = @(Find-MervinRegistration)
+    Assert-Installer ($registration.Count -eq 1 -and $registration[0].Version -eq $upgradeVersion) 'Upgrade left an incorrect product registration.'
     Assert-Installer ((Get-Item -LiteralPath $seededModel).LastWriteTimeUtc -eq $modelTimestamp) 'Upgrade overwrote the existing OCR model.'
     Invoke-Msi 'downgrade' @('/i', "`"$msiPath`"") @(1603, 1638)
     Assert-Installer (Select-String -LiteralPath "$work\downgrade.log" -SimpleMatch -Quiet `
@@ -190,7 +205,7 @@ restore_session = true
         Assert-Installer (-not (Test-Path -LiteralPath $path)) "Uninstall left an owned resource: $path"
     }
     Assert-Installer ($null -eq (Read-RegistryValue $installKey 'InstallDir')) 'Uninstall left its install directory registration.'
-    Assert-Installer (@(Find-MervinRegistration 'HKCU:').Count -eq 0) 'Uninstall left its Installed apps entry.'
+    Assert-Installer (@(Find-MervinRegistration).Count -eq 0) 'Uninstall left its Installed apps entry.'
     Assert-Installer ($null -eq (Read-RegistryValue $registeredApps 'MervinPDF')) 'Uninstall left Default Apps registration.'
     Assert-Installer ($null -eq (Read-RegistryValue $openWith 'MervinPDF.Document')) 'Uninstall left Open with registration.'
     foreach ($key in @($registeredApps, $openWith)) {

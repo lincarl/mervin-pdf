@@ -24,8 +24,9 @@
       Scope="perUser"
       Compressed="yes">
 
-    <!-- Block downgrades; silently replace an older install on upgrade. -->
-    <MajorUpgrade DowngradeErrorMessage="A newer version of Mervin PDF is already installed." />
+    <!-- Keep removal of the previous version inside the rollback transaction. -->
+    <MajorUpgrade Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="A newer version of Mervin PDF is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
     <!-- Add/Remove Programs presentation. Manufacturer becomes Publisher. -->
