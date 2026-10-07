@@ -66,8 +66,8 @@ public:
 public slots:
     void accept() override;
 
-    // Another part of the app switched automatic updates (Never in the update
-    // prompt) while this dialog is open. Keeps OK from writing the old value back.
+    // Another window changed automatic updates while this dialog is open.
+    // Keeps OK from writing the old value back.
     void setAutoUpdate(bool on);
     void setLastUpdateCheck(const QDateTime &utc);
     // The applyRequested receiver couldn't save the settings. OK and Apply then

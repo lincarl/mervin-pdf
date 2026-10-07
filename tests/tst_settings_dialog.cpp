@@ -733,14 +733,14 @@ void TstSettingsDialog::handEditedMeasureValuesLandOnOfferedChoices()
     QCOMPARE(SettingsDialog(in).settings().measurementUnit, QStringLiteral("mm"));
 }
 
-// Never in the update prompt switches updates off while Settings is open. OK
-// must not switch them back on.
+// Another window switches updates off while Settings is open. OK must not
+// switch them back on.
 void TstSettingsDialog::autoUpdateFollowsAnOutsideChange()
 {
     mervin::Settings in;
     in.autoUpdate = true;
     SettingsDialog dialog(in);
-    QCheckBox *box = checkBox(&dialog, QStringLiteral("Check for updates at start (every 30 days)"));
+    QCheckBox *box = checkBox(&dialog, QStringLiteral("Update automatically at start (every 30 days)"));
     QVERIFY(box);
     QVERIFY(box->isChecked());
 
@@ -785,7 +785,7 @@ void TstSettingsDialog::updateControlsFollowTheUpdater()
         // The OS long date, without the weekday it normally carries.
         const QDate shown = QDateTime(QDate(2026, 10, 2), QTime(12, 0), QTimeZone::UTC).toLocalTime().date();
         QVERIFY(!date->text().contains(QLocale().dayName(shown.dayOfWeek())));
-        QVERIFY(checkBox(&dialog, QStringLiteral("Check for updates at start (every 30 days)"))->isEnabled());
+        QVERIFY(checkBox(&dialog, QStringLiteral("Update automatically at start (every 30 days)"))->isEnabled());
     }
 
     // A portable or dev copy never checks on its own, so there is no switch. The
@@ -797,7 +797,7 @@ void TstSettingsDialog::updateControlsFollowTheUpdater()
         mervin::Settings in;
         in.autoUpdate = true;
         SettingsDialog dialog(in, info, Page::General);
-        QVERIFY(checkBox(&dialog, QStringLiteral("Check for updates at start (every 30 days)"))->isHidden());
+        QVERIFY(checkBox(&dialog, QStringLiteral("Update automatically at start (every 30 days)"))->isHidden());
         QVERIFY(labelStartingWith(&dialog, QStringLiteral("This copy can't update itself")));
         QVERIFY(dialog.findChild<QPushButton *>(QStringLiteral("checkForUpdatesButton")));
         QVERIFY(dialog.settings().autoUpdate);

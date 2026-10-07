@@ -46,13 +46,14 @@ const QString kPendingFileKey = QStringLiteral("update/pendingFile");
 // A download in progress is <asset name> plus this suffix until it verifies.
 const QString kPartSuffix = QStringLiteral(".part");
 
-// A verified download waiting for Install Now.
+// A verified download awaiting installation. Windows consumes the pending state
+// when handing off to MSI, which can relaunch even after an installation failure.
 struct Pending
 {
     QVersionNumber version;
     QString file;
 
-    // Still worth offering: newer than this copy and not deleted since.
+    // Still worth installing. Newer than this copy and not deleted since.
     bool usable() const
     {
         return update::isNewerStableVersion(version, QStringLiteral(MERVIN_VERSION_STRING))
@@ -165,9 +166,9 @@ QDateTime Updater::lastCheck()
     return QSettings().value(kLastCheckKey).toDateTime();
 }
 
-// The next automatic check is 30 days away. Called on definite
-// answers only; after a network error the check stays due and the next start
-// retries.
+// The next automatic check is 30 days away. A definite answer or a Windows
+// installer handoff resets the interval. A network error leaves the check due
+// so the next start retries.
 void Updater::markChecked()
 {
     const QDateTime now = QDateTime::currentDateTimeUtc();
@@ -181,19 +182,18 @@ void Updater::onStartup()
 {
     // The update state belongs to installed copies. A dev build run against the
     // real settings must neither offer nor delete an installed copy's download.
-    if (kind_ == update::PackageKind::None || busy_)
+    if (kind_ == update::PackageKind::None || busy_ || !Settings::load().autoUpdate)
         return;
 
     const Pending pending = loadPending();
     if (pending.usable()) {
         removeDownloadsExcept(pending.file);
-        askWhenIdle();
+        installWhenIdle();
+        return;
     } else {
         discardDownloads(); // installed, deleted by hand, or never there
     }
 
-    if (!Settings::load().autoUpdate)
-        return;
     if (update::automaticCheckDue(lastCheck(), QDateTime::currentDateTimeUtc()))
         check(/*manual=*/false);
 }
@@ -201,8 +201,8 @@ void Updater::onStartup()
 void Updater::checkNow()
 {
     if (busy_) {
-        // A background check or download is already running: let it report to
-        // the user from here on instead of starting a second one.
+        // Take over background work, including an installation waiting behind
+        // Settings, without starting a second check or installer.
         if (!manual_) {
             manual_ = true;
             if (part_)
@@ -215,10 +215,13 @@ void Updater::checkNow()
 
 void Updater::onAutoUpdateChanged(bool on)
 {
-    if (on || manual_)
-        return; // a check the user started from Settings runs to its end
+    if (on || manual_ || installing_)
+        return;
+    installQueued_ = false;
     if (reply_)
         reply_->abort(); // its finished handler removes the .part file
+    else
+        endOperation();
     discardDownloads();
 }
 
@@ -290,12 +293,9 @@ void Updater::onReleaseReply(QNetworkReply *reply)
 
     const Pending pending = loadPending();
     if (pending.usable() && pending.version >= release->version) {
-        // Already downloaded. An automatic check runs after this start's prompt,
-        // so only an explicit check asks again.
+        // Resume the verified download without fetching the same package again.
         markChecked();
-        if (manual_)
-            askWhenIdle(/*manual=*/true);
-        endOperation();
+        installWhenIdle();
         return;
     }
     download(*asset, release->version.toString());
@@ -420,70 +420,41 @@ void Updater::onDownloadFinished()
     st.setValue(kPendingVersionKey, downloadVersion_);
     st.setValue(kPendingFileKey, file);
     markChecked();
-    const bool manual = manual_;
-    endOperation();
-    askWhenIdle(manual);
+    installWhenIdle();
 }
 
-void Updater::askWhenIdle(bool manual)
+void Updater::installWhenIdle()
 {
-    // Promote an already queued automatic prompt when the user checks from
-    // Settings, so it reports back without queuing a second question.
-    askManual_ = askManual_ || manual;
-    if (askQueued_)
+    if (installQueued_)
         return;
-    askQueued_ = true;
-    QTimer::singleShot(0, this, &Updater::pollAsk);
+    busy_ = true;
+    installQueued_ = true;
+    QTimer::singleShot(0, this, &Updater::pollInstall);
 }
 
-void Updater::pollAsk()
+void Updater::pollInstall()
 {
+    if (!installQueued_)
+        return;
+    if (!manual_ && !Settings::load().autoUpdate) {
+        onAutoUpdateChanged(false);
+        return;
+    }
     // Automatic updates wait for other dialogs. A manual check must be able to
     // finish over its still-open Settings dialog, including after focus changes.
-    if ((!askManual_ && QApplication::activeModalWidget())
+    if ((!manual_ && QApplication::activeModalWidget())
         || QApplication::activePopupWidget()) {
-        QTimer::singleShot(1000, this, &Updater::pollAsk);
+        QTimer::singleShot(1000, this, &Updater::pollInstall);
         return;
     }
-    askQueued_ = false;
-    askManual_ = false;
-    askToInstall();
-}
-
-void Updater::askToInstall()
-{
+    installQueued_ = false;
     const Pending pending = loadPending();
-    if (!pending.usable())
+    if (!pending.usable()) {
+        endOperation();
         return;
-
-    QMessageBox box(dialogParent());
-    box.setWindowTitle(tr("Update Ready"));
-    box.setIcon(QMessageBox::Information);
-    box.setTextFormat(Qt::RichText);
-    //: %1 is the version number of the downloaded update.
-    box.setText(tr("Mervin PDF %1 is ready to install.").arg(pending.version.toString()));
-    //: %1 is the version number of this copy. Never is the button of that name; keep
-    //: the <b></b> tags around it.
-    box.setInformativeText(tr("You have %1. Click <b>Never</b> to turn off automatic updates.")
-                               .arg(QStringLiteral(MERVIN_VERSION_STRING)));
-    QPushButton *installButton = box.addButton(tr("Install Now"), QMessageBox::AcceptRole);
-    //: Button: ask about the update again on the next start.
-    QPushButton *laterButton = box.addButton(tr("Later"), QMessageBox::RejectRole);
-    //: Button: discard the update and turn off automatic updates.
-    QPushButton *neverButton = box.addButton(tr("Never"), QMessageBox::DestructiveRole);
-    box.setDefaultButton(installButton);
-    box.setEscapeButton(laterButton); // closing the box is a Later too
-    box.exec();
-
-    // Re-read: a newer download may have replaced the file while the box was up.
-    const Pending now = loadPending();
-    if (box.clickedButton() == installButton && now.usable()) {
-        install(now.file, now.version.toString());
-    } else if (box.clickedButton() == neverButton) {
-        discardDownloads();
-        emit autoUpdateDisabled();
     }
-    // Later: the download stays and the prompt returns on the next start.
+    installing_ = true;
+    install(pending.file, pending.version.toString());
 }
 
 void Updater::install(const QString &file, const QString &version)
@@ -493,13 +464,24 @@ void Updater::install(const QString &file, const QString &version)
         // The installer replaces files this process holds open, so the windows
         // close first (each may still save, or cancel the update), then the
         // installer starts detached and this process quits.
-        if (!closeWindows())
+        if (!closeWindows()) {
+            endOperation();
             return;
+        }
         if (!update::startWindowsInstaller(file)) {
             //: %1 is the path of the downloaded installer.
             warn(tr("Couldn't start the installer. It is saved at:\n\n%1\n\n"
                     "Run it to finish updating.")
                      .arg(QDir::toNativeSeparators(file)));
+            endOperation();
+        } else {
+            // The helper relaunches even if MSI fails or is cancelled. Consume
+            // this attempt so the old app cannot enter an install/relaunch loop.
+            // Keep the file until the installer exits and startup cleans it up.
+            QSettings st;
+            st.remove(kPendingVersionKey);
+            st.remove(kPendingFileKey);
+            markChecked(); // also defer retries of downloads kept over 30 days
         }
         QApplication::quit();
         return;
@@ -509,6 +491,7 @@ void Updater::install(const QString &file, const QString &version)
             //: %1 is the reason, %2 the path of the downloaded AppImage file.
             warn(tr("Couldn't install the update. %1\n\nThe new AppImage is saved at:\n\n%2")
                      .arg(error, file));
+            endOperation();
             return;
         }
         restart(qEnvironmentVariable("APPIMAGE"));
@@ -519,6 +502,7 @@ void Updater::install(const QString &file, const QString &version)
         installWithPackageManager(file, version);
         return;
     case update::PackageKind::None:
+        endOperation();
         return;
     }
 }
@@ -530,6 +514,7 @@ void Updater::installWithPackageManager(const QString &file, const QString &vers
         // No pkexec: hand the package to the desktop's software installer. The
         // next start after it is installed clears the download.
         QDesktopServices::openUrl(QUrl::fromLocalFile(file));
+        endOperation();
         return;
     }
 
@@ -544,11 +529,14 @@ void Updater::installWithPackageManager(const QString &file, const QString &vers
         proc->deleteLater();
         note->hide(); // not close(): that goes through the disabled reject()
         note->deleteLater();
-        if (ok)
+        if (ok) {
             restart(exePath_);
-        else if (!failure.isEmpty())
-            //: %1 is the package manager's error output.
-            warn(tr("The update could not be installed.\n\n%1").arg(failure));
+        } else {
+            if (!failure.isEmpty())
+                //: %1 is the package manager's error output.
+                warn(tr("The update could not be installed.\n\n%1").arg(failure));
+            endOperation();
+        }
     };
     connect(proc, &QProcess::finished, this, [proc, done](int code, QProcess::ExitStatus status) {
         if (status == QProcess::NormalExit && code == 0)
@@ -570,8 +558,10 @@ void Updater::restart(const QString &exe)
 {
     // The new version is already in place. If the user keeps a window open by
     // cancelling a save prompt, the next launch simply runs the new version.
-    if (!closeWindows())
+    if (!closeWindows()) {
+        endOperation();
         return;
+    }
     update::relaunchAfterExit(exe);
     QApplication::quit();
 }
@@ -580,6 +570,8 @@ void Updater::endOperation()
 {
     busy_ = false;
     manual_ = false;
+    installQueued_ = false;
+    installing_ = false;
 }
 
 bool Updater::closeWindows()

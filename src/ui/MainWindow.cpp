@@ -514,8 +514,8 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
                 });
         connect(wm_, &mervin::WindowManager::memorySettingsChanged, this,
                 &MainWindow::applyMemorySettings);
-        // Never (in the update prompt) or another window's Settings switched
-        // auto update: keep this copy current so a later save doesn't undo it.
+        // Another window changed automatic updates. Keep this copy current
+        // so a later save does not undo the change.
         connect(wm_, &mervin::WindowManager::autoUpdateChanged, this,
                 [this](bool on) { settings_.autoUpdate = on; });
         connect(wm_, &mervin::WindowManager::recentVisibleCountChanged, this, [this](int count) {
@@ -2175,9 +2175,8 @@ void MainWindow::openSettings(SettingsDialog::Page page)
                 &mervin::Updater::checkNow);
         connect(updater, &mervin::Updater::checked, &dlg, &SettingsDialog::setLastUpdateCheck);
     }
-    // Never in the update prompt of a check started from the General page turns
-    // automatic updates off while the dialog is still open. The checkbox has to
-    // follow, or OK would write the old value back and switch them on again.
+    // Another window can change automatic updates while this dialog is open.
+    // Keep the checkbox current so OK does not write the old value back.
     if (wm_)
         connect(wm_, &mervin::WindowManager::autoUpdateChanged, &dlg, &SettingsDialog::setAutoUpdate);
     // Apply and OK both arrive here. Cancel keeps what an earlier Apply changed.
@@ -2200,8 +2199,8 @@ void MainWindow::openSettings(SettingsDialog::Page page)
 
 bool MainWindow::applySettings(const mervin::Settings &next, QString *saveError)
 {
-    // settings_ follows the broadcasts while Settings is open (Never in the update
-    // prompt, an earlier Apply), so it holds the values in effect now.
+    // settings_ follows broadcasts and earlier Apply actions while Settings is
+    // open, so it holds the values in effect now.
     const mervin::Settings before = settings_;
     // Keep this window's save baseline: `next` carries the one from when Settings
     // opened, and a value set back after an earlier Apply would not be written.
