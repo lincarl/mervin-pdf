@@ -185,8 +185,10 @@ installed languages), Measuring (snapping and the defaults new tabs start from),
 Forms, Keyboard shortcuts, and About (version and licences). The main menu opens
 Settings; Keyboard shortcuts and About are available in its page menu. OK applies
 the changes and closes Settings. Apply puts them into effect and keeps Settings
-open; it is available only while a change is pending. Cancel discards changes made
-since the last Apply. Removing or adding OCR languages takes effect at once. Session
+open; it is available only while a change is pending. If the settings file can't
+be written, OK and Apply say why and keep Settings open, and nothing changes until
+a save works. Cancel discards changes made since the last Apply. Removing or adding
+OCR languages takes effect at once. Session
 restore and automatic updates are enabled by default. Copies that cannot update
 themselves (portable and development builds) show no automatic-update switch, only
 Check for Updates.

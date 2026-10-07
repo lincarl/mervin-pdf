@@ -2181,7 +2181,14 @@ void MainWindow::openSettings(SettingsDialog::Page page)
     if (wm_)
         connect(wm_, &mervin::WindowManager::autoUpdateChanged, &dlg, &SettingsDialog::setAutoUpdate);
     // Apply and OK both arrive here. Cancel keeps what an earlier Apply changed.
-    connect(&dlg, &SettingsDialog::applyRequested, this, &MainWindow::applySettings);
+    // A failed save keeps the dialog open, so it can't restart into a language
+    // that wasn't stored.
+    connect(&dlg, &SettingsDialog::applyRequested, this,
+            [this, &dlg](const mervin::Settings &next) {
+                QString error;
+                if (!applySettings(next, &error))
+                    dlg.reportSaveFailure(error);
+            });
     dlg.exec();
     // A new UI language takes effect at startup, so OK or Apply with one restarts
     // Mervin. Queued: the restart closes this window, which is still in this call.
@@ -2191,7 +2198,7 @@ void MainWindow::openSettings(SettingsDialog::Page page)
     }
 }
 
-void MainWindow::applySettings(const mervin::Settings &next)
+bool MainWindow::applySettings(const mervin::Settings &next, QString *saveError)
 {
     // settings_ follows the broadcasts while Settings is open (Never in the update
     // prompt, an earlier Apply), so it holds the values in effect now.
@@ -2199,7 +2206,12 @@ void MainWindow::applySettings(const mervin::Settings &next)
     // Keep this window's save baseline: `next` carries the one from when Settings
     // opened, and a value set back after an earlier Apply would not be written.
     settings_.assignValues(next);
-    settings_.save();
+    if (!settings_.save(saveError)) {
+        // Nothing changes until the save works. Settings stays open with the
+        // change pending, and a later save of this copy must not write it.
+        settings_ = before;
+        return false;
+    }
     if (wm_)
         wm_->applyMemorySettings(settings_.unloadInactiveMinutes, settings_.closeToTray);
     else
@@ -2271,6 +2283,7 @@ void MainWindow::applySettings(const mervin::Settings &next)
         v->setMeasureSnap(settings_.measurementSnap);
         v->setAutoFormFill(settings_.autoFormFill);
     }
+    return true;
 }
 
 void MainWindow::applyAnnotationDefaultsToTabs()

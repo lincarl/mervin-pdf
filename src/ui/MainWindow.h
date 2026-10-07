@@ -131,7 +131,9 @@ private slots:
     // Open Settings on the requested page.
     void openSettings(SettingsDialog::Page page = SettingsDialog::Page::General);
     // Save `next` and put what changed into effect: Settings' Apply and OK.
-    void applySettings(const mervin::Settings &next);
+    // False, with the reason in `saveError`, when the save failed. Nothing changes
+    // then.
+    bool applySettings(const mervin::Settings &next, QString *saveError = nullptr);
 
     // Document menu (M8).
     void openSecurity();

@@ -1378,6 +1378,14 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>Dokumenten förblir inlästa, även i systemfältet.</translation>
     </message>
     <message>
+        <source>Couldn&apos;t save the settings.
+
+%1</source>
+        <translation>Det gick inte att spara inställningarna.
+
+%1</translation>
+    </message>
+    <message>
         <source>Never checked</source>
         <translation>Aldrig kontrollerat</translation>
     </message>

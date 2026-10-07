@@ -79,6 +79,7 @@ private slots:
     void newUiLanguageRestartsOnApply();
     void untouchedUiLanguageKeepsTheStoredValue();
     void pendingUiLanguageShowsUntilChanged();
+    void failedSaveKeepsTheDialogOpen();
     void menuFitsLongerPageTitles();
     void shortcutKeysFollowTheUiLanguage();
 
@@ -943,6 +944,52 @@ void TstSettingsDialog::untouchedUiLanguageKeepsTheStoredValue()
         SettingsDialog dialog(in);
         QCOMPARE(dialog.settings().uiLanguage, stored);
     }
+}
+
+// A failed save shows why and keeps the dialog open with the change pending, so a
+// new language can't restart Mervin without being stored. OK then saves again.
+void TstSettingsDialog::failedSaveKeepsTheDialogOpen()
+{
+    SettingsDialog dialog(mervin::Settings{});
+    auto *combo = dialog.findChild<mervin::LanguageCombo *>(QStringLiteral("uiLanguage"));
+    QVERIFY(combo);
+    int failures = 2;
+    QList<mervin::Settings> applied;
+    connect(&dialog, &SettingsDialog::applyRequested, this,
+            [&](const mervin::Settings &s) {
+                applied.append(s);
+                if (failures-- > 0)
+                    dialog.reportSaveFailure(QStringLiteral("Permission denied"));
+            });
+    QSignalSpy accepted(&dialog, &QDialog::accepted);
+    QString shown;
+    const auto readNextBox = [this, &shown] {
+        shown.clear();
+        QTimer::singleShot(0, this, [&shown] {
+            auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            QVERIFY(box);
+            shown = box->text();
+            box->button(QMessageBox::Ok)->click();
+        });
+    };
+
+    combo->setLanguage(QStringLiteral("sv"));
+    readNextBox();
+    dialogButton(&dialog, QDialogButtonBox::Apply)->click();
+    QVERIFY(shown.contains(QStringLiteral("Permission denied")));
+    QCOMPARE(accepted.size(), 0);
+    QVERIFY(dialog.restartNeeded());
+    QVERIFY(dialogButton(&dialog, QDialogButtonBox::Apply)->isEnabled());
+
+    readNextBox();
+    dialogButton(&dialog, QDialogButtonBox::Ok)->click();
+    QVERIFY(shown.contains(QStringLiteral("Permission denied")));
+    QCOMPARE(accepted.size(), 0);
+
+    dialogButton(&dialog, QDialogButtonBox::Ok)->click();
+    QCOMPARE(applied.size(), 3);
+    QCOMPARE(applied.last().uiLanguage, QStringLiteral("sv"));
+    QCOMPARE(accepted.size(), 1);
 }
 
 // The menu on the left keeps its 196 px for the English page titles and widens
