@@ -171,7 +171,7 @@ restore_session = true
         $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
         $env:QT_PLUGIN_PATH = ''
         $env:QT_QPA_PLATFORM_PLUGIN_PATH = ''
-        $app = Start-Process $exe -PassThru -ArgumentList @('--profile', "`"$work\profile`"", '--quit-after-startup')
+        $app = Start-Process $exe -PassThru -ArgumentList @('--profile', "`"$work\profile`"", '--language', 'en', '--quit-after-startup')
     } finally {
         foreach ($name in $launchEnvironment.Keys) {
             [Environment]::SetEnvironmentVariable($name, $launchEnvironment[$name], 'Process')
