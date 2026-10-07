@@ -174,25 +174,30 @@ jobs:
       - name: Build
         run: cmake --build --preset x64-release
 
-      - name: Install packaging tools (NSIS + WiX)
+      - name: Install WiX
         shell: pwsh
         run: |
-          choco install nsis -y
-          dotnet tool install --global wix
+          dotnet tool install --global wix --version 7.0.0
+          if ($LASTEXITCODE -ne 0) { throw "Installing WiX failed" }
+          & "$env:USERPROFILE\.dotnet\tools\wix.exe" eula accept wix7
+          if ($LASTEXITCODE -ne 0) { throw "Accepting the WiX EULA failed" }
+          & "$env:USERPROFILE\.dotnet\tools\wix.exe" extension add --global WixToolset.UI.wixext/7.0.0
+          if ($LASTEXITCODE -ne 0) { throw "Installing WiX UI extension failed" }
+          & "$env:USERPROFILE\.dotnet\tools\wix.exe" extension add --global WixToolset.Util.wixext/7.0.0
+          if ($LASTEXITCODE -ne 0) { throw "Installing WiX utility extension failed" }
           "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
-      - name: Stage + build installers
+      - name: Stage app and build MSI
         shell: pwsh
         run: |
           $env:QT6_DIR = $env:QT_ROOT_DIR
           scripts\deploy.ps1 -Installer
 
-      - name: Upload installers
+      - name: Upload MSI
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: windows-installers
+          name: windows-msi
           path: |
-            build/x64-release/MervinPDF-Setup-*.exe
             build/x64-release/MervinPDF-*.msi
           if-no-files-found: error
 
@@ -395,7 +400,7 @@ jobs:
           path: dist
           # The reusable workflow shares the CI run, including its separate
           # Windows verification upload. Publish only the release packages.
-          pattern: '{windows-installers,linux-appimage,linux-deb-ubuntu-26.04,linux-rpm}'
+          pattern: '{windows-msi,linux-appimage,linux-deb-ubuntu-26.04,linux-rpm}'
       - name: Verify and checksum exact release artifacts
         shell: bash
         run: |
@@ -414,8 +419,7 @@ jobs:
               raise SystemExit("Invalid release tag")
           version = os.environ["RELEASE_TAG"][1:]
           expected = {
-              Path(f"dist/windows-installers/MervinPDF-Setup-{version}.exe"),
-              Path(f"dist/windows-installers/MervinPDF-{version}.msi"),
+              Path(f"dist/windows-msi/MervinPDF-{version}.msi"),
               Path(f"dist/linux-appimage/MervinPDF-{version}-x86_64.AppImage"),
               Path(f"dist/linux-deb-ubuntu-26.04/mervin-pdf_{version}_ubuntu26.04_amd64.deb"),
               Path(f"dist/linux-rpm/mervin-pdf-{version}.x86_64.rpm"),
@@ -461,8 +465,7 @@ jobs:
           prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
           make_latest: ${{ needs.prepare.outputs.prerelease == 'true' && 'false' || 'legacy' }}
           files: |
-            dist/windows-installers/MervinPDF-Setup-${{ env.RELEASE_VERSION }}.exe
-            dist/windows-installers/MervinPDF-${{ env.RELEASE_VERSION }}.msi
+            dist/windows-msi/MervinPDF-${{ env.RELEASE_VERSION }}.msi
             dist/linux-appimage/MervinPDF-${{ env.RELEASE_VERSION }}-x86_64.AppImage
             dist/linux-deb-ubuntu-26.04/mervin-pdf_${{ env.RELEASE_VERSION }}_ubuntu26.04_amd64.deb
             dist/linux-rpm/mervin-pdf-${{ env.RELEASE_VERSION }}.x86_64.rpm

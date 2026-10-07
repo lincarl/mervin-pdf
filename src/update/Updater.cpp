@@ -489,14 +489,13 @@ void Updater::askToInstall()
 void Updater::install(const QString &file, const QString &version)
 {
     switch (kind_) {
-    case update::PackageKind::NsisSetup:
     case update::PackageKind::Msi:
         // The installer replaces files this process holds open, so the windows
         // close first (each may still save, or cancel the update), then the
         // installer starts detached and this process quits.
         if (!closeWindows())
             return;
-        if (!update::startWindowsInstaller(kind_, file)) {
+        if (!update::startWindowsInstaller(file)) {
             //: %1 is the path of the downloaded installer.
             warn(tr("Couldn't start the installer. It is saved at:\n\n%1\n\n"
                     "Run it to finish updating.")

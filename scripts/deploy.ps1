@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
   Stage a self-contained Mervin PDF tree (Qt + qpdf DLLs) and optionally build
-  the NSIS installer.
+  the MSI installer.
 
 .DESCRIPTION
-  Runs windeployqt to gather Qt's DLLs/plugins and the VC runtime, copies the
+  Runs windeployqt to gather Qt's DLLs/plugins, stages app-local VC runtime DLLs, copies the
   vcpkg-built qpdf and its dependency DLLs next to the exe, and (if present)
   stages eng.traineddata for the installer to drop into the per-user tessdata
   folder. MuPDF is statically linked into MervinPDF.exe, so no MuPDF DLL is
@@ -15,9 +15,9 @@
   GUI-subsystem binary and refuses to package a stray console build.
 
 .PARAMETER Installer
-  Also build the per-user installers from the staged tree: the NSIS .exe
-  (friendly interactive wizard) AND the WiX .msi (managed / silent deployment,
-  e.g. `msiexec /i MervinPDF-<ver>.msi /qn`). Both are always produced together.
+  Also build the per-user WiX .msi from the staged tree. It supports an
+  interactive wizard and silent deployment, for example
+  `msiexec /i MervinPDF-<ver>.msi /qn`.
 #>
 param(
     [switch]$Installer,
@@ -66,25 +66,28 @@ if (Test-Path $deploy) { Remove-Item $deploy -Recurse -Force }
 New-Item -ItemType Directory -Force $deploy | Out-Null
 Copy-Item $exe $deploy
 
-# Qt DLLs, plugins, and the compiler runtime.
+# Qt DLLs and plugins. Stage the compiler runtime as DLLs below so the MSI
+# works without a separate machine-wide prerequisite installer or elevation.
 # --no-translations: Mervin's catalogs, Qt's own strings included, are compiled into the exe.
 & "$env:QT6_DIR\bin\windeployqt.exe" --release --no-translations --no-system-d3d-compiler `
-    --compiler-runtime (Join-Path $deploy "MervinPDF.exe")
+    --no-compiler-runtime (Join-Path $deploy "MervinPDF.exe")
 if ($LASTEXITCODE -ne 0) { throw "windeployqt failed ($LASTEXITCODE)" }
 
-# windeployqt only stages the VC++ runtime (vc_redist.x64.exe, via --compiler-runtime)
-# and the Direct3D shader compiler (dxcompiler.dll / dxil.dll) when it can locate them,
-# which needs the full VS + Windows SDK environment: vcvars64.bat sourced so the VC
-# redist dir is known and the Windows SDK bin (which holds dxcompiler/dxil) is on PATH.
-# Without that environment windeployqt SILENTLY drops all three; the installer still
-# builds but is ~30 MB smaller and broken - no bundled VC++ runtime means the app can
-# fail to launch on a clean machine. Fail loudly so a wrong-environment build never ships.
-$required = 'vc_redist.x64.exe', 'dxcompiler.dll', 'dxil.dll'
+# Use only the redistributable release DLLs supplied by the active MSVC
+# toolchain. Windows 11 supplies the Universal CRT. App-local runtime updates
+# ship with Mervin instead of depending on a separately installed VC runtime.
+if (-not $env:VCToolsRedistDir) { throw "VCToolsRedistDir is missing. Run from a VS Dev Shell." }
+$crt = Join-Path $env:VCToolsRedistDir 'x64\Microsoft.VC143.CRT'
+if (-not (Test-Path $crt)) { throw "MSVC x64 redistributable runtime not found: $crt" }
+Get-ChildItem (Join-Path $crt '*.dll') | ForEach-Object { Copy-Item $_.FullName $deploy }
+
+# windeployqt needs the Windows SDK environment to find the Direct3D shader
+# compiler. Reject an incomplete payload before building a runnable installer.
+$required = 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'dxcompiler.dll', 'dxil.dll'
 $missing  = $required | Where-Object { -not (Test-Path (Join-Path $deploy $_)) }
 if ($missing) {
-    throw ("windeployqt did not stage: $($missing -join ', '). Run from a VS Dev Shell " +
-           "with vcvars64.bat sourced (Windows SDK on PATH) so windeployqt can find the " +
-           "VC++ runtime and the Direct3D shader compiler. See docs/BUILDING.md > Package.")
+    throw ("Deployment did not stage: $($missing -join ', '). Run from a VS Dev Shell " +
+           "with the Windows SDK on PATH. See docs/BUILDING.md > Package.")
 }
 
 # vcpkg dependency DLLs (qpdf + its deps like z.dll/jpeg, and tomlplusplus).
@@ -115,40 +118,42 @@ Write-Output "Deployed to: $deploy"
 Get-ChildItem $deploy | Select-Object Name | Format-Table -AutoSize
 
 if ($Installer) {
-    $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
-    if (-not (Test-Path $makensis)) { $makensis = "C:\Program Files\NSIS\makensis.exe" }
-    $outfile = Join-Path $build "MervinPDF-Setup-$Version.exe"
-    $nsiArgs = @("/DDEPLOY_DIR=$deploy", "/DVERSION=$Version", "/DOUTFILE=$outfile")
-    if ($tessData) { $nsiArgs += "/DTESSDATA=$tessData" }
-    $nsiArgs += (Join-Path $root "packaging\nsis\mervin.nsi")
-    & $makensis @nsiArgs
-    # makensis is a native exe, so a non-zero exit does NOT trip $ErrorActionPreference;
-    # check it explicitly (as the WiX step below does) so a failed NSIS build fails the
-    # whole deploy loudly instead of leaving a stale/missing .exe beside a fresh .msi.
-    if ($LASTEXITCODE -ne 0) { throw "makensis failed ($LASTEXITCODE)" }
-    Write-Output "NSIS installer: $outfile"
-
-    # ---- MSI (WiX) -----------------------------------------------------------
-    # Always produced alongside the NSIS .exe. The MSI is the managed/silent
-    # counterpart (msiexec /i ... /qn) and is per-user too (no elevation),
-    # authored in packaging\wix\mervin.wxs. Built with the WiX v6/v7 `wix` CLI.
+    # The per-user MSI supports interactive and silent installation without
+    # elevation. Built with WiX 7 and its matching UI and utility extensions.
     $wix = (Get-Command wix.exe -ErrorAction SilentlyContinue).Source
     if (-not $wix -and (Test-Path "C:\Program Files\WiX Toolset v7.0\bin\wix.exe")) {
         $wix = "C:\Program Files\WiX Toolset v7.0\bin\wix.exe"
     }
     if (-not $wix) {
-        throw "WiX CLI (wix.exe) not found. Install it with: winget install -e --id WiXToolset.WiXCLI"
+        throw "WiX CLI (wix.exe) not found. Install WiX 7 and its UI and utility extensions as described in docs/BUILDING.md."
     }
-    # WiX v6/v7 gate use behind the OSMF EULA. Accepting is persisted per-user,
+    # WiX 7 gates use behind the OSMF EULA. Accepting is persisted per-user,
     # so this is idempotent; it encodes the project's decision to accept (see
     # packaging\wix\README.md for the licensing note).
     & $wix eula accept wix7 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Accepting the WiX EULA failed ($LASTEXITCODE)" }
     $icon = Join-Path $root "resources\icons\mervin-icon.ico"
     $wxs  = Join-Path $root "packaging\wix\mervin.wxs"
     $msi  = Join-Path $build "MervinPDF-$Version.msi"
-    $wixArgs = @("build", "-arch", "x64",
+    # Remove only empty directories owned by this payload on uninstall. Derive
+    # the list from staging so new Qt plugin directories cannot be left behind.
+    $cleanupFile = Join-Path $build 'generated\installer-remove-folders.wxi'
+    $cleanup = @('<Include xmlns="http://wixtoolset.org/schemas/v4/wxs">',
+                 '  <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />')
+    $index = 0
+    foreach ($dir in Get-ChildItem $deploy -Directory -Recurse | Sort-Object FullName) {
+        $relative = $dir.FullName.Substring($deploy.Length + 1)
+        $escaped = [System.Security.SecurityElement]::Escape($relative)
+        $cleanup += "  <RemoveFolder Id=`"RemovePayloadFolder$index`" Directory=`"INSTALLFOLDER`" Subdirectory=`"$escaped`" On=`"uninstall`" />"
+        $index++
+    }
+    $cleanup += '</Include>'
+    Set-Content -Path $cleanupFile -Value $cleanup -Encoding utf8
+    $wixArgs = @("build", "-arch", "x64", "-ext", "WixToolset.UI.wixext",
+                 "-ext", "WixToolset.Util.wixext",
                  "-d", "Version=$msiVersion", "-d", "DisplayVersion=$Version",
-                 "-d", "DeployDir=$deploy", "-d", "IconFile=$icon")
+                 "-d", "DeployDir=$deploy", "-d", "IconFile=$icon",
+                 "-d", "DirectoryCleanup=$cleanupFile")
     if ($tessData) { $wixArgs += @("-d", "TessData=$tessData") }
     $wixArgs += @("-o", $msi, $wxs)
     & $wix @wixArgs

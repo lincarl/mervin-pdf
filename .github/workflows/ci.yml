@@ -306,28 +306,51 @@ jobs:
           python scripts/check-test-results.py build/x64-release/results.xml
           if ($LASTEXITCODE -ne 0) { throw "Required tests were skipped" }
 
-      - name: Install packaging tools (NSIS + WiX)
+      - name: Install WiX
         shell: pwsh
         run: |
-          choco install nsis -y
-          if ($LASTEXITCODE -ne 0) { throw "Installing NSIS failed" }
-          dotnet tool install --global wix
+          dotnet tool install --global wix --version 7.0.0
           if ($LASTEXITCODE -ne 0) { throw "Installing WiX failed" }
+          & "$env:USERPROFILE\.dotnet\tools\wix.exe" eula accept wix7
+          if ($LASTEXITCODE -ne 0) { throw "Accepting the WiX EULA failed" }
+          & "$env:USERPROFILE\.dotnet\tools\wix.exe" extension add --global WixToolset.UI.wixext/7.0.0
+          if ($LASTEXITCODE -ne 0) { throw "Installing WiX UI extension failed" }
+          & "$env:USERPROFILE\.dotnet\tools\wix.exe" extension add --global WixToolset.Util.wixext/7.0.0
+          if ($LASTEXITCODE -ne 0) { throw "Installing WiX utility extension failed" }
           "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
-      - name: Stage app and build installers
+      - name: Stage app and build MSI
         shell: pwsh
         run: |
           $env:QT6_DIR = $env:QT_ROOT_DIR
           scripts\deploy.ps1 -Installer
 
+      - name: Verify MSI install, upgrade, repair, and uninstall
+        shell: pwsh
+        run: scripts\test-windows-installer.ps1 -Msi (Get-Item build\x64-release\MervinPDF-*.msi).FullName
+
+      - name: Verify MSI wizard and launch after Finish
+        shell: pwsh
+        run: |
+          scripts\test-windows-installer-ui.ps1 -Msi (Get-Item build\x64-release\MervinPDF-*.msi).FullName `
+            -OutputDir "$env:MERVIN_INSTALLER_TEST_DIR\ui"
+
+      - name: Upload Windows installer diagnostics
+        if: always() && env.MERVIN_INSTALLER_TEST_DIR != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-installer-diagnostics
+          path: ${{ env.MERVIN_INSTALLER_TEST_DIR }}/
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload Windows verification artifacts
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows-verification
           path: |
             build/x64-release/deploy/
-            build/x64-release/MervinPDF-Setup-*.exe
             build/x64-release/MervinPDF-*.msi
           if-no-files-found: error
           retention-days: 7

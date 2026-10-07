@@ -69,7 +69,7 @@ document servers such as Littelfuse, Analog Devices, and onsemi.
 
 Mervin PDF provides release packages for:
 
-- Windows 11 x64: NSIS installer and MSI
+- Windows 11 x64: MSI installer
 - Linux x86-64: AppImage, DEB, and RPM (Ubuntu 26.04 or a compatible distribution is the current baseline)
 
 Download packaged versions from [GitHub Releases](https://github.com/lincarl/mervin-pdf/releases).

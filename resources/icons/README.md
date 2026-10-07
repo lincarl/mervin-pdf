@@ -50,8 +50,8 @@ change the ICO.
 
 Qt embeds the PNG frames and uses them for window icons and Recent file rows.
 Windows embeds the ICO into the executable. File associations, Open with, and
-executable shortcuts use its first icon. NSIS and WiX also use that ICO for
-installer, uninstaller, and installed application entries.
+executable shortcuts use its first icon. WiX also uses that ICO for the Start
+menu shortcut and Installed apps entry.
 
 Linux installs the hicolor theme's indexed PNG sizes and the scalable SVG as
 `mervin-pdf`. The desktop entry and AppImage keep that stable identifier. Generic

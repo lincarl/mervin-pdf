@@ -81,8 +81,8 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     auto *printerForm = new QFormLayout(printerBox);
     printerCombo_ = new QComboBox(printerBox);
     printerCombo_->setObjectName(QStringLiteral("printPrinter"));
-    printerCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-    printerCombo_->setMinimumContentsLength(14);
+    // Include full printer names when calculating the settings column's width.
+    printerCombo_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     const QList<QPrinterInfo> printers = QPrinterInfo::availablePrinters();
     const QString currentName = printer_->printerName().isEmpty()
                                     ? QPrinterInfo::defaultPrinterName()
