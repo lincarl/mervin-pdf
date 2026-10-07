@@ -191,9 +191,11 @@ void TstTextFit::hiddenPagesAreCheckedWhenShown()
 void TstTextFit::stylesheetPaddingReducesAvailableSpace()
 {
     QLabel label(QStringLiteral("Text with padding"));
-    label.setFixedSize(180, 50);
+    label.ensurePolished();
+    label.setFixedSize(label.sizeHint() + QSize(20, 20));
     showAndSettle(label);
-    QVERIFY(textfit::check(label).isEmpty());
+    const QStringList fitting = textfit::check(label);
+    QVERIFY2(fitting.isEmpty(), qPrintable(fitting.join('\n')));
     label.setStyleSheet(QStringLiteral("QLabel { padding-left: 100px; padding-right: 30px; }"));
     QCoreApplication::processEvents();
     const QStringList errors = textfit::check(label);
@@ -216,15 +218,18 @@ void TstTextFit::buttonUsesPaintedContentsRatherThanPreferredSize()
 void TstTextFit::detectsClippingByParent()
 {
     QWidget root;
-    root.resize(300, 100);
     auto *holder = new QWidget(&root);
-    holder->setGeometry(0, 0, 40, 40);
     auto *label = new QLabel(QStringLiteral("The label fits itself"), holder);
-    label->setGeometry(0, 0, 200, 30);
+    label->ensurePolished();
+    const QSize labelSize = label->sizeHint() + QSize(20, 20);
+    label->resize(labelSize);
+    holder->resize(labelSize.width() / 2, labelSize.height());
+    root.resize(labelSize + QSize(40, 40));
     showAndSettle(root);
     QVERIFY(textfit::check(root).join('\n').contains(QStringLiteral("extends outside its parent")));
-    holder->resize(220, 40);
-    QVERIFY(textfit::check(root).isEmpty());
+    holder->resize(labelSize);
+    const QStringList fitting = textfit::check(root);
+    QVERIFY2(fitting.isEmpty(), qPrintable(fitting.join('\n')));
 }
 
 void TstTextFit::framedLabelMarginIncludesAutomaticIndent()
