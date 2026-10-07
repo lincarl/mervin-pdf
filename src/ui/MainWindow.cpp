@@ -877,9 +877,10 @@ void MainWindow::createActions()
     ocrAction_ = new QAction(tr("&OCR Selection"), this);
     ocrAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
     ocrAction_->setToolTip(tr("OCR Selection: drag a region to recognise its text"));
-    connect(ocrAction_, &QAction::triggered, this, [this] {
+    ocrAction_->setCheckable(true);
+    connect(ocrAction_, &QAction::triggered, this, [this](bool on) {
         if (auto *v = currentViewer())
-            v->setOcrMode(true); // next drag rubber-bands a region to OCR
+            v->setOcrMode(on); // next drag rubber-bands a region to OCR
     });
 
     //: Toggles the measuring tool (distances, areas and angles on the page).
@@ -2413,8 +2414,16 @@ void MainWindow::wireCurrentViewer(ViewerWidget *v)
     if (TabPage *t = currentTab())
         viewerConns_ << connect(t->findCard(), &mervin::FindCard::openChanged, this,
                                 &MainWindow::syncFindToggle);
+    if (ocrAction_) {
+        QSignalBlocker block(ocrAction_);
+        ocrAction_->setChecked(v && v->ocrMode());
+    }
     if (!v)
         return;
+    viewerConns_ << connect(v, &ViewerWidget::ocrModeChanged, this, [this](bool on) {
+        QSignalBlocker block(ocrAction_);
+        ocrAction_->setChecked(on);
+    });
     viewerConns_ << connect(v, &ViewerWidget::pageChanged, this,
                             [this](int current, int total) { updatePageLabels(current, total); });
     viewerConns_ << connect(v, &ViewerWidget::scaleChanged, this,

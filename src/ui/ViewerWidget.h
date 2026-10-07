@@ -95,6 +95,7 @@ public:
     ViewLayout::Mode layoutMode() const { return layoutMode_; }
     PageTheme pageTheme() const { return pageTheme_; }
     int rotation() const { return rotation_; } // 0 / 90 / 180 / 270 degrees
+    bool ocrMode() const { return toolMode_ == ToolMode::Ocr; }
 
     // The resume anchor: the page under the viewport's top-left corner, plus that
     // corner's position within the page as a fraction of its displayed size.
@@ -350,6 +351,7 @@ signals:
     void zoomModeChanged(ViewerWidget::ZoomMode mode);
     void layoutModeChanged(ViewLayout::Mode mode);
     void findStatusChanged(int current, int total); // current 1-based (0 = none)
+    void ocrModeChanged(bool on);
     void ocrRegionSelected(int pageNo, const QRectF &pageRect); // page-point rect
     // Right-click on the viewer. `page` is the page under the pointer (0-based),
     // or -1 in the gaps around pages; from the keyboard it is the current page.

@@ -26,6 +26,7 @@
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
+#include <QToolButton>
 #include <QtTest>
 
 using namespace mervin;
@@ -313,6 +314,106 @@ private slots:
         QVERIFY(!tab.viewer()->formMode());
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         QVERIFY(tab.viewer()->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly).isEmpty());
+    }
+
+    void ocrButtonTracksTheActiveMarkingTool()
+    {
+        const QString path = profile_->filePath(QStringLiteral("form.pdf"));
+        QVERIFY(writeFile(path, formPdf()));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(window.openFile(path));
+        auto *tab = window.findChild<TabPage *>();
+        QVERIFY(tab);
+        auto *viewer = tab->viewer();
+        QAction *ocr = nullptr;
+        for (QAction *action : window.findChildren<QAction *>())
+            if (action->shortcut() == QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O))
+                ocr = action;
+        QVERIFY(ocr);
+        QToolButton *button = nullptr;
+        for (QToolButton *candidate : window.findChildren<QToolButton *>())
+            if (candidate->defaultAction() == ocr)
+                button = candidate;
+        QVERIFY(button);
+        QVERIFY(!button->isChecked());
+
+        QTest::mouseClick(button, Qt::LeftButton);
+        QVERIFY(viewer->ocrMode());
+        QVERIFY(button->isChecked());
+        QTest::mouseClick(button, Qt::LeftButton);
+        QVERIFY(!viewer->ocrMode());
+        QVERIFY(!button->isChecked());
+
+        QTest::mouseClick(button, Qt::LeftButton);
+        // A click finishes the one-shot gesture without opening recognition for a region.
+        QTest::mouseClick(viewer->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(400, 300));
+        QVERIFY(!viewer->ocrMode());
+        QVERIFY(!button->isChecked());
+
+        ocr->trigger();
+        viewer->setMeasureMode(true);
+        QVERIFY(viewer->measureMode());
+        QVERIFY(!viewer->ocrMode());
+        QVERIFY(!button->isChecked());
+        ocr->trigger();
+        viewer->setFormMode(true);
+        QVERIFY(viewer->formMode());
+        QVERIFY(!viewer->ocrMode());
+        QVERIFY(!button->isChecked());
+        ocr->trigger();
+        viewer->setCommentToolEnabled(true);
+        QVERIFY(viewer->commentToolEnabled());
+        QVERIFY(!viewer->ocrMode());
+        QVERIFY(!button->isChecked());
+    }
+
+    void ocrActionFollowsTabSwitchesAndReload()
+    {
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        auto *tabs = window.findChild<QTabWidget *>();
+        QVERIFY(tabs);
+        auto *first = qobject_cast<TabPage *>(tabs->widget(0));
+        QVERIFY(first);
+        QAction *ocr = nullptr;
+        for (QAction *action : window.findChildren<QAction *>())
+            if (action->shortcut() == QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O))
+                ocr = action;
+        QVERIFY(ocr);
+        ocr->trigger();
+        QVERIFY(first->viewer()->ocrMode());
+        QVERIFY(ocr->isChecked());
+
+        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF), true));
+        auto *second = qobject_cast<TabPage *>(tabs->widget(1));
+        QVERIFY(second);
+        QVERIFY(!second->viewer()->ocrMode());
+        QVERIFY(!ocr->isChecked());
+        QVERIFY(first->viewer()->ocrMode());
+        tabs->setCurrentIndex(0);
+        QVERIFY(ocr->isChecked());
+
+        QVERIFY(first->suspend());
+        QVERIFY(!first->viewer()->ocrMode());
+        QVERIFY(!ocr->isChecked());
+        QVERIFY(!ocr->isEnabled());
+        QVERIFY(first->resume());
+        QVERIFY(first->viewer()->ocrMode());
+        QVERIFY(ocr->isChecked());
+        QVERIFY(ocr->isEnabled());
+
+        tabs->setCurrentIndex(1);
+        QVERIFY(!ocr->isChecked());
+        // Changes in a background tab must not change the current tab's action.
+        first->viewer()->setOcrMode(false);
+        first->viewer()->setOcrMode(true);
+        QVERIFY(!ocr->isChecked());
+        tabs->setCurrentIndex(0);
+        QVERIFY(ocr->isChecked());
     }
 
     void backgroundRestoreRemainsUnloadedUntilRequested()

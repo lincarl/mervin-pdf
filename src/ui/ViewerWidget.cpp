@@ -302,6 +302,7 @@ void ViewerWidget::restoreResumeState(const ResumeState &state)
     // Opening a form can create editors automatically. Remove them if this tab's saved tool
     // was something else, even when its form fields still exist.
     syncFormEditors();
+    emit ocrModeChanged(ocrMode());
     emit measureModeChanged(measureToolEnabled_);
     emit measureCursorActiveChanged(measureMode());
     emit commentToolEnabledChanged(commentToolEnabled_);
@@ -382,6 +383,7 @@ void ViewerWidget::setDocument(Document *doc)
         rubberBand_->hide();
     sincePanelPopupClosed_.invalidate();
     viewport()->setCursor(Qt::IBeamCursor);
+    emit ocrModeChanged(false);
     emit measureModeChanged(false);
     emit measurementReadout(QString());
 
@@ -2109,11 +2111,13 @@ void ViewerWidget::setOcrMode(bool on)
         selecting_ = false;
         viewport()->setCursor(Qt::CrossCursor);
         viewport()->update();
+        emit ocrModeChanged(true);
     } else if (toolMode_ == ToolMode::Ocr) {
         toolMode_ = ToolMode::None;
         viewport()->setCursor(Qt::IBeamCursor);
         if (rubberBand_)
             rubberBand_->hide();
+        emit ocrModeChanged(false);
     }
 }
 
