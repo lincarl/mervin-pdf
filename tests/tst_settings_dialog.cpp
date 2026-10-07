@@ -14,6 +14,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
+#include <QFontDatabase>
 #include <QHash>
 #include <QKeySequence>
 #include <QLabel>
@@ -953,12 +954,19 @@ void TstSettingsDialog::menuFitsLongerPageTitles()
     const QPalette palette = mervin::theme::darkPalette(QColor(QStringLiteral("#4f8cff")));
     qApp->setStyleSheet(mervin::Theme::buildStyleSheet(palette, QStringLiteral("#4f8cff")));
 
+    int englishWidth = 0;
     {
         SettingsDialog dialog(mervin::Settings{});
         auto *nav = dialog.findChild<QListWidget *>(QStringLiteral("settingsNav"));
         QVERIFY(nav);
-        QCOMPARE(nav->width(), 196);
+        englishWidth = nav->width();
     }
+    // Without fonts (Windows' offscreen platform in CI) Qt draws every letter
+    // as a wide box, so the English titles need more than 196 px there too.
+    if (QFontDatabase::families().isEmpty())
+        QVERIFY(englishWidth >= 196);
+    else
+        QCOMPARE(englishWidth, 196);
 
     const QString longTitle = QStringLiteral("Tangentbordsgenvägar och kortkommandon för alla verktyg");
     StubCatalog catalog({{"SettingsDialog|Keyboard shortcuts", longTitle}});
@@ -968,7 +976,7 @@ void TstSettingsDialog::menuFitsLongerPageTitles()
     QCOMPARE(nav->currentItem()->text(), longTitle);
     dialog.show();
     QVERIFY(QTest::qWaitForWindowExposed(&dialog));
-    QVERIFY(nav->width() > 196);
+    QVERIFY(nav->width() > englishWidth);
     QVERIFY(!nav->verticalScrollBar()->isVisible());
     const int needed = nav->iconSize().width() + nav->fontMetrics().horizontalAdvance(longTitle);
     QVERIFY2(nav->viewport()->width() >= needed, "The longest page title must fit the menu.");

@@ -143,15 +143,16 @@ private slots:
         s.uiLanguage = QStringLiteral("zh_CN");
         QVERIFY(s.save());
         QCOMPARE(mervin::Settings::load().uiLanguage, QStringLiteral("zh_CN"));
-        QFile file(mervin::ConfigPaths::configFile());
-        QVERIFY(file.open(QIODevice::ReadOnly));
-        const QByteArray saved = file.readAll();
-        QVERIFY(saved.contains("ui_language = "));
-        QVERIFY(saved.contains("zh_CN"));
 
         s.uiLanguage = QStringLiteral("pt_BR");
         QVERIFY(s.save());
         QCOMPARE(mervin::Settings::load().uiLanguage, QStringLiteral("pt_BR"));
+        // Read last: Windows won't replace a file that is open.
+        QFile file(mervin::ConfigPaths::configFile());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray saved = file.readAll();
+        QVERIFY(saved.contains("ui_language = "));
+        QVERIFY(saved.contains("pt_BR"));
         mervin::ConfigPaths::setOverrideDir({});
     }
 
