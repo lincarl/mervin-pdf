@@ -60,7 +60,11 @@ public static class MervinInstallerUi
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumCallback callback, IntPtr argument);
     [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr parent, EnumCallback callback, IntPtr argument);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
-    [DllImport("user32.dll")] private static extern bool GetGUIThreadInfo(uint threadId, ref GuiThreadInfo info);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool GetGUIThreadInfo(uint threadId, ref GuiThreadInfo info);
+    [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool AttachThreadInput(uint source, uint target, bool attach);
+    [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr SetFocus(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern bool IsWindowEnabled(IntPtr hwnd);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int capacity);
@@ -118,23 +122,59 @@ public static class MervinInstallerUi
     public static void SetText(IntPtr hwnd, string text)
     {
         IntPtr result;
-        if (SendTextTimeout(hwnd, 0x000C, IntPtr.Zero, text, 2, 5000, out result) == IntPtr.Zero || result == IntPtr.Zero)
+        // Replace the selection as an edit so MSI receives change notifications
+        // and the modification flag is set. WM_SETTEXT clears that flag.
+        if (SendMessageTimeout(hwnd, 0x00B1, IntPtr.Zero, new IntPtr(-1), 2, 5000, out result) == IntPtr.Zero)
+            throw new InvalidOperationException("The folder field did not select its contents.");
+        if (SendTextTimeout(hwnd, 0x00C2, new IntPtr(1), text, 2, 5000, out result) == IntPtr.Zero)
             throw new InvalidOperationException("The folder field did not accept its value.");
+        if (SendMessageTimeout(hwnd, 0x00B8, IntPtr.Zero, IntPtr.Zero, 2, 5000, out result) == IntPtr.Zero || result == IntPtr.Zero)
+            throw new InvalidOperationException("The folder field did not register its contents as modified.");
+    }
+    private static string DescribeFocus(uint thread, IntPtr dialog, IntPtr control)
+    {
+        var info = new GuiThreadInfo { Size = (uint)Marshal.SizeOf(typeof(GuiThreadInfo)) };
+        bool available = GetGUIThreadInfo(thread, ref info);
+        int error = Marshal.GetLastWin32Error();
+        return String.Format("thread={0}, dialog=0x{1:X}, requested=0x{2:X}, active=0x{3:X}, focus=0x{4:X}, foreground=0x{5:X}, infoAvailable={6}, infoError={7}",
+            thread, dialog.ToInt64(), control.ToInt64(), info.Active.ToInt64(), info.Focus.ToInt64(), GetForegroundWindow().ToInt64(), available, error);
     }
     public static void FocusControl(IntPtr dialog, IntPtr control)
     {
+        // Attach input queues so SetFocus sends real focus gain/loss events to
+        // the other process. MSI does not handle WM_NEXTDLGCTL for PathEdit.
         SetForegroundWindow(dialog);
         uint owner;
-        uint thread = GetWindowThreadProcessId(dialog, out owner);
-        if (!PostMessage(dialog, 0x0028, control, new IntPtr(1)))
-            throw new InvalidOperationException("The dialog did not accept a focus change.");
+        uint thread = GetWindowThreadProcessId(control, out owner);
+        uint caller = GetCurrentThreadId();
+        bool attach = caller != thread;
+        if (attach && !AttachThreadInput(caller, thread, true)) {
+            int error = Marshal.GetLastWin32Error();
+            throw new System.ComponentModel.Win32Exception(error,
+                "Cannot attach input from thread " + caller + ". " + DescribeFocus(thread, dialog, control));
+        }
+        IntPtr previous;
+        int focusError;
+        try {
+            SetForegroundWindow(dialog);
+            previous = SetFocus(control);
+            focusError = Marshal.GetLastWin32Error();
+        } finally {
+            if (attach && !AttachThreadInput(caller, thread, false)) {
+                int error = Marshal.GetLastWin32Error();
+                throw new System.ComponentModel.Win32Exception(error,
+                    "Cannot detach input from thread " + caller + ". " + DescribeFocus(thread, dialog, control));
+            }
+        }
         var watch = System.Diagnostics.Stopwatch.StartNew();
         while (watch.ElapsedMilliseconds < 5000) {
             var info = new GuiThreadInfo { Size = (uint)Marshal.SizeOf(typeof(GuiThreadInfo)) };
             if (GetGUIThreadInfo(thread, ref info) && info.Focus == control) return;
             System.Threading.Thread.Sleep(25);
         }
-        throw new InvalidOperationException("The dialog did not focus the requested control.");
+        throw new InvalidOperationException(String.Format(
+            "The dialog did not focus the requested control. caller={0}, previous=0x{1:X}, focusError={2}, {3}",
+            caller, previous.ToInt64(), focusError, DescribeFocus(thread, dialog, control)));
     }
 }
 '@
