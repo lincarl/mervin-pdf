@@ -538,11 +538,13 @@ QWidget *SettingsDialog::buildGeneralPage()
     recentForm->addRow(QString(), keepMissingCheck_);
     layout->addWidget(recentBox);
 
-    // One setting covers both halves: with it off Mervin never checks on its own,
-    // so there is nothing to download. Check for Updates works either way.
+    // With this setting off Mervin never checks or installs on its own.
+    // Check for Updates still downloads, installs and restarts when an update exists.
     auto *updateBox = groupBox(tr("Updates"), page);
     auto *updateLayout = new QVBoxLayout(updateBox);
-    updatesCheck_ = new QCheckBox(tr("Check for updates at start (every 30 days)"), updateBox);
+    //: Settings checkbox. At startup, if 30 days have passed since the last completed
+    //: check, download and install any new release automatically, then restart the app.
+    updatesCheck_ = new QCheckBox(tr("Update automatically at start (every 30 days)"), updateBox);
     updatesCheck_->setChecked(base_.autoUpdate);
     updateLayout->addWidget(updatesCheck_);
     if (!selfUpdating()) {

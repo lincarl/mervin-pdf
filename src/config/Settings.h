@@ -94,7 +94,7 @@ struct Settings
     // Crash recovery / session restore (M11), on by default
     bool restoreSession = true;
 
-    // Download new releases in the background and offer to install them (see
+    // Download and install new releases automatically, then restart (see
     // Updater). On by default. A new key on purpose: the retired
     // `check_updates_on_startup` defaulted to off and every saved config wrote
     // it, so honouring it would have kept updates off for nearly everyone.

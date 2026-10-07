@@ -183,14 +183,14 @@ set_tests_properties(tst_update_plan PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
-# Exercise download completion/cancellation and modal prompt ownership with
-# local bytes and an isolated settings profile; no network or installer runs.
+# Exercise checks, downloads, automatic installation and cancellation with
+# local replies and an isolated profile. Test-local Installer functions record
+# platform calls without launching installers or changing this machine.
 qt_add_executable(tst_updater tst_updater.cpp
     ${CMAKE_SOURCE_DIR}/src/update/Updater.cpp
     ${CMAKE_SOURCE_DIR}/src/update/Updater.h
     ${CMAKE_SOURCE_DIR}/src/update/UpdatePlan.cpp
     ${CMAKE_SOURCE_DIR}/src/update/UpdatePlan.h
-    ${CMAKE_SOURCE_DIR}/src/update/Installer.cpp
     ${CMAKE_SOURCE_DIR}/src/update/Installer.h
     ${CMAKE_SOURCE_DIR}/src/ui/Theme.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/Theme.h)
