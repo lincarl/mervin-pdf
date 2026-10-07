@@ -311,6 +311,8 @@ jobs:
         run: |
           dotnet tool install --global wix --version 7.0.0
           if ($LASTEXITCODE -ne 0) { throw "Installing WiX failed" }
+          & "$env:USERPROFILE\.dotnet\tools\wix.exe" eula accept wix7
+          if ($LASTEXITCODE -ne 0) { throw "Accepting the WiX EULA failed" }
           & "$env:USERPROFILE\.dotnet\tools\wix.exe" extension add --global WixToolset.UI.wixext/7.0.0
           if ($LASTEXITCODE -ne 0) { throw "Installing WiX UI extension failed" }
           "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8

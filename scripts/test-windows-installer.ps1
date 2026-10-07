@@ -104,7 +104,7 @@ try {
     $beforeDefault = Read-RegistryValue $userChoice 'ProgId'
     $otherHandler = "InstallerTest.OtherPdf.$suffix"
     foreach ($key in @($registeredApps, $openWith)) {
-        New-Item -Path $key -Force | Out-Null
+        if (-not (Test-Path -LiteralPath $key)) { New-Item -Path $key -Force | Out-Null }
         New-ItemProperty -LiteralPath $key -Name $otherHandler -Value 'preserve-other-handler' -PropertyType String | Out-Null
     }
     $tessdata = Join-Path $dataDir 'tessdata'

@@ -18,6 +18,7 @@ winget install --id Microsoft.VisualStudio.2022.BuildTools --source winget --acc
 winget install --id Kitware.CMake     --scope machine --source winget --accept-source-agreements --accept-package-agreements
 winget install --id Ninja-build.Ninja --source winget --accept-source-agreements --accept-package-agreements
 winget install --id WiXToolset.WiXCLI --version 7.0.0.0 --source winget --accept-source-agreements --accept-package-agreements
+wix eula accept wix7
 wix extension add --global WixToolset.UI.wixext/7.0.0
 winget install --id Python.Python.3.12 --source winget --accept-source-agreements --accept-package-agreements
 

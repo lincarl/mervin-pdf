@@ -51,6 +51,7 @@ WiX v6/v7 syntax. Install the CLI and extension:
 
 ```powershell
 winget install -e --id WiXToolset.WiXCLI --version 7.0.0.0
+wix eula accept wix7
 wix extension add --global WixToolset.UI.wixext/7.0.0
 ```
 
