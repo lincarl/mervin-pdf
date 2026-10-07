@@ -1230,8 +1230,7 @@ void SettingsDialog::refreshOcrLanguages(int focusRow)
         removeButton->setObjectName(QStringLiteral("settingsListRemove"));
         removeButton->setAutoRaise(true);
         mervin::icons::setButtonGlyph(removeButton, mervin::icons::Glyph::Delete, 14);
-        // The last model stays: on Linux the bundled English would come straight
-        // back (TessdataManager seeds an empty folder), and OCR needs one anyway.
+        // Keep one installed model available for OCR.
         if (installed.size() == 1) {
             removeButton->setEnabled(false);
             removeButton->setToolTip(tr("OCR needs at least one language"));

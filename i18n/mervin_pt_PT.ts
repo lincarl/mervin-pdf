@@ -2198,6 +2198,11 @@ O ficheiro exportado pode ser visualizado em qualquer visualizador de PDF.</tran
         <translation>Idioma de visualização</translation>
     </message>
     <message>
+        <source>Download OCR</source>
+        <extracomment>First-run checkbox. Download the best OCR language models for the selected display language and OS language after Continue. OCR means text recognition.</extracomment>
+        <translation>Descarregar OCR</translation>
+    </message>
+    <message>
         <source>Make Mervin PDF my default PDF viewer</source>
         <translation>Faça do Mervin PDF o meu visualizador de PDF predefinido</translation>
     </message>

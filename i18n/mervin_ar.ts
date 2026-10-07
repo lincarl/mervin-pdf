@@ -2218,6 +2218,11 @@ The exported file is viewable in any PDF viewer.</source>
         <translation>لغة العرض</translation>
     </message>
     <message>
+        <source>Download OCR</source>
+        <extracomment>First-run checkbox. Download the best OCR language models for the selected display language and OS language after Continue. OCR means text recognition.</extracomment>
+        <translation>تنزيل OCR</translation>
+    </message>
+    <message>
         <source>Make Mervin PDF my default PDF viewer</source>
         <translation>اجعل Mervin PDF عارض PDF الافتراضي الخاص بي</translation>
     </message>

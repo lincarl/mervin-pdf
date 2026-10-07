@@ -2203,6 +2203,11 @@ Is féidir an comhad easpórtáilte a fheiceáil in aon amharcóir PDF.</transla
         <translation>Teanga taispeána</translation>
     </message>
     <message>
+        <source>Download OCR</source>
+        <extracomment>First-run checkbox. Download the best OCR language models for the selected display language and OS language after Continue. OCR means text recognition.</extracomment>
+        <translation>Íoslódáil OCR</translation>
+    </message>
+    <message>
         <source>Make Mervin PDF my default PDF viewer</source>
         <translation>Déan Mervin PDF mar an t-amharcóir PDF réamhshocraithe agam</translation>
     </message>

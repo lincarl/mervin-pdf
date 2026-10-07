@@ -887,8 +887,7 @@ void TstSettingsDialog::removingAnOcrLanguageAsksFirst()
     QVERIFY(dialogButton(&dialog, QDialogButtonBox::Apply)->isEnabled());
 }
 
-// On Linux the bundled English comes back as soon as the folder is empty, so
-// removing the last model would look like it did nothing. It cannot be removed.
+// Keep at least one installed OCR language available through the settings UI.
 void TstSettingsDialog::theLastOcrLanguageStays()
 {
     QVERIFY(QFile::remove(tessdataPath("swe")));

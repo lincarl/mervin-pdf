@@ -2198,6 +2198,11 @@ Den eksporterte fila kan visast i alle PDF-lesarar.</translation>
         <translation>Visingsspråk</translation>
     </message>
     <message>
+        <source>Download OCR</source>
+        <extracomment>First-run checkbox. Download the best OCR language models for the selected display language and OS language after Continue. OCR means text recognition.</extracomment>
+        <translation>Last ned OCR</translation>
+    </message>
+    <message>
         <source>Make Mervin PDF my default PDF viewer</source>
         <translation>Bruk Mervin PDF som standard PDF-lesar</translation>
     </message>

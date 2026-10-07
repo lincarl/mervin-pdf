@@ -2203,6 +2203,11 @@ The exported file is viewable in any PDF viewer.</source>
         <translation>Јазик на прикажување</translation>
     </message>
     <message>
+        <source>Download OCR</source>
+        <extracomment>First-run checkbox. Download the best OCR language models for the selected display language and OS language after Continue. OCR means text recognition.</extracomment>
+        <translation>Преземи OCR</translation>
+    </message>
+    <message>
         <source>Make Mervin PDF my default PDF viewer</source>
         <translation>Направете го Mervin PDF мојот стандарден прегледувач на PDF</translation>
     </message>

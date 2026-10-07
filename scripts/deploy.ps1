@@ -5,10 +5,9 @@
 
 .DESCRIPTION
   Runs windeployqt to gather Qt's DLLs/plugins, stages app-local VC runtime DLLs, copies the
-  vcpkg-built qpdf and its dependency DLLs next to the exe, and (if present)
-  stages eng.traineddata for the installer to drop into the per-user tessdata
-  folder. MuPDF is statically linked into MervinPDF.exe, so no MuPDF DLL is
-  needed.
+  vcpkg-built qpdf and its dependency DLLs next to the exe. MuPDF is statically
+  linked into MervinPDF.exe, so no MuPDF DLL is needed. OCR language models are
+  downloaded by the application and are not included in the installer.
 
   Run from a VS Dev Shell with QT6_DIR set. The release build is the GUI
   subsystem (no console) by default; this script asserts the staged exe is a
@@ -98,17 +97,6 @@ if (Test-Path $vbin) {
     Get-ChildItem (Join-Path $vbin "*.dll") | ForEach-Object { Copy-Item $_.FullName $deploy }
 }
 
-# English OCR data the installer seeds into the per-user tessdata folder. The
-# copy tracked in the repo (resources\tessdata) is the canonical source so every
-# build ships a language out of the box; a developer's own %APPDATA% copy is only
-# a fallback. Without this, a fresh machine would package no OCR language at all.
-$tessData = $null
-$tessRepo = Join-Path $root "resources\tessdata\eng.traineddata"
-$tessUser = Join-Path $env:APPDATA "MervinPDF\tessdata\eng.traineddata"
-if (Test-Path $tessRepo)     { $tessData = $tessRepo }
-elseif (Test-Path $tessUser) { $tessData = $tessUser }
-else { Write-Warning "eng.traineddata not found (resources\tessdata or %APPDATA%); the installer will ship without an OCR language." }
-
 # Carry the application and dependency license texts alongside the app.
 Copy-Item (Join-Path $root "LICENSE") $deploy
 Copy-Item (Join-Path $root "THIRD_PARTY_LICENSES.md") $deploy
@@ -154,7 +142,6 @@ if ($Installer) {
                  "-d", "Version=$msiVersion", "-d", "DisplayVersion=$Version",
                  "-d", "DeployDir=$deploy", "-d", "IconFile=$icon",
                  "-d", "DirectoryCleanup=$cleanupFile")
-    if ($tessData) { $wixArgs += @("-d", "TessData=$tessData") }
     $wixArgs += @("-o", $msi, $wxs)
     & $wix @wixArgs
     if ($LASTEXITCODE -ne 0) { throw "wix build failed ($LASTEXITCODE)" }

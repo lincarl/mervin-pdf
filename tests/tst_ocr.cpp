@@ -1,4 +1,4 @@
-#include "ocr/TessdataManager.h"
+#include "ocr/TessdataFile.h"
 #include "render/Document.h"
 #include "render/OcrService.h"
 #include "render/RenderEngine.h"
@@ -13,13 +13,8 @@
 using mervin::OcrService;
 using mervin::RenderEngine;
 
-// OCR drives MuPDF's bundled Tesseract over a re-rendered region, so a real
-// test needs both a PDF and a language model. The language model ships in the
-// repository; the PDF is an optional local fixture, and MERVIN_TEST_PDF can
-// override it.
-//
-// It used to QSKIP unless MERVIN_TEST_PDF was set, which is how a corrupt
-// shipped eng.traineddata went unnoticed for six weeks - see tst_tessdata.
+// OCR drives MuPDF's bundled Tesseract over a re-rendered region. CMake generates
+// the PDF fixture and fetch-test-tessdata.py supplies a pinned test-only model.
 class TstOcr : public QObject
 {
     Q_OBJECT
@@ -30,20 +25,13 @@ private slots:
 
 namespace {
 
-// The tessdata folder to OCR against: prefer the one in the source tree, so the
-// test exercises the data we actually ship rather than whatever the developer
-// happens to have installed. Falls back to the user's folder for trees that
-// strip the model (some Linux source packages do).
+// Use test data only. Never fall back to an installed application's profile.
 QString tessdataDirForTest()
 {
-#ifdef MERVIN_TESSDATA_DIR
-    const QString shipped = QString::fromUtf8(MERVIN_TESSDATA_DIR);
-    if (QFileInfo::exists(QDir(shipped).filePath(QStringLiteral("eng.traineddata"))))
-        return shipped;
-#endif
-    if (mervin::TessdataManager::installedLanguages().contains(QStringLiteral("eng")))
-        return mervin::TessdataManager::directory();
-    return {};
+    const QString override = qEnvironmentVariable("MERVIN_TEST_TESSDATA_DIR");
+    if (!override.isEmpty())
+        return override;
+    return QString::fromUtf8(MERVIN_TEST_TESSDATA_DIR);
 }
 
 } // namespace
@@ -61,8 +49,11 @@ void TstOcr::recognizesTextOnFirstPage()
         QSKIP("the OCR test document is not present in this tree");
 
     const QString tessdata = tessdataDirForTest();
-    if (tessdata.isEmpty())
-        QSKIP("no eng.traineddata in the source tree or the tessdata folder");
+    const QString model = QDir(tessdata).filePath(QStringLiteral("eng.traineddata"));
+    QVERIFY2(QFileInfo::exists(model),
+             "Run scripts/fetch-test-tessdata.py and set MERVIN_TEST_TESSDATA_DIR to its output directory");
+    QString modelError;
+    QVERIFY2(mervin::TessdataFile::validate(model, &modelError), qPrintable(modelError));
 
     RenderEngine engine;
     QString err;

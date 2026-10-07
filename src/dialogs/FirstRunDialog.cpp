@@ -57,6 +57,11 @@ FirstRunDialog::FirstRunDialog(bool offerDefaultApp, QWidget *parent)
     form->addRow(languageLabel_, combo_);
     column->addLayout(form);
 
+    downloadOcrCheck_ = new QCheckBox(this);
+    downloadOcrCheck_->setObjectName(QStringLiteral("downloadOcr"));
+    downloadOcrCheck_->setChecked(true);
+    column->addWidget(downloadOcrCheck_);
+
     if (offerDefaultApp) {
         defaultAppCheck_ = new QCheckBox(this);
         defaultAppCheck_->setObjectName(QStringLiteral("makeDefaultPdfApp"));
@@ -106,6 +111,11 @@ bool FirstRunDialog::makeDefaultApp() const
     return defaultAppCheck_ && defaultAppCheck_->isChecked();
 }
 
+bool FirstRunDialog::downloadOcr() const
+{
+    return downloadOcrCheck_->isChecked();
+}
+
 void FirstRunDialog::changeEvent(QEvent *event)
 {
     if (event->type() == QEvent::LanguageChange)
@@ -119,6 +129,9 @@ void FirstRunDialog::retranslate()
     languageLabel_->setText(tr("Display language:"));
     //: Accessible name of the picker for the language of Mervin's own text.
     combo_->setAccessibleName(tr("Display language"));
+    //: First-run checkbox. Download the best OCR language models for the selected
+    //: display language and OS language after Continue. OCR means text recognition.
+    downloadOcrCheck_->setText(tr("Download OCR"));
     if (defaultAppCheck_) {
         defaultAppCheck_->setText(tr("Make Mervin PDF my default PDF viewer"));
         //: Shown under the default PDF viewer checkbox. Windows Settings is the system app.

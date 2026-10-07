@@ -2203,6 +2203,11 @@ Izvezena datoteka može da se prikaže u svakom PDF pregledniku.</translation>
         <translation>Jezik prikaza</translation>
     </message>
     <message>
+        <source>Download OCR</source>
+        <extracomment>First-run checkbox. Download the best OCR language models for the selected display language and OS language after Continue. OCR means text recognition.</extracomment>
+        <translation>Preuzmi OCR</translation>
+    </message>
+    <message>
         <source>Make Mervin PDF my default PDF viewer</source>
         <translation>Postavi Mervin PDF kao moj podrazumijevani PDF preglednik</translation>
     </message>

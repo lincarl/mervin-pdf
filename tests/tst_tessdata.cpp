@@ -5,30 +5,22 @@
 #include <QByteArray>
 #include <QDir>
 #include <QFile>
-#include <QFileInfo>
 #include <QString>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QtEndian>
 
 namespace TessdataFile = mervin::TessdataFile;
 
-// Guard rail for the language data the installers ship, and for the validator
-// that stands between a damaged model and Tesseract.
-//
-// This exists because of a real shipped defect: a repo-wide em-dash purge
-// (commit da2e02d) rewrote two U+2014 bytes inside the binary
-// resources/tessdata/eng.traineddata to '-'. That shrank the file by 4 bytes
-// without updating the container's offset table and left the LSTM unicharset
-// listing "-" twice, which made Tesseract write past the end of a std::vector
-// and abort the whole process on the first OCR. Nothing in the suite noticed,
-// because the only OCR test skipped itself unless an env var was set.
+// Validate the container and character tables before damaged language models can
+// reach Tesseract. Generated fixtures keep these checks independent of downloads.
 class TstTessdata : public QObject
 {
     Q_OBJECT
 
 private slots:
     void initTestCase();
-    void shippedEngModelIsLoadable();
+    void acceptsValidContainer();
     void rejectsEmDashPurgedModel();
     void rejectsTruncatedModel();
     void rejectsFileThatIsNotTessdata();
@@ -39,13 +31,19 @@ private slots:
 
 namespace {
 
-QString shippedEng()
+// A minimal container with a real LSTM unicharset component. The validator does
+// not parse neural network data, so this is deliberately not an OCR model.
+QByteArray validContainer()
 {
-#ifdef MERVIN_TESSDATA_ENG
-    return QString::fromUtf8(MERVIN_TESSDATA_ENG);
-#else
-    return {};
-#endif
+    constexpr quint32 count = 22;
+    constexpr qsizetype headerSize = sizeof(quint32) + count * sizeof(qint64);
+    QByteArray bytes(headerSize, '\0');
+    qToLittleEndian<quint32>(count, bytes.data());
+    for (quint32 slot = 0; slot < count; ++slot)
+        qToLittleEndian<qint64>(slot == 21 ? headerSize : -1,
+                               bytes.data() + sizeof(quint32) + slot * sizeof(qint64));
+    bytes += "3\n- 0 Common 0\n\xE2\x80\x94 0 Common 1\nA 3 Latin 2\n";
+    return bytes;
 }
 
 // Write `bytes` into `dir` as eng.traineddata and return the path.
@@ -91,36 +89,26 @@ void TstTessdata::languageNamesAreFriendly()
     mervin::i18n::apply(QStringLiteral("en"));
 }
 
-// The file every installer seeds into the user's tessdata folder must be data
-// Tesseract can actually load. This is the check that would have caught the
-// corruption on any machine, with no language installed and no OCR run.
-void TstTessdata::shippedEngModelIsLoadable()
+void TstTessdata::acceptsValidContainer()
 {
-    const QString eng = shippedEng();
-    if (eng.isEmpty() || !QFileInfo::exists(eng))
-        QSKIP("resources/tessdata/eng.traineddata is not present in this tree");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeModel(dir.path(), validContainer());
+    QVERIFY(!path.isEmpty());
 
     QString err;
-    QVERIFY2(TessdataFile::validate(eng, &err), qPrintable(err));
+    QVERIFY2(TessdataFile::validate(path, &err), qPrintable(err));
+    QVERIFY2(TessdataFile::validateLanguages(dir.path(), {QStringLiteral("eng")}, &err),
+             qPrintable(err));
 }
 
-// The exact damage that shipped: every em-dash rewritten to a hyphen. The
-// container stays structurally plausible - only the duplicated unichar gives it
-// away - so this is the case a size or offset check alone would wave through.
+// Replacing an em dash with a hyphen once damaged a shipped model. Duplicate
+// unichars can make Tesseract abort even when the container offsets look valid.
 void TstTessdata::rejectsEmDashPurgedModel()
 {
-    const QString eng = shippedEng();
-    if (eng.isEmpty() || !QFileInfo::exists(eng))
-        QSKIP("resources/tessdata/eng.traineddata is not present in this tree");
-
-    QFile src(eng);
-    QVERIFY(src.open(QIODevice::ReadOnly));
-    const QByteArray good = src.readAll();
-    src.close();
-
+    const QByteArray good = validContainer();
     const QByteArray purged = QByteArray(good).replace("\xE2\x80\x94", "-");
-    QVERIFY2(purged != good, "the shipped model has no em-dash to purge - fixture is stale");
-    QCOMPARE(purged.size(), good.size() - 4); // two 3-byte sequences to 1 byte each
+    QCOMPARE(purged.size(), good.size() - 2);
 
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -128,28 +116,17 @@ void TstTessdata::rejectsEmDashPurgedModel()
     QVERIFY(!path.isEmpty());
 
     QString err;
-    QVERIFY2(!TessdataFile::validate(path, &err), "em-dash-purged model was accepted");
+    QVERIFY2(!TessdataFile::validate(path, &err), "duplicate unichar was accepted");
     QVERIFY2(err.contains(QStringLiteral("twice")), qPrintable(err));
 
-    // And the same file must be rejected through the by-language entry point the
-    // OCR service actually calls.
     QString langErr;
     QVERIFY(!TessdataFile::validateLanguages(dir.path(), {QStringLiteral("eng")}, &langErr));
     QVERIFY(!langErr.isEmpty());
 }
 
-// A half-finished copy: offsets point past the end of the file.
 void TstTessdata::rejectsTruncatedModel()
 {
-    const QString eng = shippedEng();
-    if (eng.isEmpty() || !QFileInfo::exists(eng))
-        QSKIP("resources/tessdata/eng.traineddata is not present in this tree");
-
-    QFile src(eng);
-    QVERIFY(src.open(QIODevice::ReadOnly));
-    const QByteArray good = src.readAll();
-    src.close();
-
+    const QByteArray good = validContainer();
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString path = writeModel(dir.path(), good.left(good.size() / 2));

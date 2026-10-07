@@ -2198,6 +2198,11 @@ La datoteca exportada po vegnir mussada en mintga lectur PDF.</translation>
         <translation>Lingua da visualisaziun</translation>
     </message>
     <message>
+        <source>Download OCR</source>
+        <extracomment>First-run checkbox. Download the best OCR language models for the selected display language and OS language after Continue. OCR means text recognition.</extracomment>
+        <translation>Telechargiar OCR</translation>
+    </message>
+    <message>
         <source>Make Mervin PDF my default PDF viewer</source>
         <translation>Definir Mervin PDF sco mes lectur PDF predefinì</translation>
     </message>

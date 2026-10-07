@@ -579,6 +579,11 @@ void TstTranslationLayout::firstRun()
         mervin::FirstRunDialog dialog(offerDefaultApp);
         inspect(dialog, offerDefaultApp ? QStringLiteral("Welcome with default-app option")
                                        : QStringLiteral("Welcome"));
+        auto *download = dialog.findChild<QCheckBox *>(QStringLiteral("downloadOcr"));
+        QVERIFY(download);
+        QVERIFY(download->isChecked());
+        download->setChecked(false);
+        inspect(dialog, QStringLiteral("Welcome without OCR download"));
     }
 }
 

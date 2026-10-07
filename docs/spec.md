@@ -94,7 +94,11 @@ The result opens in an editable dialog with line-break, trim, and copy controls.
 
 OCR requires an installed Tesseract language model:
 
-- English is bundled with the application.
+- Language models are downloaded separately and are not included in installers.
+- On first start, **Download OCR** is checked by default. Continue downloads the
+  best models matching the selected display language and primary OS language,
+  once per distinct model. Unsupported languages are skipped. Failed, stalled or
+  interrupted downloads fail silently and are not retried on later launches.
 - The Manage OCR languages dialog can download and remove official
   `tessdata_best` models and choose the default language. Settings > OCR lists the
   installed models, removes them, chooses the default and opens the same manager.

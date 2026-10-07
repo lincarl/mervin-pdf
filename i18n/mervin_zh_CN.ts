@@ -2193,6 +2193,11 @@ The exported file is viewable in any PDF viewer.</source>
         <translation>显示语言</translation>
     </message>
     <message>
+        <source>Download OCR</source>
+        <extracomment>First-run checkbox. Download the best OCR language models for the selected display language and OS language after Continue. OCR means text recognition.</extracomment>
+        <translation>下载 OCR</translation>
+    </message>
+    <message>
         <source>Make Mervin PDF my default PDF viewer</source>
         <translation>将 Mervin PDF 设为默认 PDF 查看器</translation>
     </message>

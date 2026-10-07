@@ -30,9 +30,9 @@ user's chosen default.
 Uninstall removes installed application files, empty application folders, the shortcut and Mervin's PDF
 handler registration. It removes only Mervin's values from shared registry keys,
 preserving other PDF handlers. Preferences, recent files and OCR languages under
-`%APPDATA%\MervinPDF` are user data and remain intact. The packaged
-`eng.traineddata` component is permanent and never overwrites an existing English
-model. Other downloaded languages are not tracked by MSI.
+`%APPDATA%\MervinPDF` are user data and remain intact. The installer includes no
+OCR language models. Existing English models from older installers remain
+permanent user data, and downloaded languages are not tracked by MSI.
 
 Major upgrades replace the previous MSI installation and block downgrades. Keep
 the `UpgradeCode` (`A1E04BD8-CF2C-4B78-9506-C72EBCD29617`) fixed across versions or

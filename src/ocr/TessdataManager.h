@@ -5,10 +5,9 @@
 
 namespace mervin {
 
-// Manages the Tesseract language-data folder (%APPDATA%/MervinPDF/tessdata/).
-// The app never downloads data itself (no-network-by-default posture); the user
-// drops .traineddata files into the folder. This class just locates the folder,
-// lists installed languages, and points the user at the official repository.
+// Locates the writable Tesseract language-data folder in the user profile, lists
+// installed models, and points the user at the official repository. Downloads
+// and manually supplied .traineddata files share this folder.
 namespace TessdataManager {
 
 // The tessdata directory (created if missing).

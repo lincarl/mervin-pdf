@@ -110,11 +110,10 @@ try {
     Assert-Installer ($version.Build -lt 65535) 'The test needs room for a higher MSI version.'
     $upgradeVersion = '{0}.{1}.{2}' -f $version.Major, $version.Minor, ($version.Build + 1)
     $upgradeMsi = Join-Path $work 'MervinPDF-upgrade-test.msi'
-    $bundledModel = Join-Path $repository 'resources\tessdata\eng.traineddata'
     & wix build -arch x64 -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext `
         -d "Version=$upgradeVersion" -d "DisplayVersion=$($metadata.version) upgrade verification" `
         -d "DeployDir=$build\deploy" -d "IconFile=$repository\resources\icons\mervin-icon.ico" `
-        -d "DirectoryCleanup=$build\generated\installer-remove-folders.wxi" -d "TessData=$bundledModel" `
+        -d "DirectoryCleanup=$build\generated\installer-remove-folders.wxi" `
         -o $upgradeMsi "$repository\packaging\wix\mervin.wxs"
     Assert-Installer ($LASTEXITCODE -eq 0) 'Building the verification-only upgrade MSI failed.'
 
@@ -135,7 +134,8 @@ auto_update = false
 restore_session = true
 '@ | Set-Content -LiteralPath $settings -Encoding utf8
     $extraModel = Join-Path $tessdata 'eng_custom.traineddata'
-    Copy-Item -LiteralPath $bundledModel -Destination $extraModel
+    # Opaque user bytes are enough to test preservation; this account never runs OCR.
+    [IO.File]::WriteAllBytes($extraModel, [byte[]](1, 3, 5, 7, 9))
     $settingsHash = (Get-FileHash -LiteralPath $settings).Hash
     $modelHash = (Get-FileHash -LiteralPath $extraModel).Hash
 
@@ -159,8 +159,9 @@ restore_session = true
     Assert-Installer ((Read-RegistryValue "$progIdKey\shell\open\command" '') -eq "`"$exe`" `"%1`"") 'PDF open command does not quote the installed path.'
     Assert-Installer ((Read-RegistryValue $openWith 'MervinPDF.Document') -eq '') 'Open with registration is missing.'
     Assert-Installer ((Read-RegistryValue $userChoice 'ProgId') -eq $beforeDefault) 'Installation changed the default PDF handler.'
-    $seededModel = Join-Path $tessdata 'eng.traineddata'
-    Assert-Installer ((Get-FileHash -LiteralPath $seededModel).Hash -eq $modelHash) 'Bundled English OCR model was not seeded.'
+    $englishModel = Join-Path $tessdata 'eng.traineddata'
+    Assert-Installer (-not (Test-Path -LiteralPath $englishModel)) 'Installer unexpectedly supplied an English OCR model.'
+    Assert-Installer (@(Get-ChildItem -LiteralPath $installDir -Filter '*.traineddata' -Recurse).Count -eq 0) 'Application payload contains an OCR model.'
 
     # Start the installed payload with its own state and a bounded normal exit.
     $launchEnvironment = @{}
@@ -185,16 +186,17 @@ restore_session = true
     if (-not $app.WaitForExit(60000)) { $app.Kill($true); throw 'Installed application failed to exit after startup.' }
     Assert-Installer ($app.ExitCode -eq 0) "Installed application failed with exit code $($app.ExitCode)."
 
-    # Preserve a valid user model, including its timestamp, across replacement.
-    (Get-Item -LiteralPath $seededModel).LastWriteTimeUtc = [datetime]'2001-01-01T00:00:00Z'
-    $modelTimestamp = (Get-Item -LiteralPath $seededModel).LastWriteTimeUtc
+    # Simulate an existing English model and preserve its bytes and timestamp.
+    Copy-Item -LiteralPath $extraModel -Destination $englishModel
+    (Get-Item -LiteralPath $englishModel).LastWriteTimeUtc = [datetime]'2001-01-01T00:00:00Z'
+    $modelTimestamp = (Get-Item -LiteralPath $englishModel).LastWriteTimeUtc
     Invoke-Msi 'upgrade' @('/i', "`"$upgradeMsi`"")
     Assert-Installer ((Read-RegistryValue $installKey 'InstallDir').TrimEnd('\') -eq $installDir) 'Upgrade lost the custom destination.'
     Assert-Installer (Test-Path -LiteralPath $exe) 'Upgrade did not install to the recorded destination.'
     Assert-Installer (-not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Mervin PDF'))) 'Upgrade created a second default installation.'
     $registration = @(Find-MervinRegistration)
     Assert-Installer ($registration.Count -eq 1 -and $registration[0].Version -eq $upgradeVersion) 'Upgrade left an incorrect product registration.'
-    Assert-Installer ((Get-Item -LiteralPath $seededModel).LastWriteTimeUtc -eq $modelTimestamp) 'Upgrade overwrote the existing OCR model.'
+    Assert-Installer ((Get-Item -LiteralPath $englishModel).LastWriteTimeUtc -eq $modelTimestamp) 'Upgrade overwrote the existing OCR model.'
     Invoke-Msi 'downgrade' @('/i', "`"$msiPath`"") @(1603, 1638)
     Assert-Installer (Select-String -LiteralPath "$work\downgrade.log" -SimpleMatch -Quiet `
         'A newer version of Mervin PDF is already installed.') 'Downgrade failed for an unexpected reason.'
@@ -216,15 +218,15 @@ restore_session = true
         Assert-Installer ((Read-RegistryValue $key $otherHandler) -eq 'preserve-other-handler') 'Uninstall removed another PDF handler.'
     }
     Assert-Installer ((Get-FileHash -LiteralPath $settings).Hash -eq $settingsHash) 'Settings changed or were removed.'
-    foreach ($model in @($extraModel, $seededModel)) {
+    foreach ($model in @($extraModel, $englishModel)) {
         Assert-Installer ((Get-FileHash -LiteralPath $model).Hash -eq $modelHash) 'An OCR model changed or was removed.'
     }
-    Assert-Installer ((Get-Item -LiteralPath $seededModel).LastWriteTimeUtc -eq $modelTimestamp) 'Repair or uninstall overwrote the existing OCR model.'
+    Assert-Installer ((Get-Item -LiteralPath $englishModel).LastWriteTimeUtc -eq $modelTimestamp) 'Repair or uninstall overwrote the existing OCR model.'
     Assert-Installer ((Read-RegistryValue $userChoice 'ProgId') -eq $beforeDefault) 'Uninstall changed the default PDF handler.'
 
     # Remove only synthetic user data and neighboring values after success.
     foreach ($key in @($registeredApps, $openWith)) { Remove-ItemProperty -LiteralPath $key -Name $otherHandler }
-    Remove-Item -LiteralPath $settings, $extraModel, $seededModel
+    Remove-Item -LiteralPath $settings, $extraModel, $englishModel
     foreach ($dir in @($tessdata, $dataDir)) {
         if (@(Get-ChildItem -LiteralPath $dir -Force).Count -eq 0) { Remove-Item -LiteralPath $dir }
     }

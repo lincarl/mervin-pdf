@@ -12,8 +12,6 @@
     -d DeployDir=<dir>     staged application tree (exe + Qt/qpdf DLLs)
     -d IconFile=<file>     mervin-icon.ico for the ARP entry + Start-menu shortcut
     -d DirectoryCleanup=<file> generated empty-directory removal entries
-  Optional:
-    -d TessData=<file>     eng.traineddata to seed %APPDATA%\MervinPDF\tessdata
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package
@@ -64,9 +62,6 @@
     <Feature Id="Main" Title="Mervin PDF" Level="1">
       <ComponentGroupRef Id="AppPayload" />
       <ComponentGroupRef Id="PdfRegistration" />
-<?ifdef TessData ?>
-      <ComponentGroupRef Id="UserData" />
-<?endif?>
     </Feature>
   </Package>
 
@@ -77,12 +72,6 @@
       <Directory Id="INSTALLFOLDER" Name="Mervin PDF" />
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder" />
-    <StandardDirectory Id="AppDataFolder">
-      <!-- %APPDATA%\MervinPDF (no space) - where the app reads config + tessdata -->
-      <Directory Id="AppDataMervin" Name="MervinPDF">
-        <Directory Id="AppDataTessdata" Name="tessdata" />
-      </Directory>
-    </StandardDirectory>
   </Fragment>
 
   <!-- == Application payload == -->
@@ -140,20 +129,6 @@
       </Component>
     </ComponentGroup>
   </Fragment>
-
-  <!-- == Seeded per-user OCR language == -->
-<?ifdef TessData ?>
-  <Fragment>
-    <ComponentGroup Id="UserData">
-      <Component Id="TessdataEng" Directory="AppDataTessdata" Guid="*"
-                 Permanent="yes" NeverOverwrite="yes">
-        <File Id="EngTraineddata" Source="$(var.TessData)" KeyPath="yes" />
-        <!-- OCR models are user data. Preserve existing English data, downloaded
-             languages, settings and recent files on upgrade and uninstall. -->
-      </Component>
-    </ComponentGroup>
-  </Fragment>
-<?endif?>
 
   <!-- Reuse WixUI's native dialogs with our own navigation. No license
        acceptance page is needed; license texts ship with the application. -->
