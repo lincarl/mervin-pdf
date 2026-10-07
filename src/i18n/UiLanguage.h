@@ -25,8 +25,9 @@ QString normalized(const QString &code, const QStringList &available);
 // QLocale::uiLanguages() lists them) that one of `available` can show:
 // same language and script, preferring the same territory. A Chinese region
 // matches the catalog with its script (zh-HK gives zh_TW), and a regional
-// variant matches the base catalog (de-AT gives de). English when nothing
-// matches.
+// variant matches the base catalog (de-AT gives de). The first tag of a
+// language decides its script, so a later "zh" or zh-Hans-CN can't turn
+// zh-Hant-TW into Simplified Chinese. English when nothing matches.
 QString suggestedLanguage(const QStringList &osLanguages, const QStringList &available);
 
 // suggestedLanguage() for this user's OS languages and this build.

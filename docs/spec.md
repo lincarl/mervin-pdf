@@ -197,7 +197,8 @@ The interface is available in English, Swedish, and Simplified Chinese. The firs
 time Mervin starts without a saved display language (a new install, or the first
 start after updating from a version without language support), a welcome window
 appears before any other. Its display language picker starts at the first
-language in the OS preference list that Mervin offers, or English, and picking
+language in the OS preference list that Mervin offers in the same script, or
+English, so Traditional Chinese systems start at English, and picking
 another switches the window to it at once. On Windows, when Mervin is not the
 default PDF viewer and has not offered this before, the window also has a ticked
 "Make Mervin PDF my default PDF viewer" checkbox; Continue then opens the system

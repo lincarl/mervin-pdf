@@ -4,6 +4,7 @@
 
 #include <QCoreApplication>
 #include <QGuiApplication>
+#include <QLocale>
 #include <QTest>
 
 namespace i18n = mervin::i18n;
@@ -60,6 +61,26 @@ private slots:
         // Traditional Chinese readers don't get the Simplified catalog.
         QTest::newRow("Hong Kong") << QStringList{"zh-HK"} << shipped << "en";
         QTest::newRow("Taiwan, then Swedish") << QStringList{"zh-TW", "sv"} << shipped << "sv";
+        // The lists as Qt makes them end with the bare "zh", which alone means
+        // Simplified. After a Traditional tag it must not pick Simplified.
+        const auto qtList = [](QLocale::Script script, QLocale::Territory territory) {
+            return QLocale(QLocale::Chinese, script, territory).uiLanguages();
+        };
+        QTest::newRow("Qt's Taiwan list")
+            << qtList(QLocale::TraditionalHanScript, QLocale::Taiwan) << shipped << "en";
+        QTest::newRow("Qt's Hong Kong list")
+            << qtList(QLocale::TraditionalHanScript, QLocale::HongKong) << shipped << "en";
+        QTest::newRow("Qt's Singapore list")
+            << qtList(QLocale::SimplifiedHanScript, QLocale::Singapore) << shipped << "zh_CN";
+        // Debian's default LANGUAGE=zh_TW:zh, where Qt expands "zh" to zh-Hans-CN.
+        QTest::newRow("Debian's Taiwan list")
+            << QStringList{"zh-Hant-TW", "zh-TW", "zh-Hant", "zh-Hans-CN", "zh-CN", "zh-Hans", "zh"}
+            << shipped << "en";
+        // The first Chinese tag decides the script, whichever comes first.
+        QTest::newRow("Traditional, then Simplified")
+            << QStringList{"zh-Hant-TW", "zh-Hans-CN"} << shipped << "en";
+        QTest::newRow("Simplified, then Traditional")
+            << QStringList{"zh-Hans-CN", "zh-Hant-TW"} << shipped << "zh_CN";
         QTest::newRow("not shipped") << QStringList{"nb-NO", "fr-FR"} << shipped << "en";
         QTest::newRow("C locale") << QStringList{"C"} << shipped << "en";
         QTest::newRow("empty list") << QStringList{} << shipped << "en";
