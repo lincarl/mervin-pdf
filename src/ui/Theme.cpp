@@ -226,6 +226,8 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
 
     // ── Generic controls (reach the dialogs too, via the app-level sheet) ────
     add(QStringLiteral("QDialog, QMessageBox { background:%1; }").arg(css(t.window)));
+    // Suppress platform-provided action icons while keeping explicitly assigned icons.
+    add(QStringLiteral("QDialogButtonBox { dialogbuttonbox-buttons-have-icons: 0; }"));
 
     add(QStringLiteral("QPushButton { background:%1; color:%2; border:1px solid %3;"
                        " border-radius:%4; padding:6px 14px; }")
