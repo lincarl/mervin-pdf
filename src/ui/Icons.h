@@ -26,7 +26,8 @@ enum class Glyph {
     Search,        // search
     ZoomOut,       // minus
     ZoomIn,        // plus
-    FitMode,       // fullscreen: the fit page / fit width toggle
+    FitPage,       // square with an inset move-vertical arrow
+    FitWidth,      // square with an inset move-horizontal arrow
     RotateLeft,    // rotate-ccw
     RotateRight,   // rotate-cw (also Document > Rotate pages)
     Print,         // printer
@@ -39,8 +40,6 @@ enum class Glyph {
     Menu,          // menu
 
     // Hamburger menu
-    FitPage,          // shrink
-    FitWidth,         // move-horizontal
     FullScreen,       // maximize
     ContinuousScroll, // gallery-vertical
     SinglePage,       // rectangle-vertical

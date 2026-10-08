@@ -109,6 +109,8 @@ private slots:
     void inkColourIsHonoured();
     void relatedGlyphsAreDistinct_data();
     void relatedGlyphsAreDistinct();
+    void fitArrowsStayInsideSquare();
+    void fitGlyphRenderingHonoursOptions();
     void rotateArrowsMirrorEachOther();
     void badgeAddsInkToTheCorner();
     void strokeOverrideThickensTheLine();
@@ -213,7 +215,7 @@ void TestIcons::everyGlyphPaints()
                                                   .arg(ink).arg(total)));
 
     // The drawing must fill and sit centred in its box. Testing for ink in the
-    // middle would be wrong - FitPage, FullScreen and SelectAll are hollow by
+    // middle would be wrong - FullScreen and SelectAll are hollow by
     // design - so this checks the ink's extent and where it is balanced instead.
     // That still catches a glyph drawn off in a corner or mostly clipped away.
     // Elongated glyphs are legitimate (a chevron is about 6x12 in a 16 px box, a
@@ -292,10 +294,9 @@ void TestIcons::relatedGlyphsAreDistinct_data()
         // The same folded page; only the text lines tell the Extract strip's
         // folded pages apart from a plain document.
         {"file text vs document", Glyph::FileText, Glyph::Document, 0.90},
-        // Lucide draws both as corner brackets around the box ("scan" and
-        // "maximize" are near-identical), which is why FitMode is "fullscreen":
-        // the toolbar's fit toggle must not look like the menu's full screen.
-        {"fit mode vs full screen", Glyph::FitMode, Glyph::FullScreen, 0.75},
+        // Fit buttons share a square, but their arrows must remain distinct.
+        {"fit page vs fit width", Glyph::FitPage, Glyph::FitWidth, 0.85},
+        {"fit page vs full screen", Glyph::FitPage, Glyph::FullScreen, 0.75},
         {"select all vs single page", Glyph::SelectAll, Glyph::SinglePage, 0.90},
         // Both are "a stack of marks in the middle of the box". If the grip ever
         // gets redrawn as stacked lines it becomes the hamburger, and the merge
@@ -315,6 +316,60 @@ void TestIcons::relatedGlyphsAreDistinct()
     QVERIFY2(same < maxAgreement,
              qPrintable(QStringLiteral("glyphs are %1% identical (ceiling %2%)")
                             .arg(same * 100, 0, 'f', 1).arg(maxAgreement * 100, 0, 'f', 0)));
+}
+
+// Inspect a large render so antialiasing cannot hide a shrunken arrow stroke
+// or a gap that closed between the arrow tips and the surrounding square.
+void TestIcons::fitArrowsStayInsideSquare()
+{
+    for (Glyph id : {Glyph::FitPage, Glyph::FitWidth}) {
+        const QImage img = mervin::icons::glyphPixmap(id, Qt::black, 240, 1.5)
+                               .toImage().convertToFormat(QImage::Format_ARGB32);
+        const QRect inner(45, 45, 150, 150);
+        const QRect arrow = inkBounds(img.copy(inner)).translated(inner.topLeft());
+        QVERIFY(!arrow.isEmpty());
+        QVERIFY(inner.adjusted(1, 1, -1, -1).contains(arrow));
+        if (id == Glyph::FitPage)
+            QVERIFY(arrow.height() > arrow.width() * 1.7);
+        else
+            QVERIFY(arrow.width() > arrow.height() * 1.7);
+
+        // All four sides stay present, with a clear gap beside every arrow tip.
+        for (const QRect side : {QRect(15, 105, 30, 30), QRect(195, 105, 30, 30),
+                                 QRect(105, 15, 30, 30), QRect(105, 195, 30, 30)})
+            QVERIFY(inkCount(img.copy(side)) > 0);
+        for (const QRect gap : {QRect(40, 100, 5, 40), QRect(195, 100, 5, 40),
+                                QRect(100, 40, 40, 5), QRect(100, 195, 40, 5)})
+            QCOMPARE(inkCount(img.copy(gap)), 0);
+
+        // Compare straight parts of the border and arrow at the same scale.
+        // Scaling an SVG without compensating its stroke makes the arrow thinner.
+        const QRect stem = id == Glyph::FitPage ? QRect(105, 115, 30, 10)
+                                               : QRect(115, 105, 10, 30);
+        const QRect border = id == Glyph::FitPage ? QRect(15, 115, 30, 10)
+                                                 : QRect(115, 15, 10, 30);
+        QCOMPARE(inkCount(img.copy(stem)), inkCount(img.copy(border)));
+    }
+}
+
+void TestIcons::fitGlyphRenderingHonoursOptions()
+{
+    const QColor ink(40, 100, 180, 128);
+    for (Glyph id : {Glyph::FitPage, Glyph::FitWidth}) {
+        for (int size : {16, 20, 48}) {
+            const QImage native = mervin::icons::glyphPixmap(id, ink, size, 0, QColor(), 1.0)
+                                      .toImage().convertToFormat(QImage::Format_ARGB32);
+            QCOMPARE(native, render(id, size, ink));
+        }
+        QPixmap scaled = mervin::icons::glyphPixmap(id, ink, 20, 0, QColor(), 2.0);
+        QCOMPARE(scaled.size(), QSize(40, 40));
+        QCOMPARE(scaled.devicePixelRatio(), 2.0);
+        scaled.setDevicePixelRatio(1.0);
+        const QPixmap native = mervin::icons::glyphPixmap(id, ink, 40, 0, QColor(), 1.0);
+        QCOMPARE(scaled.toImage(), native.toImage());
+        const QImage thicker = mervin::icons::glyphPixmap(id, ink, 40, 3.0).toImage();
+        QVERIFY(inkCount(thicker) > inkCount(native.toImage()));
+    }
 }
 
 // Lucide draws rotate-ccw as rotate-cw's mirror image, so flipping one must land

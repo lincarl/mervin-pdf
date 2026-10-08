@@ -944,10 +944,32 @@ void MainWindow::createActions()
             v->zoomOut();
     });
 
-    // One-tap toggle between the two fit modes (the current mode is also shown
-    // in the adjacent zoom combo). Any custom zoom snaps to Fit Page first.
-    //: Toolbar button that switches between fitting the whole page and the page
-    //: width to the window.
+    // Separate actions serve the toolbar and menu. Repeating a fit command
+    // keeps that mode; the Home shortcut below still toggles between the two.
+    //: Zoom command that fits the whole page in the window.
+    //: The ampersand marks the menu keyboard access key.
+    fitPageAction_ = new QAction(tr("Fit &Page"), this);
+    //: Zoom choice: scale the page so the whole page fits the window.
+    fitPageAction_->setToolTip(tr("Fit Page"));
+    fitPageAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
+    connect(fitPageAction_, &QAction::triggered, this, [this] {
+        if (auto *v = currentViewer())
+            v->setZoomMode(ViewerWidget::ZoomMode::FitPage);
+    });
+    //: Zoom command that fits the page width in the window.
+    //: The ampersand marks the menu keyboard access key.
+    fitWidthAction_ = new QAction(tr("Fit &Width"), this);
+    //: Zoom choice: scale the page so its width fits the window.
+    fitWidthAction_->setToolTip(tr("Fit Width"));
+    fitWidthAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_2));
+    connect(fitWidthAction_, &QAction::triggered, this, [this] {
+        if (auto *v = currentViewer())
+            v->setZoomMode(ViewerWidget::ZoomMode::FitWidth);
+    });
+
+    // Any custom zoom snaps to Fit Page first when Home is pressed.
+    //: Keyboard command that switches between fitting the whole page and the
+    //: page width to the window.
     fitModeAction_ = new QAction(tr("Fit Page / Fit Width"), this);
     // Home toggles the two fit modes. (The viewer's bare-Home "go to first page"
     // moved to Ctrl+Home; this window-level shortcut intercepts the plain key.)
@@ -958,6 +980,7 @@ void MainWindow::createActions()
                                ? ViewerWidget::ZoomMode::FitWidth
                                : ViewerWidget::ZoomMode::FitPage);
     });
+    addAction(fitModeAction_); // Keep Home active without a toolbar or menu entry.
 
     rotateLeftAction_ = new QAction(tr("Rotate Left"), this);
     rotateLeftAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_L));
@@ -1196,7 +1219,8 @@ void MainWindow::createToolBar()
 
     addDocAction(zoomInAction_);
     addSep();
-    addDocAction(fitModeAction_);
+    addDocAction(fitPageAction_);
+    addDocAction(fitWidthAction_);
     addDocAction(rotateLeftAction_);
     addDocAction(rotateRightAction_);
     addSep();
@@ -1259,14 +1283,8 @@ void MainWindow::createMenus()
     // View - fit presets, then the two window-level view toggles.
     //: Section heading in the main menu (noun): how the document is shown.
     addSectionHeader(mainMenu, tr("View"));
-    fitPageAction_ = mainMenu->addAction(tr("Fit &Page"), QKeySequence(Qt::CTRL | Qt::Key_1), this, [this] {
-        if (auto *v = currentViewer())
-            v->setZoomMode(ViewerWidget::ZoomMode::FitPage);
-    });
-    fitWidthAction_ = mainMenu->addAction(tr("Fit &Width"), QKeySequence(Qt::CTRL | Qt::Key_2), this, [this] {
-        if (auto *v = currentViewer())
-            v->setZoomMode(ViewerWidget::ZoomMode::FitWidth);
-    });
+    mainMenu->addAction(fitPageAction_);
+    mainMenu->addAction(fitWidthAction_);
     mainMenu->addAction(fullScreenAction_);
     // Two-Page Spread belongs here and not in Scroll: it is an on/off view of the
     // document that composes with either scrolling mode, so it is a toggle rather
@@ -1481,7 +1499,6 @@ void MainWindow::applyActionIcons()
     nextPageAction_->setIcon(mervin::icons::glyph(Glyph::NextPage, col));
     zoomOutAction_->setIcon(mervin::icons::glyph(Glyph::ZoomOut, col));
     zoomInAction_->setIcon(mervin::icons::glyph(Glyph::ZoomIn, col));
-    fitModeAction_->setIcon(mervin::icons::glyph(Glyph::FitMode, col));
     rotateLeftAction_->setIcon(mervin::icons::glyph(Glyph::RotateLeft, col));
     rotateRightAction_->setIcon(mervin::icons::glyph(Glyph::RotateRight, col));
     printAction_->setIcon(mervin::icons::glyph(Glyph::Print, col));
@@ -1591,7 +1608,8 @@ void MainWindow::setUiEnabled(bool enabled)
     // setCommandBarMode separately styles the visible controls.
     const bool docEnabled = enabled && !recentActive_;
     for (QAction *a : {prevPageAction_, nextPageAction_, zoomInAction_, zoomOutAction_,
-                       fitModeAction_, rotateLeftAction_, rotateRightAction_, printAction_,
+                       fitPageAction_, fitWidthAction_, fitModeAction_,
+                       rotateLeftAction_, rotateRightAction_, printAction_,
                        findCardAction_})
         a->setEnabled(docEnabled);
     pageEdit_->setEnabled(docEnabled);
@@ -1975,6 +1993,11 @@ void MainWindow::setCommandBarMode(bool recentActive)
     // Keep document controls visible but disabled on Recent; action shortcuts are disabled separately.
     if (docControls_)
         docControls_->setEnabled(!recentActive);
+    // The shared fit actions also appear in the menu and own window shortcuts.
+    // Disabling their toolbar parent alone does not disable those entry points.
+    const bool fitEnabled = !recentActive && currentViewer() != nullptr;
+    for (QAction *action : {fitPageAction_, fitWidthAction_, fitModeAction_})
+        action->setEnabled(fitEnabled);
     syncFindToggle();
     syncOcrAction();
 }

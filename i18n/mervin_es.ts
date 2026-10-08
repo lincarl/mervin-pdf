@@ -413,7 +413,7 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     </message>
     <message>
         <source>Fit Page / Fit Width</source>
-        <extracomment>Toolbar button that switches between fitting the whole page and the page width to the window.</extracomment>
+        <extracomment>Keyboard command that switches between fitting the whole page and the page width to the window.</extracomment>
         <translation>Ajustar página/Ajustar ancho</translation>
     </message>
     <message>
@@ -493,10 +493,12 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     </message>
     <message>
         <source>Fit &amp;Page</source>
+        <extracomment>Zoom command that fits the whole page in the window. The ampersand marks the menu keyboard access key.</extracomment>
         <translation>Ajustar &amp;página</translation>
     </message>
     <message>
         <source>Fit &amp;Width</source>
+        <extracomment>Zoom command that fits the page width in the window. The ampersand marks the menu keyboard access key.</extracomment>
         <translation>Ajustar &amp;ancho</translation>
     </message>
     <message>

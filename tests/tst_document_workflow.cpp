@@ -12,6 +12,7 @@
 #include "ui/ThemeTokens.h"
 #include "ui/ViewerWidget.h"
 
+#include <QAction>
 #include <QComboBox>
 #include <QContextMenuEvent>
 #include <QFile>
@@ -21,8 +22,10 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScopeGuard>
+#include <QTabBar>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QToolButton>
 #include <QtTest>
 
 #include <functional>
@@ -163,6 +166,89 @@ private slots:
         QCOMPARE(seen, SettingsDialog::Page::General);
         QCOMPARE(viewer->zoomMode(), ViewerWidget::ZoomMode::FitPage);
         QCOMPARE(Settings::load().defaultZoom, QStringLiteral("fit-page"));
+    }
+
+    // Each fit button always selects its own preset. Home keeps the keyboard toggle.
+    void fitButtonsSelectTheirOwnModes()
+    {
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.resize(1000, 800);
+        window.show();
+
+        const auto actionFor = [&window](QKeySequence shortcut) -> QAction * {
+            for (QAction *action : window.findChildren<QAction *>())
+                if (action->shortcut() == shortcut)
+                    return action;
+            return nullptr;
+        };
+        const auto buttonFor = [&window](QAction *action) -> QToolButton * {
+            for (QToolButton *button : window.findChildren<QToolButton *>())
+                if (button->defaultAction() == action)
+                    return button;
+            return nullptr;
+        };
+        QAction *page = actionFor(QKeySequence(Qt::CTRL | Qt::Key_1));
+        QAction *width = actionFor(QKeySequence(Qt::CTRL | Qt::Key_2));
+        QAction *toggle = actionFor(QKeySequence(Qt::Key_Home));
+        QVERIFY(page);
+        QVERIFY(width);
+        QVERIFY(toggle);
+        QToolButton *pageButton = buttonFor(page);
+        QToolButton *widthButton = buttonFor(width);
+        QVERIFY(pageButton);
+        QVERIFY(widthButton);
+        QVERIFY(pageButton != widthButton);
+        QVERIFY(!buttonFor(toggle));
+        for (QAction *action : {page, width, toggle}) {
+            QVERIFY(window.actions().contains(action));
+            QVERIFY(!action->isEnabled());
+        }
+        QVERIFY(!pageButton->isEnabled());
+        QVERIFY(!widthButton->isEnabled());
+
+        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        auto *tab = window.findChild<TabPage *>();
+        QVERIFY(tab);
+        auto *viewer = tab->viewer();
+        viewer->setZoomEaseMs(0);
+        for (QToolButton *button : {pageButton, widthButton}) {
+            QVERIFY(button->isEnabled());
+            viewer->setScale(1.75);
+            QCOMPARE(viewer->zoomMode(), ViewerWidget::ZoomMode::Custom);
+            const auto mode = button == pageButton ? ViewerWidget::ZoomMode::FitPage
+                                                   : ViewerWidget::ZoomMode::FitWidth;
+            QTest::mouseClick(button, Qt::LeftButton);
+            QCOMPARE(viewer->zoomMode(), mode);
+            const double scale = viewer->scale();
+            QTest::mouseClick(button, Qt::LeftButton);
+            QCOMPARE(viewer->zoomMode(), mode);
+            QCOMPARE(viewer->scale(), scale);
+        }
+        toggle->trigger();
+        QCOMPARE(viewer->zoomMode(), ViewerWidget::ZoomMode::FitPage);
+        toggle->trigger();
+        QCOMPARE(viewer->zoomMode(), ViewerWidget::ZoomMode::FitWidth);
+
+        auto *recent = window.findChild<QPushButton *>(QStringLiteral("recentPillBtn"));
+        auto *bar = window.findChild<QTabBar *>(QStringLiteral("docTabBar"));
+        QVERIFY(recent);
+        QVERIFY(bar);
+        QTest::mouseClick(recent, Qt::LeftButton);
+        QVERIFY(recent->property("recentActive").toBool());
+        for (QAction *action : {page, width, toggle}) {
+            QVERIFY(!action->isEnabled());
+            action->trigger();
+            QCOMPARE(viewer->zoomMode(), ViewerWidget::ZoomMode::FitWidth);
+        }
+        QVERIFY(!pageButton->isEnabled());
+        QVERIFY(!widthButton->isEnabled());
+        QTest::mouseClick(bar, Qt::LeftButton, Qt::NoModifier, bar->tabRect(0).center());
+        QVERIFY(!recent->property("recentActive").toBool());
+        QVERIFY(pageButton->isEnabled());
+        QVERIFY(widthButton->isEnabled());
+        QVERIFY(toggle->isEnabled());
     }
 
     // Save Page As in a page's right-click menu opens Extract Pages with the

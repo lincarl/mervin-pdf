@@ -437,6 +437,14 @@ Icons use a 1.5-unit stroke on Lucide's 24-unit grid, but no render draws a line
 thinner than about 1.07 device pixels: at one pixel or less Qt's raster engine uses
 its hairline stroker, which drops the dots in icons such as Outline, About and
 Keyboard shortcuts. A 16 px icon at 100% scaling therefore gets about 1.6 units.
+
+Fit page and Fit width have separate toolbar buttons, each selecting its mode
+without toggling. Their icons overlay a centered directional arrow at 65% scale
+inside Lucide's square, with the same stroke weight on both layers. The menu uses
+the same actions and icons. Ctrl+1 selects Fit page, Ctrl+2 selects Fit width,
+and Home continues to toggle between them, selecting Fit page from custom zoom.
+The fit actions are disabled while the Recent view is active or no document is open.
+
 The application and packages share the repository's approved icon assets.
 
 ### Application icon
