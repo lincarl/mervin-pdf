@@ -2276,11 +2276,6 @@ Abra la Configuración de su sistema → Aplicaciones predeterminadas (o haga cl
         <translation>Cargando modelos de lenguaje de mejor calidad...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Abrir carpeta</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Catálogo de idiomas no disponible</translation>
     </message>

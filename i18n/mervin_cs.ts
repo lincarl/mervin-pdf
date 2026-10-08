@@ -2281,11 +2281,6 @@ Otevřete Nastavení systému → Výchozí aplikace (nebo klepněte pravým tla
         <translation>Načítání jazykových modelů v nejlepší kvalitě...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Otevřít složku</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Jazykový katalog není k dispozici</translation>
     </message>

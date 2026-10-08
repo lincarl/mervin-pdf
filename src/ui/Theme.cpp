@@ -856,13 +856,18 @@ void Theme::applyApp()
     const QScopedValueRollback<bool> applying(applyingTheme(), true);
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
-    // Effective scheme, independent of any palette override applied below (Qt
-    // tracks both the forced scheme from WindowManager::applyColorSchemeToQt and
-    // the system's own switches).
-    const Qt::ColorScheme scheme = QGuiApplication::styleHints()->colorScheme();
-    const bool dark = (scheme == Qt::ColorScheme::Unknown)
-                          ? theme::isDark(qApp->palette())
-                          : scheme == Qt::ColorScheme::Dark;
+    // Honor an explicit preference even when the platform cannot force its
+    // colour scheme, as on bare X11. Only system mode follows Qt's effective
+    // scheme, falling back to the platform palette when Qt reports none.
+    const bool dark = [&st] {
+        if (st.colorScheme == QLatin1String("dark"))
+            return true;
+        if (st.colorScheme == QLatin1String("light"))
+            return false;
+        const Qt::ColorScheme scheme = QGuiApplication::styleHints()->colorScheme();
+        return scheme == Qt::ColorScheme::Unknown ? theme::isDark(qApp->palette())
+                                                  : scheme == Qt::ColorScheme::Dark;
+    }();
 
     // Install the scheme's palette for painters not covered by QSS, so native
     // widgets match the tokens on every platform. It goes in twice. The first

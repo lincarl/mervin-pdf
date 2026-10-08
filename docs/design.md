@@ -415,8 +415,10 @@ The dark theme is "Nord", lifted blue-grey surfaces chosen for comfort in long
 sessions: no near-black wells, body text at about 9.4:1 and a soft frost accent
 that carries dark text. The light theme is "Cool slate", cool blue-grey bands with
 white controls around the same slate canvas. Both themes install a matching
-`QPalette` for native widgets, carrying the accent. While the accent setting is
-"system", `Theme` reads the OS accent from the platform palette in either theme,
+`QPalette` for native widgets, carrying the accent. Explicit dark and light
+preferences take precedence even when the platform cannot force its colour
+scheme. While the accent setting is "system", `Theme` reads the OS accent from
+the platform palette in either theme,
 and again whenever the platform reports a theme change or replaces the palette,
 as Plasma does. Windows 11 reports a lighter shade of it in dark mode; Qt's GTK
 theme and its built-in KDE theme report it only as the selection colour. A role
@@ -424,8 +426,10 @@ that still holds Fusion's #308cc6 came from Qt rather than the desktop, as on
 Linux without a desktop platform theme, and counts as no accent. The OS accent
 is lightened in dark or darkened in light, keeping its hue, until it reaches the
 3:1 the design accents keep on the window and in the well. The design accents are
-the Reset value and the fallback when the desktop reports no accent. Text on an
-accent fill is white or the theme's dark ink, whichever has more contrast.
+the fallback when the desktop reports no accent. The custom accent Reset value
+is `#62c9ff` in both UI themes. Turning off the system accent keeps the resolved
+system colour. Text on an accent fill is white or the theme's dark ink, whichever
+has more contrast.
 `tst_theme` checks each theme's key text pairs against WCAG contrast targets.
 
 The interface icons are [Lucide](https://lucide.dev) SVGs, vendored unmodified in

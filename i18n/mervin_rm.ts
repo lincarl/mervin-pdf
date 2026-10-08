@@ -2276,11 +2276,6 @@ Avra ils Parameters → Applicaziuns predefinidas dal sistem (u clicca cun la ta
         <translation>Chargiar ils models linguistics da la meglra qualitad...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Avrir l&apos;ordinatur</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Catalog da linguas betg disponibel</translation>
     </message>

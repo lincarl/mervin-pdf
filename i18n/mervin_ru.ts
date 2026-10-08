@@ -2281,11 +2281,6 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>Загрузка языковых моделей лучшего качества...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Открыть папку</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Каталог языков недоступен.</translation>
     </message>

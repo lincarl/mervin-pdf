@@ -752,6 +752,10 @@ void TstTranslationLayout::settings()
             search->setCurrentIndex(previous);
         }
     }
+    auto portableUpdates = updates;
+    portableUpdates.canSelfUpdate = false;
+    SettingsDialog portable(values, portableUpdates, SettingsDialog::Page::Updates);
+    inspect(portable, QStringLiteral("Settings updates without automatic installation"));
     dialog.showPage(SettingsDialog::Page::General);
     auto *duration = dialog.findChild<QSpinBox *>(QStringLiteral("unloadInactiveMinutes"));
     auto *never = dialog.findChild<QCheckBox *>(QStringLiteral("neverUnloadDocuments"));

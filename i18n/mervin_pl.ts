@@ -2281,11 +2281,6 @@ Otwórz Ustawienia systemu → Aplikacje domyślne (lub kliknij plik PDF prawym 
         <translation>Ładowanie najwyższej jakości modeli językowych...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Otwórz folder</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Katalog języków niedostępny</translation>
     </message>

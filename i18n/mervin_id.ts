@@ -2271,11 +2271,6 @@ Buka Pengaturan sistem Anda → Aplikasi Default (atau klik kanan PDF → Buka D
         <translation>Memuat model bahasa kualitas terbaik...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Buka Folder</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Katalog bahasa tidak tersedia</translation>
     </message>

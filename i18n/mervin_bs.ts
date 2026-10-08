@@ -2281,11 +2281,6 @@ Otvorite Postavke svog sistema → Zadane aplikacije (ili kliknite desnim taster
         <translation>Učitavanje jezičkih modela najboljeg kvaliteta...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Otvorite folder</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Katalog jezika nedostupan</translation>
     </message>

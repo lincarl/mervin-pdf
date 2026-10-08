@@ -2276,11 +2276,6 @@ Abra Configurações → Aplicativos padrão do seu sistema (ou clique com o bot
         <translation>Carregando modelos de linguagem de melhor qualidade...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Abrir pasta</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Catálogo de idiomas indisponível</translation>
     </message>

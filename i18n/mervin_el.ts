@@ -2276,11 +2276,6 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>Φόρτωση μοντέλων γλώσσας καλύτερης ποιότητας...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Άνοιγμα φακέλου</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Ο κατάλογος γλωσσών δεν είναι διαθέσιμος</translation>
     </message>

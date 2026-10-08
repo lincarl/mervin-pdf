@@ -2286,11 +2286,6 @@ Iftaħ is-Settings tas-sistema tiegħek → Applikazzjonijiet Default (jew ikkli
         <translation>Tagħbija mudelli tal-lingwa tal-aqwa kwalità...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Iftaħ folder</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Il-katalgu tal-lingwa mhux disponibbli</translation>
     </message>

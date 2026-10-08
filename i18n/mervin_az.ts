@@ -2276,11 +2276,6 @@ Sisteminizin Parametrlər → Defolt Proqramları açın (və ya PDF-i sağ klik
         <translation>Ən keyfiyyətli dil modelləri yüklənir...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Qovluğu açın</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Dil kataloqu mövcud deyil</translation>
     </message>

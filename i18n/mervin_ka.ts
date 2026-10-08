@@ -2276,11 +2276,6 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>საუკეთესო ხარისხის ენების მოდელების ჩატვირთვა...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>გახსენით საქაღალდე</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>ენის კატალოგი მიუწვდომელია</translation>
     </message>

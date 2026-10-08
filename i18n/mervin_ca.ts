@@ -2276,11 +2276,6 @@ Obriu la configuració del vostre sistema → Aplicacions predeterminades (o feu
         <translation>S&apos;estan carregant models d&apos;idioma de millor qualitat...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Obre la carpeta</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>El catàleg d&apos;idiomes no està disponible</translation>
     </message>

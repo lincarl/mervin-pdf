@@ -277,7 +277,7 @@ private:
     QString colorScheme_;
     QString documentTheme_;
     bool themeRefreshPending_ = false; // a deferred Theme::applyApp() is queued
-    bool keepMissingRecent_ = true;    // Settings::recentKeepMissing
+    bool keepMissingRecent_ = false;   // Settings::recentKeepMissing
     bool pruneRunning_ = false;        // a pruneMissingRecent scan is on the worker
     bool prunePending_ = false;        // ...and another was asked for meanwhile
     // Set on shutdown so a scan stuck on slow network paths stops between paths

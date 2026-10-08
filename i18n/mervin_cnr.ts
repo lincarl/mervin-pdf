@@ -2281,11 +2281,6 @@ Otvorite sistemska Podešavanja → Podrazumijevane aplikacije (ili desni klik n
         <translation>Učitavanje najkvalitetnijih jezičkih modela...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Otvori fasciklu</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Katalog jezika nije dostupan</translation>
     </message>

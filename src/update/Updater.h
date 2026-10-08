@@ -48,7 +48,7 @@ public:
     // are asynchronous, so startup never waits on the network.
     void onStartup();
 
-    // Settings -> General -> Check for Updates checks now regardless of the last check or setting,
+    // Settings -> Updates -> Check for Updates checks now regardless of the last check or setting,
     // downloads and installs available updates, and reports "up to date" and errors.
     void checkNow();
 

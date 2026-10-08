@@ -2276,11 +2276,6 @@ Ouvrez les paramètres de votre système → Applications par défaut (ou clique
         <translation>Chargement des modèles linguistiques de la meilleure qualité...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Ouvrir le dossier</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Catalogue de langues indisponible</translation>
     </message>
