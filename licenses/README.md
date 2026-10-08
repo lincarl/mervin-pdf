@@ -9,3 +9,9 @@ This directory contains the license and notice texts shipped with Mervin PDF dis
 - `lucide-LICENSE.txt` comes from the lucide-static 1.49.0 npm package, the source of the vendored icons in `resources/icons/lucide`.
 
 See [`../THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md) for the component inventory and redistribution notes.
+
+Windows deployment additionally copies the target vcpkg packages' copyright
+files into `licenses/vcpkg` in the package. Those notices cover the pinned static
+dependencies, including libjpeg-turbo and libspng, and supplement this source
+directory. They must remain in the installer even though the dependency DLLs are
+no longer shipped.

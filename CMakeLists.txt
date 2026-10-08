@@ -25,9 +25,9 @@ qt_standard_project_setup(
         lt lv mk mt nb nl nn pl pt_BR pt_PT rm ro ru sk
         sl sq sr sv th tr uk vi zh_CN zh_TW)
 find_package(MuPDF REQUIRED)
-# tomlplusplus is header-only. Prefer a system/vcpkg config package; fall back to
-# fetching the single-header release so distros without libtomlplusplus-dev (e.g.
-# Fedora) still configure cleanly.
+# Prefer a system/vcpkg config package for tomlplusplus. The vcpkg port builds a
+# compiled library. Fall back to the header-only CMake release so distros without
+# libtomlplusplus-dev (e.g. Fedora) still configure cleanly.
 find_package(tomlplusplus CONFIG QUIET)
 if(NOT tomlplusplus_FOUND)
     include(FetchContent)

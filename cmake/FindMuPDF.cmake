@@ -43,6 +43,19 @@ find_path(MUPDF_INCLUDE_DIR
 
 if(WIN32)
     set(_mupdf_libdir "${MUPDF_DIR}/platform/win32/x64/Release")
+    # Static qpdf uses a different JPEG ABI. Require the Windows build that
+    # prefixes MuPDF's bundled JPEG symbols so the two libraries can coexist.
+    set(_mupdf_flavor_file "${_mupdf_libdir}/mervin-build-flavor.txt")
+    if(EXISTS "${_mupdf_flavor_file}")
+        file(READ "${_mupdf_flavor_file}" _mupdf_flavor)
+        string(STRIP "${_mupdf_flavor}" _mupdf_flavor)
+    endif()
+    if(NOT _mupdf_flavor MATCHES "^(native|ltcg)-jpeg-prefix-v1$")
+        message(FATAL_ERROR
+            "MuPDF at ${MUPDF_DIR} lacks the required JPEG symbol prefix. "
+            "Run scripts/build-mupdf-windows.ps1 with a new -Dest and configure "
+            "with -DMUPDF_DIR pointing to that directory.")
+    endif()
     find_library(MUPDF_CORE_LIBRARY NAMES libmupdf mupdf HINTS "${_mupdf_libdir}")
     # Link every static lib MuPDF produced (core + thirdparty codecs + harfbuzz +
     # resources + barcode/zxing + tesseract/leptonica). Over-linking is harmless

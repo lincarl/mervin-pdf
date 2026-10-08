@@ -6,16 +6,14 @@ execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS generate_fixtures.py)
 
 
-# Windows only: ensure ctest can find the runtime DLLs without manual PATH setup
-# (Qt's bin + the vcpkg-installed bin where qpdf and its deps live). On Linux the
+# On Windows, ensure ctest can find Qt's runtime DLLs without manual PATH setup.
+# vcpkg dependencies are static and must not need their bin directory. On Linux the
 # dynamic loader finds the shared libs normally, so this stays empty there.
 if(WIN32)
     file(TO_CMAKE_PATH "$ENV{QT6_DIR}/bin" _mervin_qt_bin)
-    set(_mervin_vcpkg_bin "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/bin")
-    # Tests need Qt/vcpkg DLLs on PATH. Force Qt test output to stderr so CTest captures failures.
+    # Force Qt test output to stderr so CTest captures failures.
     set(_mervin_test_env
         "PATH=path_list_prepend:${_mervin_qt_bin}"
-        "PATH=path_list_prepend:${_mervin_vcpkg_bin}"
         "QT_ASSUME_STDERR_HAS_CONSOLE=set:1")
 endif()
 

@@ -10,6 +10,8 @@
 #include <qpdf/QPDFPageObjectHelper.hh>
 #include <qpdf/QPDFWriter.hh>
 
+#include <QBuffer>
+#include <QImage>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -75,6 +77,9 @@ private slots:
     void init();
 
     void pageCountRoundTrip();
+#ifdef Q_OS_WIN
+    void jpegDecodersCoexist();
+#endif
     void encryptAes256ThenReadInfo();
     void decryptRemovesEncryption();
     void userPasswordRequiredToOpen();
@@ -115,6 +120,77 @@ void TstQpdf::pageCountRoundTrip()
     makePdf(p, 4);
     QCOMPARE(PageOps::pageCount(p), 4);
 }
+
+#ifdef Q_OS_WIN
+void TstQpdf::jpegDecodersCoexist()
+{
+    // Static Windows builds contain different JPEG ABIs in qpdf and MuPDF.
+    // Exercise both decoders in one process to detect accidental symbol sharing.
+    QImage source(16, 16, QImage::Format_RGB888);
+    const QColor left(200, 32, 24);
+    const QColor right(24, 64, 200);
+    for (int y = 0; y < source.height(); ++y) {
+        for (int x = 0; x < source.width(); ++x)
+            source.setPixelColor(x, y, x < 8 ? left : right);
+    }
+    QByteArray jpeg;
+    QBuffer buffer(&jpeg);
+    QVERIFY(buffer.open(QIODevice::WriteOnly));
+    QVERIFY(source.save(&buffer, "JPEG", 100));
+
+    QPDF pdf;
+    pdf.emptyPDF();
+    auto image = pdf.newStream(std::string(jpeg.constData(), jpeg.size()));
+    auto dictionary = image.getDict();
+    dictionary.replaceKey("/Type", QPDFObjectHandle::newName("/XObject"));
+    dictionary.replaceKey("/Subtype", QPDFObjectHandle::newName("/Image"));
+    dictionary.replaceKey("/Width", QPDFObjectHandle::newInteger(16));
+    dictionary.replaceKey("/Height", QPDFObjectHandle::newInteger(16));
+    dictionary.replaceKey("/BitsPerComponent", QPDFObjectHandle::newInteger(8));
+    dictionary.replaceKey("/ColorSpace", QPDFObjectHandle::newName("/DeviceRGB"));
+    dictionary.replaceKey("/Filter", QPDFObjectHandle::newName("/DCTDecode"));
+
+    const auto decoded = image.getStreamData(qpdf_dl_all);
+    QCOMPARE(decoded->getSize(), size_t(16 * 16 * 3));
+    const QImage qpdfPixels(decoded->getBuffer(), 16, 16, 16 * 3, QImage::Format_RGB888);
+    for (const int x : {4, 12}) {
+        const QColor expected = x < 8 ? left : right;
+        const QColor actual = qpdfPixels.pixelColor(x, 8);
+        QVERIFY(qAbs(actual.red() - expected.red()) <= 3);
+        QVERIFY(qAbs(actual.green() - expected.green()) <= 3);
+        QVERIFY(qAbs(actual.blue() - expected.blue()) <= 3);
+    }
+
+    auto images = QPDFObjectHandle::newDictionary();
+    images.replaceKey("/Image", image);
+    auto resources = QPDFObjectHandle::newDictionary();
+    resources.replaceKey("/XObject", images);
+    auto page = QPDFObjectHandle::parse("<< /Type /Page /MediaBox [0 0 16 16] >>");
+    page.replaceKey("/Resources", resources);
+    page.replaceKey("/Contents", pdf.newStream("q 16 0 0 16 0 0 cm /Image Do Q"));
+    QPDFPageDocumentHelper(pdf).addPage(QPDFPageObjectHelper(pdf.makeIndirectObject(page)), false);
+    const QString path = in(QStringLiteral("jpeg-codecs.pdf"));
+    const QByteArray name = path.toUtf8();
+    QPDFWriter writer(pdf, name.constData());
+    writer.setStreamDataMode(qpdf_s_preserve);
+    writer.setDecodeLevel(qpdf_dl_none);
+    writer.write();
+
+    mervin::RenderEngine engine;
+    QString error;
+    auto document = engine.openDocument(path, {}, &error);
+    QVERIFY2(document, qPrintable(error));
+    const QImage rendered = engine.renderPageImage(document.get(), 0, 1, 0);
+    QCOMPARE(rendered.size(), source.size());
+    for (const int x : {4, 12}) {
+        const QColor expected = x < 8 ? left : right;
+        const QColor actual = rendered.pixelColor(x, 8);
+        QVERIFY(qAbs(actual.red() - expected.red()) <= 3);
+        QVERIFY(qAbs(actual.green() - expected.green()) <= 3);
+        QVERIFY(qAbs(actual.blue() - expected.blue()) <= 3);
+    }
+}
+#endif
 
 void TstQpdf::encryptAes256ThenReadInfo()
 {
