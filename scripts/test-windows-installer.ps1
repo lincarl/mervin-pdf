@@ -23,6 +23,8 @@ if (-not $DisposableUser -and
     throw 'Use a hosted GitHub runner or an empty disposable Windows account with -DisposableUser.'
 }
 $msiPath = (Resolve-Path -LiteralPath $Msi).Path
+$build = Split-Path $msiPath -Parent
+$fixture = Join-Path $build 'tests\fixtures\properties.pdf'
 $dataDir = Join-Path $env:APPDATA 'MervinPDF'
 $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Mervin PDF.lnk'
 $installKey = 'HKCU:\Software\Mervin PDF'
@@ -40,6 +42,8 @@ function Assert-Installer([bool]$Condition, [string]$Message) {
 function Read-RegistryValue([string]$Key, [string]$Name) {
     if (Test-Path -LiteralPath $Key) { (Get-Item -LiteralPath $Key).GetValue($Name, $null) }
 }
+
+Assert-Installer (Test-Path -LiteralPath $fixture) 'Generated PDF fixture is missing. Configure with MERVIN_BUILD_TESTS=ON.'
 
 # Per-user MSI registration can live in Installer\UserData rather than the
 # conventional Uninstall key. Query Windows Installer's supported product API.
@@ -103,7 +107,6 @@ function Invoke-Msi([string]$Step, [string[]]$Options, [int[]]$ExpectedCodes = @
 try {
     # A verification-only newer product uses the same payload and never enters
     # the release artifact directory. Its app binary retains its real version.
-    $build = Split-Path $msiPath -Parent
     $repository = Split-Path $PSScriptRoot -Parent
     $metadata = Get-Content (Join-Path $build 'generated\package-version.json') -Raw | ConvertFrom-Json
     $version = [Version]$metadata.msi_version
@@ -165,8 +168,6 @@ restore_session = true
 
     # Open a generated document with isolated state, no development DLL search
     # directories, and a bounded exit after the selected document has loaded.
-    $fixture = Join-Path $build 'tests\fixtures\properties.pdf'
-    Assert-Installer (Test-Path -LiteralPath $fixture) 'Generated PDF fixture is missing. Configure with MERVIN_BUILD_TESTS=ON.'
     $testPdf = Join-Path $work 'generated-test.pdf'
     Copy-Item -LiteralPath $fixture -Destination $testPdf
     $launchEnvironment = @{}

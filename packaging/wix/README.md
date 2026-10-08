@@ -64,7 +64,9 @@ or data, installs into a test folder, launches with a separate profile, and chec
 upgrade, downgrade rejection, repair and uninstall. It also checks the installed
 payload and writes `installed-payload.json`. Retain the staging directory,
 generated package metadata and WiX toolchain for its verification-only upgrade
-package. On an empty disposable account:
+package. Configure with `MERVIN_BUILD_TESTS=ON` and retain `build/x64-release/tests/fixtures`
+for the generated PDF used in the startup check. The script checks for that
+fixture before installing anything. On an empty disposable account:
 
 ```powershell
 pwsh -File scripts/test-windows-installer.ps1 -Msi build/x64-release/MervinPDF-0.0.0.msi -DisposableUser
