@@ -8,8 +8,8 @@
   thirdparty submodule pre-extracted, incl. tesseract/leptonica), builds
   platform\win32\mupdf.sln in Release|x64, and verifies libmupdf.lib landed in
   platform\win32\x64\Release. Writes the source root path to stdout (use it as
-  MUPDF_DIR). Idempotent: if libmupdf.lib already exists it skips the build, so
-  CI caching short-circuits the multi-minute rebuild.
+  MUPDF_DIR). Enables MuPDF's bundled JPEG symbol prefix so static qpdf can use
+  its own JPEG ABI. Reuses only builds with the matching build-flavor marker.
 
   Requires a developer environment with msbuild on PATH (e.g. after
   ilammy/msvc-dev-cmd or microsoft/setup-msbuild). The Release config already
@@ -35,12 +35,12 @@ $sha256 = "98a5c10cda20c3992cdf76ff6b2a1149c32bd79cc796d3f703230b1185b7e934"
 $url = "https://mupdf.com/downloads/archive/mupdf-$version-source.tar.gz"
 $lib = Join-Path $Dest "platform\win32\x64\Release\libmupdf.lib"
 $flavorFile = Join-Path (Split-Path $lib -Parent) "mervin-build-flavor.txt"
-$flavor = if ($NoLtcg) { "native" } else { "ltcg" }
+$flavor = if ($NoLtcg) { "native-jpeg-prefix-v1" } else { "ltcg-jpeg-prefix-v1" }
 
 if (Test-Path $lib) {
-    $builtFlavor = if (Test-Path $flavorFile) { (Get-Content $flavorFile -Raw).Trim() } else { "ltcg" }
+    $builtFlavor = if (Test-Path $flavorFile) { (Get-Content $flavorFile -Raw).Trim() } else { "unmarked" }
     if ($builtFlavor -ne $flavor) {
-        throw "MuPDF at $Dest uses $builtFlavor objects; choose a separate -Dest for $flavor objects."
+        throw "MuPDF at $Dest has build flavor $builtFlavor. Run this script with a separate -Dest to build $flavor."
     }
     Write-Host "MuPDF already built at $Dest"
     Write-Output $Dest
@@ -48,8 +48,10 @@ if (Test-Path $lib) {
 }
 
 if (-not (Test-Path (Join-Path $Dest "platform\win32\mupdf.sln"))) {
-    $parent = Split-Path $Dest -Parent
-    New-Item -ItemType Directory -Force $parent | Out-Null
+    if ((Test-Path $Dest) -and (Get-ChildItem $Dest -Force | Select-Object -First 1)) {
+        throw "Destination $Dest is not an empty MuPDF source directory. Choose a new -Dest."
+    }
+    New-Item -ItemType Directory -Force $Dest | Out-Null
     $tmpRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
     $tar = Join-Path $tmpRoot ("mupdf-" + [guid]::NewGuid().ToString("N") + ".tar.gz")
     Write-Host "Downloading $url"
@@ -59,26 +61,30 @@ if (-not (Test-Path (Join-Path $Dest "platform\win32\mupdf.sln"))) {
         Remove-Item $tar -Force
         throw "MuPDF archive SHA-256 mismatch: expected $sha256, got $actual"
     }
-    if (Test-Path $Dest) { Remove-Item $Dest -Recurse -Force }
-    # Extract straight into the parent (NOT a temp dir + Move-Item): a cross-drive
-    # Move-Item copies file-by-file and MuPDF's deep thirdparty paths
-    # (e.g. zxing-cpp\wrappers\rust\core) overflow Windows' 260-char MAX_PATH.
-    # Extracting into the short, same-drive parent avoids the move entirely.
+    # Extract directly into the chosen directory. Stripping the archive's root
+    # avoids overwriting another MuPDF checkout beside a custom -Dest and avoids
+    # a cross-drive move of MuPDF's deep thirdparty paths.
     # bsdtar (tar.exe) ships on windows-2022 runners and handles .tar.gz.
     # The excludes skip thirdparty demo/binding dirs that contain symlinks:
     # creating those needs elevation/Developer Mode on Windows, and a failed
     # symlink makes tar exit 1 even though nothing the build needs is missing.
-    & tar -xzf $tar -C $parent `
+    & tar -xzf $tar -C $Dest --strip-components 1 `
         --exclude "*/thirdparty/freeglut/progs/*" `
         --exclude "*/thirdparty/zxing-cpp/wrappers/*"
     if ($LASTEXITCODE -ne 0) { throw "tar extraction failed ($LASTEXITCODE)" }
     Remove-Item $tar -Force
-    # Filter on the exact version: a wildcard (mupdf-*-source) would match an
-    # older MuPDF tree already sitting in the same parent and rename it.
-    $src = Get-ChildItem -Path $parent -Directory -Filter "mupdf-$version-source" | Select-Object -First 1
-    if (-not $src) { throw "Could not find extracted MuPDF source under $parent" }
-    # Top-level directory rename (same parent) - a metadata op, no deep-path copy.
-    if ($src.FullName -ne $Dest) { Rename-Item $src.FullName (Split-Path $Dest -Leaf) }
+    if (-not (Test-Path (Join-Path $Dest "platform\win32\mupdf.sln"))) {
+        throw "Could not find extracted MuPDF source under $Dest"
+    }
+}
+
+# MuPDF's bundled JPEG 10 and qpdf's libjpeg-turbo have incompatible ABIs.
+# Their shared jconfig.h enables upstream symbol renaming for every MuPDF JPEG
+# caller and implementation. Updating the header also invalidates cached objects.
+$jpegConfig = Join-Path $Dest "scripts\libjpeg\jconfig.h"
+$jpegConfigText = Get-Content $jpegConfig -Raw
+if ($jpegConfigText -notmatch '(?m)^#define FZ_HIDE_INTERNAL_JPEG(?:\s|$)') {
+    Set-Content $jpegConfig -Value ("#define FZ_HIDE_INTERNAL_JPEG`r`n" + $jpegConfigText) -NoNewline
 }
 
 $sln = Join-Path $Dest "platform\win32\mupdf.sln"

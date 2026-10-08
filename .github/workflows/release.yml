@@ -126,7 +126,7 @@ jobs:
           # Must match build-mupdf-windows.ps1's default -Dest (invoked below with
           # no arguments): C:\dev is the project's tool root on Windows.
           path: C:\dev\src\mupdf-${{ env.MUPDF_VERSION }}-source
-          key: mupdf-${{ env.MUPDF_VERSION }}-${{ env.MUPDF_SHA256 }}-windows-msvc2022-v143
+          key: mupdf-${{ env.MUPDF_VERSION }}-${{ env.MUPDF_SHA256 }}-windows-msvc2022-v143-jpeg-prefix-v1
 
       - name: Build MuPDF
         shell: pwsh
@@ -138,8 +138,8 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~\AppData\Local\vcpkg\archives
-          key: vcpkg-windows-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-windows-
+          key: vcpkg-x64-windows-static-md-${{ hashFiles('vcpkg.json', 'CMakePresets.json') }}
+          restore-keys: vcpkg-x64-windows-static-md-
 
       - name: Configure
         shell: pwsh

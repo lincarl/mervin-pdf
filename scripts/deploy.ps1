@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-  Stage a self-contained Mervin PDF tree (Qt + qpdf DLLs) and optionally build
+  Stage a self-contained Mervin PDF tree (Qt and Microsoft DLLs) and optionally build
   the MSI installer.
 
 .DESCRIPTION
-  Runs windeployqt to gather Qt's DLLs/plugins, stages app-local VC runtime DLLs, copies the
-  vcpkg-built qpdf and its dependency DLLs next to the exe. MuPDF is statically
-  linked into MervinPDF.exe, so no MuPDF DLL is needed. OCR language models are
+  Runs windeployqt to gather Qt's DLLs/plugins and stages app-local VC runtime DLLs.
+  The vcpkg dependencies and MuPDF are statically linked into MervinPDF.exe.
+  Checks normal and delayed PE imports before packaging. OCR language models are
   downloaded by the application and are not included in the installer.
 
   Run from a VS Dev Shell with QT6_DIR set. The release build is the GUI
@@ -31,6 +31,18 @@ $deploy = Join-Path $build "deploy"
 
 if (-not (Test-Path $exe)) { throw "Build MervinPDF.exe first (cmake --build --preset x64-release)." }
 if (-not $env:QT6_DIR)      { throw "QT6_DIR is not set." }
+
+# Read the configured install location rather than assume vcpkg's default.
+$cache = @{}
+Get-Content (Join-Path $build 'CMakeCache.txt') | ForEach-Object {
+    if ($_ -match '^([^#/:][^:]*):[^=]+=(.*)$') { $cache[$Matches[1]] = $Matches[2] }
+}
+if ($cache['VCPKG_TARGET_TRIPLET'] -ne 'x64-windows-static-md') {
+    throw 'Reconfigure and rebuild with the x64-windows-static-md target triplet before packaging.'
+}
+if (-not $cache['VCPKG_INSTALLED_DIR']) { throw 'CMakeCache.txt does not contain VCPKG_INSTALLED_DIR.' }
+$vcpkgTarget = Join-Path $cache['VCPKG_INSTALLED_DIR'] $cache['VCPKG_TARGET_TRIPLET']
+if (-not (Test-Path $vcpkgTarget)) { throw "Configured vcpkg target directory is missing: $vcpkgTarget" }
 
 # Release CI passes the version derived from its Git tag; local builds default to
 # the CMake fallback. This script does not rebuild, so require the requested
@@ -68,9 +80,29 @@ Copy-Item $exe $deploy
 # Qt DLLs and plugins. Stage the compiler runtime as DLLs below so the MSI
 # works without a separate machine-wide prerequisite installer or elevation.
 # --no-translations: Mervin's catalogs, Qt's own strings included, are compiled into the exe.
-& "$env:QT6_DIR\bin\windeployqt.exe" --release --no-translations --no-system-d3d-compiler `
+& "$env:QT6_DIR\bin\windeployqt.exe" --release --no-translations --no-system-d3d-compiler --no-patchqt `
     --no-compiler-runtime (Join-Path $deploy "MervinPDF.exe")
 if ($LASTEXITCODE -ne 0) { throw "windeployqt failed ($LASTEXITCODE)" }
+
+# Keep the signed Qt binaries unchanged. Resolve plugins relative to the app
+# through configuration instead of patching Qt6Core's embedded install paths.
+@'
+[Paths]
+Prefix=.
+Plugins=.
+'@ | Set-Content -LiteralPath (Join-Path $deploy 'qt.conf') -Encoding utf8
+foreach ($dll in Get-ChildItem $deploy -Filter '*.dll' -Recurse) {
+    $relative = $dll.FullName.Substring($deploy.Length + 1)
+    $qtSource = if ($dll.DirectoryName -eq $deploy) {
+        Join-Path $env:QT6_DIR "bin\$relative"
+    } else {
+        Join-Path $env:QT6_DIR "plugins\$relative"
+    }
+    if ((Test-Path -LiteralPath $qtSource) -and
+        (Get-FileHash -LiteralPath $qtSource).Hash -ne (Get-FileHash -LiteralPath $dll.FullName).Hash) {
+        throw "Deployment modified a Qt DLL and may have invalidated its signature: $relative"
+    }
+}
 
 # Use only the redistributable release DLLs supplied by the active MSVC
 # toolchain. Windows 11 supplies the Universal CRT. App-local runtime updates
@@ -80,27 +112,28 @@ $crt = Join-Path $env:VCToolsRedistDir 'x64\Microsoft.VC143.CRT'
 if (-not (Test-Path $crt)) { throw "MSVC x64 redistributable runtime not found: $crt" }
 Get-ChildItem (Join-Path $crt '*.dll') | ForEach-Object { Copy-Item $_.FullName $deploy }
 
-# windeployqt needs the Windows SDK environment to find the Direct3D shader
-# compiler. Reject an incomplete payload before building a runnable installer.
-$required = 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'dxcompiler.dll', 'dxil.dll'
-$missing  = $required | Where-Object { -not (Test-Path (Join-Path $deploy $_)) }
-if ($missing) {
-    throw ("Deployment did not stage: $($missing -join ', '). Run from a VS Dev Shell " +
-           "with the Windows SDK on PATH. See docs/BUILDING.md > Package.")
-}
-
-# vcpkg dependency DLLs (qpdf + its deps like z.dll/jpeg, and tomlplusplus).
-# Copy them all - names vary (zlib ships as z.dll here) and over-copying is
-# harmless. MuPDF is statically linked into the exe, so it needs no DLL.
-$vbin = Join-Path $build "vcpkg_installed\x64-windows\bin"
-if (Test-Path $vbin) {
-    Get-ChildItem (Join-Path $vbin "*.dll") | ForEach-Object { Copy-Item $_.FullName $deploy }
-}
-
 # Carry the application and dependency license texts alongside the app.
 Copy-Item (Join-Path $root "LICENSE") $deploy
 Copy-Item (Join-Path $root "THIRD_PARTY_LICENSES.md") $deploy
 Copy-Item (Join-Path $root "licenses") (Join-Path $deploy "licenses") -Recurse
+# Static dependencies still require their notices. Take them from the actual
+# target packages, including transitive dependencies and bundled license texts.
+foreach ($port in @('qpdf', 'tomlplusplus', 'zlib', 'libjpeg-turbo', 'libspng')) {
+    if (-not (Test-Path (Join-Path $vcpkgTarget "share\$port\copyright"))) {
+        throw "Missing vcpkg dependency license notice for $port"
+    }
+}
+foreach ($notice in Get-ChildItem (Join-Path $vcpkgTarget 'share\*\copyright')) {
+    $destination = Join-Path $deploy "licenses\vcpkg\$($notice.Directory.Name)"
+    New-Item -ItemType Directory -Path $destination -Force | Out-Null
+    Copy-Item -LiteralPath $notice.FullName -Destination $destination
+}
+
+# Inspect every packaged executable and plugin, including delayed imports.
+# System32 is the only external DLL search directory. PATH cannot mask omissions.
+& python (Join-Path $PSScriptRoot 'check-windows-payload.py') --directory $deploy `
+    --report (Join-Path $build 'windows-payload.json')
+if ($LASTEXITCODE -ne 0) { throw 'Windows payload dependency validation failed.' }
 
 Write-Output "Deployed to: $deploy"
 Get-ChildItem $deploy | Select-Object Name | Format-Table -AutoSize

@@ -25,9 +25,9 @@ qt_standard_project_setup(
         lt lv mk mt nb nl nn pl pt_BR pt_PT rm ro ru sk
         sl sq sr sv th tr uk vi zh_CN zh_TW)
 find_package(MuPDF REQUIRED)
-# tomlplusplus is header-only. Prefer a system/vcpkg config package; fall back to
-# fetching the single-header release so distros without libtomlplusplus-dev (e.g.
-# Fedora) still configure cleanly.
+# Prefer a system/vcpkg config package for tomlplusplus. The vcpkg port builds a
+# compiled library. Fall back to the header-only CMake release so distros without
+# libtomlplusplus-dev (e.g. Fedora) still configure cleanly.
 find_package(tomlplusplus CONFIG QUIET)
 if(NOT tomlplusplus_FOUND)
     include(FetchContent)
@@ -40,6 +40,19 @@ endif()
 # NOT pinned via find_package because qpdf's config is SameMajorVersion-compatible, so a
 # "11.0.0" request would reject qpdf 12.x (vcpkg / Ubuntu 26.04 / Fedora all ship 12).
 find_package(qpdf CONFIG REQUIRED)
+if(WIN32 AND VCPKG_TARGET_TRIPLET STREQUAL "x64-windows-static-md")
+    # qpdf 12.4.2 exports bare pkg-config library names without their install
+    # directories. Preserve its configuration expressions and other dependencies,
+    # but resolve zlib and JPEG through their configuration-aware imported targets.
+    find_package(ZLIB REQUIRED)
+    find_package(JPEG REQUIRED)
+    get_target_property(_mervin_qpdf_links qpdf::libqpdf INTERFACE_LINK_LIBRARIES)
+    list(TRANSFORM _mervin_qpdf_links REPLACE
+        "(^|>:)(zs|zsd)([.]lib)?(>|$)" "\\1ZLIB::ZLIB\\4")
+    list(TRANSFORM _mervin_qpdf_links REPLACE
+        "(^|>:)jpeg([.]lib)?(>|$)" "\\1JPEG::JPEG\\3")
+    set_property(TARGET qpdf::libqpdf PROPERTY INTERFACE_LINK_LIBRARIES "${_mervin_qpdf_links}")
+endif()
 
 option(MERVIN_BUILD_TESTS "Build the Qt Test unit tests" ON)
 

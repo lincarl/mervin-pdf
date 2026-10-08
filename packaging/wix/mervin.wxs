@@ -9,7 +9,7 @@
   Required preprocessor defines (passed by scripts/deploy.ps1):
     -d Version=<x.y.z>     numeric MSI upgrade version from CMake
     -d DisplayVersion=<version> public version, including an optional -rcN
-    -d DeployDir=<dir>     staged application tree (exe + Qt/qpdf DLLs)
+    -d DeployDir=<dir>     staged application tree (exe + Qt/Microsoft DLLs)
     -d IconFile=<file>     mervin-icon.ico for the ARP entry + Start-menu shortcut
     -d DirectoryCleanup=<file> generated empty-directory removal entries
 -->
@@ -77,7 +77,7 @@
   <!-- == Application payload == -->
   <Fragment>
     <ComponentGroup Id="AppPayload" Directory="INSTALLFOLDER">
-      <!-- Auto-harvest the whole staged tree (exe + Qt/qpdf DLLs, plugins,
+      <!-- Auto-harvest the whole staged tree (exe + Qt/Microsoft DLLs, plugins,
            licenses, ...), preserving the subdirectory structure. -->
       <Files Include="$(var.DeployDir)\**" />
 

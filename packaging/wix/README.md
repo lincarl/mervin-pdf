@@ -6,6 +6,12 @@ and through deployment tools.
 
 No administrator access is needed. The package uses `Scope="perUser"`.
 
+The payload retains Qt, its plugins and app-local Microsoft runtime DLLs with
+their existing signatures. The Windows vcpkg libraries use
+`x64-windows-static-md` and contribute no runtime DLLs. Their notices remain
+under `licenses/`, including the target packages' copyright files under
+`licenses/vcpkg`. Mervin's executable and MSI remain unsigned.
+
 ```powershell
 msiexec /i MervinPDF-<version>.msi          # interactive wizard
 msiexec /i MervinPDF-<version>.msi /qn      # silent deployment
@@ -43,6 +49,38 @@ the generated CMake metadata and includes the public version in its product name
 For example, `1.64.10-rc1` uses MSI version `1.64.1001`; stable `1.64.10` uses
 `1.64.1099`. This keeps candidate upgrades and the later stable upgrade in order.
 See [the release policy](../../docs/RELEASING.md) for the mapping and limits.
+
+## Verification
+
+Deployment checks all staged PE files before WiX builds the MSI. The
+`scripts/check-windows-payload.py` report lists packaged DLLs and ordinary and
+delayed imports. The check rejects the six removed vcpkg DLLs, unresolved imports,
+and missing required runtime-loaded Qt or graphics components. It does not use
+development directories on `PATH` to satisfy dependencies.
+
+`scripts/test-windows-installer.ps1` requires PowerShell 7 and either a disposable
+Windows account or a hosted CI runner. It refuses existing Mervin installations
+or data, installs into a test folder, launches with a separate profile, and checks
+upgrade, downgrade rejection, repair and uninstall. It also checks the installed
+payload and writes `installed-payload.json`. Retain the staging directory,
+generated package metadata and WiX toolchain for its verification-only upgrade
+package. Configure with `MERVIN_BUILD_TESTS=ON` and retain `build/x64-release/tests/fixtures`
+for the generated PDF used in the startup check. The script checks for that
+fixture before installing anything. On an empty disposable account:
+
+```powershell
+pwsh -File scripts/test-windows-installer.ps1 -Msi build/x64-release/MervinPDF-0.0.0.msi -DisposableUser
+```
+
+The separate `scripts/test-windows-installer-ui.ps1` test runs the interactive
+wizard on a disposable GitHub-hosted Windows runner. It checks the installation
+folder, launch option and native application window. These
+tests preserve the selected default PDF handler. Do not run them against a
+daily-driver installation. For a clean-machine acceptance check, install and
+launch in a disposable VM without development tools or dependency directories
+on the application's `PATH`, using generated PDFs and a separate `--profile`.
+Static payload inspection and successful CI tests alone do not establish Windows
+application-control policy acceptance.
 
 ## Toolchain
 

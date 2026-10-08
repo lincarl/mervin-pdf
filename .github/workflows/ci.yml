@@ -148,11 +148,12 @@ jobs:
             packaging/linux/rpm-post.sh packaging/linux/rpm-postun.sh
           python3 resources/icons/export_icon_frames.py --check
 
-      - name: Test release scripts
+      - name: Test repository scripts
         run: |
           python3 -B scripts/test_prepare_prerelease.py
           python3 -B scripts/test_release_versions.py
           python3 -B scripts/test_prune_releases.py
+          python3 -B scripts/test_windows_payload.py
 
   linux-tests:
     runs-on: ubuntu-24.04
@@ -248,7 +249,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: C:\dev\src\mupdf-${{ env.MUPDF_VERSION }}-tests-source
-          key: mupdf-${{ env.MUPDF_VERSION }}-${{ env.MUPDF_SHA256 }}-windows-msvc2022-v143-tests-native-v1
+          key: mupdf-${{ env.MUPDF_VERSION }}-${{ env.MUPDF_SHA256 }}-windows-msvc2022-v143-tests-native-jpeg-prefix-v1
 
       - name: Build MuPDF
         shell: pwsh
@@ -268,8 +269,8 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~\AppData\Local\vcpkg\archives
-          key: vcpkg-windows-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-windows-
+          key: vcpkg-x64-windows-static-md-${{ hashFiles('vcpkg.json', 'CMakePresets.json') }}
+          restore-keys: vcpkg-x64-windows-static-md-
 
       - name: Configure
         shell: pwsh
@@ -358,6 +359,7 @@ jobs:
           path: |
             build/x64-release/deploy/
             build/x64-release/MervinPDF-*.msi
+            build/x64-release/windows-payload.json
           if-no-files-found: error
           retention-days: 7
 

@@ -23,6 +23,8 @@ if (-not $DisposableUser -and
     throw 'Use a hosted GitHub runner or an empty disposable Windows account with -DisposableUser.'
 }
 $msiPath = (Resolve-Path -LiteralPath $Msi).Path
+$build = Split-Path $msiPath -Parent
+$fixture = Join-Path $build 'tests\fixtures\properties.pdf'
 $dataDir = Join-Path $env:APPDATA 'MervinPDF'
 $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Mervin PDF.lnk'
 $installKey = 'HKCU:\Software\Mervin PDF'
@@ -40,6 +42,8 @@ function Assert-Installer([bool]$Condition, [string]$Message) {
 function Read-RegistryValue([string]$Key, [string]$Name) {
     if (Test-Path -LiteralPath $Key) { (Get-Item -LiteralPath $Key).GetValue($Name, $null) }
 }
+
+Assert-Installer (Test-Path -LiteralPath $fixture) 'Generated PDF fixture is missing. Configure with MERVIN_BUILD_TESTS=ON.'
 
 # Per-user MSI registration can live in Installer\UserData rather than the
 # conventional Uninstall key. Query Windows Installer's supported product API.
@@ -103,7 +107,6 @@ function Invoke-Msi([string]$Step, [string[]]$Options, [int[]]$ExpectedCodes = @
 try {
     # A verification-only newer product uses the same payload and never enters
     # the release artifact directory. Its app binary retains its real version.
-    $build = Split-Path $msiPath -Parent
     $repository = Split-Path $PSScriptRoot -Parent
     $metadata = Get-Content (Join-Path $build 'generated\package-version.json') -Raw | ConvertFrom-Json
     $version = [Version]$metadata.msi_version
@@ -143,9 +146,9 @@ restore_session = true
     Start-Sleep -Seconds 1
     Assert-Installer (-not (Get-Process MervinPDF -ErrorAction SilentlyContinue)) 'Silent installation launched Mervin.'
     Assert-Installer (Test-Path -LiteralPath $exe) 'Installed application is missing.'
-    foreach ($dll in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
-        Assert-Installer (Test-Path -LiteralPath (Join-Path $installDir $dll)) "App-local runtime is missing: $dll"
-    }
+    & python (Join-Path $PSScriptRoot 'check-windows-payload.py') --directory $installDir `
+        --report (Join-Path $work 'installed-payload.json')
+    Assert-Installer ($LASTEXITCODE -eq 0) 'Installed payload dependency validation failed.'
     Assert-Installer (-not (Test-Path -LiteralPath (Join-Path $installDir 'vc_redist.x64.exe'))) 'Unused runtime installer was packaged.'
     Assert-Installer (Test-Path -LiteralPath $shortcut) 'Start menu shortcut is missing.'
     $link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
@@ -163,7 +166,10 @@ restore_session = true
     Assert-Installer (-not (Test-Path -LiteralPath $englishModel)) 'Installer unexpectedly supplied an English OCR model.'
     Assert-Installer (@(Get-ChildItem -LiteralPath $installDir -Filter '*.traineddata' -Recurse).Count -eq 0) 'Application payload contains an OCR model.'
 
-    # Start the installed payload with its own state and a bounded normal exit.
+    # Open a generated document with isolated state, no development DLL search
+    # directories, and a bounded exit after the selected document has loaded.
+    $testPdf = Join-Path $work 'generated-test.pdf'
+    Copy-Item -LiteralPath $fixture -Destination $testPdf
     $launchEnvironment = @{}
     foreach ($name in @('PATH', 'QT_QPA_PLATFORM', 'QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH')) {
         $launchEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
@@ -173,10 +179,10 @@ restore_session = true
         $env:QT_QPA_PLATFORM = 'windows'
         $env:QT_PLUGIN_PATH = ''
         $env:QT_QPA_PLATFORM_PLUGIN_PATH = ''
-        $app = Start-Process $exe -PassThru `
+        $app = Start-Process $exe -PassThru -WorkingDirectory $work `
             -RedirectStandardOutput (Join-Path $work 'app-stdout.log') `
             -RedirectStandardError (Join-Path $work 'app-stderr.log') `
-            -ArgumentList @('--profile', "`"$work\profile`"", '--language', 'en', '--quit-after-startup')
+            -ArgumentList @('--profile', "`"$work\profile`"", '--language', 'en', '--quit-after-startup', "`"$testPdf`"")
     } finally {
         foreach ($name in $launchEnvironment.Keys) {
             [Environment]::SetEnvironmentVariable($name, $launchEnvironment[$name], 'Process')

@@ -17,9 +17,12 @@ Mervin is a C++20 desktop application built with CMake.
 | toml++ | Settings serialization |
 | Tesseract data through MuPDF | Local OCR language models |
 
-MuPDF is built from source and linked statically. Qt and qpdf are dynamically linked
-in packaged builds. The application is licensed under AGPL-3.0; dependency notices
-are maintained in [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md).
+MuPDF is built from source and linked statically. Windows also statically links
+qpdf, toml++ and their vcpkg library dependencies using `x64-windows-static-md`.
+Qt, its plugins and the Microsoft runtime remain dynamic. Linux uses its
+distribution's qpdf and toml++ packages without changing their linking
+configuration. The application is licensed under AGPL-3.0; dependency notices are
+maintained in [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md).
 
 ## Source layout
 

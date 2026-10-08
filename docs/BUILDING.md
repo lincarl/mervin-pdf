@@ -9,6 +9,13 @@ The pinned dependency set is Qt 6.12.0, MuPDF 1.28.5, qpdf 12.4.2 and toml++
 dependencies. Linux release packages use the supported distribution's Qt and
 qpdf packages; MuPDF is built from the same source release on both platforms.
 
+Windows vcpkg libraries use the `x64-windows-static-md` target triplet. This
+links qpdf, toml++ and their library dependencies statically while keeping the
+Microsoft C/C++ runtime dynamic (`/MD`, or `/MDd` for Debug), matching the
+prebuilt Qt and MuPDF libraries. Build tools use the separate `x64-windows`
+host triplet. Qt, its plugins and the redistributable Microsoft runtime remain
+DLLs. Linux continues to use its distribution's linking configuration.
+
 ## Toolchain (one-time)
 
 ```powershell
@@ -43,22 +50,24 @@ C:\dev\vcpkg\bootstrap-vcpkg.bat
 ## MuPDF from source (not in vcpkg)
 
 ```powershell
-# Download + extract the 1.28.5 source release (bundles all thirdparty deps).
-curl.exe -L --fail -o C:\dev\src\mupdf-1.28.5-source.tar.gz https://mupdf.com/downloads/archive/mupdf-1.28.5-source.tar.gz
-tar -xzf C:\dev\src\mupdf-1.28.5-source.tar.gz -C C:\dev\src
-# (A few symlinks in thirdparty wrapper/demo dirs fail to extract on Windows - harmless.)
-
-# Build the core static library (Release|x64). The .sln targets toolset v142;
-# retarget to v143. This pulls libthirdparty + harfbuzz + tesseract/leptonica +
-# barcode/zxing + pkcs7 + resources as project dependencies.
-& "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe" `
-  C:\dev\src\mupdf-1.28.5-source\platform\win32\mupdf.sln `
-  /t:libmupdf /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
-# => libs land in  C:\dev\src\mupdf-1.28.5-source\platform\win32\x64\Release\*.lib
+# Run from a VS Dev Shell. Use a new destination to retain earlier MuPDF builds.
+$env:MUPDF_DIR = & scripts\build-mupdf-windows.ps1 -Dest C:\dev\src\mupdf-1.28.5-static-deps-source | Select-Object -Last 1
+# => platform\win32\x64\Release\*.lib below MUPDF_DIR
 ```
 
-`cmake/FindMuPDF.cmake` locates these (default root `C:/dev/src/mupdf-1.28.5-source`,
-overridable via the `MUPDF_DIR` env/cache variable) and links all produced `.lib`s.
+The script verifies the official source archive, builds the libraries with the
+v143 toolset, and enables MuPDF's `FZ_HIDE_INTERNAL_JPEG` symbol prefix. MuPDF
+bundles IJG JPEG 10, while qpdf's libjpeg-turbo dependency uses the JPEG 6b ABI.
+Their identically named symbols cannot safely share one statically linked
+executable. The prefix keeps MuPDF's JPEG implementation separate.
+
+Rebuild MuPDF when migrating from the dynamic-vcpkg build. The script refuses
+cached libraries from the older build configuration. Use a separate destination
+instead of replacing libraries another checkout still uses. For faster test
+builds, add `-NoLtcg` and use another destination. That mode retains JPEG symbol
+isolation while avoiding repeated link-time optimization in each test executable.
+
+`cmake/FindMuPDF.cmake` locates and links the `.lib` files under `MUPDF_DIR`.
 
 Notes:
 - MuPDF's Release config uses `/MD` (dynamic CRT), matching Qt - do not mix with `/MT`.
@@ -68,26 +77,32 @@ Notes:
 ## Configure & build
 
 The Ninja generator needs the MSVC environment, so launch the VS Dev Shell first.
-Two env vars drive the CMake presets.
+Set the Qt, vcpkg and MuPDF roots before configuring.
 
 ```powershell
 $env:VCPKG_ROOT = "C:\dev\vcpkg"
 $env:QT6_DIR    = "C:\dev\Qt\6.12.0\msvc2022_64"
+$env:MUPDF_DIR  = "C:\dev\src\mupdf-1.28.5-static-deps-source"
 & "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -SkipAutomaticLocation
 cmake --preset x64-release
 cmake --build --preset x64-release
 # => build\x64-release\MervinPDF.exe
 ```
 
+When migrating an existing dynamic-vcpkg build, move its build directory aside
+and configure a fresh one. Merely changing the triplet or using `cmake --fresh`
+can leave obsolete DLLs beside old executables. Rebuild the application and its
+deployment tree together. Do not remove DLLs from an old dynamic executable's
+deployment tree and treat it as a static build.
+
 ## Run
 
-An unpackaged development build needs the Qt and vcpkg DLLs on `PATH`:
+An unpackaged development build needs the Qt DLLs on `PATH`. It does not need
+a vcpkg runtime directory:
 
 ```powershell
 $env:Path = "C:\dev\Qt\6.12.0\msvc2022_64\bin;" + $env:Path
-# Also needs the vcpkg deps (qpdf etc.) on PATH for a non-deployed dev run:
-$env:Path = "build\x64-release\vcpkg_installed\x64-windows\bin;" + $env:Path
-.\build\x64-release\MervinPDF.exe "path\to\document.pdf"
+.\build\x64-release\MervinPDF.exe --profile "C:\dev-temp\mervin-review-abcd\profile" "path\to\generated-test.pdf"
 ```
 
 ## Package
@@ -116,13 +131,18 @@ including the stable version that succeeds an installed candidate with the same
 base version. See [RELEASING.md](RELEASING.md) for the full policy and package
 version mapping.
 
-`scripts/deploy.ps1` runs `windeployqt` (Qt DLLs/plugins) and copies
-the vcpkg dependency DLLs (qpdf + zlib/jpeg/toml++); MuPDF is statically linked.
+`scripts/deploy.ps1` runs `windeployqt` to preserve Qt's DLLs and runtime-loaded
+plugins. It copies no vcpkg DLLs. MuPDF and the required vcpkg libraries are
+linked into the executable. Qt and Microsoft binaries retain their original
+embedded signatures.
 It skips Qt's translation files, because the UI catalogs, Qt's own strings
 included, are compiled into `MervinPDF.exe`.
 The script copies the active MSVC toolchain's redistributable runtime DLLs beside
 the app. No separate Visual C++ runtime installation or administrator access is
 needed. Runtime security updates must ship in new Mervin releases.
+The existing application and dependency notices remain in the deployment tree.
+The deployment script also copies the target vcpkg packages' copyright files
+into `licenses/vcpkg`, including notices for statically linked code.
 `packaging/wix/mervin.wxs` installs to `%LOCALAPPDATA%\Mervin PDF` by default,
 adds a Start menu shortcut and an Installed apps entry. Installers and Linux
 packages include no OCR language models. The application downloads models into
@@ -130,6 +150,51 @@ the writable user profile. The interactive wizard lets users choose the installa
 folder and launch the app when installation finishes. Silent installs do not launch the app. See
 [WiX packaging](../packaging/wix/README.md) for install, repair, and uninstall
 commands.
+
+## Windows payload verification
+
+Deployment runs `scripts/check-windows-payload.py` before building the MSI and
+writes `build/x64-release/windows-payload.json`. The check inventories every
+packaged EXE and DLL, reads ordinary and delayed PE imports, and rejects missing
+dependencies without searching development directories or `PATH`. It also checks
+required runtime-loaded Qt plugins and graphics libraries. These cannot all be
+discovered from the executable's import table alone.
+
+The payload must contain and import none of `tomlplusplus-3.dll`, `qpdf30.dll`,
+`jpeg62.dll`, `turbojpeg.dll`, `spng.dll` or `z.dll`. On Windows, rerun the check
+against the staged or extracted installer directory with:
+
+```powershell
+python scripts/check-windows-payload.py --directory build/x64-release/deploy --report build/x64-release/windows-payload.json
+```
+
+An off-Windows inspection must provide an actual Windows system directory with
+`--system-directory`. Passing this check does not verify Authenticode trust or
+application-control policy acceptance. `MervinPDF.exe` and the MSI remain
+unsigned. A policy that requires trusted application binaries still needs an
+appropriate signing or administrator approval process outside this build change.
+
+Run the existing tests against the rebuilt application libraries. The focused
+cases cover settings parsing and saving, qpdf operations, document output and
+rendering. The Windows-only `tst_qpdf::jpegDecodersCoexist` case generates a JPEG
+and exercises qpdf's decoder and MuPDF's renderer in one process to catch JPEG
+ABI collisions. CI runs the complete required suite:
+
+```powershell
+ctest --test-dir build/x64-release --output-on-failure -R '^(tst_settings_store|tst_qpdf|tst_document|tst_document_output|tst_render_lifetime|tst_measure_export)$'
+```
+
+Use a disposable Windows VM or account for installation and launch checks. Keep
+development and dependency directories out of the launched application's `PATH`,
+use a separate `--profile` directory, and open only generated test PDFs. The
+existing `scripts/test-windows-installer.ps1` exercises silent installation,
+startup, upgrade, downgrade rejection, repair and uninstall. It requires a
+disposable account or hosted CI runner and refuses existing Mervin installations
+and data. `scripts/test-windows-installer-ui.ps1` exercises the interactive wizard
+on a disposable GitHub-hosted runner. See the [installer guide](../packaging/wix/README.md)
+for their requirements. Do not run installer tests on an installed daily-driver
+copy or change real PDF associations. PE inspection alone does not establish that
+the native installer and application work.
 
 
 ## Linux development and verification
