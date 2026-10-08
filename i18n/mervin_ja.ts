@@ -2271,11 +2271,6 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>最高品質の言語モデルをロードしています...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>フォルダーを開く</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>言語カタログが利用できません</translation>
     </message>

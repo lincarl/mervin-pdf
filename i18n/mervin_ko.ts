@@ -2271,11 +2271,6 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>최고 품질의 언어 모델 로드 중...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>폴더 열기</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>언어 카탈로그를 사용할 수 없습니다.</translation>
     </message>

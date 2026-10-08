@@ -2271,11 +2271,6 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>正在加载最佳质量语言模型…</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>打开文件夹</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>语言目录不可用</translation>
     </message>

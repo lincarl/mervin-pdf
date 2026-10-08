@@ -2276,11 +2276,6 @@ Avage oma süsteemi Seaded → Vaikerakendused (või paremklõpsake PDF-i → Av
         <translation>Parima kvaliteediga keelemudelite laadimine...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Ava kaust</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Keeltekataloog pole saadaval</translation>
     </message>

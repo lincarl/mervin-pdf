@@ -2276,11 +2276,6 @@ Abra as Definições → Aplicações predefinidas do seu sistema (ou clique com
         <translation>A carregar os modelos de idiomas de melhor qualidade...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Abrir pasta</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Catálogo de idiomas indisponível</translation>
     </message>

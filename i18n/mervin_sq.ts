@@ -2276,11 +2276,6 @@ Hapni Cilësimet e sistemit tuaj → Aplikacionet e parazgjedhura (ose kliko me 
         <translation>Po ngarkohen modelet e gjuhës me cilësi më të mirë...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Hap dosjen</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Katalogu i gjuhës nuk është i disponueshëm</translation>
     </message>

@@ -2281,11 +2281,6 @@ Atidarykite sistemos Nustatymai → Numatytosios programos (arba dešiniuoju pel
         <translation>Įkeliami geriausios kokybės kalbų modeliai...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Atidaryti aplanką</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Kalbų katalogas nepasiekiamas</translation>
     </message>

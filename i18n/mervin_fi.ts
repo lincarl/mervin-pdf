@@ -2276,11 +2276,6 @@ Avaa järjestelmäsi Asetukset → Oletussovellukset (tai napsauta PDF-tiedostoa
         <translation>Ladataan parhaita kielimalleja...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Avaa kansio</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Kieliluetteloa ei ole saatavilla</translation>
     </message>

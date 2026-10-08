@@ -148,10 +148,7 @@ ManageLanguagesDialog::ManageLanguagesDialog(const QString &defaultLanguage, QWi
     layout->addLayout(columns, 1);
 
     auto *buttons = new QDialogButtonBox(this);
-    //: Button that opens the OCR language folder in the file manager.
-    auto *openFolder = buttons->addButton(tr("Open Folder"), QDialogButtonBox::ActionRole);
     buttons->addButton(QDialogButtonBox::Close);
-    connect(openFolder, &QPushButton::clicked, this, [] { TessdataManager::openFolder(); });
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(buttons);
     connect(search_, &QLineEdit::textChanged, this, &ManageLanguagesDialog::applyFilter);

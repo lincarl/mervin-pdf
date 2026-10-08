@@ -2296,11 +2296,6 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>جارٍ تحميل نماذج اللغة ذات الجودة الأفضل...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>فتح المجلد</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>كتالوج اللغة غير متوفر</translation>
     </message>

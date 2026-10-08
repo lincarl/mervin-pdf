@@ -26,6 +26,8 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QScopeGuard>
+#include <QScreen>
+#include <QScrollArea>
 #include <QScrollBar>
 #include <QSignalSpy>
 #include <QSpinBox>
@@ -36,6 +38,8 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QTranslator>
+#include <QWheelEvent>
+#include <QWindow>
 
 #include <functional>
 
@@ -66,6 +70,10 @@ private slots:
     void documentThemesRespondToMouseAndKeyboard();
     void legacyDocumentThemeIsPreserved();
     void uiThemesRespondToMouseAndKeyboard();
+    void customAccentKeepsTheSystemColorUntilReset();
+    void wheelDoesNotEditSettings();
+    void wheelOverInputsScrollsThePage();
+    void generalFitsWhenScreenSpaceAllows();
     void applyHandsOverPendingChanges();
     void okAppliesPendingChangesAndCancelDropsThem();
     void everyKindOfControlEnablesApply();
@@ -185,7 +193,8 @@ void TstSettingsDialog::opensOnRequestedPage_data()
 {
     QTest::addColumn<Page>("page");
     for (Page page : {Page::General, Page::Appearance, Page::Viewing, Page::Annotations,
-                      Page::Ocr, Page::Measuring, Page::Forms, Page::Shortcuts, Page::About})
+                      Page::Ocr, Page::Measuring, Page::Forms, Page::Shortcuts,
+                      Page::Updates, Page::About})
         QTest::newRow(QMetaEnum::fromType<Page>().valueToKey(int(page))) << page;
 }
 
@@ -220,6 +229,12 @@ void TstSettingsDialog::arrowKeysSkipTheDivider()
     QCOMPARE(dialog.currentPage(), Page::Shortcuts);
     QTest::keyClick(nav, Qt::Key_Up);
     QCOMPARE(dialog.currentPage(), Page::Forms);
+
+    dialog.showPage(Page::Shortcuts);
+    QTest::keyClick(nav, Qt::Key_Down);
+    QCOMPARE(dialog.currentPage(), Page::Updates);
+    QTest::keyClick(nav, Qt::Key_Down);
+    QCOMPARE(dialog.currentPage(), Page::About);
 }
 
 // Opening Settings and pressing OK must not rewrite anything.
@@ -584,6 +599,174 @@ void TstSettingsDialog::uiThemesRespondToMouseAndKeyboard()
     QVERIFY(dialogButton(&reopened, QDialogButtonBox::Apply)->isEnabled());
 }
 
+void TstSettingsDialog::customAccentKeepsTheSystemColorUntilReset()
+{
+    const QPalette previousPalette = qApp->palette();
+    const auto restorePalette = qScopeGuard([&] { qApp->setPalette(previousPalette); });
+    for (bool dark : {true, false}) {
+        const QColor platformColor(QStringLiteral("#C08050"));
+        qApp->setPalette(dark ? mervin::theme::darkPalette(platformColor)
+                             : mervin::theme::lightPalette(platformColor));
+        SettingsDialog dialog(mervin::Settings{}, {}, Page::Appearance);
+        auto *system = checkBox(&dialog, QStringLiteral("Use the system accent colour"));
+        QPushButton *reset = nullptr;
+        for (auto *button : dialog.findChildren<QPushButton *>())
+            if (button->text() == QStringLiteral("Reset"))
+                reset = button;
+        QVERIFY(system && reset);
+        QVERIFY(system->isChecked());
+        QVERIFY(!reset->isEnabled());
+        QCOMPARE(dialog.settings().accentColor, QStringLiteral("system"));
+
+        const QColor systemColor = mervin::Theme::systemAccent(dark);
+        system->click();
+        QCOMPARE(QColor(dialog.settings().accentColor), systemColor);
+        QVERIFY(reset->isEnabled());
+        reset->click();
+        QCOMPARE(QColor(dialog.settings().accentColor), QColor(QStringLiteral("#62C9FF")));
+        QVERIFY(!system->isChecked());
+
+        // Choosing the system again replaces the custom swatch. Turning it off
+        // keeps that current system color, including after a previous Reset.
+        system->click();
+        QCOMPARE(dialog.settings().accentColor, QStringLiteral("system"));
+        system->click();
+        QCOMPARE(QColor(dialog.settings().accentColor), systemColor);
+    }
+}
+
+void TstSettingsDialog::wheelDoesNotEditSettings()
+{
+    SettingsDialog dialog(mervin::Settings{});
+    auto *nav = dialog.findChild<QListWidget *>(QStringLiteral("settingsNav"));
+    auto *stack = dialog.findChild<QStackedWidget *>();
+    QVERIFY(nav && stack);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    dialog.activateWindow();
+    const auto wheel = [](QWidget *target, int delta) {
+        const QPoint position = target->rect().center();
+        QWheelEvent event(position, target->mapToGlobal(position), {}, QPoint(0, delta),
+                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(target, &event);
+    };
+
+    bool checkedNumber = false;
+    bool checkedCombo = false;
+    for (int row = 0; row < nav->count(); ++row) {
+        if (!(nav->item(row)->flags() & Qt::ItemIsEnabled))
+            continue;
+        nav->setCurrentRow(row);
+        QWidget *page = stack->currentWidget();
+        for (auto *number : page->findChildren<QAbstractSpinBox *>()) {
+            if (!number->isEnabled())
+                continue;
+            auto *editor = number->findChild<QLineEdit *>();
+            QVERIFY(editor);
+            for (bool focused : {false, true}) {
+                (focused ? static_cast<QWidget *>(number) : static_cast<QWidget *>(nav))->setFocus();
+                QTRY_COMPARE(number->hasFocus(), focused);
+                const QString before = number->text();
+                for (QWidget *target : {static_cast<QWidget *>(number), static_cast<QWidget *>(editor)})
+                    for (int delta : {-120, 120}) {
+                        wheel(target, delta);
+                        QCOMPARE(number->text(), before);
+                    }
+            }
+            checkedNumber = true;
+        }
+        for (auto *combo : page->findChildren<QComboBox *>()) {
+            if (!combo->isEnabled())
+                continue;
+            for (bool focused : {false, true}) {
+                (focused ? static_cast<QWidget *>(combo) : static_cast<QWidget *>(nav))->setFocus();
+                QTRY_COMPARE(combo->hasFocus(), focused);
+                const int before = combo->currentIndex();
+                for (int delta : {-120, 120}) {
+                    wheel(combo, delta);
+                    QCOMPARE(combo->currentIndex(), before);
+                }
+            }
+            checkedCombo = true;
+        }
+    }
+    QVERIFY(checkedNumber && checkedCombo);
+    QVERIFY(!dialogButton(&dialog, QDialogButtonBox::Apply)->isEnabled());
+
+    // Deliberate keyboard changes still work for both kinds of input.
+    dialog.showPage(Page::General);
+    auto *number = dialog.findChild<QSpinBox *>(QStringLiteral("unloadInactiveMinutes"));
+    auto *combo = dialog.findChild<QComboBox *>(QStringLiteral("recentSearchScope"));
+    QVERIFY(number && combo);
+    number->setFocus();
+    QTest::keyClick(number, Qt::Key_Up);
+    QCOMPARE(number->value(), 31);
+    auto *editor = number->findChild<QLineEdit *>();
+    editor->selectAll();
+    QTest::keyClicks(editor, "42");
+    QCOMPARE(dialog.settings().unloadInactiveMinutes, 42);
+    combo->setFocus();
+    QTest::keyClick(combo, Qt::Key_Down);
+    QCOMPARE(combo->currentData().toString(), QStringLiteral("contents"));
+    QVERIFY(dialogButton(&dialog, QDialogButtonBox::Apply)->isEnabled());
+}
+
+void TstSettingsDialog::wheelOverInputsScrollsThePage()
+{
+    SettingsDialog dialog(mervin::Settings{});
+    dialog.resize(dialog.width(), dialog.minimumHeight());
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    auto *stack = dialog.findChild<QStackedWidget *>();
+    auto *page = stack ? qobject_cast<QScrollArea *>(stack->currentWidget()) : nullptr;
+    auto *number = dialog.findChild<QSpinBox *>(QStringLiteral("unloadInactiveMinutes"));
+    auto *combo = dialog.findChild<QComboBox *>(QStringLiteral("uiLanguage"));
+    QVERIFY(page && number && combo && dialog.windowHandle());
+    auto *bar = page->verticalScrollBar();
+    QVERIFY(bar->maximum() > 0);
+    const mervin::Settings before = dialog.settings();
+
+    for (QWidget *target : {static_cast<QWidget *>(number), static_cast<QWidget *>(combo)}) {
+        page->ensureWidgetVisible(target);
+        const QPoint global = target->mapToGlobal(target->rect().center());
+        QVERIFY(page->viewport()->rect().contains(page->viewport()->mapFromGlobal(global)));
+        const int oldPosition = bar->value();
+        const int delta = oldPosition < bar->maximum() ? -120 : 120;
+        // QtTest injects a native wheel event, exercising widget hit testing
+        // and propagation to the surrounding page when the input ignores it.
+        QTest::wheelEvent(dialog.windowHandle(), dialog.mapFromGlobal(global), QPoint(0, delta));
+        QTRY_VERIFY(bar->value() != oldPosition);
+        QVERIFY(dialog.settings() == before);
+    }
+}
+
+void TstSettingsDialog::generalFitsWhenScreenSpaceAllows()
+{
+    const QString previousStyle = qApp->styleSheet();
+    const auto restoreStyle = qScopeGuard([&] { qApp->setStyleSheet(previousStyle); });
+    const QPalette palette = mervin::theme::darkPalette(QColor(QStringLiteral("#62C9FF")));
+    qApp->setStyleSheet(mervin::Theme::buildStyleSheet(palette, QStringLiteral("#62C9FF")));
+
+    SettingsDialog dialog(mervin::Settings{});
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    auto *stack = dialog.findChild<QStackedWidget *>();
+    auto *page = stack ? qobject_cast<QScrollArea *>(stack->currentWidget()) : nullptr;
+    auto *footer = dialog.findChild<QWidget *>(QStringLiteral("settingsFooter"));
+    QVERIFY(page && footer && dialog.screen());
+    const int availableHeight = dialog.screen()->availableGeometry().height() - 60;
+    QVERIFY(dialog.height() <= availableHeight);
+    QWidget *content = page->widget();
+    const int contentHeight = content->hasHeightForWidth()
+                                  ? content->heightForWidth(page->viewport()->width())
+                                  : content->sizeHint().height();
+    const int wantedHeight = qMax(740, qMax(content->sizeHint().height(), contentHeight)
+                                         + footer->sizeHint().height());
+    QCOMPARE(dialog.height(), qMin(availableHeight, wantedHeight));
+    if (contentHeight + footer->height() <= availableHeight)
+        QCOMPARE(page->verticalScrollBar()->maximum(), 0);
+}
+
 // Apply hands the pending changes over and keeps the dialog open. It is
 // available only while a control differs from what was last applied.
 void TstSettingsDialog::applyHandsOverPendingChanges()
@@ -739,7 +922,7 @@ void TstSettingsDialog::autoUpdateFollowsAnOutsideChange()
 {
     mervin::Settings in;
     in.autoUpdate = true;
-    SettingsDialog dialog(in);
+    SettingsDialog dialog(in, {}, Page::Updates);
     QCheckBox *box = checkBox(&dialog, QStringLiteral("Update automatically at start (every 30 days)"));
     QVERIFY(box);
     QVERIFY(box->isChecked());
@@ -759,7 +942,7 @@ void TstSettingsDialog::updateControlsFollowTheUpdater()
 {
     // No Updater (tests, embedded use): no check button and no date.
     {
-        SettingsDialog dialog(mervin::Settings{});
+        SettingsDialog dialog(mervin::Settings{}, {}, Page::Updates);
         QVERIFY(!dialog.findChild<QPushButton *>(QStringLiteral("checkForUpdatesButton")));
         QVERIFY(!labelStartingWith(&dialog, QStringLiteral("Never checked")));
     }
@@ -769,9 +952,17 @@ void TstSettingsDialog::updateControlsFollowTheUpdater()
         SettingsDialog::UpdateInfo info;
         info.checkAvailable = true;
         info.canSelfUpdate = true;
-        SettingsDialog dialog(mervin::Settings{}, info, Page::General);
+        SettingsDialog dialog(mervin::Settings{}, info, Page::Updates);
         auto *button = dialog.findChild<QPushButton *>(QStringLiteral("checkForUpdatesButton"));
-        QVERIFY(button);
+        auto *automatic = checkBox(&dialog, QStringLiteral("Update automatically at start (every 30 days)"));
+        auto *stack = dialog.findChild<QStackedWidget *>();
+        QVERIFY(button && automatic && stack);
+        QVERIFY(stack->currentWidget()->isAncestorOf(button));
+        QVERIFY(stack->currentWidget()->isAncestorOf(automatic));
+        dialog.showPage(Page::General);
+        QVERIFY(!stack->currentWidget()->isAncestorOf(button));
+        QVERIFY(!stack->currentWidget()->isAncestorOf(automatic));
+        dialog.showPage(Page::Updates);
         QSignalSpy requested(&dialog, &SettingsDialog::checkForUpdatesRequested);
         button->click();
         QCOMPARE(requested.count(), 1);
@@ -796,7 +987,7 @@ void TstSettingsDialog::updateControlsFollowTheUpdater()
         info.canSelfUpdate = false;
         mervin::Settings in;
         in.autoUpdate = true;
-        SettingsDialog dialog(in, info, Page::General);
+        SettingsDialog dialog(in, info, Page::Updates);
         QVERIFY(checkBox(&dialog, QStringLiteral("Update automatically at start (every 30 days)"))->isHidden());
         QVERIFY(labelStartingWith(&dialog, QStringLiteral("This copy can't update itself")));
         QVERIFY(dialog.findChild<QPushButton *>(QStringLiteral("checkForUpdatesButton")));

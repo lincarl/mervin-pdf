@@ -2271,11 +2271,6 @@ Nyissa meg a rendszer Beállítások → Alapértelmezett alkalmazások menüpon
         <translation>A legjobb minőségű nyelvi modellek betöltése...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Nyissa meg a mappát</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>A nyelvi katalógus nem érhető el</translation>
     </message>

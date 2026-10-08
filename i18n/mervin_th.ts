@@ -2271,11 +2271,6 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>กำลังโหลดโมเดลภาษาคุณภาพดีที่สุด...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>เปิดโฟลเดอร์</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>แค็ตตาล็อกภาษาไม่พร้อมใช้งาน</translation>
     </message>

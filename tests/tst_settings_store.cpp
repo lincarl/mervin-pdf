@@ -96,17 +96,27 @@ private slots:
         }
     }
 
-    // Existing configs have no recent_keep_missing key: they keep today's
-    // behaviour, and an explicit false survives a save and load.
-    void keepMissingRecentDefaultsOnAndRoundTrips()
+    // Fresh profiles use dark chrome and the system accent, and remove missing
+    // recent files. Explicit saved preferences survive the new defaults.
+    void appearanceAndRecentDefaultsRespectSavedValues()
     {
         QTemporaryDir dir;
         mervin::ConfigPaths::setOverrideDir(dir.path());
-        QVERIFY(mervin::Settings::load().recentKeepMissing);
         auto s = mervin::Settings::load();
-        s.recentKeepMissing = false;
-        QVERIFY(s.save());
-        QVERIFY(!mervin::Settings::load().recentKeepMissing);
+        QCOMPARE(s.colorScheme, QStringLiteral("dark"));
+        QCOMPARE(s.accentColor, QStringLiteral("system"));
+        QVERIFY(!s.recentKeepMissing);
+
+        s.colorScheme = QStringLiteral("light");
+        s.accentColor = QStringLiteral("#112233");
+        for (const bool keepMissing : {true, false}) {
+            s.recentKeepMissing = keepMissing;
+            QVERIFY(s.save());
+            const auto loaded = mervin::Settings::load();
+            QCOMPARE(loaded.colorScheme, s.colorScheme);
+            QCOMPARE(loaded.accentColor, s.accentColor);
+            QCOMPARE(loaded.recentKeepMissing, keepMissing);
+        }
         QFile file(mervin::ConfigPaths::configFile());
         QVERIFY(file.open(QIODevice::ReadOnly));
         QVERIFY(file.readAll().contains("recent_keep_missing = false"));

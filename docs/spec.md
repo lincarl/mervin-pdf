@@ -181,12 +181,12 @@ edited snapshot remains available for retry or recovery.
 ## Settings and platform integration
 
 Settings is one window with a page menu on the left: General (display language,
-opening files, session restore, memory and tray, recent files, updates, and the
-Windows default-app action),
+opening files, session restore, memory and tray, recent files, and the Windows
+default-app action),
 Appearance (UI theme, accent colour, document theme), Viewing (default zoom,
 scrolling, spreads), Annotations (default colour, author name), OCR (default and
 installed languages), Measuring (snapping and the defaults new tabs start from),
-Forms, Keyboard shortcuts, and About (version and licences). The main menu opens
+Forms, Keyboard shortcuts, Updates, and About (version and licences). The main menu opens
 Settings; Keyboard shortcuts and About are available in its page menu. OK applies
 the changes and closes Settings. Apply puts them into effect and keeps Settings
 open; it is available only while a change is pending. If the settings file can't
@@ -195,7 +195,14 @@ a save works. Cancel discards changes made since the last Apply. Removing or add
 OCR languages takes effect at once. Session
 restore and automatic updates are enabled by default. Copies that cannot update
 themselves (portable and development builds) show no automatic-update switch, only
-Check for Updates.
+Check for Updates. General determines the initial window height, capped to the
+available screen. Pages scroll on smaller screens. Scrolling over number fields
+and closed dropdowns scrolls the page without changing their values. Keyboard
+editing and scrolling an opened dropdown remain available.
+
+New profiles use the dark UI theme and the system accent. Turning off the system
+accent keeps its current colour; Reset selects the custom default `#62c9ff`.
+Keep removed files in list defaults to off. Explicit saved preferences are preserved.
 
 The interface is available in 53 languages, including English, Swedish, Simplified
 Chinese and Traditional Chinese. See [TRANSLATING.md](TRANSLATING.md) for coverage.

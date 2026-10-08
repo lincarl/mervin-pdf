@@ -2276,11 +2276,6 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>Lade Sprachmodelle in bester Qualität...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Ordner öffnen</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Sprachkatalog nicht verfügbar</translation>
     </message>

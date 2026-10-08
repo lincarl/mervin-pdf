@@ -2281,11 +2281,6 @@ Otvorte nastavenia svojho systému → Predvolené aplikácie (alebo kliknite pr
         <translation>Načítavajú sa jazykové modely najvyššej kvality...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Otvoriť priečinok</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Jazykový katalóg nie je dostupný</translation>
     </message>

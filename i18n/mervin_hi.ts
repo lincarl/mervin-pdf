@@ -2276,11 +2276,6 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>सर्वोत्तम गुणवत्ता वाले भाषा मॉडल लोड हो रहे हैं...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>फ़ोल्डर खोलें</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>भाषा सूची अनुपलब्ध है</translation>
     </message>

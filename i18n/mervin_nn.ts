@@ -2276,11 +2276,6 @@ Opne Innstillingar → Standardprogram i systemet (eller høgreklikk på ei PDF-
         <translation>Lastar språkmodellar med best kvalitet...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Opne mappe</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Språkkatalogen er utilgjengeleg</translation>
     </message>

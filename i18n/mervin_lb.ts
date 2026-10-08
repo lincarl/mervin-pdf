@@ -2276,11 +2276,6 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>Luede bescht-Qualitéit Sprooch Modeller ...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Dossier opmaachen</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Sproochekatalog net verfügbar</translation>
     </message>

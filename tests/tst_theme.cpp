@@ -176,6 +176,8 @@ private slots:
     void systemAccentStaysLegible();
     void applyAppInstallsTheChosenAccent_data();
     void applyAppInstallsTheChosenAccent();
+    void applyAppHonorsTheThemePreference_data();
+    void applyAppHonorsTheThemePreference();
     void themesMeetContrast_data();
     void themesMeetContrast();
     void accentTextPicksTheLegibleInk();
@@ -382,6 +384,7 @@ void TstTheme::applyAppInstallsTheChosenAccent()
     const QColor expected = theme::legibleAccent(desktop, dark);
     const auto applyWith = [](const QString &accent) {
         Settings st = Settings::load();
+        st.colorScheme = QStringLiteral("system");
         st.accentColor = accent;
         QVERIFY(st.save());
         Theme::applyApp();
@@ -423,6 +426,45 @@ void TstTheme::applyAppInstallsTheChosenAccent()
     applyWith(QStringLiteral("system"));
     QCOMPARE(Theme::systemAccent(!dark), theme::legibleAccent(otherShade, !dark));
     QCOMPARE(Theme::systemAccent(dark), expected);
+}
+
+void TstTheme::applyAppHonorsTheThemePreference_data()
+{
+    QTest::addColumn<QString>("scheme");
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("fresh-profile") << QString() << true;
+    QTest::newRow("saved-dark") << QStringLiteral("dark") << true;
+    QTest::newRow("saved-light") << QStringLiteral("light") << false;
+}
+
+// A platform may ignore Qt's forced scheme. The saved choice, including a
+// fresh profile's dark default, must still override the opposite palette.
+void TstTheme::applyAppHonorsTheThemePreference()
+{
+    QFETCH(QString, scheme);
+    QFETCH(bool, dark);
+    QTemporaryDir profile;
+    QVERIFY(profile.isValid());
+    ConfigPaths::setOverrideDir(profile.path());
+    const QPalette saved = qApp->palette();
+    const auto restore = qScopeGuard([&saved] {
+        ConfigPaths::setOverrideDir({});
+        qApp->setStyleSheet(QString());
+        qApp->setPalette(saved);
+    });
+
+    if (!scheme.isEmpty()) {
+        Settings st = Settings::load();
+        st.colorScheme = scheme;
+        QVERIFY(st.save());
+    }
+    qApp->setPalette(dark ? theme::lightPalette(QColor()) : theme::darkPalette(QColor()));
+    QCOMPARE(theme::isDark(qApp->palette()), !dark);
+
+    Theme::applyApp();
+    QCOMPARE(theme::isDark(qApp->palette()), dark);
+    const QPalette expected = dark ? theme::darkPalette(QColor()) : theme::lightPalette(QColor());
+    QCOMPARE(qApp->palette().color(QPalette::Window), expected.color(QPalette::Window));
 }
 
 void TstTheme::themesMeetContrast_data()

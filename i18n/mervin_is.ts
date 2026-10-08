@@ -2276,11 +2276,6 @@ Opnaðu stillingar kerfisins þíns → Sjálfgefin forrit (eða hægrismelltu �
         <translation>Hleður hágæða tungumálalíkön...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Opna möppu</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Tungumálaskrá ekki tiltæk</translation>
     </message>

@@ -163,8 +163,8 @@ QColor pageAccent(const QColor &accent, const QColor &paper);
 QColor legibleAccent(const QColor &accent, bool dark);
 
 // The design accent of each theme: the frost blue of Nord in dark and the Cool
-// slate blue in light. The accent's Reset button picks it, and "system" falls back
-// to it when the desktop reports no accent (see Theme::accentColor). A single
+// slate blue in light. "system" falls back to it when the desktop reports no
+// accent (see Theme::accentColor). A single
 // value would put a mid blue under dark button text, or a pale one on white.
 QColor defaultAccent(bool dark);
 

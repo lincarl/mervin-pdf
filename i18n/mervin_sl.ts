@@ -2286,11 +2286,6 @@ Odprite sistemske nastavitve → Privzete aplikacije (ali z desno miškino tipko
         <translation>Nalaganje jezikovnih modelov najboljše kakovosti ...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Odpri mapo</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Jezikovni katalog ni na voljo</translation>
     </message>

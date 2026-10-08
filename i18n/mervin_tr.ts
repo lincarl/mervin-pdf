@@ -2271,11 +2271,6 @@ Sisteminizin Ayarlar → Varsayılan Uygulamalar&apos;ı açın (veya bir PDF&ap
         <translation>En iyi kalitede dil modelleri yükleniyor...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Klasörü Aç</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Dil kataloğu mevcut değil</translation>
     </message>

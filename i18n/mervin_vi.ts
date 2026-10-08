@@ -2271,11 +2271,6 @@ Mở Cài đặt của hệ thống → Ứng dụng mặc định (hoặc nhấ
         <translation>Đang tải mô hình ngôn ngữ chất lượng tốt nhất...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Mở thư mục</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Danh mục ngôn ngữ không có sẵn</translation>
     </message>

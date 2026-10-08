@@ -2276,11 +2276,6 @@ Open de instellingen van uw systeem → Standaardtoepassingen (of klik met de re
         <translation>Taalmodellen van de beste kwaliteit laden...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Map openen</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Taalcatalogus niet beschikbaar</translation>
     </message>

@@ -19,6 +19,7 @@
 #endif
 
 #include <QAbstractButton>
+#include <QAbstractSpinBox>
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
@@ -58,6 +59,7 @@ using Page = SettingsDialog::Page;
 
 constexpr int kPageRole = Qt::UserRole;      // nav item -> Page
 constexpr int kStackRole = Qt::UserRole + 1; // nav item -> index in the page stack
+constexpr QRgb kDefaultCustomAccent = qRgb(0x62, 0xc9, 0xff);
 
 void selectByData(QComboBox *combo, const QString &value)
 {
@@ -166,6 +168,7 @@ mervin::icons::Glyph pageGlyph(Page page)
     case Page::Measuring: return Glyph::Measure;
     case Page::Forms: return Glyph::FillForm;
     case Page::Shortcuts: return Glyph::Keyboard;
+    case Page::Updates: return Glyph::RotateRight;
     case Page::About: return Glyph::About;
     }
     return Glyph::Settings;
@@ -272,13 +275,15 @@ SettingsDialog::SettingsDialog(const mervin::Settings &current, const UpdateInfo
     if (useSystemAccent) {
         accent_ = mervin::Theme::systemAccent(mervin::theme::isDark(palette()));
     } else if (!accent_.isValid()) {
-        accent_ = mervin::theme::defaultAccent(mervin::theme::isDark(palette()));
+        accent_ = QColor(kDefaultCustomAccent);
     }
     setWindowTitle(tr("Settings"));
-    setMinimumSize(680, 420);
     // Keep the dialog within the screen; each page scrolls when its controls need more room.
     const QRect screenArea = screen() ? screen()->availableGeometry() : QRect(0, 0, 1280, 720);
-    resize(std::min(820, screenArea.width() - 40), std::min(640, screenArea.height() - 60));
+    const QSize screenLimit(std::max(1, screenArea.width() - 40),
+                           std::max(1, screenArea.height() - 60));
+    setMinimumSize(QSize(680, 420).boundedTo(screenLimit));
+    resize(QSize(820, 740).boundedTo(screenLimit));
 
     auto *outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
@@ -301,8 +306,9 @@ SettingsDialog::SettingsDialog(const mervin::Settings &current, const UpdateInfo
     body->addWidget(stack_, 1);
 
     // The page titles are the rows of the menu on the left of Settings.
+    auto *generalPage = buildGeneralPage();
     //: Settings page title: general settings.
-    addPage(Page::General, tr("General"), buildGeneralPage());
+    addPage(Page::General, tr("General"), generalPage);
     addPage(Page::Appearance, tr("Appearance"), buildAppearancePage());
     //: Settings page title: how documents are shown (zoom, scrolling).
     addPage(Page::Viewing, tr("Viewing"), buildViewingPage());
@@ -315,7 +321,7 @@ SettingsDialog::SettingsDialog(const mervin::Settings &current, const UpdateInfo
     //: Settings page title: fillable PDF forms.
     addPage(Page::Forms, tr("Forms"), buildFormsPage());
 
-    // A divider between the settings and the two reference pages. It is a
+    // A divider before shortcuts, updates and application information. It is a
     // disabled row, so arrow keys and clicks skip it.
     auto *divider = new QListWidgetItem(nav_);
     divider->setFlags(Qt::NoItemFlags);
@@ -330,6 +336,7 @@ SettingsDialog::SettingsDialog(const mervin::Settings &current, const UpdateInfo
     nav_->setItemWidget(divider, dividerHolder);
 
     addPage(Page::Shortcuts, tr("Keyboard shortcuts"), buildShortcutsPage());
+    addPage(Page::Updates, tr("Updates"), buildUpdatesPage());
     addPage(Page::About, tr("About"), buildAboutPage());
     refreshNavIcons();
     // Wide enough for the longest page title in the UI language, with its icon
@@ -369,6 +376,20 @@ SettingsDialog::SettingsDialog(const mervin::Settings &current, const UpdateInfo
     applied_ = settings();
     watchForEdits();
     refreshButtons();
+
+    // Size after all controls are polished, so General fits at the current font
+    // and language when the screen allows it. Smaller screens keep page scrolling.
+    ensurePolished();
+    outer->activate();
+    // Hidden scroll areas have not delivered their resize events yet. Measure
+    // at the width the outer layout assigned, not the content's stale geometry.
+    const int generalWidth =
+        std::max(generalPage->minimumSizeHint().width(), stack_->contentsRect().width());
+    const int generalHeight =
+        std::max(generalPage->sizeHint().height(),
+                 generalPage->layout()->totalHeightForWidth(generalWidth));
+    resize(width(), std::min(screenLimit.height(),
+                             std::max(740, generalHeight + footer->sizeHint().height())));
 
     showPage(page);
     nav_->setFocus();
@@ -505,8 +526,8 @@ QWidget *SettingsDialog::buildGeneralPage()
     auto *recentForm = snugForm(recentBox);
     // Both counts are typed, not stepped: the useful values are round numbers
     // hundreds apart, so the stepper arrows were only ever visual noise (nudging
-    // 500 by one at a time is not a real interaction). Typing, Up/Down and the
-    // wheel all still work - see Theme::useTypedSpinBox.
+    // 500 by one at a time is not a real interaction). Typing and Up/Down
+    // still work. The settings event filter ignores the wheel.
     visibleSpin_ = new QSpinBox(recentBox);
     visibleSpin_->setRange(1, 100000);
     visibleSpin_->setValue(base_.recentVisibleCount);
@@ -537,6 +558,45 @@ QWidget *SettingsDialog::buildGeneralPage()
     keepMissingCheck_->setMinimumWidth(keepMissingCheck_->sizeHint().width());
     recentForm->addRow(QString(), keepMissingCheck_);
     layout->addWidget(recentBox);
+
+    // Windows requires the user to confirm default-app changes in system Settings.
+#ifdef Q_OS_WIN
+    auto *winBox = groupBox(tr("System integration"), page);
+    auto *winLayout = new QHBoxLayout(winBox);
+    auto *defaultBtn = new QPushButton(tr("Set as Default PDF App"), winBox);
+    defaultBtn->setObjectName(QStringLiteral("setDefaultPdfAppButton"));
+    defaultBtn->setAutoDefault(false);
+    // A --profile (dev/test) instance must not touch the machine's file-type
+    // registration - it would point the .pdf handler at the dev executable.
+    if (!mervin::ConfigPaths::overrideDir().isEmpty()) {
+        defaultBtn->setEnabled(false);
+        //: --profile is a command-line option; keep it as it is.
+        defaultBtn->setToolTip(tr("Disabled while running with --profile"));
+    }
+    connect(defaultBtn, &QPushButton::clicked, this, [this] {
+        if (mervin::PlatformIntegration::registerPdfHandlerAndPromptDefault())
+            return;
+        // A confined Snap can't change the association from inside the app; tell
+        // the user where to finish it rather than leave the button looking dead.
+        QMessageBox::information(
+            this, tr("Mervin PDF"),
+            tr("Mervin couldn't set itself as your default PDF viewer automatically.\n\n"
+               "Open your system's Settings → Default Applications (or right-click a "
+               "PDF → Open With) and choose Mervin PDF for PDF files."));
+    });
+    winLayout->addWidget(defaultBtn);
+    winLayout->addStretch(1);
+    layout->addWidget(winBox);
+#endif
+
+    layout->addStretch(1);
+    return page;
+}
+
+QWidget *SettingsDialog::buildUpdatesPage()
+{
+    auto *page = new QWidget(this);
+    auto *layout = pageLayout(page);
 
     // With this setting off Mervin never checks or installs on its own.
     // Check for Updates still downloads, installs and restarts when an update exists.
@@ -574,36 +634,6 @@ QWidget *SettingsDialog::buildGeneralPage()
         refreshLastCheck();
     }
     layout->addWidget(updateBox);
-
-    // Windows requires the user to confirm default-app changes in system Settings.
-#ifdef Q_OS_WIN
-    auto *winBox = groupBox(tr("System integration"), page);
-    auto *winLayout = new QHBoxLayout(winBox);
-    auto *defaultBtn = new QPushButton(tr("Set as Default PDF App"), winBox);
-    defaultBtn->setObjectName(QStringLiteral("setDefaultPdfAppButton"));
-    defaultBtn->setAutoDefault(false);
-    // A --profile (dev/test) instance must not touch the machine's file-type
-    // registration - it would point the .pdf handler at the dev executable.
-    if (!mervin::ConfigPaths::overrideDir().isEmpty()) {
-        defaultBtn->setEnabled(false);
-        //: --profile is a command-line option; keep it as it is.
-        defaultBtn->setToolTip(tr("Disabled while running with --profile"));
-    }
-    connect(defaultBtn, &QPushButton::clicked, this, [this] {
-        if (mervin::PlatformIntegration::registerPdfHandlerAndPromptDefault())
-            return;
-        // A confined Snap can't change the association from inside the app; tell
-        // the user where to finish it rather than leave the button looking dead.
-        QMessageBox::information(
-            this, tr("Mervin PDF"),
-            tr("Mervin couldn't set itself as your default PDF viewer automatically.\n\n"
-               "Open your system's Settings → Default Applications (or right-click a "
-               "PDF → Open With) and choose Mervin PDF for PDF files."));
-    });
-    winLayout->addWidget(defaultBtn);
-    winLayout->addStretch(1);
-    layout->addWidget(winBox);
-#endif
 
     layout->addStretch(1);
     return page;
@@ -643,7 +673,7 @@ QWidget *SettingsDialog::buildAppearancePage()
     auto *accentReset = new QPushButton(tr("Reset"), appBox);
     accentReset->setAutoDefault(false);
     connect(accentReset, &QPushButton::clicked, this, [this] {
-        accent_ = mervin::theme::defaultAccent(mervin::theme::isDark(palette()));
+        accent_ = QColor(kDefaultCustomAccent);
         updateAccentSwatch();
     });
     accentRow->addWidget(accentBtn_);
@@ -1121,8 +1151,11 @@ void SettingsDialog::watchForEdits()
     // controls and call refreshButtons themselves.
     for (auto *combo : findChildren<QComboBox *>()) {
         mervin::fitComboText(*combo);
+        combo->installEventFilter(this);
         connect(combo, &QComboBox::currentIndexChanged, this, &SettingsDialog::refreshButtons);
     }
+    for (auto *spin : findChildren<QAbstractSpinBox *>())
+        spin->installEventFilter(this);
     for (auto *check : findChildren<QCheckBox *>()) {
         check->ensurePolished();
         check->setMinimumWidth(check->sizeHint().width());
@@ -1316,6 +1349,13 @@ void SettingsDialog::manageOcrLanguages()
 
 bool SettingsDialog::eventFilter(QObject *watched, QEvent *event)
 {
+    if (event->type() == QEvent::Wheel
+        && (qobject_cast<QAbstractSpinBox *>(watched) || qobject_cast<QComboBox *>(watched))) {
+        // Leave the value alone, even with focus. Ignoring the event lets the
+        // settings page scroll. An opened combo's list keeps its own scrolling.
+        event->ignore();
+        return true;
+    }
     if (watched == nav_ && event->type() == QEvent::KeyPress) {
         const int key = static_cast<QKeyEvent *>(event)->key();
         if (key == Qt::Key_Return || key == Qt::Key_Enter) {

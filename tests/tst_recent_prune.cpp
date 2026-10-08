@@ -53,11 +53,9 @@ private slots:
     }
     void cleanup() { ConfigPaths::setOverrideDir({}); }
 
-    void dropsRemovedFilesButNotDetachedVolumes()
+    void dropsRemovedFilesByDefaultButNotDetachedVolumes()
     {
-        Settings s = Settings::load();
-        s.recentKeepMissing = false;
-        QVERIFY(s.save());
+        QVERIFY(!Settings::load().recentKeepMissing);
         WindowManager wm;
         wm.refreshRecent();
         QTRY_COMPARE(wm.recentEntries().size(), 2);
@@ -73,9 +71,11 @@ private slots:
         QVERIFY(states.get(kept_));
     }
 
-    // The default keeps today's behaviour: nothing is forgotten.
     void keepsEverythingWhileTheSettingIsOn()
     {
+        Settings s = Settings::load();
+        s.recentKeepMissing = true;
+        QVERIFY(s.save());
         WindowManager wm;
         wm.refreshRecent();
         QTest::qWait(200);

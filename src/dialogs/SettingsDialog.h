@@ -38,10 +38,10 @@ class SettingsDialog : public QDialog
 
 public:
     // The pages, in menu order.
-    enum class Page { General, Appearance, Viewing, Annotations, Ocr, Measuring, Forms, Shortcuts, About };
+    enum class Page { General, Appearance, Viewing, Annotations, Ocr, Measuring, Forms, Shortcuts, Updates, About };
     Q_ENUM(Page)
 
-    // What the General page shows about updates. The dialog does not talk to the
+    // What the Updates page shows. The dialog does not talk to the
     // Updater itself: it emits checkForUpdatesRequested and is told the result.
     struct UpdateInfo
     {
@@ -83,7 +83,7 @@ signals:
 
 protected:
     void changeEvent(QEvent *event) override; // re-skin swatches and menu icons on light/dark switch
-    bool eventFilter(QObject *watched, QEvent *event) override; // Enter on the menu
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     QWidget *buildGeneralPage();
@@ -94,6 +94,7 @@ private:
     QWidget *buildMeasuringPage();
     QWidget *buildFormsPage();
     QWidget *buildShortcutsPage();
+    QWidget *buildUpdatesPage();
     QWidget *buildAboutPage();
     void addPage(Page page, const QString &title, QWidget *content);
     void watchForEdits();        // any control change refreshes the buttons

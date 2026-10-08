@@ -2281,11 +2281,6 @@ Oscail Socruithe do chórais → Feidhmchláir Réamhshocraithe (nó deaschlice�
         <translation>Samhlacha teanga den chaighdeán is fearr á lódáil...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Oscail fillteán</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Níl an chatalóg teangacha ar fáil</translation>
     </message>

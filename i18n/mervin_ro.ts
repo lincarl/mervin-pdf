@@ -2281,11 +2281,6 @@ Deschideți Setările sistemului dvs. → Aplicații implicite (sau faceți clic
         <translation>Se încarcă modele de limbă de cea mai bună calitate...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Deschideți folderul</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Catalog de limbi indisponibil</translation>
     </message>

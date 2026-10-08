@@ -2281,11 +2281,6 @@ Atveriet sistēmas Iestatījumi → Noklusējuma lietojumprogrammas (vai ar pele
         <translation>Notiek labākās kvalitātes valodu modeļu ielāde...</translation>
     </message>
     <message>
-        <source>Open Folder</source>
-        <extracomment>Button that opens the OCR language folder in the file manager.</extracomment>
-        <translation>Atveriet mapi</translation>
-    </message>
-    <message>
         <source>Language catalog unavailable</source>
         <translation>Valodu katalogs nav pieejams</translation>
     </message>
