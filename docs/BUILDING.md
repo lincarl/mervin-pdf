@@ -170,9 +170,12 @@ python scripts/check-windows-payload.py --directory build/x64-release/deploy --r
 
 An off-Windows inspection must provide an actual Windows system directory with
 `--system-directory`. Passing this check does not verify Authenticode trust or
-application-control policy acceptance. `MervinPDF.exe` and the MSI remain
-unsigned. A policy that requires trusted application binaries still needs an
-appropriate signing or administrator approval process outside this build change.
+application-control policy acceptance. `MervinPDF.exe` remains unsigned. Local and
+CI verification MSIs remain unsigned; the release workflow can sign the MSI with
+SignPath as described in [the release policy](RELEASING.md#windows-msi-signing).
+Signing the MSI does not sign its executable payload. A policy that requires
+trusted application binaries still needs an appropriate signing or administrator
+approval process.
 
 Run the existing tests against the rebuilt application libraries. The focused
 cases cover settings parsing and saving, qpdf operations, document output and

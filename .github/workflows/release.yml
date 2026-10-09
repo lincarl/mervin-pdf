@@ -6,6 +6,10 @@ on:
   push:
     tags: ['v*']
   workflow_call:
+    secrets:
+      SIGNPATH_API_TOKEN:
+        description: SignPath submitter token, required when SIGNPATH_ENABLED is true
+        required: false
 
 permissions:
   contents: read
@@ -89,9 +93,38 @@ jobs:
   windows:
     needs: prepare
     runs-on: windows-2022
+    permissions:
+      actions: read
+      contents: read
     env:
       MERVIN_VERSION: ${{ needs.prepare.outputs.version }}
+      SIGNPATH_ENABLED: ${{ vars.SIGNPATH_ENABLED }}
     steps:
+      - name: Check SignPath configuration
+        shell: pwsh
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          SIGNPATH_ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+        run: |
+          if ([string]$env:SIGNPATH_ENABLED -cnotin @('', 'false', 'true')) {
+            throw 'SIGNPATH_ENABLED must be true, false, or unset.'
+          }
+          if ($env:SIGNPATH_ENABLED -ceq 'true') {
+            foreach ($name in @('SIGNPATH_API_TOKEN', 'SIGNPATH_ORGANIZATION_ID',
+                               'SIGNPATH_PROJECT_SLUG', 'SIGNPATH_SIGNING_POLICY_SLUG',
+                               'SIGNPATH_ARTIFACT_CONFIGURATION_SLUG')) {
+              if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+                throw "Set $name before enabling SignPath. See docs/RELEASING.md."
+              }
+            }
+          } else {
+            'MSI signing is disabled. Set SIGNPATH_ENABLED to true after completing the setup in docs/RELEASING.md.' |
+              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          }
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
@@ -193,12 +226,50 @@ jobs:
           $env:QT6_DIR = $env:QT_ROOT_DIR
           scripts\deploy.ps1 -Installer
 
+      - name: Upload unsigned MSI for SignPath
+        if: env.SIGNPATH_ENABLED == 'true'
+        id: unsigned-msi
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-msi-unsigned
+          path: build/x64-release/MervinPDF-${{ env.MERVIN_VERSION }}.msi
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Sign MSI with SignPath
+        if: env.SIGNPATH_ENABLED == 'true'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.unsigned-msi.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: build/signed-msi
+
+      - name: Verify signed MSI
+        if: env.SIGNPATH_ENABLED == 'true'
+        shell: pwsh
+        run: |
+          $msi = "build/signed-msi/MervinPDF-$env:MERVIN_VERSION.msi"
+          if (-not (Test-Path -LiteralPath $msi -PathType Leaf)) {
+            throw "SignPath did not return the expected MSI at $msi."
+          }
+          $signature = Get-AuthenticodeSignature -LiteralPath $msi
+          if ($signature.Status -ne 'Valid') {
+            throw "MSI signature is not trusted ($($signature.Status)). $($signature.StatusMessage)"
+          }
+          "Verified MSI signature from $($signature.SignerCertificate.Subject)." |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
       - name: Upload MSI
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows-msi
-          path: |
-            build/x64-release/MervinPDF-*.msi
+          path: ${{ env.SIGNPATH_ENABLED == 'true' && 'build/signed-msi' || 'build/x64-release' }}/MervinPDF-${{ env.MERVIN_VERSION }}.msi
           if-no-files-found: error
 
   # --------------------------------------------------------------- AppImage ---

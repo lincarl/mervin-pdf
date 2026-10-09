@@ -372,3 +372,5 @@ jobs:
     # GITHUB_TOKEN-created tags do not trigger workflows. Call the shared
     # packaging workflow directly after the checks pass.
     uses: ./.github/workflows/release.yml
+    secrets:
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}

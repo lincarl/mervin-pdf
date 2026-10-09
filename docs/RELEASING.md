@@ -33,6 +33,75 @@ Packaging runs no tests, so the successful CI run must precede a stable tag push
 Installed copies offer only stable releases as updates. A copy running
 `1.64.10-rc2` can update to `1.64.10` when that stable release becomes available.
 
+## Windows MSI signing
+
+The release workflow supports SignPath for both automatic release candidates and
+tag-triggered releases. Signing stays disabled while the account is being set up.
+An unset or `false` repository variable `SIGNPATH_ENABLED` keeps the existing
+unsigned MSI build and records that choice in the Windows job summary. Other
+values besides lowercase `true` and `false` fail configuration validation.
+
+After creating the SignPath account:
+
+1. Create a project for `lincarl/mervin-pdf`. Add the predefined `GitHub.com`
+   trusted build system to the organization and link it to the project. Install
+   the SignPath GitHub App for this repository if using audit-log evaluation.
+2. Create an artifact configuration from
+   [`packaging/signpath/msi.xml`](../packaging/signpath/msi.xml), for example with
+   slug `windows-msi`. GitHub uploads a ZIP containing one `MervinPDF-*.msi`, so
+   keep the XML's `zip-file` wrapper. This configuration signs only the MSI.
+3. Configure a signing policy with a publicly trusted code-signing certificate.
+   Give a dedicated CI user's API token Submitter access to that policy. A
+   self-signed test certificate fails the workflow's Windows trust check.
+4. Add the following repository settings under **Settings > Secrets and
+   variables > Actions**. Use the slugs from SignPath, not their display names.
+5. Set `SIGNPATH_ENABLED` to `true` after the remaining settings and SignPath
+   policy are ready.
+
+| Kind | Name | Value |
+|---|---|---|
+| Secret | `SIGNPATH_API_TOKEN` | CI user's SignPath API token |
+| Variable | `SIGNPATH_ORGANIZATION_ID` | SignPath organization ID |
+| Variable | `SIGNPATH_PROJECT_SLUG` | Project slug, for example `mervin-pdf` |
+| Variable | `SIGNPATH_SIGNING_POLICY_SLUG` | Policy slug, for example `release-signing` |
+| Variable | `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG` | Artifact configuration slug, for example `windows-msi` |
+| Variable | `SIGNPATH_ENABLED` | `true` to require signing, unset or `false` during setup |
+
+The CI workflow passes only `SIGNPATH_API_TOKEN` to the reusable release
+workflow. Pull-request MSI verification and local `scripts/deploy.ps1 -Installer`
+builds remain unsigned and require no SignPath credentials.
+
+When enabled, the Windows release job checks configuration before building,
+uploads `windows-msi-unsigned`, and submits its artifact ID to SignPath. It waits
+up to 30 minutes for signing, including any manual approval, and downloads to a
+separate directory. It requires the expected MSI filename and a `Valid`
+Authenticode signature before uploading the final `windows-msi` artifact.
+Missing settings, rejected requests, timeouts, missing output, and invalid
+signatures fail the job and prevent publication. There is no unsigned fallback
+when signing is enabled. Release checksums cover the final signed MSI; the
+unsigned intermediate artifact is excluded from GitHub release downloads.
+
+Configure origin restrictions for this repository and verify that the policy
+accepts both the `main` CI run and the `v*` tag release run. Do not assume that a
+branch-only restriction also accepts tag-triggered builds. The existing release
+check still requires the commit to be on `main`. After enabling signing, check
+the first authorized candidate and stable release runs in SignPath and GitHub,
+then verify a downloaded MSI on Windows:
+
+```powershell
+Get-AuthenticodeSignature -LiteralPath .\MervinPDF-<version>.msi |
+    Format-List Status, StatusMessage, SignerCertificate, TimeStamperCertificate
+```
+
+Expect `Status` to be `Valid` and the signer to match the configured certificate.
+MSI signing does not sign `MervinPDF.exe` inside the installer. The executable
+remains unsigned, and bundled Qt and Microsoft signatures remain unchanged.
+Policies that require signed application executables need additional signing.
+
+See SignPath's [GitHub integration](https://docs.signpath.io/trusted-build-systems/github),
+[artifact configuration syntax](https://docs.signpath.io/artifact-configuration/syntax),
+and [origin verification](https://docs.signpath.io/origin-verification) documentation.
+
 ## Release retention
 
 After publishing a stable release and all its assets successfully, the packaging
