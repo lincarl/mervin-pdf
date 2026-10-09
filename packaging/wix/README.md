@@ -10,10 +10,10 @@ The payload retains Qt, its plugins and app-local Microsoft runtime DLLs with
 their existing signatures. The Windows vcpkg libraries use
 `x64-windows-static-md` and contribute no runtime DLLs. Their notices remain
 under `licenses/`, including the target packages' copyright files under
-`licenses/vcpkg`. Mervin's executable remains unsigned. Local and CI verification
-MSIs remain unsigned; release MSIs use SignPath when enabled. See the
-[signing setup](../../docs/RELEASING.md#windows-msi-signing) for account settings
-and signature verification.
+`licenses/vcpkg`. When enabled, SignPath signs `MervinPDF.exe` inside the release
+MSI and then signs the MSI itself. Local and CI verification builds remain
+unsigned. See the [signing setup](../../docs/RELEASING.md#windows-msi-signing)
+for account settings and signature verification.
 
 ```powershell
 msiexec /i MervinPDF-<version>.msi          # interactive wizard

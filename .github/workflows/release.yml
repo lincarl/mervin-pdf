@@ -236,7 +236,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Sign MSI with SignPath
+      - name: Sign MSI and application with SignPath
         if: env.SIGNPATH_ENABLED == 'true'
         uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
         with:
@@ -250,7 +250,7 @@ jobs:
           wait-for-completion-timeout-in-seconds: 1800
           output-artifact-directory: build/signed-msi
 
-      - name: Verify signed MSI
+      - name: Verify signed MSI and application
         if: env.SIGNPATH_ENABLED == 'true'
         shell: pwsh
         run: |
@@ -262,7 +262,29 @@ jobs:
           if ($signature.Status -ne 'Valid') {
             throw "MSI signature is not trusted ($($signature.Status)). $($signature.StatusMessage)"
           }
-          "Verified MSI signature from $($signature.SignerCertificate.Subject)." |
+
+          # Inspect the returned package, since the local staging EXE is unsigned.
+          $work = Join-Path $env:RUNNER_TEMP "mervin-signatures-$([Guid]::NewGuid().ToString('N'))"
+          New-Item -ItemType Directory -Path $work | Out-Null
+          & wix msi decompile $msi -x "$work/payload" -o "$work/installer.wxs"
+          if ($LASTEXITCODE -ne 0) { throw 'Extracting the signed MSI failed.' }
+          $files = @(Select-Xml -LiteralPath "$work/installer.wxs" `
+            -Namespace @{ wix = 'http://wixtoolset.org/schemas/v4/wxs' } `
+            -XPath '//wix:File[@Name="MervinPDF.exe"]')
+          if ($files.Count -ne 1) {
+            throw "Expected one MervinPDF.exe in the signed MSI, found $($files.Count)."
+          }
+          # WiX extracts compressed files under their MSI File IDs.
+          $exe = Join-Path $work 'MervinPDF.exe'
+          Copy-Item -LiteralPath "$work/payload/File/$($files[0].Node.Id)" -Destination $exe
+          $exeSignature = Get-AuthenticodeSignature -LiteralPath $exe
+          if ($exeSignature.Status -ne 'Valid') {
+            throw "EXE signature is not trusted ($($exeSignature.Status)). $($exeSignature.StatusMessage)"
+          }
+          if ($exeSignature.SignerCertificate.Thumbprint -ne $signature.SignerCertificate.Thumbprint) {
+            throw 'The MSI and MervinPDF.exe must be signed with the same certificate.'
+          }
+          "Verified MSI and MervinPDF.exe signatures from $($signature.SignerCertificate.Subject)." |
             Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
       - name: Upload MSI

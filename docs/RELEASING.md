@@ -35,8 +35,10 @@ Installed copies offer only stable releases as updates. A copy running
 
 ## Windows MSI signing
 
-The release workflow supports SignPath for both automatic release candidates and
-tag-triggered releases. Signing stays disabled while the account is being set up.
+The release workflow uses SignPath to sign `MervinPDF.exe` inside the MSI, then
+the MSI itself, in one request. This applies to both automatic release candidates
+and tag-triggered releases. Signing stays disabled while the account is being
+set up.
 An unset or `false` repository variable `SIGNPATH_ENABLED` keeps the existing
 unsigned MSI build and records that choice in the Windows job summary. Other
 values besides lowercase `true` and `false` fail configuration validation.
@@ -49,7 +51,10 @@ After creating the SignPath account:
 2. Create an artifact configuration from
    [`packaging/signpath/msi.xml`](../packaging/signpath/msi.xml), for example with
    slug `windows-msi`. GitHub uploads a ZIP containing one `MervinPDF-*.msi`, so
-   keep the XML's `zip-file` wrapper. This configuration signs only the MSI.
+   keep the XML's `zip-file` wrapper and nested `pe-file` entry. The configuration
+   requires exactly one `MervinPDF.exe` inside the MSI and signs both files.
+   If you already imported the MSI-only configuration, replace it with this version
+   in SignPath. Repository changes do not update the service's configuration.
 3. Configure a signing policy with a publicly trusted code-signing certificate.
    Give a dedicated CI user's API token Submitter access to that policy. A
    self-signed test certificate fails the workflow's Windows trust check.
@@ -74,12 +79,16 @@ builds remain unsigned and require no SignPath credentials.
 When enabled, the Windows release job checks configuration before building,
 uploads `windows-msi-unsigned`, and submits its artifact ID to SignPath. It waits
 up to 30 minutes for signing, including any manual approval, and downloads to a
-separate directory. It requires the expected MSI filename and a `Valid`
-Authenticode signature before uploading the final `windows-msi` artifact.
-Missing settings, rejected requests, timeouts, missing output, and invalid
-signatures fail the job and prevent publication. There is no unsigned fallback
-when signing is enabled. Release checksums cover the final signed MSI; the
-unsigned intermediate artifact is excluded from GitHub release downloads.
+separate directory. It checks the MSI signature, extracts its payload with WiX,
+and verifies `MervinPDF.exe` from that returned package. WiX extracts files under
+their MSI File IDs, so the verifier reads the decompiled metadata to locate the
+application. Both signatures must be `Valid` and use the same certificate before
+the job uploads the final `windows-msi` artifact. Missing settings, rejected
+requests, timeouts, missing or duplicate executables, extraction failures, and
+invalid or mismatched signatures fail the job and prevent publication. There is
+no unsigned fallback when signing is enabled. Release checksums cover the final
+signed MSI; the unsigned intermediate artifact is excluded from GitHub release
+downloads.
 
 Configure origin restrictions for this repository and verify that the policy
 accepts both the `main` CI run and the `v*` tag release run. Do not assume that a
@@ -93,10 +102,11 @@ Get-AuthenticodeSignature -LiteralPath .\MervinPDF-<version>.msi |
     Format-List Status, StatusMessage, SignerCertificate, TimeStamperCertificate
 ```
 
-Expect `Status` to be `Valid` and the signer to match the configured certificate.
-MSI signing does not sign `MervinPDF.exe` inside the installer. The executable
-remains unsigned, and bundled Qt and Microsoft signatures remain unchanged.
-Policies that require signed application executables need additional signing.
+Also check `MervinPDF.exe` from an extracted or installed copy of that MSI.
+Expect both statuses to be `Valid` and both signers to match the configured
+certificate. Signing changes the executable inside the returned MSI. The original
+build and staging directories remain unsigned. Bundled Qt and Microsoft
+signatures remain unchanged.
 
 See SignPath's [GitHub integration](https://docs.signpath.io/trusted-build-systems/github),
 [artifact configuration syntax](https://docs.signpath.io/artifact-configuration/syntax),

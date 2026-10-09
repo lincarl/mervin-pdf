@@ -1,6 +1,9 @@
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
   <zip-file>
     <msi-file path="MervinPDF-*.msi">
+      <pe-file path="**/MervinPDF.exe" min-matches="1" max-matches="1">
+        <authenticode-sign />
+      </pe-file>
       <authenticode-sign />
     </msi-file>
   </zip-file>
