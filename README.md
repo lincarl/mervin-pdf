@@ -1,6 +1,6 @@
 # Mervin PDF
 
-**A fast, private PDF reader built for people who often opens PDF docuemnts**
+**A fast, private PDF reader built for people who live in the PDF reader**
 
 Mervin PDF combines a focused native reader with practical tools for technical drawings and everyday document work. Measure scaled plans, OCR part of a scanned page, fill forms, annotate, reorganize pages, and manage PDF security without sending the document to an online service.
 
