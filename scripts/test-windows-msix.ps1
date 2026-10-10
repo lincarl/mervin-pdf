@@ -8,7 +8,10 @@
   Logs, screenshots, and an isolated profile remain under C:\dev-temp.
 #>
 [CmdletBinding()]
-param([Parameter(Mandatory = $true)][string]$Msix)
+param(
+    [Parameter(Mandatory = $true)][string]$Msix,
+    [string]$Fixture
+)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -31,7 +34,8 @@ $family = 'Lincarl.MervinPDF_s4kmqx4fnhk0j'
 $aumid = "$family!MervinPDF"
 $packagePath = (Resolve-Path -LiteralPath $Msix).Path
 $build = Split-Path $packagePath -Parent
-$fixture = Join-Path $build 'tests\fixtures\properties.pdf'
+$fixturePath = if ($Fixture) { [IO.Path]::GetFullPath($Fixture) } else { Join-Path $build 'tests\fixtures\properties.pdf' }
+$documentName = [IO.Path]::GetFileName($fixturePath)
 $userChoice = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.pdf\UserChoice'
 $certificate = $null
 $app = $null
@@ -47,7 +51,7 @@ function Get-PdfDefault {
     }
 }
 
-Assert-Msix (Test-Path -LiteralPath $fixture) 'Generated properties.pdf fixture is missing. Configure with MERVIN_BUILD_TESTS=ON.'
+Assert-Msix (Test-Path -LiteralPath $fixturePath) 'The PDF fixture is missing. Supply -Fixture or configure with MERVIN_BUILD_TESTS=ON.'
 Assert-Msix (@(Get-AppxPackage -Name $name).Count -eq 0) 'An existing Mervin MSIX prevents lifecycle testing.'
 Assert-Msix (-not (Get-Process MervinPDF -ErrorAction SilentlyContinue)) 'Mervin is already running.'
 $originalHash = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash
@@ -105,14 +109,30 @@ public static class MervinMsixTest
     [StructLayout(LayoutKind.Sequential)]
     public struct Rect { public int Left, Top, Right, Bottom; }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct ShellExecuteInfo
+    {
+        public uint Size, Mask;
+        public IntPtr Window;
+        public string Verb, File, Parameters, Directory;
+        public int Show;
+        public IntPtr Instance, IdList;
+        public string Class;
+        public IntPtr ClassKey;
+        public uint HotKey;
+        public IntPtr Icon, Process;
+    }
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetPackageFullName(IntPtr process, ref uint length, StringBuilder name);
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
-    private static extern int SHCreateItemFromParsingName(string path, IntPtr bindingContext,
-        ref Guid interfaceId, out IntPtr item);
-    [DllImport("shell32.dll", PreserveSig = true)]
-    private static extern int SHCreateShellItemArrayFromShellItem(IntPtr item,
-        ref Guid interfaceId, out IntPtr items);
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr handle);
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShellExecuteEx(ref ShellExecuteInfo info);
+    [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)]
+    private static extern int AssocQueryString(uint flags, uint kind, string association,
+        string extra, StringBuilder value, ref uint length);
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool GetWindowRect(IntPtr window, out Rect rect);
     [DllImport("user32.dll")]
@@ -149,25 +169,32 @@ public static class MervinMsixTest
         return name.ToString();
     }
 
-    public static Process ActivateFile(string appId, string path)
+    public static string AssociationAppId(string progId)
     {
-        var manager = (IApplicationActivationManager)new ApplicationActivationManager();
-        IntPtr item = IntPtr.Zero;
-        IntPtr items = IntPtr.Zero;
+        // Fixed ProgID avoids resolving the user's default instead of this handler.
+        const uint fixedProgId = 0x800;
+        const uint appId = 21;
+        uint length = 0;
+        AssocQueryString(fixedProgId, appId, progId, null, null, ref length);
+        if (length == 0) return null;
+        var value = new StringBuilder((int)length);
+        return AssocQueryString(fixedProgId, appId, progId, null, value, ref length) == 0
+            ? value.ToString() : null;
+    }
+
+    public static void OpenWithHandler(string progId, string path)
+    {
+        // Packaged desktop apps use Shell file associations, not the UWP
+        // Windows.File activation contract used by ActivateForFile.
+        var info = new ShellExecuteInfo {
+            Size = (uint)Marshal.SizeOf(typeof(ShellExecuteInfo)),
+            Mask = 0x001 | 0x040 | 0x100 | 0x400,
+            Verb = "open", File = path, Class = progId, Show = 1
+        };
         try {
-            var itemId = new Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE");
-            var arrayId = new Guid("B63EA76D-1F85-456F-A19C-48159EFA858B");
-            Marshal.ThrowExceptionForHR(SHCreateItemFromParsingName(path, IntPtr.Zero, ref itemId, out item));
-            Marshal.ThrowExceptionForHR(SHCreateShellItemArrayFromShellItem(item, ref arrayId, out items));
-            uint processId;
-            Marshal.ThrowExceptionForHR(manager.ActivateForFile(appId, items, "open", out processId));
-            var process = Process.GetProcessById((int)processId);
-            var handle = process.Handle;
-            return process;
+            if (!ShellExecuteEx(ref info)) throw new Win32Exception(Marshal.GetLastWin32Error());
         } finally {
-            if (items != IntPtr.Zero) Marshal.Release(items);
-            if (item != IntPtr.Zero) Marshal.Release(item);
-            Marshal.ReleaseComObject(manager);
+            if (info.Process != IntPtr.Zero) CloseHandle(info.Process);
         }
     }
 }
@@ -220,15 +247,34 @@ function Wait-DocumentWindow([Diagnostics.Process]$Process) {
         Start-Sleep -Milliseconds 250
         $Process.Refresh()
     } while (-not $Process.HasExited -and
-             ($Process.MainWindowHandle -eq [IntPtr]::Zero -or $Process.MainWindowTitle -notlike '*generated-document*') -and
+             ($Process.MainWindowHandle -eq [IntPtr]::Zero -or $Process.MainWindowTitle.IndexOf($documentName, [StringComparison]::OrdinalIgnoreCase) -lt 0) -and
              (Get-Date) -lt $deadline)
     Assert-Msix (-not $Process.HasExited) 'Packaged application exited before displaying its document.'
-    Assert-Msix ($Process.MainWindowHandle -ne [IntPtr]::Zero -and $Process.MainWindowTitle -like '*generated-document*') 'Packaged application did not show the requested PDF.'
+    Assert-Msix ($Process.MainWindowHandle -ne [IntPtr]::Zero -and $Process.MainWindowTitle.IndexOf($documentName, [StringComparison]::OrdinalIgnoreCase) -ge 0) 'Packaged application did not show the requested PDF.'
+}
+
+function Get-PackagePdfProgId {
+    $openWith = [Microsoft.Win32.Registry]::ClassesRoot.OpenSubKey('.pdf\OpenWithProgids')
+    Assert-Msix ($null -ne $openWith) 'Windows did not register any PDF Open With handlers.'
+    try {
+        $handlers = @($openWith.GetValueNames() | ForEach-Object {
+            [pscustomobject]@{ ProgId = $_; AppId = [MervinMsixTest]::AssociationAppId($_) }
+        })
+    } finally { $openWith.Dispose() }
+    $handlers | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $work 'pdf-handlers.json')
+    $matching = @($handlers | Where-Object { $_.AppId -eq $aumid })
+    Assert-Msix ($matching.Count -eq 1) 'Expected exactly one PDF handler for the installed package. See pdf-handlers.json.'
+    $matching[0].ProgId
 }
 
 try {
     Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $work 'windows-version.json')
+    if (Get-Command Set-DisplayResolution -ErrorAction SilentlyContinue) {
+        Set-DisplayResolution -Width 1920 -Height 1080 -Force | Out-Host
+    } else {
+        Write-Warning 'Display resolution cannot be changed by this server. Review screenshot dimensions before using images in the Store.'
+    }
     $unpacked = Join-Path $work 'unpacked'
     Invoke-SdkTool $makeAppx @('unpack', '/p', $packagePath, '/d', $unpacked, '/o') 'unpack'
     $manifestPath = Join-Path $unpacked 'AppxManifest.xml'
@@ -267,13 +313,14 @@ ui_language = "en"
 auto_update = false
 close_to_tray = false
 restore_session = false
+default_zoom = "fit-page"
 '@ | Set-Content -LiteralPath (Join-Path $profile 'config.toml') -Encoding utf8
     $sentinel = Join-Path $profile 'retained-user-data.txt'
     'Preserve isolated user data across package upgrade and removal.' |
         Set-Content -LiteralPath $sentinel -Encoding utf8
     $sentinelHash = (Get-FileHash -LiteralPath $sentinel).Hash
-    $testPdf = Join-Path $work 'generated-document.pdf'
-    Copy-Item -LiteralPath $fixture -Destination $testPdf
+    $testPdf = Join-Path $work $documentName
+    Copy-Item -LiteralPath $fixturePath -Destination $testPdf
     $arguments = "--profile `"$profile`" --language en `"$testPdf`""
 
     $app = Start-PackagedApp $arguments $package.PackageFullName
@@ -296,8 +343,19 @@ auto_update = false
 close_to_tray = false
 restore_session = false
 prompted_set_default_app = true
+default_zoom = "fit-page"
 '@ | Set-Content -LiteralPath (Join-Path $normalData 'config.toml') -Encoding utf8
-    $app = [MervinMsixTest]::ActivateFile($aumid, $testPdf)
+    $pdfProgId = Get-PackagePdfProgId
+    Write-Output "Invoking registered PDF handler $pdfProgId"
+    [MervinMsixTest]::OpenWithHandler($pdfProgId, $testPdf)
+    $activationDeadline = (Get-Date).AddSeconds(30)
+    do {
+        Start-Sleep -Milliseconds 250
+        $processes = @(Get-Process MervinPDF -ErrorAction SilentlyContinue)
+    } while ($processes.Count -eq 0 -and (Get-Date) -lt $activationDeadline)
+    Assert-Msix ($processes.Count -eq 1) 'PDF Open With did not launch exactly one application process.'
+    $app = $processes[0]
+    $null = $app.Handle
     Write-Output "File activation process $($app.Id)"
     Assert-Msix ([MervinMsixTest]::PackageName($app) -eq $package.PackageFullName) 'PDF activation launched the wrong package.'
     Wait-DocumentWindow $app

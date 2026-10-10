@@ -77,7 +77,7 @@ jobs:
             version=$(python3 scripts/version-from-tag.py "v$STORE_VERSION")
             [[ "$version" != *-rc* ]] || { echo "Store submissions require a stable version" >&2; exit 1; }
             # Store uploads use a tested main commit without creating a GitHub release.
-            passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success" \
+            passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success&event=push" \
               --jq '[.workflow_runs[] | select(.head_branch == "main")] | length')
             [[ "$passed" -gt 0 ]] || { echo "This main commit needs a successful CI run first" >&2; exit 1; }
             echo "version=$version" >> "$GITHUB_OUTPUT"

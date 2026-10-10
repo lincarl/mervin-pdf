@@ -85,12 +85,9 @@ Leave What's new in this version empty for the first submission.
 Verify the privacy URL in a signed-out browser before submission. Partner Center
 also accepts privacy policy text directly where that option is offered.
 
-The repository's Issues and Discussions features were disabled when checked on
-10 October 2026. Do not use an inactive Issues URL as a support contact. Choose a
-working support page or a dedicated public support email if adding contact
-information. Support contact information is optional for this desktop-only
-submission. Do not copy the publisher's private sign-in email into the public
-listing.
+The public support URL is <https://github.com/lincarl/mervin-pdf/issues>.
+GitHub Issues was enabled with the publisher's approval on 10 October 2026.
+Do not copy the publisher's private sign-in email into the public listing.
 
 For additional license terms, identify the application as AGPL-3.0 and retain the
 bundled dependency notices. Keep corresponding source available for the exact
@@ -112,6 +109,13 @@ personal or third-party PDF corpus mentioned in [examples/README.md](../examples
 Keep account names, private paths, personal documents, and unrelated windows out
 of screenshots. Do not substitute Linux screenshots or mockups for the Windows
 application. Avoid added marketing text and decorative overlays.
+
+Generate a redistributable drawing with
+`python scripts/generate-store-sample.py <output-directory>/Birch-courtyard-studio.pdf`.
+This original, fictional A3 floor plan includes room labels, furniture, dimensions
+and an embedded 1:50 measurement scale. The generator uses only Python's standard
+library. Open the generated PDF in the Windows application for screenshots. Keep
+the generated PDF and screenshots outside the repository.
 
 ## Certification notes
 
@@ -140,9 +144,9 @@ uninstallation, and coexistence with an MSI installation on Windows.
 
 Complete these in the authenticated Partner Center account.
 
-1. Choose pricing, markets, and publication timing. Free, public availability
-   after certification is the recommendation for this existing open-source app,
-   but price and market choices have not been confirmed in this worksheet.
+1. Use the free price confirmed by the publisher on 10 October 2026. Choose
+   markets and publication timing. Public availability after certification is
+   the proposed publication timing.
 2. Complete the IARC questionnaire based on the actual app. Do not assign an age
    rating manually or infer account-holder declarations. Microsoft shares the
    publisher display name and email address with IARC for rating administration.

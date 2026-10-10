@@ -59,6 +59,12 @@ copy. They do not establish Microsoft certification or Windows 11 compatibility
 by themselves. Test the Store candidate on Windows 11 before submission,
 including PDF activation, saving, printing, OCR, settings, and MSI coexistence.
 
+For packaging diagnostics, the CI workflow's optional `msix_artifact_run` input
+reuses a previous run's Windows payload and tests the current manifest and
+MSIX test script. It skips compilation and application tests, so it cannot
+qualify a Store release. The Store build requires successful full push CI on
+its main commit.
+
 Store copies delegate updates to Microsoft Store. Their Check for Updates
 action opens the Store's Downloads and updates page. Their PDF registration
 comes from the package manifest, and Windows Settings controls the default.
