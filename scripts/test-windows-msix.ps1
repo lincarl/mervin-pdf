@@ -391,14 +391,21 @@ default_zoom = "fit-page"
     Assert-Msix ($app.ExitCode -eq 0) 'Upgraded application returned an error.'
     $app.Dispose()
     $app = $null
+    # Appx properties can become unavailable as soon as the package is removed.
+    # Preserve the resolved directory before invalidating the live package object.
+    $removedInstallLocation = [string]$package.InstallLocation
+    Assert-Msix (-not [string]::IsNullOrWhiteSpace($removedInstallLocation)) 'The upgraded package has no installation directory.'
     Remove-AppxPackage -Package $package.PackageFullName
     $installedByTest = $false
     Assert-Msix (@(Get-AppxPackage -Name $name).Count -eq 0) 'Uninstall left the MSIX registered.'
-    Assert-Msix (-not (Test-Path -LiteralPath $package.InstallLocation)) 'Uninstall left the installed package directory.'
+    Assert-Msix (-not (Test-Path -LiteralPath $removedInstallLocation)) 'Uninstall left the installed package directory.'
     Assert-Msix ((Get-FileHash -LiteralPath $sentinel).Hash -eq $sentinelHash) 'Uninstall removed isolated user data outside the package.'
     Assert-Msix ((Get-PdfDefault) -eq $beforeDefault) 'MSIX uninstall changed the default PDF application.'
     Assert-Msix ((Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash -eq $originalHash) 'Test changed the unsigned submission package.'
     Write-Output "MSIX install, package identity, document startup, file activation, upgrade, and uninstall passed. Diagnostics remain in $work"
+} catch {
+    $_ | Format-List -Property Exception, ScriptStackTrace -Force | Out-Host
+    throw
 } finally {
     if ($null -ne $app) {
         if (-not $app.HasExited) { $app.Kill(); $app.WaitForExit(10000) | Out-Null }
