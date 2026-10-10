@@ -1,6 +1,7 @@
 #include "ipc/PipeName.h"
 
 #include "config/ConfigPaths.h"
+#include "platform/PlatformIntegration.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -28,6 +29,10 @@ QString userToken()
 QString hostPipeName()
 {
     QString name = QStringLiteral("MervinPDF-") + userToken();
+    // Store and MSI copies can coexist. A Store activation must not hand its
+    // document to an MSI process with a different updater and default-app identity.
+    if (PlatformIntegration::hasPackageIdentity())
+        name += QStringLiteral("-msix");
 
     // A --profile instance forms its own single-instance group: hash the
     // profile directory into the pipe name so it never hands its files to (or

@@ -199,11 +199,12 @@ target_link_libraries(mervin_core
     PUBLIC Qt6::Core Qt6::Gui Qt6::Network
     PRIVATE MuPDF::MuPDF tomlplusplus::tomlplusplus qpdf::libqpdf)
 
-# Default-PDF-app integration is platform-specific: Windows writes HKCU registry
-# capabilities (WindowsIntegration.cpp); other platforms use xdg-mime
+# Default-PDF-app integration is platform-specific. Windows uses package identity
+# or HKCU registry capabilities; other platforms use xdg-mime
 # (DesktopIntegration.cpp). Both define mervin::PlatformIntegration.
 if(WIN32)
     target_sources(mervin_core PRIVATE src/platform/win/WindowsIntegration.cpp)
+    target_link_libraries(mervin_core PRIVATE shlwapi)
 else()
     target_sources(mervin_core PRIVATE src/platform/linux/DesktopIntegration.cpp)
 endif()

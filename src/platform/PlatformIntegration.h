@@ -2,10 +2,13 @@
 
 namespace mervin {
 
-// Build-selected integration: Windows registers per-user capabilities and opens Default Apps;
-// Linux uses xdg-mime and mervin-pdf.desktop. First-run/Settings controls are Windows-only;
-// Linux remains available to other callers.
+// Windows uses manifest associations for packaged apps and per-user capabilities
+// for MSI/portable copies. Linux uses xdg-mime and mervin-pdf.desktop.
 namespace PlatformIntegration {
+
+// Windows package identity takes precedence over any coexisting MSI installation.
+// False on platforms without Windows package identity.
+bool hasPackageIdentity();
 
 // Make Mervin a candidate .pdf handler and, on Windows, open the OS picker for
 // the user to confirm; on Linux, set it as the user's default via xdg-mime.

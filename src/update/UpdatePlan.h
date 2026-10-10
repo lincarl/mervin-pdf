@@ -16,8 +16,9 @@ namespace mervin::update {
 
 // How this copy of Mervin was installed. It decides which release asset replaces
 // it and how that asset is installed. None covers dev builds, portable copies
-// and source installs, which never update themselves.
-enum class PackageKind { None, Msi, AppImage, Deb, Rpm };
+// and source installs, which never update themselves. Windows and the Microsoft
+// Store manage Msix updates; that kind must never use GitHub release assets.
+enum class PackageKind { None, Msi, Msix, AppImage, Deb, Rpm };
 
 inline constexpr int kDaysPerCheck = 30;
 

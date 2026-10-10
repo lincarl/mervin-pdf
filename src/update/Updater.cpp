@@ -182,7 +182,7 @@ void Updater::onStartup()
 {
     // The update state belongs to installed copies. A dev build run against the
     // real settings must neither offer nor delete an installed copy's download.
-    if (kind_ == update::PackageKind::None || busy_ || !Settings::load().autoUpdate)
+    if (!canSelfUpdate() || busy_ || !Settings::load().autoUpdate)
         return;
 
     const Pending pending = loadPending();
@@ -200,6 +200,10 @@ void Updater::onStartup()
 
 void Updater::checkNow()
 {
+    if (kind_ == update::PackageKind::Msix) {
+        QDesktopServices::openUrl(QUrl(QStringLiteral("ms-windows-store://downloadsandupdates")));
+        return;
+    }
     if (busy_) {
         // Take over background work, including an installation waiting behind
         // Settings, without starting a second check or installer.
@@ -215,6 +219,8 @@ void Updater::checkNow()
 
 void Updater::onAutoUpdateChanged(bool on)
 {
+    if (kind_ == update::PackageKind::Msix)
+        return;
     if (on || manual_ || installing_)
         return;
     installQueued_ = false;
@@ -227,6 +233,8 @@ void Updater::onAutoUpdateChanged(bool on)
 
 void Updater::check(bool manual)
 {
+    if (kind_ == update::PackageKind::Msix)
+        return;
     busy_ = true;
     manual_ = manual;
     QNetworkRequest req{QUrl(QStringLiteral(MERVIN_RELEASE_API_URL))};
@@ -502,6 +510,7 @@ void Updater::install(const QString &file, const QString &version)
         installWithPackageManager(file, version);
         return;
     case update::PackageKind::None:
+    case update::PackageKind::Msix:
         endOperation();
         return;
     }

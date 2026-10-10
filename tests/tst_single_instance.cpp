@@ -1,8 +1,12 @@
+#include "config/ConfigPaths.h"
 #include "ipc/Message.h"
+#include "ipc/PipeName.h"
 #include "ipc/SingleInstanceServer.h"
 
 #include <QLocalSocket>
 #include <QSignalSpy>
+#include <QScopeGuard>
+#include <QTemporaryDir>
 #include <QTest>
 
 using mervin::ipc::Message;
@@ -10,6 +14,16 @@ using mervin::ipc::SingleInstanceServer;
 
 // A unique-ish name so the test never collides with a real running host.
 static const QString kTestPipe = QStringLiteral("MervinPDF-unittest-si");
+
+namespace {
+bool packaged = false;
+}
+
+// Substitute process identity so the real lock and IPC implementation can be
+// exercised for both installation types on each test platform.
+namespace mervin::PlatformIntegration {
+bool hasPackageIdentity() { return packaged; }
+}
 
 class TstSingleInstance : public QObject
 {
@@ -19,7 +33,41 @@ private slots:
     void secondListenFails();
     void relistenAfterClose();
     void twoClientsDeliverMessages();
+    void storeAndMsiHostsStaySeparate();
 };
+
+void TstSingleInstance::storeAndMsiHostsStaySeparate()
+{
+    QTemporaryDir profile;
+    QVERIFY(profile.isValid());
+    const QString previousProfile = mervin::ConfigPaths::overrideDir();
+    const auto reset = qScopeGuard([&] {
+        packaged = false;
+        mervin::ConfigPaths::setOverrideDir(previousProfile);
+    });
+    mervin::ConfigPaths::setOverrideDir(profile.path());
+
+    const QString msiName = mervin::ipc::hostPipeName();
+    SingleInstanceServer msi;
+    QVERIFY(msi.start());
+    packaged = true;
+    const QString storeName = mervin::ipc::hostPipeName();
+    QVERIFY(storeName != msiName);
+    SingleInstanceServer store;
+    QVERIFY(store.start());
+    SingleInstanceServer duplicateStore;
+    QVERIFY(!duplicateStore.start());
+
+    QSignalSpy msiMessages(&msi, &SingleInstanceServer::messageReceived);
+    QSignalSpy storeMessages(&store, &SingleInstanceServer::messageReceived);
+    QLocalSocket client;
+    client.connectToServer(storeName);
+    QVERIFY(client.waitForConnected(1000));
+    client.write(Message::open({QStringLiteral("store.pdf")}, QStringLiteral("new-tab")).encode());
+    client.flush();
+    QTRY_COMPARE(storeMessages.size(), 1);
+    QCOMPARE(msiMessages.size(), 0);
+}
 
 void TstSingleInstance::secondListenFails()
 {

@@ -21,7 +21,7 @@ The measuring workflow is the main distinction. Mervin understands rectilinear P
 
 ## Features
 
-- Privacy by default. No telemetry or accounts. All data stays local.
+- No telemetry or accounts. Document processing and OCR run on your computer.
 - Fast native rendering with MuPDF
 - Comfort document view (dark mode for PDF) - Under development
 - Zoom from 8% to 1000%
@@ -59,6 +59,9 @@ Mervin PDF provides release packages for:
 - Linux x86-64: AppImage, DEB, and RPM (Ubuntu 26.04 or a compatible distribution is the current baseline)
 
 Download packaged versions from [GitHub Releases](https://github.com/lincarl/mervin-pdf/releases).
+
+The [privacy policy](docs/PRIVACY.md) explains local data storage, document
+downloads, OCR model downloads, and application updates.
 
 ## Build from source
 

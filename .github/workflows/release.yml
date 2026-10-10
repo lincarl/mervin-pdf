@@ -6,6 +6,12 @@ on:
   push:
     tags: ['v*']
   workflow_call:
+  workflow_dispatch:
+    inputs:
+      store_version:
+        description: 'Stable version for a Microsoft Store upload, for example 1.65.2'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -22,6 +28,7 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: write
     outputs:
       tag: ${{ steps.metadata.outputs.tag }}
@@ -49,6 +56,7 @@ jobs:
         id: metadata
         env:
           GH_TOKEN: ${{ github.token }}
+          STORE_VERSION: ${{ inputs.store_version }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ]]; then
@@ -65,12 +73,22 @@ jobs:
                 echo "prerelease=false"
               fi
             } >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" == refs/heads/main ]]; then
+            version=$(python3 scripts/version-from-tag.py "v$STORE_VERSION")
+            [[ "$version" != *-rc* ]] || { echo "Store submissions require a stable version" >&2; exit 1; }
+            # Store uploads use a tested main commit without creating a GitHub release.
+            passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success" \
+              --jq '[.workflow_runs[] | select(.head_branch == "main")] | length')
+            [[ "$passed" -gt 0 ]] || { echo "This main commit needs a successful CI run first" >&2; exit 1; }
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
           else
             echo "Releases require a version tag push or successful CI for a main push" >&2
             exit 1
           fi
 
       - name: Verify release tag
+        if: github.event_name != 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
@@ -194,12 +212,25 @@ jobs:
           scripts\deploy.ps1 -Installer
 
       - name: Upload MSI
+        if: github.event_name != 'workflow_dispatch'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows-msi
           path: |
             build/x64-release/MervinPDF-*.msi
           if-no-files-found: error
+
+      - name: Build unsigned Microsoft Store package
+        shell: pwsh
+        run: scripts\build-msix.ps1 -Version $env:MERVIN_VERSION
+
+      - name: Upload Microsoft Store package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-msix-store-upload
+          path: build/x64-release/MervinPDF-*-x64.msix
+          if-no-files-found: error
+          retention-days: 30
 
   # --------------------------------------------------------------- AppImage ---
   # Built on Ubuntu 26.04 - the only supported release - against that release's
@@ -209,6 +240,7 @@ jobs:
   # AppDir, so the AppImage stays self-contained; it is just no longer portable
   # to releases older than the one it was built on.
   appimage:
+    if: github.event_name != 'workflow_dispatch'
     needs: prepare
     runs-on: ubuntu-26.04
     env:
@@ -279,6 +311,7 @@ jobs:
   # color-scheme control), and the AppImage no longer covers 24.04 either - 26.04
   # is the minimum supported release. (Matrix kept for easy re-add of later ones.)
   deb:
+    if: github.event_name != 'workflow_dispatch'
     needs: prepare
     runs-on: ubuntu-latest
     env:
@@ -335,6 +368,7 @@ jobs:
 
   # ------------------------------------------------------------------- .rpm ---
   rpm:
+    if: github.event_name != 'workflow_dispatch'
     needs: prepare
     runs-on: ubuntu-latest
     env:
@@ -385,6 +419,7 @@ jobs:
 
   # -------------------------------------------------------- GitHub Release ---
   release:
+    if: github.event_name != 'workflow_dispatch'
     needs: [prepare, windows, appimage, deb, rpm]
     runs-on: ubuntu-latest
     env:

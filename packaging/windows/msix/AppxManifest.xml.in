@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+         xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+         IgnorableNamespaces="uap uap10 rescap">
+  <Identity Name="Lincarl.MervinPDF"
+            Publisher="CN=7444C5EF-8AD3-459D-A81A-9B90254807FC"
+            Version="@MSIX_VERSION@"
+            ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>Mervin PDF</DisplayName>
+    <PublisherDisplayName>Lincarl</PublisherDisplayName>
+    <Description>View, annotate and edit PDF documents.</Description>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop"
+                        MinVersion="10.0.22000.0"
+                        MaxVersionTested="10.0.22621.1555" />
+  </Dependencies>
+  <Applications>
+    <Application Id="MervinPDF" Executable="MervinPDF.exe"
+                 uap10:RuntimeBehavior="packagedClassicApp"
+                 uap10:TrustLevel="mediumIL">
+      <uap:VisualElements DisplayName="Mervin PDF"
+                          Description="View, annotate and edit PDF documents."
+                          Square150x150Logo="Assets\Square150x150Logo.png"
+                          Square44x44Logo="Assets\Square44x44Logo.png"
+                          BackgroundColor="transparent" />
+      <Extensions>
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="pdf">
+            <uap:DisplayName>PDF document</uap:DisplayName>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.pdf</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

@@ -8,6 +8,7 @@
 
 #include <QAbstractButton>
 #include <QApplication>
+#include <QDesktopServices>
 #include <QDialog>
 #include <QDir>
 #include <QFile>
@@ -32,6 +33,7 @@ const QString kAssetName = QStringLiteral("MervinPDF-9999.123.456.msi");
 QStringList installerFiles;
 std::function<void()> beforeInstallerReturns;
 bool installerLaunchSucceeds = true;
+mervin::update::PackageKind installedKind = mervin::update::PackageKind::Msi;
 
 bool setAutoUpdate(bool enabled)
 {
@@ -155,7 +157,7 @@ private:
 // and verify that the handoff requests exit.
 namespace mervin::update {
 
-PackageKind installedPackageKind() { return PackageKind::Msi; }
+PackageKind installedPackageKind() { return installedKind; }
 bool startWindowsInstaller(const QString &file)
 {
     installerFiles.append(file);
@@ -189,6 +191,9 @@ private slots:
     void queuedAutomaticInstallCanBecomeManual();
     void startupRespectsSetting_data();
     void startupRespectsSetting();
+    void msixDelegatesToStore_data();
+    void msixDelegatesToStore();
+    void recordStoreUrl(const QUrl &url);
     void releaseInstallsWithoutConfirmation_data();
     void releaseInstallsWithoutConfirmation();
     void disablingCancelsQueuedInstall();
@@ -217,6 +222,7 @@ private:
     QFont previousFont_;
     QString previousStyle_;
     int quitRequests_ = 0;
+    QList<QUrl> storeUrls_;
 };
 
 void TestUpdater::initTestCase()
@@ -249,6 +255,8 @@ bool TestUpdater::eventFilter(QObject *object, QEvent *event)
 
 void TestUpdater::init()
 {
+    installedKind = update::PackageKind::Msi;
+    storeUrls_.clear();
     QSettings().clear();
     installerFiles.clear();
     quitRequests_ = 0;
@@ -262,6 +270,7 @@ void TestUpdater::init()
 
 void TestUpdater::cleanup()
 {
+    QDesktopServices::unsetUrlHandler(QStringLiteral("ms-windows-store"));
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     qApp->setStyleSheet(previousStyle_);
     QApplication::setFont(previousFont_);
@@ -479,6 +488,56 @@ ReleaseNetworkAccessManager *TestUpdater::useLocalNetwork(Updater &updater)
     auto *network = new ReleaseNetworkAccessManager(&updater);
     updater.nam_ = network;
     return network;
+}
+
+void TestUpdater::recordStoreUrl(const QUrl &url)
+{
+    storeUrls_.append(url);
+}
+
+void TestUpdater::msixDelegatesToStore_data()
+{
+    QTest::addColumn<bool>("pending");
+    QTest::newRow("fresh Store installation") << false;
+    QTest::newRow("coexisting MSI has a pending update") << true;
+}
+
+void TestUpdater::msixDelegatesToStore()
+{
+    QFETCH(bool, pending);
+    installedKind = update::PackageKind::Msix;
+    Updater updater;
+    auto *network = useLocalNetwork(updater);
+    network->hasUpdate = true;
+    QDesktopServices::setUrlHandler(QStringLiteral("ms-windows-store"), this, "recordStoreUrl");
+    if (pending)
+        QVERIFY(savePending());
+    const QDateTime previousCheck = QDateTime::currentDateTimeUtc().addDays(-31);
+    QSettings().setValue(QStringLiteral("update/lastCheckUtc"), previousCheck);
+    const QString previousPending = QSettings().value(QStringLiteral("update/pendingFile")).toString();
+    QSignalSpy checked(&updater, &Updater::checked);
+
+    QVERIFY(!updater.canSelfUpdate());
+    updater.onStartup();
+    updater.checkNow();
+    updater.onAutoUpdateChanged(false);
+    updater.onAutoUpdateChanged(true);
+    QCoreApplication::processEvents();
+
+    QCOMPARE(network->requests, 0);
+    QVERIFY(installerFiles.isEmpty());
+    QCOMPARE(quitRequests_, 0);
+    QVERIFY(!updater.busy_);
+    QVERIFY(!updater.installQueued_);
+    QVERIFY(!updater.installing_);
+    QCOMPARE(storeUrls_, QList<QUrl>{QUrl(QStringLiteral("ms-windows-store://downloadsandupdates"))});
+    QCOMPARE(checked.count(), 0);
+    QCOMPARE(Updater::lastCheck(), previousCheck);
+    QCOMPARE(QSettings().value(QStringLiteral("update/pendingFile")).toString(), previousPending);
+    if (pending) {
+        QCOMPARE(QSettings().value(QStringLiteral("update/pendingVersion")).toString(), kVersion);
+        QVERIFY(QFile::exists(downloadedPath()));
+    }
 }
 
 void TestUpdater::startupRespectsSetting_data()

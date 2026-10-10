@@ -151,6 +151,24 @@ folder and launch the app when installation finishes. Silent installs do not lau
 [WiX packaging](../packaging/wix/README.md) for install, repair, and uninstall
 commands.
 
+## Microsoft Store package
+
+For a Microsoft Store upload, package the same deployed files as MSIX. Use a
+nonzero major version and build the executable with that version first.
+The Windows SDK supplies MakeAppx.
+
+```powershell
+scripts\build-msix.ps1 -Version 1.2.3
+# => build\x64-release\MervinPDF-1.2.3-x64.msix
+```
+
+This package is unsigned and intended for Partner Center. Store certification
+supplies its distribution signature. Do not install the unsigned file or submit
+a package signed with a local test certificate. See
+[RELEASING.md](RELEASING.md#microsoft-store-packages) for the workflow and version
+rules. Native lifecycle verification uses `scripts/test-windows-msix.ps1` on
+a disposable Windows account or hosted runner.
+
 ## Windows payload verification
 
 Deployment runs `scripts/check-windows-payload.py` before building the MSI and

@@ -193,6 +193,7 @@ void TestUpdatePlan::assetForEachKind_data()
     QTest::addColumn<PackageKind>("kind");
     QTest::addColumn<QString>("expected"); // empty: no asset
     QTest::newRow("MSI") << PackageKind::Msi << "MervinPDF-1.63.3.msi";
+    QTest::newRow("MSIX delegates to Store") << PackageKind::Msix << QString();
     QTest::newRow("AppImage") << PackageKind::AppImage << "MervinPDF-1.63.3-x86_64.AppImage";
     QTest::newRow("deb") << PackageKind::Deb << "mervin-pdf_1.63.3_ubuntu26.04_amd64.deb";
     QTest::newRow("rpm") << PackageKind::Rpm << "mervin-pdf-1.63.3.x86_64.rpm";

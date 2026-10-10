@@ -78,6 +78,7 @@ std::optional<ReleaseAsset> assetFor(const QList<ReleaseAsset> &assets, PackageK
     QLatin1StringView suffix;
     switch (kind) {
     case PackageKind::None:
+    case PackageKind::Msix:
         return std::nullopt;
     case PackageKind::Msi: // MervinPDF-1.64.0.msi
         prefix = QLatin1StringView("MervinPDF-");
