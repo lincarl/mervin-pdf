@@ -22,8 +22,9 @@ namespace mervin {
 // Primary-process updater singleton. On startup, auto-update checks the release API
 // when 30 days have passed, downloads the matching package, verifies SHA-256,
 // installs it and restarts. Manual checks use the same installation flow and show
-// progress. Unsupported/dev/portable copies link to the release. Asset URLs come
-// only from the configured release API response.
+// progress. Unsupported/dev/portable copies link to the release. MSIX copies
+// open Microsoft Store for manual checks and never contact the release API.
+// Asset URLs come only from the configured release API response.
 class Updater : public QObject
 {
     Q_OBJECT
@@ -39,9 +40,11 @@ public:
     static QDateTime lastCheck();
 
     // Whether this copy can download and install updates itself. Portable and dev
-    // copies cannot: they never check on their own, and a manual check only
-    // links to the release page.
-    bool canSelfUpdate() const { return kind_ != update::PackageKind::None; }
+    // copies cannot. MSIX delegates updates to Microsoft Store.
+    bool canSelfUpdate() const
+    {
+        return kind_ != update::PackageKind::None && kind_ != update::PackageKind::Msix;
+    }
 
     // Run once after the first window is up. When automatic updates are enabled,
     // resumes a pending installation or checks when due. The check and download
@@ -50,6 +53,7 @@ public:
 
     // Settings -> Updates -> Check for Updates checks now regardless of the last check or setting,
     // downloads and installs available updates, and reports "up to date" and errors.
+    // For MSIX copies it opens the Store's Downloads and updates page instead.
     void checkNow();
 
     // Auto update was switched on or off through WindowManager. Off cancels

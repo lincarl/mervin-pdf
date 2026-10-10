@@ -1,6 +1,7 @@
 #include "update/Installer.h"
 
 #include "config/ConfigPaths.h"
+#include "platform/PlatformIntegration.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -55,6 +56,10 @@ QString systemDir()
 PackageKind installedPackageKind()
 {
 #if defined(Q_OS_WIN)
+    // A Store copy can coexist with MSI. Package identity wins even when the
+    // user's MSI install directory or pending update still exists.
+    if (PlatformIntegration::hasPackageIdentity())
+        return PackageKind::Msix;
     const QString exeDir = QCoreApplication::applicationDirPath();
     const QSettings reg(QStringLiteral("HKEY_CURRENT_USER\\Software\\Mervin PDF"),
                         QSettings::NativeFormat);
@@ -72,6 +77,8 @@ PackageKind installedPackageKind()
 bool startWindowsInstaller(const QString &file)
 {
 #ifdef Q_OS_WIN
+    if (PlatformIntegration::hasPackageIdentity())
+        return false;
     const QString installer = QDir::toNativeSeparators(file);
     const QString workDir = QFileInfo(file).absolutePath(); // not wherever Mervin was started
     // cmd's /s strips just the outer quotes, leaving every quoted path intact.

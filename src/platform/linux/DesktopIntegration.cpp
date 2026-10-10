@@ -38,6 +38,11 @@ QString runCapture(const QString &program, const QStringList &args)
 
 } // namespace
 
+bool PlatformIntegration::hasPackageIdentity()
+{
+    return false;
+}
+
 bool PlatformIntegration::isDefaultPdfHandler()
 {
     // Snap confinement hides the host MIME configuration. Report false rather than trusting the

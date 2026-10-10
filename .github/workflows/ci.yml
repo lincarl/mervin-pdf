@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      msix_artifact_run:
+        description: 'Diagnostic MSIX-only run. Reuse Windows binaries from this CI run ID.'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -154,8 +159,10 @@ jobs:
           python3 -B scripts/test_release_versions.py
           python3 -B scripts/test_prune_releases.py
           python3 -B scripts/test_windows_payload.py
+          python3 -B scripts/test_msix_manifest.py
 
   linux-tests:
+    if: inputs.msix_artifact_run == ''
     runs-on: ubuntu-24.04
     strategy:
       matrix:
@@ -207,8 +214,12 @@ jobs:
           python3 scripts/check-test-results.py build/ci/results.xml
 
   windows-tests:
+    if: inputs.msix_artifact_run == ''
     runs-on: windows-2022
     env:
+      # Store manifests require a nonzero major version. Verification packages
+      # use this fixed test version and are never submitted to Microsoft Store.
+      MERVIN_VERSION: "1.0.0"
       MUPDF_VERSION: "1.28.5"
       MUPDF_SHA256: "98a5c10cda20c3992cdf76ff6b2a1149c32bd79cc796d3f703230b1185b7e934"
       QT_QPA_PLATFORM: offscreen
@@ -294,7 +305,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Checking out vcpkg baseline failed" }
           & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
           if ($LASTEXITCODE -ne 0) { throw "Bootstrapping vcpkg failed" }
-          cmake --preset x64-release -DCMAKE_BUILD_TYPE=Release -DMERVIN_BUILD_TESTS=ON "-DMUPDF_DIR=$env:MUPDF_DIR"
+          cmake --preset x64-release -DCMAKE_BUILD_TYPE=Release "-DMERVIN_VERSION=$env:MERVIN_VERSION" -DMERVIN_BUILD_TESTS=ON "-DMUPDF_DIR=$env:MUPDF_DIR"
           if ($LASTEXITCODE -ne 0) { throw "Configuring failed" }
 
       - name: Save vcpkg cache
@@ -351,6 +362,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Build unsigned MSIX
+        shell: pwsh
+        run: scripts\build-msix.ps1 -Version $env:MERVIN_VERSION
+
       - name: Upload Windows verification artifacts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -359,12 +374,53 @@ jobs:
           path: |
             build/x64-release/deploy/
             build/x64-release/MervinPDF-*.msi
+            build/x64-release/MervinPDF-*-x64.msix
             build/x64-release/windows-payload.json
+            build/x64-release/tests/fixtures/properties.pdf
+          if-no-files-found: error
+          retention-days: 7
+
+  windows-msix-tests:
+    needs: windows-tests
+    if: always() && !cancelled() && (needs.windows-tests.result == 'success' || inputs.msix_artifact_run != '')
+    # Server 2025 can install the package's Windows 11 minimum build. The
+    # compiler job retains its existing Server 2022 toolchain and MSI tests.
+    runs-on: windows-2025
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: windows-verification
+          path: build/x64-release
+          run-id: ${{ inputs.msix_artifact_run || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Rebuild diagnostic MSIX from the selected payload
+        if: inputs.msix_artifact_run != ''
+        shell: pwsh
+        run: |
+          $version = (Get-Item build\x64-release\deploy\MervinPDF.exe).VersionInfo.FileVersion
+          scripts\build-msix.ps1 -Version $version
+      - name: Verify MSIX installation, activation, upgrade, and uninstall
+        shell: powershell
+        run: |
+          python scripts\generate-store-sample.py build\x64-release\tests\fixtures\Birch-courtyard-studio.pdf
+          if ($LASTEXITCODE -ne 0) { throw 'Generating the Store screenshot document failed.' }
+          scripts\test-windows-msix.ps1 -Msix (Get-Item build\x64-release\MervinPDF-*-x64.msix).FullName `
+            -Fixture build\x64-release\tests\fixtures\Birch-courtyard-studio.pdf
+      - name: Upload MSIX diagnostics
+        if: always() && env.MERVIN_MSIX_TEST_DIR != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-msix-diagnostics
+          path: ${{ env.MERVIN_MSIX_TEST_DIR }}/
           if-no-files-found: error
           retention-days: 7
 
   prerelease:
-    needs: [repository-checks, linux-tests, windows-tests]
+    needs: [repository-checks, linux-tests, windows-tests, windows-msix-tests]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       actions: read
