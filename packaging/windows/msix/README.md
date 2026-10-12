@@ -43,11 +43,12 @@ Windows finds these qualified file names only through the package's
 `resources.pri`. `build-msix.ps1` runs `makepri createconfig` and removes the
 `<packaging>` element, so a flat package gets one index. It then runs
 `makepri new` on a copy of `Assets` alone, so application folder names are never
-read as language or scale qualifiers. A `makepri dump` check fails the build
-unless every unplated and light unplated size is indexed under
-`Square44x44Logo.png`. The configuration, the copy and `resources.pri.xml` remain
-beside the MSIX in its `-msix-pri` directory for inspection. CI uploads that
-directory with the Windows verification artifacts.
+read as language or scale qualifiers. The build first runs
+`export_icon_frames.py --check`, so every ICO frame has its three copies. A
+`makepri dump` check then fails the build unless every size is indexed in all
+three forms under `Square44x44Logo.png`. The configuration, the copy and
+`resources.pri.xml` remain beside the MSIX in its `-msix-pri` directory for
+inspection. CI uploads that directory with the Windows verification artifacts.
 
 The Windows shell caches packaged app icons. To check the icons on Windows 11,
 install a test package that replaces any earlier Mervin package, then unpin and

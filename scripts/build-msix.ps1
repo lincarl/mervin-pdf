@@ -53,6 +53,9 @@ if ((Get-Item -LiteralPath $exe).VersionInfo.FileVersion -ne $Version) {
 # Recheck DLL closure so packaging a stale or manually assembled tree fails.
 & python (Join-Path $PSScriptRoot 'check-windows-payload.py') --directory $deploy
 if ($LASTEXITCODE -ne 0) { throw 'Windows payload dependency validation failed.' }
+# Every ICO frame must have its three target-size copies in Assets, unchanged.
+& python (Join-Path $root 'resources\icons\export_icon_frames.py') --check
+if ($LASTEXITCODE -ne 0) { throw 'MSIX icon images differ from the application icon frames.' }
 
 $makeAppx = (Get-Command MakeAppx.exe -ErrorAction SilentlyContinue).Source
 if (-not $makeAppx) {
@@ -103,14 +106,21 @@ $dump = Join-Path $pri 'resources.pri.xml'
 if ($LASTEXITCODE -ne 0) { throw "MakePri dump failed ($LASTEXITCODE)." }
 [xml]$index = Get-Content -LiteralPath $dump -Raw
 $candidates = @($index.SelectNodes("//*[local-name()='NamedResource' and @name='Square44x44Logo.png']/*[local-name()='Candidate']"))
-$sizes = @(Get-ChildItem -LiteralPath $assets -Filter 'Square44x44Logo.targetsize-*_altform-unplated.png' -File).Count
-foreach ($form in 'UNPLATED', 'LIGHTUNPLATED') {
-    $found = @($candidates | Where-Object { $_.GetAttribute('qualifiers') -match "AlternateForm[-=]$form\b" }).Count
-    if ($sizes -eq 0 -or $found -ne $sizes) {
-        # Hosted runners discard the dump, so show what MakePri indexed in the log.
-        Get-Content -LiteralPath $dump | Write-Host
-        throw "resources.pri indexes $found of $sizes $form icons. The dump above is saved at $dump."
+$indexed = @($candidates | ForEach-Object { (($_.GetAttribute('qualifiers') -split ',\s*') | Sort-Object) -join ', ' })
+$sizes = @(Get-ChildItem -LiteralPath $assets -File | ForEach-Object {
+    if ($_.Name -match '^Square44x44Logo\.targetsize-(\d+)\.png$') { [int]$Matches[1] }
+})
+# Each size needs its plain, dark-theme unplated and light-theme unplated form.
+$missing = @(foreach ($size in $sizes) {
+    foreach ($key in "TargetSize-$size", "AlternateForm-UNPLATED, TargetSize-$size",
+                     "AlternateForm-LIGHTUNPLATED, TargetSize-$size") {
+        if ($indexed -notcontains $key) { $key }
     }
+})
+if ($sizes.Count -eq 0 -or $missing.Count -gt 0) {
+    # Hosted runners discard the dump, so show what MakePri indexed in the log.
+    Get-Content -LiteralPath $dump | Write-Host
+    throw "resources.pri lacks Square44x44Logo.png variants ($($missing -join '; ')) for $($sizes.Count) sizes. The dump above is saved at $dump."
 }
 Write-Output "resources.pri indexes $($candidates.Count) Square44x44Logo.png variants."
 
