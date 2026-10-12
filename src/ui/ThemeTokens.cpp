@@ -33,7 +33,7 @@ theme::Chrome nordChrome()
     theme::Chrome t;
     t.dark = true;
     t.well    = rgb(0x242933); // inset wells: inputs, search, page field
-    t.status  = rgb(0x272c36); // title bar + status bar
+    t.status  = rgb(0x272c36); // status bar
     t.bar     = rgb(0x2a303b); // tab strip / secondary bars
     t.window  = rgb(0x2e3440); // main toolbar + window chrome
     t.fill    = rgb(0x353c4a); // active tab body

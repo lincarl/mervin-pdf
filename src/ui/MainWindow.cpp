@@ -1422,7 +1422,7 @@ void MainWindow::applyControlStyle()
         sep->update();
     }
 
-    applyTitleBarTheme(); // dark caption colour on Windows 11 (no-op elsewhere)
+    applyTitleBarTheme(); // system caption colours on Windows 11 (no-op elsewhere)
     updateRecentButton(); // re-apply pill style with the updated palette
     applyActionIcons();   // re-draw icons with the current text colour
 
@@ -1454,26 +1454,17 @@ void MainWindow::reassertHoverAttributes()
 void MainWindow::applyTitleBarTheme()
 {
 #ifdef Q_OS_WIN
-    // Colour the native caption to the dark status-bar tone. DWMWA_CAPTION_COLOR
-    // needs Windows 11; older Windows rejects the attribute, which is harmless
-    // (Qt's own dark-scheme handling still gives a dark title bar there). Light
-    // mode resets to the DWM default so the OS draws its standard caption.
+    // Leave the native caption and its text to Windows in both UI themes.
+    // These attributes need Windows 11; older Windows rejects them harmlessly.
     if (!windowHandle())
         return; // no native window yet; showEvent re-applies once created
     constexpr DWORD kCaptionColor = 35;        // DWMWA_CAPTION_COLOR (Win11+)
     constexpr DWORD kCaptionTextColor = 36;    // DWMWA_TEXT_COLOR (Win11+)
     constexpr COLORREF kColorDefault = 0xFFFFFFFF; // DWMWA_COLOR_DEFAULT (an OS
                                                    // sentinel, not a colour)
-    // COLORREF is 0x00BBGGRR, so the RGB() macro (not a hex literal) does the swap.
-    const mervin::theme::Chrome t = mervin::theme::chrome(palette());
-    const COLORREF caption =
-        t.dark ? RGB(t.status.red(), t.status.green(), t.status.blue()) : kColorDefault;
-    const COLORREF captionText =
-        t.dark ? RGB(t.inkPrimary.red(), t.inkPrimary.green(), t.inkPrimary.blue())
-               : kColorDefault;
     HWND hwnd = reinterpret_cast<HWND>(winId());
-    DwmSetWindowAttribute(hwnd, kCaptionColor, &caption, sizeof(caption));
-    DwmSetWindowAttribute(hwnd, kCaptionTextColor, &captionText, sizeof(captionText));
+    DwmSetWindowAttribute(hwnd, kCaptionColor, &kColorDefault, sizeof(kColorDefault));
+    DwmSetWindowAttribute(hwnd, kCaptionTextColor, &kColorDefault, sizeof(kColorDefault));
 #endif
 }
 
