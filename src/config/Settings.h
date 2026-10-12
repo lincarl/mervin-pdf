@@ -20,9 +20,9 @@ struct Settings
     QString pageMode = QStringLiteral("continuous");   // "continuous" | "single"
     bool twoPageSpread = false;                        // facing pages in one row
     // UI theme: the application chrome's light/dark scheme, chosen with the cards
-    // under Settings -> Appearance -> Application. New installs default to "dark".
-    // "system" follows the OS setting, including live auto-switches.
-    QString colorScheme = QStringLiteral("dark");      // "system" | "light" | "dark"
+    // under Settings -> Appearance -> Application. New installs default to "system",
+    // which follows the OS setting, including live auto-switches.
+    QString colorScheme = QStringLiteral("system");    // "system" | "light" | "dark"
     // Document theme is independent of chrome: light preserves pages, dark inverts, comfort
     // applies the colour-aware dark transform, and legacy follow-ui follows the UI scheme.
     // Migrate invert_colors true/false to dark/light; new installs default to light.

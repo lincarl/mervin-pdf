@@ -250,9 +250,10 @@ switch is enabled by default.
 Appearance offers illustrated choices with labels and an exclusive selection
 indicator. Application holds the UI theme in the order Dark, Light, Follow system.
 Each preview shows a Mervin window in that scheme, and Follow system splits the
-window between the two. Document holds the document themes in the order
-Traditional, Comfort, Inverted. Traditional preserves page colours, Comfort darkens
-the page while keeping photos readable, and Inverted reverses all page colours.
+window between the two. New installs follow the system. Document holds the
+document themes in the order Traditional, Comfort, Inverted. Traditional preserves
+page colours, Comfort darkens the page while keeping photos readable, and Inverted
+reverses all page colours.
 
 On Windows, Mervin can register itself as a PDF handler and open the system Default
 Apps settings. If Mervin is not already the default, the welcome window offers this
