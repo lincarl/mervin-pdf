@@ -5,6 +5,7 @@
 
 #include <QHash>
 #include <QList>
+#include <QSet>
 #include <QStringList>
 #include <QWidget>
 
@@ -30,7 +31,8 @@ public:
 
     explicit RecentFilesPanel(QWidget *parent = nullptr);
 
-    // Replace the displayed history (entries most-recent first).
+    // Replace the displayed history (entries most-recent first). The current file
+    // and the scroll offset are kept.
     void setEntries(const QList<RecentEntry> &entries);
 
     // How many non-starred entries to show when the search is empty (spec default
@@ -72,7 +74,8 @@ signals:
     // Emitted after every rebuild with the one-line listing summary, so the
     // window can display it in the status bar (where file paths appear).
     void statusSummaryChanged(const QString &text);
-    // User toggled the favourite star on a file.
+    // User toggled the favourite star on a file. The row has already moved to its
+    // new section.
     void favoriteToggled(const QString &path, bool isFavorite);
     // User requested stale entries be removed from the current visible filter scope.
     void clearMissingRequested(const QStringList &paths);
@@ -90,9 +93,13 @@ private:
     };
 
     // Draws the whole list from entries_ and the content hits so far, so a history
-    // change (remove, clear missing, a star from another window) reaches every
+    // change (remove, clear missing, a star from this or another window) reaches every
     // scope. Hits that arrive while a scan runs are added to the list directly.
     void rebuild();
+    // rebuild() for a history change, such as a star toggled here or in another
+    // window: the current file stays current and the scroll offset is kept, so
+    // the list does not jump back to the top.
+    void rebuildKeepingPlace();
     void updateSummary(int listed);
     void onSearchChanged();
     void startContentSearch();
@@ -105,7 +112,6 @@ private:
     bool contentMode() const; // Contents or All with a query: a scan runs or ran
     QString needle() const;
     bool nameMatches(const RecentEntry &entry) const;
-    bool listedAsFavourite(const RecentEntry &entry) const;
     const RecentEntry *entryFor(const QString &path) const;
     void onItemActivated(QListWidgetItem *item);
     void handleMissingFile(const QString &path);
@@ -139,14 +145,14 @@ private:
     // Content hits for the current search, in the order they arrived.
     QStringList hitOrder_;
     QHash<QString, ContentHit> hits_;
+    // Files unstarred since Recent was shown or the search changed. They stay
+    // listed past the visible count, so an unstar can be undone with the star.
+    QSet<QString> unstarredHere_;
+    bool starClicked_ = false; // the last press toggled a star
     bool scanDone_ = false;     // the scan for the current search finished
     bool rescanOnShow_ = false; // a scan was stopped or held back while Recent was hidden
     int scanned_ = 0;   // files finished in the running scan
     int scanTotal_ = 0; // files it reads
-    // A row whose star was just toggled stays in the section it was shown in
-    // until the search changes or Recent is left, so it never jumps away from
-    // the pointer. Maps path -> listed as a favourite.
-    QHash<QString, bool> stickySection_;
 };
 
 } // namespace mervin

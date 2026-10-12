@@ -43,7 +43,10 @@ signals:
     void dismissed();
 
 protected:
+    void changeEvent(QEvent *event) override;
     void hideEvent(QHideEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
 
 private:
     void refreshSwatchChecks(const QColor &color);
@@ -54,6 +57,7 @@ private:
     QToolButton *deleteBtn_ = nullptr;
     QList<QToolButton *> swatches_;
     QList<QColor> swatchColors_;
+    QColor checkedColor_; // the colour refreshSwatchChecks last marked
 
     QString committedText_; // last value pushed via commentEdited (de-dupe)
     QRect anchorRect_;       // last annotation rect we positioned against

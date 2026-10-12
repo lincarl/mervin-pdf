@@ -550,7 +550,7 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    if (!closeConfirmed_ && wm_ && wm_->canCloseToTray()) {
+    if (!closeConfirmed_ && wm_ && wm_->canCloseToTray(this)) {
         event->ignore();
         hideToTray();
         return;

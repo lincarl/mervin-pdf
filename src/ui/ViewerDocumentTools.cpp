@@ -408,6 +408,11 @@ void ViewerWidget::openAnnotPopup(int page, int id, bool readOnly)
             openAnnotPage_ = -1;
             openAnnotId_ = -1;
             viewport()->update(); // clear the selection outline
+            // The card is hiding. If it held the keyboard, return it to the page now,
+            // or Qt passes it to the next widget in the window and the arrow and page
+            // keys stop scrolling the document.
+            if (isVisible() && annotPopup_->isAncestorOf(QApplication::focusWidget()))
+                setFocus();
         });
     }
     openAnnotPage_ = page;

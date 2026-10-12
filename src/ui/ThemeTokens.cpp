@@ -266,13 +266,6 @@ const theme::Doc &theme::doc()
         v.formEditorSelection    = QColor(0x33, 0x99, 0xff);
         v.formEditorSelectionInk = QColor(Qt::white);
 
-        v.noteCard             = QColor(0xff, 0xfe, 0xf0);
-        v.noteCardBorder       = QColor(0xb9, 0xb9, 0xb9);
-        v.noteCardEditor       = QColor(Qt::white);
-        v.noteCardEditorBorder = QColor(0xcf, 0xcf, 0xcf);
-        v.noteCardInk          = QColor(0x1a, 0x1a, 0x1a);
-        v.noteCardLabelInk     = QColor(0x3a, 0x3a, 0x3a);
-
         v.swatchRingDark  = QColor(0xe6, 0xed, 0xf3);
         v.swatchRingLight = QColor(0x1a, 0x1a, 0x1a);
         v.swatchRingRest  = QColor(255, 255, 255, 89); // rgba(255,255,255,0.35)

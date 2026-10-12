@@ -217,6 +217,8 @@ void MainWindow::hideToTray()
     persistWindowState();
     beforeTrayState_ = windowState() & ~Qt::WindowMinimized;
     hiddenToTray_ = true;
+    static quint64 lastTrayOrder = 0;
+    trayOrder_ = ++lastTrayOrder;
     if (contentSearch_)
         contentSearch_->cancel();
     hide();

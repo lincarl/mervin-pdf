@@ -656,12 +656,13 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
     add(QStringLiteral("QToolButton#recentSearchStop:focus { border-color:%1; }")
             .arg(css(theme::legibleAccent(t.accent, dark))));
 
-    // ── Floating tool panels (Measure, Comment) ─────────────────────────────
+    // ── Floating tool panels (Measure, Comment, annotation card) ────────────
     // These live on the viewer's viewport, so they get an explicit ink for every
     // label: the viewport's QPalette::Dark background role makes Qt derive
     // QPalette::Light for child foregrounds, and a panel label that falls back to
     // the palette is invisible in both themes (see MeasurePanel's constructor).
-    // The panels stack with the find card, so they share one surface and rim.
+    // The panels stack with the find card, so they share one surface and rim. The
+    // annotation card (AnnotPopup) reuses the measurePanel name for the same look.
     // The dark rim is borderStrong: the popover sits on the canvas at about 1.1:1,
     // and the app draws no shadows to lift a floating panel.
     add(QStringLiteral("QWidget#measurePanel, QWidget#findCard { background:%1;"

@@ -32,13 +32,21 @@ public:
 
     // True when `path` is gone from a volume that is attached: the file, or a
     // folder above it, was deleted, moved or renamed. False while the file exists,
-    // and false when its volume is away, so automatic pruning does not forget
-    // entries on an unplugged drive or an offline share:
+    // and false when its volume is away (isVolumeAttached), so automatic pruning
+    // does not forget entries on an unplugged drive or an offline share.
+    static bool isRemovedFromDisk(const QString &path);
+
+    // Whether the volume holding `path` is attached. Session restore uses it too.
     // - Windows: the drive (D:/) or share (//server/share) must be reachable.
     // - Elsewhere: a path under /media, /run/media, /mnt or /net counts only while
     //   a volume is mounted below that folder, and a GVFS path only while its share
     //   folder exists; other paths are on the system's own disks.
-    static bool isRemovedFromDisk(const QString &path);
+    // On an offline share the check can stall for seconds.
+    static bool isVolumeAttached(const QString &path);
+    // Paths with the same key get the same isVolumeAttached() answer, so a caller
+    // can check each drive or share once: "D:" or "//server/share" on Windows, the
+    // containing folder elsewhere.
+    static QString volumeKey(const QString &path);
 
     // Toggle the favourite flag on an existing entry. Returns true if the entry
     // was found and the flag actually changed.

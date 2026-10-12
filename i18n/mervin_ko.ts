@@ -132,6 +132,11 @@ Edited document retained at %2.
 편집된 문서는 %2 에 보관되어 있습니다.
 %3</translation>
     </message>
+    <message>
+        <source>Don&apos;t save</source>
+        <extracomment>Button in the unsaved-changes question. Closes the document and loses the changes made since it was last saved. The file on disk stays as it is.</extracomment>
+        <translation>저장 안 함</translation>
+    </message>
     <message numerus="yes">
         <source>Wrote %n file(s) to:
 %1</source>

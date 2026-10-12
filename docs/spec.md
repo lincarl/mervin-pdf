@@ -52,9 +52,13 @@ The Recent screen provides:
   drive or an offline network share are never dropped automatically; and
 - file and folder actions such as copying paths or opening the containing folder.
 
-The application can restore the previous session. It opens the selected document
-and leaves the other restored tabs unloaded until selected. It remembers each file's
-page, zoom, rotation, and scroll position.
+The application can restore the previous session. It opens the selected document and
+leaves the other restored tabs unloaded until selected. It remembers each file's
+page, zoom, rotation, and scroll position. A saved file that was deleted, moved or
+renamed is dropped. A file on a detached drive, an offline network share or an
+unmounted volume gets no tab but stays in the saved session. A later start that
+finds it reopens it after the other restored tabs. Mervin stops looking for it 30
+days after it was first missing.
 
 Inactive documents unload after 30 minutes by default. This includes background tabs,
 documents hidden by the Recent screen, and documents in minimized or hidden windows.

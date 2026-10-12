@@ -7,6 +7,7 @@
 #include "render/MeasureContent.h"
 #include "render/RenderEngine.h"
 #include "security/MeasureExport.h"
+#include "session/SessionStore.h"
 #include "ui/MainWindow.h"
 #include "ui/TabPage.h"
 #include "ui/ThemeTokens.h"
@@ -15,6 +16,7 @@
 #include <QAction>
 #include <QComboBox>
 #include <QContextMenuEvent>
+#include <QDir>
 #include <QFile>
 #include <QLineEdit>
 #include <QMap>
@@ -69,6 +71,7 @@ public:
                 unexpectedDialogs_.append(box->windowTitle() + ": " + box->text());
                 box->reject();
             } else if (auto *button = box->button(answers_.takeFirst())) {
+                clicked_.append(button->text());
                 button->click();
             } else {
                 unexpectedDialogs_.append("Missing expected button: " + box->text());
@@ -82,6 +85,7 @@ private slots:
     {
         ConfigPaths::setOverrideDir(profile_.path());
         answers_.clear();
+        clicked_.clear();
         unexpectedDialogs_.clear();
         dialogs_.start(10);
     }
@@ -346,6 +350,8 @@ private slots:
         answers_.append(QMessageBox::Discard);
         QVERIFY(QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0)));
         QCOMPARE(window.tabCount(), 0);
+        // The app's own text, not the platform's "Discard", so every catalog has it.
+        QCOMPARE(clicked_.last(), QStringLiteral("Don't save"));
     }
 
     void canceledQuitPreservesSuspendedDocumentsAcrossWindows()
@@ -392,6 +398,76 @@ private slots:
         const auto notes = AnnotModel(*saved).pageAnnots(0);
         QCOMPARE(notes.size(), 1u);
         QCOMPARE(notes.front().contents, QStringLiteral("First pending edit"));
+    }
+
+    // A tray restore brings back every hidden window, the one hidden last in front.
+    // Creation order must not decide: a window opened later, and hidden first, would
+    // otherwise come back over the window the user closed last.
+    void trayRestoresTheWindowHiddenLastInFront()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("doc.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        WindowManager manager;
+        MainWindow *documents = manager.createWindow();
+        MainWindow *later = manager.createWindow();
+        QVERIFY(documents->openFile(path));
+        QVERIFY(QTest::qWaitForWindowExposed(documents));
+        QVERIFY(QTest::qWaitForWindowExposed(later));
+
+        later->hideToTray();
+        documents->hideToTray();
+        QVERIFY(later->trayOrder() < documents->trayOrder());
+        manager.restoreFromTray();
+        QVERIFY(documents->isVisible() && !documents->isInTray());
+        QVERIFY(later->isVisible() && !later->isInTray());
+        QTRY_COMPARE(QApplication::activeWindow(), documents);
+
+        // Hidden the other way round, the other window comes back in front.
+        documents->hideToTray();
+        later->hideToTray();
+        manager.restoreFromTray();
+        QTRY_COMPARE(QApplication::activeWindow(), later);
+    }
+
+    // A session document on an unavailable drive stays in the saved session through
+    // later saves until the user opens it again. Then it is an ordinary tab.
+    void sessionKeepsDocumentsOnUnavailableDrives()
+    {
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        const QString open = root.filePath(QStringLiteral("open.pdf"));
+        const QString other = root.filePath(QStringLiteral("other.pdf"));
+#ifdef Q_OS_WIN
+        const QString away = QStringLiteral("//mervin-test-no-such-server/share/plan.pdf");
+#else
+        const QString away = QStringLiteral("/mnt/mervin-test-absent/plan.pdf");
+#endif
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), open));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), other));
+        SessionStore saved;
+        saved.setPaths({away, open});
+        QVERIFY(saved.save());
+
+        WindowManager manager;
+        QCOMPARE(manager.sessionPathsToRestore(), QStringList{open});
+        MainWindow *window = manager.createWindow();
+        QVERIFY(window->openFile(open));
+        SessionStore onDisk;
+        QVERIFY(onDisk.load());
+        QCOMPARE(onDisk.paths(), QStringList{open});
+        QCOMPARE(onDisk.activePath(), open);
+        QCOMPARE(onDisk.unavailable().size(), 1);
+        QCOMPARE(onDisk.unavailable().first().path, away);
+        QCOMPARE(onDisk.unavailable().first().since, QDate::currentDate());
+
+        // Every later save keeps it: opening and closing other documents.
+        QVERIFY(window->openFile(other));
+        QVERIFY(QMetaObject::invokeMethod(window, "closeTab", Q_ARG(int, 1)));
+        QVERIFY(onDisk.load());
+        QCOMPARE(onDisk.paths(), QStringList{open});
+        QCOMPARE(onDisk.unavailable().size(), 1);
+        QCOMPARE(onDisk.unavailable().first().path, away);
     }
 
     void savingSuspendedEditsRequiresConfirmingExternalChanges()
@@ -517,6 +593,7 @@ private:
     QTemporaryDir profile_;
     QTimer dialogs_;
     QList<QMessageBox::StandardButton> answers_;
+    QStringList clicked_; // the text of each button the dialog handler clicked
     QStringList unexpectedDialogs_;
 };
 

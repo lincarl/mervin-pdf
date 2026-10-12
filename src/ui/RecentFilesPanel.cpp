@@ -22,6 +22,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QStyle>
 #include <QStyledItemDelegate>
 #include <QTimer>
@@ -425,13 +426,22 @@ bool RecentFilesPanel::eventFilter(QObject *obj, QEvent *event)
             focusList();
             return true;
         }
+    } else if (obj == list_->viewport() && event->type() == QEvent::MouseButtonDblClick
+               && starClicked_) {
+        // A toggle moves rows, so the second click of a double-click on a star lands on
+        // another row or a caption. Swallow it wherever it lands, rather than select
+        // or open what moved under the pointer.
+        starClicked_ = false;
+        return true;
     } else if (obj == list_->viewport() && event->type() == QEvent::MouseButtonPress) {
         auto *me = static_cast<QMouseEvent *>(event);
+        starClicked_ = false;
         if (me->button() == Qt::LeftButton) {
             QListWidgetItem *item = list_->itemAt(me->pos());
             if (item && !item->data(kPathRole).toString().isEmpty()
                      &&  item->data(kEpochRole).isValid()) {
                 if (starRegion(list_->visualItemRect(item)).contains(me->pos())) {
+                    starClicked_ = true;
                     toggleItemFavorite(item);
                     return true;
                 }
@@ -483,9 +493,9 @@ void RecentFilesPanel::hideEvent(QHideEvent *event)
         }
         rescanOnShow_ = true;
     }
-    // It also settles starred rows into their sections for the next visit.
-    if (!stickySection_.isEmpty()) {
-        stickySection_.clear();
+    // Files unstarred during this visit settle under the visible count again.
+    if (!unstarredHere_.isEmpty()) {
+        unstarredHere_.clear();
         rebuild();
     }
 }
@@ -502,22 +512,19 @@ void RecentFilesPanel::showEvent(QShowEvent *event)
 void RecentFilesPanel::toggleItemFavorite(QListWidgetItem *item)
 {
     const QString path = item->data(kPathRole).toString();
-    const bool wasFav  = item->data(kFavoriteRole).toBool();
+    const bool favourite = !item->data(kFavoriteRole).toBool();
 
-    // The row stays in the section it is listed in until the search changes or
-    // Recent is left; rebuilds in between (the store echoes the change back
-    // through setEntries) keep it there.
-    if (!stickySection_.contains(path))
-        stickySection_.insert(path, wasFav);
-
-    // Keep in-memory entries_ consistent so rebuild() doesn't undo the change
-    // before the store round-trip completes.
+    // The file moves to its new section at once. entries_ changes first so the list
+    // is right even before the store echoes the change back through setEntries().
     for (RecentEntry &e : entries_) {
-        if (e.path == path) { e.favorite = !wasFav; break; }
+        if (e.path == path) { e.favorite = favourite; break; }
     }
-    item->setData(kFavoriteRole, !wasFav);
-    list_->update(list_->indexFromItem(item));
-    emit favoriteToggled(path, !wasFav);
+    if (favourite)
+        unstarredHere_.remove(path);
+    else
+        unstarredHere_.insert(path);
+    rebuildKeepingPlace(); // `item` is deleted from here on
+    emit favoriteToggled(path, favourite);
 }
 
 QString RecentFilesPanel::needle() const
@@ -528,11 +535,6 @@ QString RecentFilesPanel::needle() const
 bool RecentFilesPanel::nameMatches(const RecentEntry &entry) const
 {
     return QFileInfo(entry.path).fileName().contains(needle(), Qt::CaseInsensitive);
-}
-
-bool RecentFilesPanel::listedAsFavourite(const RecentEntry &entry) const
-{
-    return stickySection_.value(entry.path, entry.favorite);
 }
 
 const RecentEntry *RecentFilesPanel::entryFor(const QString &path) const
@@ -557,7 +559,7 @@ QStringList RecentFilesPanel::missingFilesInCurrentFilter() const
 void RecentFilesPanel::setEntries(const QList<RecentEntry> &entries)
 {
     entries_ = entries;
-    rebuild();
+    rebuildKeepingPlace();
 }
 
 void RecentFilesPanel::setVisibleCount(int count)
@@ -598,8 +600,7 @@ bool RecentFilesPanel::contentMode() const
 
 void RecentFilesPanel::onSearchChanged()
 {
-    // A new search settles starred rows into their sections.
-    stickySection_.clear();
+    unstarredHere_.clear(); // a new search lists by the visible count again
     rescanOnShow_ = false;
     debounce_->stop();
     if (searching_) {
@@ -714,7 +715,7 @@ void RecentFilesPanel::addContentHit(const QString &path, int page, const QStrin
         return; // left the history while the scan ran
     const ContentHit &hit = *hits_.insert(path, {page, snippet});
     hitOrder_.append(path);
-    insertResult(makeHitItem(*entry, hit), listedAsFavourite(*entry));
+    insertResult(makeHitItem(*entry, hit), entry->favorite);
 }
 
 void RecentFilesPanel::setContentProgress(int scanned, int total)
@@ -854,10 +855,16 @@ void RecentFilesPanel::rebuild()
         for (const RecentEntry &e : std::as_const(entries_)) {
             if (filtering && !nameMatches(e))
                 continue;
-            (listedAsFavourite(e) ? favourites : rest).append(&e);
+            (e.favorite ? favourites : rest).append(&e);
         }
-        if (!filtering && rest.size() > visibleCount_)
-            rest.resize(visibleCount_);
+        if (!filtering) {
+            // A file unstarred during this visit stays listed even when it is older
+            // than the visible count, so its star can be clicked again to undo.
+            int listed = 0;
+            rest.removeIf([this, &listed](const RecentEntry *e) {
+                return ++listed > visibleCount_ && !unstarredHere_.contains(e->path);
+            });
+        }
         for (const RecentEntry *e : std::as_const(favourites))
             insertResult(makeFileItem(*e), true);
         for (const RecentEntry *e : std::as_const(rest))
@@ -866,7 +873,7 @@ void RecentFilesPanel::rebuild()
     nameRows_ = favRows_ + recentRows_;
     for (const QString &path : std::as_const(hitOrder_)) {
         if (const RecentEntry *e = entryFor(path))
-            insertResult(makeHitItem(*e, hits_.value(path)), listedAsFavourite(*e));
+            insertResult(makeHitItem(*e, hits_.value(path)), e->favorite);
     }
 
     const int listed = favRows_ + recentRows_;
@@ -881,6 +888,28 @@ void RecentFilesPanel::rebuild()
         // Otherwise a scan is pending or running, and the status says so.
     }
     updateSummary(listed);
+}
+
+void RecentFilesPanel::rebuildKeepingPlace()
+{
+    const QListWidgetItem *current = list_->currentItem();
+    const QString currentPath = current ? current->data(kPathRole).toString() : QString();
+    const bool selected = current && current->isSelected();
+    const int scroll = list_->verticalScrollBar()->value();
+    rebuild();
+    if (!currentPath.isEmpty()) {
+        for (int i = 0; i < list_->count(); ++i) {
+            if (list_->item(i)->data(kPathRole).toString() == currentPath) {
+                list_->setCurrentRow(i, selected ? QItemSelectionModel::ClearAndSelect
+                                                 : QItemSelectionModel::NoUpdate);
+                break;
+            }
+        }
+    }
+    // The new rows are laid out lazily; lay them out now so the scroll range is
+    // current before the old offset is restored.
+    list_->doItemsLayout();
+    list_->verticalScrollBar()->setValue(scroll);
 }
 
 // The window's status bar line for the list as it stands.

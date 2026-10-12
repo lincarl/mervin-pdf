@@ -402,8 +402,8 @@ endforeach()
 
 target_link_libraries(tst_print_output PRIVATE qpdf::libqpdf)
 
-# The Recent page: Favourites and Recent sections, rows that keep their place when
-# starred, and the Names, Contents and All search scopes (content hits are fed in
+# The Recent page: Favourites and Recent sections, rows that move between them as
+# soon as they are starred, and the Names, Contents and All search scopes (content hits are fed in
 # by hand, as the window's ContentSearch would).
 qt_add_executable(tst_recent_panel tst_recent_panel.cpp)
 target_link_libraries(tst_recent_panel PRIVATE mervin_app Qt6::Test)

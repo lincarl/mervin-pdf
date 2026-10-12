@@ -291,13 +291,12 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
         mervin::FirstRunDialog::setAsDefaultPdfApp(firstWindow);
 
     // Crash recovery / session restore (M11): reopen the documents that were
-    // open last time (still-existing files only). On by default.
+    // open last time and still exist (see SessionStore::prepareRestore). On by
+    // default. When off, the saved session is never loaded, so the first save
+    // forgets it.
     QStringList restore;
-    if (mervin::Settings::load().restoreSession) {
-        for (const QString &p : wm.sessionPaths())
-            if (QFileInfo::exists(p))
-                restore.append(p);
-    }
+    if (mervin::Settings::load().restoreSession)
+        restore = wm.sessionPathsToRestore();
 
     // Recover unsaved work even if the original moved or ordinary session restore is off.
     // Passwords are deliberately absent from these manifests and are requested on selection.

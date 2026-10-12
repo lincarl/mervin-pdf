@@ -155,6 +155,11 @@ Edited document retained at %2.
         <translation>要儲存對 %1 的變更嗎？</translation>
     </message>
     <message>
+        <source>Don&apos;t save</source>
+        <extracomment>Button in the unsaved-changes question. Closes the document and loses the changes made since it was last saved. The file on disk stays as it is.</extracomment>
+        <translation>不要儲存</translation>
+    </message>
+    <message>
         <source>Export with Measurements</source>
         <translation>匯出含測量標記的副本</translation>
     </message>
