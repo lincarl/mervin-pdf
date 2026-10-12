@@ -476,7 +476,8 @@ native renders rather than a larger render shrunk to fit. No render draws a line
 thinner than about 1.07 device pixels. At one pixel or less Qt's raster engine uses
 its hairline stroker, which drops the dots in icons such as Outline, About and
 Keyboard shortcuts. A 16 px icon at 100% scaling therefore gets about 1.6 units,
-and a 20 px one about 1.3.
+and a 20 px one about 1.3. The Document menu's Split and Merge icons are Lucide's
+split and merge turned a quarter clockwise, so their arrows point right.
 
 Fit page and Fit width have separate toolbar buttons, each selecting its mode
 without toggling. Their icons overlay a centered directional arrow at 65% scale
