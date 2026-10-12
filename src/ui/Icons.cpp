@@ -148,6 +148,7 @@ const char *lucideName(Glyph id)
     case Glyph::FileText: return "file-text";
     case Glyph::Check: return "check";
     case Glyph::Star: return "star";
+    case Glyph::Restore: return "undo-2";
     }
     return "file";
 }

@@ -474,38 +474,17 @@ void MainWindow::rotatePagesOp()
 
 void MainWindow::deletePagesOp()
 {
-    QScopedValueRollback<int> operation(documentOperationDepth_, documentOperationDepth_ + 1);
-    TabPage *t = currentTab();
-    ViewerWidget *v = currentViewer();
-    if (!t || !v)
-        return;
-    const QList<int> pages = askPageRange(tr("Delete Pages"), v->pageCount());
-    if (pages.isEmpty())
-        return;
-    if (pages.size() >= v->pageCount()) {
-        QMessageBox::warning(this, tr("Delete Pages"), tr("Cannot delete every page."));
-        return;
-    }
-    const QFileInfo fi(t->path());
-    const QString out = QFileDialog::getSaveFileName(
-        this, tr("Save Edited Copy"),
-        fi.absolutePath() + QLatin1Char('/') + fi.completeBaseName() + QStringLiteral("-edited.pdf"),
-        tr("PDF documents (*.pdf)"));
-    if (out.isEmpty())
-        return;
-    const QString in = t->path();
-    if (runWriteOp(this, t, [&](const QString &pw, QString *err) {
-            return PageOps::deletePages(in, out, pages, pw, err);
-        }))
-        offerToOpen(out, t->password()); // output keeps the source's encryption
+    // The page being read is the one most often deleted, so it is the first row.
+    if (ViewerWidget *v = currentViewer())
+        pagesDialog(mervin::ExtractPlan::Mode::Delete, v->currentPage());
 }
 
 void MainWindow::extractPagesOp()
 {
-    extractPages();
+    pagesDialog(mervin::ExtractPlan::Mode::Extract, std::nullopt);
 }
 
-void MainWindow::extractPages(std::optional<int> seedPage)
+void MainWindow::pagesDialog(mervin::ExtractPlan::Mode mode, std::optional<int> seedPage)
 {
     QScopedValueRollback<int> operation(documentOperationDepth_, documentOperationDepth_ + 1);
     TabPage *t = currentTab();
@@ -513,11 +492,12 @@ void MainWindow::extractPages(std::optional<int> seedPage)
     if (!t || !v)
         return;
     // Bake an edit still being typed into the live document so the unsaved-changes
-    // note sees it. Nothing is written here: Extract copies from the file on disk.
+    // note sees it. Nothing is written here, since both modes copy from the file on disk.
     v->commitActiveFormEditor();
     v->commitActiveAnnotEditor();
 
     mervin::ExtractDialog::Source src;
+    src.mode = mode;
     src.path = t->path();
     src.password = t->password();
     src.viewerPageCount = v->pageCount();
@@ -542,10 +522,12 @@ void MainWindow::extractPages(std::optional<int> seedPage)
     // The dialog has written the file: it writes before closing, so a failed
     // write stays in the dialog with the rows. No completion modal: the status
     // bar says what was written, and Open when done decides what happens next.
+    // Delete's copy keeps the source's encryption, so it opens with its password.
     const mervin::ExtractPlan::Job job = dlg.job();
     statusBar()->showMessage(mervin::ExtractPlan::doneText(job), 5000);
     if (dlg.openWhenDone())
-        openFile(job.path);
+        openFile(job.path, false, -1, true,
+                 job.mode == mervin::ExtractPlan::Mode::Delete ? dlg.password() : QString());
 }
 
 void MainWindow::splitDocument()

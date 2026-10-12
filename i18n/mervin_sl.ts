@@ -210,18 +210,6 @@ Urejen dokument, ohranjen na %2.
         <translation>Shrani obrnjeno kopijo</translation>
     </message>
     <message>
-        <source>Delete Pages</source>
-        <translation>Izbriši strani</translation>
-    </message>
-    <message>
-        <source>Cannot delete every page.</source>
-        <translation>Ni mogoče izbrisati vseh strani.</translation>
-    </message>
-    <message>
-        <source>Save Edited Copy</source>
-        <translation>Shrani urejeno kopijo</translation>
-    </message>
-    <message>
         <source>Choose Output Folder</source>
         <translation>Izberi izhodno mapo</translation>
     </message>
@@ -1936,6 +1924,11 @@ Izvoženo datoteko si lahko ogledate v katerem koli pregledovalniku PDF.</transl
 <context>
     <name>mervin::ExtractDialog</name>
     <message>
+        <source>Delete pages from %1</source>
+        <extracomment>Title of the Delete pages window. %1 is the document&apos;s file name, like &quot;report.pdf&quot;. The window writes a new file without the chosen pages.</extracomment>
+        <translation>Izbriši strani iz datoteke %1</translation>
+    </message>
+    <message>
         <source>Extract Pages</source>
         <translation>Izvleci strani</translation>
     </message>
@@ -1958,9 +1951,24 @@ Izvoženo datoteko si lahko ogledate v katerem koli pregledovalniku PDF.</transl
         <translation>&amp;Premakni se navzdol</translation>
     </message>
     <message>
+        <source>&amp;Remove Row</source>
+        <extracomment>Button beside the rows of Delete pages. It takes the selected row out of the list, so the pages it names are no longer deleted. It deletes no pages. Name the row, so it cannot be read as the Delete pages button.</extracomment>
+        <translation>&amp;Odstrani vrstico</translation>
+    </message>
+    <message>
         <source>&amp;Remove</source>
         <extracomment>Button: removes the selected row.</extracomment>
         <translation>&amp;Odstrani</translation>
+    </message>
+    <message>
+        <source>Delete Page</source>
+        <extracomment>Context menu item of a page in the Delete pages strip. It marks the page to be left out of the new file.</extracomment>
+        <translation>Izbriši stran</translation>
+    </message>
+    <message>
+        <source>Keep Page</source>
+        <extracomment>Context menu item of a page marked for deletion in the Delete pages strip. It takes the mark away, so the new file keeps the page.</extracomment>
+        <translation>Ohrani stran</translation>
     </message>
     <message>
         <source>Remove</source>
@@ -1986,6 +1994,11 @@ Izvoženo datoteko si lahko ogledate v katerem koli pregledovalniku PDF.</transl
     <message>
         <source>&amp;Open when done</source>
         <translation>&amp;Ko končate, odprite</translation>
+    </message>
+    <message>
+        <source>Delete pages</source>
+        <extracomment>Button: writes a new file without the listed pages. The original file keeps every page.</extracomment>
+        <translation>Izbriši strani</translation>
     </message>
     <message>
         <source>Extract</source>
@@ -2016,6 +2029,11 @@ Izvoženo datoteko si lahko ogledate v katerem koli pregledovalniku PDF.</transl
         <translation>%1 Neshranjene spremembe niso vključene.</translation>
     </message>
     <message>
+        <source>This PDF cannot be read for deleting pages.</source>
+        <extracomment>The viewer shows the document, but qpdf, which writes the new file, cannot read it.</extracomment>
+        <translation>Tega PDF-ja ni mogoče prebrati za brisanje strani.</translation>
+    </message>
+    <message>
         <source>This PDF cannot be read for extraction.</source>
         <translation>Tega PDF-ja ni mogoče prebrati za ekstrakcijo.</translation>
     </message>
@@ -2026,6 +2044,11 @@ Izvoženo datoteko si lahko ogledate v katerem koli pregledovalniku PDF.</transl
     <message>
         <source>That password is not correct.</source>
         <translation>To geslo ni pravilno.</translation>
+    </message>
+    <message>
+        <source>Save Edited Copy</source>
+        <extracomment>Title of the file picker for the new file Delete pages writes.</extracomment>
+        <translation>Shrani urejeno kopijo</translation>
     </message>
     <message>
         <source>Save Extracted Pages</source>
@@ -2040,6 +2063,11 @@ Izvoženo datoteko si lahko ogledate v katerem koli pregledovalniku PDF.</transl
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
         <translation>&quot;%1&quot; že obstaja. Zamenjati?</translation>
+    </message>
+    <message>
+        <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Delete pages again, or choose another name.</source>
+        <extracomment>%1 is the new file&apos;s name. &quot;Delete pages&quot; is the button&apos;s text.</extracomment>
+        <translation>Datoteke &quot;%1&quot; ni bilo mogoče zapisati. Če je odprta v drugem programu, jo zaprite in znova pritisnite Izbriši strani ali izberite drugo ime.</translation>
     </message>
     <message>
         <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Extract again, or choose another name.</source>
@@ -2086,6 +2114,31 @@ Izvoženo datoteko si lahko ogledate v katerem koli pregledovalniku PDF.</transl
         </translation>
     </message>
     <message numerus="yes">
+        <source>Result: %n of %1 page(s) remain (%2).</source>
+        <extracomment>Result line of Delete pages, under the page strip. %n is how many pages the new file keeps, %1 the document&apos;s page count, %2 the pages that remain as ranges, like &quot;1, 3-4&quot;. In English the verb follows %n: &quot;1 of 6 pages remains&quot;, &quot;3 of 6 pages remain&quot;.</extracomment>
+        <translation>
+            <numerusform>Rezultat: ostane %n od %1 strani (%2).</numerusform>
+            <numerusform>Rezultat: ostaneta %n od %1 strani (%2).</numerusform>
+            <numerusform>Rezultat: ostanejo %n od %1 strani (%2).</numerusform>
+            <numerusform>Rezultat: ostane %n od %1 strani (%2).</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Click the pages to delete, or add a range.</source>
+        <extracomment>Delete pages with no rows left. Clicking a page in the strip below marks it for deletion; &quot;add a range&quot; refers to the Add Range button.</extracomment>
+        <translation>Kliknite strani, ki jih želite izbrisati, ali dodajte obseg.</translation>
+    </message>
+    <message>
+        <source>Page %1 will be deleted. Click to keep it.</source>
+        <extracomment>Tooltip of a page struck out in the Delete pages strip. %1 is its page number. The original file keeps it; only the new file leaves it out.</extracomment>
+        <translation>Stran %1 bo izbrisana. Kliknite, da jo ohranite.</translation>
+    </message>
+    <message>
+        <source>Click to delete page %1.</source>
+        <extracomment>Tooltip of a page in the Delete pages strip. %1 is its page number.</extracomment>
+        <translation>Kliknite, da izbrišete stran %1.</translation>
+    </message>
+    <message numerus="yes">
         <source>Pages %1 (%n page(s)). Click to show them.</source>
         <extracomment>Tooltip of a tile standing in for hidden pages: %1 is their range, like &quot;14-30&quot;.</extracomment>
         <translation>
@@ -2094,6 +2147,11 @@ Izvoženo datoteko si lahko ogledate v katerem koli pregledovalniku PDF.</transl
             <numerusform>Strani %1 (število: %n). Kliknite za prikaz.</numerusform>
             <numerusform>Strani %1 (število: %n). Kliknite za prikaz.</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Choose where to save the edited copy.</source>
+        <extracomment>Delete pages with an empty Save as field. The edited copy is the new file without the deleted pages.</extracomment>
+        <translation>Izberite, kam želite shraniti urejeno kopijo.</translation>
     </message>
     <message>
         <source>Choose where to save the extracted pages.</source>
@@ -2108,12 +2166,27 @@ Izvoženo datoteko si lahko ogledate v katerem koli pregledovalniku PDF.</transl
         <translation>Ta mapa ne obstaja.</translation>
     </message>
     <message>
+        <source>The edited copy cannot replace the document it comes from.</source>
+        <extracomment>Delete pages always writes a new file and never changes the original.</extracomment>
+        <translation>Urejena kopija ne more nadomestiti dokumenta, iz katerega izhaja.</translation>
+    </message>
+    <message>
         <source>The extract cannot replace the document it comes from.</source>
         <translation>Izvleček ne more nadomestiti dokumenta, iz katerega izhaja.</translation>
     </message>
     <message>
         <source>That file is open in a tab. Choose another name.</source>
         <translation>Ta datoteka je odprta v zavihku. Izberite drugo ime.</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n page(s) in a copy saved as %1</source>
+        <extracomment>Status bar message after Delete pages wrote its new file. %n is how many pages it left out, %1 the new file&apos;s name. The original is unchanged.</extracomment>
+        <translation>
+            <numerusform>Izbrisana %n stran v kopiji, shranjeni kot %1</numerusform>
+            <numerusform>Izbrisani %n strani v kopiji, shranjeni kot %1</numerusform>
+            <numerusform>Izbrisane %n strani v kopiji, shranjeni kot %1</numerusform>
+            <numerusform>Izbrisanih %n strani v kopiji, shranjeni kot %1</numerusform>
+        </translation>
     </message>
     <message>
         <source>Extracted page %1 to %2</source>

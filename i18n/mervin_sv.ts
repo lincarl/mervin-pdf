@@ -206,18 +206,6 @@ Det redigerade dokumentet finns kvar i %2.
         <translation>Spara roterad kopia</translation>
     </message>
     <message>
-        <source>Delete Pages</source>
-        <translation>Ta bort sidor</translation>
-    </message>
-    <message>
-        <source>Cannot delete every page.</source>
-        <translation>Det går inte att ta bort alla sidor.</translation>
-    </message>
-    <message>
-        <source>Save Edited Copy</source>
-        <translation>Spara redigerad kopia</translation>
-    </message>
-    <message>
         <source>Choose Output Folder</source>
         <translation>Välj målmapp</translation>
     </message>
@@ -1932,6 +1920,11 @@ Den exporterade filen kan visas i alla PDF-läsare.</translation>
 <context>
     <name>mervin::ExtractDialog</name>
     <message>
+        <source>Delete pages from %1</source>
+        <extracomment>Title of the Delete pages window. %1 is the document&apos;s file name, like &quot;report.pdf&quot;. The window writes a new file without the chosen pages.</extracomment>
+        <translation>Ta bort sidor från %1</translation>
+    </message>
+    <message>
         <source>Extract Pages</source>
         <translation>Extrahera sidor</translation>
     </message>
@@ -1954,9 +1947,24 @@ Den exporterade filen kan visas i alla PDF-läsare.</translation>
         <translation>Flytta &amp;ned</translation>
     </message>
     <message>
+        <source>&amp;Remove Row</source>
+        <extracomment>Button beside the rows of Delete pages. It takes the selected row out of the list, so the pages it names are no longer deleted. It deletes no pages. Name the row, so it cannot be read as the Delete pages button.</extracomment>
+        <translation>&amp;Ta bort rad</translation>
+    </message>
+    <message>
         <source>&amp;Remove</source>
         <extracomment>Button: removes the selected row.</extracomment>
         <translation>&amp;Ta bort</translation>
+    </message>
+    <message>
+        <source>Delete Page</source>
+        <extracomment>Context menu item of a page in the Delete pages strip. It marks the page to be left out of the new file.</extracomment>
+        <translation>Ta bort sida</translation>
+    </message>
+    <message>
+        <source>Keep Page</source>
+        <extracomment>Context menu item of a page marked for deletion in the Delete pages strip. It takes the mark away, so the new file keeps the page.</extracomment>
+        <translation>Behåll sida</translation>
     </message>
     <message>
         <source>Remove</source>
@@ -1982,6 +1990,11 @@ Den exporterade filen kan visas i alla PDF-läsare.</translation>
     <message>
         <source>&amp;Open when done</source>
         <translation>&amp;Öppna när det är klart</translation>
+    </message>
+    <message>
+        <source>Delete pages</source>
+        <extracomment>Button: writes a new file without the listed pages. The original file keeps every page.</extracomment>
+        <translation>Ta bort sidor</translation>
     </message>
     <message>
         <source>Extract</source>
@@ -2012,6 +2025,11 @@ Den exporterade filen kan visas i alla PDF-läsare.</translation>
         <translation>%1 Osparade ändringar ingår inte.</translation>
     </message>
     <message>
+        <source>This PDF cannot be read for deleting pages.</source>
+        <extracomment>The viewer shows the document, but qpdf, which writes the new file, cannot read it.</extracomment>
+        <translation>Den här PDF-filen kan inte läsas för att ta bort sidor.</translation>
+    </message>
+    <message>
         <source>This PDF cannot be read for extraction.</source>
         <translation>Den här PDF-filen kan inte läsas för extrahering.</translation>
     </message>
@@ -2022,6 +2040,11 @@ Den exporterade filen kan visas i alla PDF-läsare.</translation>
     <message>
         <source>That password is not correct.</source>
         <translation>Lösenordet är felaktigt.</translation>
+    </message>
+    <message>
+        <source>Save Edited Copy</source>
+        <extracomment>Title of the file picker for the new file Delete pages writes.</extracomment>
+        <translation>Spara redigerad kopia</translation>
     </message>
     <message>
         <source>Save Extracted Pages</source>
@@ -2036,6 +2059,11 @@ Den exporterade filen kan visas i alla PDF-läsare.</translation>
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
         <translation>”%1” finns redan. Vill du ersätta den?</translation>
+    </message>
+    <message>
+        <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Delete pages again, or choose another name.</source>
+        <extracomment>%1 is the new file&apos;s name. &quot;Delete pages&quot; is the button&apos;s text.</extracomment>
+        <translation>Det gick inte att spara ”%1”. Om ett annat program har filen öppen, stäng den och klicka på Ta bort sidor igen eller välj ett annat namn.</translation>
     </message>
     <message>
         <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Extract again, or choose another name.</source>
@@ -2080,12 +2108,40 @@ Den exporterade filen kan visas i alla PDF-läsare.</translation>
         </translation>
     </message>
     <message numerus="yes">
+        <source>Result: %n of %1 page(s) remain (%2).</source>
+        <extracomment>Result line of Delete pages, under the page strip. %n is how many pages the new file keeps, %1 the document&apos;s page count, %2 the pages that remain as ranges, like &quot;1, 3-4&quot;. In English the verb follows %n: &quot;1 of 6 pages remains&quot;, &quot;3 of 6 pages remain&quot;.</extracomment>
+        <translation>
+            <numerusform>Resultat: %n av %1 sidor blir kvar (%2).</numerusform>
+            <numerusform>Resultat: %n av %1 sidor blir kvar (%2).</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Click the pages to delete, or add a range.</source>
+        <extracomment>Delete pages with no rows left. Clicking a page in the strip below marks it for deletion; &quot;add a range&quot; refers to the Add Range button.</extracomment>
+        <translation>Klicka på sidorna som ska tas bort eller lägg till ett intervall.</translation>
+    </message>
+    <message>
+        <source>Page %1 will be deleted. Click to keep it.</source>
+        <extracomment>Tooltip of a page struck out in the Delete pages strip. %1 is its page number. The original file keeps it; only the new file leaves it out.</extracomment>
+        <translation>Sida %1 tas bort. Klicka för att behålla den.</translation>
+    </message>
+    <message>
+        <source>Click to delete page %1.</source>
+        <extracomment>Tooltip of a page in the Delete pages strip. %1 is its page number.</extracomment>
+        <translation>Klicka för att ta bort sida %1.</translation>
+    </message>
+    <message numerus="yes">
         <source>Pages %1 (%n page(s)). Click to show them.</source>
         <extracomment>Tooltip of a tile standing in for hidden pages: %1 is their range, like &quot;14-30&quot;.</extracomment>
         <translation>
             <numerusform>Sidorna %1 (%n sida). Klicka för att visa dem.</numerusform>
             <numerusform>Sidorna %1 (%n sidor). Klicka för att visa dem.</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Choose where to save the edited copy.</source>
+        <extracomment>Delete pages with an empty Save as field. The edited copy is the new file without the deleted pages.</extracomment>
+        <translation>Välj var den redigerade kopian ska sparas.</translation>
     </message>
     <message>
         <source>Choose where to save the extracted pages.</source>
@@ -2100,12 +2156,25 @@ Den exporterade filen kan visas i alla PDF-läsare.</translation>
         <translation>Den mappen finns inte.</translation>
     </message>
     <message>
+        <source>The edited copy cannot replace the document it comes from.</source>
+        <extracomment>Delete pages always writes a new file and never changes the original.</extracomment>
+        <translation>Den redigerade kopian kan inte ersätta dokumentet som den kommer från.</translation>
+    </message>
+    <message>
         <source>The extract cannot replace the document it comes from.</source>
         <translation>Utdraget kan inte ersätta dokumentet som det kommer från.</translation>
     </message>
     <message>
         <source>That file is open in a tab. Choose another name.</source>
         <translation>Den filen är öppen i en flik. Välj ett annat namn.</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n page(s) in a copy saved as %1</source>
+        <extracomment>Status bar message after Delete pages wrote its new file. %n is how many pages it left out, %1 the new file&apos;s name. The original is unchanged.</extracomment>
+        <translation>
+            <numerusform>Tog bort %n sida i en kopia sparad som %1</numerusform>
+            <numerusform>Tog bort %n sidor i en kopia sparad som %1</numerusform>
+        </translation>
     </message>
     <message>
         <source>Extracted page %1 to %2</source>

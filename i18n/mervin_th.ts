@@ -204,18 +204,6 @@ Edited document retained at %2.
         <translation>บันทึกสำเนาแบบหมุน</translation>
     </message>
     <message>
-        <source>Delete Pages</source>
-        <translation>ลบหน้า</translation>
-    </message>
-    <message>
-        <source>Cannot delete every page.</source>
-        <translation>ไม่สามารถลบทุกหน้าได้</translation>
-    </message>
-    <message>
-        <source>Save Edited Copy</source>
-        <translation>บันทึกสำเนาที่แก้ไข</translation>
-    </message>
-    <message>
         <source>Choose Output Folder</source>
         <translation>เลือกโฟลเดอร์เอาท์พุต</translation>
     </message>
@@ -1930,6 +1918,11 @@ The exported file is viewable in any PDF viewer.</source>
 <context>
     <name>mervin::ExtractDialog</name>
     <message>
+        <source>Delete pages from %1</source>
+        <extracomment>Title of the Delete pages window. %1 is the document&apos;s file name, like &quot;report.pdf&quot;. The window writes a new file without the chosen pages.</extracomment>
+        <translation>ลบหน้าจาก %1</translation>
+    </message>
+    <message>
         <source>Extract Pages</source>
         <translation>แยกหน้า</translation>
     </message>
@@ -1952,9 +1945,24 @@ The exported file is viewable in any PDF viewer.</source>
         <translation>&amp;เลื่อนลง</translation>
     </message>
     <message>
+        <source>&amp;Remove Row</source>
+        <extracomment>Button beside the rows of Delete pages. It takes the selected row out of the list, so the pages it names are no longer deleted. It deletes no pages. Name the row, so it cannot be read as the Delete pages button.</extracomment>
+        <translation>&amp;นำแถวออก</translation>
+    </message>
+    <message>
         <source>&amp;Remove</source>
         <extracomment>Button: removes the selected row.</extracomment>
         <translation>&amp;ลบ</translation>
+    </message>
+    <message>
+        <source>Delete Page</source>
+        <extracomment>Context menu item of a page in the Delete pages strip. It marks the page to be left out of the new file.</extracomment>
+        <translation>ลบหน้านี้</translation>
+    </message>
+    <message>
+        <source>Keep Page</source>
+        <extracomment>Context menu item of a page marked for deletion in the Delete pages strip. It takes the mark away, so the new file keeps the page.</extracomment>
+        <translation>เก็บหน้านี้ไว้</translation>
     </message>
     <message>
         <source>Remove</source>
@@ -1980,6 +1988,11 @@ The exported file is viewable in any PDF viewer.</source>
     <message>
         <source>&amp;Open when done</source>
         <translation>&amp;เปิดเมื่อเสร็จสิ้น</translation>
+    </message>
+    <message>
+        <source>Delete pages</source>
+        <extracomment>Button: writes a new file without the listed pages. The original file keeps every page.</extracomment>
+        <translation>ลบหน้า</translation>
     </message>
     <message>
         <source>Extract</source>
@@ -2010,6 +2023,11 @@ The exported file is viewable in any PDF viewer.</source>
         <translation>%1 การเปลี่ยนแปลงที่ยังไม่ได้บันทึกจะไม่รวมอยู่ด้วย</translation>
     </message>
     <message>
+        <source>This PDF cannot be read for deleting pages.</source>
+        <extracomment>The viewer shows the document, but qpdf, which writes the new file, cannot read it.</extracomment>
+        <translation>PDF นี้ไม่สามารถอ่านเพื่อลบหน้าได้</translation>
+    </message>
+    <message>
         <source>This PDF cannot be read for extraction.</source>
         <translation>PDF นี้ไม่สามารถอ่านเพื่อแยกออกมาได้</translation>
     </message>
@@ -2020,6 +2038,11 @@ The exported file is viewable in any PDF viewer.</source>
     <message>
         <source>That password is not correct.</source>
         <translation>รหัสผ่านนั้นไม่ถูกต้อง</translation>
+    </message>
+    <message>
+        <source>Save Edited Copy</source>
+        <extracomment>Title of the file picker for the new file Delete pages writes.</extracomment>
+        <translation>บันทึกสำเนาที่แก้ไข</translation>
     </message>
     <message>
         <source>Save Extracted Pages</source>
@@ -2034,6 +2057,11 @@ The exported file is viewable in any PDF viewer.</source>
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
         <translation>&quot;%1&quot; มีอยู่แล้ว แทนที่มัน?</translation>
+    </message>
+    <message>
+        <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Delete pages again, or choose another name.</source>
+        <extracomment>%1 is the new file&apos;s name. &quot;Delete pages&quot; is the button&apos;s text.</extracomment>
+        <translation>ไม่สามารถเขียน &quot;%1&quot; ได้ หากไฟล์นี้เปิดอยู่ในโปรแกรมอื่น ให้ปิดไฟล์แล้วกด ลบหน้า อีกครั้ง หรือเลือกชื่ออื่น</translation>
     </message>
     <message>
         <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Extract again, or choose another name.</source>
@@ -2077,11 +2105,38 @@ The exported file is viewable in any PDF viewer.</source>
         </translation>
     </message>
     <message numerus="yes">
+        <source>Result: %n of %1 page(s) remain (%2).</source>
+        <extracomment>Result line of Delete pages, under the page strip. %n is how many pages the new file keeps, %1 the document&apos;s page count, %2 the pages that remain as ranges, like &quot;1, 3-4&quot;. In English the verb follows %n: &quot;1 of 6 pages remains&quot;, &quot;3 of 6 pages remain&quot;.</extracomment>
+        <translation>
+            <numerusform>ผลลัพธ์: เหลือ %n จาก %1 หน้า (%2)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Click the pages to delete, or add a range.</source>
+        <extracomment>Delete pages with no rows left. Clicking a page in the strip below marks it for deletion; &quot;add a range&quot; refers to the Add Range button.</extracomment>
+        <translation>คลิกหน้าที่จะลบ หรือเพิ่มช่วง</translation>
+    </message>
+    <message>
+        <source>Page %1 will be deleted. Click to keep it.</source>
+        <extracomment>Tooltip of a page struck out in the Delete pages strip. %1 is its page number. The original file keeps it; only the new file leaves it out.</extracomment>
+        <translation>หน้า %1 จะถูกลบ คลิกเพื่อเก็บไว้</translation>
+    </message>
+    <message>
+        <source>Click to delete page %1.</source>
+        <extracomment>Tooltip of a page in the Delete pages strip. %1 is its page number.</extracomment>
+        <translation>คลิกเพื่อลบหน้า %1</translation>
+    </message>
+    <message numerus="yes">
         <source>Pages %1 (%n page(s)). Click to show them.</source>
         <extracomment>Tooltip of a tile standing in for hidden pages: %1 is their range, like &quot;14-30&quot;.</extracomment>
         <translation>
             <numerusform>หน้า %1 (%n หน้า) คลิกเพื่อแสดง</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Choose where to save the edited copy.</source>
+        <extracomment>Delete pages with an empty Save as field. The edited copy is the new file without the deleted pages.</extracomment>
+        <translation>เลือกตำแหน่งที่จะบันทึกสำเนาที่แก้ไข</translation>
     </message>
     <message>
         <source>Choose where to save the extracted pages.</source>
@@ -2096,12 +2151,24 @@ The exported file is viewable in any PDF viewer.</source>
         <translation>ไม่มีโฟลเดอร์นั้นอยู่</translation>
     </message>
     <message>
+        <source>The edited copy cannot replace the document it comes from.</source>
+        <extracomment>Delete pages always writes a new file and never changes the original.</extracomment>
+        <translation>สำเนาที่แก้ไขไม่สามารถเขียนทับเอกสารต้นฉบับได้</translation>
+    </message>
+    <message>
         <source>The extract cannot replace the document it comes from.</source>
         <translation>ไฟล์ที่แยกออกมาไม่สามารถเขียนทับเอกสารต้นฉบับได้</translation>
     </message>
     <message>
         <source>That file is open in a tab. Choose another name.</source>
         <translation>ไฟล์นั้นเปิดอยู่ในแท็บ เลือกชื่ออื่น</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n page(s) in a copy saved as %1</source>
+        <extracomment>Status bar message after Delete pages wrote its new file. %n is how many pages it left out, %1 the new file&apos;s name. The original is unchanged.</extracomment>
+        <translation>
+            <numerusform>ลบ %n หน้าในสำเนาที่บันทึกเป็น %1 แล้ว</numerusform>
+        </translation>
     </message>
     <message>
         <source>Extracted page %1 to %2</source>

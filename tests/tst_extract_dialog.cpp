@@ -39,7 +39,9 @@ using mervin::QpdfService;
 // strip edits reach the plan and the job, that the strip keeps the current row
 // in view without undoing the user's scrolling, that a disabled Extract always
 // shows its reason, and that an encrypted file is unlocked by the tab's password
-// or, failing that, inline before close.
+// or, failing that, inline before close. The Delete mode cases check the same
+// window as Document > Delete Pages: its seed row, the strip's clicks, the refusal
+// to delete every page, and the copy PageOps::deletePages writes.
 //
 // As in tst_merge_dialog, the dialog is flagged WA_DontShowOnScreen and never
 // exec()d, so it never appears and nothing blocks; only the "Replace it?" box
@@ -61,11 +63,26 @@ void makePdf(const QString &path, int n)
         QPDFObjectHandle page = QPDFObjectHandle::newDictionary();
         page.replaceKey("/Type", QPDFObjectHandle::newName("/Page"));
         page.replaceKey("/MediaBox", box);
+        // Which page this is, for checking which ones a written copy kept.
+        page.replaceKey("/MervinTestIndex", QPDFObjectHandle::newInteger(i));
         dh.addPage(QPDFPageObjectHelper(q.makeIndirectObject(page)), false);
     }
     const QByteArray outputName = path.toUtf8();
     QPDFWriter w(q, outputName.constData());
     w.write();
+}
+
+// The /MervinTestIndex of every page of `path`, in order: the source pages it holds.
+QList<int> sourcePages(const QString &path, const QString &password = QString())
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    const QByteArray pw = password.toUtf8();
+    q.processFile(name.constData(), password.isEmpty() ? nullptr : pw.constData());
+    QList<int> out;
+    for (QPDFPageObjectHelper &page : QPDFPageDocumentHelper(q).getAllPages())
+        out << page.getObjectHandle().getKey("/MervinTestIndex").getIntValueAsInt();
+    return out;
 }
 
 } // namespace
@@ -97,6 +114,11 @@ private slots:
     void encryptedSourceUsesTheTabPassword();
     void staleTabPasswordFallsBackToTheRow();
 
+    void deleteOpensOnTheCurrentPage();
+    void deleteStripClickTogglesThePage();
+    void deletingEveryPageIsRefused();
+    void deleteWritesTheRemainingPages();
+
 private:
     QTemporaryDir dir_;
     QString plain_;
@@ -109,6 +131,33 @@ private:
         s.viewerPageCount = 31;
         s.seedPage = 6;
         return s;
+    }
+    // Document > Delete Pages with page 7 in view.
+    ExtractDialog::Source deleting(const QString &path) const
+    {
+        ExtractDialog::Source s = source(path);
+        s.mode = ExtractPlan::Mode::Delete;
+        return s;
+    }
+    static QString summary(ExtractDialog &d) { return child<QLabel>(d, "extractSummary")->text(); }
+    static QString tip(ExtractDialog &d, int cell)
+    {
+        return strip(d)->model()->index(cell, 0).data(Qt::ToolTipRole).toString();
+    }
+    // A click on a strip cell. The dialog applies it on the next event-loop turn.
+    static void clickCell(ExtractDialog &d, int cell)
+    {
+        ExtractStrip *s = strip(d);
+        QTest::mouseClick(s->viewport(), Qt::LeftButton, {},
+                          s->visualRect(s->model()->index(cell, 0)).center());
+    }
+    // The strip action with this text, when it is the one showing.
+    static QAction *stripAction(ExtractDialog &d, const QString &text)
+    {
+        for (QAction *a : strip(d)->actions())
+            if (a->text() == text && a->isVisible() && a->isEnabled())
+                return a;
+        return nullptr;
     }
     static void prepare(ExtractDialog &d)
     {
@@ -661,6 +710,151 @@ void TstExtractDialog::staleTabPasswordFallsBackToTheRow()
     QCOMPARE(error(d), QStringLiteral("Enter the password for this PDF."));
     QVERIFY(!extract(d)->isEnabled());
     QVERIFY(d.password().isEmpty());
+}
+
+void TstExtractDialog::deleteOpensOnTheCurrentPage()
+{
+    ExtractDialog d(deleting(plain_));
+    prepare(d);
+    QCOMPARE(d.windowTitle(), QStringLiteral("Delete pages from annual-report.pdf"));
+    // The page in view is the one row, selected, so typing replaces it.
+    QCOMPARE(texts(d), QStringList({QStringLiteral("7")}));
+    QCOMPARE(rows(d).at(0)->selectedText(), QStringLiteral("7"));
+    QCOMPARE(d.focusWidget(), rows(d).at(0));
+    QCOMPARE(extract(d)->text(), QStringLiteral("Delete pages"));
+    QVERIFY(extract(d)->isEnabled());
+    QVERIFY(extract(d)->isDefault()); // Enter deletes
+    QVERIFY(error(d).isEmpty());
+    QVERIFY(output(d)->text().endsWith(QStringLiteral("annual-report-edited.pdf")));
+    QCOMPARE(summary(d), QStringLiteral("Result: 30 of 31 pages remain (1-6, 8-31)."));
+    QVERIFY(d.openWhenDone());
+
+    // Pages to delete have no order: no grips, no moves, no Output column.
+    QVERIFY(!button(d, QStringLiteral("Move &Up")));
+    QVERIFY(!button(d, QStringLiteral("Move &Down")));
+    QVERIFY(button(d, QStringLiteral("&Add Range")));
+    QVERIFY(!list(d)->findChild<QLabel *>(QStringLiteral("rowListGrip")));
+    QVERIFY(!list(d)->findChild<QLabel *>(QStringLiteral("rowListOutput")));
+    for (QLabel *l : child<QWidget>(d, "rowListHeader")->findChildren<QLabel *>())
+        QVERIFY(l->text() != QStringLiteral("Output"));
+
+    // The strip shows every page, the one to delete among them.
+    QCOMPARE(strip(d)->model()->rowCount(), 31);
+    QCOMPARE(tip(d, 6), QStringLiteral("Page 7 will be deleted. Click to keep it."));
+    QCOMPARE(tip(d, 5), QStringLiteral("Click to delete page 6."));
+
+    // Unsaved edits in the tab are left out, as in Extract.
+    ExtractDialog::Source edited = deleting(plain_);
+    edited.hasUnsavedEdits = true;
+    ExtractDialog u(edited);
+    prepare(u);
+    QCOMPARE(summary(u), QStringLiteral("Result: 30 of 31 pages remain (1-6, 8-31). Unsaved "
+                                        "changes are not included."));
+}
+
+void TstExtractDialog::deleteStripClickTogglesThePage()
+{
+    ExtractDialog d(deleting(plain_));
+    prepare(d);
+    type(rows(d).at(0), QStringLiteral("5-7"));
+    ExtractStrip *s = strip(d);
+
+    // Keeping the middle page of a range splits it.
+    clickCell(d, 5); // page 6
+    QTRY_COMPARE(texts(d), QStringList({QStringLiteral("5"), QStringLiteral("7")}));
+    QCOMPARE(list(d)->currentRow(), 1);   // the row holding what followed
+    QCOMPARE(s->currentIndex().row(), 5); // the page stays current
+    QCOMPARE(tip(d, 5), QStringLiteral("Click to delete page 6."));
+    QCOMPARE(summary(d), QStringLiteral("Result: 29 of 31 pages remain (1-4, 6, 8-31)."));
+
+    // Deleting it again joins the two rows; a page with no neighbour gets a row.
+    clickCell(d, 5);
+    QTRY_COMPARE(texts(d), QStringList({QStringLiteral("5-7")}));
+    clickCell(d, 1); // page 2
+    QTRY_COMPARE(texts(d), QStringList({QStringLiteral("5-7"), QStringLiteral("2")}));
+    QCOMPARE(list(d)->currentRow(), 1);
+    QCOMPARE(summary(d), QStringLiteral("Result: 27 of 31 pages remain (1, 3-4, 8-31)."));
+
+    // The context menu, and its keys, offer what a click would do.
+    s->setCurrentIndex(s->model()->index(1, 0));
+    QVERIFY(!stripAction(d, QStringLiteral("Delete Page")));
+    QAction *keep = stripAction(d, QStringLiteral("Keep Page"));
+    QVERIFY(keep);
+    keep->trigger();
+    QCOMPARE(texts(d), QStringList({QStringLiteral("5-7")}));
+    QVERIFY(!stripAction(d, QStringLiteral("Keep Page")));
+    QAction *del = stripAction(d, QStringLiteral("Delete Page"));
+    QVERIFY(del);
+    QVERIFY(del->shortcuts().contains(QKeySequence(Qt::Key_Delete)));
+    del->trigger();
+    QCOMPARE(texts(d), QStringList({QStringLiteral("5-7"), QStringLiteral("2")}));
+    // Extract's own strip actions are not there.
+    QVERIFY(!stripAction(d, QStringLiteral("Remove")));
+}
+
+void TstExtractDialog::deletingEveryPageIsRefused()
+{
+    ExtractDialog d(deleting(plain_));
+    prepare(d);
+    type(rows(d).at(0), QStringLiteral("all"));
+    QVERIFY(!extract(d)->isEnabled());
+    QCOMPARE(error(d), QStringLiteral("Cannot delete every page."));
+    QVERIFY(summary(d).isEmpty());
+    QTest::keyClick(rows(d).at(0), Qt::Key_Return); // Enter does nothing either
+    QVERIFY(d.result() != QDialog::Accepted);
+
+    type(rows(d).at(0), QStringLiteral("1-30"));
+    QVERIFY(extract(d)->isEnabled());
+    QVERIFY(error(d).isEmpty());
+    QCOMPARE(summary(d), QStringLiteral("Result: 1 of 31 pages remains (31)."));
+
+    // With no rows the line says how to start again. The side button names the
+    // row, since taking one away keeps its pages.
+    QVERIFY(!button(d, QStringLiteral("&Remove")));
+    button(d, QStringLiteral("&Remove Row"))->click();
+    QCOMPARE(list(d)->count(), 0);
+    QCOMPARE(error(d), QStringLiteral("Click the pages to delete, or add a range."));
+    QVERIFY(!extract(d)->isEnabled());
+}
+
+void TstExtractDialog::deleteWritesTheRemainingPages()
+{
+    const QString target = dir_.filePath(QStringLiteral("deleted-copy.pdf"));
+    ExtractDialog d(deleting(plain_));
+    prepare(d);
+    rows(d).at(0)->selectAll();
+    rows(d).at(0)->insert(QStringLiteral("2, 5-6"));
+    QTRY_COMPARE(rows(d).size(), 2);
+    type(output(d), QDir::toNativeSeparators(target));
+    QVERIFY(extract(d)->isEnabled());
+    extract(d)->click();
+    QCOMPARE(d.result(), int(QDialog::Accepted));
+    QCOMPARE(d.job().mode, ExtractPlan::Mode::Delete);
+    QCOMPARE(d.job().pages, QList<int>({1, 4, 5}));
+    QList<int> kept;
+    for (int page = 0; page < 31; ++page)
+        if (page != 1 && page != 4 && page != 5)
+            kept << page;
+    QCOMPARE(sourcePages(target), kept);
+    QCOMPARE(sourcePages(plain_).size(), 31); // the original keeps every page
+
+    // An encrypted source gives an encrypted copy, written with the tab's password.
+    const QString locked = dir_.filePath(QStringLiteral("deleted-locked.pdf"));
+    ExtractDialog::Source s = deleting(encrypted_);
+    s.password = QStringLiteral("secret");
+    ExtractDialog e(s);
+    prepare(e);
+    QVERIFY(!child<QLineEdit>(e, "extractPassword"));
+    type(output(e), QDir::toNativeSeparators(locked));
+    extract(e)->click();
+    QCOMPARE(e.result(), int(QDialog::Accepted));
+    QCOMPARE(e.password(), QStringLiteral("secret"));
+    int count = 0;
+    QString err;
+    QCOMPARE(PageOps::probe(locked, &count, QString(), &err), PageOps::Status::NeedsPassword);
+    QCOMPARE(PageOps::probe(locked, &count, QStringLiteral("secret"), &err), PageOps::Status::Ok);
+    QCOMPARE(count, 30);
+    QCOMPARE(sourcePages(locked, QStringLiteral("secret")).value(6), 7); // page 7 went
 }
 
 QTEST_MAIN(TstExtractDialog)

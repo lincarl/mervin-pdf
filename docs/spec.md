@@ -137,31 +137,44 @@ display them. Saved and printed output includes the current annotations.
 The Document menu provides structural operations that create new output files:
 
 - rotate selected pages;
-- delete selected pages;
+- delete pages, writing a copy without them, with a preview of the result;
 - extract pages into a new file, in any order, with a preview of the result;
 - split every page into a separate PDF; and
 - merge and reorder multiple PDFs.
 
-Extract Pages and Merge PDFs read page ranges with one grammar: `5`, `8-10`, `7-` (to
-the end), `-5` (from the first page), and `all` (on its own). Merge PDFs takes a list
-per file (`1-3, 5, 8-10`); Extract Pages builds one file from rows of one page or range
-each, reordered like the files in Merge PDFs (typing a comma starts the next row).
-Pages are taken in the order given and duplicates are kept. A range that does not
-resolve is reported, never skipped, and Extract shows the result as thumbnails before
-anything is written. Both dialogs write before they close: neither saves over a file
-that is open in a tab, and a write that fails leaves the dialog open with its plan.
+Extract Pages, Delete Pages and Merge PDFs read page ranges with one grammar: `5`,
+`8-10`, `7-` (to the end), `-5` (from the first page), and `all` (on its own). Merge
+PDFs takes a list per file (`1-3, 5, 8-10`); Extract Pages builds one file from rows
+of one page or range each, reordered like the files in Merge PDFs (typing a comma
+starts the next row). Extract and Merge take pages in the order given and keep
+duplicates. A range that does not resolve is reported, never skipped, and Extract
+shows the result as thumbnails before anything is written. These dialogs write before they close: none
+saves over a file that is open in a tab or over the document it reads, and a write
+that fails leaves the dialog open with its plan.
 
 Document > Extract Pages opens with one row that holds every page, first to last.
 Save Page As in a page's right-click menu opens it with that page as its one row.
 
-Extract copies pages from the saved file, so unsaved comments and form entries are not
-included; the dialog says so when the open document has any. The password typed to
-open an encrypted document is remembered for that tab, in memory only, and reused by
-Extract, the page operations, Save edits, Security and Merge PDFs, so they do not ask
-again. Opening a copy written by Rotate, Delete, Save as copy or Export with
-measurements, which keeps that encryption, reuses it too. If it no longer opens the
-file, Extract asks inside its dialog, Merge PDFs marks the document Locked, and the
-other operations prompt. Other encrypted files cannot be added to a merge plan.
+Document > Delete Pages opens the same window with the page in view as its one row.
+Its rows list the pages to leave out, in any order, and repeats count once. The strip
+shows every page of the document. A page to be deleted is dimmed and struck through
+in red, with its number crossed out. Clicking a page deletes it or keeps it, adding it
+to a row or taking it out of the row that holds it. The result line names the pages
+that remain, for example "Result: 3 of 6 pages remain (1, 3-4)." Deleting every page
+is refused before anything is written, with the reason on the error line. The window
+writes a copy, by default `<name>-edited.pdf` beside the document, which keeps the
+document's structure and encryption; the original file is never changed. Extract and
+Delete share one remembered Open when done choice.
+
+Extract and Delete copy pages from the saved file, so unsaved comments and form
+entries are not included; their window says so when the open document has any. The
+password typed to open an encrypted document is remembered for that tab, in memory
+only, and reused by Extract, Delete, the other page operations, Save edits, Security
+and Merge PDFs, so they do not ask again. Opening a copy written by Rotate, Delete,
+Save as copy or Export with measurements, which keeps that encryption, reuses it too.
+If it no longer opens the file, Extract and Delete ask inside their window, Merge PDFs
+marks the document Locked, and the other operations prompt. Other encrypted files
+cannot be added to a merge plan.
 
 Mervin can also inspect PDF encryption, remove encryption or owner restrictions,
 and create encrypted copies using AES-256, AES-128, or legacy RC4-128. Permission

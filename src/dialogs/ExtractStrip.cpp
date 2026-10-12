@@ -35,6 +35,8 @@ constexpr int kFoldTileW = 40;
 constexpr int kFoldGlyph = 24;         // FileText in the fold tile; glyph() paints 24 natively
 constexpr int kCloseSize = 16;         // the ✕ hit square; the glyph is 14 px inside it
 constexpr int kPad = 6;                // thumbnail inset inside a cell
+constexpr qreal kDeletedOpacity = 0.3; // a page Delete mode leaves out, under its red line
+constexpr qreal kStrikeWidth = 2.0;    // that line, corner to corner
 constexpr int kRenderDebounceMs = 150; // typing 4, 40, 400 renders nothing in between
 
 // `shape` scaled to fit inside `box`, centred. The whole box when shape is empty.
@@ -163,6 +165,12 @@ void ExtractStrip::setSource(Document *doc, RenderEngine *engine)
     renderTimer_->start(kRenderDebounceMs);
 }
 
+void ExtractStrip::setMode(ExtractPlan::Mode mode)
+{
+    mode_ = mode;
+    viewport()->update();
+}
+
 ExtractPlan::Metrics ExtractStrip::metrics()
 {
     ExtractPlan::Metrics m;
@@ -215,6 +223,8 @@ void ExtractStrip::setHighlightedRow(int row)
 
 void ExtractStrip::ensureRowVisible(int row)
 {
+    if (row < 0)
+        return; // no row, or (Delete mode) the kept pages, which belong to none
     const QList<ExtractPlan::Cell> &cells = model_->content().cells;
     int first = -1;
     int last = -1;
@@ -294,7 +304,7 @@ void ExtractStrip::paintCell(QPainter *p, int row) const
         p->setPen(t.accent);
         p->setBrush(t.accentWash);
         p->drawRoundedRect(halfPixel(cr), 4, 4);
-    } else if (hovered || c.row == highlightedRow_) {
+    } else if (hovered || (highlightedRow_ >= 0 && c.row == highlightedRow_)) {
         p->setPen(Qt::NoPen);
         p->setBrush(hovered ? t.hover : t.accentWash);
         p->drawRoundedRect(cr, 4, 4);
@@ -314,17 +324,34 @@ void ExtractStrip::paintCell(QPainter *p, int row) const
 
     switch (c.kind) {
     case ExtractPlan::Cell::Kind::Page: {
+        // A deleted page stays in place, faded, so the pages around it keep their
+        // positions and it can be clicked back.
+        const qreal opacity = c.deleted ? kDeletedOpacity : 1.0;
         const QPixmap pm = cache_.get(c.page);
+        const QRect paper = fitted(box, !pm.isNull() ? QSizeF(pm.size())
+                                        : doc_       ? doc_->pageSize(c.page)
+                                                     : QSizeF());
         if (!pm.isNull()) {
             p->setRenderHint(QPainter::SmoothPixmapTransform);
-            p->drawPixmap(fitted(box, pm.size()), pm);
+            p->setOpacity(opacity);
+            p->drawPixmap(paper, pm);
         } else {
             // Pending: the paper colour at 35%, which reads as "not here yet"
             // rather than as a blank page. No spinner.
-            p->setOpacity(0.35);
-            p->fillRect(fitted(box, doc_ ? doc_->pageSize(c.page) : QSizeF()),
-                        theme::doc().paperNormal);
-            p->setOpacity(1.0);
+            p->setOpacity(0.35 * opacity);
+            p->fillRect(paper, theme::doc().paperNormal);
+        }
+        p->setOpacity(1.0);
+        if (c.deleted) {
+            // The faded page's edge, which on a light well would otherwise vanish,
+            // and one red line from corner to corner.
+            p->setPen(t.borderStrong);
+            p->drawRect(halfPixel(paper));
+            QPen strike(t.inkDanger, kStrikeWidth);
+            strike.setCapStyle(Qt::FlatCap);
+            p->setPen(strike);
+            p->drawLine(QRectF(paper).topLeft(), QRectF(paper).bottomRight());
+            captionInk = t.inkDanger;
         }
         break;
     }
@@ -358,7 +385,9 @@ void ExtractStrip::paintCell(QPainter *p, int row) const
     }
     }
 
-    p->setFont(font());
+    QFont captionFont = font();
+    captionFont.setStrikeOut(c.deleted); // the number struck through as well
+    p->setFont(captionFont);
     p->setPen(captionInk);
     p->drawText(captionR, Qt::AlignCenter,
                 p->fontMetrics().elidedText(content.captions.value(row), Qt::ElideRight,
@@ -371,8 +400,12 @@ void ExtractStrip::paintCell(QPainter *p, int row) const
             p->setBrush(t.hover);
             p->drawRoundedRect(close, 3, 3);
         }
-        icons::glyph(icons::Glyph::Close, onClose ? t.inkPrimary : t.inkSoft)
-            .paint(p, close.adjusted(1, 1, -1, -1));
+        // In Delete mode the glyph shows what a click does, a bin to delete the
+        // page and an undo arrow to keep it.
+        const icons::Glyph glyph = mode_ == ExtractPlan::Mode::Extract ? icons::Glyph::Close
+                                   : c.deleted                         ? icons::Glyph::Restore
+                                                                       : icons::Glyph::Delete;
+        icons::glyph(glyph, onClose ? t.inkPrimary : t.inkSoft).paint(p, close.adjusted(1, 1, -1, -1));
     }
     p->restore();
 }
@@ -410,9 +443,12 @@ bool ExtractStrip::viewportEvent(QEvent *event)
         break;
     }
     case QEvent::ToolTip: {
+        // In Delete mode the button does what a click on the page does, so the
+        // page's own tooltip, which says so, covers it too.
         auto *he = static_cast<QHelpEvent *>(event);
         const int row = indexAt(he->pos()).row();
-        if (row >= 0 && row == hoverRow_ && closeRect(row).contains(he->pos())) {
+        if (mode_ == ExtractPlan::Mode::Extract && row >= 0 && row == hoverRow_
+            && closeRect(row).contains(he->pos())) {
             //: Tooltip of the close button on a page in the strip: takes it out of
             //: the extract.
             QToolTip::showText(he->globalPos(), tr("Remove"), viewport(), closeRect(row));
@@ -459,6 +495,10 @@ void ExtractStrip::mouseReleaseEvent(QMouseEvent *event)
     const ExtractPlan::Cell c = model_->content().cells.at(row);
     // Queued: the dialog rebuilds the model in response, which must not happen
     // inside the view's own mouse handling.
+    if (mode_ == ExtractPlan::Mode::Delete) {
+        QMetaObject::invokeMethod(this, [this, c] { emit toggleClicked(c); }, Qt::QueuedConnection);
+        return;
+    }
     if (pressOnClose_ && closeRect(row).contains(event->position().toPoint())) {
         QMetaObject::invokeMethod(this, [this, c] { emit removeClicked(c); }, Qt::QueuedConnection);
         return;
@@ -488,7 +528,8 @@ void ExtractStrip::currentChanged(const QModelIndex &current, const QModelIndex 
     updateRow(current.row());
     emit currentCellChanged();
     if (!settingContent_) {
-        if (const ExtractPlan::Cell *c = currentCell())
+        // A page Delete mode keeps belongs to no row.
+        if (const ExtractPlan::Cell *c = currentCell(); c && c->row >= 0)
             emit rowPicked(c->row);
     }
 }

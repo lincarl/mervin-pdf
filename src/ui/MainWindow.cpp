@@ -2573,7 +2573,7 @@ void MainWindow::wireCurrentViewer(ViewerWidget *v)
                                 QAction *chosen = menu.exec(globalPos);
                                 // Opened once the menu has closed, not from inside it.
                                 if (savePage && chosen == savePage)
-                                    extractPages(page);
+                                    pagesDialog(mervin::ExtractPlan::Mode::Extract, page);
                             });
     // Reflect this viewer's current measure state in the toolbar toggle.
     if (measureAction_) {

@@ -39,6 +39,12 @@ private slots:
     void destinationRules();
     void jobFollowsRowOrder();
 
+    void deleteReadsTheRowsAsASet();
+    void deleteKeepsAtLeastOnePage();
+    void clickingAPageDeletesOrKeepsIt();
+    void deleteStripShowsEveryPage();
+    void deleteWritesAnEditedCopy();
+
 private:
     static ExtractPlan plan(const QStringList &rows, const QString &source = sourcePath())
     {
@@ -48,6 +54,15 @@ private:
         return p;
     }
     static QString sourcePath() { return QStringLiteral("/reports/annual-report.pdf"); }
+    // Delete mode over a 6-page document, like the mockup's report.
+    static ExtractPlan deleting(const QStringList &rows, int pageCount = 6,
+                                const QString &source = sourcePath())
+    {
+        ExtractPlan p(source, pageCount, ExtractPlan::Mode::Delete);
+        for (const QString &r : rows)
+            p.append(r);
+        return p;
+    }
     static QList<int> pages(const ExtractPlan &p) { return p.job(QStringLiteral("x")).pages; }
     // "PPFP": one letter per cell (Page, Fold, Bad).
     static QString kinds(const QList<ExtractPlan::Cell> &cells)
@@ -464,6 +479,173 @@ void TstExtractPlan::jobFollowsRowOrder()
              QStringLiteral("Extracted page 7 to annual-report-p7.pdf"));
     job.path = dir.filePath(QStringLiteral("annual-report-extract.pdf"));
     QCOMPARE(ExtractPlan::doneText(job), QStringLiteral("Extracted 5 pages to annual-report-extract.pdf"));
+}
+
+// Delete Pages reads the same rows as the pages a copy leaves out. Order and
+// repeats do not matter, and the result line names what remains.
+void TstExtractPlan::deleteReadsTheRowsAsASet()
+{
+    ExtractPlan p = deleting({QStringLiteral("5-6"), QStringLiteral("2"), QStringLiteral("6")});
+    QVERIFY(p.isValid());
+    QCOMPARE(p.deletedPages(), QList<int>({1, 4, 5}));
+    QCOMPARE(p.summaryText(), QStringLiteral("Result: 3 of 6 pages remain (1, 3-4)."));
+    QCOMPARE(deleting({QStringLiteral("-3"), QStringLiteral("5-")}).summaryText(),
+             QStringLiteral("Result: 1 of 6 pages remains (4)."));
+
+    // A long list of what remains stops after eight runs.
+    QStringList everyOther;
+    for (int page = 2; page <= 30; page += 2)
+        everyOther << QString::number(page);
+    QCOMPARE(deleting(everyOther, 31).summaryText(),
+             QStringLiteral("Result: 16 of 31 pages remain (1, 3, 5, 7, 9, 11, 13, 15, …)."));
+
+    // The rows' problems come first, as in Extract, and leave no result line.
+    p.append(QStringLiteral("x"));
+    QCOMPARE(p.errorText(), QStringLiteral("Row 4: \"x\" is not a valid page number."));
+    QVERIFY(p.summaryText().isEmpty());
+    QCOMPARE(deleting({}).errorText(), QStringLiteral("Click the pages to delete, or add a range."));
+    QCOMPARE(deleting({QString()}).errorText(), QStringLiteral("Enter a page or range, like 5-7."));
+}
+
+void TstExtractPlan::deleteKeepsAtLeastOnePage()
+{
+    const QString every = QStringLiteral("Cannot delete every page.");
+    for (const QStringList &rows : {QStringList{QStringLiteral("all")},
+                                    QStringList{QStringLiteral("4-6"), QStringLiteral("1-3")},
+                                    QStringList{QStringLiteral("1-")}}) {
+        const ExtractPlan p = deleting(rows);
+        QVERIFY(!p.isValid());
+        QCOMPARE(p.errorText(), every);
+        QVERIFY(p.summaryText().isEmpty());
+    }
+    QVERIFY(deleting({QStringLiteral("1-5")}).isValid());
+    QCOMPARE(deleting({QStringLiteral("1")}, 1).errorText(), every);
+    // Extract takes every page happily.
+    QVERIFY(plan({QStringLiteral("all")}).isValid());
+}
+
+void TstExtractPlan::clickingAPageDeletesOrKeepsIt()
+{
+    // A page next to a row's run widens it; one between two runs joins them.
+    ExtractPlan p = deleting({QStringLiteral("2"), QStringLiteral("5-6")});
+    QCOMPARE(p.deletePage(3), 1);
+    QCOMPARE(p.specs(), QStringList({QStringLiteral("2"), QStringLiteral("4-6")}));
+    QCOMPARE(p.deletePage(2), 0);
+    QCOMPARE(p.specs(), QStringList({QStringLiteral("2-6")}));
+    // Keeping a page splits the range around it; the row holding what followed
+    // becomes current.
+    QCOMPARE(p.keepPage(3), 1);
+    QCOMPARE(p.specs(), QStringList({QStringLiteral("2-3"), QStringLiteral("5-6")}));
+    QCOMPARE(p.keepPage(1), 0);
+    QCOMPARE(p.specs(), QStringList({QStringLiteral("3"), QStringLiteral("5-6")}));
+    // Nothing to do when the page is already deleted, already kept, or not a page.
+    QCOMPARE(p.deletePage(4), -1);
+    QCOMPARE(p.keepPage(0), -1);
+    QCOMPARE(p.deletePage(6), -1);
+    QCOMPARE(p.deletePage(-1), -1);
+    QCOMPARE(p.specs(), QStringList({QStringLiteral("3"), QStringLiteral("5-6")}));
+
+    // "all" splits like any range, and every row naming the page lets go of it.
+    p = deleting({QStringLiteral("all")});
+    QCOMPARE(p.keepPage(2), 1);
+    QCOMPARE(p.specs(), QStringList({QStringLiteral("1-2"), QStringLiteral("4-6")}));
+    p = deleting({QStringLiteral("2-4"), QStringLiteral("3")});
+    QCOMPARE(p.keepPage(2), 1);
+    QCOMPARE(p.specs(), QStringList({QStringLiteral("2"), QStringLiteral("4")}));
+
+    // An empty row, as Add Range leaves, takes the next page, even one beside a
+    // run, so a click cannot leave it blocking the window. With none, a page with
+    // no neighbour adds a row.
+    p = deleting({QStringLiteral("2"), QString()});
+    QCOMPARE(p.deletePage(2), 1);
+    QCOMPARE(p.specs(), QStringList({QStringLiteral("2"), QStringLiteral("3")}));
+    QVERIFY(p.isValid());
+    p = deleting({QStringLiteral("2"), QString()});
+    QCOMPARE(p.deletePage(4), 1);
+    QCOMPARE(p.specs(), QStringList({QStringLiteral("2"), QStringLiteral("5")}));
+    QCOMPARE(p.deletePage(0), 0); // before a run widens it too
+    QCOMPARE(p.specs(), QStringList({QStringLiteral("1-2"), QStringLiteral("5")}));
+    p = deleting({QStringLiteral("2")});
+    QCOMPARE(p.deletePage(4), 1);
+    QCOMPARE(p.specs(), QStringList({QStringLiteral("2"), QStringLiteral("5")}));
+    // A bad row is not a run to join.
+    p = deleting({QStringLiteral("x")});
+    QCOMPARE(p.deletePage(0), 1);
+    QCOMPARE(p.specs(), QStringList({QStringLiteral("x"), QStringLiteral("1")}));
+
+    // Keeping the last deleted page leaves no row.
+    p = deleting({QStringLiteral("3")});
+    QCOMPARE(p.keepPage(2), -1);
+    QCOMPARE(p.count(), 0);
+}
+
+void TstExtractPlan::deleteStripShowsEveryPage()
+{
+    const ExtractPlan::Metrics m;
+    const ExtractPlan p = deleting({QStringLiteral("2"), QStringLiteral("5-6"), QStringLiteral("x")});
+    // Every page, in document order, never folded however narrow the strip; the
+    // bad row has no cell, since its text names no page.
+    for (const int viewport : {10000, 200}) {
+        const QList<ExtractPlan::Cell> cells = p.cells(m, viewport, {});
+        QCOMPARE(kinds(cells), QStringLiteral("PPPPPP"));
+        QList<bool> deleted;
+        QList<int> rows;
+        QList<int> positions;
+        for (const ExtractPlan::Cell &c : cells) {
+            QCOMPARE(c.firstFlat, c.page); // a page keeps its identity across edits
+            deleted << c.deleted;
+            rows << c.row;
+            positions << c.position;
+        }
+        QCOMPARE(deleted, QList<bool>({false, true, false, false, true, true}));
+        QCOMPARE(rows, QList<int>({-1, 0, -1, -1, 1, 1}));
+        QCOMPARE(positions, QList<int>({1, 0, 2, 3, 0, 0}));
+        QCOMPARE(cells.at(5).first, 1); // its index in row 2's pages
+        QCOMPARE(cells.at(0).gapBefore, m.lead);
+        QCOMPARE(width(cells, m), m.lead + m.lead + 6 * m.page);
+    }
+    const QList<ExtractPlan::Cell> cells = p.cells(m, 10000, {});
+    QCOMPARE(p.caption(cells.at(1)), QStringLiteral("2"));
+    QCOMPARE(p.describe(cells.at(1)), QStringLiteral("Page 2 will be deleted. Click to keep it."));
+    QCOMPARE(p.describe(cells.at(2)), QStringLiteral("Click to delete page 3."));
+    // Extract's strip still shows its rows' pages only.
+    QCOMPARE(kinds(plan({QStringLiteral("2"), QStringLiteral("5-6")}).cells(m, 10000, {})),
+             QStringLiteral("PPP"));
+}
+
+void TstExtractPlan::deleteWritesAnEditedCopy()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = dir.filePath(QStringLiteral("annual-report.pdf"));
+    QFile f(source);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.close();
+    const ExtractPlan p = deleting({QStringLiteral("5-6"), QStringLiteral("2")}, 6, source);
+
+    QCOMPARE(p.fileName(), QStringLiteral("annual-report-edited.pdf"));
+    QCOMPARE(p.defaultOutputPath(), dir.filePath(QStringLiteral("annual-report-edited.pdf")));
+    QFile taken(dir.filePath(QStringLiteral("annual-report-edited.pdf")));
+    QVERIFY(taken.open(QIODevice::WriteOnly));
+    taken.close();
+    QCOMPARE(p.defaultOutputPath(), dir.filePath(QStringLiteral("annual-report-edited-2.pdf")));
+
+    QCOMPARE(p.destinationError(QStringLiteral(" ")),
+             QStringLiteral("Choose where to save the edited copy."));
+    QCOMPARE(p.destinationError(source),
+             QStringLiteral("The edited copy cannot replace the document it comes from."));
+    QVERIFY(p.destinationError(QStringLiteral("out")).isEmpty());
+
+    // The job lists the pages to leave out, in page order, for PageOps::deletePages.
+    const ExtractPlan::Job job = p.job(QStringLiteral("out"));
+    QCOMPARE(job.mode, ExtractPlan::Mode::Delete);
+    QCOMPARE(job.path, dir.filePath(QStringLiteral("out.pdf")));
+    QCOMPARE(job.pages, QList<int>({1, 4, 5}));
+    QCOMPARE(ExtractPlan::doneText(job),
+             QStringLiteral("Deleted 3 pages in a copy saved as out.pdf"));
+    QCOMPARE(ExtractPlan::doneText({job.path, {4}, ExtractPlan::Mode::Delete}),
+             QStringLiteral("Deleted 1 page in a copy saved as out.pdf"));
+    QCOMPARE(plan({QStringLiteral("2")}).job(QStringLiteral("x")).mode, ExtractPlan::Mode::Extract);
 }
 
 QTEST_GUILESS_MAIN(TstExtractPlan)

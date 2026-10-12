@@ -79,6 +79,7 @@ enum class Glyph {
     FileText,        // file-text: pages the Extract strip folds away
     Check,           // check: menu check marks and the checkbox tick
     Star,            // star: favourite files in the Recent list (filled when set)
+    Restore,         // undo-2: keep a page marked for deletion (Delete pages strip)
 };
 
 // The pictograph tinted to `color` (the palette's WindowText, Theme::iconInk, or

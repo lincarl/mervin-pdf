@@ -206,18 +206,6 @@ Das bearbeitete Dokument wurde unter %2 aufbewahrt.
         <translation>Gedrehte Kopie speichern</translation>
     </message>
     <message>
-        <source>Delete Pages</source>
-        <translation>Seiten löschen</translation>
-    </message>
-    <message>
-        <source>Cannot delete every page.</source>
-        <translation>Es können nicht alle Seiten gelöscht werden.</translation>
-    </message>
-    <message>
-        <source>Save Edited Copy</source>
-        <translation>Bearbeitete Kopie speichern</translation>
-    </message>
-    <message>
         <source>Choose Output Folder</source>
         <translation>Ausgabeordner wählen</translation>
     </message>
@@ -1932,6 +1920,11 @@ Die exportierte Datei kann in jedem PDF-Viewer angezeigt werden.</translation>
 <context>
     <name>mervin::ExtractDialog</name>
     <message>
+        <source>Delete pages from %1</source>
+        <extracomment>Title of the Delete pages window. %1 is the document&apos;s file name, like &quot;report.pdf&quot;. The window writes a new file without the chosen pages.</extracomment>
+        <translation>Seiten aus %1 löschen</translation>
+    </message>
+    <message>
         <source>Extract Pages</source>
         <translation>Seiten extrahieren</translation>
     </message>
@@ -1954,9 +1947,24 @@ Die exportierte Datei kann in jedem PDF-Viewer angezeigt werden.</translation>
         <translation>&amp;Nach unten bewegen</translation>
     </message>
     <message>
+        <source>&amp;Remove Row</source>
+        <extracomment>Button beside the rows of Delete pages. It takes the selected row out of the list, so the pages it names are no longer deleted. It deletes no pages. Name the row, so it cannot be read as the Delete pages button.</extracomment>
+        <translation>Zeile &amp;entfernen</translation>
+    </message>
+    <message>
         <source>&amp;Remove</source>
         <extracomment>Button: removes the selected row.</extracomment>
         <translation>&amp;Entfernen</translation>
+    </message>
+    <message>
+        <source>Delete Page</source>
+        <extracomment>Context menu item of a page in the Delete pages strip. It marks the page to be left out of the new file.</extracomment>
+        <translation>Seite löschen</translation>
+    </message>
+    <message>
+        <source>Keep Page</source>
+        <extracomment>Context menu item of a page marked for deletion in the Delete pages strip. It takes the mark away, so the new file keeps the page.</extracomment>
+        <translation>Seite behalten</translation>
     </message>
     <message>
         <source>Remove</source>
@@ -1982,6 +1990,11 @@ Die exportierte Datei kann in jedem PDF-Viewer angezeigt werden.</translation>
     <message>
         <source>&amp;Open when done</source>
         <translation>&amp;Öffnen, wenn fertig</translation>
+    </message>
+    <message>
+        <source>Delete pages</source>
+        <extracomment>Button: writes a new file without the listed pages. The original file keeps every page.</extracomment>
+        <translation>Seiten löschen</translation>
     </message>
     <message>
         <source>Extract</source>
@@ -2012,6 +2025,11 @@ Die exportierte Datei kann in jedem PDF-Viewer angezeigt werden.</translation>
         <translation>%1 Nicht gespeicherte Änderungen werden nicht berücksichtigt.</translation>
     </message>
     <message>
+        <source>This PDF cannot be read for deleting pages.</source>
+        <extracomment>The viewer shows the document, but qpdf, which writes the new file, cannot read it.</extracomment>
+        <translation>Dieses PDF kann nicht zum Löschen von Seiten gelesen werden.</translation>
+    </message>
+    <message>
         <source>This PDF cannot be read for extraction.</source>
         <translation>Dieses PDF kann nicht zum Extrahieren gelesen werden.</translation>
     </message>
@@ -2022,6 +2040,11 @@ Die exportierte Datei kann in jedem PDF-Viewer angezeigt werden.</translation>
     <message>
         <source>That password is not correct.</source>
         <translation>Dieses Passwort ist nicht korrekt.</translation>
+    </message>
+    <message>
+        <source>Save Edited Copy</source>
+        <extracomment>Title of the file picker for the new file Delete pages writes.</extracomment>
+        <translation>Bearbeitete Kopie speichern</translation>
     </message>
     <message>
         <source>Save Extracted Pages</source>
@@ -2036,6 +2059,11 @@ Die exportierte Datei kann in jedem PDF-Viewer angezeigt werden.</translation>
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
         <translation>„%1“ existiert bereits. Ersetzen?</translation>
+    </message>
+    <message>
+        <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Delete pages again, or choose another name.</source>
+        <extracomment>%1 is the new file&apos;s name. &quot;Delete pages&quot; is the button&apos;s text.</extracomment>
+        <translation>„%1“ konnte nicht geschrieben werden. Wenn es in einem anderen Programm geöffnet ist, schließen Sie es und klicken Sie erneut auf „Seiten löschen“ oder wählen Sie einen anderen Namen.</translation>
     </message>
     <message>
         <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Extract again, or choose another name.</source>
@@ -2080,12 +2108,40 @@ Die exportierte Datei kann in jedem PDF-Viewer angezeigt werden.</translation>
         </translation>
     </message>
     <message numerus="yes">
+        <source>Result: %n of %1 page(s) remain (%2).</source>
+        <extracomment>Result line of Delete pages, under the page strip. %n is how many pages the new file keeps, %1 the document&apos;s page count, %2 the pages that remain as ranges, like &quot;1, 3-4&quot;. In English the verb follows %n: &quot;1 of 6 pages remains&quot;, &quot;3 of 6 pages remain&quot;.</extracomment>
+        <translation>
+            <numerusform>Ergebnis: %n von %1 Seiten bleibt übrig (%2).</numerusform>
+            <numerusform>Ergebnis: %n von %1 Seiten bleiben übrig (%2).</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Click the pages to delete, or add a range.</source>
+        <extracomment>Delete pages with no rows left. Clicking a page in the strip below marks it for deletion; &quot;add a range&quot; refers to the Add Range button.</extracomment>
+        <translation>Klicken Sie auf die zu löschenden Seiten oder fügen Sie einen Bereich hinzu.</translation>
+    </message>
+    <message>
+        <source>Page %1 will be deleted. Click to keep it.</source>
+        <extracomment>Tooltip of a page struck out in the Delete pages strip. %1 is its page number. The original file keeps it; only the new file leaves it out.</extracomment>
+        <translation>Seite %1 wird gelöscht. Zum Behalten klicken.</translation>
+    </message>
+    <message>
+        <source>Click to delete page %1.</source>
+        <extracomment>Tooltip of a page in the Delete pages strip. %1 is its page number.</extracomment>
+        <translation>Klicken, um Seite %1 zu löschen.</translation>
+    </message>
+    <message numerus="yes">
         <source>Pages %1 (%n page(s)). Click to show them.</source>
         <extracomment>Tooltip of a tile standing in for hidden pages: %1 is their range, like &quot;14-30&quot;.</extracomment>
         <translation>
             <numerusform>Seiten %1 (%n Seite). Zum Anzeigen klicken.</numerusform>
             <numerusform>Seiten %1 (%n Seiten). Zum Anzeigen klicken.</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Choose where to save the edited copy.</source>
+        <extracomment>Delete pages with an empty Save as field. The edited copy is the new file without the deleted pages.</extracomment>
+        <translation>Wählen Sie, wo die bearbeitete Kopie gespeichert werden soll.</translation>
     </message>
     <message>
         <source>Choose where to save the extracted pages.</source>
@@ -2100,12 +2156,25 @@ Die exportierte Datei kann in jedem PDF-Viewer angezeigt werden.</translation>
         <translation>Dieser Ordner existiert nicht.</translation>
     </message>
     <message>
+        <source>The edited copy cannot replace the document it comes from.</source>
+        <extracomment>Delete pages always writes a new file and never changes the original.</extracomment>
+        <translation>Die bearbeitete Kopie kann das Dokument, aus dem sie stammt, nicht ersetzen.</translation>
+    </message>
+    <message>
         <source>The extract cannot replace the document it comes from.</source>
         <translation>Der Auszug kann das Dokument, aus dem er stammt, nicht ersetzen.</translation>
     </message>
     <message>
         <source>That file is open in a tab. Choose another name.</source>
         <translation>Diese Datei ist in einer Registerkarte geöffnet. Wählen Sie einen anderen Namen.</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n page(s) in a copy saved as %1</source>
+        <extracomment>Status bar message after Delete pages wrote its new file. %n is how many pages it left out, %1 the new file&apos;s name. The original is unchanged.</extracomment>
+        <translation>
+            <numerusform>%n Seite in einer als %1 gespeicherten Kopie gelöscht</numerusform>
+            <numerusform>%n Seiten in einer als %1 gespeicherten Kopie gelöscht</numerusform>
+        </translation>
     </message>
     <message>
         <source>Extracted page %1 to %2</source>

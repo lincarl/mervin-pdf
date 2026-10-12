@@ -19,7 +19,9 @@ class ExtractCellModel;
 
 // Display ExtractPlan cells in output order; signals request plan edits. Own a thumbnail cache
 // and render visible cells one per event-loop turn after 150 ms debounce. Fixed 89x124
-// thumbnails and a 16px scrollbar reserve prevent height changes.
+// thumbnails and a 16px scrollbar reserve prevent height changes. In Delete mode the cells
+// are every source page. A deleted one is dimmed and struck through in red, and a click
+// anywhere on a page asks to delete or keep it.
 class ExtractStrip : public QListView
 {
     Q_OBJECT
@@ -38,6 +40,7 @@ public:
     // The cell widths this strip draws, for ExtractPlan::cells().
     static ExtractPlan::Metrics metrics();
     void setSource(Document *doc, RenderEngine *engine); // either may be null
+    void setMode(ExtractPlan::Mode mode);                // before the first setContent()
     // Replace every cell and make the cell holding `currentFlat` current (the last
     // cell when it is past the end). Does not scroll: see ensureRowVisible.
     void setContent(const Content &content, int currentFlat);
@@ -53,6 +56,7 @@ signals:
     void viewportResized();                          // the dialog refolds
     void foldActivated(const ExtractPlan::RunKey &); // a click on a fold
     void removeClicked(const ExtractPlan::Cell &);   // the hover ✕
+    void toggleClicked(const ExtractPlan::Cell &);   // a click on a page, in Delete mode
     void currentCellChanged();                       // refresh action states
     // The user picked a cell of `row`, by click or keyboard (never by setContent).
     void rowPicked(int row);
@@ -75,7 +79,7 @@ private:
     // A cell's content: its item rect minus the lead before it, hover wash height.
     QRect contentRect(int row) const;
     int cellAt(const QPoint &pos) const; // the row whose content is under `pos`, or -1
-    QRect closeRect(int row) const;      // the hover ✕, in viewport coordinates
+    QRect closeRect(int row) const;      // the hover ✕ (bin or undo arrow in Delete mode)
     void paintCell(QPainter *p, int row) const;
     // Re-derive the hovered cell from the pointer, for when the cells move under a
     // pointer that did not (a rebuild or a scroll), and repaint both rows.
@@ -84,6 +88,7 @@ private:
     void pump();             // render one visible page that needs it, then re-arm
 
     ExtractCellModel *model_ = nullptr;
+    ExtractPlan::Mode mode_ = ExtractPlan::Mode::Extract;
     Document *doc_ = nullptr;
     RenderEngine *engine_ = nullptr;
     ThumbnailCache cache_{128}; // 89 x 124 each: about 22 MB at 200% scaling

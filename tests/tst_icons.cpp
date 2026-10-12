@@ -210,7 +210,7 @@ void TestIcons::applicationIconSelectsScaledFrames()
 void TestIcons::rosterCoversTheEnum()
 {
     const auto &roster = mervin::icons::allGlyphs();
-    QCOMPARE(int(roster.size()), int(Glyph::Star) + 1);
+    QCOMPARE(int(roster.size()), int(Glyph::Restore) + 1);
 
     QSet<int> seen;
     for (const auto &e : roster) {

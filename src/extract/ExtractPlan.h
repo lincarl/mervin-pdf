@@ -7,10 +7,12 @@
 
 namespace mervin {
 
-// One output file assembled from ordered page/range rows. ExtractDialog renders this model and
+// One output file assembled from page/range rows. ExtractDialog renders this model and
 // writes edits back to it. Each row accepts one PageRange token (5, 5-7, 7-, -5, all or
-// PageRange::allKeyword()); the dialog splits commas/semicolons via splitPieces. Preserve page
-// order and duplicates.
+// PageRange::allKeyword()); the dialog splits commas/semicolons via splitPieces.
+// In Extract mode the rows are the new file's pages, so page order and duplicates are kept.
+// In Delete mode they are the pages a copy of the source leaves out. They form a set, so row
+// order and repeats do not matter, the strip shows every source page, and nothing folds.
 // API pages are zero-based; row text and UI strings are one-based. Filesystem access is limited
 // to output validation and resolving the source path at construction.
 class ExtractPlan
@@ -18,8 +20,11 @@ class ExtractPlan
     Q_DECLARE_TR_FUNCTIONS(mervin::ExtractPlan)
 
 public:
-    ExtractPlan(const QString &sourcePath, int pageCount);
+    enum class Mode { Extract, Delete };
 
+    ExtractPlan(const QString &sourcePath, int pageCount, Mode mode = Mode::Extract);
+
+    Mode mode() const { return mode_; }
     const QString &sourcePath() const { return sourcePath_; }
     int pageCount() const { return pageCount_; }
     // Re-read every row against a corrected count (qpdf's, once the password is
@@ -64,13 +69,31 @@ public:
     };
     QList<RowText> rowTexts() const;
     int pageTotal() const;
-    bool isValid() const; // at least one row and no row error
+    bool isValid() const; // at least one row and no problem (errorText)
     // "" when invalid, else "Result: 1 page." / "Result: 4 pages, in the order
-    // shown."
+    // shown.", or in Delete mode "Result: 3 of 6 pages remain (1, 3-4)." (eight
+    // runs at most, then "…", so a long list cannot push the dialog apart).
     QString summaryText() const;
     // The first problem, "" when valid: "Add a range of pages to extract." with no
-    // rows, else the first rowError(), prefixed "Row 2: " when there are 2+ rows.
+    // rows (Delete mode: "Click the pages to delete, or add a range."), else the
+    // first rowError(), prefixed "Row 2: " when there are 2+ rows. Delete mode
+    // then refuses rows that name every page with "Cannot delete every page."
     QString errorText() const;
+
+    // ---- Delete mode ---------------------------------------------------------
+    // The pages the rows name, ascending, each once. A bad row adds none.
+    QList<int> deletedPages() const;
+    // A click on a page in the strip. deletePage() fills the first empty row, so an
+    // added range never stays empty and blocks the window. Else it widens a row whose
+    // pages are one ascending run ending just before or starting just after `page`
+    // ("5-6" becomes "4-6"), joining two such rows into one, else it adds a row at
+    // the end. keepPage() takes `page` out of every row that names it, splitting a
+    // range as removeFromRow() does ("all" minus 3 becomes "1-2" and "4-31"). Both
+    // return the row to make current, which is the one that took the page or the one
+    // now holding what followed it. -1 when nothing changed (the page was already
+    // deleted, already kept, or out of range) or no rows are left.
+    int deletePage(int page);
+    int keepPage(int page);
 
     // ---- The strip, fitted to a width ---------------------------------------
     struct Metrics
@@ -100,7 +123,9 @@ public:
         int page = -1;     // Page: source page. Fold: first hidden page. Bad: -1
         int lastPage = -1; // Fold: last hidden page
         int position = 0;  // Page: 1-based position in the output; 0 below a row
-                           // with an error, where it is not knowable (rowTexts)
+                           // with an error, where it is not knowable (rowTexts),
+                           // and on a deleted page
+        bool deleted = false; // Delete mode only, set when the copy leaves this page out
         RunKey run;        // Fold: the whole run it belongs to (what "expand" records)
         int gapBefore = 0; // the lead, on the first cell only; included in width
         int width = 0;
@@ -112,6 +137,9 @@ public:
     // fold that makes the strip fit gives any room it left back as more leading
     // pages, while still hiding at least two. When nothing is left to fold, the
     // strip scrolls. Pure: geometry is the model's, so the rule is unit-tested.
+    // In Delete mode, every source page in order, never folded, `deleted` set on
+    // the ones the rows name. A deleted page's `row` is the first row naming it; a
+    // kept page has row -1 and its position in the copy.
     QList<Cell> cells(const Metrics &m, int viewportWidth, const QList<RunKey> &expanded) const;
     // True while `run` is one of the runs cells() can fold. The dialog forgets an
     // expansion once its run is edited away, so typing it again starts folded.
@@ -121,7 +149,8 @@ public:
     QString caption(const Cell &cell) const;
     // Tooltip text: "Page 12 becomes page 4 of the extract." ("Page 12" when its
     // position is not knowable), "Pages 14-30 (17 pages). Click to show them."
-    // (Fold), or the bad row's error.
+    // (Fold), or the bad row's error. In Delete mode, "Click to delete page 4." or
+    // "Page 5 will be deleted. Click to keep it."
     QString describe(const Cell &cell) const;
     // Remove pagesFor(row)[first..last] (one cell, or a fold's hidden span). The
     // row splits into up to two rows around them ("5-7" minus 6 becomes "5" and
@@ -135,12 +164,15 @@ public:
     struct Job
     {
         QString path;
-        QList<int> pages; // 0-based, output order, duplicates kept
+        // 0-based. Extract lists them in output order with duplicates. Delete lists
+        // the pages to leave out, ascending, each once (deletedPages()).
+        QList<int> pages;
+        Mode mode = Mode::Extract;
     };
     // `destination` taken against the source's folder when relative, cleaned.
     QString resolvePath(const QString &destination) const;
     // "<base>-p7.pdf" / "<base>-p12-18.pdf" when the output is one ascending run,
-    // otherwise "<base>-extract.pdf".
+    // otherwise "<base>-extract.pdf". Delete mode: "<base>-edited.pdf".
     QString fileName() const;
     // Save as default: fileName() in the source's folder, stepping to "-2", "-3"...
     // while the name exists or is the source.
@@ -152,14 +184,16 @@ public:
     // against the source's folder. "Choose where to save the extracted pages." /
     // "That folder does not exist." / "That is a folder. Add a file name." / "The
     // extract cannot replace the document it comes from." / "That file is open in
-    // a tab. Choose another name."
+    // a tab. Choose another name." Delete mode words the first and fourth for the
+    // edited copy rather than an extract.
     QString destinationError(const QString &destination) const;
     // What to write: `destination` resolved with ".pdf" appended if missing, and
-    // every page in row order. Only meaningful when isValid() and
-    // destinationError(destination) is empty.
+    // every page in row order (deletedPages() in Delete mode). Only meaningful when
+    // isValid() and destinationError(destination) is empty.
     Job job(const QString &destination) const;
     // "Extracted page 7 to annual-report-p7.pdf" / "Extracted 4 pages to
-    // annual-report-extract.pdf".
+    // annual-report-extract.pdf" / "Deleted 3 pages in a copy saved as
+    // annual-report-edited.pdf".
     static QString doneText(const Job &job);
 
 private:
@@ -180,7 +214,9 @@ private:
         int keep = 1;        // ...and the leading pages a folded run still shows
     };
     QList<Run> foldableRuns() const; // every run of 4+ pages, in output order
+    QList<Cell> deleteCells(const Metrics &m) const; // cells() in Delete mode
 
+    Mode mode_ = Mode::Extract;
     QString sourcePath_;
     QString sourceKey_; // fileKey(sourcePath_), once: it opens the file on Windows
     QStringList openKeys_; // fileKey() of every file open in a tab

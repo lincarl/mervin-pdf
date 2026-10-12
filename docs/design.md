@@ -332,6 +332,16 @@ the same reorderable `RowList`. Extract writes through `PageOps::merge`, which f
 on an out-of-range page instead of skipping it, so a stale page count cannot silently
 shorten the output.
 
+Delete Pages is the same `ExtractDialog` and `ExtractStrip` over an `ExtractPlan` in
+`Mode::Delete`, not a separate dialog. The rows, Save as, the password row, writing
+before closing and the keyboard handling are shared, and the mode changes only what
+differs. Its rows are a set of pages to leave out, so `RowList` drops the grips and
+the Output column and there are no moves. `ExtractPlan::cells()` returns every
+source page, unfolded, flagged `deleted`, and `deletePage()`/`keepPage()` turn a
+click on the strip into row edits, widening, joining or splitting ranges. The dialog writes through
+`PageOps::deletePages`, which copies the whole document minus those pages, so the
+copy keeps the source's structure and encryption, and refuses to delete every page.
+
 ## Save and print pipeline
 
 The application has two complementary writers:
@@ -367,7 +377,8 @@ security and measurement operations. A failed write discards its temporary file;
 only a complete write replaces the destination. A split commits each output file
 individually. Flattening copies inherited resource/font dictionaries and allocates
 a unique label font name, preserving existing page fonts and sibling resources.
-Rotate/Delete prompts use the same validated page-range grammar as Print/Extract.
+The Rotate prompt uses the same validated page-range grammar as Print, Extract and
+Delete.
 
 `ZoomAnimation` owns visual interpolation state, timing and overlay transforms;
 `ViewerWidget` captures viewport rectangles and coordinates layout and repainting.

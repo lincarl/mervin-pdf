@@ -206,6 +206,8 @@ private slots:
     void exportMeasurements();
     void extract_data() { addLanguageMatrix(); }
     void extract();
+    void deletePages_data() { addLanguageMatrix(); }
+    void deletePages();
     void firstRun_data() { addLanguageMatrix(); }
     void firstRun();
     void languagePicker_data() { addLanguageMatrix(); }
@@ -573,6 +575,71 @@ void TstTranslationLayout::extract()
     source.path = profile_.filePath(QStringLiteral("missing-source.pdf"));
     mervin::ExtractDialog missing(source);
     inspect(missing, QStringLiteral("Extract unreadable document"));
+}
+
+// Document > Delete Pages: the Extract window in its Delete mode, with its own
+// title, button, result line and errors.
+void TstTranslationLayout::deletePages()
+{
+    mervin::ExtractDialog::Source source;
+    source.mode = mervin::ExtractPlan::Mode::Delete;
+    source.path = plain_;
+    source.viewerPageCount = 12;
+    source.seedPage = 6;
+    source.hasUnsavedEdits = true;
+    mervin::ExtractDialog dialog(source);
+    inspect(dialog, QStringLiteral("Delete pages with unsaved changes"));
+    auto *rows = dialog.findChild<QListWidget *>(QStringLiteral("extractList"));
+    auto *error = dialog.findChild<QLabel *>(QStringLiteral("extractError"));
+    auto *summary = dialog.findChild<QLabel *>(QStringLiteral("extractSummary"));
+    QVERIFY(rows && error && summary);
+    // The rows are rebuilt after a split, so each step looks the field up again.
+    const auto field = [rows](int row) {
+        QWidget *w = rows->itemWidget(rows->item(row));
+        return w ? w->findChild<QLineEdit *>(QStringLiteral("extractRowSpec")) : nullptr;
+    };
+    QVERIFY(field(0));
+
+    // Every other page: the longest result line, with the unsaved-changes note.
+    field(0)->selectAll();
+    field(0)->insert(QStringLiteral("2, 4, 6, 8, 10"));
+    QTRY_COMPARE(rows->count(), 5);
+    QVERIFY(!summary->text().isEmpty());
+    inspect(dialog, QStringLiteral("Delete pages long result"));
+
+    field(0)->selectAll();
+    QTest::keyClicks(field(0), QStringLiteral("all"));
+    QVERIFY(!error->text().isEmpty());
+    QVERIFY(summary->text().isEmpty());
+    inspect(dialog, QStringLiteral("Delete pages every page"));
+    field(0)->selectAll();
+    QTest::keyClicks(field(0), QStringLiteral("999999"));
+    QVERIFY(!error->text().isEmpty());
+    inspect(dialog, QStringLiteral("Delete pages invalid range"));
+    auto *remove = dialog.findChild<QPushButton *>(QStringLiteral("extractRemove"));
+    QVERIFY(remove);
+    for (int left = rows->count(); left > 0; --left) {
+        rows->setCurrentRow(0);
+        remove->click();
+    }
+    QCOMPARE(rows->count(), 0);
+    QVERIFY(!error->text().isEmpty());
+    inspect(dialog, QStringLiteral("Delete pages no rows"));
+
+    source.path = encrypted_;
+    mervin::ExtractDialog locked(source);
+    auto *password = locked.findChild<QLineEdit *>(QStringLiteral("extractPassword"));
+    auto *accept = locked.findChild<QPushButton *>(QStringLiteral("extractAccept"));
+    QVERIFY(password && accept);
+    inspect(locked, QStringLiteral("Delete pages encrypted document"));
+    QTest::keyClicks(password, QStringLiteral("incorrect-password"));
+    accept->click();
+    QCOMPARE(locked.result(), int(QDialog::Rejected));
+    inspect(locked, QStringLiteral("Delete pages rejected password"));
+
+    source.path = profile_.filePath(QStringLiteral("missing-source.pdf"));
+    mervin::ExtractDialog missing(source);
+    inspect(missing, QStringLiteral("Delete pages unreadable document"));
 }
 
 void TstTranslationLayout::firstRun()

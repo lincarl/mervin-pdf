@@ -199,18 +199,6 @@ Edited document retained at %2.
         <translation>儲存旋轉後的副本</translation>
     </message>
     <message>
-        <source>Delete Pages</source>
-        <translation>刪除頁面</translation>
-    </message>
-    <message>
-        <source>Cannot delete every page.</source>
-        <translation>無法刪除所有頁面。</translation>
-    </message>
-    <message>
-        <source>Save Edited Copy</source>
-        <translation>儲存編輯後的副本</translation>
-    </message>
-    <message>
         <source>Choose Output Folder</source>
         <translation>選擇輸出資料夾</translation>
     </message>
@@ -1930,6 +1918,11 @@ The exported file is viewable in any PDF viewer.</source>
 <context>
     <name>mervin::ExtractDialog</name>
     <message>
+        <source>Delete pages from %1</source>
+        <extracomment>Title of the Delete pages window. %1 is the document&apos;s file name, like &quot;report.pdf&quot;. The window writes a new file without the chosen pages.</extracomment>
+        <translation>從 %1 刪除頁面</translation>
+    </message>
+    <message>
         <source>Extract Pages</source>
         <translation>擷取頁面</translation>
     </message>
@@ -1952,9 +1945,24 @@ The exported file is viewable in any PDF viewer.</source>
         <translation>下移(&amp;D)</translation>
     </message>
     <message>
+        <source>&amp;Remove Row</source>
+        <extracomment>Button beside the rows of Delete pages. It takes the selected row out of the list, so the pages it names are no longer deleted. It deletes no pages. Name the row, so it cannot be read as the Delete pages button.</extracomment>
+        <translation>移除列(&amp;R)</translation>
+    </message>
+    <message>
         <source>&amp;Remove</source>
         <extracomment>Button: removes the selected row.</extracomment>
         <translation>移除(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Delete Page</source>
+        <extracomment>Context menu item of a page in the Delete pages strip. It marks the page to be left out of the new file.</extracomment>
+        <translation>刪除此頁</translation>
+    </message>
+    <message>
+        <source>Keep Page</source>
+        <extracomment>Context menu item of a page marked for deletion in the Delete pages strip. It takes the mark away, so the new file keeps the page.</extracomment>
+        <translation>保留此頁</translation>
     </message>
     <message>
         <source>Remove</source>
@@ -1980,6 +1988,11 @@ The exported file is viewable in any PDF viewer.</source>
     <message>
         <source>&amp;Open when done</source>
         <translation>完成後開啟(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Delete pages</source>
+        <extracomment>Button: writes a new file without the listed pages. The original file keeps every page.</extracomment>
+        <translation>刪除頁面</translation>
     </message>
     <message>
         <source>Extract</source>
@@ -2010,6 +2023,11 @@ The exported file is viewable in any PDF viewer.</source>
         <translation>%1 不包含尚未儲存的變更。</translation>
     </message>
     <message>
+        <source>This PDF cannot be read for deleting pages.</source>
+        <extracomment>The viewer shows the document, but qpdf, which writes the new file, cannot read it.</extracomment>
+        <translation>無法讀取此 PDF 以刪除頁面。</translation>
+    </message>
+    <message>
         <source>This PDF cannot be read for extraction.</source>
         <translation>無法讀取此 PDF 以擷取頁面。</translation>
     </message>
@@ -2020,6 +2038,11 @@ The exported file is viewable in any PDF viewer.</source>
     <message>
         <source>That password is not correct.</source>
         <translation>密碼不正確。</translation>
+    </message>
+    <message>
+        <source>Save Edited Copy</source>
+        <extracomment>Title of the file picker for the new file Delete pages writes.</extracomment>
+        <translation>儲存編輯後的副本</translation>
     </message>
     <message>
         <source>Save Extracted Pages</source>
@@ -2036,6 +2059,11 @@ The exported file is viewable in any PDF viewer.</source>
         <translation>「%1」已存在。要取代嗎？</translation>
     </message>
     <message>
+        <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Delete pages again, or choose another name.</source>
+        <extracomment>%1 is the new file&apos;s name. &quot;Delete pages&quot; is the button&apos;s text.</extracomment>
+        <translation>無法寫入「%1」。如果其他程式正開啟此檔案，請先關閉，再按一次「刪除頁面」，或選擇其他名稱。</translation>
+    </message>
+    <message>
         <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Extract again, or choose another name.</source>
         <extracomment>%1 is the new file&apos;s name.</extracomment>
         <translation>無法寫入「%1」。如果其他程式正開啟此檔案，請先關閉，再按「擷取」，或選擇其他名稱。</translation>
@@ -2046,6 +2074,13 @@ The exported file is viewable in any PDF viewer.</source>
     <message>
         <source>Enter a page or range, like 5-7.</source>
         <translation>輸入頁碼或範圍，例如 5-7。</translation>
+    </message>
+    <message numerus="yes">
+        <source>Result: %n of %1 page(s) remain (%2).</source>
+        <extracomment>Result line of Delete pages, under the page strip. %n is how many pages the new file keeps, %1 the document&apos;s page count, %2 the pages that remain as ranges, like &quot;1, 3-4&quot;. In English the verb follows %n: &quot;1 of 6 pages remains&quot;, &quot;3 of 6 pages remain&quot;.</extracomment>
+        <translation>
+            <numerusform>結果：共 %1 頁，保留 %n 頁（%2）。</numerusform>
+        </translation>
     </message>
     <message>
         <source>Result: 1 page.</source>
@@ -2058,6 +2093,11 @@ The exported file is viewable in any PDF viewer.</source>
         </translation>
     </message>
     <message>
+        <source>Click the pages to delete, or add a range.</source>
+        <extracomment>Delete pages with no rows left. Clicking a page in the strip below marks it for deletion; &quot;add a range&quot; refers to the Add Range button.</extracomment>
+        <translation>按一下要刪除的頁面，或新增範圍。</translation>
+    </message>
+    <message>
         <source>Add a range of pages to extract.</source>
         <translation>新增要擷取的頁面範圍。</translation>
     </message>
@@ -2065,6 +2105,16 @@ The exported file is viewable in any PDF viewer.</source>
         <source>Row %1: %2</source>
         <extracomment>%1 is the row number, %2 the sentence saying what is wrong with it.</extracomment>
         <translation>第 %1 列：%2</translation>
+    </message>
+    <message>
+        <source>Page %1 will be deleted. Click to keep it.</source>
+        <extracomment>Tooltip of a page struck out in the Delete pages strip. %1 is its page number. The original file keeps it; only the new file leaves it out.</extracomment>
+        <translation>第 %1 頁將被刪除。按一下以保留。</translation>
+    </message>
+    <message>
+        <source>Click to delete page %1.</source>
+        <extracomment>Tooltip of a page in the Delete pages strip. %1 is its page number.</extracomment>
+        <translation>按一下以刪除第 %1 頁。</translation>
     </message>
     <message>
         <source>Page %1</source>
@@ -2084,6 +2134,11 @@ The exported file is viewable in any PDF viewer.</source>
         </translation>
     </message>
     <message>
+        <source>Choose where to save the edited copy.</source>
+        <extracomment>Delete pages with an empty Save as field. The edited copy is the new file without the deleted pages.</extracomment>
+        <translation>選擇編輯後副本的儲存位置。</translation>
+    </message>
+    <message>
         <source>Choose where to save the extracted pages.</source>
         <translation>選擇擷取頁面的儲存位置。</translation>
     </message>
@@ -2096,12 +2151,24 @@ The exported file is viewable in any PDF viewer.</source>
         <translation>該資料夾不存在。</translation>
     </message>
     <message>
+        <source>The edited copy cannot replace the document it comes from.</source>
+        <extracomment>Delete pages always writes a new file and never changes the original.</extracomment>
+        <translation>編輯後的副本不能取代來源文件。</translation>
+    </message>
+    <message>
         <source>The extract cannot replace the document it comes from.</source>
         <translation>擷取的檔案不能取代來源文件。</translation>
     </message>
     <message>
         <source>That file is open in a tab. Choose another name.</source>
         <translation>此檔案已在分頁中開啟。請選擇其他名稱。</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n page(s) in a copy saved as %1</source>
+        <extracomment>Status bar message after Delete pages wrote its new file. %n is how many pages it left out, %1 the new file&apos;s name. The original is unchanged.</extracomment>
+        <translation>
+            <numerusform>已將刪除 %n 頁後的副本儲存為 %1</numerusform>
+        </translation>
     </message>
     <message>
         <source>Extracted page %1 to %2</source>
