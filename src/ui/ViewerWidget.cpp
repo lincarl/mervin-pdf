@@ -2238,13 +2238,15 @@ void ViewerWidget::mousePressEvent(QMouseEvent *event)
         }
         // A press anywhere first dismisses an open inline editor (committing it).
         closeAnnotPopup();
+        // The page takes the keyboard first, so the card opened below can take it
+        // for its comment field.
+        setFocus();
         int pg = -1;
         int id = -1;
         if (annotAt(event->pos(), pg, id))
             openAnnotPopup(pg, id); // click an existing annotation to edit it
         else
             createCommentAt(event->pos()); // empty space: drop a new sticky note
-        setFocus();
         event->accept();
         return;
     }

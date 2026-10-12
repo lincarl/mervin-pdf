@@ -18,6 +18,7 @@
 #include "render/RenderEngine.h"
 #include "security/QpdfService.h"
 #include "ui/AnnotPanel.h"
+#include "ui/AnnotPopup.h"
 #include "ui/LanguageCombo.h"
 #include "ui/MeasurePanel.h"
 #include "ui/Theme.h"
@@ -793,6 +794,15 @@ void TstTranslationLayout::toolPanels()
     inspect(measure, QStringLiteral("Measurement tools with reset and results"));
     mervin::AnnotPanel annotations;
     inspect(annotations, QStringLiteral("Annotation tools"));
+    // The comment card of a highlight without an author: the translated
+    // "Annotation" and the date head it, above the empty comment and the colours.
+    mervin::AnnotPopup card;
+    mervin::Annotation highlight;
+    highlight.type = mervin::AnnotType::Highlight;
+    highlight.color = mervin::annot::palette().front();
+    highlight.modifiedMs = QDateTime(QDate(2026, 10, 12), QTime(12, 0)).toMSecsSinceEpoch();
+    card.showFor(highlight);
+    inspect(card, QStringLiteral("Annotation card"));
 }
 
 QTEST_MAIN(TstTranslationLayout)

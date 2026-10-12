@@ -122,20 +122,12 @@ struct Doc
     QColor formEditorSelection;
     QColor formEditorSelectionInk;
 
-    // The sticky-note edit card, likewise a light card in both themes.
-    QColor noteCard;
-    QColor noteCardBorder;
-    QColor noteCardEditor;
-    QColor noteCardEditorBorder;
-    QColor noteCardInk;
-    QColor noteCardLabelInk;
-
     // Annotation chrome: the ring round a colour swatch and the border round the
     // colour chip in the comments sidebar (a pale annotation colour needs one).
     QColor swatchRingDark;  // ring on the selected swatch, dark chrome
-    QColor swatchRingLight; // ring on the selected swatch, light card
+    QColor swatchRingLight; // ring on the selected swatch, light chrome
     QColor swatchRingRest;  // unselected swatch edge on the dark chrome
-    QColor chipBorder;      // unselected swatch edge on a light card, and the
+    QColor chipBorder;      // unselected swatch edge on the light chrome, and the
                             // comment row's colour chip
     QColor colorChipEdge;   // the Settings accent swatch: a fixed dark wash that
                             // stays visible on any colour the user picks
@@ -186,7 +178,7 @@ const Brand &brand();
 // A colour-chip QToolButton's stylesheet, with a ring marking the active colour.
 // Shared by the annotation comment card's swatches and the Settings default-colour
 // picker so both read identically. `dark` picks ring colours that stay visible on
-// the dark chrome; the sticky-note card keeps its light values.
+// the dark chrome; otherwise they suit the light chrome.
 QString swatchStyle(const QColor &c, bool checked, bool dark = false);
 
 // ── QSS interpolation ───────────────────────────────────────────────────────
