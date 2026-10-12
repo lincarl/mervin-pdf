@@ -1,22 +1,28 @@
 #include "ui/Icons.h"
 
 #include <QAbstractButton>
+#include <QApplication>
 #include <QByteArray>
 #include <QColor>
 #include <QEvent>
 #include <QFile>
 #include <QGuiApplication>
 #include <QHash>
+#include <QIconEngine>
 #include <QPainter>
 #include <QPalette>
 #include <QPixmap>
+#include <QPixmapCache>
 #include <QRect>
 #include <QRectF>
 #include <QSize>
+#include <QStyle>
+#include <QStyleOption>
 #include <QSvgRenderer>
 #include <QToolButton>
 
 #include <algorithm>
+#include <optional>
 
 // Q_INIT_RESOURCE must run outside a namespace so the static library's resource
 // initializer resolves to the generated global symbol.
@@ -54,6 +60,13 @@ namespace {
 constexpr double kLucideStroke = 2.0; // what the vendored files say
 constexpr double kStroke = 1.5;       // what the app draws
 
+// kStroke is one logical pixel at the menus' 16 px. Icons from there up to the
+// toolbar's 20 px keep that line instead of growing with the icon (1.2 units at
+// 20 px), so the toolbar matches the menus at every display scale. Smaller and
+// larger icons draw kStroke.
+constexpr int kMenuIconPx = 16;
+constexpr int kToolBarIconPx = 20;
+
 // The thinnest line a render may get, in device pixels. At 1 px or less Qt's
 // raster engine switches to its hairline stroker, which drops round caps, so the
 // dots in list bullets, the info "i" and the keyboard keys vanish. At 1.5 units a
@@ -66,8 +79,17 @@ double strokeFor(double stroke, int sizePx)
     return std::max(stroke, kMinStrokePx * 24.0 / std::max(1, sizePx));
 }
 
-// The sizes QIcon is populated with. Each is rendered natively from the SVG, not
-// scaled from one pixmap, so a stroke never lands between pixels by accident.
+// The stroke, in Lucide units, for an icon `logicalPx` square drawn on
+// `devicePx` device pixels. The logical size picks the line and the device size
+// the floor.
+double strokeAt(int logicalPx, int devicePx)
+{
+    const bool onePixel = logicalPx >= kMenuIconPx && logicalPx <= kToolBarIconPx;
+    return strokeFor(onePixel ? 24.0 / logicalPx : kStroke, devicePx);
+}
+
+// The sizes glyph() icons report through QIcon::availableSizes(). They draw at
+// any size; these are the ones the tests and the contact sheet check.
 constexpr int kSizes[] = {16, 20, 24, 32, 48};
 
 // The Lucide file each glyph is drawn from, under resources/icons/lucide.
@@ -126,6 +148,7 @@ const char *lucideName(Glyph id)
     case Glyph::FileText: return "file-text";
     case Glyph::Check: return "check";
     case Glyph::Star: return "star";
+    case Glyph::Restore: return "undo-2";
     }
     return "file";
 }
@@ -188,41 +211,143 @@ QPixmap rasterize(Glyph id, const QColor &color, int sz, double strokeWidth,
     return pm;
 }
 
+// A mode's pixmap derived from the normal one by the application style, as QIcon's
+// pixmap engine does for a mode it holds no pixmap for, so a disabled glyph dims
+// like any other icon. A QGuiApplication has no style and keeps the normal look.
+QPixmap styled(QIcon::Mode mode, const QPixmap &normal)
+{
+    if (!qobject_cast<QApplication *>(QCoreApplication::instance()))
+        return normal;
+    QStyleOption option;
+    option.palette = QGuiApplication::palette();
+    const QPixmap generated = QApplication::style()->generatedIconPixmap(mode, normal, &option);
+    return generated.isNull() ? normal : generated;
+}
+
+// The engine behind glyph(), glyphBadged() and setButtonGlyph(). It draws each
+// request from the SVG at the exact device size asked for, the logical size times
+// the device pixel ratio, so 125%, 150% and 175% get native renders instead of a
+// larger render shrunk to fit, and the line follows the logical size (strokeAt).
+// Renders are kept in QPixmapCache. An engine is bound to one ink; icons are
+// rebuilt when the theme changes. It ignores QIcon::addPixmap().
+class GlyphEngine : public QIconEngine
+{
+public:
+    // A valid `disabledInk` draws the Disabled mode; otherwise the style derives it.
+    GlyphEngine(Glyph id, const QColor &ink, const QColor &disabledInk = QColor(),
+                std::optional<Glyph> badge = std::nullopt)
+        : id_(id)
+        , badge_(badge)
+        , ink_(ink)
+        , disabledInk_(disabledInk)
+    {
+    }
+
+    QIconEngine *clone() const override { return new GlyphEngine(*this); }
+    bool isNull() override { return false; }
+
+    // Glyphs are square, so the largest square that fits.
+    QSize actualSize(const QSize &size, QIcon::Mode, QIcon::State) override
+    {
+        const int side = std::min(size.width(), size.height());
+        return side > 0 ? QSize(side, side) : QSize();
+    }
+
+    QList<QSize> availableSizes(QIcon::Mode, QIcon::State) override
+    {
+        QList<QSize> sizes;
+        for (int sz : kSizes)
+            sizes.append(QSize(sz, sz));
+        return sizes;
+    }
+
+    void paint(QPainter *painter, const QRect &rect, QIcon::Mode mode, QIcon::State state) override
+    {
+        const QPaintDevice *device = painter->device();
+        const qreal dpr = device ? device->devicePixelRatio()
+                          : qGuiApp ? qGuiApp->devicePixelRatio()
+                                    : 1.0;
+        painter->drawPixmap(rect, scaledPixmap(rect.size(), mode, state, dpr));
+    }
+
+    QPixmap pixmap(const QSize &size, QIcon::Mode mode, QIcon::State state) override
+    {
+        return scaledPixmap(size, mode, state, 1.0);
+    }
+
+    // QIcon::pixmap() passes `size` in logical pixels and `scale` as the ratio.
+    QPixmap scaledPixmap(const QSize &size, QIcon::Mode mode, QIcon::State,
+                         qreal scale) override
+    {
+        // Rounded as QIcon::pixmap() rounds when it sets the result's ratio.
+        const QSize scaled = size * scale;
+        const int logical = std::min(size.width(), size.height());
+        const int device = std::min(scaled.width(), scaled.height());
+        if (logical <= 0 || device <= 0)
+            return QPixmap();
+        const bool disabledInk = mode == QIcon::Disabled && disabledInk_.isValid();
+        const bool derived = mode != QIcon::Normal && !disabledInk;
+        const QColor ink = disabledInk ? disabledInk_ : ink_;
+        // Everything the pixels depend on. A derived mode also follows the palette.
+        const QString key = QString::asprintf(
+            "mervin-glyph:%d:%d:%08x:%d:%d:%g:%d:%llx", int(id_), badge_ ? int(*badge_) : -1,
+            ink.rgba(), logical, device, scale, derived ? int(mode) : -1,
+            derived ? static_cast<unsigned long long>(QGuiApplication::palette().cacheKey())
+                    : 0ULL);
+        QPixmap pm;
+        if (QPixmapCache::find(key, &pm))
+            return pm;
+        pm = render(logical, device, scale, ink);
+        if (derived)
+            pm = styled(mode, pm);
+        pm.setDevicePixelRatio(scale);
+        QPixmapCache::insert(key, pm);
+        return pm;
+    }
+
+private:
+    // The glyph in `ink`, `device` pixels square, with its badge if it has one.
+    QPixmap render(int logical, int device, qreal scale, const QColor &ink) const
+    {
+        const double stroke = strokeAt(logical, device);
+        QPixmap pm = rasterize(id_, ink, device, stroke);
+        if (!badge_)
+            return pm;
+        // The badge at about 60% over the bottom-right corner, laid out in logical
+        // pixels. The margin behind it is erased, not filled with the menu surface
+        // colour, so the composite stays readable over the hover wash and any other
+        // row state.
+        pm.setDevicePixelRatio(scale);
+        QPixmap badge = rasterize(*badge_, ink, device, stroke);
+        badge.setDevicePixelRatio(scale);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        const int bs = logical * 3 / 5;
+        const QRect badgeBox(logical - bs, logical - bs, bs, bs);
+        const int margin = std::max(2, logical / 8);
+        p.setCompositionMode(QPainter::CompositionMode_Clear);
+        p.fillRect(badgeBox.adjusted(-margin, -margin, 0, 0), Qt::black);
+        p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+        p.drawPixmap(badgeBox, badge);
+        return pm;
+    }
+
+    Glyph id_;
+    std::optional<Glyph> badge_;
+    QColor ink_;
+    QColor disabledInk_;
+};
+
 } // namespace
 
 QIcon glyph(Glyph id, const QColor &color)
 {
-    QIcon icon;
-    for (int sz : kSizes)
-        icon.addPixmap(rasterize(id, color, sz, strokeFor(kStroke, sz)));
-    return icon;
+    return QIcon(new GlyphEngine(id, color));
 }
 
 QIcon glyphBadged(Glyph base, Glyph badge, const QColor &color)
 {
-    // Compose per rendered size: the base pictograph, then the badge at ~60%
-    // over the bottom-right corner. The margin behind the badge is erased - not
-    // filled with the menu surface colour - so the composite stays readable over
-    // the hover wash and any other row state.
-    const QIcon baseIcon  = glyph(base, color);
-    const QIcon badgeIcon = glyph(badge, color);
-    QIcon icon;
-    for (const QSize &sq : baseIcon.availableSizes()) {
-        const int sz = sq.width();
-        QPixmap pm = baseIcon.pixmap(sz, sz); // QPainter::begin() detaches the copy
-        QPainter p(&pm);
-        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
-        const int bs = sz * 3 / 5;
-        const QRect badgeBox(sz - bs, sz - bs, bs, bs);
-        const int margin = qMax(2, sz / 8);
-        p.setCompositionMode(QPainter::CompositionMode_Clear);
-        p.fillRect(badgeBox.adjusted(-margin, -margin, 0, 0), Qt::black);
-        p.setCompositionMode(QPainter::CompositionMode_SourceOver);
-        p.drawPixmap(badgeBox, badgeIcon.pixmap(sz, sz));
-        p.end();
-        icon.addPixmap(pm);
-    }
-    return icon;
+    return QIcon(new GlyphEngine(base, color, QColor(), badge));
 }
 
 QPixmap glyphPixmap(Glyph id, const QColor &color, int sizePx, double strokeWidth,
@@ -230,15 +355,15 @@ QPixmap glyphPixmap(Glyph id, const QColor &color, int sizePx, double strokeWidt
 {
     const int sz = qMax(1, sizePx);
     if (strokeWidth <= 0 && !fill.isValid()) {
-        // Drawn natively at the device size rather than scaled from the nearest
-        // QIcon render: shrinking the 16 px render to a 12 px chevron thinned its
-        // line below a pixel. Without a ratio this uses the application's, as
-        // QIcon::pixmap(size) does - the highest of all screens.
+        // Drawn natively at the device size with the line glyph() gives a sizePx
+        // icon, the same pixels glyph() draws. Shrinking a larger render thinned a
+        // 12 px chevron's line below a pixel. Without a ratio this uses the
+        // application's, the highest of all screens, as QIcon::pixmap(size) does.
         const qreal dpr = devicePixelRatio > 0 ? devicePixelRatio
                           : qGuiApp       ? qGuiApp->devicePixelRatio()
                                           : 1.0;
         const int device = qMax(1, qRound(sz * dpr));
-        QPixmap pm = rasterize(id, color, device, strokeFor(kStroke, device));
+        QPixmap pm = rasterize(id, color, device, strokeAt(sz, device));
         pm.setDevicePixelRatio(dpr);
         return pm;
     }
@@ -282,11 +407,9 @@ private:
     void apply()
     {
         const QPalette pal = button_->palette();
-        QIcon icon = glyph(glyph_, pal.color(QPalette::Active, QPalette::ButtonText));
-        const QIcon off = glyph(glyph_, pal.color(QPalette::Disabled, QPalette::ButtonText));
-        for (const QSize &sz : off.availableSizes())
-            icon.addPixmap(off.pixmap(sz), QIcon::Disabled);
-        button_->setIcon(icon);
+        button_->setIcon(QIcon(new GlyphEngine(glyph_,
+                                               pal.color(QPalette::Active, QPalette::ButtonText),
+                                               pal.color(QPalette::Disabled, QPalette::ButtonText))));
     }
 
     QAbstractButton *button_;

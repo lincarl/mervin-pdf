@@ -14,7 +14,8 @@ namespace mervin {
 // Shared Merge/Extract row UI: grip, index, dialog columns, count, output and remove button.
 // Dialogs own plans and rebuild rows after edits. This class handles focus, drag markers,
 // Ctrl+Shift+Up/Down and Ctrl+Delete. Route drops to onRowDropped/moveToGap:
-// QListWidget::InternalMove moves items separately from their row widgets.
+// QListWidget::InternalMove moves items separately from their row widgets. Delete Pages,
+// whose rows have no order, leaves out the grip and the Output column.
 class RowList : public QListWidget
 {
     // Its own context: without Q_OBJECT, tr() would be QListWidget's.
@@ -26,8 +27,9 @@ public:
     using Fill = std::function<void(QWidget *parent, QHBoxLayout *columns)>;
 
     // The Count and Output columns get these widths, or more when their
-    // translated captions need it.
-    RowList(int countWidth, int outputWidth, QWidget *parent);
+    // translated captions need it. An `outputWidth` of 0 leaves the Output column
+    // out. Rows that are not `reorderable` have no grip and take no drops.
+    RowList(int countWidth, int outputWidth, QWidget *parent, bool reorderable = true);
 
     // `minimum`, or wider when one of `texts` needs more room in `font`, plus
     // `padding`. Column widths fit English with room to spare; this lets a longer
@@ -70,7 +72,8 @@ private:
     int gapY(int gap) const;
 
     int countWidth_;
-    int outputWidth_;
+    int outputWidth_; // 0 when there is no Output column
+    bool reorderable_;
     QHBoxLayout *headerRow_ = nullptr;
     int dropAt_ = -1;   // insertion point under the cursor, -1 when not dragging
     int dragRow_ = -1;  // row whose grip is held, -1 when none

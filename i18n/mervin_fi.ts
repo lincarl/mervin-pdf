@@ -206,18 +206,6 @@ Muokattu asiakirja säilytetty %2.
         <translation>Tallenna käännetty kopio</translation>
     </message>
     <message>
-        <source>Delete Pages</source>
-        <translation>Poista sivut</translation>
-    </message>
-    <message>
-        <source>Cannot delete every page.</source>
-        <translation>Kaikkia sivuja ei voi poistaa.</translation>
-    </message>
-    <message>
-        <source>Save Edited Copy</source>
-        <translation>Tallenna muokattu kopio</translation>
-    </message>
-    <message>
         <source>Choose Output Folder</source>
         <translation>Valitse tulostuskansio</translation>
     </message>
@@ -1932,6 +1920,11 @@ Vietyä tiedostoa voi tarkastella missä tahansa PDF-katseluohjelmassa.</transla
 <context>
     <name>mervin::ExtractDialog</name>
     <message>
+        <source>Delete pages from %1</source>
+        <extracomment>Title of the Delete pages window. %1 is the document&apos;s file name, like &quot;report.pdf&quot;. The window writes a new file without the chosen pages.</extracomment>
+        <translation>Poista sivuja tiedostosta %1</translation>
+    </message>
+    <message>
         <source>Extract Pages</source>
         <translation>Poimi sivut</translation>
     </message>
@@ -1954,9 +1947,24 @@ Vietyä tiedostoa voi tarkastella missä tahansa PDF-katseluohjelmassa.</transla
         <translation>&amp;Siirrä alas</translation>
     </message>
     <message>
+        <source>&amp;Remove Row</source>
+        <extracomment>Button beside the rows of Delete pages. It takes the selected row out of the list, so the pages it names are no longer deleted. It deletes no pages. Name the row, so it cannot be read as the Delete pages button.</extracomment>
+        <translation>&amp;Poista rivi</translation>
+    </message>
+    <message>
         <source>&amp;Remove</source>
         <extracomment>Button: removes the selected row.</extracomment>
         <translation>&amp;Poista</translation>
+    </message>
+    <message>
+        <source>Delete Page</source>
+        <extracomment>Context menu item of a page in the Delete pages strip. It marks the page to be left out of the new file.</extracomment>
+        <translation>Poista sivu</translation>
+    </message>
+    <message>
+        <source>Keep Page</source>
+        <extracomment>Context menu item of a page marked for deletion in the Delete pages strip. It takes the mark away, so the new file keeps the page.</extracomment>
+        <translation>Säilytä sivu</translation>
     </message>
     <message>
         <source>Remove</source>
@@ -1982,6 +1990,11 @@ Vietyä tiedostoa voi tarkastella missä tahansa PDF-katseluohjelmassa.</transla
     <message>
         <source>&amp;Open when done</source>
         <translation>&amp;Avaa, kun olet valmis</translation>
+    </message>
+    <message>
+        <source>Delete pages</source>
+        <extracomment>Button: writes a new file without the listed pages. The original file keeps every page.</extracomment>
+        <translation>Poista sivut</translation>
     </message>
     <message>
         <source>Extract</source>
@@ -2012,6 +2025,11 @@ Vietyä tiedostoa voi tarkastella missä tahansa PDF-katseluohjelmassa.</transla
         <translation>%1 Tallentamattomat muutokset eivät sisälly.</translation>
     </message>
     <message>
+        <source>This PDF cannot be read for deleting pages.</source>
+        <extracomment>The viewer shows the document, but qpdf, which writes the new file, cannot read it.</extracomment>
+        <translation>Tätä PDF-tiedostoa ei voi lukea sivujen poistamista varten.</translation>
+    </message>
+    <message>
         <source>This PDF cannot be read for extraction.</source>
         <translation>Tätä PDF-tiedostoa ei voi lukea sivujen poimimista varten.</translation>
     </message>
@@ -2022,6 +2040,11 @@ Vietyä tiedostoa voi tarkastella missä tahansa PDF-katseluohjelmassa.</transla
     <message>
         <source>That password is not correct.</source>
         <translation>Salasana ei ole oikea.</translation>
+    </message>
+    <message>
+        <source>Save Edited Copy</source>
+        <extracomment>Title of the file picker for the new file Delete pages writes.</extracomment>
+        <translation>Tallenna muokattu kopio</translation>
     </message>
     <message>
         <source>Save Extracted Pages</source>
@@ -2036,6 +2059,11 @@ Vietyä tiedostoa voi tarkastella missä tahansa PDF-katseluohjelmassa.</transla
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
         <translation>&quot;%1&quot; on jo olemassa. Vaihda se?</translation>
+    </message>
+    <message>
+        <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Delete pages again, or choose another name.</source>
+        <extracomment>%1 is the new file&apos;s name. &quot;Delete pages&quot; is the button&apos;s text.</extracomment>
+        <translation>Tiedostoon ”%1” ei voitu kirjoittaa. Jos toinen ohjelma pitää sitä avoinna, sulje ohjelma ja paina Poista sivut uudelleen tai valitse toinen nimi.</translation>
     </message>
     <message>
         <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Extract again, or choose another name.</source>
@@ -2080,12 +2108,40 @@ Vietyä tiedostoa voi tarkastella missä tahansa PDF-katseluohjelmassa.</transla
         </translation>
     </message>
     <message numerus="yes">
+        <source>Result: %n of %1 page(s) remain (%2).</source>
+        <extracomment>Result line of Delete pages, under the page strip. %n is how many pages the new file keeps, %1 the document&apos;s page count, %2 the pages that remain as ranges, like &quot;1, 3-4&quot;. In English the verb follows %n: &quot;1 of 6 pages remains&quot;, &quot;3 of 6 pages remain&quot;.</extracomment>
+        <translation>
+            <numerusform>Tulos: %1 sivusta jää jäljelle %n (%2).</numerusform>
+            <numerusform>Tulos: %1 sivusta jää jäljelle %n (%2).</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Click the pages to delete, or add a range.</source>
+        <extracomment>Delete pages with no rows left. Clicking a page in the strip below marks it for deletion; &quot;add a range&quot; refers to the Add Range button.</extracomment>
+        <translation>Napsauta poistettavia sivuja tai lisää alue.</translation>
+    </message>
+    <message>
+        <source>Page %1 will be deleted. Click to keep it.</source>
+        <extracomment>Tooltip of a page struck out in the Delete pages strip. %1 is its page number. The original file keeps it; only the new file leaves it out.</extracomment>
+        <translation>Sivu %1 poistetaan. Säilytä se napsauttamalla.</translation>
+    </message>
+    <message>
+        <source>Click to delete page %1.</source>
+        <extracomment>Tooltip of a page in the Delete pages strip. %1 is its page number.</extracomment>
+        <translation>Poista sivu %1 napsauttamalla.</translation>
+    </message>
+    <message numerus="yes">
         <source>Pages %1 (%n page(s)). Click to show them.</source>
         <extracomment>Tooltip of a tile standing in for hidden pages: %1 is their range, like &quot;14-30&quot;.</extracomment>
         <translation>
             <numerusform>Sivut %1 (%n sivu). Näytä napsauttamalla.</numerusform>
             <numerusform>Sivut %1 (%n sivua). Näytä napsauttamalla.</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Choose where to save the edited copy.</source>
+        <extracomment>Delete pages with an empty Save as field. The edited copy is the new file without the deleted pages.</extracomment>
+        <translation>Valitse muokatun kopion tallennuspaikka.</translation>
     </message>
     <message>
         <source>Choose where to save the extracted pages.</source>
@@ -2100,12 +2156,25 @@ Vietyä tiedostoa voi tarkastella missä tahansa PDF-katseluohjelmassa.</transla
         <translation>Tätä kansiota ei ole olemassa.</translation>
     </message>
     <message>
+        <source>The edited copy cannot replace the document it comes from.</source>
+        <extracomment>Delete pages always writes a new file and never changes the original.</extracomment>
+        <translation>Muokattu kopio ei voi korvata asiakirjaa, josta se tulee.</translation>
+    </message>
+    <message>
         <source>The extract cannot replace the document it comes from.</source>
         <translation>Ote ei voi korvata asiakirjaa, josta se tulee.</translation>
     </message>
     <message>
         <source>That file is open in a tab. Choose another name.</source>
         <translation>Tämä tiedosto on avoinna välilehdellä. Valitse toinen nimi.</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n page(s) in a copy saved as %1</source>
+        <extracomment>Status bar message after Delete pages wrote its new file. %n is how many pages it left out, %1 the new file&apos;s name. The original is unchanged.</extracomment>
+        <translation>
+            <numerusform>Poistettiin %n sivu kopiosta, joka tallennettiin nimellä %1</numerusform>
+            <numerusform>Poistettiin %n sivua kopiosta, joka tallennettiin nimellä %1</numerusform>
+        </translation>
     </message>
     <message>
         <source>Extracted page %1 to %2</source>

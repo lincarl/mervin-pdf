@@ -96,18 +96,19 @@ private slots:
         }
     }
 
-    // Fresh profiles use dark chrome and the system accent, and remove missing
-    // recent files. Explicit saved preferences survive the new defaults.
+    // Fresh profiles follow the system's light or dark chrome, use the system accent,
+    // and remove missing recent files. Explicit saved preferences survive the new
+    // defaults.
     void appearanceAndRecentDefaultsRespectSavedValues()
     {
         QTemporaryDir dir;
         mervin::ConfigPaths::setOverrideDir(dir.path());
         auto s = mervin::Settings::load();
-        QCOMPARE(s.colorScheme, QStringLiteral("dark"));
+        QCOMPARE(s.colorScheme, QStringLiteral("system"));
         QCOMPARE(s.accentColor, QStringLiteral("system"));
         QVERIFY(!s.recentKeepMissing);
 
-        s.colorScheme = QStringLiteral("light");
+        s.colorScheme = QStringLiteral("dark"); // the old default, saved by earlier versions
         s.accentColor = QStringLiteral("#112233");
         for (const bool keepMissing : {true, false}) {
             s.recentKeepMissing = keepMissing;

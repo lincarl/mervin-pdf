@@ -2,6 +2,7 @@
 
 #include "config/Settings.h"
 #include "dialogs/SettingsDialog.h"
+#include "extract/ExtractPlan.h"
 #include "recent/ViewState.h"
 #include "render/MeasureContent.h"
 #include "ui/ViewerWidget.h"
@@ -11,6 +12,7 @@
 #include <QSet>
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace mervin {
@@ -151,10 +153,10 @@ private slots:
     void mergeDocuments();
 
 private:
-    // Extract Pages for the current document, its one row holding `seedPage`
-    // (0-based): the page on screen from the Document menu, the clicked page from
-    // the page's Save Page As.
-    void extractPages(int seedPage);
+    // Extract Pages or Delete Pages (`mode`) for the current document. The one row
+    // holds `seedPage` (0-based) when given: the clicked page from the page's Save
+    // Page As, or for Delete the page in view. Extract without it holds every page.
+    void pagesDialog(mervin::ExtractPlan::Mode mode, std::optional<int> seedPage);
     void createActions();
     void createToolBar();
     void createMenus();
@@ -167,6 +169,7 @@ private:
     void updateSidebars();     // sync sidebars with the current document/page
     void refreshCommentsSidebar(); // repopulate the comments list from the current viewer
     // Prompt for a 0-based page set ("all", "1-5", "1,3,5-9"); empty == cancel.
+    // Rotate Pages uses it.
     QList<int> askPageRange(const QString &title, int pageCount);
     QStringList askForPdfs();              // app picker: local multi-select or typed URL
     void openUrl(const QUrl &url, bool inNewWindow = false); // download, then open its cache file

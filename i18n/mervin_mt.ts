@@ -210,18 +210,6 @@ Dokument editjat miżmuma f&apos;%2.
         <translation>Issejvja kopja mdawra</translation>
     </message>
     <message>
-        <source>Delete Pages</source>
-        <translation>Ħassar Paġni</translation>
-    </message>
-    <message>
-        <source>Cannot delete every page.</source>
-        <translation>Ma tistax tħassar il-paġni kollha.</translation>
-    </message>
-    <message>
-        <source>Save Edited Copy</source>
-        <translation>Issejvja kopja editjata</translation>
-    </message>
-    <message>
         <source>Choose Output Folder</source>
         <translation>Agħżel il-folder tal-output</translation>
     </message>
@@ -1936,6 +1924,11 @@ Il-fajl esportat jista&apos; jara fi kwalunkwe viewer PDF.</translation>
 <context>
     <name>mervin::ExtractDialog</name>
     <message>
+        <source>Delete pages from %1</source>
+        <extracomment>Title of the Delete pages window. %1 is the document&apos;s file name, like &quot;report.pdf&quot;. The window writes a new file without the chosen pages.</extracomment>
+        <translation>Ħassar paġni minn %1</translation>
+    </message>
+    <message>
         <source>Extract Pages</source>
         <translation>Oħroġ paġni</translation>
     </message>
@@ -1958,9 +1951,24 @@ Il-fajl esportat jista&apos; jara fi kwalunkwe viewer PDF.</translation>
         <translation>&amp;Nimxu &apos;l isfel</translation>
     </message>
     <message>
+        <source>&amp;Remove Row</source>
+        <extracomment>Button beside the rows of Delete pages. It takes the selected row out of the list, so the pages it names are no longer deleted. It deletes no pages. Name the row, so it cannot be read as the Delete pages button.</extracomment>
+        <translation>&amp;Neħħi r-ringiela</translation>
+    </message>
+    <message>
         <source>&amp;Remove</source>
         <extracomment>Button: removes the selected row.</extracomment>
         <translation>&amp;Neħħi</translation>
+    </message>
+    <message>
+        <source>Delete Page</source>
+        <extracomment>Context menu item of a page in the Delete pages strip. It marks the page to be left out of the new file.</extracomment>
+        <translation>Ħassar il-Paġna</translation>
+    </message>
+    <message>
+        <source>Keep Page</source>
+        <extracomment>Context menu item of a page marked for deletion in the Delete pages strip. It takes the mark away, so the new file keeps the page.</extracomment>
+        <translation>Żomm il-Paġna</translation>
     </message>
     <message>
         <source>Remove</source>
@@ -1986,6 +1994,11 @@ Il-fajl esportat jista&apos; jara fi kwalunkwe viewer PDF.</translation>
     <message>
         <source>&amp;Open when done</source>
         <translation>&amp;Iftaħ meta jkun lest</translation>
+    </message>
+    <message>
+        <source>Delete pages</source>
+        <extracomment>Button: writes a new file without the listed pages. The original file keeps every page.</extracomment>
+        <translation>Ħassar il-paġni</translation>
     </message>
     <message>
         <source>Extract</source>
@@ -2016,6 +2029,11 @@ Il-fajl esportat jista&apos; jara fi kwalunkwe viewer PDF.</translation>
         <translation>%1 Bidliet mhux salvati mhumiex inklużi.</translation>
     </message>
     <message>
+        <source>This PDF cannot be read for deleting pages.</source>
+        <extracomment>The viewer shows the document, but qpdf, which writes the new file, cannot read it.</extracomment>
+        <translation>Dan il-PDF ma jistax jinqara biex jitħassru paġni.</translation>
+    </message>
+    <message>
         <source>This PDF cannot be read for extraction.</source>
         <translation>Dan il-PDF ma jistax jinqara għall-estrazzjoni.</translation>
     </message>
@@ -2026,6 +2044,11 @@ Il-fajl esportat jista&apos; jara fi kwalunkwe viewer PDF.</translation>
     <message>
         <source>That password is not correct.</source>
         <translation>Dik il-password mhix korretta.</translation>
+    </message>
+    <message>
+        <source>Save Edited Copy</source>
+        <extracomment>Title of the file picker for the new file Delete pages writes.</extracomment>
+        <translation>Issejvja kopja editjata</translation>
     </message>
     <message>
         <source>Save Extracted Pages</source>
@@ -2040,6 +2063,11 @@ Il-fajl esportat jista&apos; jara fi kwalunkwe viewer PDF.</translation>
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
         <translation>&quot;%1&quot; diġà jeżisti. Ibdelha?</translation>
+    </message>
+    <message>
+        <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Delete pages again, or choose another name.</source>
+        <extracomment>%1 is the new file&apos;s name. &quot;Delete pages&quot; is the button&apos;s text.</extracomment>
+        <translation>Ma setax jinkiteb &quot;%1&quot;. Jekk programm ieħor għandu l-fajl miftuħ, agħlqu u erġa&apos; agħfas Ħassar il-paġni, jew agħżel isem ieħor.</translation>
     </message>
     <message>
         <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Extract again, or choose another name.</source>
@@ -2086,6 +2114,31 @@ Il-fajl esportat jista&apos; jara fi kwalunkwe viewer PDF.</translation>
         </translation>
     </message>
     <message numerus="yes">
+        <source>Result: %n of %1 page(s) remain (%2).</source>
+        <extracomment>Result line of Delete pages, under the page strip. %n is how many pages the new file keeps, %1 the document&apos;s page count, %2 the pages that remain as ranges, like &quot;1, 3-4&quot;. In English the verb follows %n: &quot;1 of 6 pages remains&quot;, &quot;3 of 6 pages remain&quot;.</extracomment>
+        <translation>
+            <numerusform>Riżultat: paġni li jibqgħu: %n minn %1 (%2).</numerusform>
+            <numerusform>Riżultat: paġni li jibqgħu: %n minn %1 (%2).</numerusform>
+            <numerusform>Riżultat: paġni li jibqgħu: %n minn %1 (%2).</numerusform>
+            <numerusform>Riżultat: paġni li jibqgħu: %n minn %1 (%2).</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Click the pages to delete, or add a range.</source>
+        <extracomment>Delete pages with no rows left. Clicking a page in the strip below marks it for deletion; &quot;add a range&quot; refers to the Add Range button.</extracomment>
+        <translation>Ikklikkja l-paġni li trid tħassar, jew żid firxa.</translation>
+    </message>
+    <message>
+        <source>Page %1 will be deleted. Click to keep it.</source>
+        <extracomment>Tooltip of a page struck out in the Delete pages strip. %1 is its page number. The original file keeps it; only the new file leaves it out.</extracomment>
+        <translation>Il-paġna %1 se titħassar. Ikklikkja biex iżżommha.</translation>
+    </message>
+    <message>
+        <source>Click to delete page %1.</source>
+        <extracomment>Tooltip of a page in the Delete pages strip. %1 is its page number.</extracomment>
+        <translation>Ikklikkja biex tħassar il-paġna %1.</translation>
+    </message>
+    <message numerus="yes">
         <source>Pages %1 (%n page(s)). Click to show them.</source>
         <extracomment>Tooltip of a tile standing in for hidden pages: %1 is their range, like &quot;14-30&quot;.</extracomment>
         <translation>
@@ -2094,6 +2147,11 @@ Il-fajl esportat jista&apos; jara fi kwalunkwe viewer PDF.</translation>
             <numerusform>Paġni %1 (għadd: %n). Ikklikkja biex turihom.</numerusform>
             <numerusform>Paġni %1 (għadd: %n). Ikklikkja biex turihom.</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Choose where to save the edited copy.</source>
+        <extracomment>Delete pages with an empty Save as field. The edited copy is the new file without the deleted pages.</extracomment>
+        <translation>Agħżel fejn tissejvja l-kopja editjata.</translation>
     </message>
     <message>
         <source>Choose where to save the extracted pages.</source>
@@ -2108,12 +2166,27 @@ Il-fajl esportat jista&apos; jara fi kwalunkwe viewer PDF.</translation>
         <translation>Dak il-folder ma jeżistix.</translation>
     </message>
     <message>
+        <source>The edited copy cannot replace the document it comes from.</source>
+        <extracomment>Delete pages always writes a new file and never changes the original.</extracomment>
+        <translation>Il-kopja editjata ma tistax tissostitwixxi d-dokument li ġejja minnu.</translation>
+    </message>
+    <message>
         <source>The extract cannot replace the document it comes from.</source>
         <translation>L-estratt ma jistax jissostitwixxi d-dokument li ġej minnu.</translation>
     </message>
     <message>
         <source>That file is open in a tab. Choose another name.</source>
         <translation>Dak il-fajl huwa miftuħ f&apos;tab. Agħżel isem ieħor.</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n page(s) in a copy saved as %1</source>
+        <extracomment>Status bar message after Delete pages wrote its new file. %n is how many pages it left out, %1 the new file&apos;s name. The original is unchanged.</extracomment>
+        <translation>
+            <numerusform>Paġni mħassra: %n. Il-kopja ġiet salvata bħala %1</numerusform>
+            <numerusform>Paġni mħassra: %n. Il-kopja ġiet salvata bħala %1</numerusform>
+            <numerusform>Paġni mħassra: %n. Il-kopja ġiet salvata bħala %1</numerusform>
+            <numerusform>Paġni mħassra: %n. Il-kopja ġiet salvata bħala %1</numerusform>
+        </translation>
     </message>
     <message>
         <source>Extracted page %1 to %2</source>

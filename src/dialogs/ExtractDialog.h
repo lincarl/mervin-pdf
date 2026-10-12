@@ -24,7 +24,10 @@ class RowList;
 
 // ExtractPlan-backed editor with reorderable page/range rows and an output thumbnail strip.
 // Rows and strip write into the plan; all displayed state is rebuilt from it. Shares RowList
-// with MergeDialog.
+// with MergeDialog. In Delete mode (Document > Delete Pages) the same window lists the pages
+// to leave out of a copy. The rows have no order, the strip shows every page and a click
+// deletes or keeps one, and the copy is written with PageOps::deletePages, which keeps the
+// source's structure and encryption.
 class ExtractDialog : public QDialog
 {
     Q_OBJECT
@@ -32,10 +35,14 @@ class ExtractDialog : public QDialog
 public:
     struct Source
     {
+        ExtractPlan::Mode mode = ExtractPlan::Mode::Extract;
         QString path;            // the file on disk: what qpdf reads
         QString password;        // the tab's, tried before the password row is shown
         int viewerPageCount = 0; // used only when qpdf cannot count (locked)
-        int currentPage = 0;     // 0-based; the first row's page (on screen, or Save Page As's)
+        // 0-based: the one row holds this page (Save Page As, and in Delete mode the
+        // page in view). Without it the row holds every page, first to last
+        // (Document > Extract Pages); in Delete mode it starts empty.
+        std::optional<int> seedPage;
         bool hasUnsavedEdits = false;
         bool openWhenDone = true; // last choice, from Settings
         QStringList openPaths;    // files open in any tab: Save as may not name one
@@ -62,12 +69,12 @@ private:
     void accept() override;
 
     // Tear down and rebuild every row from plan_, refresh(), then make `selectRow`
-    // (clamped) current and reveal it in the strip. Field puts the caret at the
-    // end of that row's field and SelectAll selects its text; Keep does what Field
-    // does only when focus was in the list, whose fields the rebuild replaces, and
-    // otherwise leaves it.
+    // (clamped) current and, when `reveal`, scroll the strip to it. Field puts the
+    // caret at the end of that row's field and SelectAll selects its text; Keep
+    // does what Field does only when focus was in the list, whose fields the
+    // rebuild replaces, and otherwise leaves it.
     enum class Focus { Keep, Field, SelectAll };
-    void rebuild(int selectRow, Focus focus);
+    void rebuild(int selectRow, Focus focus, bool reveal = true);
     // A row's field, typed or pasted. Text with a comma or semicolon is split
     // into rows by applySplit() on the next event-loop turn.
     void specChanged(int row, const QString &text);
@@ -80,6 +87,9 @@ private:
     void moveCurrent(int delta);
     void removeCurrent();
     void removeCells(const ExtractPlan::Cell &cell);
+    // In Delete mode, delete a kept page or keep a deleted one. The strip stays
+    // where it is, since the click was on a page in view.
+    void togglePage(const ExtractPlan::Cell &cell);
     void expand(const ExtractPlan::RunKey &run);
     void updateActions(); // the strip's context menu follows its current cell
     void browseForOutput();
@@ -112,7 +122,7 @@ private:
     RowList *list_ = nullptr;
     QList<QLineEdit *> specs_; // one per row, rebuilt with the list
     QLabel *of_ = nullptr;
-    QPushButton *upBtn_ = nullptr;
+    QPushButton *upBtn_ = nullptr;   // Extract mode only, as are removeAct_ and expandAct_
     QPushButton *downBtn_ = nullptr;
     QPushButton *removeBtn_ = nullptr;
     ExtractStrip *strip_ = nullptr;
@@ -124,6 +134,8 @@ private:
     QPushButton *acceptBtn_ = nullptr;
     QAction *removeAct_ = nullptr;
     QAction *expandAct_ = nullptr;
+    QAction *deleteAct_ = nullptr; // the strip's Delete Page and Keep Page, in
+    QAction *keepAct_ = nullptr;   // Delete mode only
 };
 
 } // namespace mervin

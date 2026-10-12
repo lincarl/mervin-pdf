@@ -19,6 +19,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QStyle>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -50,9 +51,16 @@ QHBoxLayout *row()
 ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
     : QDialog(parent)
     , source_(source)
-    , plan_(source.path, source.viewerPageCount)
+    , plan_(source.path, source.viewerPageCount, source.mode)
 {
-    setWindowTitle(tr("Extract Pages"));
+    const bool deleting = source.mode == ExtractPlan::Mode::Delete;
+    if (deleting) {
+        //: Title of the Delete pages window. %1 is the document's file name, like
+        //: "report.pdf". The window writes a new file without the chosen pages.
+        setWindowTitle(tr("Delete pages from %1").arg(QFileInfo(source.path).fileName()));
+    } else {
+        setWindowTitle(tr("Extract Pages"));
+    }
 
     // qpdf is what will write, so qpdf is asked: whatever it can open, the write
     // can read. It never prompts. An encrypted file is tried with the tab's
@@ -84,11 +92,12 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
     layout->setSpacing(0); // the gaps between rows are set one by one below
 
     // ── Rows + button column (Merge's arrangement, without its hint lines) ───
+    // Pages to delete have no order, so Delete has no grips, moves or Output column.
     auto *middle = row();
     auto *listSide = new QVBoxLayout;
     listSide->setContentsMargins(0, 0, 0, 0);
     listSide->setSpacing(4);
-    list_ = new RowList(kColCount, kColOutput, this);
+    list_ = new RowList(kColCount, deleting ? 0 : kColOutput, this, !deleting);
     list_->setObjectName(QStringLiteral("extractList"));
     listSide->addWidget(list_->makeHeader([this](QWidget *header, QHBoxLayout *columns) {
         //: Column caption over the page range fields. The next label, "of %1",
@@ -98,14 +107,16 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
         of_->setObjectName(QStringLiteral("extractOf"));
         columns->addWidget(of_, 1);
     }));
-    list_->onRowDropped = [this](int from, int gap) {
-        // The drop arrives inside QDrag::exec(), whose grip is still on the stack:
-        // move the plan now, rebuild the widgets on the next turn.
-        const int landed = plan_.moveToGap(from, gap);
-        if (landed >= 0)
-            QTimer::singleShot(0, this, [this, landed] { rebuild(landed, Focus::Keep); });
-    };
-    list_->onMove = [this](int delta) { moveCurrent(delta); };
+    if (!deleting) {
+        list_->onRowDropped = [this](int from, int gap) {
+            // The drop arrives inside QDrag::exec(), whose grip is still on the stack:
+            // move the plan now, rebuild the widgets on the next turn.
+            const int landed = plan_.moveToGap(from, gap);
+            if (landed >= 0)
+                QTimer::singleShot(0, this, [this, landed] { rebuild(landed, Focus::Keep); });
+        };
+        list_->onMove = [this](int delta) { moveCurrent(delta); };
+    }
     list_->onRemove = [this] { removeCurrent(); };
     connect(list_, &QListWidget::currentRowChanged, this, [this] { syncCurrentRow(true); });
     listSide->addWidget(list_, 1);
@@ -124,13 +135,26 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
     };
     //: Button: adds an empty row below the selected one.
     connect(sideButton(tr("&Add Range")), &QPushButton::clicked, this, &ExtractDialog::addRange);
-    upBtn_ = sideButton(tr("Move &Up"));
-    connect(upBtn_, &QPushButton::clicked, this, [this] { moveCurrent(-1); });
-    downBtn_ = sideButton(tr("Move &Down"));
-    connect(downBtn_, &QPushButton::clicked, this, [this] { moveCurrent(1); });
+    if (!deleting) {
+        upBtn_ = sideButton(tr("Move &Up"));
+        connect(upBtn_, &QPushButton::clicked, this, [this] { moveCurrent(-1); });
+        downBtn_ = sideButton(tr("Move &Down"));
+        connect(downBtn_, &QPushButton::clicked, this, [this] { moveCurrent(1); });
+    }
     side->addSpacing(6);
-    //: Button: removes the selected row.
-    removeBtn_ = sideButton(tr("&Remove"), icons::glyph(icons::Glyph::Delete, Theme::iconInk(palette())));
+    const QColor ink = Theme::iconInk(palette());
+    if (deleting) {
+        // Taking a row away keeps its pages, so this button has the row's own ✕
+        // rather than the bin the strip uses to delete a page.
+        //: Button beside the rows of Delete pages. It takes the selected row out of
+        //: the list, so the pages it names are no longer deleted. It deletes no
+        //: pages. Name the row, so it cannot be read as the Delete pages button.
+        removeBtn_ = sideButton(tr("&Remove Row"), icons::glyph(icons::Glyph::Close, ink));
+    } else {
+        //: Button: removes the selected row.
+        removeBtn_ = sideButton(tr("&Remove"), icons::glyph(icons::Glyph::Delete, ink));
+    }
+    removeBtn_->setObjectName(QStringLiteral("extractRemove"));
     connect(removeBtn_, &QPushButton::clicked, this, &ExtractDialog::removeCurrent);
     side->addStretch(1);
     middle->addLayout(side, 0);
@@ -140,6 +164,7 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
     // ── The result strip ─────────────────────────────────────────────────────
     strip_ = new ExtractStrip(this);
     strip_->setObjectName(QStringLiteral("extractStrip"));
+    strip_->setMode(source.mode);
     strip_->setSource(source.doc, source.engine);
     // Resizing refolds from scratch: it is one of the two ways an expanded fold
     // closes (editing its run is the other, see refresh).
@@ -149,6 +174,7 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
     });
     connect(strip_, &ExtractStrip::foldActivated, this, &ExtractDialog::expand);
     connect(strip_, &ExtractStrip::removeClicked, this, &ExtractDialog::removeCells);
+    connect(strip_, &ExtractStrip::toggleClicked, this, &ExtractDialog::togglePage);
     connect(strip_, &ExtractStrip::currentCellChanged, this, &ExtractDialog::updateActions);
     connect(strip_, &ExtractStrip::rowPicked, this, [this](int row) { list_->setCurrentRow(row); });
     layout->addWidget(strip_);
@@ -162,19 +188,38 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
         strip_->addAction(a);
         return a;
     };
-    //: Context menu item of a page in the strip: takes it out of the extract.
-    removeAct_ = stripAction(tr("Remove"));
-    removeAct_->setShortcuts({QKeySequence(Qt::Key_Delete), QKeySequence(Qt::Key_Backspace)});
-    connect(removeAct_, &QAction::triggered, this, [this] {
-        if (const ExtractPlan::Cell *c = strip_->currentCell())
-            removeCells(*c);
-    });
-    expandAct_ = stripAction(QString());
-    expandAct_->setShortcut(QKeySequence(Qt::Key_Space));
-    connect(expandAct_, &QAction::triggered, this, [this] {
-        if (const ExtractPlan::Cell *c = strip_->currentCell())
-            expand(c->run);
-    });
+    const auto onCurrentCell = [this](void (ExtractDialog::*act)(const ExtractPlan::Cell &)) {
+        return [this, act] {
+            if (const ExtractPlan::Cell *c = strip_->currentCell())
+                (this->*act)(*c);
+        };
+    };
+    if (deleting) {
+        // One of the two shows, as the current page needs. Space toggles, like a
+        // check box; Delete and Backspace only delete.
+        //: Context menu item of a page in the Delete pages strip. It marks the page
+        //: to be left out of the new file.
+        deleteAct_ = stripAction(tr("Delete Page"));
+        deleteAct_->setShortcuts({QKeySequence(Qt::Key_Delete), QKeySequence(Qt::Key_Backspace),
+                                  QKeySequence(Qt::Key_Space)});
+        connect(deleteAct_, &QAction::triggered, this, onCurrentCell(&ExtractDialog::togglePage));
+        //: Context menu item of a page marked for deletion in the Delete pages
+        //: strip. It takes the mark away, so the new file keeps the page.
+        keepAct_ = stripAction(tr("Keep Page"));
+        keepAct_->setShortcut(QKeySequence(Qt::Key_Space));
+        connect(keepAct_, &QAction::triggered, this, onCurrentCell(&ExtractDialog::togglePage));
+    } else {
+        //: Context menu item of a page in the strip: takes it out of the extract.
+        removeAct_ = stripAction(tr("Remove"));
+        removeAct_->setShortcuts({QKeySequence(Qt::Key_Delete), QKeySequence(Qt::Key_Backspace)});
+        connect(removeAct_, &QAction::triggered, this, onCurrentCell(&ExtractDialog::removeCells));
+        expandAct_ = stripAction(QString());
+        expandAct_->setShortcut(QKeySequence(Qt::Key_Space));
+        connect(expandAct_, &QAction::triggered, this, [this] {
+            if (const ExtractPlan::Cell *c = strip_->currentCell())
+                expand(c->run);
+        });
+    }
 
     // ── Summary and the reserved error line ──────────────────────────────────
     summary_ = new QLabel(this);
@@ -186,6 +231,9 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
     layout->addSpacing(2);
     error_ = new QLabel(this);
     error_->setObjectName(QStringLiteral("extractError"));
+    // A long reason, such as a translated "Row 2: Page 40 is out of range (1-31).",
+    // wraps onto a second line and takes the room from the rows.
+    error_->setWordWrap(true);
     error_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     // Reserved even when empty, so nothing below moves as the rows go in and out
     // of validity.
@@ -257,8 +305,14 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
     buttonRow->addWidget(openWhenDone_);
     buttonRow->addStretch(1);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
-    //: Button: writes the extracted pages to a new file.
-    acceptBtn_ = buttons->addButton(tr("Extract"), QDialogButtonBox::AcceptRole);
+    if (deleting) {
+        //: Button: writes a new file without the listed pages. The original file
+        //: keeps every page.
+        acceptBtn_ = buttons->addButton(tr("Delete pages"), QDialogButtonBox::AcceptRole);
+    } else {
+        //: Button: writes the extracted pages to a new file.
+        acceptBtn_ = buttons->addButton(tr("Extract"), QDialogButtonBox::AcceptRole);
+    }
     acceptBtn_->setObjectName(QStringLiteral("extractAccept"));
     acceptBtn_->setDefault(true);
     connect(buttons, &QDialogButtonBox::accepted, this, &ExtractDialog::accept);
@@ -266,10 +320,16 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
     buttonRow->addWidget(buttons);
     layout->addLayout(buttonRow);
 
-    // One row holding the page being viewed, selected, so typing replaces it and
-    // Enter extracts it.
-    const int seed = qBound(0, source.currentPage, qMax(0, plan_.pageCount() - 1));
-    plan_.append(QString::number(seed + 1));
+    // One row, selected, so typing replaces it and Enter extracts it: the page Save
+    // Page As was opened for, or every page, first to last. Delete starts on the
+    // page in view, since deleting the page being read is the common case.
+    const int last = qMax(1, plan_.pageCount());
+    if (source.seedPage)
+        plan_.append(QString::number(qBound(0, *source.seedPage, last - 1) + 1));
+    else if (deleting)
+        plan_.append(QString());
+    else
+        plan_.append(last > 1 ? QStringLiteral("1-%1").arg(last) : QStringLiteral("1"));
     rebuild(0, Focus::SelectAll);
 
     resize(kWidth, kHeight);
@@ -283,7 +343,7 @@ bool ExtractDialog::openWhenDone() const
     return openWhenDone_->isChecked();
 }
 
-void ExtractDialog::rebuild(int selectRow, Focus focus)
+void ExtractDialog::rebuild(int selectRow, Focus focus, bool reveal)
 {
     if (focus == Focus::Keep) {
         const QWidget *f = focusWidget();
@@ -320,9 +380,13 @@ void ExtractDialog::rebuild(int selectRow, Focus focus)
     refresh();
     const int current = qMin(selectRow, plan_.count() - 1);
     if (current >= 0) {
-        list_->setCurrentRow(current);
+        {
+            // Quiet, so `reveal` alone decides whether the strip scrolls.
+            const QSignalBlocker quiet(list_);
+            list_->setCurrentRow(current);
+        }
         list_->scrollToItem(list_->item(current));
-        syncCurrentRow(true); // also when the row was already current
+        syncCurrentRow(reveal);
     }
     if (current < 0 || focus == Focus::Keep)
         return;
@@ -392,6 +456,15 @@ void ExtractDialog::removeCells(const ExtractPlan::Cell &cell)
     rebuild(next, Focus::Keep);
 }
 
+void ExtractDialog::togglePage(const ExtractPlan::Cell &cell)
+{
+    if (cell.kind != ExtractPlan::Cell::Kind::Page)
+        return;
+    const int row = cell.deleted ? plan_.keepPage(cell.page) : plan_.deletePage(cell.page);
+    pendingFlat_ = cell.firstFlat; // the page itself stays current
+    rebuild(row >= 0 ? row : list_->currentRow(), Focus::Keep, false);
+}
+
 void ExtractDialog::expand(const ExtractPlan::RunKey &run)
 {
     if (!expanded_.contains(run))
@@ -404,6 +477,15 @@ void ExtractDialog::expand(const ExtractPlan::RunKey &run)
 void ExtractDialog::updateActions()
 {
     const ExtractPlan::Cell *c = strip_->currentCell();
+    if (deleteAct_) {
+        // A hidden action's shortcut does not fire, so Space reaches only the one shown.
+        const bool deleted = c && c->deleted;
+        deleteAct_->setVisible(c && !deleted);
+        deleteAct_->setEnabled(c && !deleted);
+        keepAct_->setVisible(deleted);
+        keepAct_->setEnabled(deleted);
+        return;
+    }
     removeAct_->setEnabled(c != nullptr);
     const bool fold = c && c->kind == ExtractPlan::Cell::Kind::Fold;
     expandAct_->setVisible(fold);
@@ -418,8 +500,10 @@ void ExtractDialog::updateActions()
 void ExtractDialog::syncCurrentRow(bool reveal)
 {
     const int cur = list_->currentRow();
-    upBtn_->setEnabled(cur > 0);
-    downBtn_->setEnabled(cur >= 0 && cur < plan_.count() - 1);
+    if (upBtn_) {
+        upBtn_->setEnabled(cur > 0);
+        downBtn_->setEnabled(cur >= 0 && cur < plan_.count() - 1);
+    }
     removeBtn_->setEnabled(cur >= 0);
     // With one row every cell is that row's, so marking it would say nothing.
     strip_->setHighlightedRow(plan_.count() > 1 ? cur : -1);
@@ -487,8 +571,14 @@ void ExtractDialog::refresh()
 
 QString ExtractDialog::problem() const
 {
-    if (readError_)
+    if (readError_) {
+        if (plan_.mode() == ExtractPlan::Mode::Delete) {
+            //: The viewer shows the document, but qpdf, which writes the new file,
+            //: cannot read it.
+            return tr("This PDF cannot be read for deleting pages.");
+        }
         return tr("This PDF cannot be read for extraction.");
+    }
     const QString planError = plan_.errorText();
     if (!planError.isEmpty())
         return planError;
@@ -501,7 +591,10 @@ QString ExtractDialog::problem() const
 
 void ExtractDialog::browseForOutput()
 {
-    const QString picked = QFileDialog::getSaveFileName(this, tr("Save Extracted Pages"),
+    //: Title of the file picker for the new file Delete pages writes.
+    const QString title = plan_.mode() == ExtractPlan::Mode::Delete ? tr("Save Edited Copy")
+                                                                     : tr("Save Extracted Pages");
+    const QString picked = QFileDialog::getSaveFileName(this, title,
                                                         plan_.resolvePath(output_->text()),
                                                         //: File type filter. Keep "(*.pdf)".
                                                         tr("PDF documents (*.pdf)"));
@@ -552,7 +645,7 @@ void ExtractDialog::accept()
 
     const ExtractPlan::Job job = plan_.job(output_->text());
     if (QFileInfo::exists(job.path)
-        && QMessageBox::question(this, tr("Extract Pages"),
+        && QMessageBox::question(this, windowTitle(),
                                  //: %1 is a file path.
                                  tr("\"%1\" already exists. Replace it?")
                                      .arg(QDir::toNativeSeparators(job.path)),
@@ -567,17 +660,29 @@ void ExtractDialog::accept()
     // another program holds open, or a full disk, then costs a message on the
     // error line instead of every row. merge() fails on an out-of-range page
     // rather than skipping it, and one input on the same file is exactly an
-    // extract.
+    // extract. deletePages() copies the whole file minus the pages, so the copy
+    // keeps the source's structure and encryption, as Delete Pages always has.
+    const bool deleting = job.mode == ExtractPlan::Mode::Delete;
     QString err;
     QApplication::setOverrideCursor(Qt::WaitCursor);
-    const PageOps::Status st = PageOps::merge(
-        {PageOps::MergeInput{source_.path, job.pages, password_}}, job.path, &err);
+    const PageOps::Status st =
+        deleting ? PageOps::deletePages(source_.path, job.path, job.pages, password_, &err)
+                 : PageOps::merge({PageOps::MergeInput{source_.path, job.pages, password_}},
+                                  job.path, &err);
     QApplication::restoreOverrideCursor();
     if (st != PageOps::Status::Ok) {
-        //: %1 is the new file's name.
-        writeError_ = tr("Could not write \"%1\". If another program has it open, close it "
-                         "and press Extract again, or choose another name.")
-                          .arg(QFileInfo(job.path).fileName());
+        const QString name = QFileInfo(job.path).fileName();
+        if (deleting) {
+            //: %1 is the new file's name. "Delete pages" is the button's text.
+            writeError_ = tr("Could not write \"%1\". If another program has it open, close "
+                             "it and press Delete pages again, or choose another name.")
+                              .arg(name);
+        } else {
+            //: %1 is the new file's name.
+            writeError_ = tr("Could not write \"%1\". If another program has it open, close it "
+                             "and press Extract again, or choose another name.")
+                              .arg(name);
+        }
         writeErrorDetail_ = QDir::toNativeSeparators(err);
         refresh();
         return;

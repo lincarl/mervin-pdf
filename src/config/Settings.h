@@ -20,9 +20,9 @@ struct Settings
     QString pageMode = QStringLiteral("continuous");   // "continuous" | "single"
     bool twoPageSpread = false;                        // facing pages in one row
     // UI theme: the application chrome's light/dark scheme, chosen with the cards
-    // under Settings -> Appearance -> Application. New installs default to "dark".
-    // "system" follows the OS setting, including live auto-switches.
-    QString colorScheme = QStringLiteral("dark");      // "system" | "light" | "dark"
+    // under Settings -> Appearance -> Application. New installs default to "system",
+    // which follows the OS setting, including live auto-switches.
+    QString colorScheme = QStringLiteral("system");    // "system" | "light" | "dark"
     // Document theme is independent of chrome: light preserves pages, dark inverts, comfort
     // applies the colour-aware dark transform, and legacy follow-ui follows the UI scheme.
     // Migrate invert_colors true/false to dark/light; new installs default to light.
@@ -70,8 +70,9 @@ struct Settings
     bool highlightFormFields = true;
     bool autoFormFill = true;
 
-    // Document > Extract Pages: the dialog's "Open when done" box, remembered.
-    // True by default because the old "Open it now?" prompt defaulted to Yes.
+    // The "Open when done" box of Document > Extract Pages and Delete Pages,
+    // remembered and shared, since both write a new file from the open one. True
+    // by default because the old "Open it now?" prompt defaulted to Yes.
     bool extractOpenWhenDone = true;
 
     // Selection OCR. This is a Tesseract language code (for example, "eng").

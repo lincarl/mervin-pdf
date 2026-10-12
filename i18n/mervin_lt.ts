@@ -208,18 +208,6 @@ Redaguotas dokumentas išsaugotas %2.
         <translation>Išsaugoti pasuktą kopiją</translation>
     </message>
     <message>
-        <source>Delete Pages</source>
-        <translation>Ištrinti puslapius</translation>
-    </message>
-    <message>
-        <source>Cannot delete every page.</source>
-        <translation>Negalima pašalinti visų puslapių.</translation>
-    </message>
-    <message>
-        <source>Save Edited Copy</source>
-        <translation>Išsaugoti redaguotą kopiją</translation>
-    </message>
-    <message>
         <source>Choose Output Folder</source>
         <translation>Pasirinkite išvesties aplanką</translation>
     </message>
@@ -1934,6 +1922,11 @@ Eksportuotą failą galima peržiūrėti bet kurioje PDF peržiūros priemonėje
 <context>
     <name>mervin::ExtractDialog</name>
     <message>
+        <source>Delete pages from %1</source>
+        <extracomment>Title of the Delete pages window. %1 is the document&apos;s file name, like &quot;report.pdf&quot;. The window writes a new file without the chosen pages.</extracomment>
+        <translation>Ištrinti puslapius iš %1</translation>
+    </message>
+    <message>
         <source>Extract Pages</source>
         <translation>Išskleisti puslapius</translation>
     </message>
@@ -1956,9 +1949,24 @@ Eksportuotą failą galima peržiūrėti bet kurioje PDF peržiūros priemonėje
         <translation>&amp;Judėti žemyn</translation>
     </message>
     <message>
+        <source>&amp;Remove Row</source>
+        <extracomment>Button beside the rows of Delete pages. It takes the selected row out of the list, so the pages it names are no longer deleted. It deletes no pages. Name the row, so it cannot be read as the Delete pages button.</extracomment>
+        <translation>Pašalinti &amp;eilutę</translation>
+    </message>
+    <message>
         <source>&amp;Remove</source>
         <extracomment>Button: removes the selected row.</extracomment>
         <translation>&amp;Pašalinti</translation>
+    </message>
+    <message>
+        <source>Delete Page</source>
+        <extracomment>Context menu item of a page in the Delete pages strip. It marks the page to be left out of the new file.</extracomment>
+        <translation>Ištrinti puslapį</translation>
+    </message>
+    <message>
+        <source>Keep Page</source>
+        <extracomment>Context menu item of a page marked for deletion in the Delete pages strip. It takes the mark away, so the new file keeps the page.</extracomment>
+        <translation>Palikti puslapį</translation>
     </message>
     <message>
         <source>Remove</source>
@@ -1984,6 +1992,11 @@ Eksportuotą failą galima peržiūrėti bet kurioje PDF peržiūros priemonėje
     <message>
         <source>&amp;Open when done</source>
         <translation>&amp;Atidarykite, kai baigsite</translation>
+    </message>
+    <message>
+        <source>Delete pages</source>
+        <extracomment>Button: writes a new file without the listed pages. The original file keeps every page.</extracomment>
+        <translation>Ištrinti puslapius</translation>
     </message>
     <message>
         <source>Extract</source>
@@ -2014,6 +2027,11 @@ Eksportuotą failą galima peržiūrėti bet kurioje PDF peržiūros priemonėje
         <translation>%1 Neįrašyti pakeitimai neįtraukti.</translation>
     </message>
     <message>
+        <source>This PDF cannot be read for deleting pages.</source>
+        <extracomment>The viewer shows the document, but qpdf, which writes the new file, cannot read it.</extracomment>
+        <translation>Šio PDF negalima nuskaityti puslapiams ištrinti.</translation>
+    </message>
+    <message>
         <source>This PDF cannot be read for extraction.</source>
         <translation>Šio PDF formato negalima nuskaityti išskleisti.</translation>
     </message>
@@ -2024,6 +2042,11 @@ Eksportuotą failą galima peržiūrėti bet kurioje PDF peržiūros priemonėje
     <message>
         <source>That password is not correct.</source>
         <translation>Tas slaptažodis neteisingas.</translation>
+    </message>
+    <message>
+        <source>Save Edited Copy</source>
+        <extracomment>Title of the file picker for the new file Delete pages writes.</extracomment>
+        <translation>Išsaugoti redaguotą kopiją</translation>
     </message>
     <message>
         <source>Save Extracted Pages</source>
@@ -2038,6 +2061,11 @@ Eksportuotą failą galima peržiūrėti bet kurioje PDF peržiūros priemonėje
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
         <translation>„%1“ jau yra. Pakeisti?</translation>
+    </message>
+    <message>
+        <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Delete pages again, or choose another name.</source>
+        <extracomment>%1 is the new file&apos;s name. &quot;Delete pages&quot; is the button&apos;s text.</extracomment>
+        <translation>Nepavyko įrašyti „%1“. Jei failas atvertas kitoje programoje, užverkite jį ir vėl spauskite „Ištrinti puslapius“ arba pasirinkite kitą pavadinimą.</translation>
     </message>
     <message>
         <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Extract again, or choose another name.</source>
@@ -2083,6 +2111,30 @@ Eksportuotą failą galima peržiūrėti bet kurioje PDF peržiūros priemonėje
         </translation>
     </message>
     <message numerus="yes">
+        <source>Result: %n of %1 page(s) remain (%2).</source>
+        <extracomment>Result line of Delete pages, under the page strip. %n is how many pages the new file keeps, %1 the document&apos;s page count, %2 the pages that remain as ranges, like &quot;1, 3-4&quot;. In English the verb follows %n: &quot;1 of 6 pages remains&quot;, &quot;3 of 6 pages remain&quot;.</extracomment>
+        <translation>
+            <numerusform>Rezultatas: lieka %n puslapis iš %1 (%2).</numerusform>
+            <numerusform>Rezultatas: lieka %n puslapiai iš %1 (%2).</numerusform>
+            <numerusform>Rezultatas: lieka %n puslapių iš %1 (%2).</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Click the pages to delete, or add a range.</source>
+        <extracomment>Delete pages with no rows left. Clicking a page in the strip below marks it for deletion; &quot;add a range&quot; refers to the Add Range button.</extracomment>
+        <translation>Spustelėkite puslapius, kuriuos norite ištrinti, arba pridėkite diapazoną.</translation>
+    </message>
+    <message>
+        <source>Page %1 will be deleted. Click to keep it.</source>
+        <extracomment>Tooltip of a page struck out in the Delete pages strip. %1 is its page number. The original file keeps it; only the new file leaves it out.</extracomment>
+        <translation>Puslapis %1 bus ištrintas. Spustelėkite, kad jį paliktumėte.</translation>
+    </message>
+    <message>
+        <source>Click to delete page %1.</source>
+        <extracomment>Tooltip of a page in the Delete pages strip. %1 is its page number.</extracomment>
+        <translation>Spustelėkite, kad ištrintumėte puslapį %1.</translation>
+    </message>
+    <message numerus="yes">
         <source>Pages %1 (%n page(s)). Click to show them.</source>
         <extracomment>Tooltip of a tile standing in for hidden pages: %1 is their range, like &quot;14-30&quot;.</extracomment>
         <translation>
@@ -2090,6 +2142,11 @@ Eksportuotą failą galima peržiūrėti bet kurioje PDF peržiūros priemonėje
             <numerusform>Puslapiai %1 (%n puslapiai). Spustelėkite, kad juos parodytumėte.</numerusform>
             <numerusform>Puslapiai %1 (%n puslapių). Spustelėkite, kad juos parodytumėte.</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Choose where to save the edited copy.</source>
+        <extracomment>Delete pages with an empty Save as field. The edited copy is the new file without the deleted pages.</extracomment>
+        <translation>Pasirinkite, kur išsaugoti redaguotą kopiją.</translation>
     </message>
     <message>
         <source>Choose where to save the extracted pages.</source>
@@ -2104,12 +2161,26 @@ Eksportuotą failą galima peržiūrėti bet kurioje PDF peržiūros priemonėje
         <translation>To aplanko nėra.</translation>
     </message>
     <message>
+        <source>The edited copy cannot replace the document it comes from.</source>
+        <extracomment>Delete pages always writes a new file and never changes the original.</extracomment>
+        <translation>Redaguota kopija negali pakeisti dokumento, iš kurio ji sukurta.</translation>
+    </message>
+    <message>
         <source>The extract cannot replace the document it comes from.</source>
         <translation>Išrašas negali pakeisti dokumento, iš kurio jis gaunamas.</translation>
     </message>
     <message>
         <source>That file is open in a tab. Choose another name.</source>
         <translation>Tas failas atidarytas skirtuke. Pasirinkite kitą pavadinimą.</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n page(s) in a copy saved as %1</source>
+        <extracomment>Status bar message after Delete pages wrote its new file. %n is how many pages it left out, %1 the new file&apos;s name. The original is unchanged.</extracomment>
+        <translation>
+            <numerusform>Ištrintas %n puslapis kopijoje, išsaugotoje kaip %1</numerusform>
+            <numerusform>Ištrinti %n puslapiai kopijoje, išsaugotoje kaip %1</numerusform>
+            <numerusform>Ištrinta %n puslapių kopijoje, išsaugotoje kaip %1</numerusform>
+        </translation>
     </message>
     <message>
         <source>Extracted page %1 to %2</source>
@@ -2814,7 +2885,7 @@ Atidarykite sistemos Nustatymai → Numatytosios programos (arba dešiniuoju pel
     </message>
     <message>
         <source>Cannot delete every page.</source>
-        <translation>Negalima pašalinti visų puslapių.</translation>
+        <translation>Negalima ištrinti visų puslapių.</translation>
     </message>
     <message>
         <source>Rotation must be a multiple of 90 degrees.</source>

@@ -88,20 +88,22 @@ QFont RowList::captionFont(const QFont &base)
     return f;
 }
 
-RowList::RowList(int countWidth, int outputWidth, QWidget *parent)
+RowList::RowList(int countWidth, int outputWidth, QWidget *parent, bool reorderable)
     : QListWidget(parent)
     , countWidth_(widthFor(countWidth, captionFont(font()), {countCaption()}, 4))
-    , outputWidth_(widthFor(outputWidth, captionFont(font()), {outputCaption()}, 4))
+    , outputWidth_(outputWidth > 0 ? widthFor(outputWidth, captionFont(font()), {outputCaption()}, 4)
+                                   : 0)
+    , reorderable_(reorderable)
 {
     setSelectionMode(QAbstractItemView::SingleSelection);
     setUniformItemSizes(true);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    setAcceptDrops(true);
+    setAcceptDrops(reorderable);
     // The rows are item widgets covering the viewport, so a drag over the list
     // is over a row, not the viewport; Qt walks up to the first ancestor that
     // accepts drops, which has to be the viewport. Setting it on the view alone
     // does not reach it.
-    viewport()->setAcceptDrops(true);
+    viewport()->setAcceptDrops(reorderable);
     // Filter the viewport directly: QAbstractScrollArea does not forward these drag/drop events
     // to the overrides. Resize/show events also refresh header insets.
     viewport()->installEventFilter(this);
@@ -140,7 +142,8 @@ QWidget *RowList::makeHeader(const Fill &fill)
     headerRow_ = new QHBoxLayout(header);
     headerRow_->setContentsMargins(6, 0, 6, 0); // real insets set by syncHeaderInsets()
     headerRow_->setSpacing(kSpacing);
-    headerRow_->addSpacing(kColGrip); // over the drag grips
+    if (reorderable_)
+        headerRow_->addSpacing(kColGrip); // over the drag grips
     auto *num = fixedLabel(header, kColNum, Qt::AlignRight);
     num->setText(QStringLiteral("#"));
     headerRow_->addWidget(num);
@@ -150,9 +153,11 @@ QWidget *RowList::makeHeader(const Fill &fill)
     auto *count = fixedLabel(header, countWidth_, Qt::AlignRight);
     count->setText(countCaption());
     headerRow_->addWidget(count);
-    auto *output = fixedLabel(header, outputWidth_, Qt::AlignRight);
-    output->setText(outputCaption());
-    headerRow_->addWidget(output);
+    if (outputWidth_ > 0) {
+        auto *output = fixedLabel(header, outputWidth_, Qt::AlignRight);
+        output->setText(outputCaption());
+        headerRow_->addWidget(output);
+    }
     headerRow_->addSpacing(kColX + kSpacing);
     return header;
 }
@@ -187,15 +192,17 @@ void RowList::addRow(const Fill &fill)
     // The grip. Rows are item widgets, so a press anywhere else in the row lands
     // on a child widget and the list never sees it: the drag has to start from
     // something that exists for exactly that purpose.
-    auto *grip = new QLabel(row);
-    grip->setObjectName(QStringLiteral("rowListGrip"));
-    grip->setFixedWidth(kColGrip);
-    grip->setAlignment(Qt::AlignCenter);
-    grip->setPixmap(icons::glyphPixmap(icons::Glyph::DragHandle, Theme::iconInk(palette()), 16));
-    grip->setCursor(Qt::OpenHandCursor);
-    grip->setToolTip(tr("Drag to reorder"));
-    grip->installEventFilter(this);
-    h->addWidget(grip);
+    if (reorderable_) {
+        auto *grip = new QLabel(row);
+        grip->setObjectName(QStringLiteral("rowListGrip"));
+        grip->setFixedWidth(kColGrip);
+        grip->setAlignment(Qt::AlignCenter);
+        grip->setPixmap(icons::glyphPixmap(icons::Glyph::DragHandle, Theme::iconInk(palette()), 16));
+        grip->setCursor(Qt::OpenHandCursor);
+        grip->setToolTip(tr("Drag to reorder"));
+        grip->installEventFilter(this);
+        h->addWidget(grip);
+    }
 
     auto *num = fixedLabel(row, kColNum, Qt::AlignRight, "rowListNum");
     num->setText(QString::number(i + 1));
@@ -209,7 +216,8 @@ void RowList::addRow(const Fill &fill)
             w->installEventFilter(this); // FocusIn makes the row current
 
     h->addWidget(fixedLabel(row, countWidth_, Qt::AlignRight, "rowListCount"));
-    h->addWidget(fixedLabel(row, outputWidth_, Qt::AlignRight, "rowListOutput"));
+    if (outputWidth_ > 0)
+        h->addWidget(fixedLabel(row, outputWidth_, Qt::AlignRight, "rowListOutput"));
 
     auto *x = new QToolButton(row);
     x->setObjectName(QStringLiteral("rowListX"));

@@ -206,18 +206,6 @@ Breytt skjal varðveitt á %2.
         <translation>Vista snúið afrit</translation>
     </message>
     <message>
-        <source>Delete Pages</source>
-        <translation>Eyða síðum</translation>
-    </message>
-    <message>
-        <source>Cannot delete every page.</source>
-        <translation>Ekki er hægt að eyða öllum síðum.</translation>
-    </message>
-    <message>
-        <source>Save Edited Copy</source>
-        <translation>Vista breytt afrit</translation>
-    </message>
-    <message>
         <source>Choose Output Folder</source>
         <translation>Velja úttaksmöppu</translation>
     </message>
@@ -1932,6 +1920,11 @@ The exported file is viewable in any PDF viewer.</source>
 <context>
     <name>mervin::ExtractDialog</name>
     <message>
+        <source>Delete pages from %1</source>
+        <extracomment>Title of the Delete pages window. %1 is the document&apos;s file name, like &quot;report.pdf&quot;. The window writes a new file without the chosen pages.</extracomment>
+        <translation>Eyða síðum úr %1</translation>
+    </message>
+    <message>
         <source>Extract Pages</source>
         <translation>Draga út síður</translation>
     </message>
@@ -1954,9 +1947,24 @@ The exported file is viewable in any PDF viewer.</source>
         <translation>&amp;Færa niður</translation>
     </message>
     <message>
+        <source>&amp;Remove Row</source>
+        <extracomment>Button beside the rows of Delete pages. It takes the selected row out of the list, so the pages it names are no longer deleted. It deletes no pages. Name the row, so it cannot be read as the Delete pages button.</extracomment>
+        <translation>&amp;Fjarlægja röð</translation>
+    </message>
+    <message>
         <source>&amp;Remove</source>
         <extracomment>Button: removes the selected row.</extracomment>
         <translation>&amp;Fjarlægja</translation>
+    </message>
+    <message>
+        <source>Delete Page</source>
+        <extracomment>Context menu item of a page in the Delete pages strip. It marks the page to be left out of the new file.</extracomment>
+        <translation>Eyða síðu</translation>
+    </message>
+    <message>
+        <source>Keep Page</source>
+        <extracomment>Context menu item of a page marked for deletion in the Delete pages strip. It takes the mark away, so the new file keeps the page.</extracomment>
+        <translation>Halda síðu</translation>
     </message>
     <message>
         <source>Remove</source>
@@ -1982,6 +1990,11 @@ The exported file is viewable in any PDF viewer.</source>
     <message>
         <source>&amp;Open when done</source>
         <translation>&amp;Opið þegar því er lokið</translation>
+    </message>
+    <message>
+        <source>Delete pages</source>
+        <extracomment>Button: writes a new file without the listed pages. The original file keeps every page.</extracomment>
+        <translation>Eyða síðum</translation>
     </message>
     <message>
         <source>Extract</source>
@@ -2012,6 +2025,11 @@ The exported file is viewable in any PDF viewer.</source>
         <translation>%1 Óvistaðar breytingar eru ekki innifaldar.</translation>
     </message>
     <message>
+        <source>This PDF cannot be read for deleting pages.</source>
+        <extracomment>The viewer shows the document, but qpdf, which writes the new file, cannot read it.</extracomment>
+        <translation>Ekki er hægt að lesa þessa PDF til að eyða síðum.</translation>
+    </message>
+    <message>
         <source>This PDF cannot be read for extraction.</source>
         <translation>Ekki er hægt að lesa þessa PDF til útdráttar.</translation>
     </message>
@@ -2022,6 +2040,11 @@ The exported file is viewable in any PDF viewer.</source>
     <message>
         <source>That password is not correct.</source>
         <translation>Þetta lykilorð er ekki rétt.</translation>
+    </message>
+    <message>
+        <source>Save Edited Copy</source>
+        <extracomment>Title of the file picker for the new file Delete pages writes.</extracomment>
+        <translation>Vista breytt afrit</translation>
     </message>
     <message>
         <source>Save Extracted Pages</source>
@@ -2036,6 +2059,11 @@ The exported file is viewable in any PDF viewer.</source>
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
         <translation>„%1“ er þegar til. Skipta um það?</translation>
+    </message>
+    <message>
+        <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Delete pages again, or choose another name.</source>
+        <extracomment>%1 is the new file&apos;s name. &quot;Delete pages&quot; is the button&apos;s text.</extracomment>
+        <translation>Gat ekki skrifað „%1“. Ef annað forrit er með skrána opna, lokaðu því og ýttu aftur á Eyða síðum eða veldu annað nafn.</translation>
     </message>
     <message>
         <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Extract again, or choose another name.</source>
@@ -2080,12 +2108,40 @@ The exported file is viewable in any PDF viewer.</source>
         </translation>
     </message>
     <message numerus="yes">
+        <source>Result: %n of %1 page(s) remain (%2).</source>
+        <extracomment>Result line of Delete pages, under the page strip. %n is how many pages the new file keeps, %1 the document&apos;s page count, %2 the pages that remain as ranges, like &quot;1, 3-4&quot;. In English the verb follows %n: &quot;1 of 6 pages remains&quot;, &quot;3 of 6 pages remain&quot;.</extracomment>
+        <translation>
+            <numerusform>Niðurstaða: %n af %1 síðum er eftir (%2).</numerusform>
+            <numerusform>Niðurstaða: %n af %1 síðum eru eftir (%2).</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Click the pages to delete, or add a range.</source>
+        <extracomment>Delete pages with no rows left. Clicking a page in the strip below marks it for deletion; &quot;add a range&quot; refers to the Add Range button.</extracomment>
+        <translation>Smelltu á síðurnar sem á að eyða eða bættu við sviði.</translation>
+    </message>
+    <message>
+        <source>Page %1 will be deleted. Click to keep it.</source>
+        <extracomment>Tooltip of a page struck out in the Delete pages strip. %1 is its page number. The original file keeps it; only the new file leaves it out.</extracomment>
+        <translation>Síðu %1 verður eytt. Smelltu til að halda henni.</translation>
+    </message>
+    <message>
+        <source>Click to delete page %1.</source>
+        <extracomment>Tooltip of a page in the Delete pages strip. %1 is its page number.</extracomment>
+        <translation>Smelltu til að eyða síðu %1.</translation>
+    </message>
+    <message numerus="yes">
         <source>Pages %1 (%n page(s)). Click to show them.</source>
         <extracomment>Tooltip of a tile standing in for hidden pages: %1 is their range, like &quot;14-30&quot;.</extracomment>
         <translation>
             <numerusform>Síður %1 (%n síða). Smelltu til að sýna þær.</numerusform>
             <numerusform>Síður %1 (%n síður). Smelltu til að sýna þær.</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Choose where to save the edited copy.</source>
+        <extracomment>Delete pages with an empty Save as field. The edited copy is the new file without the deleted pages.</extracomment>
+        <translation>Veldu hvar á að vista breytta afritið.</translation>
     </message>
     <message>
         <source>Choose where to save the extracted pages.</source>
@@ -2100,12 +2156,25 @@ The exported file is viewable in any PDF viewer.</source>
         <translation>Sú mappa er ekki til.</translation>
     </message>
     <message>
+        <source>The edited copy cannot replace the document it comes from.</source>
+        <extracomment>Delete pages always writes a new file and never changes the original.</extracomment>
+        <translation>Breytta afritið getur ekki komið í stað skjalsins sem það kemur frá.</translation>
+    </message>
+    <message>
         <source>The extract cannot replace the document it comes from.</source>
         <translation>Útdrátturinn getur ekki komið í stað skjalsins sem hann kemur frá.</translation>
     </message>
     <message>
         <source>That file is open in a tab. Choose another name.</source>
         <translation>Sú skrá er opin í flipa. Veldu annað nafn.</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n page(s) in a copy saved as %1</source>
+        <extracomment>Status bar message after Delete pages wrote its new file. %n is how many pages it left out, %1 the new file&apos;s name. The original is unchanged.</extracomment>
+        <translation>
+            <numerusform>Eyddi %n síðu í afriti sem var vistað sem %1</numerusform>
+            <numerusform>Eyddi %n síðum í afriti sem var vistað sem %1</numerusform>
+        </translation>
     </message>
     <message>
         <source>Extracted page %1 to %2</source>

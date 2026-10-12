@@ -559,7 +559,9 @@ void TstSettingsDialog::legacyDocumentThemeIsPreserved()
 
 void TstSettingsDialog::uiThemesRespondToMouseAndKeyboard()
 {
-    SettingsDialog dialog(mervin::Settings{}, {}, Page::Appearance);
+    mervin::Settings in;
+    in.colorScheme = QStringLiteral("dark");
+    SettingsDialog dialog(in, {}, Page::Appearance);
     auto *dark = dialog.findChild<QRadioButton *>(QStringLiteral("uiThemeDark"));
     auto *light = dialog.findChild<QRadioButton *>(QStringLiteral("uiThemeLight"));
     auto *system = dialog.findChild<QRadioButton *>(QStringLiteral("uiThemeSystem"));
@@ -771,7 +773,9 @@ void TstSettingsDialog::generalFitsWhenScreenSpaceAllows()
 // available only while a control differs from what was last applied.
 void TstSettingsDialog::applyHandsOverPendingChanges()
 {
-    SettingsDialog dialog(mervin::Settings{}, {}, Page::Appearance);
+    mervin::Settings in;
+    in.colorScheme = QStringLiteral("dark");
+    SettingsDialog dialog(in, {}, Page::Appearance);
     QList<mervin::Settings> applied;
     connect(&dialog, &SettingsDialog::applyRequested, this,
             [&applied](const mervin::Settings &s) { applied.append(s); });
@@ -872,7 +876,7 @@ void TstSettingsDialog::everyKindOfControlEnablesApply()
          }},
         {"UI theme",
          [](SettingsDialog &d) {
-             d.findChild<QRadioButton *>(QStringLiteral("uiThemeSystem"))->click();
+             d.findChild<QRadioButton *>(QStringLiteral("uiThemeDark"))->click();
          }},
         {"OCR language",
          [](SettingsDialog &d) {

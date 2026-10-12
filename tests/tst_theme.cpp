@@ -431,17 +431,21 @@ void TstTheme::applyAppInstallsTheChosenAccent()
 void TstTheme::applyAppHonorsTheThemePreference_data()
 {
     QTest::addColumn<QString>("scheme");
+    QTest::addColumn<bool>("platformDark");
     QTest::addColumn<bool>("dark");
-    QTest::newRow("fresh-profile") << QString() << true;
-    QTest::newRow("saved-dark") << QStringLiteral("dark") << true;
-    QTest::newRow("saved-light") << QStringLiteral("light") << false;
+    QTest::newRow("fresh-profile-dark-platform") << QString() << true << true;
+    QTest::newRow("fresh-profile-light-platform") << QString() << false << false;
+    QTest::newRow("saved-dark") << QStringLiteral("dark") << false << true;
+    QTest::newRow("saved-light") << QStringLiteral("light") << true << false;
 }
 
-// A platform may ignore Qt's forced scheme. The saved choice, including a
-// fresh profile's dark default, must still override the opposite palette.
+// A platform may ignore Qt's forced scheme. A saved choice must still override the
+// opposite palette, while a fresh profile follows the system and keeps the
+// platform's.
 void TstTheme::applyAppHonorsTheThemePreference()
 {
     QFETCH(QString, scheme);
+    QFETCH(bool, platformDark);
     QFETCH(bool, dark);
     QTemporaryDir profile;
     QVERIFY(profile.isValid());
@@ -458,8 +462,8 @@ void TstTheme::applyAppHonorsTheThemePreference()
         st.colorScheme = scheme;
         QVERIFY(st.save());
     }
-    qApp->setPalette(dark ? theme::lightPalette(QColor()) : theme::darkPalette(QColor()));
-    QCOMPARE(theme::isDark(qApp->palette()), !dark);
+    qApp->setPalette(platformDark ? theme::darkPalette(QColor()) : theme::lightPalette(QColor()));
+    QCOMPARE(theme::isDark(qApp->palette()), platformDark);
 
     Theme::applyApp();
     QCOMPARE(theme::isDark(qApp->palette()), dark);

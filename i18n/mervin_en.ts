@@ -18,6 +18,14 @@
 <context>
     <name>mervin::ExtractPlan</name>
     <message numerus="yes">
+        <source>Result: %n of %1 page(s) remain (%2).</source>
+        <extracomment>Result line of Delete pages, under the page strip. %n is how many pages the new file keeps, %1 the document&apos;s page count, %2 the pages that remain as ranges, like &quot;1, 3-4&quot;. In English the verb follows %n: &quot;1 of 6 pages remains&quot;, &quot;3 of 6 pages remain&quot;.</extracomment>
+        <translation>
+            <numerusform>Result: %n of %1 pages remains (%2).</numerusform>
+            <numerusform>Result: %n of %1 pages remain (%2).</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
         <source>Result: %n page(s), in the order shown.</source>
         <translation>
             <numerusform>Result: %n page, in the order shown.</numerusform>
@@ -30,6 +38,14 @@
         <translation>
             <numerusform>Pages %1 (%n page). Click to show them.</numerusform>
             <numerusform>Pages %1 (%n pages). Click to show them.</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n page(s) in a copy saved as %1</source>
+        <extracomment>Status bar message after Delete pages wrote its new file. %n is how many pages it left out, %1 the new file&apos;s name. The original is unchanged.</extracomment>
+        <translation>
+            <numerusform>Deleted %n page in a copy saved as %1</numerusform>
+            <numerusform>Deleted %n pages in a copy saved as %1</numerusform>
         </translation>
     </message>
     <message numerus="yes">
