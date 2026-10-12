@@ -38,9 +38,13 @@ public:
 
     // Whether the volume holding `path` is attached. Session restore uses it too.
     // - Windows: the drive (D:/) or share (//server/share) must be reachable.
-    // - Elsewhere: a path under /media, /run/media, /mnt or /net counts only while
-    //   a volume is mounted below that folder, and a GVFS path only while its share
-    //   folder exists; other paths are on the system's own disks.
+    // - Elsewhere: a GVFS path counts only while its share folder exists.
+    //   Otherwise the deepest mounted file system above the path holds it, and
+    //   must answer. The volume is away when a folder that /etc/fstab mounts a
+    //   volume on, or an automount point, lies between that file system and the
+    //   path, or when the path is under /media, /run/media, /mnt or /net with no
+    //   volume mounted below that folder (mounts::holdingMount). Symbolic links
+    //   are not followed, so pass a canonical path as Recent and the session do.
     // On an offline share the check can stall for seconds.
     static bool isVolumeAttached(const QString &path);
     // Paths with the same key get the same isVolumeAttached() answer, so a caller

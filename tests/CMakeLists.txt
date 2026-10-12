@@ -34,6 +34,7 @@ set(_mervin_tests
     tst_message
     tst_single_instance
     tst_recent_store
+    tst_mount_table
     tst_view_state_store
     tst_content_search
     tst_print_range

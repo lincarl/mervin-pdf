@@ -1,6 +1,7 @@
 #include "recent/RecentStore.h"
 
 #include "config/ConfigPaths.h"
+#include "recent/MountTable.h"
 #include "recent/PathKey.h"
 
 #include <QDir>
@@ -12,6 +13,12 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QStorageInfo>
+
+#ifndef Q_OS_WIN
+#include <sys/statvfs.h>
+
+#include <cerrno>
+#endif
 
 namespace mervin {
 
@@ -123,16 +130,57 @@ QString windowsVolume(const QString &p)
         return p.left(2);
     return {};
 }
+#else
+// The file systems mounted now. Linux lists them in /proc/self/mountinfo, which
+// is read without touching any volume. QStorageInfo::mountedVolumes() queries
+// each one, which stalls on an offline share and mounts every automount point.
+QList<mounts::Mount> mountedNow()
+{
+    QFile mountInfo(QStringLiteral("/proc/self/mountinfo"));
+    if (mountInfo.open(QIODevice::ReadOnly)) {
+        const QList<mounts::Mount> listed = mounts::parseMountInfo(mountInfo.readAll());
+        if (!listed.isEmpty())
+            return listed;
+    }
+    QList<mounts::Mount> listed;
+    for (const QStorageInfo &volume : QStorageInfo::mountedVolumes())
+        listed.append({volume.rootPath(), volume.fileSystemType()});
+    return listed;
+}
+
+// The folders /etc/fstab mounts volumes on, mounted or not, as written. Resolving
+// links in them would look inside other volumes and could mount an unrelated
+// automount point or wait on an offline share.
+QStringList configuredMounts()
+{
+    QFile fstab(QStringLiteral("/etc/fstab"));
+    return fstab.open(QIODevice::ReadOnly) ? mounts::parseFstab(fstab.readAll()) : QStringList();
+}
+
+// Whether the file system mounted on `folder` answers. A network share can stay
+// mounted after its server went away.
+bool answers(const QString &folder)
+{
+    const QByteArray name = QFile::encodeName(folder);
+    struct statvfs info;
+    int result;
+    do {
+        result = ::statvfs(name.constData(), &info);
+    } while (result == -1 && errno == EINTR);
+    return result == 0;
+}
 #endif
 
 // Whether the volume holding `absPath` is attached (see isRemovedFromDisk).
 bool volumeAttached(const QString &absPath)
 {
-    const QString p = QDir::fromNativeSeparators(absPath);
 #ifdef Q_OS_WIN
-    const QString volume = windowsVolume(p);
+    const QString volume = windowsVolume(QDir::fromNativeSeparators(absPath));
     return !volume.isEmpty() && QDir(volume + QLatin1Char('/')).exists();
 #else
+    // Recent and the session store canonical paths, without links, as the
+    // mount list does.
+    const QString p = QDir::fromNativeSeparators(absPath);
     // GVFS (GNOME's network and phone mounts) gives each share its own folder
     // under /run/user/<uid>/gvfs, which exists only while the share is mounted.
     const int gvfs = p.indexOf(QLatin1String("/gvfs/"));
@@ -140,24 +188,8 @@ bool volumeAttached(const QString &absPath)
         const int shareEnd = p.indexOf(QLatin1Char('/'), gvfs + 6);
         return shareEnd > 0 && QDir(p.left(shareEnd)).exists();
     }
-    // Removable and network volumes are mounted below these folders. An
-    // unmounted mount point is often still there as an empty folder, and the
-    // folders themselves may sit on a mount of their own (/mnt on some hosts),
-    // so only a volume mounted below the folder counts.
-    static const char *const kDetachable[] = {"/media/", "/run/media/", "/mnt/", "/net/"};
-    for (const char *folder : kDetachable) {
-        const QLatin1String prefix(folder);
-        if (!p.startsWith(prefix))
-            continue;
-        for (const QStorageInfo &volume : QStorageInfo::mountedVolumes()) {
-            const QString root = volume.rootPath();
-            if (root.size() > prefix.size() && root.startsWith(prefix) && volume.isReady()
-                && p.startsWith(root + QLatin1Char('/')))
-                return true;
-        }
-        return false;
-    }
-    return true;
+    const QString holder = mounts::holdingMount(p, mountedNow(), configuredMounts());
+    return !holder.isEmpty() && answers(holder);
 #endif
 }
 

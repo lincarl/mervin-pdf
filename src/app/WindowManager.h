@@ -177,9 +177,10 @@ public:
     // "Keep removed files in list" prunes at once.
     void applyRecentSettings(int visibleCount, int retention, bool keepMissing);
 
-    // With that setting off, forget entries whose file is gone from a folder that
-    // still exists (RecentStore::isRemovedFromDisk). The disk is checked on a
-    // worker thread, since network paths can stall. A no-op while the setting is on.
+    // With that setting off, forget entries whose file is gone while its drive,
+    // share or mount is attached (RecentStore::isRemovedFromDisk). The disk is
+    // checked on a worker thread, since network paths can stall. A no-op while the
+    // setting is on.
     void pruneMissingRecent();
 
     // Crash recovery / session restore (M11). sessionPathsToRestore() loads the
