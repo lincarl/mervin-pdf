@@ -647,9 +647,8 @@ QWidget *SettingsDialog::buildAppearancePage()
     //: Group title: the look of Mervin's windows, as opposed to the document pages.
     auto *appBox = groupBox(tr("Application"), page);
     auto *appLayout = new QVBoxLayout(appBox);
-    // UI theme: the application chrome's light/dark scheme. Dark is the default
-    // and sits first. "Follow system" tracks the OS setting, including live
-    // auto-switches, and is what a config with an unknown value shows.
+    // New installs default to "Follow system", which tracks OS light/dark changes.
+    // Dark sits first in the picker. Unknown config values show "Follow system".
     uiThemePicker_ = new mervin::UiThemePicker(appBox);
     uiThemePicker_->setScheme(base_.colorScheme);
     appLayout->addWidget(uiThemePicker_);
