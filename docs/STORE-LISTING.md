@@ -96,8 +96,10 @@ published binary and review distribution requirements in
 
 ## Images
 
-Use the existing Mervin icon for the package assets and a 300 by 300 pixel Store
-icon. No new branding is needed.
+Use the existing Mervin icon for the package assets and the 300 by 300 pixel
+Store icon in `packaging/windows/msix/Listing/StoreIcon.png`. No new branding is
+needed. Partner Center keeps the uploaded icon, so upload the file again after an
+icon change.
 
 Capture at least one real Windows desktop screenshot. Microsoft requires PNG
 images at least 1366 by 768 pixels, no larger than 50 MB each. Four screenshots

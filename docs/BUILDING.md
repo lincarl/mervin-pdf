@@ -155,7 +155,8 @@ commands.
 
 For a Microsoft Store upload, package the same deployed files as MSIX. Use a
 nonzero major version and build the executable with that version first.
-The Windows SDK supplies MakeAppx.
+The Windows SDK supplies MakeAppx and MakePri. MakePri indexes the icon variants
+in `resources.pri`, as described in the [MSIX notes](../packaging/windows/msix/README.md).
 
 ```powershell
 scripts\build-msix.ps1 -Version 1.2.3

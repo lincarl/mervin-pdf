@@ -24,18 +24,45 @@ test of the Default apps page and desktop integration.
 
 ## Assets
 
-The PNGs in `Assets` are raster exports of the existing approved
-`resources/icons/mervin-icon.svg` artwork. They were rendered directly at 44,
-50 and 150 pixels using librsvg and Cairo. They introduce no new icon design.
-The package metadata is English. The executable still embeds all existing Qt
-language catalogs.
+The PNGs in `Assets` are raster exports of the approved
+`resources/icons/mervin-icon.svg` artwork. `resources/icons/export_icon_frames.py`
+writes all of them, as described in the [icon notes](../../../resources/icons/README.md).
+`Square44x44Logo.png`, `StoreLogo.png` and `Square150x150Logo.png` are rendered
+directly at 44, 50 and 150 pixels. The package metadata is English. The executable
+still embeds all existing Qt language catalogs.
+
+Every frame of `mervin-icon.ico` is also copied unchanged as
+`Square44x44Logo.targetsize-<size>.png`, `..._altform-unplated.png` and
+`..._altform-lightunplated.png`. Windows uses these plain, dark-theme and
+light-theme forms for the taskbar, Start menu, Alt+Tab and Explorer file icons.
+Microsoft requires all three forms, even when they are identical. Without the
+unplated forms, Windows shrinks the icon onto a plate, which is the accent color
+on the taskbar and gray in Start.
+
+Windows finds these qualified file names only through the package's
+`resources.pri`. `build-msix.ps1` runs `makepri createconfig` and removes the
+`<packaging>` element, so a flat package gets one index. It then runs
+`makepri new` on a copy of `Assets` alone, so application folder names are never
+read as language or scale qualifiers. A `makepri dump` check fails the build
+unless every unplated and light unplated size is indexed under
+`Square44x44Logo.png`. The configuration, the copy and `resources.pri.xml` remain
+beside the MSIX in its `-msix-pri` directory for inspection. CI uploads that
+directory with the Windows verification artifacts.
+
+The Windows shell caches packaged app icons. To check the icons on Windows 11,
+install a test package that replaces any earlier Mervin package, then unpin and
+pin it again. Check the taskbar in dark and light Windows modes, Start pins and
+All apps, Alt+Tab, and Explorer `.pdf` icons in several views.
 
 `Listing/StoreIcon.png` is the same SVG rendered at 300 by 300 pixels for the
 Partner Center Store listing. It is uploaded with the listing and is not included
-in the installed application payload.
+in the installed application payload. Upload it again whenever the icon changes,
+or the Store page keeps showing the previous icon.
 
 ## References
 
 - [Manual MSIX packaging](https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-manual-conversion)
+- [App icon construction](https://learn.microsoft.com/en-us/windows/apps/design/iconography/app-icon-construction)
+- [MakePri command options](https://learn.microsoft.com/en-us/windows/uwp/app-resources/makepri-exe-command-options)
 - [Store package version rules](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msix/app-package-requirements)
 - [Qt for Windows](https://doc.qt.io/qt-6/windows.html)
