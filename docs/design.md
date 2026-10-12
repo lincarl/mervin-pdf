@@ -44,7 +44,7 @@ src/
   ocr/           language-model discovery and validation
   platform/      Windows and Linux integration
   print/         print-range parsing
-  recent/        recent-file and per-file view-state stores
+  recent/        recent-file and per-file view-state stores, volume checks
   render/        MuPDF documents, rendering, text, tools, forms, and annotations
   security/      qpdf page, security, and measurement-output services
   session/       open-session and closed-tab state
@@ -419,9 +419,27 @@ stale windows from overwriting newer preferences, and commit through `QSaveFile`
 Closing a window batches view-state updates into one write.
 When the Recent setting to keep deleted or moved files is off, `WindowManager` checks
 the recent paths on a worker thread whenever the list is shown and drops entries
-whose file is gone while its volume is attached (`RecentStore::isRemovedFromDisk`:
-the drive or UNC share on Windows, a mount below `/media`, `/run/media`, `/mnt` or
-`/net`, or a GVFS share folder elsewhere), together with their view state.
+whose file is gone while its volume is attached (`RecentStore::isRemovedFromDisk`),
+together with their view state.
+
+On Windows the volume is the drive or UNC share. Elsewhere a GVFS path counts while
+its share folder exists. Otherwise `RecentStore::isVolumeAttached` reads the mounted
+file systems from `/proc/self/mountinfo` and the configured mount points from
+`/etc/fstab`, and `mounts::holdingMount` (`recent/MountTable`) decides. The deepest
+mounted file system above the path holds it and must answer `statvfs`, since a
+network share can stay mounted after its server went away. The volume is away when
+an fstab mount point or an automount (`autofs`) point lies between that file system
+and the path, or when the path is under `/media`, `/run/media`, `/mnt` or `/net` with
+nothing mounted below that folder. While such a volume is unmounted, Recent keeps
+every file on it, and session restore keeps one in its top folder, where the empty
+mount point is left behind. Recent and the session store canonical paths, and the kernel lists
+mount points without links, so the fstab folders get the links above them resolved
+and the path itself is not resolved again. The mount list is read as text because
+`QStorageInfo::mountedVolumes()`, used only when mountinfo cannot be read, queries
+every volume, which stalls on an offline share and mounts every automount point. A
+volume mounted outside these lists, such as an sshfs share mounted by hand, is not
+recognised once it is unmounted.
+
 `SettingsDialog` edits a copy of the settings. It emits a request for a manual update
 check, and on Apply, or OK with changes pending, a request to apply the edited copy;
 only its OCR language list changes files directly. `MainWindow::applySettings` saves

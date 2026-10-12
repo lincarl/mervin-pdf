@@ -157,6 +157,8 @@ add_library(mervin_core STATIC
     src/recent/RecentEntry.h
     src/recent/ViewState.h
     src/recent/PathKey.h
+    src/recent/MountTable.cpp
+    src/recent/MountTable.h
     src/recent/RecentStore.cpp
     src/recent/RecentStore.h
     src/recent/ViewStateStore.cpp
