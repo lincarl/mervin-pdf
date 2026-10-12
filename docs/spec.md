@@ -217,7 +217,7 @@ available screen. Pages scroll on smaller screens. Scrolling over number fields
 and closed dropdowns scrolls the page without changing their values. Keyboard
 editing and scrolling an opened dropdown remain available.
 
-New profiles use the dark UI theme and the system accent. Turning off the system
+New profiles follow the system theme and use the system accent. Turning off the system
 accent keeps its current colour; Reset selects the custom default `#62c9ff`.
 Keep removed files in list defaults to off. Explicit saved preferences are preserved.
 

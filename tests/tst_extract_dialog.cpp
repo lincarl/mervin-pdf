@@ -116,6 +116,7 @@ private slots:
 
     void deleteOpensOnTheCurrentPage();
     void deleteStripClickTogglesThePage();
+    void deleteStripKeysToggleThePage();
     void deletingEveryPageIsRefused();
     void deleteWritesTheRemainingPages();
 
@@ -790,6 +791,37 @@ void TstExtractDialog::deleteStripClickTogglesThePage()
     QCOMPARE(texts(d), QStringList({QStringLiteral("5-7"), QStringLiteral("2")}));
     // Extract's own strip actions are not there.
     QVERIFY(!stripAction(d, QStringLiteral("Remove")));
+}
+
+// The keys the strip's context menu shows, pressed for real: two actions share
+// Space, and only the enabled one may take it. Delete and Backspace only delete.
+void TstExtractDialog::deleteStripKeysToggleThePage()
+{
+    ExtractDialog d(deleting(plain_)); // opens with page 7 to delete
+    d.show();
+    d.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&d));
+    ExtractStrip *s = strip(d);
+    s->setFocus();
+    s->setCurrentIndex(s->model()->index(1, 0)); // page 2, kept
+    const QStringList seeded{QStringLiteral("7")};
+    const QStringList both{QStringLiteral("7"), QStringLiteral("2")};
+    QCOMPARE(texts(d), seeded);
+
+    QTest::keyClick(s, Qt::Key_Space);
+    QTRY_COMPARE(texts(d), both);
+    QTest::keyClick(s, Qt::Key_Delete); // already deleted: no change
+    QTest::keyClick(s, Qt::Key_Backspace);
+    QTest::qWait(1);
+    QCOMPARE(texts(d), both);
+    QTest::keyClick(s, Qt::Key_Space); // keeps it again
+    QTRY_COMPARE(texts(d), seeded);
+    QTest::keyClick(s, Qt::Key_Backspace);
+    QTRY_COMPARE(texts(d), both);
+    QTest::keyClick(s, Qt::Key_Space);
+    QTRY_COMPARE(texts(d), seeded);
+    QTest::keyClick(s, Qt::Key_Delete);
+    QTRY_COMPARE(texts(d), both);
 }
 
 void TstExtractDialog::deletingEveryPageIsRefused()
