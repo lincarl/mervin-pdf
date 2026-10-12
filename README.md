@@ -4,6 +4,10 @@
 
 Mervin PDF is a fast, private reader for technical drawings and everyday documents, with tools for measurement, OCR, forms, annotations, page editing, and PDF security. Everything runs locally, with no accounts or telemetry.
 
+[Install from Microsoft Store](https://apps.microsoft.com/detail/9PPM4Z5G1LD0),
+the recommended Windows download. [MSI and Linux downloads](https://github.com/lincarl/mervin-pdf/releases/latest)
+are available on GitHub.
+
 ## What makes Mervin different?
 
 Most lightweight PDF readers stop at viewing and annotation. Full PDF suites include more, but can feel heavy, account-driven, or cloud-first. Mervin aims for the useful space between them:
@@ -53,12 +57,18 @@ Grayscale keeps shades of gray; Black and white converts them to pure black or w
 
 ## Platforms
 
-Mervin PDF provides release packages for:
+Mervin PDF supports Windows 11 x64 and Linux x86-64.
 
-- Windows 11 x64: MSI installer
-- Linux x86-64: AppImage, DEB, and RPM (Ubuntu 26.04 or a compatible distribution is the current baseline)
+- **Windows, recommended.** [Microsoft Store](https://apps.microsoft.com/detail/9PPM4Z5G1LD0)
+  provides a free package signed by Microsoft, with updates managed by the Store.
+- **Windows, direct download.** The [MSI installer](https://github.com/lincarl/mervin-pdf/releases/latest)
+  and its application executable remain unsigned. This installation checks GitHub
+  for updates.
+- **Linux.** [AppImage, DEB, and RPM](https://github.com/lincarl/mervin-pdf/releases/latest)
+  packages are available. Ubuntu 26.04 or a compatible distribution is the current baseline.
 
-Download packaged versions from [GitHub Releases](https://github.com/lincarl/mervin-pdf/releases).
+The unsigned MSIX produced by GitHub Actions is for Microsoft Store submission.
+Use the Store link to install the signed package.
 
 The [privacy policy](docs/PRIVACY.md) explains local data storage, document
 downloads, OCR model downloads, and application updates.
