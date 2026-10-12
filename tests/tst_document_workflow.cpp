@@ -394,6 +394,36 @@ private slots:
         QCOMPARE(notes.front().contents, QStringLiteral("First pending edit"));
     }
 
+    // A tray restore brings back every hidden window, the one hidden last in front.
+    // Creation order must not decide: a window opened later, and hidden first, would
+    // otherwise come back over the window the user closed last.
+    void trayRestoresTheWindowHiddenLastInFront()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("doc.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        WindowManager manager;
+        MainWindow *documents = manager.createWindow();
+        MainWindow *later = manager.createWindow();
+        QVERIFY(documents->openFile(path));
+        QVERIFY(QTest::qWaitForWindowExposed(documents));
+        QVERIFY(QTest::qWaitForWindowExposed(later));
+
+        later->hideToTray();
+        documents->hideToTray();
+        QVERIFY(later->trayOrder() < documents->trayOrder());
+        manager.restoreFromTray();
+        QVERIFY(documents->isVisible() && !documents->isInTray());
+        QVERIFY(later->isVisible() && !later->isInTray());
+        QTRY_COMPARE(QApplication::activeWindow(), documents);
+
+        // Hidden the other way round, the other window comes back in front.
+        documents->hideToTray();
+        later->hideToTray();
+        manager.restoreFromTray();
+        QTRY_COMPARE(QApplication::activeWindow(), later);
+    }
+
     void savingSuspendedEditsRequiresConfirmingExternalChanges()
     {
         QTemporaryDir files;

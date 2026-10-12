@@ -22,6 +22,7 @@
 #include <QStyleHints>
 #include <QTimer>
 
+#include <algorithm>
 #include <optional>
 #include <utility>
 
@@ -581,8 +582,20 @@ void WindowManager::onWindowDestroyed(MainWindow *w)
 {
     // Retain pointer identity; the MainWindow subobject has already been destroyed.
     windows_.removeOne(w);
-    if (active_ == w)
-        active_ = windows_.isEmpty() ? nullptr : windows_.last();
+    if (active_ == w) {
+        // A window still on screen, else the one hidden in the tray last, else the
+        // newest. An empty window closed for real must not hand over to an older
+        // tray window just because it was created later.
+        active_ = nullptr;
+        for (MainWindow *window : std::as_const(windows_))
+            if (window->isVisible() && !window->isInTray())
+                active_ = window;
+        if (!active_) {
+            const QList<MainWindow *> hidden = trayWindows();
+            active_ = !hidden.isEmpty() ? hidden.last()
+                      : windows_.isEmpty() ? nullptr : windows_.last();
+        }
+    }
     if (stagedWindow_ == w)
         stagedWindow_ = nullptr; // stagedStep then abandons the rest of the batch
 
@@ -633,7 +646,9 @@ bool WindowManager::focusExistingTab(const QString &canonicalPath)
 void WindowManager::openPaths(const QStringList &paths, const QString &behavior)
 {
     if (paths.isEmpty()) {
-        surfaceWindow(activeOrNewWindow());
+        // A launch without files brings the app up, like a tray click: every window
+        // hidden in the tray returns, not only the active one.
+        restoreFromTray();
         return;
     }
 
@@ -750,8 +765,12 @@ bool WindowManager::restart()
     return true;
 }
 
-bool WindowManager::canCloseToTray() const
+bool WindowManager::canCloseToTray(const MainWindow *window) const
 {
+    // An empty window kept in the tray would come back with the others on the next
+    // restore, in front of the window that holds the documents.
+    if (window->tabCount() == 0 && windows_.size() > 1)
+        return false;
     return !quitting_ && !shuttingDown_ && closeToTray_ && tray_ && tray_->isVisible()
         && QSystemTrayIcon::isSystemTrayAvailable() && !qApp->isSavingSession();
 }
@@ -764,24 +783,37 @@ void WindowManager::updateTrayAvailability()
             tray_->show();
     } else {
         // Never strand a window if its desktop tray disappears or the setting is disabled.
-        for (MainWindow *window : std::as_const(windows_))
-            if (window->isInTray())
-                window->restoreFromTray();
+        for (MainWindow *window : trayWindows())
+            window->restoreFromTray();
         tray_->hide();
     }
 }
 
+QList<MainWindow *> WindowManager::trayWindows() const
+{
+    QList<MainWindow *> hidden;
+    for (MainWindow *window : windows_)
+        if (window->isInTray())
+            hidden.append(window);
+    std::sort(hidden.begin(), hidden.end(), [](const MainWindow *a, const MainWindow *b) {
+        return a->trayOrder() < b->trayOrder();
+    });
+    return hidden;
+}
+
 void WindowManager::restoreFromTray()
 {
-    bool restored = false;
-    for (MainWindow *window : std::as_const(windows_)) {
-        if (window->isInTray()) {
-            window->restoreFromTray();
-            restored = true;
-        }
+    // Each restore raises its window, so the window hidden last, the one in use when
+    // the app went to the tray, ends up in front.
+    const QList<MainWindow *> hidden = trayWindows();
+    for (MainWindow *window : hidden)
+        window->restoreFromTray();
+    if (!hidden.isEmpty()) {
+        // Activation is reported later. Record the front window now, so the second
+        // call of a tray double-click surfaces this window again, not another one.
+        active_ = hidden.last();
     }
-    if (!restored)
-        surfaceWindow(activeOrNewWindow());
+    surfaceWindow(activeOrNewWindow());
 }
 
 void WindowManager::applyMemorySettings(int minutes, bool closeToTray)

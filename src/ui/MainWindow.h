@@ -89,6 +89,9 @@ public:
     void hideToTray();
     void restoreFromTray();
     bool isInTray() const { return hiddenToTray_; }
+    // Rises with every hideToTray() across all windows, so the window hidden last has
+    // the highest value. WindowManager restores tray windows in this order.
+    quint64 trayOrder() const { return trayOrder_; }
     bool prepareToClose();
     void closeForQuit(); // call only after prepareToClose succeeds
     void applyMemorySettings(int minutes, bool closeToTray);
@@ -243,6 +246,7 @@ private:
     QHash<mervin::TabPage *, QList<QMetaObject::Connection>> tabConnections_;
     QSet<mervin::TabPage *> suspensionFailed_;
     bool hiddenToTray_ = false;
+    quint64 trayOrder_ = 0;
     bool closeConfirmed_ = false;
     bool suspending_ = false;
     bool resumeScheduled_ = false;

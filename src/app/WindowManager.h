@@ -95,7 +95,11 @@ public:
     // only takes effect at startup. False when a save prompt was cancelled: nothing
     // closes, and the change waits for the next start.
     bool restart();
-    bool canCloseToTray() const;
+    // Whether closing `window` hides it in the tray instead of closing it. A window
+    // without documents closes for real while another window remains.
+    bool canCloseToTray(const MainWindow *window) const;
+    // Shows every window hidden in the tray, the one hidden last in front. With
+    // none hidden, brings up the active window instead.
     void restoreFromTray();
     void applyMemorySettings(int minutes, bool closeToTray);
     void checkDocumentActivity();
@@ -239,6 +243,8 @@ private:
 
     MainWindow *activeOrNewWindow();
     MainWindow *emptyWindow() const; // a document-less window, or nullptr
+    // The windows hidden in the tray, in the order they were hidden.
+    QList<MainWindow *> trayWindows() const;
     void applyViewStateIfStored(const QString &canonicalPath);
 
     // Rebuild the app-wide Theme stylesheet on the next event-loop turn. Deferred
