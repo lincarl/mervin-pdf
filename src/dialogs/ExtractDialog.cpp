@@ -266,10 +266,13 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
     buttonRow->addWidget(buttons);
     layout->addLayout(buttonRow);
 
-    // One row holding the page being viewed, selected, so typing replaces it and
-    // Enter extracts it.
-    const int seed = qBound(0, source.currentPage, qMax(0, plan_.pageCount() - 1));
-    plan_.append(QString::number(seed + 1));
+    // One row, selected, so typing replaces it and Enter extracts it: the page Save
+    // Page As was opened for, or every page, first to last.
+    const int last = qMax(1, plan_.pageCount());
+    if (source.seedPage)
+        plan_.append(QString::number(qBound(0, *source.seedPage, last - 1) + 1));
+    else
+        plan_.append(last > 1 ? QStringLiteral("1-%1").arg(last) : QStringLiteral("1"));
     rebuild(0, Focus::SelectAll);
 
     resize(kWidth, kHeight);

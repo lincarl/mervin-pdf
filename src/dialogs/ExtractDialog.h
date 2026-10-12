@@ -35,7 +35,9 @@ public:
         QString path;            // the file on disk: what qpdf reads
         QString password;        // the tab's, tried before the password row is shown
         int viewerPageCount = 0; // used only when qpdf cannot count (locked)
-        int currentPage = 0;     // 0-based; the first row's page (on screen, or Save Page As's)
+        // 0-based: the one row holds this page (Save Page As). Without it the row
+        // holds every page, first to last (Document > Extract Pages).
+        std::optional<int> seedPage;
         bool hasUnsavedEdits = false;
         bool openWhenDone = true; // last choice, from Settings
         QStringList openPaths;    // files open in any tab: Save as may not name one

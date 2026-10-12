@@ -11,6 +11,7 @@
 #include <QSet>
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace mervin {
@@ -151,10 +152,10 @@ private slots:
     void mergeDocuments();
 
 private:
-    // Extract Pages for the current document, its one row holding `seedPage`
-    // (0-based): the page on screen from the Document menu, the clicked page from
-    // the page's Save Page As.
-    void extractPages(int seedPage);
+    // Extract Pages for the current document. Its one row holds every page (the
+    // Document menu), or `seedPage` (0-based) when given: the clicked page from the
+    // page's Save Page As.
+    void extractPages(std::optional<int> seedPage = std::nullopt);
     void createActions();
     void createToolBar();
     void createMenus();

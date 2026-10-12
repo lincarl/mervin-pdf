@@ -77,7 +77,8 @@ class TstExtractDialog : public QObject
 private slots:
     void initTestCase();
 
-    void opensWithOneRowOnTheCurrentPage();
+    void opensWithOneRowOnTheSeedPage();
+    void opensWithEveryPageWithoutASeed();
     void typedCommaStartsANewRow();
     void keysQueuedBehindACommaSplitOnce();
     void pastedListBecomesRows();
@@ -106,7 +107,7 @@ private:
         ExtractDialog::Source s;
         s.path = path;
         s.viewerPageCount = 31;
-        s.currentPage = 6;
+        s.seedPage = 6;
         return s;
     }
     static void prepare(ExtractDialog &d)
@@ -201,7 +202,7 @@ void TstExtractDialog::initTestCase()
              QpdfService::Status::Ok);
 }
 
-void TstExtractDialog::opensWithOneRowOnTheCurrentPage()
+void TstExtractDialog::opensWithOneRowOnTheSeedPage()
 {
     ExtractDialog d(source(plain_));
     prepare(d);
@@ -230,6 +231,22 @@ void TstExtractDialog::opensWithOneRowOnTheCurrentPage()
     prepare(u);
     QCOMPARE(child<QLabel>(u, "extractSummary")->text(),
              QStringLiteral("Result: 1 page. Unsaved changes are not included."));
+}
+
+// Document > Extract Pages has no seed: its one row holds the whole document.
+void TstExtractDialog::opensWithEveryPageWithoutASeed()
+{
+    ExtractDialog::Source whole = source(plain_);
+    whole.seedPage.reset();
+    ExtractDialog d(whole);
+    prepare(d);
+    QCOMPARE(texts(d), QStringList({QStringLiteral("1-31")}));
+    QCOMPARE(rows(d).at(0)->selectedText(), QStringLiteral("1-31")); // typing replaces it
+    QVERIFY(extract(d)->isEnabled());
+    QVERIFY(error(d).isEmpty());
+    QVERIFY(output(d)->text().endsWith(QStringLiteral("-p1-31.pdf")));
+    QCOMPARE(child<QLabel>(d, "extractSummary")->text(),
+             QStringLiteral("Result: 31 pages, in the order shown."));
 }
 
 void TstExtractDialog::typedCommaStartsANewRow()

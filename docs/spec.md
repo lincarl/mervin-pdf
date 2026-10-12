@@ -151,8 +151,8 @@ resolve is reported, never skipped, and Extract shows the result as thumbnails b
 anything is written. Both dialogs write before they close: neither saves over a file
 that is open in a tab, and a write that fails leaves the dialog open with its plan.
 
-Save Page As in a page's right-click menu opens Extract Pages with that page as its
-one row.
+Document > Extract Pages opens with one row that holds every page, first to last.
+Save Page As in a page's right-click menu opens it with that page as its one row.
 
 Extract copies pages from the saved file, so unsaved comments and form entries are not
 included; the dialog says so when the open document has any. The password typed to

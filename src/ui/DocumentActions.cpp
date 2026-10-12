@@ -502,11 +502,10 @@ void MainWindow::deletePagesOp()
 
 void MainWindow::extractPagesOp()
 {
-    if (ViewerWidget *v = currentViewer())
-        extractPages(v->currentPage());
+    extractPages();
 }
 
-void MainWindow::extractPages(int seedPage)
+void MainWindow::extractPages(std::optional<int> seedPage)
 {
     QScopedValueRollback<int> operation(documentOperationDepth_, documentOperationDepth_ + 1);
     TabPage *t = currentTab();
@@ -522,7 +521,7 @@ void MainWindow::extractPages(int seedPage)
     src.path = t->path();
     src.password = t->password();
     src.viewerPageCount = v->pageCount();
-    src.currentPage = seedPage;
+    src.seedPage = seedPage;
     src.hasUnsavedEdits = v->hasFormEdits() || v->hasAnnotEdits();
     src.openWhenDone = settings_.extractOpenWhenDone;
     src.doc = v->document();

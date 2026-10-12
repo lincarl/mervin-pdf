@@ -536,7 +536,7 @@ void TstTranslationLayout::extract()
     mervin::ExtractDialog::Source source;
     source.path = plain_;
     source.viewerPageCount = 12;
-    source.currentPage = 6;
+    source.seedPage = 6;
     source.hasUnsavedEdits = true;
     mervin::ExtractDialog dialog(source);
     inspect(dialog, QStringLiteral("Extract with unsaved changes"));
