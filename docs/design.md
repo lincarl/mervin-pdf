@@ -499,6 +499,9 @@ its hairline stroker, which drops the dots in icons such as Outline, About and
 Keyboard shortcuts. A 16 px icon at 100% scaling therefore gets about 1.6 units,
 and a 20 px one about 1.3. The Document menu's Split and Merge icons are Lucide's
 split and merge turned a quarter clockwise, so their arrows point right.
+Extract Pages mirrors Lucide's file-output horizontally, so its arrow points
+right out of the document and its page fold moves to the upper-left corner.
+Save Page As uses the same mirrored icon.
 
 Fit page and Fit width have separate toolbar buttons, each selecting its mode
 without toggling. Their icons overlay a centered directional arrow at 65% scale
