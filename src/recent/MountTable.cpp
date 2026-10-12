@@ -3,7 +3,6 @@
 #include <QByteArrayView>
 #include <QDir>
 #include <QFile>
-#include <QFileInfo>
 
 namespace mervin::mounts {
 
@@ -108,19 +107,6 @@ QString holdingMount(const QString &path, const QList<Mount> &mounted,
             return {};
     }
     return holder;
-}
-
-QString resolvedParent(const QString &folder)
-{
-    const QFileInfo info(folder);
-    const QString parent = info.path();
-    if (parent == QLatin1String("/") || info.fileName().isEmpty())
-        return folder;
-    const QString canonical = QFileInfo(parent).canonicalFilePath();
-    if (canonical.isEmpty())
-        return folder;
-    return (canonical == QLatin1String("/") ? QString() : canonical) + QLatin1Char('/')
-        + info.fileName();
 }
 
 } // namespace mervin::mounts

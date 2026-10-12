@@ -32,11 +32,4 @@ QStringList parseFstab(const QByteArray &text);
 QString holdingMount(const QString &path, const QList<Mount> &mounted,
                      const QStringList &configured);
 
-// `folder` with the symbolic links above it followed, so an fstab line written
-// through a link (/mnt/data where /mnt links to /var/mnt) names the folder the
-// volume is mounted on, as the stored canonical paths do. The folder itself is
-// not touched, so an automount point is not mounted. A parent that cannot be
-// resolved is kept as written.
-QString resolvedParent(const QString &folder);
-
 } // namespace mervin::mounts

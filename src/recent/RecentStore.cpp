@@ -148,17 +148,13 @@ QList<mounts::Mount> mountedNow()
     return listed;
 }
 
-// The folders /etc/fstab mounts volumes on, mounted or not, with the links above
-// them followed. On an offline share that holds one of them this can stall.
+// The folders /etc/fstab mounts volumes on, mounted or not, as written. Resolving
+// links in them would look inside other volumes and could mount an unrelated
+// automount point or wait on an offline share.
 QStringList configuredMounts()
 {
     QFile fstab(QStringLiteral("/etc/fstab"));
-    if (!fstab.open(QIODevice::ReadOnly))
-        return {};
-    QStringList folders = mounts::parseFstab(fstab.readAll());
-    for (QString &folder : folders)
-        folder = mounts::resolvedParent(folder);
-    return folders;
+    return fstab.open(QIODevice::ReadOnly) ? mounts::parseFstab(fstab.readAll()) : QStringList();
 }
 
 // Whether the file system mounted on `folder` answers. A network share can stay

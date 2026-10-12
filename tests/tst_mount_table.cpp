@@ -1,13 +1,9 @@
 // The Linux mount list behind RecentStore::isVolumeAttached (src/recent/MountTable).
 // holdingMount() is checked against a described system, since a test cannot mount
 // or unmount volumes. The parsers and holdingMount() are plain text and list work,
-// so they run on every platform. resolvedParent() needs symbolic links.
+// so they run on every platform.
 #include "recent/MountTable.h"
 
-#include <QDir>
-#include <QFile>
-#include <QFileInfo>
-#include <QTemporaryDir>
 #include <QTest>
 
 using mervin::mounts::Mount;
@@ -51,7 +47,6 @@ private slots:
     void holdingMount_data();
     void holdingMount();
     void mountedAutomountHoldsItsFiles();
-    void resolvedParentFollowsLinks();
 };
 
 void TstMountTable::parseMountInfoReadsFoldersAndTypes()
@@ -135,43 +130,6 @@ void TstMountTable::mountedAutomountHoldsItsFiles()
              QStringLiteral("/"));
     QCOMPARE(mervin::mounts::holdingMount(QStringLiteral("/data/plan.pdf"), {}, configured),
              QString());
-}
-
-// An fstab line written through a link names the folder its volume is mounted on.
-void TstMountTable::resolvedParentFollowsLinks()
-{
-    // Not on Windows, where links need extra rights and the volume check does not
-    // use fstab. A skip would fail CI.
-#ifndef Q_OS_WIN
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    const QString root = QFileInfo(dir.path()).canonicalFilePath();
-    QVERIFY(QDir(root).mkpath(QStringLiteral("var/mnt")));
-    QVERIFY(QFile::link(root + QStringLiteral("/var/mnt"), root + QStringLiteral("/mnt")));
-    // The folder itself is a link here, and is not followed.
-    QVERIFY(QFile::link(root + QStringLiteral("/elsewhere"), root + QStringLiteral("/var/mnt/usb")));
-
-    using mervin::mounts::resolvedParent;
-    QCOMPARE(resolvedParent(root + QStringLiteral("/mnt/data")),
-             root + QStringLiteral("/var/mnt/data"));
-    QCOMPARE(resolvedParent(root + QStringLiteral("/var/mnt/data")),
-             root + QStringLiteral("/var/mnt/data"));
-    QCOMPARE(resolvedParent(root + QStringLiteral("/mnt/usb")),
-             root + QStringLiteral("/var/mnt/usb"));
-    QCOMPARE(resolvedParent(root + QStringLiteral("/missing/data")),
-             root + QStringLiteral("/missing/data"));
-    QCOMPARE(resolvedParent(QStringLiteral("/data")), QStringLiteral("/data"));
-    QCOMPARE(resolvedParent(QStringLiteral("/")), QStringLiteral("/"));
-
-    // The resolved line keeps a canonical path on the unmounted volume away.
-    const QList<Mount> mounted = mervin::mounts::parseMountInfo(line("/", "ext4"));
-    const QString stored = root + QStringLiteral("/var/mnt/data/plan.pdf");
-    QCOMPARE(mervin::mounts::holdingMount(stored, mounted, {root + QStringLiteral("/mnt/data")}),
-             QStringLiteral("/"));
-    QCOMPARE(mervin::mounts::holdingMount(
-                 stored, mounted, {resolvedParent(root + QStringLiteral("/mnt/data"))}),
-             QString());
-#endif
 }
 
 QTEST_GUILESS_MAIN(TstMountTable)

@@ -432,9 +432,11 @@ an fstab mount point or an automount (`autofs`) point lies between that file sys
 and the path, or when the path is under `/media`, `/run/media`, `/mnt` or `/net` with
 nothing mounted below that folder. While such a volume is unmounted, Recent keeps
 every file on it, and session restore keeps one in its top folder, where the empty
-mount point is left behind. Recent and the session store canonical paths, and the kernel lists
-mount points without links, so the fstab folders get the links above them resolved
-and the path itself is not resolved again. The mount list is read as text because
+mount point is left behind. Recent and the session store canonical paths, and the
+kernel lists mount points without links. The fstab folders are compared as written,
+since resolving links in them would look inside other volumes and could mount an
+unrelated automount point. A line written through a link, such as `/mnt/data` where
+`/mnt` links to `/var/mnt`, is therefore not matched. The mount list is read as text because
 `QStorageInfo::mountedVolumes()`, used only when mountinfo cannot be read, queries
 every volume, which stalls on an offline share and mounts every automount point. A
 volume mounted outside these lists, such as an sshfs share mounted by hand, is not
