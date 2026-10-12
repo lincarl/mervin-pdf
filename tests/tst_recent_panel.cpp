@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QLabel>
 #include <QListWidget>
+#include <QScrollBar>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -14,8 +15,8 @@ using mervin::RecentEntry;
 using mervin::RecentFilesPanel;
 using mervin::RecentSearchField;
 
-// The Recent page lists starred files in a Favourites section above the rest, keeps
-// a just-starred row where it is until the search changes, and searches file names,
+// The Recent page lists starred files in a Favourites section above the rest, moves
+// a file between the sections as soon as its star is clicked, and searches file names,
 // contents, or names then contents. Content hits are fed in by hand, as the
 // window's ContentSearch would deliver them. Counts use the English catalog's
 // plural forms ("1 file found", "2 files found").
@@ -30,7 +31,9 @@ private slots:
 
     void favouritesSitAboveTheRest();
     void nothingStarredMeansNoCaptions();
-    void aStarredRowKeepsItsPlaceUntilTheSearchChanges();
+    void aStarMovesTheFileToItsSectionAtOnce();
+    void aStarKeepsTheCurrentFileAndTheScrollOffset();
+    void anUnstarredOldFileStaysForAnUndo();
     void namesFiltersAtOnceWithoutAScan();
     void contentsScansEveryFileIntoSections();
     void allListsNamesFirstThenScansTheRest();
@@ -125,28 +128,104 @@ void TstRecentPanel::nothingStarredMeansNoCaptions()
     QCOMPARE(rows(), QStringList({"report-2024.pdf", "notes.pdf"}));
 }
 
-void TstRecentPanel::aStarredRowKeepsItsPlaceUntilTheSearchChanges()
+void TstRecentPanel::aStarMovesTheFileToItsSectionAtOnce()
 {
     QList<RecentEntry> entries{entry("report-2024.pdf", 40), entry("notes.pdf", 20)};
     panel_->setEntries(entries);
     QSignalSpy starred(panel_, &RecentFilesPanel::favoriteToggled);
+    // The star sits at the right end of a row.
+    const auto clickStar = [this](int row) {
+        const QRect rect = list_->visualItemRect(list_->item(row));
+        QTest::mouseClick(list_->viewport(), Qt::LeftButton, {},
+                          QPoint(rect.right() - 16 - 10, rect.center().y()));
+    };
 
-    // Click the star at the right end of the notes.pdf row.
-    const QRect row = list_->visualItemRect(list_->item(1));
-    QTest::mouseClick(list_->viewport(), Qt::LeftButton, {},
-                      QPoint(row.right() - 16 - 10, row.center().y()));
+    // Starring notes.pdf moves it into Favourites without waiting for the store.
+    clickStar(1);
     QCOMPARE(starred.count(), 1);
+    QCOMPARE(starred.at(0).at(0).toString(), file("notes.pdf"));
     QCOMPARE(starred.at(0).at(1).toBool(), true);
+    QCOMPARE(rows(), QStringList({"# Favourites", "notes.pdf", "# Recent", "report-2024.pdf"}));
 
-    // The store echoes the change back. The row must not jump away from the pointer.
+    // The store's echo of the change leaves the list as it is.
     entries[1].favorite = true;
     panel_->setEntries(entries);
-    QCOMPARE(rows(), QStringList({"report-2024.pdf", "notes.pdf"}));
+    QCOMPARE(rows(), QStringList({"# Favourites", "notes.pdf", "# Recent", "report-2024.pdf"}));
 
-    // A new search settles it into Favourites.
+    // Unstarring moves it straight back, and the captions go with the last star.
+    clickStar(1);
+    QCOMPARE(starred.count(), 2);
+    QCOMPARE(starred.at(1).at(1).toBool(), false);
+    QCOMPARE(rows(), QStringList({"report-2024.pdf", "notes.pdf"}));
+}
+
+void TstRecentPanel::aStarKeepsTheCurrentFileAndTheScrollOffset()
+{
+    // More rows than fit, so the list scrolls. The files need not exist.
+    QList<RecentEntry> entries;
+    for (int i = 0; i < 30; ++i)
+        entries << entry(QStringLiteral("file-%1.pdf").arg(i, 2, 10, QLatin1Char('0')), 100 - i);
+    panel_->setEntries(entries);
+    list_->setCurrentRow(0); // file-00.pdf
+    QScrollBar *bar = list_->verticalScrollBar();
+    bar->setValue(bar->maximum());
+    const int scroll = bar->value();
+    QVERIFY(scroll > 0);
+
+    // Star the row in the middle of the view: it moves up into Favourites, out of view.
+    QListWidgetItem *middle = list_->itemAt(list_->viewport()->rect().center());
+    QVERIFY(middle);
+    const QString starredName = middle->text();
+    const QRect rect = list_->visualItemRect(middle);
+    QTest::mouseClick(list_->viewport(), Qt::LeftButton, {},
+                      QPoint(rect.right() - 16 - 10, rect.center().y()));
+    QCOMPARE(rows().mid(0, 2), QStringList({"# Favourites", starredName}));
+    QCOMPARE(bar->value(), scroll);
+    QVERIFY(list_->currentItem());
+    QCOMPARE(list_->currentItem()->text(), QStringLiteral("file-00.pdf"));
+    QVERIFY(list_->currentItem()->isSelected());
+
+    // A star from another window keeps them too.
+    entries[1].favorite = true;
+    for (RecentEntry &e : entries)
+        if (QFileInfo(e.path).fileName() == starredName)
+            e.favorite = true;
+    panel_->setEntries(entries);
+    QCOMPARE(rows().mid(0, 3), QStringList({"# Favourites", "file-01.pdf", starredName}));
+    QCOMPARE(bar->value(), scroll);
+    QCOMPARE(list_->currentItem()->text(), QStringLiteral("file-00.pdf"));
+}
+
+// Unstarring an old favourite moves it to Recent, past the visible count. It stays
+// listed until the search changes, so a second click on its star undoes the first.
+void TstRecentPanel::anUnstarredOldFileStaysForAnUndo()
+{
+    panel_->setVisibleCount(1);
+    panel_->setEntries({entry("report-2024.pdf", 40), entry("notes.pdf", 20),
+                        entry("plan.pdf", 10, true)});
+    QCOMPARE(rows(), QStringList({"# Favourites", "plan.pdf", "# Recent", "report-2024.pdf"}));
+    const auto clickStar = [this](const QString &name) {
+        for (int i = 0; i < list_->count(); ++i) {
+            if (QFileInfo(list_->item(i)->data(Qt::UserRole).toString()).fileName() == name) {
+                const QRect rect = list_->visualItemRect(list_->item(i));
+                QTest::mouseClick(list_->viewport(), Qt::LeftButton, {},
+                                  QPoint(rect.right() - 16 - 10, rect.center().y()));
+                return;
+            }
+        }
+        QFAIL(qPrintable(name + " is not listed"));
+    };
+
+    clickStar(QStringLiteral("plan.pdf"));
+    QCOMPARE(rows(), QStringList({"report-2024.pdf", "plan.pdf"})); // notes.pdf is past the count
+    clickStar(QStringLiteral("plan.pdf"));
+    QCOMPARE(rows(), QStringList({"# Favourites", "plan.pdf", "# Recent", "report-2024.pdf"}));
+
+    // Once the search changes, the visible count applies to it again.
+    clickStar(QStringLiteral("plan.pdf"));
     field_->setText(QStringLiteral("x"));
     field_->clear();
-    QCOMPARE(rows(), QStringList({"# Favourites", "notes.pdf", "# Recent", "report-2024.pdf"}));
+    QCOMPARE(rows(), QStringList({"report-2024.pdf"}));
 }
 
 void TstRecentPanel::namesFiltersAtOnceWithoutAScan()
