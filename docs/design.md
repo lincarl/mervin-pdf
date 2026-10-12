@@ -102,12 +102,15 @@ If the primary process disappears during handoff, the new process retries owners
 and can fall back to a standalone window. Session restoration creates the tab list
 but opens only the selected document. Other restored tabs load when selected.
 
-Before that, `SessionStore::prepareRestore` checks each saved path. A missing file
-on an attached volume was deleted, moved or renamed and is dropped. A file whose
-volume is away, such as a detached drive, an offline network share or an unmounted
-volume, gets no tab. `RecentStore::isVolumeAttached` decides this, as it does for
-pruning Recent. The file stays in `session.json` under `unavailable`, next to
-`open`, with the date it was first found missing.
+Before that, `SessionStore::prepareRestore` checks each saved path. A file that is
+there is restored. A missing file whose folder is still there on an attached volume
+was deleted, moved or renamed and is dropped. Any other missing file gets no tab.
+Its volume is away, as for a detached drive, an offline network share or an
+unmounted volume, or its folder is missing, which can be a share mounted where the
+volume check does not look. `RecentStore::isVolumeAttached` checks the volume, as it
+does for pruning Recent, once per drive or share because an offline share can stall
+each check. The file stays in `session.json` under `unavailable`, next to `open`,
+with the date it was first found missing.
 `WindowManager::updateSession` writes these entries back without checking the disk,
 because a check on an unreachable share can block the UI thread for seconds. An
 entry leaves the list once its file is open in a tab. A later start that finds the

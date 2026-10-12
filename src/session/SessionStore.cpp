@@ -7,6 +7,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -103,14 +104,23 @@ QStringList SessionStore::prepareRestore(const QDate &today,
                                          const std::function<bool(const QString &)> &volumeAttached)
 {
     enum class Found { File, Gone, Away };
-    // Check the volume first. On an unreachable share each check can stall for
-    // seconds, and a volume that is away already settles the answer.
     const std::function<bool(const QString &)> attached =
         volumeAttached ? volumeAttached : RecentStore::isVolumeAttached;
-    const auto find = [&attached](const QString &path) {
-        if (!attached(path))
-            return Found::Away;
-        return QFileInfo::exists(path) ? Found::File : Found::Gone;
+    // Each drive or share is checked once: on an offline share every check can
+    // stall for seconds.
+    QHash<QString, bool> attachedByVolume;
+    const auto find = [&](const QString &path) {
+        const QFileInfo info(path);
+        if (info.exists())
+            return Found::File;
+        const QString volume = RecentStore::volumeKey(path);
+        auto it = attachedByVolume.constFind(volume);
+        if (it == attachedByVolume.cend())
+            it = attachedByVolume.insert(volume, attached(path));
+        // Gone only from a folder that is still there on an attached volume. A
+        // missing folder can be a drive mounted where the volume check does not
+        // look, such as a share mounted in the home folder.
+        return *it && info.absoluteDir().exists() ? Found::Gone : Found::Away;
     };
 
     QStringList restore;

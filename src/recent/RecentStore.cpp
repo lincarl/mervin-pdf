@@ -109,19 +109,29 @@ QStringList RecentStore::removeMissingFiles(const QStringList &paths)
 
 namespace {
 
+#ifdef Q_OS_WIN
+// The share (//server/share) or drive (D:) holding `p`, an absolute path with
+// forward slashes, or "" when it has neither.
+QString windowsVolume(const QString &p)
+{
+    if (p.startsWith(QLatin1String("//"))) {
+        const QStringList parts = p.mid(2).split(QLatin1Char('/'), Qt::SkipEmptyParts);
+        return parts.size() >= 2 ? QStringLiteral("//%1/%2").arg(parts.at(0), parts.at(1))
+                                 : QString();
+    }
+    if (p.size() >= 2 && p.at(1) == QLatin1Char(':'))
+        return p.left(2);
+    return {};
+}
+#endif
+
 // Whether the volume holding `absPath` is attached (see isRemovedFromDisk).
 bool volumeAttached(const QString &absPath)
 {
     const QString p = QDir::fromNativeSeparators(absPath);
 #ifdef Q_OS_WIN
-    if (p.startsWith(QLatin1String("//"))) {
-        const QStringList parts = p.mid(2).split(QLatin1Char('/'), Qt::SkipEmptyParts);
-        return parts.size() >= 2
-               && QDir(QStringLiteral("//%1/%2/").arg(parts.at(0), parts.at(1))).exists();
-    }
-    if (p.size() >= 2 && p.at(1) == QLatin1Char(':'))
-        return QDir(p.left(2) + QLatin1Char('/')).exists();
-    return false;
+    const QString volume = windowsVolume(p);
+    return !volume.isEmpty() && QDir(volume + QLatin1Char('/')).exists();
 #else
     // GVFS (GNOME's network and phone mounts) gives each share its own folder
     // under /run/user/<uid>/gvfs, which exists only while the share is mounted.
@@ -164,6 +174,17 @@ bool RecentStore::isRemovedFromDisk(const QString &path)
 bool RecentStore::isVolumeAttached(const QString &path)
 {
     return !path.isEmpty() && volumeAttached(QFileInfo(path).absoluteFilePath());
+}
+
+QString RecentStore::volumeKey(const QString &path)
+{
+    const QString p = QDir::fromNativeSeparators(QFileInfo(path).absoluteFilePath());
+#ifdef Q_OS_WIN
+    const QString volume = windowsVolume(p);
+    return (volume.isEmpty() ? p : volume).toLower(); // Windows paths ignore case
+#else
+    return QFileInfo(p).path();
+#endif
 }
 
 void RecentStore::clear()

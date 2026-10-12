@@ -47,6 +47,9 @@ private slots:
     void clearDropsActivePath();
     void removedFileIsDropped();
     void fileOnDetachedVolumeIsKept();
+    void fileInMissingFolderIsKept();
+    void readableFileIsRestoredWhateverTheVolumeCheck();
+    void eachVolumeIsCheckedOnce();
     void unmountedMountPointIsDetached();
     void keptFileExpires();
     void keptFileFoundAgainIsRestored();
@@ -166,17 +169,16 @@ void TstSessionStore::clearDropsActivePath()
 
 void TstSessionStore::removedFileIsDropped()
 {
-    // Gone from an attached disk, so it was deleted, moved or renamed, including
-    // along with its folder.
+    // Gone from a folder that is still there on an attached disk, so it was
+    // deleted, moved or renamed.
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString present = dir.filePath(QStringLiteral("present.pdf"));
     const QString removed = dir.filePath(QStringLiteral("removed.pdf"));
-    const QString folderGone = dir.filePath(QStringLiteral("gone/plan.pdf"));
     QVERIFY(touch(present));
 
     SessionStore s;
-    s.setPaths({removed, folderGone, present});
+    s.setPaths({removed, present});
     s.setActivePath(removed);
     QCOMPARE(s.prepareRestore(kToday), QStringList{present});
     QCOMPARE(s.paths(), QStringList{present});
@@ -214,6 +216,54 @@ void TstSessionStore::fileOnDetachedVolumeIsKept()
     QCOMPARE(s.unavailable().first().path, away);
     QCOMPARE(s.unavailable().first().since, kToday);
     QVERIFY(s.activePath().isEmpty());
+}
+
+void TstSessionStore::fileInMissingFolderIsKept()
+{
+    // The volume check says attached, but the folder is missing: it may be a share
+    // mounted where the check does not look, such as in the home folder.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString inMissingFolder = dir.filePath(QStringLiteral("nas/docs/plan.pdf"));
+    SessionStore s;
+    s.setPaths({inMissingFolder});
+    QVERIFY(s.prepareRestore(kToday, [](const QString &) { return true; }).isEmpty());
+    QCOMPARE(s.unavailable().size(), 1);
+    QCOMPARE(s.unavailable().first().path, inMissingFolder);
+}
+
+void TstSessionStore::readableFileIsRestoredWhateverTheVolumeCheck()
+{
+    // A file that is there reopens even where the volume check knows of no mounted
+    // volume, as for a folder directly under /mnt on the system disk.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString present = dir.filePath(QStringLiteral("present.pdf"));
+    QVERIFY(touch(present));
+    SessionStore s;
+    s.setPaths({present});
+    QCOMPARE(s.prepareRestore(kToday, [](const QString &) { return false; }),
+             QStringList{present});
+    QVERIFY(s.unavailable().isEmpty());
+}
+
+void TstSessionStore::eachVolumeIsCheckedOnce()
+{
+    // On an offline share every check can stall, so files on one share share one.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QDir(dir.path()).mkpath(QStringLiteral("away")));
+    int checks = 0;
+    SessionStore s;
+    s.setPaths({dir.filePath(QStringLiteral("away/a.pdf")),
+                dir.filePath(QStringLiteral("away/b.pdf"))});
+    s.setUnavailable({{dir.filePath(QStringLiteral("away/c.pdf")), kToday}});
+    s.prepareRestore(kToday, [&checks](const QString &) {
+        ++checks;
+        return false;
+    });
+    QCOMPARE(checks, 1);
+    QCOMPARE(s.unavailable().size(), 3);
 }
 
 void TstSessionStore::unmountedMountPointIsDetached()

@@ -54,8 +54,8 @@ The Recent screen provides:
 
 The application can restore the previous session. It opens the selected document and
 leaves the other restored tabs unloaded until selected. It remembers each file's
-page, zoom, rotation, and scroll position. A saved file that is gone from an
-attached disk is dropped. A file on a detached drive, an offline network share or an
+page, zoom, rotation, and scroll position. A saved file that was deleted, moved or
+renamed is dropped. A file on a detached drive, an offline network share or an
 unmounted volume gets no tab but stays in the saved session. A later start that
 finds it reopens it after the other restored tabs. Mervin stops looking for it 30
 days after it was first missing.

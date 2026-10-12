@@ -16,11 +16,10 @@ namespace mervin {
 class SessionStore
 {
 public:
-    // A session document found missing at startup because its volume is away: a
-    // detached drive, an offline network share or an unmounted volume. It stays
-    // in the saved session, unopened, until a later start finds it again or it
-    // expires (see prepareRestore). Persisted as "unavailable" next to "open".
-    // Older versions ignore it.
+    // A session document missing at startup on a detached drive, an offline network
+    // share or an unmounted volume. It stays in the saved session, unopened, until a
+    // later start finds it again or it expires (see prepareRestore). Persisted as
+    // "unavailable" next to "open". Older versions ignore it.
     struct Unavailable
     {
         QString path;
@@ -50,9 +49,10 @@ public:
     void setUnavailable(const QList<Unavailable> &entries) { unavailable_ = entries; }
     const QList<Unavailable> &unavailable() const { return unavailable_; }
 
-    // The startup decision for a loaded session. A missing document on an attached
-    // volume was deleted, moved or renamed, and is dropped. A document whose volume
-    // is away is kept in unavailable(), dated `today` when first found. Kept
+    // The startup decision for a loaded session. A missing document whose folder is
+    // still there on an attached volume was deleted, moved or renamed, and is
+    // dropped. Any other missing document, on a volume that is away or in a missing
+    // folder, is kept in unavailable(), dated `today` when first found. Kept
     // documents found again are restored after the open ones, and those kept for
     // kKeepUnavailableDays are dropped without checking the disk. Replaces paths()
     // with the documents to reopen, in order, and returns them. `volumeAttached`

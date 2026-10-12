@@ -43,6 +43,10 @@ public:
     //   folder exists; other paths are on the system's own disks.
     // On an offline share the check can stall for seconds.
     static bool isVolumeAttached(const QString &path);
+    // Paths with the same key get the same isVolumeAttached() answer, so a caller
+    // can check each drive or share once: "D:" or "//server/share" on Windows, the
+    // containing folder elsewhere.
+    static QString volumeKey(const QString &path);
 
     // Toggle the favourite flag on an existing entry. Returns true if the entry
     // was found and the flag actually changed.
