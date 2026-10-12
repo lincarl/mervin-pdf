@@ -78,6 +78,14 @@ QStringList layoutLanguages()
     return requested.isEmpty() ? i18n::availableLanguages() : QStringList{requested};
 }
 
+// Runs the event loop until it is idle, so queued layout work has reached every
+// widget. A single pass can stop halfway, as when a list gains its scroll bar and
+// widens its header before the dialog's minimum follows.
+void settle()
+{
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 1000);
+}
+
 // Every new compiled catalog automatically enters the same layout matrix.
 void addLanguageMatrix()
 {
@@ -465,12 +473,19 @@ void TstTranslationLayout::inspect(QWidget &widget, const QString &state)
     widget.setAttribute(Qt::WA_DontShowOnScreen);
     widget.ensurePolished();
     widget.show();
-    QTest::qWait(1);
+    settle();
     if (minimumSize_) {
         // Respect the actual layout minimum, including translated labels. A
-        // fixed-size dialog has the same dimensions in both matrix entries.
-        widget.resize(widget.minimumSize().expandedTo(widget.minimumSizeHint()));
-        QTest::qWait(1);
+        // fixed-size dialog has the same dimensions in both matrix entries. The
+        // smaller size can raise the minimum again, as when a list gains its
+        // scroll bar, so resize until the size holds.
+        for (int turn = 0; turn < 10; ++turn) {
+            const QSize minimum = widget.minimumSize().expandedTo(widget.minimumSizeHint());
+            if (widget.size() == minimum)
+                break;
+            widget.resize(minimum);
+            settle();
+        }
     }
     const QStringList problems = textfit::check(widget);
     const QString details = state + QLatin1Char('\n') + problems.join(QLatin1Char('\n'));
