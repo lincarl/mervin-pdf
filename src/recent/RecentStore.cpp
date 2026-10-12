@@ -161,6 +161,11 @@ bool RecentStore::isRemovedFromDisk(const QString &path)
     return !fi.exists() && volumeAttached(fi.absoluteFilePath());
 }
 
+bool RecentStore::isVolumeAttached(const QString &path)
+{
+    return !path.isEmpty() && volumeAttached(QFileInfo(path).absoluteFilePath());
+}
+
 void RecentStore::clear()
 {
     entries_.clear();

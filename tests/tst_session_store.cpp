@@ -8,6 +8,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <functional>
+
 using mervin::SessionStore;
 
 namespace {
@@ -19,6 +21,14 @@ bool touch(const QString &path)
 {
     QFile f(path);
     return f.open(QIODevice::WriteOnly);
+}
+
+// A volume check for prepareRestore that treats `dir`/away as a detached drive and
+// everything else as attached.
+std::function<bool(const QString &)> awayIsDetached(const QTemporaryDir &dir)
+{
+    const QString away = dir.filePath(QStringLiteral("away")) + QLatin1Char('/');
+    return [away](const QString &path) { return !path.startsWith(away); };
 }
 
 } // namespace
@@ -36,9 +46,11 @@ private slots:
     void activePathOutsideOpenSetIsDropped();
     void clearDropsActivePath();
     void removedFileIsDropped();
-    void fileInMissingFolderIsKept();
+    void fileOnDetachedVolumeIsKept();
+    void unmountedMountPointIsDetached();
     void keptFileExpires();
     void keptFileFoundAgainIsRestored();
+    void keptFileOpenAgainLeavesTheList();
     void unavailableRoundTrip();
 };
 
@@ -154,15 +166,17 @@ void TstSessionStore::clearDropsActivePath()
 
 void TstSessionStore::removedFileIsDropped()
 {
-    // Gone from a folder that still exists, so it was deleted or renamed.
+    // Gone from an attached disk, so it was deleted, moved or renamed, including
+    // along with its folder.
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString present = dir.filePath(QStringLiteral("present.pdf"));
     const QString removed = dir.filePath(QStringLiteral("removed.pdf"));
+    const QString folderGone = dir.filePath(QStringLiteral("gone/plan.pdf"));
     QVERIFY(touch(present));
 
     SessionStore s;
-    s.setPaths({removed, present});
+    s.setPaths({removed, folderGone, present});
     s.setActivePath(removed);
     QCOMPARE(s.prepareRestore(kToday), QStringList{present});
     QCOMPARE(s.paths(), QStringList{present});
@@ -170,13 +184,14 @@ void TstSessionStore::removedFileIsDropped()
     QVERIFY(s.activePath().isEmpty());
 }
 
-void TstSessionStore::fileInMissingFolderIsKept()
+void TstSessionStore::fileOnDetachedVolumeIsKept()
 {
-    // A session file from before "unavailable" existed. The missing folder stands in
-    // for an unplugged drive. The file is kept, unopened, dated from this start, and
-    // is not the active document.
+    // A session file from before "unavailable" existed, with a document on an
+    // unplugged drive whose mount point stayed behind as an empty folder. It is
+    // kept, unopened, dated from this start, and is not the active document.
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
+    QVERIFY(QDir(dir.path()).mkpath(QStringLiteral("away")));
     const QString present = dir.filePath(QStringLiteral("present.pdf"));
     const QString away = dir.filePath(QStringLiteral("away/plan.pdf"));
     QVERIFY(touch(present));
@@ -194,11 +209,27 @@ void TstSessionStore::fileInMissingFolderIsKept()
     QCOMPARE(s.activePath(), away);
     QVERIFY(s.unavailable().isEmpty());
 
-    QCOMPARE(s.prepareRestore(kToday), QStringList{present});
+    QCOMPARE(s.prepareRestore(kToday, awayIsDetached(dir)), QStringList{present});
     QCOMPARE(s.unavailable().size(), 1);
     QCOMPARE(s.unavailable().first().path, away);
     QCOMPARE(s.unavailable().first().since, kToday);
     QVERIFY(s.activePath().isEmpty());
+}
+
+void TstSessionStore::unmountedMountPointIsDetached()
+{
+    // The real volume check: an offline share, or a mount point with nothing
+    // mounted on it (often an empty folder), keeps its documents.
+#ifdef Q_OS_WIN
+    const QString away = QStringLiteral("//mervin-test-no-such-server/share/plan.pdf");
+#else
+    const QString away = QStringLiteral("/mnt/mervin-test-absent/plan.pdf");
+#endif
+    SessionStore s;
+    s.setPaths({away});
+    QVERIFY(s.prepareRestore(kToday).isEmpty());
+    QCOMPARE(s.unavailable().size(), 1);
+    QCOMPARE(s.unavailable().first().path, away);
 }
 
 void TstSessionStore::keptFileExpires()
@@ -217,7 +248,7 @@ void TstSessionStore::keptFileExpires()
     s.setUnavailable({{recent, kToday.addDays(-29)},
                       {expired, kToday.addDays(-30)},
                       {future, kToday.addDays(5)}});
-    QVERIFY(s.prepareRestore(kToday).isEmpty());
+    QVERIFY(s.prepareRestore(kToday, awayIsDetached(dir)).isEmpty());
     QCOMPARE(s.unavailable().size(), 2);
     QCOMPARE(s.unavailable().at(0).path, recent);
     QCOMPARE(s.unavailable().at(0).since, kToday.addDays(-29));
@@ -243,10 +274,25 @@ void TstSessionStore::keptFileFoundAgainIsRestored()
     SessionStore s;
     s.setPaths({present});
     s.setUnavailable({{back, since}, {removed, since}, {away, since}});
-    QCOMPARE(s.prepareRestore(kToday), (QStringList{present, back}));
+    QCOMPARE(s.prepareRestore(kToday, awayIsDetached(dir)), (QStringList{present, back}));
     QCOMPARE(s.unavailable().size(), 1);
     QCOMPARE(s.unavailable().first().path, away);
     QCOMPARE(s.unavailable().first().since, since);
+}
+
+void TstSessionStore::keptFileOpenAgainLeavesTheList()
+{
+    // Opened during the session, a kept document is an ordinary tab, so closing it
+    // later drops it. The others stay kept.
+    const QString reopened = QStringLiteral("D:/plans/a.pdf");
+    const QString away = QStringLiteral("D:/plans/b.pdf");
+    SessionStore s;
+    s.setUnavailable({{reopened, kToday}, {away, kToday}});
+    s.setPaths({QStringLiteral("C:/c.pdf"), reopened});
+    QCOMPARE(s.unavailable().size(), 1);
+    QCOMPARE(s.unavailable().first().path, away);
+    s.setPaths({QStringLiteral("C:/c.pdf")});
+    QCOMPARE(s.unavailable().size(), 1);
 }
 
 void TstSessionStore::unavailableRoundTrip()

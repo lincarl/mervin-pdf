@@ -1,6 +1,8 @@
 #include "session/SessionStore.h"
 
 #include "config/ConfigPaths.h"
+#include "recent/PathKey.h"
+#include "recent/RecentStore.h"
 
 #include <QDir>
 #include <QFile>
@@ -10,6 +12,7 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QSaveFile>
+#include <QSet>
 
 #include <utility>
 
@@ -83,16 +86,31 @@ bool SessionStore::save(const QString &file) const
     return f.commit();
 }
 
-QStringList SessionStore::prepareRestore(const QDate &today)
+void SessionStore::setPaths(const QStringList &paths)
 {
-    enum class Found { File, FolderOnly, Nothing };
-    // Check the folder first. On an unreachable share each check can stall for
-    // seconds, and a missing folder already settles the answer.
-    const auto find = [](const QString &path) {
-        const QFileInfo info(path);
-        if (!info.absoluteDir().exists())
-            return Found::Nothing;
-        return info.exists() ? Found::File : Found::FolderOnly;
+    paths_ = paths;
+    if (unavailable_.isEmpty())
+        return;
+    QSet<QString> open;
+    for (const QString &p : paths_)
+        open.insert(normalizePathKey(p));
+    unavailable_.removeIf([&open](const Unavailable &entry) {
+        return open.contains(normalizePathKey(entry.path));
+    });
+}
+
+QStringList SessionStore::prepareRestore(const QDate &today,
+                                         const std::function<bool(const QString &)> &volumeAttached)
+{
+    enum class Found { File, Gone, Away };
+    // Check the volume first. On an unreachable share each check can stall for
+    // seconds, and a volume that is away already settles the answer.
+    const std::function<bool(const QString &)> attached =
+        volumeAttached ? volumeAttached : RecentStore::isVolumeAttached;
+    const auto find = [&attached](const QString &path) {
+        if (!attached(path))
+            return Found::Away;
+        return QFileInfo::exists(path) ? Found::File : Found::Gone;
     };
 
     QStringList restore;
@@ -101,7 +119,7 @@ QStringList SessionStore::prepareRestore(const QDate &today)
         const Found found = find(path);
         if (found == Found::File)
             restore.append(path);
-        else if (found == Found::Nothing)
+        else if (found == Found::Away)
             kept.append({path, today});
     }
     for (const Unavailable &entry : std::as_const(unavailable_)) {
@@ -112,7 +130,7 @@ QStringList SessionStore::prepareRestore(const QDate &today)
         const Found found = find(entry.path);
         if (found == Found::File)
             restore.append(entry.path);
-        else if (found == Found::Nothing)
+        else if (found == Found::Away)
             kept.append({entry.path, since});
     }
 

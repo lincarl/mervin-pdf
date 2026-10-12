@@ -103,10 +103,11 @@ and can fall back to a standalone window. Session restoration creates the tab li
 but opens only the selected document. Other restored tabs load when selected.
 
 Before that, `SessionStore::prepareRestore` checks each saved path. A missing file
-whose folder exists was deleted or renamed and is dropped. A missing file whose
-folder is also missing, such as one on a detached drive, an offline network share
-or an unmounted volume, gets no tab. It stays in `session.json` under `unavailable`,
-next to `open`, with the date it was first found missing.
+on an attached volume was deleted, moved or renamed and is dropped. A file whose
+volume is away, such as a detached drive, an offline network share or an unmounted
+volume, gets no tab. `RecentStore::isVolumeAttached` decides this, as it does for
+pruning Recent. The file stays in `session.json` under `unavailable`, next to
+`open`, with the date it was first found missing.
 `WindowManager::updateSession` writes these entries back without checking the disk,
 because a check on an unreachable share can block the UI thread for seconds. An
 entry leaves the list once its file is open in a tab. A later start that finds the

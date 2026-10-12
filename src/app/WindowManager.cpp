@@ -4,7 +4,6 @@
 #include "config/Settings.h"
 #include "ipc/Message.h"
 #include "ipc/SingleInstanceServer.h"
-#include "recent/PathKey.h"
 #include "render/RenderEngine.h"
 #include "ui/MainWindow.h"
 #include "ui/Icons.h"
@@ -401,21 +400,7 @@ void WindowManager::updateSession()
                 seen.insert(p);
                 all.append(p);
             }
-    session_.setPaths(all);
-
-    // A kept document that is open again is live, so a later close drops it like
-    // any other tab. Kept documents are never checked on disk here. This runs on
-    // the UI thread, and a check on an unreachable share can stall for seconds.
-    if (!session_.unavailable().isEmpty()) {
-        QSet<QString> live;
-        for (const QString &p : std::as_const(all))
-            live.insert(normalizePathKey(p));
-        QList<SessionStore::Unavailable> kept = session_.unavailable();
-        kept.removeIf([&live](const SessionStore::Unavailable &entry) {
-            return live.contains(normalizePathKey(entry.path));
-        });
-        session_.setUnavailable(kept);
-    }
+    session_.setPaths(all); // a kept document open again leaves the kept list
 
     // Which document is on screen, so the next start can open that one first
     // instead of making the user wait behind the rest of the session. The active

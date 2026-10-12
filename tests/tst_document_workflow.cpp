@@ -437,8 +437,14 @@ private slots:
         QTemporaryDir files;
         const QDir root(QFileInfo(files.path()).canonicalFilePath());
         const QString open = root.filePath(QStringLiteral("open.pdf"));
-        const QString away = root.filePath(QStringLiteral("away/plan.pdf"));
+        const QString other = root.filePath(QStringLiteral("other.pdf"));
+#ifdef Q_OS_WIN
+        const QString away = QStringLiteral("//mervin-test-no-such-server/share/plan.pdf");
+#else
+        const QString away = QStringLiteral("/mnt/mervin-test-absent/plan.pdf");
+#endif
         QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), open));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), other));
         SessionStore saved;
         saved.setPaths({away, open});
         QVERIFY(saved.save());
@@ -455,17 +461,13 @@ private slots:
         QCOMPARE(onDisk.unavailable().first().path, away);
         QCOMPARE(onDisk.unavailable().first().since, QDate::currentDate());
 
-        QVERIFY(root.mkpath(QStringLiteral("away")));
-        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), away));
-        QVERIFY(window->openFile(away));
-        QVERIFY(onDisk.load());
-        QCOMPARE(onDisk.paths(), (QStringList{open, away}));
-        QVERIFY(onDisk.unavailable().isEmpty());
-
+        // Every later save keeps it: opening and closing other documents.
+        QVERIFY(window->openFile(other));
         QVERIFY(QMetaObject::invokeMethod(window, "closeTab", Q_ARG(int, 1)));
         QVERIFY(onDisk.load());
         QCOMPARE(onDisk.paths(), QStringList{open});
-        QVERIFY(onDisk.unavailable().isEmpty());
+        QCOMPARE(onDisk.unavailable().size(), 1);
+        QCOMPARE(onDisk.unavailable().first().path, away);
     }
 
     void savingSuspendedEditsRequiresConfirmingExternalChanges()
