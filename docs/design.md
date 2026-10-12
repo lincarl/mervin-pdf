@@ -436,11 +436,28 @@ mount point is left behind. Recent and the session store canonical paths, and th
 kernel lists mount points without links. The fstab folders are compared as written,
 since resolving links in them would look inside other volumes and could mount an
 unrelated automount point. A line written through a link, such as `/mnt/data` where
-`/mnt` links to `/var/mnt`, is therefore not matched. The mount list is read as text because
-`QStorageInfo::mountedVolumes()`, used only when mountinfo cannot be read, queries
-every volume, which stalls on an offline share and mounts every automount point. A
-volume mounted outside these lists, such as an sshfs share mounted by hand, is not
-recognised once it is unmounted.
+`/mnt` links to `/var/mnt`, is therefore not matched. The mount list is read as text
+because `QStorageInfo::mountedVolumes()`, used only when mountinfo cannot be read,
+queries every volume, which stalls on an offline share and mounts every automount
+point.
+
+The mount list cannot tell the empty folder of a share mounted by hand outside
+fstab, such as an sshfs share, from a folder whose file was deleted. So when a file
+is opened and is there, `WindowManager::recordOpen` stores the mount point of the
+file system that holds it with its Recent entry (`RecentEntry::mount`, `"m"` in
+`recent.json`), read from mountinfo only. A file opened while it is missing, such
+as a crash recovery tab opened lazily, keeps the mount recorded before. For an entry
+with a recorded mount, the volume is also away while another file system holds the
+path and that folder still exists. A recorded mount never makes a volume attached
+that the mount list calls away. A folder that went with its volume, as udisks and
+per-login mounts such as KDE's kio-fuse leave it, falls back to the mount list. Only
+the folder is recorded, so another volume mounted on the same folder counts as the
+file's volume, unless that folder is `/media`, `/run/media`, `/mnt` or `/net` itself. Session restore looks the mount up in
+Recent, so `session.json` is unchanged, and checks each folder once per recorded
+mount. A missing file under a folder that was a mount point when the file was
+opened, and is no longer used as one, stays listed as away until it is cleared by
+hand or opened again. An entry from an older version has no recorded mount, so on a
+share mounted by hand it is not recognised once the share is unmounted.
 
 `SettingsDialog` edits a copy of the settings. It emits a request for a manual update
 check, and on Apply, or OK with changes pending, a request to apply the edited copy;

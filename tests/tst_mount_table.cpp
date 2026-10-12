@@ -44,6 +44,7 @@ class TstMountTable : public QObject
 private slots:
     void parseMountInfoReadsFoldersAndTypes();
     void parseFstabReadsFolders();
+    void deepestMountIsTheFileSystemBelow();
     void holdingMount_data();
     void holdingMount();
     void mountedAutomountHoldsItsFiles();
@@ -80,6 +81,26 @@ void TstMountTable::parseFstabReadsFolders()
         "   # /old /old ext4 defaults 0 2\n");
     QCOMPARE(folders, QStringList({QStringLiteral("/"), QStringLiteral("/data"),
                                    QStringLiteral("/srv/My Photos")}));
+}
+
+// The file system holding a path now, with no rule about fstab or removable folders.
+void TstMountTable::deepestMountIsTheFileSystemBelow()
+{
+    using mervin::mounts::deepestMount;
+    const QList<Mount> mounted = mervin::mounts::parseMountInfo(kMountInfo);
+    QCOMPARE(deepestMount(QStringLiteral("/home/ann/plan.pdf"), mounted), QStringLiteral("/home"));
+    QCOMPARE(deepestMount(QStringLiteral("/opt/plan.pdf"), mounted), QStringLiteral("/"));
+    QCOMPARE(deepestMount(QStringLiteral("/nas/docs/plan.pdf"), mounted),
+             QStringLiteral("/nas/docs"));
+    QCOMPARE(deepestMount(QStringLiteral("/media/ann/My Disk/plan.pdf"), mounted),
+             QStringLiteral("/media/ann/My Disk"));
+    QCOMPARE(deepestMount(QStringLiteral("/mnt/backup/plan.pdf"), mounted), QStringLiteral("/mnt"));
+    // An automount point with nothing mounted on it holds no files.
+    QCOMPARE(deepestMount(QStringLiteral("/srv/nas/plan.pdf"), mounted), QStringLiteral("/"));
+    QCOMPARE(deepestMount(QStringLiteral("/srv/nas/plan.pdf"),
+                          mervin::mounts::parseMountInfo(kMountInfo + line("/srv/nas", "cifs"))),
+             QStringLiteral("/srv/nas"));
+    QCOMPARE(deepestMount(QStringLiteral("/home/ann/plan.pdf"), {}), QStringLiteral("/"));
 }
 
 void TstMountTable::holdingMount_data()

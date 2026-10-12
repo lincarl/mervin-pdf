@@ -239,7 +239,12 @@ void WindowManager::recordOpen(const QString &canonicalPath, bool restoreViewSta
 {
     if (canonicalPath.isEmpty())
         return;
-    if (recent_.add(canonicalPath, QDateTime::currentMSecsSinceEpoch(), pageCount)) {
+    // A file that is not there now, such as a crash recovery tab opened lazily or a
+    // tab focused again after its share went away, keeps the mount it was opened
+    // from. Recording now would store the file system below the empty folder.
+    const QString mount = QFileInfo::exists(canonicalPath) ? RecentStore::mountOf(canonicalPath)
+                                                           : recent_.recordedMount(canonicalPath);
+    if (recent_.add(canonicalPath, QDateTime::currentMSecsSinceEpoch(), pageCount, mount)) {
         recent_.save(recentFile_);
         emit recentListChanged(recent_.entries());
     }
@@ -350,16 +355,17 @@ void WindowManager::pruneMissingRecent()
         return;
     }
     pruneRunning_ = true;
-    QStringList paths;
+    // Each path with the mount recorded when it was opened.
+    QList<std::pair<QString, QString>> paths;
     paths.reserve(recent_.count());
     for (const RecentEntry &e : recent_.entries())
-        paths << e.path;
+        paths.append({e.path, e.mount});
     prunePool_.start([this, paths] {
         QStringList removed;
-        for (const QString &path : paths) {
+        for (const auto &[path, mount] : paths) {
             if (pruneCancel_)
                 return;
-            if (RecentStore::isRemovedFromDisk(path))
+            if (RecentStore::isRemovedFromDisk(path, mount))
                 removed << path;
         }
         QMetaObject::invokeMethod(
@@ -380,7 +386,11 @@ void WindowManager::pruneMissingRecent()
 QStringList WindowManager::sessionPathsToRestore()
 {
     session_.load();
-    return session_.prepareRestore(QDate::currentDate());
+    // Each file is judged by the file system it was on when opened, as Recent
+    // recorded it.
+    return session_.prepareRestore(QDate::currentDate(), {}, [this](const QString &path) {
+        return recent_.recordedMount(path);
+    });
 }
 
 void WindowManager::updateSession()

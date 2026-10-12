@@ -49,7 +49,10 @@ The Recent screen provides:
 - page count, file size, and last-opened information;
 - recovery choices for files that were moved or deleted, which stay listed until
   cleared unless Settings is set to drop them automatically. Entries on a detached
-  drive or an offline network share are never dropped automatically; and
+  drive, an offline network share or another unmounted volume are never dropped
+  automatically. On Linux the exceptions are a file last opened by an older version
+  on a volume mounted by hand outside the system's mount configuration, and a file
+  whose folder now holds another volume; and
 - file and folder actions such as copying paths or opening the containing folder.
 
 The application can restore the previous session. It opens the selected document and

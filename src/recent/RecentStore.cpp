@@ -33,7 +33,7 @@ void RecentStore::setRetention(int retention)
     trim();
 }
 
-bool RecentStore::add(const QString &path, qint64 whenMs, int pageCount)
+bool RecentStore::add(const QString &path, qint64 whenMs, int pageCount, const QString &mount)
 {
     if (path.isEmpty())
         return false;
@@ -53,6 +53,7 @@ bool RecentStore::add(const QString &path, qint64 whenMs, int pageCount)
     e.lastOpened = whenMs;
     e.pageCount = pageCount;
     e.favorite = wasFavorite;
+    e.mount = mount;
     entries_.prepend(e);
     trim();
     return true;
@@ -131,17 +132,23 @@ QString windowsVolume(const QString &p)
     return {};
 }
 #else
-// The file systems mounted now. Linux lists them in /proc/self/mountinfo, which
-// is read without touching any volume. QStorageInfo::mountedVolumes() queries
-// each one, which stalls on an offline share and mounts every automount point.
-QList<mounts::Mount> mountedNow()
+// The file systems Linux lists in /proc/self/mountinfo, which is read without
+// touching any volume. Empty when it cannot be read.
+QList<mounts::Mount> kernelMounts()
 {
     QFile mountInfo(QStringLiteral("/proc/self/mountinfo"));
-    if (mountInfo.open(QIODevice::ReadOnly)) {
-        const QList<mounts::Mount> listed = mounts::parseMountInfo(mountInfo.readAll());
-        if (!listed.isEmpty())
-            return listed;
-    }
+    return mountInfo.open(QIODevice::ReadOnly) ? mounts::parseMountInfo(mountInfo.readAll())
+                                               : QList<mounts::Mount>();
+}
+
+// The file systems mounted now. QStorageInfo::mountedVolumes(), used only without
+// mountinfo, queries each one, which stalls on an offline share and mounts every
+// automount point.
+QList<mounts::Mount> mountedNow()
+{
+    const QList<mounts::Mount> kernel = kernelMounts();
+    if (!kernel.isEmpty())
+        return kernel;
     QList<mounts::Mount> listed;
     for (const QStorageInfo &volume : QStorageInfo::mountedVolumes())
         listed.append({volume.rootPath(), volume.fileSystemType()});
@@ -171,10 +178,12 @@ bool answers(const QString &folder)
 }
 #endif
 
-// Whether the volume holding `absPath` is attached (see isRemovedFromDisk).
-bool volumeAttached(const QString &absPath)
+// Whether the volume holding `absPath` is attached, given the mount recorded
+// when the file was opened, if any (see isVolumeAttached).
+bool volumeAttached(const QString &absPath, const QString &mount)
 {
 #ifdef Q_OS_WIN
+    Q_UNUSED(mount);
     const QString volume = windowsVolume(QDir::fromNativeSeparators(absPath));
     return !volume.isEmpty() && QDir(volume + QLatin1Char('/')).exists();
 #else
@@ -188,24 +197,60 @@ bool volumeAttached(const QString &absPath)
         const int shareEnd = p.indexOf(QLatin1Char('/'), gvfs + 6);
         return shareEnd > 0 && QDir(p.left(shareEnd)).exists();
     }
-    const QString holder = mounts::holdingMount(p, mountedNow(), configuredMounts());
+    const QList<mounts::Mount> mounted = mountedNow();
+    // A share mounted by hand outside fstab leaves an empty folder once it is
+    // unmounted, which the mount list cannot tell from a folder whose file was
+    // deleted. While the folder the file was opened from is still there and
+    // another file system holds the path, the volume is away. Otherwise the mount
+    // list decides, so a recorded mount never makes a volume look attached. That
+    // covers a folder that went with its volume, as udisks and per-login mounts
+    // such as kio-fuse leave it.
+    if (!mount.isEmpty() && mounts::deepestMount(p, mounted) != mount && QFileInfo(mount).isDir())
+        return false;
+    const QString holder = mounts::holdingMount(p, mounted, configuredMounts());
     return !holder.isEmpty() && answers(holder);
 #endif
 }
 
 } // namespace
 
-bool RecentStore::isRemovedFromDisk(const QString &path)
+bool RecentStore::isRemovedFromDisk(const QString &path, const QString &mount)
 {
     if (path.isEmpty())
         return false;
     const QFileInfo fi(path);
-    return !fi.exists() && volumeAttached(fi.absoluteFilePath());
+    return !fi.exists() && volumeAttached(fi.absoluteFilePath(), mount);
 }
 
-bool RecentStore::isVolumeAttached(const QString &path)
+bool RecentStore::isVolumeAttached(const QString &path, const QString &mount)
 {
-    return !path.isEmpty() && volumeAttached(QFileInfo(path).absoluteFilePath());
+    return !path.isEmpty() && volumeAttached(QFileInfo(path).absoluteFilePath(), mount);
+}
+
+QString RecentStore::mountOf(const QString &path)
+{
+#ifdef Q_OS_WIN
+    Q_UNUSED(path);
+    return {};
+#else
+    // Only the kernel's list says which file system holds the path. Without it
+    // nothing is recorded, and the entry keeps the mount list rules.
+    const QList<mounts::Mount> mounted = kernelMounts();
+    if (path.isEmpty() || mounted.isEmpty())
+        return {};
+    return mounts::deepestMount(QDir::fromNativeSeparators(QFileInfo(path).absoluteFilePath()),
+                                mounted);
+#endif
+}
+
+QString RecentStore::recordedMount(const QString &path) const
+{
+    const QString key = normalizePathKey(path);
+    for (const RecentEntry &e : entries_) {
+        if (normalizePathKey(e.path) == key)
+            return e.mount;
+    }
+    return {};
 }
 
 QString RecentStore::volumeKey(const QString &path)
@@ -256,6 +301,7 @@ bool RecentStore::load(const QString &file)
         e.lastOpened = static_cast<qint64>(o.value(QStringLiteral("t")).toDouble());
         e.pageCount = o.value(QStringLiteral("n")).toInt(0);
         e.favorite = o.value(QStringLiteral("f")).toBool(false);
+        e.mount = o.value(QStringLiteral("m")).toString();
         if (!e.path.isEmpty())
             entries_.append(e);
     }
@@ -274,6 +320,8 @@ bool RecentStore::save(const QString &file) const
             o.insert(QStringLiteral("n"), e.pageCount);
         if (e.favorite)
             o.insert(QStringLiteral("f"), true);
+        if (!e.mount.isEmpty())
+            o.insert(QStringLiteral("m"), e.mount);
         arr.append(o);
     }
 

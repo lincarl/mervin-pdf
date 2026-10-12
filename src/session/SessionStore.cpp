@@ -101,22 +101,25 @@ void SessionStore::setPaths(const QStringList &paths)
 }
 
 QStringList SessionStore::prepareRestore(const QDate &today,
-                                         const std::function<bool(const QString &)> &volumeAttached)
+                                         const std::function<bool(const QString &)> &volumeAttached,
+                                         const std::function<QString(const QString &)> &recordedMount)
 {
     enum class Found { File, Gone, Away };
-    const std::function<bool(const QString &)> attached =
-        volumeAttached ? volumeAttached : RecentStore::isVolumeAttached;
-    // Each drive or share is checked once: on an offline share every check can
-    // stall for seconds.
+    // Each drive or share is checked once, since on an offline share every check
+    // can stall for seconds. Documents in one folder share an answer only when
+    // they were opened from the same mount.
     QHash<QString, bool> attachedByVolume;
     const auto find = [&](const QString &path) {
         const QFileInfo info(path);
         if (info.exists())
             return Found::File;
-        const QString volume = RecentStore::volumeKey(path);
+        const QString mount = recordedMount ? recordedMount(path) : QString();
+        const QString volume = RecentStore::volumeKey(path) + QLatin1Char('\n') + mount;
         auto it = attachedByVolume.constFind(volume);
         if (it == attachedByVolume.cend())
-            it = attachedByVolume.insert(volume, attached(path));
+            it = attachedByVolume.insert(volume, volumeAttached
+                                                     ? volumeAttached(path)
+                                                     : RecentStore::isVolumeAttached(path, mount));
         // Gone only from a folder that is still there on an attached volume. A
         // missing folder can be a drive mounted where the volume check does not
         // look, such as a share mounted in the home folder.

@@ -24,6 +24,7 @@ private slots:
     void removeMissingFilesDeletesAbsentEntries();
     void removeMissingFilesOnlyRemovesRequestedEntries();
     void removedFromDiskNeedsAnAttachedVolume();
+    void recordedMountJudgesTheVolume();
     void emptyPathIgnored();
     void jsonRoundTrip();
     void loadMissingFileLeavesEmpty();
@@ -166,6 +167,42 @@ void TstRecentStore::removedFromDiskNeedsAnAttachedVolume()
 #endif
 }
 
+// A recorded mount adds one case to the mount list rules. While the folder the
+// file was opened from is still there and another file system holds the path, the
+// volume is away. It never makes a volume attached that those rules call away.
+void TstRecentStore::recordedMountJudgesTheVolume()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString gone = dir.filePath(QStringLiteral("gone.pdf"));
+    const QString mount = RecentStore::mountOf(gone);
+    RecentStore s;
+    s.add(gone, 100, 0, mount);
+    QCOMPARE(s.recordedMount(gone), mount);
+    QCOMPARE(s.recordedMount(dir.filePath(QStringLiteral("other.pdf"))), QString());
+#ifdef Q_OS_WIN
+    QVERIFY(mount.isEmpty());
+#else
+    QVERIFY(mount.startsWith(QLatin1Char('/')));
+    QVERIFY(RecentStore::isVolumeAttached(gone, mount));
+    QVERIFY(RecentStore::isRemovedFromDisk(gone, mount));
+    // As if a share had been mounted on the folder by hand and is unmounted now.
+    QVERIFY(!RecentStore::isVolumeAttached(gone, dir.path()));
+    QVERIFY(!RecentStore::isRemovedFromDisk(gone, dir.path()));
+    // A mount folder that went with its volume, as udisks and kio-fuse leave it,
+    // falls back to the mount list, which finds the file deleted.
+    const QString goneFolder = dir.filePath(QStringLiteral("kio-fuse-AbCdEf"));
+    QVERIFY(RecentStore::isRemovedFromDisk(gone, goneFolder));
+    // Under /media the mount list keeps an unplugged drive away, also when the file
+    // system recorded for it holds the path now.
+    const QString usb = QStringLiteral("/media/mervin-test-no-such-user/USB/report.pdf");
+    QVERIFY(!RecentStore::isRemovedFromDisk(usb, RecentStore::mountOf(usb)));
+    // Opening the file again records the mount again.
+    s.add(gone, 200, 0, dir.path());
+    QCOMPARE(s.recordedMount(gone), dir.path());
+#endif
+}
+
 void TstRecentStore::emptyPathIgnored()
 {
     RecentStore s;
@@ -181,7 +218,7 @@ void TstRecentStore::jsonRoundTrip()
 
     RecentStore a;
     a.add(QStringLiteral("C:/a.pdf"), 111);
-    a.add(QStringLiteral("C:/b.pdf"), 222);
+    a.add(QStringLiteral("C:/b.pdf"), 222, 0, QStringLiteral("/media/ann/USB"));
     QVERIFY(a.save(file));
 
     RecentStore b;
@@ -189,7 +226,9 @@ void TstRecentStore::jsonRoundTrip()
     QCOMPARE(b.count(), 2);
     QCOMPARE(b.entries()[0].path, QStringLiteral("C:/b.pdf"));
     QCOMPARE(b.entries()[0].lastOpened, qint64(222));
+    QCOMPARE(b.entries()[0].mount, QStringLiteral("/media/ann/USB"));
     QCOMPARE(b.entries()[1].path, QStringLiteral("C:/a.pdf"));
+    QCOMPARE(b.entries()[1].mount, QString());
 }
 
 void TstRecentStore::loadMissingFileLeavesEmpty()

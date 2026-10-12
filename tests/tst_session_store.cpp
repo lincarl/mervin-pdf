@@ -51,6 +51,7 @@ private slots:
     void readableFileIsRestoredWhateverTheVolumeCheck();
     void eachVolumeIsCheckedOnce();
     void unmountedMountPointIsDetached();
+    void eachRecordedMountIsCheckedOnItsOwn();
     void keptFileExpires();
     void keptFileFoundAgainIsRestored();
     void keptFileOpenAgainLeavesTheList();
@@ -264,6 +265,31 @@ void TstSessionStore::eachVolumeIsCheckedOnce()
     });
     QCOMPARE(checks, 1);
     QCOMPARE(s.unavailable().size(), 3);
+}
+
+// Two documents in one folder, one with a recorded mount that no longer holds the
+// folder, as a share mounted by hand leaves it. The document opened from the share
+// is kept and the other one is dropped, in either order.
+void TstSessionStore::eachRecordedMountIsCheckedOnItsOwn()
+{
+#ifndef Q_OS_WIN
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString share = dir.filePath(QStringLiteral("share"));
+    QVERIFY(QDir().mkpath(share));
+    const QString fromShare = share + QStringLiteral("/plan.pdf");
+    const QString local = share + QStringLiteral("/deleted.pdf");
+    const auto recordedMount = [&](const QString &path) {
+        return path == fromShare ? share : QString();
+    };
+    for (const QStringList &order : {QStringList{local, fromShare}, QStringList{fromShare, local}}) {
+        SessionStore s;
+        s.setPaths(order);
+        QVERIFY(s.prepareRestore(kToday, {}, recordedMount).isEmpty());
+        QCOMPARE(s.unavailable().size(), 1);
+        QCOMPARE(s.unavailable().first().path, fromShare);
+    }
+#endif
 }
 
 void TstSessionStore::unmountedMountPointIsDetached()

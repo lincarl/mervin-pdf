@@ -38,6 +38,13 @@ bool holds(const QString &folder, const QString &path)
         && (path.size() == folder.size() || path.at(folder.size()) == QLatin1Char('/'));
 }
 
+// An automount (autofs) point mounts the volume on demand, on itself or on a
+// folder below it, so it holds no files of its own.
+bool automount(const Mount &m)
+{
+    return m.type == "autofs";
+}
+
 } // namespace
 
 QList<Mount> parseMountInfo(const QByteArray &text)
@@ -70,20 +77,24 @@ QStringList parseFstab(const QByteArray &text)
     return folders;
 }
 
+QString deepestMount(const QString &path, const QList<Mount> &mounted)
+{
+    QString holder = QStringLiteral("/");
+    for (const Mount &m : mounted) {
+        if (!automount(m) && holds(m.point, path) && m.point.size() > holder.size())
+            holder = m.point;
+    }
+    return holder;
+}
+
 QString holdingMount(const QString &path, const QList<Mount> &mounted,
                      const QStringList &configured)
 {
-    // An automount (autofs) point mounts the volume on demand, on itself or on a
-    // folder below it, so it holds no files of its own.
-    const auto automount = [](const Mount &m) { return m.type == "autofs"; };
-    QString holder = QStringLiteral("/");
+    const QString holder = deepestMount(path, mounted);
     QString required;
     for (const Mount &m : mounted) {
-        if (!holds(m.point, path))
-            continue;
-        QString &deepest = automount(m) ? required : holder;
-        if (m.point.size() > deepest.size())
-            deepest = m.point;
+        if (automount(m) && holds(m.point, path) && m.point.size() > required.size())
+            required = m.point;
     }
     for (const QString &point : configured) {
         if (holds(point, path) && point.size() > required.size())

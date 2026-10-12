@@ -55,10 +55,13 @@ public:
     // folder, is kept in unavailable(), dated `today` when first found. Kept
     // documents found again are restored after the open ones, and those kept for
     // kKeepUnavailableDays are dropped without checking the disk. Replaces paths()
-    // with the documents to reopen, in order, and returns them. `volumeAttached`
-    // defaults to RecentStore::isVolumeAttached; tests pass their own.
+    // with the documents to reopen, in order, and returns them. `recordedMount`
+    // gives the mount a document was opened from (RecentEntry::mount), which
+    // WindowManager looks up in Recent. `volumeAttached` defaults to
+    // RecentStore::isVolumeAttached with that mount, and tests pass their own.
     QStringList prepareRestore(const QDate &today,
-                               const std::function<bool(const QString &)> &volumeAttached = {});
+                               const std::function<bool(const QString &)> &volumeAttached = {},
+                               const std::function<QString(const QString &)> &recordedMount = {});
 
     void clear()
     {
