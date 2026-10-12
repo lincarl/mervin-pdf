@@ -31,7 +31,7 @@ struct Chrome
 
     // Surfaces, layered from the deepest well up to floating popovers.
     QColor well;     // inset input wells: line edits, spin boxes, combos, lists
-    QColor status;   // title bar + status bar (the darkest chrome band)
+    QColor status;   // status bar (the darkest chrome band)
     QColor bar;      // tab strip, dock titles, secondary bars
     QColor window;   // window/toolbar chrome and dialog bodies
     QColor fill;     // filled bodies: selected tab, checked segment, active pill

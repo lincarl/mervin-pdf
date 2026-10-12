@@ -440,7 +440,8 @@ All themed application-chrome and viewer-surface colors are defined in
 tokens and the selected system or custom accent. Colors written into PDF content and
 the compile-time Comfort transform ramp are deliberate data-level exceptions.
 Document color transforms are separate from application chrome so page appearance
-can be changed independently.
+can be changed independently. On Windows, the native title bar uses the system's
+default caption and text colors in both UI themes.
 
 The dark theme is "Nord", lifted blue-grey surfaces chosen for comfort in long
 sessions: no near-black wells, body text at about 9.4:1 and a soft frost accent

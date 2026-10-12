@@ -355,7 +355,7 @@ target_compile_definitions(mervin_app PRIVATE MERVIN_PACKAGE_FORMAT="${MERVIN_PA
 # .rc automatically. The ICO and runtime PNG frames contain the same artwork.
 if(WIN32)
     target_sources(MervinPDF PRIVATE ${CMAKE_BINARY_DIR}/generated/mervin.rc)
-    # Dark-theme caption colouring (DwmSetWindowAttribute in MainWindow.cpp).
+    # Native caption colour defaults (DwmSetWindowAttribute in MainWindow.cpp).
     target_link_libraries(mervin_app PUBLIC comctl32 dwmapi ole32 shell32 uuid)
 endif()
 

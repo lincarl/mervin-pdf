@@ -186,8 +186,8 @@ private:
     // Re-assert WA_Hover on the chrome buttons after a theme switch re-polishes
     // them (a dropped WA_Hover leaves a button stuck without its :hover highlight).
     void reassertHoverAttributes();
-    // Windows 11: colour the native caption to the dark status-bar tone while
-    // the UI theme is dark; reset to the DWM default in light. No-op elsewhere.
+    // Restore Windows 11's default caption and text colours in both UI themes.
+    // No-op elsewhere.
     void applyTitleBarTheme();
     // How PDF pages should be toned, given the current document theme setting
     // ("light"/"dark"/"comfort"; legacy "follow-ui" resolves against the live
