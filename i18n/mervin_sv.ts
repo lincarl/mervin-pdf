@@ -132,6 +132,11 @@ Edited document retained at %2.
 Det redigerade dokumentet finns kvar i %2.
 %3</translation>
     </message>
+    <message>
+        <source>Don&apos;t save</source>
+        <extracomment>Button in the unsaved-changes question. Closes the document and loses the changes made since it was last saved. The file on disk stays as it is.</extracomment>
+        <translation>Spara inte</translation>
+    </message>
     <message numerus="yes">
         <source>Wrote %n file(s) to:
 %1</source>

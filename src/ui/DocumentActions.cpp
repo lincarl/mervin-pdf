@@ -17,6 +17,7 @@
 #include "ui/TabPage.h"
 #include "ui/ViewerWidget.h"
 
+#include <QAbstractButton>
 #include <QAction>
 #include <QDialog>
 #include <QDir>
@@ -375,11 +376,17 @@ bool MainWindow::confirmClose(TabPage *tab)
     viewer->commitActiveAnnotEditor();
     if (!tab->hasUnsavedEdits())
         return true;
-    const auto answer = QMessageBox::question(
-        this, tr("Unsaved changes"),
-        //: %1 is the file name.
-        tr("Save changes to %1?").arg(tab->tabTitle()),
-        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+    QMessageBox box(QMessageBox::Question, tr("Unsaved changes"),
+                    //: %1 is the file name.
+                    tr("Save changes to %1?").arg(tab->tabTitle()),
+                    QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, this);
+    box.setDefaultButton(QMessageBox::Save);
+    // Qt names this button after the platform ("Discard", or "Close without
+    // Saving" on GNOME). Say what it does, in the app's own catalogs.
+    //: Button in the unsaved-changes question. Closes the document and loses the
+    //: changes made since it was last saved. The file on disk stays as it is.
+    box.button(QMessageBox::Discard)->setText(tr("Don't save"));
+    const int answer = box.exec();
     return answer == QMessageBox::Discard
         || (answer == QMessageBox::Save && saveTab(tab));
 }

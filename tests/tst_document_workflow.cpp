@@ -71,6 +71,7 @@ public:
                 unexpectedDialogs_.append(box->windowTitle() + ": " + box->text());
                 box->reject();
             } else if (auto *button = box->button(answers_.takeFirst())) {
+                clicked_.append(button->text());
                 button->click();
             } else {
                 unexpectedDialogs_.append("Missing expected button: " + box->text());
@@ -84,6 +85,7 @@ private slots:
     {
         ConfigPaths::setOverrideDir(profile_.path());
         answers_.clear();
+        clicked_.clear();
         unexpectedDialogs_.clear();
         dialogs_.start(10);
     }
@@ -348,6 +350,8 @@ private slots:
         answers_.append(QMessageBox::Discard);
         QVERIFY(QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0)));
         QCOMPARE(window.tabCount(), 0);
+        // The app's own text, not the platform's "Discard", so every catalog has it.
+        QCOMPARE(clicked_.last(), QStringLiteral("Don't save"));
     }
 
     void canceledQuitPreservesSuspendedDocumentsAcrossWindows()
@@ -587,6 +591,7 @@ private:
     QTemporaryDir profile_;
     QTimer dialogs_;
     QList<QMessageBox::StandardButton> answers_;
+    QStringList clicked_; // the text of each button the dialog handler clicked
     QStringList unexpectedDialogs_;
 };
 
