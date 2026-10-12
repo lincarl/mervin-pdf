@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDate>
+#include <QHash>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -49,15 +50,24 @@ public:
     void setUnavailable(const QList<Unavailable> &entries) { unavailable_ = entries; }
     const QList<Unavailable> &unavailable() const { return unavailable_; }
 
+    // The mount point a document was opened from (RecentEntry::mount). The session
+    // keeps its own copy, so a share that is away is still told from a deleted file
+    // after Recent trims or clears the document. Kept while the document is open or
+    // kept, and saved with it in "mounts". Older versions ignore it. An empty mount
+    // forgets the document's.
+    void setMount(const QString &path, const QString &mount);
+    QString mount(const QString &path) const;
+
     // The startup decision for a loaded session. A missing document whose folder is
     // still there on an attached volume was deleted, moved or renamed, and is
     // dropped. Any other missing document, on a volume that is away or in a missing
     // folder, is kept in unavailable(), dated `today` when first found. Kept
     // documents found again are restored after the open ones, and those kept for
     // kKeepUnavailableDays are dropped without checking the disk. Replaces paths()
-    // with the documents to reopen, in order, and returns them. `recordedMount`
-    // gives the mount a document was opened from (RecentEntry::mount), which
-    // WindowManager looks up in Recent. `volumeAttached` defaults to
+    // with the documents to reopen, in order, and returns them. Each document is
+    // judged by its mount(), or else by `recordedMount`, which WindowManager looks
+    // up in Recent for a session saved before sessions recorded mounts. A mount
+    // found that way is kept from then on. `volumeAttached` defaults to
     // RecentStore::isVolumeAttached with that mount, and tests pass their own.
     QStringList prepareRestore(const QDate &today,
                                const std::function<bool(const QString &)> &volumeAttached = {},
@@ -68,6 +78,7 @@ public:
         paths_.clear();
         activePath_.clear();
         unavailable_.clear();
+        mounts_.clear();
     }
 
     bool load(const QString &file = defaultFile());
@@ -76,9 +87,13 @@ public:
     static QString defaultFile(); // %APPDATA%/MervinPDF/session.json
 
 private:
+    // Forgets the mounts of documents that are neither open nor kept.
+    void keepListedMounts();
+
     QStringList paths_;
     QString activePath_;
     QList<Unavailable> unavailable_;
+    QHash<QString, QString> mounts_; // by normalizePathKey
 };
 
 } // namespace mervin

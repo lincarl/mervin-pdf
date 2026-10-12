@@ -242,8 +242,13 @@ void WindowManager::recordOpen(const QString &canonicalPath, bool restoreViewSta
     // A file that is not there now, such as a crash recovery tab opened lazily or a
     // tab focused again after its share went away, keeps the mount it was opened
     // from. Recording now would store the file system below the empty folder.
-    const QString mount = QFileInfo::exists(canonicalPath) ? RecentStore::mountOf(canonicalPath)
-                                                           : recent_.recordedMount(canonicalPath);
+    QString mount;
+    if (QFileInfo::exists(canonicalPath))
+        mount = RecentStore::mountOf(canonicalPath);
+    else if (mount = session_.mount(canonicalPath); mount.isEmpty())
+        mount = recent_.recordedMount(canonicalPath);
+    // The session keeps it too, for when Recent no longer lists the file.
+    session_.setMount(canonicalPath, mount);
     if (recent_.add(canonicalPath, QDateTime::currentMSecsSinceEpoch(), pageCount, mount)) {
         recent_.save(recentFile_);
         emit recentListChanged(recent_.entries());
@@ -386,8 +391,8 @@ void WindowManager::pruneMissingRecent()
 QStringList WindowManager::sessionPathsToRestore()
 {
     session_.load();
-    // Each file is judged by the file system it was on when opened, as Recent
-    // recorded it.
+    // Each file is judged by the file system it was on when opened, as the session
+    // recorded it. A session saved before sessions recorded mounts has them in Recent.
     return session_.prepareRestore(QDate::currentDate(), {}, [this](const QString &path) {
         return recent_.recordedMount(path);
     });

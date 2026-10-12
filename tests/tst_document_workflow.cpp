@@ -473,7 +473,7 @@ private slots:
     }
 
     // A share mounted by hand on a folder, outside fstab, leaves the folder empty
-    // once it is unmounted. Recent recorded the share's mount when the document was
+    // once it is unmounted. The share's mount was recorded when the document was
     // opened, so the session keeps the document instead of dropping it as deleted.
     void sessionKeepsDocumentsWhoseRecordedMountIsGone()
     {
@@ -481,19 +481,23 @@ private slots:
         QTemporaryDir files;
         const QDir root(QFileInfo(files.path()).canonicalFilePath());
         QVERIFY(root.mkpath(QStringLiteral("share")));
+        const QString share = root.filePath(QStringLiteral("share"));
         const QString open = root.filePath(QStringLiteral("open.pdf"));
-        const QString away = root.filePath(QStringLiteral("share/plan.pdf"));
+        // One mount is in the session only, as after Recent trimmed the document.
+        // The other is in Recent only, as a session saved by an older version has it.
+        const QString inSession = root.filePath(QStringLiteral("share/plan.pdf"));
+        const QString inRecent = root.filePath(QStringLiteral("share/older.pdf"));
         QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), open));
         const QString recentFile = RecentStore::defaultFile();
         RecentStore recent;
         recent.load(recentFile);
         const RecentStore before = recent;
         const auto restoreRecent = qScopeGuard([&] { before.save(recentFile); });
-        recent.add(away, QDateTime::currentMSecsSinceEpoch(), 0,
-                   root.filePath(QStringLiteral("share")));
+        recent.add(inRecent, QDateTime::currentMSecsSinceEpoch(), 0, share);
         QVERIFY(recent.save(recentFile));
         SessionStore saved;
-        saved.setPaths({away, open});
+        saved.setMount(inSession, share);
+        saved.setPaths({inSession, inRecent, open});
         QVERIFY(saved.save());
 
         WindowManager manager;
@@ -503,12 +507,15 @@ private slots:
         SessionStore onDisk;
         QVERIFY(onDisk.load());
         QCOMPARE(onDisk.paths(), QStringList{open});
-        QCOMPARE(onDisk.unavailable().size(), 1);
-        QCOMPARE(onDisk.unavailable().first().path, away);
-        // Opening a document records the file system it is on.
+        QCOMPARE(onDisk.unavailable().size(), 2);
+        QCOMPARE(onDisk.mount(inSession), share);
+        QCOMPARE(onDisk.mount(inRecent), share);
+        // Opening a document records the file system it is on, in Recent and in
+        // the session.
+        QVERIFY(!RecentStore::mountOf(open).isEmpty());
+        QCOMPARE(onDisk.mount(open), RecentStore::mountOf(open));
         RecentStore reloaded;
         QVERIFY(reloaded.load(recentFile));
-        QVERIFY(!reloaded.recordedMount(open).isEmpty());
         QCOMPARE(reloaded.recordedMount(open), RecentStore::mountOf(open));
 #endif
     }

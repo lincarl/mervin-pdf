@@ -186,10 +186,10 @@ public:
     // Crash recovery / session restore (M11). sessionPathsToRestore() loads the
     // saved session and returns the documents to reopen. Documents on an
     // unavailable drive, share or mount stay in the session unopened (see
-    // SessionStore::prepareRestore), judged by the mount Recent recorded for each
-    // file when there is one. updateSession() saves the current open set
-    // (union across live windows) followed by those kept documents. The single UI
-    // process is the only writer.
+    // SessionStore::prepareRestore), judged by the mount recorded for each file
+    // when there is one (SessionStore::mount). updateSession() saves the current
+    // open set (union across live windows) followed by those kept documents. The
+    // single UI process is the only writer.
     QStringList sessionPathsToRestore();
     void updateSession();
 

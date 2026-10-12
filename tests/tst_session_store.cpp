@@ -52,10 +52,12 @@ private slots:
     void eachVolumeIsCheckedOnce();
     void unmountedMountPointIsDetached();
     void eachRecordedMountIsCheckedOnItsOwn();
+    void sessionMountOutlivesRecent();
     void keptFileExpires();
     void keptFileFoundAgainIsRestored();
     void keptFileOpenAgainLeavesTheList();
     void unavailableRoundTrip();
+    void mountsRoundTrip();
 };
 
 void TstSessionStore::roundTrip()
@@ -292,6 +294,43 @@ void TstSessionStore::eachRecordedMountIsCheckedOnItsOwn()
 #endif
 }
 
+// The session keeps each document's mount, so a document from a share mounted by
+// hand stays start after start once Recent no longer lists it. A mount Recent gave
+// for a session saved before sessions recorded mounts is kept from then on. A
+// missing document in the same folder with no mount is dropped.
+void TstSessionStore::sessionMountOutlivesRecent()
+{
+#ifndef Q_OS_WIN
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString file = dir.filePath(QStringLiteral("session.json"));
+    const QString share = dir.filePath(QStringLiteral("share"));
+    QVERIFY(QDir().mkpath(share));
+    const QString fromShare = share + QStringLiteral("/plan.pdf");
+    const QString older = share + QStringLiteral("/older.pdf");
+    const QString deleted = share + QStringLiteral("/deleted.pdf");
+
+    SessionStore saved;
+    saved.setMount(fromShare, share);
+    saved.setPaths({fromShare, older, deleted});
+    QVERIFY(saved.save(file));
+    for (int start = 1; start <= 2; ++start) {
+        // Recent lists only the older document, and forgets it after the first start.
+        const auto recordedMount = [&](const QString &path) {
+            return start == 1 && path == older ? share : QString();
+        };
+        SessionStore s;
+        QVERIFY(s.load(file));
+        QVERIFY(s.prepareRestore(kToday, {}, recordedMount).isEmpty());
+        QCOMPARE(s.unavailable().size(), 2);
+        QCOMPARE(s.unavailable().at(0).path, fromShare);
+        QCOMPARE(s.unavailable().at(1).path, older);
+        QCOMPARE(s.mount(older), share);
+        QVERIFY(s.save(file));
+    }
+#endif
+}
+
 void TstSessionStore::unmountedMountPointIsDetached()
 {
     // The real volume check: an offline share, or a mount point with nothing
@@ -399,6 +438,31 @@ void TstSessionStore::unavailableRoundTrip()
     QCOMPARE(b.unavailable().size(), 1);
     QCOMPARE(b.unavailable().first().path, away);
     QCOMPARE(b.unavailable().first().since, QDate(2026, 9, 20));
+}
+
+// The mounts of open and kept documents are saved. A closed document's is not.
+void TstSessionStore::mountsRoundTrip()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString file = dir.filePath(QStringLiteral("session.json"));
+    const QString nas = QStringLiteral("/home/ann/nas");
+    const QString open = nas + QStringLiteral("/a.pdf");
+    const QString away = nas + QStringLiteral("/b.pdf");
+    const QString closed = nas + QStringLiteral("/c.pdf");
+
+    SessionStore a;
+    for (const QString &path : {open, away, closed})
+        a.setMount(path, nas);
+    a.setUnavailable({{away, kToday}});
+    a.setPaths({open});
+    QVERIFY(a.save(file));
+
+    SessionStore b;
+    QVERIFY(b.load(file));
+    QCOMPARE(b.mount(open), nas);
+    QCOMPARE(b.mount(away), nas);
+    QVERIFY(b.mount(closed).isEmpty());
 }
 
 QTEST_GUILESS_MAIN(TstSessionStore)
