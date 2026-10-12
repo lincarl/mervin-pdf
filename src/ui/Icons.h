@@ -64,7 +64,7 @@ enum class Glyph {
     Viewing,    // eye
 
     // Document popover
-    ExtractPages, // file-output
+    ExtractPages, // file-output, mirrored horizontally
     SplitPages,   // split
     MergePages,   // merge
     Security,     // lock

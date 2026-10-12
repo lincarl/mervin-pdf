@@ -213,6 +213,11 @@ QPixmap rasterize(Glyph id, const QColor &color, int sz, double strokeWidth,
         p.rotate(90);
         p.translate(-sz / 2.0, -sz / 2.0);
     }
+    if (id == Glyph::ExtractPages) {
+        // Mirror file-output so its arrow leaves the document to the right.
+        p.translate(sz, 0);
+        p.scale(-1, 1);
+    }
     QSvgRenderer renderer(tinted(lucideName(id), color, strokeWidth, fill));
     renderer.render(&p, bounds);
     return pm;

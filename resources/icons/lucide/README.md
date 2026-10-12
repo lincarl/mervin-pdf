@@ -14,7 +14,9 @@ indicators request a heavier stroke. These files stay unchanged.
 Fit page and fit width combine `square` with `move-vertical` and `move-horizontal`,
 respectively. Each arrow is centered at 65% of its original size, with its stroke
 compensated to match the square. Split and merge are turned a quarter clockwise, so
-their arrows point right instead of up.
+their arrows point right instead of up. Extract Pages mirrors `file-output`
+horizontally, so its arrow points right out of the document and its page fold
+moves to the upper-left corner.
 
 ## Adding or changing an icon
 
