@@ -30,6 +30,13 @@ Both use the same packaging workflow, which accepts only commits on `main`.
 After `v1.64.10` exists, the next automatic candidate becomes `v1.64.11-rc1`.
 Packaging runs no tests, so the successful CI run must precede a stable tag push.
 
+After publication, update the release notes with the
+[Microsoft Store link](https://apps.microsoft.com/detail/9PPM4Z5G1LD0) as the
+recommended Windows download. Explain that the Store package is signed by
+Microsoft and uses Store updates. Keep the unsigned MSI alternative and Linux
+downloads available. Do not attach the unsigned Store-upload MSIX or a package
+signed with a temporary test certificate to the public release.
+
 ## Microsoft Store packages
 
 The Windows release job also creates an unsigned x64 MSIX with the reserved
