@@ -182,22 +182,25 @@ public:
     // worker thread, since network paths can stall. A no-op while the setting is on.
     void pruneMissingRecent();
 
-    // Crash recovery / session restore (M11). sessionPaths() loads the
-    // previously-open documents; updateSession() saves the current open set
-    // (union across live windows). The single UI process is the only writer.
-    QStringList sessionPaths();
+    // Crash recovery / session restore (M11). sessionPathsToRestore() loads the
+    // saved session and returns the documents to reopen. Documents on an
+    // unavailable drive, share or mount stay in the session unopened (see
+    // SessionStore::prepareRestore). updateSession() saves the current open set
+    // (union across live windows) followed by those kept documents. The single UI
+    // process is the only writer.
+    QStringList sessionPathsToRestore();
     void updateSession();
 
     // The document that was on screen when the session was recorded. Valid after
-    // sessionPaths() has loaded the file; empty when the session predates the
-    // field or recorded no current document.
+    // sessionPathsToRestore() has loaded the file; empty when the session predates
+    // the field, recorded no current document, or that document is not restored.
     QString sessionActivePath() const { return session_.activePath(); }
 
     // The current recent list (so a newly shown panel has data immediately).
     const QList<RecentEntry> &recentEntries() const { return recent_.entries(); }
 
     // Remember canonical sibling order and the closed index so reopening derives a position in
-    // the live bar. Memory-only undo history; sessionPaths separately persists open tabs.
+    // the live bar. Memory-only undo history; updateSession separately persists open tabs.
     void rememberClosedTab(const QString &path, const QStringList &siblings, int index);
 
     enum class Reopen {

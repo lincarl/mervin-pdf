@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QDate>
+#include <QList>
 #include <QString>
 #include <QStringList>
 
@@ -12,6 +14,20 @@ namespace mervin {
 class SessionStore
 {
 public:
+    // A session document found missing at startup together with its folder, as on
+    // a detached drive, an offline network share or an unmounted volume. It stays
+    // in the saved session, unopened, until a later start finds it again or it
+    // expires (see prepareRestore). Persisted as "unavailable" next to "open".
+    // Older versions ignore it.
+    struct Unavailable
+    {
+        QString path;
+        QDate since; // the date of the start that first found it missing
+    };
+
+    // Days an unavailable document is kept, counted from Unavailable::since.
+    static constexpr int kKeepUnavailableDays = 30;
+
     void setPaths(const QStringList &paths) { paths_ = paths; }
     const QStringList &paths() const { return paths_; }
 
@@ -23,10 +39,24 @@ public:
     void setActivePath(const QString &path) { activePath_ = path; }
     const QString &activePath() const { return activePath_; }
 
+    // Kept documents, never part of paths() or the active path. Saves write them
+    // as they are, without checking the disk.
+    void setUnavailable(const QList<Unavailable> &entries) { unavailable_ = entries; }
+    const QList<Unavailable> &unavailable() const { return unavailable_; }
+
+    // The startup decision for a loaded session. A missing document whose folder
+    // exists was deleted or renamed, and is dropped. A missing document whose
+    // folder is missing too is kept in unavailable(), dated `today` when first
+    // found. Kept documents found again are restored after the open ones, and
+    // those kept for kKeepUnavailableDays are dropped without checking the disk.
+    // Replaces paths() with the documents to reopen, in order, and returns them.
+    QStringList prepareRestore(const QDate &today);
+
     void clear()
     {
         paths_.clear();
         activePath_.clear();
+        unavailable_.clear();
     }
 
     bool load(const QString &file = defaultFile());
@@ -37,6 +67,7 @@ public:
 private:
     QStringList paths_;
     QString activePath_;
+    QList<Unavailable> unavailable_;
 };
 
 } // namespace mervin

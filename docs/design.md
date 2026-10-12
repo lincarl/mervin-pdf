@@ -102,6 +102,18 @@ If the primary process disappears during handoff, the new process retries owners
 and can fall back to a standalone window. Session restoration creates the tab list
 but opens only the selected document. Other restored tabs load when selected.
 
+Before that, `SessionStore::prepareRestore` checks each saved path. A missing file
+whose folder exists was deleted or renamed and is dropped. A missing file whose
+folder is also missing, such as one on a detached drive, an offline network share
+or an unmounted volume, gets no tab. It stays in `session.json` under `unavailable`,
+next to `open`, with the date it was first found missing.
+`WindowManager::updateSession` writes these entries back without checking the disk,
+because a check on an unreachable share can block the UI thread for seconds. An
+entry leaves the list once its file is open in a tab. A later start that finds the
+file reopens it after the other restored tabs. Entries expire 30 days after that
+date, without a disk check. With session restore off, the saved session is not
+loaded and nothing is kept.
+
 `WindowManager` owns the system tray lifecycle. With Close to tray enabled, a window
 close hides that window without destroying its tabs. Tray actions restore windows
 or explicitly quit, including the usual unsaved-edit checks. Disabling Close to tray
@@ -379,7 +391,7 @@ The files are:
 | `config.toml` | settings and saved window state |
 | `recent.json` | recent paths, timestamps, page counts, and favourites |
 | `viewstate.json` | page, zoom, rotation, and scroll state per path |
-| `session.json` | currently open files and active document |
+| `session.json` | currently open files, active document, and files kept while their drive is unavailable |
 | `recovery/` | edited document snapshots and metadata for unloaded tabs |
 | `tessdata/` | writable OCR language models |
 | `downloads/` | PDF downloads when no normal download directory is available or a profile is active |

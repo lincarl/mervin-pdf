@@ -7,6 +7,7 @@
 #include "render/MeasureContent.h"
 #include "render/RenderEngine.h"
 #include "security/MeasureExport.h"
+#include "session/SessionStore.h"
 #include "ui/MainWindow.h"
 #include "ui/TabPage.h"
 #include "ui/ThemeTokens.h"
@@ -15,6 +16,7 @@
 #include <QAction>
 #include <QComboBox>
 #include <QContextMenuEvent>
+#include <QDir>
 #include <QFile>
 #include <QLineEdit>
 #include <QMap>
@@ -422,6 +424,44 @@ private slots:
         later->hideToTray();
         manager.restoreFromTray();
         QTRY_COMPARE(QApplication::activeWindow(), later);
+    }
+
+    // A session document on an unavailable drive stays in the saved session through
+    // later saves until the user opens it again. Then it is an ordinary tab.
+    void sessionKeepsDocumentsOnUnavailableDrives()
+    {
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        const QString open = root.filePath(QStringLiteral("open.pdf"));
+        const QString away = root.filePath(QStringLiteral("away/plan.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), open));
+        SessionStore saved;
+        saved.setPaths({away, open});
+        QVERIFY(saved.save());
+
+        WindowManager manager;
+        QCOMPARE(manager.sessionPathsToRestore(), QStringList{open});
+        MainWindow *window = manager.createWindow();
+        QVERIFY(window->openFile(open));
+        SessionStore onDisk;
+        QVERIFY(onDisk.load());
+        QCOMPARE(onDisk.paths(), QStringList{open});
+        QCOMPARE(onDisk.activePath(), open);
+        QCOMPARE(onDisk.unavailable().size(), 1);
+        QCOMPARE(onDisk.unavailable().first().path, away);
+        QCOMPARE(onDisk.unavailable().first().since, QDate::currentDate());
+
+        QVERIFY(root.mkpath(QStringLiteral("away")));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), away));
+        QVERIFY(window->openFile(away));
+        QVERIFY(onDisk.load());
+        QCOMPARE(onDisk.paths(), (QStringList{open, away}));
+        QVERIFY(onDisk.unavailable().isEmpty());
+
+        QVERIFY(QMetaObject::invokeMethod(window, "closeTab", Q_ARG(int, 1)));
+        QVERIFY(onDisk.load());
+        QCOMPARE(onDisk.paths(), QStringList{open});
+        QVERIFY(onDisk.unavailable().isEmpty());
     }
 
     void savingSuspendedEditsRequiresConfirmingExternalChanges()
