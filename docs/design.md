@@ -336,7 +336,8 @@ Delete Pages is the same `ExtractDialog` and `ExtractStrip` over an `ExtractPlan
 `Mode::Delete`, not a separate dialog. The rows, Save as, the password row, writing
 before closing and the keyboard handling are shared, and the mode changes only what
 differs. Its rows are a set of pages to leave out, so `RowList` drops the grips and
-the Output column and there are no moves. `ExtractPlan::cells()` returns every
+the Output column and there are no moves. Nor is there a Remove button beside the
+rows, since each row's ✕ removes it. `ExtractPlan::cells()` returns every
 source page, unfolded, flagged `deleted`, and `deletePage()`/`keepPage()` turn a
 click on the strip into row edits, widening, joining or splitting ranges. The dialog writes through
 `PageOps::deletePages`, which copies the whole document minus those pages, so the
@@ -475,7 +476,8 @@ native renders rather than a larger render shrunk to fit. No render draws a line
 thinner than about 1.07 device pixels. At one pixel or less Qt's raster engine uses
 its hairline stroker, which drops the dots in icons such as Outline, About and
 Keyboard shortcuts. A 16 px icon at 100% scaling therefore gets about 1.6 units,
-and a 20 px one about 1.3.
+and a 20 px one about 1.3. The Document menu's Split and Merge icons are Lucide's
+split and merge turned a quarter clockwise, so their arrows point right.
 
 Fit page and Fit width have separate toolbar buttons, each selecting its mode
 without toggling. Their icons overlay a centered directional arrow at 65% scale

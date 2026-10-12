@@ -206,6 +206,13 @@ QPixmap rasterize(Glyph id, const QColor &color, int sz, double strokeWidth,
         bounds.adjust(inset, inset, -inset, -inset);
         strokeWidth /= arrowScale;
     }
+    if (id == Glyph::SplitPages || id == Glyph::MergePages) {
+        // Lucide's split and merge point up. Turned a quarter clockwise about the
+        // centre, they point right, and the grid lines stay on the pixel grid.
+        p.translate(sz / 2.0, sz / 2.0);
+        p.rotate(90);
+        p.translate(-sz / 2.0, -sz / 2.0);
+    }
     QSvgRenderer renderer(tinted(lucideName(id), color, strokeWidth, fill));
     renderer.render(&p, bounds);
     return pm;

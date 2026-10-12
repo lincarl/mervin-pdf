@@ -141,21 +141,16 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
         downBtn_ = sideButton(tr("Move &Down"));
         connect(downBtn_, &QPushButton::clicked, this, [this] { moveCurrent(1); });
     }
-    side->addSpacing(6);
-    const QColor ink = Theme::iconInk(palette());
-    if (deleting) {
-        // Taking a row away keeps its pages, so this button has the row's own ✕
-        // rather than the bin the strip uses to delete a page.
-        //: Button beside the rows of Delete pages. It takes the selected row out of
-        //: the list, so the pages it names are no longer deleted. It deletes no
-        //: pages. Name the row, so it cannot be read as the Delete pages button.
-        removeBtn_ = sideButton(tr("&Remove Row"), icons::glyph(icons::Glyph::Close, ink));
-    } else {
+    // In Delete pages each row's own ✕ takes the row away. A Remove button there
+    // read as deleting pages.
+    if (!deleting) {
+        side->addSpacing(6);
         //: Button: removes the selected row.
-        removeBtn_ = sideButton(tr("&Remove"), icons::glyph(icons::Glyph::Delete, ink));
+        removeBtn_ = sideButton(tr("&Remove"),
+                                icons::glyph(icons::Glyph::Delete, Theme::iconInk(palette())));
+        removeBtn_->setObjectName(QStringLiteral("extractRemove"));
+        connect(removeBtn_, &QPushButton::clicked, this, &ExtractDialog::removeCurrent);
     }
-    removeBtn_->setObjectName(QStringLiteral("extractRemove"));
-    connect(removeBtn_, &QPushButton::clicked, this, &ExtractDialog::removeCurrent);
     side->addStretch(1);
     middle->addLayout(side, 0);
     layout->addLayout(middle, 1); // extra height goes to the rows
@@ -503,8 +498,8 @@ void ExtractDialog::syncCurrentRow(bool reveal)
     if (upBtn_) {
         upBtn_->setEnabled(cur > 0);
         downBtn_->setEnabled(cur >= 0 && cur < plan_.count() - 1);
+        removeBtn_->setEnabled(cur >= 0);
     }
-    removeBtn_->setEnabled(cur >= 0);
     // With one row every cell is that row's, so marking it would say nothing.
     strip_->setHighlightedRow(plan_.count() > 1 ? cur : -1);
     if (reveal)

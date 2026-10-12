@@ -24,6 +24,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QToolButton>
 
 #include <memory>
 
@@ -840,11 +841,13 @@ void TstExtractDialog::deletingEveryPageIsRefused()
     QVERIFY(error(d).isEmpty());
     QCOMPARE(summary(d), QStringLiteral("Result: 1 of 31 pages remains (31)."));
 
-    // With no rows the line says how to start again. The side button names the
-    // row, since taking one away keeps its pages.
+    // With no rows the line says how to start again. Delete pages has no Remove
+    // button beside the rows. The row's own ✕ takes the row away.
+    QVERIFY(!child<QPushButton>(d, "extractRemove"));
     QVERIFY(!button(d, QStringLiteral("&Remove")));
-    button(d, QStringLiteral("&Remove Row"))->click();
-    QCOMPARE(list(d)->count(), 0);
+    list(d)->itemWidget(list(d)->item(0))
+        ->findChild<QToolButton *>(QStringLiteral("rowListX"))->click();
+    QTRY_COMPARE(list(d)->count(), 0);
     QCOMPARE(error(d), QStringLiteral("Click the pages to delete, or add a range."));
     QVERIFY(!extract(d)->isEnabled());
 }

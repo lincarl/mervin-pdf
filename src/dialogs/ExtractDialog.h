@@ -122,7 +122,8 @@ private:
     RowList *list_ = nullptr;
     QList<QLineEdit *> specs_; // one per row, rebuilt with the list
     QLabel *of_ = nullptr;
-    QPushButton *upBtn_ = nullptr;   // Extract mode only, as are removeAct_ and expandAct_
+    // Extract mode only, as are removeAct_ and expandAct_.
+    QPushButton *upBtn_ = nullptr;
     QPushButton *downBtn_ = nullptr;
     QPushButton *removeBtn_ = nullptr;
     ExtractStrip *strip_ = nullptr;

@@ -139,6 +139,7 @@ private slots:
     void fitArrowsStayInsideSquare();
     void fitGlyphRenderingHonoursOptions();
     void rotateArrowsMirrorEachOther();
+    void splitAndMergePointRight();
     void badgeAddsInkToTheCorner();
     void strokeOverrideThickensTheLine();
     void toolbarLineMatchesTheMenu_data();
@@ -421,6 +422,25 @@ void TestIcons::rotateArrowsMirrorEachOther()
     const double same = agreement(cw, ccw);
     QVERIFY2(same > 0.82, qPrintable(QStringLiteral("mirrored rotate arrows agree only %1%%")
                                          .arg(same * 100, 0, 'f', 1)));
+}
+
+// Split and Merge are Lucide's split and merge turned a quarter clockwise. On the
+// 24-unit grid that sends a point (x, y) to (24 - y, x): merge's arrowhead moves
+// from the top middle (12, 2) to the right middle (22, 12), and split's heads from
+// the top corners to the right-hand ones. The boxes are 4 units square at 48 px.
+void TestIcons::splitAndMergePointRight()
+{
+    const auto inkAround = [](const QImage &img, double x, double y) {
+        return inkCount(img.copy(QRect(qRound(x * 2) - 4, qRound(y * 2) - 4, 8, 8)));
+    };
+    const QImage merge = render(Glyph::MergePages, 48);
+    QVERIFY2(inkAround(merge, 22, 12) > 0, "merge has no arrowhead at the right");
+    QCOMPARE(inkAround(merge, 12, 2), 0);
+    const QImage split = render(Glyph::SplitPages, 48);
+    QVERIFY2(inkAround(split, 21, 3) > 0 && inkAround(split, 21, 21) > 0,
+             "split has no arrowheads in the right-hand corners");
+    QCOMPARE(inkAround(split, 3, 3), 0);
+    QCOMPARE(inkAround(split, 3, 21), 0);
 }
 
 // glyphBadged() composes the base and the badge at the size each request asks

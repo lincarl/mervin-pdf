@@ -59,6 +59,7 @@
 #include <QTextDocument>
 #include <QTimeZone>
 #include <QTimer>
+#include <QToolButton>
 #include <QXmlStreamReader>
 
 #include <cstring>
@@ -616,13 +617,14 @@ void TstTranslationLayout::deletePages()
     QTest::keyClicks(field(0), QStringLiteral("999999"));
     QVERIFY(!error->text().isEmpty());
     inspect(dialog, QStringLiteral("Delete pages invalid range"));
-    auto *remove = dialog.findChild<QPushButton *>(QStringLiteral("extractRemove"));
-    QVERIFY(remove);
+    // Each row's ✕ removes it on the next event-loop turn, and the rows are rebuilt.
     for (int left = rows->count(); left > 0; --left) {
-        rows->setCurrentRow(0);
-        remove->click();
+        auto *x = rows->itemWidget(rows->item(0))->findChild<QToolButton *>(
+            QStringLiteral("rowListX"));
+        QVERIFY(x);
+        x->click();
+        QTRY_COMPARE(rows->count(), left - 1);
     }
-    QCOMPARE(rows->count(), 0);
     QVERIFY(!error->text().isEmpty());
     inspect(dialog, QStringLiteral("Delete pages no rows"));
 

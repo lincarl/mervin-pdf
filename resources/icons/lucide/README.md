@@ -13,7 +13,8 @@ indicators request a heavier stroke. These files stay unchanged.
 
 Fit page and fit width combine `square` with `move-vertical` and `move-horizontal`,
 respectively. Each arrow is centered at 65% of its original size, with its stroke
-compensated to match the square.
+compensated to match the square. Split and merge are turned a quarter clockwise, so
+their arrows point right instead of up.
 
 ## Adding or changing an icon
 
