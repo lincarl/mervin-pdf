@@ -336,7 +336,7 @@ void ExtractStrip::paintCell(QPainter *p, int row) const
         p->drawRoundedRect(halfPixel(tile), 3, 3);
         QRect glyph(0, 0, kFoldGlyph, kFoldGlyph);
         glyph.moveCenter(tile.center());
-        // Built once per ink, not per paint: glyph() renders five pixmaps.
+        // Built once per ink, not per paint.
         if (foldGlyphInk_ != t.inkBody) {
             foldGlyphInk_ = t.inkBody;
             foldGlyph_ = icons::glyph(icons::Glyph::FileText, t.inkBody);

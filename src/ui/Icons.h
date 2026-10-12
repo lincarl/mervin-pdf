@@ -14,8 +14,10 @@ QIcon applicationIcon();
 
 // Lucide icons (https://lucide.dev, ISC), vendored unmodified under resources/icons/lucide and
 // compiled as Qt resources. See its README for the pinned version. glyph() substitutes
-// currentColor, uses a 1.5-unit stroke that never draws thinner than about one device pixel
-// (so 16 px renders get about 1.6 units), and rasterizes at 16/20/24/32/48 px.
+// currentColor and draws each icon at the exact device size it is shown at. Icons from the
+// menus' 16 px to the toolbar's 20 px draw a line one logical pixel wide (1.5 units at 16 px,
+// 1.2 at 20 px); smaller and larger ones draw 1.5 units. No line is thinner than about one
+// device pixel, so a 16 px icon at 100% gets about 1.6 units.
 enum class Glyph {
     // Toolbar
     Open,          // folder-open (also "open containing folder")
@@ -80,7 +82,10 @@ enum class Glyph {
 };
 
 // The pictograph tinted to `color` (the palette's WindowText, Theme::iconInk, or
-// the accent tone the Document popover uses).
+// the accent tone the Document popover uses). Each request is drawn from the SVG
+// at its logical size times the device pixel ratio, with the line that logical
+// size gets, and cached. So one icon serves a 16 px menu and a 20 px toolbar
+// button alike. QIcon::addPixmap() on it is ignored.
 QIcon glyph(Glyph id, const QColor &color);
 
 // glyph() with a second, smaller glyph badged over the base's bottom-right
@@ -90,8 +95,8 @@ QIcon glyph(Glyph id, const QColor &color);
 QIcon glyphBadged(Glyph base, Glyph badge, const QColor &color);
 
 // Transparent sizePx-square glyph. strokeWidth uses the 24-unit Lucide grid; a valid fill
-// colours closed shapes. strokeWidth 0 keeps the set's stroke and renders natively at
-// `devicePixelRatio` (0 means the application's, as QIcon::pixmap() uses), so a painter
+// colours closed shapes. strokeWidth 0 draws what glyph() draws for a sizePx icon, natively
+// at `devicePixelRatio` (0 means the application's, as QIcon::pixmap() uses), so a painter
 // that draws the pixmap unscaled should pass its own widget's ratio. An explicit
 // strokeWidth renders exactly sizePx device pixels.
 QPixmap glyphPixmap(Glyph id, const QColor &color, int sizePx, double strokeWidth = 0,

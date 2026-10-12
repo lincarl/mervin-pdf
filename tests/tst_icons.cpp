@@ -28,14 +28,41 @@ using mervin::icons::Glyph;
 
 namespace {
 
-// Always ask at device-pixel-ratio 1. QIcon::pixmap(int, int) honours the
-// screen's DPR, so on a scaled display it hands back a pixmap of a different
-// size than requested (and caps at the icon's largest available pixmap), which
-// makes every size-dependent assertion below machine-specific.
+// Always ask at device-pixel-ratio 1 unless the ratio is the point. QIcon::pixmap(int,
+// int) honours the screen's DPR, so on a scaled display it hands back a pixmap of a
+// different size than requested, which makes every size-dependent assertion below
+// machine-specific.
 QImage render(Glyph id, int sz, const QColor &ink = QColor(0, 0, 0))
 {
     return mervin::icons::glyph(id, ink).pixmap(QSize(sz, sz), 1.0).toImage()
         .convertToFormat(QImage::Format_ARGB32);
+}
+
+// glyph() at `sz` logical pixels on a screen with ratio `dpr`, in device pixels.
+QImage renderAt(Glyph id, int sz, qreal dpr, const QColor &ink = QColor(0, 0, 0))
+{
+    QImage img = mervin::icons::glyph(id, ink).pixmap(QSize(sz, sz), dpr).toImage()
+                     .convertToFormat(QImage::Format_ARGB32);
+    img.setDevicePixelRatio(1.0);
+    return img;
+}
+
+// An explicit-stroke render, exactly `devicePx` square at `units` Lucide units.
+QImage renderExplicit(Glyph id, int devicePx, double units, const QColor &ink = QColor(0, 0, 0))
+{
+    return mervin::icons::glyphPixmap(id, ink, devicePx, units).toImage()
+        .convertToFormat(QImage::Format_ARGB32);
+}
+
+// The width of a horizontal line in device pixels, as the coverage summed down the
+// middle column. For ZoomOut, Lucide's "minus", that column crosses only its stroke.
+double lineWidth(const QImage &img)
+{
+    const int x = img.width() / 2;
+    double sum = 0;
+    for (int y = 0; y < img.height(); ++y)
+        sum += qAlpha(img.pixel(x, y)) / 255.0;
+    return sum;
 }
 
 // Every pixel with meaningful coverage. Antialiasing leaves a wide skirt of very
@@ -114,6 +141,11 @@ private slots:
     void rotateArrowsMirrorEachOther();
     void badgeAddsInkToTheCorner();
     void strokeOverrideThickensTheLine();
+    void toolbarLineMatchesTheMenu_data();
+    void toolbarLineMatchesTheMenu();
+    void iconsDrawAtTheDeviceSize_data();
+    void iconsDrawAtTheDeviceSize();
+    void menuIconsKeepTheirLook();
     void smallRendersKeepTheirDots();
     void spinChevronsPointOppositeWays();
 };
@@ -361,12 +393,15 @@ void TestIcons::fitGlyphRenderingHonoursOptions()
                                       .toImage().convertToFormat(QImage::Format_ARGB32);
             QCOMPARE(native, render(id, size, ink));
         }
+        // At a ratio it draws what glyph() draws for the same logical size. The
+        // line follows the 20 px icon, not the 40 device pixels it lands on.
         QPixmap scaled = mervin::icons::glyphPixmap(id, ink, 20, 0, QColor(), 2.0);
         QCOMPARE(scaled.size(), QSize(40, 40));
         QCOMPARE(scaled.devicePixelRatio(), 2.0);
         scaled.setDevicePixelRatio(1.0);
+        QCOMPARE(scaled.toImage().convertToFormat(QImage::Format_ARGB32),
+                 renderAt(id, 20, 2.0, ink));
         const QPixmap native = mervin::icons::glyphPixmap(id, ink, 40, 0, QColor(), 1.0);
-        QCOMPARE(scaled.toImage(), native.toImage());
         const QImage thicker = mervin::icons::glyphPixmap(id, ink, 40, 3.0).toImage();
         QVERIFY(inkCount(thicker) > inkCount(native.toImage()));
     }
@@ -385,20 +420,15 @@ void TestIcons::rotateArrowsMirrorEachOther()
                                          .arg(same * 100, 0, 'f', 1)));
 }
 
-// glyphBadged() composes its pixmaps through QIcon::pixmap(), so which sizes the
-// composite ends up carrying depends on the screen's device pixel ratio - and a
-// QIcon never upscales past its largest pixmap. Asking for 48 can therefore hand
-// back something smaller on a scaled display. So take whatever size it gives,
-// paint the bare glyph at that same size, and derive the quadrant from it: the
+// glyphBadged() composes the base and the badge at the size each request asks
+// for, so the composite and the bare glyph can be compared at 48 px. The
 // assertion is about where the badge puts its ink, not about pixel counts.
 void TestIcons::badgeAddsInkToTheCorner()
 {
     const QImage badged = mervin::icons::glyphBadged(Glyph::Open, Glyph::Copy, QColor(0, 0, 0))
                               .pixmap(QSize(48, 48), 1.0).toImage()
                               .convertToFormat(QImage::Format_ARGB32);
-    QVERIFY2(badged.width() >= 16, qPrintable(QStringLiteral("badged icon came back at %1 px")
-                                                  .arg(badged.width())));
-    QCOMPARE(badged.height(), badged.width());
+    QCOMPARE(badged.size(), QSize(48, 48));
 
     const QImage plain = render(Glyph::Open, badged.width());
     QCOMPARE(badged.size(), plain.size());
@@ -434,6 +464,82 @@ void TestIcons::strokeOverrideThickensTheLine()
                             .arg(ink(3.0)).arg(plain)));
 }
 
+void TestIcons::toolbarLineMatchesTheMenu_data()
+{
+    QTest::addColumn<qreal>("dpr");
+    for (qreal dpr : {1.0, 1.25, 1.5, 1.75, 2.0})
+        QTest::newRow(qPrintable(QStringLiteral("%1%").arg(dpr * 100))) << dpr;
+}
+
+// The toolbar's 20 px icons draw the menus' line, one logical pixel at every
+// scale, held at the 1.07 device-pixel floor at 100%. Before, a 20 px icon drew
+// 1.5 units, about a quarter heavier, and at 125% it was the 32 px render shrunk
+// to 25 px, heavier still. Lucide's minus is one horizontal stroke, so the summed
+// coverage down its middle is the line width.
+void TestIcons::toolbarLineMatchesTheMenu()
+{
+    QFETCH(qreal, dpr);
+    const QImage toolbar = renderAt(Glyph::ZoomOut, 20, dpr);
+    const QImage menu = renderAt(Glyph::ZoomOut, 16, dpr);
+    QCOMPARE(toolbar.size(), QSize(qRound(20 * dpr), qRound(20 * dpr)));
+    QCOMPARE(menu.size(), QSize(qRound(16 * dpr), qRound(16 * dpr)));
+    const double expected = std::max(dpr, 1.07);
+    QVERIFY2(std::abs(lineWidth(menu) - expected) < 0.02,
+             qPrintable(QStringLiteral("16 px line is %1 device px, expected %2")
+                            .arg(lineWidth(menu), 0, 'f', 3).arg(expected)));
+    QVERIFY2(std::abs(lineWidth(toolbar) - lineWidth(menu)) < 0.02,
+             qPrintable(QStringLiteral("20 px line is %1 device px, the 16 px line %2")
+                            .arg(lineWidth(toolbar), 0, 'f', 3)
+                            .arg(lineWidth(menu), 0, 'f', 3)));
+}
+
+void TestIcons::iconsDrawAtTheDeviceSize_data()
+{
+    QTest::addColumn<int>("size");
+    QTest::addColumn<qreal>("dpr");
+    QTest::addColumn<double>("units");
+    // The line is one logical pixel from 16 to 20 px and 1.5 units at other sizes.
+    QTest::newRow("toolbar at 125%") << 20 << 1.25 << 1.2;
+    QTest::newRow("toolbar at 150%") << 20 << 1.5 << 1.2;
+    QTest::newRow("toolbar at 175%") << 20 << 1.75 << 1.2;
+    QTest::newRow("menu at 175%") << 16 << 1.75 << 1.5;
+    QTest::newRow("14 px at 125%") << 14 << 1.25 << 1.5;
+    QTest::newRow("24 px at 125%") << 24 << 1.25 << 1.5;
+}
+
+// glyph() draws each request from the SVG at its exact device size, so a 20 px
+// icon at 125% is a 25 px render rather than the 32 px one shrunk to fit.
+void TestIcons::iconsDrawAtTheDeviceSize()
+{
+    QFETCH(int, size);
+    QFETCH(qreal, dpr);
+    QFETCH(double, units);
+    const int device = qRound(size * dpr);
+    for (const auto &e : mervin::icons::allGlyphs()) {
+        const QPixmap pm = mervin::icons::glyph(e.id, Qt::black).pixmap(QSize(size, size), dpr);
+        QCOMPARE(pm.size(), QSize(device, device));
+        QCOMPARE(pm.devicePixelRatio(), dpr);
+        QVERIFY2(renderAt(e.id, size, dpr) == renderExplicit(e.id, device, units),
+                 qPrintable(QStringLiteral("%1 is not drawn natively at %2 px").arg(e.name)
+                                .arg(device)));
+    }
+}
+
+// The menus' 16 px icons look as they did before glyph() drew on demand. At 125%,
+// 150% and 200% that is the 1.5-unit render at the device size, and at 100% the
+// same with the 1.07 px floor.
+void TestIcons::menuIconsKeepTheirLook()
+{
+    for (const auto &e : mervin::icons::allGlyphs()) {
+        for (qreal dpr : {1.0, 1.25, 1.5, 2.0}) {
+            const int device = qRound(16 * dpr);
+            const double units = std::max(1.5, 1.07 * 24 / device);
+            QVERIFY2(renderAt(e.id, 16, dpr) == renderExplicit(e.id, device, units),
+                     qPrintable(QStringLiteral("%1 changed at %2%").arg(e.name).arg(dpr * 100)));
+        }
+    }
+}
+
 // At 1.5 units a 16 px render is exactly one device pixel wide, where Qt's raster
 // engine switches to its hairline stroker and drops round caps: the info "i" lost
 // its dot and the keyboard its keys at 100% scaling. Small renders are thickened to
@@ -463,11 +569,14 @@ void TestIcons::smallRendersKeepTheirDots()
     };
     QVERIFY(inkCount(native(Glyph::About, 16).copy(dot)) > 0);
 
-    // The 12 px arrow is drawn natively at 12 px. Shrinking glyph()'s 16 px render
-    // instead keeps the outline but halves the solid line, so compare solid ink.
+    // The 12 px arrow is drawn natively at 12 px, by glyph() as by glyphPixmap().
+    // Shrinking the 16 px render instead keeps the outline but halves the solid
+    // line, so compare solid ink.
     const QImage arrow = native(Glyph::ChevronDown, 12);
-    const QImage shrunk = render(Glyph::ChevronDown, 12);
+    const QImage shrunk = native(Glyph::ChevronDown, 16)
+                              .scaled(12, 12, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
     QCOMPARE(arrow.size(), QSize(12, 12));
+    QCOMPARE(render(Glyph::ChevronDown, 12), arrow);
     QVERIFY2(inkCount(arrow, 128) > inkCount(shrunk, 128),
              qPrintable(QStringLiteral("12 px arrow has %1 solid px, the shrunk 16 px render %2")
                             .arg(inkCount(arrow, 128)).arg(inkCount(shrunk, 128))));

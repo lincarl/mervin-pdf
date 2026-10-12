@@ -456,10 +456,15 @@ The interface icons are [Lucide](https://lucide.dev) SVGs, vendored unmodified i
 resource. `ui/Icons` renders them through Qt SVG in the theme's ink, so Windows and
 Linux show identical artwork without depending on a platform icon font; the
 stylesheet's check marks, close crosses and arrows are rendered from the same set.
-Icons use a 1.5-unit stroke on Lucide's 24-unit grid, but no render draws a line
-thinner than about 1.07 device pixels: at one pixel or less Qt's raster engine uses
+Icons use a 1.5-unit stroke on Lucide's 24-unit grid, which is one logical pixel in
+the menus' 16 px icons. The toolbar's 20 px icons keep that one-pixel line, 1.2
+units, so they match the menus at every display scale. Each icon is drawn from its
+SVG at the exact device size it is shown at, so 125%, 150% and 175% scaling get
+native renders rather than a larger render shrunk to fit. No render draws a line
+thinner than about 1.07 device pixels. At one pixel or less Qt's raster engine uses
 its hairline stroker, which drops the dots in icons such as Outline, About and
-Keyboard shortcuts. A 16 px icon at 100% scaling therefore gets about 1.6 units.
+Keyboard shortcuts. A 16 px icon at 100% scaling therefore gets about 1.6 units,
+and a 20 px one about 1.3.
 
 Fit page and Fit width have separate toolbar buttons, each selecting its mode
 without toggling. Their icons overlay a centered directional arrow at 65% scale

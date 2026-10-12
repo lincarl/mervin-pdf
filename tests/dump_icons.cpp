@@ -17,6 +17,7 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QPainter>
+#include <QPixmapCache>
 #include <QString>
 
 #include <cstdio>
@@ -76,16 +77,20 @@ int main(int argc, char **argv)
     std::printf("wrote %s (%d glyphs, %dx%d)\n", qPrintable(QDir::toNativeSeparators(out)),
                 int(entries.size()), sheet.width(), sheet.height());
 
-    // What a theme switch costs: applyActionIcons() rebuilds the whole roster,
-    // and each QIcon renders all five sizes from its SVG. Printed so the price of
-    // the set stays visible - whole-process startup timings cannot resolve it.
+    // A theme switch rebuilds the whole roster (applyActionIcons()), and each icon
+    // renders from its SVG when it is first painted. Timed as one 20 px toolbar
+    // render per glyph, with the render cache emptied every round. Printed so the
+    // price of the set stays visible, which whole-process startup timings cannot
+    // resolve.
     QElapsedTimer t;
     t.start();
     constexpr int kRounds = 10;
-    for (int i = 0; i < kRounds; ++i)
+    for (int i = 0; i < kRounds; ++i) {
+        QPixmapCache::clear();
         for (const auto &e : entries)
-            (void)mervin::icons::glyph(e.id, ink).availableSizes();
-    std::printf("building all %d glyphs (5 sizes each): %.2f ms per round\n",
+            (void)mervin::icons::glyph(e.id, ink).pixmap(QSize(20, 20), 1.0);
+    }
+    std::printf("drawing all %d glyphs at 20 px: %.2f ms per round\n",
                 int(entries.size()), double(t.nsecsElapsed()) / 1e6 / kRounds);
     return 0;
 }
