@@ -71,6 +71,30 @@ private slots:
         QVERIFY(states.get(kept_));
     }
 
+    // A share mounted by hand on a folder, outside fstab, leaves the folder empty
+    // once it is unmounted. Recent recorded the share's mount when the file was
+    // opened, so the entry stays.
+    void keepsFilesWhoseRecordedMountIsGone()
+    {
+#ifndef Q_OS_WIN
+        const QDir root(profile_.path());
+        QVERIFY(root.mkpath(QStringLiteral("share")));
+        const QString onShare = root.filePath(QStringLiteral("share/plan.pdf"));
+        RecentStore recent;
+        QVERIFY(recent.load(RecentStore::defaultFile()));
+        recent.add(onShare, QDateTime::currentMSecsSinceEpoch(), 0,
+                   root.filePath(QStringLiteral("share")));
+        QVERIFY(recent.save(RecentStore::defaultFile()));
+
+        WindowManager wm;
+        wm.refreshRecent();
+        QTRY_COMPARE(wm.recentEntries().size(), 3);
+        QCOMPARE(wm.recentEntries().at(0).path, onShare);
+        QCOMPARE(wm.recentEntries().at(1).path, kept_);
+        QCOMPARE(wm.recentEntries().at(2).path, away_);
+#endif
+    }
+
     void keepsEverythingWhileTheSettingIsOn()
     {
         Settings s = Settings::load();

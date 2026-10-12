@@ -21,9 +21,7 @@ namespace mervin {
 
 bool SessionStore::load(const QString &file)
 {
-    paths_.clear();
-    activePath_.clear();
-    unavailable_.clear();
+    clear();
     QFile f(file);
     if (!f.open(QIODevice::ReadOnly))
         return false;
@@ -57,6 +55,12 @@ bool SessionStore::load(const QString &file)
         unavailable_.append(
             {path, QDate::fromString(entry.value(QStringLiteral("since")).toString(), Qt::ISODate)});
     }
+
+    // Absent in files written before the field existed.
+    const QJsonObject mounts = root.value(QStringLiteral("mounts")).toObject();
+    for (auto it = mounts.constBegin(); it != mounts.constEnd(); ++it)
+        setMount(it.key(), it.value().toString());
+    keepListedMounts();
     return true;
 }
 
@@ -79,6 +83,18 @@ bool SessionStore::save(const QString &file) const
         }
         root.insert(QStringLiteral("unavailable"), kept);
     }
+    QJsonObject mounts;
+    const auto addMount = [&](const QString &path) {
+        const QString m = mount(path);
+        if (!m.isEmpty())
+            mounts.insert(path, m);
+    };
+    for (const QString &p : paths_)
+        addMount(p);
+    for (const Unavailable &entry : unavailable_)
+        addMount(entry.path);
+    if (!mounts.isEmpty())
+        root.insert(QStringLiteral("mounts"), mounts);
 
     QSaveFile f(file);
     if (!f.open(QIODevice::WriteOnly))
@@ -90,33 +106,66 @@ bool SessionStore::save(const QString &file) const
 void SessionStore::setPaths(const QStringList &paths)
 {
     paths_ = paths;
-    if (unavailable_.isEmpty())
+    if (!unavailable_.isEmpty()) {
+        QSet<QString> open;
+        for (const QString &p : paths_)
+            open.insert(normalizePathKey(p));
+        unavailable_.removeIf([&open](const Unavailable &entry) {
+            return open.contains(normalizePathKey(entry.path));
+        });
+    }
+    keepListedMounts();
+}
+
+void SessionStore::setMount(const QString &path, const QString &mount)
+{
+    if (mount.isEmpty())
+        mounts_.remove(normalizePathKey(path));
+    else
+        mounts_.insert(normalizePathKey(path), mount);
+}
+
+QString SessionStore::mount(const QString &path) const
+{
+    return mounts_.value(normalizePathKey(path));
+}
+
+void SessionStore::keepListedMounts()
+{
+    if (mounts_.isEmpty())
         return;
-    QSet<QString> open;
-    for (const QString &p : paths_)
-        open.insert(normalizePathKey(p));
-    unavailable_.removeIf([&open](const Unavailable &entry) {
-        return open.contains(normalizePathKey(entry.path));
-    });
+    QSet<QString> listed;
+    for (const QString &p : std::as_const(paths_))
+        listed.insert(normalizePathKey(p));
+    for (const Unavailable &entry : std::as_const(unavailable_))
+        listed.insert(normalizePathKey(entry.path));
+    mounts_.removeIf([&listed](const auto &it) { return !listed.contains(it.key()); });
 }
 
 QStringList SessionStore::prepareRestore(const QDate &today,
-                                         const std::function<bool(const QString &)> &volumeAttached)
+                                         const std::function<bool(const QString &)> &volumeAttached,
+                                         const std::function<QString(const QString &)> &recordedMount)
 {
     enum class Found { File, Gone, Away };
-    const std::function<bool(const QString &)> attached =
-        volumeAttached ? volumeAttached : RecentStore::isVolumeAttached;
-    // Each drive or share is checked once: on an offline share every check can
-    // stall for seconds.
+    // Each drive or share is checked once, since on an offline share every check
+    // can stall for seconds. Documents in one folder share an answer only when
+    // they were opened from the same mount.
     QHash<QString, bool> attachedByVolume;
     const auto find = [&](const QString &path) {
         const QFileInfo info(path);
         if (info.exists())
             return Found::File;
-        const QString volume = RecentStore::volumeKey(path);
+        QString mount = this->mount(path);
+        if (mount.isEmpty() && recordedMount) {
+            mount = recordedMount(path);
+            setMount(path, mount);
+        }
+        const QString volume = RecentStore::volumeKey(path) + QLatin1Char('\n') + mount;
         auto it = attachedByVolume.constFind(volume);
         if (it == attachedByVolume.cend())
-            it = attachedByVolume.insert(volume, attached(path));
+            it = attachedByVolume.insert(volume, volumeAttached
+                                                     ? volumeAttached(path)
+                                                     : RecentStore::isVolumeAttached(path, mount));
         // Gone only from a folder that is still there on an attached volume. A
         // missing folder can be a drive mounted where the volume check does not
         // look, such as a share mounted in the home folder.
@@ -146,6 +195,7 @@ QStringList SessionStore::prepareRestore(const QDate &today,
 
     paths_ = restore;
     unavailable_ = kept;
+    keepListedMounts();
     if (!paths_.contains(activePath_))
         activePath_.clear();
     return paths_;

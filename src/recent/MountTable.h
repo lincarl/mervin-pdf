@@ -23,6 +23,11 @@ QList<Mount> parseMountInfo(const QByteArray &text);
 // without a folder are left out.
 QStringList parseFstab(const QByteArray &text);
 
+// The mount point of the file system that holds `path` now, a clean absolute path
+// with '/' separators. It is the deepest mounted folder above the path, leaving out
+// automount points, or "/" when no mount is listed.
+QString deepestMount(const QString &path, const QList<Mount> &mounted);
+
 // The mount point of the volume that holds `path`, a clean absolute path with '/'
 // separators, or "" when that volume is not mounted. The holder is the deepest
 // mounted file system above the path. The volume is away when a folder that

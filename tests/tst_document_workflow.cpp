@@ -5,6 +5,7 @@
 #include "dialogs/SettingsDialog.h"
 #include "render/AnnotModel.h"
 #include "render/MeasureContent.h"
+#include "recent/RecentStore.h"
 #include "render/RenderEngine.h"
 #include "security/MeasureExport.h"
 #include "session/SessionStore.h"
@@ -16,6 +17,7 @@
 #include <QAction>
 #include <QComboBox>
 #include <QContextMenuEvent>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QLineEdit>
@@ -468,6 +470,85 @@ private slots:
         QCOMPARE(onDisk.paths(), QStringList{open});
         QCOMPARE(onDisk.unavailable().size(), 1);
         QCOMPARE(onDisk.unavailable().first().path, away);
+    }
+
+    // A share mounted by hand on a folder, outside fstab, leaves the folder empty
+    // once it is unmounted. The share's mount was recorded when the document was
+    // opened, so the session keeps the document instead of dropping it as deleted.
+    void sessionKeepsDocumentsWhoseRecordedMountIsGone()
+    {
+#ifndef Q_OS_WIN
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        QVERIFY(root.mkpath(QStringLiteral("share")));
+        const QString share = root.filePath(QStringLiteral("share"));
+        const QString open = root.filePath(QStringLiteral("open.pdf"));
+        // One mount is in the session only, as after Recent trimmed the document.
+        // The other is in Recent only, as a session saved by an older version has it.
+        const QString inSession = root.filePath(QStringLiteral("share/plan.pdf"));
+        const QString inRecent = root.filePath(QStringLiteral("share/older.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), open));
+        const QString recentFile = RecentStore::defaultFile();
+        RecentStore recent;
+        recent.load(recentFile);
+        const RecentStore before = recent;
+        const auto restoreRecent = qScopeGuard([&] { before.save(recentFile); });
+        recent.add(inRecent, QDateTime::currentMSecsSinceEpoch(), 0, share);
+        QVERIFY(recent.save(recentFile));
+        SessionStore saved;
+        saved.setMount(inSession, share);
+        saved.setPaths({inSession, inRecent, open});
+        QVERIFY(saved.save());
+
+        WindowManager manager;
+        QCOMPARE(manager.sessionPathsToRestore(), QStringList{open});
+        MainWindow *window = manager.createWindow();
+        QVERIFY(window->openFile(open));
+        SessionStore onDisk;
+        QVERIFY(onDisk.load());
+        QCOMPARE(onDisk.paths(), QStringList{open});
+        QCOMPARE(onDisk.unavailable().size(), 2);
+        QCOMPARE(onDisk.mount(inSession), share);
+        QCOMPARE(onDisk.mount(inRecent), share);
+        // Opening a document records the file system it is on, in Recent and in
+        // the session.
+        QVERIFY(!RecentStore::mountOf(open).isEmpty());
+        QCOMPARE(onDisk.mount(open), RecentStore::mountOf(open));
+        RecentStore reloaded;
+        QVERIFY(reloaded.load(recentFile));
+        QCOMPARE(reloaded.recordedMount(open), RecentStore::mountOf(open));
+#endif
+    }
+
+    // Recording a document that is not there, as a crash recovery tab opened lazily
+    // or a tab focused again after its share went away does, keeps the mount it
+    // was opened from. Once the file is back, its mount is recorded afresh.
+    void recordingAMissingFileKeepsItsMount()
+    {
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        const QString path = root.filePath(QStringLiteral("plan.pdf"));
+        const QString share = root.filePath(QStringLiteral("share"));
+        const QString recentFile = RecentStore::defaultFile();
+        RecentStore recent;
+        recent.load(recentFile);
+        const RecentStore before = recent;
+        const auto restoreRecent = qScopeGuard([&] { before.save(recentFile); });
+        recent.add(path, QDateTime::currentMSecsSinceEpoch(), 0, share);
+        QVERIFY(recent.save(recentFile));
+        const auto mountOf = [](const WindowManager &manager, const QString &file) {
+            for (const RecentEntry &e : manager.recentEntries())
+                if (e.path == file)
+                    return e.mount;
+            return QStringLiteral("no entry");
+        };
+
+        WindowManager manager;
+        manager.recordOpen(path, false);
+        QCOMPARE(mountOf(manager, path), share);
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        manager.recordOpen(path, false);
+        QCOMPARE(mountOf(manager, path), RecentStore::mountOf(path));
     }
 
     void savingSuspendedEditsRequiresConfirmingExternalChanges()

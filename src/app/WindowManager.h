@@ -178,17 +178,18 @@ public:
     void applyRecentSettings(int visibleCount, int retention, bool keepMissing);
 
     // With that setting off, forget entries whose file is gone while its drive,
-    // share or mount is attached (RecentStore::isRemovedFromDisk). The disk is
-    // checked on a worker thread, since network paths can stall. A no-op while the
-    // setting is on.
+    // share or mount is attached (RecentStore::isRemovedFromDisk, given the mount
+    // recorded when the file was opened). The disk is checked on a worker thread,
+    // since network paths can stall. A no-op while the setting is on.
     void pruneMissingRecent();
 
     // Crash recovery / session restore (M11). sessionPathsToRestore() loads the
     // saved session and returns the documents to reopen. Documents on an
     // unavailable drive, share or mount stay in the session unopened (see
-    // SessionStore::prepareRestore). updateSession() saves the current open set
-    // (union across live windows) followed by those kept documents. The single UI
-    // process is the only writer.
+    // SessionStore::prepareRestore), judged by the mount recorded for each file
+    // when there is one (SessionStore::mount). updateSession() saves the current
+    // open set (union across live windows) followed by those kept documents. The
+    // single UI process is the only writer.
     QStringList sessionPathsToRestore();
     void updateSession();
 
