@@ -79,11 +79,17 @@ class ManifestTests(unittest.TestCase):
     def test_manifest_assets_exist_at_required_dimensions(self):
         document = ET.fromstring(msix.manifest("1.0.0"))
         visual = document.find("m:Applications/m:Application/uap:VisualElements", NS)
-        assets = (
+        app_list = visual.get("Square44x44Logo")
+        assets = [
             (document.find("m:Properties/m:Logo", NS).text, 50),
-            (visual.get("Square44x44Logo"), 44),
+            (app_list, 44),
             (visual.get("Square150x150Logo"), 150),
-        )
+        ]
+        # Windows takes the taskbar, Start and file icons from these through
+        # resources.pri. Without the unplated forms it draws the icon on a plate.
+        for size in (16, 20, 24, 30, 32, 36, 40, 48, 60, 64, 72, 80, 96, 128, 256):
+            for form in ("", "_altform-unplated", "_altform-lightunplated"):
+                assets.append((app_list.removesuffix(".png") + f".targetsize-{size}{form}.png", size))
         for relative, size in assets:
             with self.subTest(asset=relative):
                 data = (ROOT / "packaging/windows/msix" / relative.replace("\\", "/")).read_bytes()

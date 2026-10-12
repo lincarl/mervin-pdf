@@ -492,13 +492,16 @@ The default is [mervin-icon.ico](../resources/icons/mervin-icon.ico), with match
 [SVG](../resources/icons/mervin-icon.svg) and
 [PNG](../resources/icons/mervin-icon.png) assets. This is the selected
 `mervin-p06-raised-p` design, renamed for application use. It retains the folded
-blue page and original gradient, with the longer P stem and raised letter.
+blue page and original gradient, with the longer P stem and raised letter. The
+page fills the icon's full height.
 
 The original gradient is used at every size. Qt windows, dialogs, the taskbar,
 and Recent files use the approved PNG frames embedded in the application.
 Windows executable resources, installers, shortcuts, and PDF associations use
-the same ICO. Linux packages and AppImages install the PNG frames and scalable
-SVG under the existing `mervin-pdf` desktop icon name.
+the same ICO. The Microsoft Store package uses the same frames as unplated
+target-size images, so its taskbar, Start menu and file icons match the other
+builds. Linux packages and AppImages install the PNG frames and scalable SVG
+under the existing `mervin-pdf` desktop icon name.
 
 See the [icon asset notes](../resources/icons/README.md) for geometry, export
 sizes, and verification.

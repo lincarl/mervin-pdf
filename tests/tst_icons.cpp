@@ -178,12 +178,15 @@ void TestIcons::applicationIconKeepsFoldAndRaisedP()
     // The cut-away top-right corner, blue fold and raised white stem distinguish
     // the approved page artwork from the old square and the alternative mockups.
     QCOMPARE(image.pixelColor(0, 0).alpha(), 0);
-    QCOMPARE(image.pixelColor(200, 30).alpha(), 0);
-    QCOMPARE(image.pixelColor(170, 50), QColor(0x91, 0xd9, 0xf5));
-    QCOMPARE(image.pixelColor(95, 85), QColor(Qt::white));
-    QCOMPARE(image.pixelColor(95, 180), QColor(Qt::white));
-    QVERIFY(image.pixelColor(95, 200) != QColor(Qt::white));
-    QVERIFY(image.pixelColor(45, 100).blue() > image.pixelColor(45, 100).red());
+    QCOMPARE(image.pixelColor(210, 22).alpha(), 0);
+    QCOMPARE(image.pixelColor(178, 44), QColor(0x91, 0xd9, 0xf5));
+    QCOMPARE(image.pixelColor(98, 82), QColor(Qt::white));
+    QCOMPARE(image.pixelColor(98, 184), QColor(Qt::white));
+    QVERIFY(image.pixelColor(98, 205) != QColor(Qt::white));
+    QVERIFY(image.pixelColor(44, 98).blue() > image.pixelColor(44, 98).red());
+    // The page fills the full height, so shells show it as tall as other apps.
+    QCOMPARE(image.pixelColor(128, 0).alpha(), 255);
+    QCOMPARE(image.pixelColor(128, 255).alpha(), 255);
 }
 
 void TestIcons::applicationIconSelectsScaledFrames()

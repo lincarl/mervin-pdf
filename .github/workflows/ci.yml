@@ -375,6 +375,7 @@ jobs:
             build/x64-release/deploy/
             build/x64-release/MervinPDF-*.msi
             build/x64-release/MervinPDF-*-x64.msix
+            build/x64-release/MervinPDF-*-x64-msix-pri/
             build/x64-release/windows-payload.json
             build/x64-release/tests/fixtures/properties.pdf
           if-no-files-found: error
