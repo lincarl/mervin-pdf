@@ -336,7 +336,8 @@ Delete Pages is the same `ExtractDialog` and `ExtractStrip` over an `ExtractPlan
 `Mode::Delete`, not a separate dialog. The rows, Save as, the password row, writing
 before closing and the keyboard handling are shared, and the mode changes only what
 differs. Its rows are a set of pages to leave out, so `RowList` drops the grips and
-the Output column and there are no moves. `ExtractPlan::cells()` returns every
+the Output column and there are no moves. Nor is there a Remove button beside the
+rows, since each row's ✕ removes it. `ExtractPlan::cells()` returns every
 source page, unfolded, flagged `deleted`, and `deletePage()`/`keepPage()` turn a
 click on the strip into row edits, widening, joining or splitting ranges. The dialog writes through
 `PageOps::deletePages`, which copies the whole document minus those pages, so the

@@ -1947,11 +1947,6 @@ The exported file is viewable in any PDF viewer.</source>
         <translation>&amp;გადაადგილება ქვემოთ</translation>
     </message>
     <message>
-        <source>&amp;Remove Row</source>
-        <extracomment>Button beside the rows of Delete pages. It takes the selected row out of the list, so the pages it names are no longer deleted. It deletes no pages. Name the row, so it cannot be read as the Delete pages button.</extracomment>
-        <translation>&amp;რიგის ამოღება</translation>
-    </message>
-    <message>
         <source>&amp;Remove</source>
         <extracomment>Button: removes the selected row.</extracomment>
         <translation>&amp;ამოღება</translation>

@@ -1945,11 +1945,6 @@ File yang diekspor dapat dilihat di penampil PDF mana pun.</translation>
         <translation>&amp;Pindah ke Bawah</translation>
     </message>
     <message>
-        <source>&amp;Remove Row</source>
-        <extracomment>Button beside the rows of Delete pages. It takes the selected row out of the list, so the pages it names are no longer deleted. It deletes no pages. Name the row, so it cannot be read as the Delete pages button.</extracomment>
-        <translation>&amp;Hapus baris</translation>
-    </message>
-    <message>
         <source>&amp;Remove</source>
         <extracomment>Button: removes the selected row.</extracomment>
         <translation>&amp;Hapus</translation>

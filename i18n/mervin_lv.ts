@@ -1949,11 +1949,6 @@ Eksportētais fails ir skatāms jebkurā PDF skatītājā.</translation>
         <translation>&amp;Pārvietot uz leju</translation>
     </message>
     <message>
-        <source>&amp;Remove Row</source>
-        <extracomment>Button beside the rows of Delete pages. It takes the selected row out of the list, so the pages it names are no longer deleted. It deletes no pages. Name the row, so it cannot be read as the Delete pages button.</extracomment>
-        <translation>&amp;Noņemt rindu</translation>
-    </message>
-    <message>
         <source>&amp;Remove</source>
         <extracomment>Button: removes the selected row.</extracomment>
         <translation>&amp;Noņemt</translation>
