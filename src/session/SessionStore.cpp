@@ -64,6 +64,15 @@ bool SessionStore::load(const QString &file)
 
 bool SessionStore::save(const QString &file) const
 {
+    QSaveFile f(file);
+    if (!f.open(QIODevice::WriteOnly))
+        return false;
+    f.write(toJson());
+    return f.commit();
+}
+
+QByteArray SessionStore::toJson() const
+{
     QJsonArray arr;
     for (const QString &p : paths_)
         arr.append(p);
@@ -93,12 +102,7 @@ bool SessionStore::save(const QString &file) const
         addMount(entry.path);
     if (!mounts.isEmpty())
         root.insert(QStringLiteral("mounts"), mounts);
-
-    QSaveFile f(file);
-    if (!f.open(QIODevice::WriteOnly))
-        return false;
-    f.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
-    return f.commit();
+    return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
 
 void SessionStore::setPaths(const QStringList &paths)

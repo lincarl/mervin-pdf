@@ -94,6 +94,8 @@ public:
 
     bool load(const QString &file = defaultFile());
     bool save(const QString &file = defaultFile()) const;
+    // What save() writes, for a write on another thread (appfiles::write).
+    QByteArray toJson() const;
 
     static QString defaultFile(); // %APPDATA%/MervinPDF/session.json
 

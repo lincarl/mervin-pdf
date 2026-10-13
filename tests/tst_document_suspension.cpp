@@ -1,5 +1,6 @@
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
+#include "io/AppFiles.h"
 #include "render/AnnotModel.h"
 #include "render/Document.h"
 #include "render/FormModel.h"
@@ -97,6 +98,7 @@ private slots:
 
     void cleanup()
     {
+        QVERIFY(mervin::appfiles::flush(10000)); // before the profile goes
         ConfigPaths::setOverrideDir({});
         profile_.reset();
     }
@@ -244,6 +246,7 @@ private slots:
                      QStringLiteral("Uncommitted field value"));
             checkpoint = tab.recoveryPath();
         }
+        QVERIFY(mervin::appfiles::flush(10000)); // recovery files go in the background
         QVERIFY(!QFileInfo::exists(checkpoint));
         QCOMPARE(readFile(path), original);
     }
@@ -675,6 +678,7 @@ private slots:
             if (encrypted)
                 QVERIFY(!manifestBytes.contains(password.toUtf8()));
         }
+        QVERIFY(mervin::appfiles::flush(10000)); // recovery files go in the background
         QVERIFY(!QFileInfo::exists(checkpoint));
         QVERIFY(!QFileInfo::exists(checkpoint + QStringLiteral(".json")));
         // Recreate the exact files a terminated process leaves, with no in-memory owner.
@@ -716,6 +720,7 @@ private slots:
                      QStringLiteral("Recovered edit"));
             QVERIFY(restored.sourceChangedOnDisk());
         }
+        QVERIFY(mervin::appfiles::flush(10000)); // recovery files go in the background
         QVERIFY(TabPage::recoverablePaths().isEmpty());
     }
 

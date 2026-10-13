@@ -1,6 +1,7 @@
 #include "app/WindowManager.h"
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
+#include "io/AppFiles.h"
 #include "dialogs/ExtractDialog.h"
 #include "dialogs/SettingsDialog.h"
 #include "render/AnnotModel.h"
@@ -45,6 +46,17 @@
 using namespace mervin;
 
 namespace {
+
+// Loads what the app saved, once its background writes are done.
+bool loadSaved(SessionStore &store)
+{
+    return mervin::appfiles::flush(10000) && store.load();
+}
+
+bool loadSaved(RecentStore &store, const QString &file)
+{
+    return mervin::appfiles::flush(10000) && store.load(file);
+}
 
 // The files of a window's tabs, in tab order.
 QStringList tabFiles(const MainWindow &window)
@@ -133,6 +145,7 @@ public:
 private slots:
     void init()
     {
+        QVERIFY(mervin::appfiles::flush(10000)); // the previous test's writes land first
         ConfigPaths::setOverrideDir(profile_.path());
         answers_.clear();
         clicked_.clear();
@@ -142,6 +155,7 @@ private slots:
     void cleanup()
     {
         dialogs_.stop();
+        QVERIFY(mervin::appfiles::flush(10000));
         ConfigPaths::setOverrideDir({});
         QVERIFY2(unexpectedDialogs_.isEmpty(), qPrintable(unexpectedDialogs_.join('\n')));
         QVERIFY(answers_.isEmpty());
@@ -709,7 +723,7 @@ private slots:
         QCOMPARE(restoredSession(manager), QStringList{open});
         QVERIFY(window->openFile(open));
         SessionStore onDisk;
-        QVERIFY(onDisk.load());
+        QVERIFY(loadSaved(onDisk));
         QCOMPARE(onDisk.paths(), QStringList{open});
         QCOMPARE(onDisk.activePath(), open);
         QCOMPARE(onDisk.unavailable().size(), 1);
@@ -719,7 +733,7 @@ private slots:
         // Every later save keeps it: opening and closing other documents.
         QVERIFY(window->openFile(other));
         QVERIFY(QMetaObject::invokeMethod(window, "closeTab", Q_ARG(int, 1)));
-        QVERIFY(onDisk.load());
+        QVERIFY(loadSaved(onDisk));
         QCOMPARE(onDisk.paths(), QStringList{open});
         QCOMPARE(onDisk.unavailable().size(), 1);
         QCOMPARE(onDisk.unavailable().first().path, away);
@@ -745,7 +759,10 @@ private slots:
         RecentStore recent;
         recent.load(recentFile);
         const RecentStore before = recent;
-        const auto restoreRecent = qScopeGuard([&] { before.save(recentFile); });
+        const auto restoreRecent = qScopeGuard([&] {
+            mervin::appfiles::flush(10000); // the test's own writes first
+            before.save(recentFile);
+        });
         recent.add(inRecent, QDateTime::currentMSecsSinceEpoch(), 0, share);
         QVERIFY(recent.save(recentFile));
         SessionStore saved;
@@ -767,7 +784,7 @@ private slots:
         QTRY_COMPARE(recentMount(open), RecentStore::mountOf(open));
         // ...and saved in the session by then, without another save.
         SessionStore onDisk;
-        QTRY_VERIFY(onDisk.load() && onDisk.mount(open) == RecentStore::mountOf(open));
+        QTRY_VERIFY(loadSaved(onDisk) && onDisk.mount(open) == RecentStore::mountOf(open));
         QCOMPARE(onDisk.paths(), QStringList{open});
         QCOMPARE(onDisk.unavailable().size(), 2);
         QCOMPARE(onDisk.mount(inSession), share);
@@ -777,7 +794,7 @@ private slots:
         QVERIFY(!RecentStore::mountOf(open).isEmpty());
         QCOMPARE(onDisk.mount(open), RecentStore::mountOf(open));
         RecentStore reloaded;
-        QVERIFY(reloaded.load(recentFile));
+        QVERIFY(loadSaved(reloaded, recentFile));
         QCOMPARE(reloaded.recordedMount(open), RecentStore::mountOf(open));
 #endif
     }
@@ -795,7 +812,10 @@ private slots:
         RecentStore recent;
         recent.load(recentFile);
         const RecentStore before = recent;
-        const auto restoreRecent = qScopeGuard([&] { before.save(recentFile); });
+        const auto restoreRecent = qScopeGuard([&] {
+            mervin::appfiles::flush(10000); // the test's own writes first
+            before.save(recentFile);
+        });
         recent.add(path, QDateTime::currentMSecsSinceEpoch(), 0, share);
         QVERIFY(recent.save(recentFile));
         const auto mountOf = [](const WindowManager &manager, const QString &file) {
@@ -865,7 +885,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(tabFiles(*window), after, 30000);
         QVERIFY(recent->property("recentActive").toBool());
         SessionStore onDisk;
-        QVERIFY(onDisk.load());
+        QVERIFY(loadSaved(onDisk));
         QVERIFY(!onDisk.paths().contains(gone));
         QCOMPARE(onDisk.paths().size(), 4);
 
@@ -892,7 +912,10 @@ private slots:
         RecentStore recent;
         recent.load(recentFile);
         const RecentStore before = recent;
-        const auto restoreRecent = qScopeGuard([&] { before.save(recentFile); });
+        const auto restoreRecent = qScopeGuard([&] {
+            mervin::appfiles::flush(10000); // the test's own writes first
+            before.save(recentFile);
+        });
         recent.add(away, QDateTime::currentMSecsSinceEpoch(), 0, share);
         QVERIFY(recent.save(recentFile));
 
@@ -924,10 +947,10 @@ private slots:
         manager.holdSession(true);
         QVERIFY(window->openFile(path));
         SessionStore onDisk;
-        QVERIFY(onDisk.load());
+        QVERIFY(loadSaved(onDisk));
         QVERIFY(onDisk.paths().isEmpty());
         manager.holdSession(false);
-        QVERIFY(onDisk.load());
+        QVERIFY(loadSaved(onDisk));
         QCOMPARE(onDisk.paths(), QStringList{path});
     }
 
@@ -950,7 +973,7 @@ private slots:
         delete window.data();
         QTRY_VERIFY(!manager.fileProbe()->isChecking({path, {}}));
         SessionStore onDisk;
-        QVERIFY(onDisk.load());
+        QVERIFY(loadSaved(onDisk));
         QCOMPARE(onDisk.paths(), QStringList{path});
     }
 
@@ -972,14 +995,14 @@ private slots:
 #ifndef Q_OS_WIN
         // Windows records no mounts. Elsewhere the session saves the mount once the
         // file's check has found it.
-        QTRY_VERIFY(onDisk.load() && !onDisk.mount(moved).isEmpty());
+        QTRY_VERIFY(loadSaved(onDisk) && !onDisk.mount(moved).isEmpty());
 #endif
-        QVERIFY(onDisk.load());
+        QVERIFY(loadSaved(onDisk));
         const QString mount = onDisk.mount(moved);
 
         manager.detachTab(window, 0, {});
         QCOMPARE(window->tabPaths(), QStringList{other});
-        QVERIFY(onDisk.load());
+        QVERIFY(loadSaved(onDisk));
         QCOMPARE(onDisk.mount(moved), mount);
         MainWindow *detached = nullptr;
         for (QWidget *w : QApplication::topLevelWidgets())
@@ -989,7 +1012,7 @@ private slots:
 
         manager.mergeTab(detached, 0, window, 0);
         QCOMPARE(window->tabPaths(), (QStringList{moved, other}));
-        QVERIFY(onDisk.load());
+        QVERIFY(loadSaved(onDisk));
         QCOMPARE(onDisk.mount(moved), mount);
         QCOMPARE(onDisk.paths().size(), 2);
     }

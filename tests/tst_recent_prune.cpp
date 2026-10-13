@@ -1,6 +1,7 @@
 #include "app/WindowManager.h"
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
+#include "io/AppFiles.h"
 #include "recent/RecentStore.h"
 #include "recent/ViewStateStore.h"
 
@@ -10,6 +11,8 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest>
+
+#include <memory>
 
 using namespace mervin;
 
@@ -22,10 +25,13 @@ class TstRecentPrune : public QObject
 private slots:
     void init()
     {
-        QVERIFY(profile_.isValid());
-        ConfigPaths::setOverrideDir(profile_.path());
-        QFile::remove(ConfigPaths::configFile());
-        QDir root(profile_.path());
+        // A profile of its own, so neither a write still queued by the previous test
+        // nor the settings it left in memory reach this one.
+        QVERIFY(mervin::appfiles::flush(10000));
+        profile_ = std::make_unique<QTemporaryDir>();
+        QVERIFY(profile_->isValid());
+        ConfigPaths::setOverrideDir(profile_->path());
+        QDir root(profile_->path());
         QVERIFY(root.mkpath(QStringLiteral("docs")));
         kept_ = root.filePath(QStringLiteral("docs/kept.pdf"));
         gone_ = root.filePath(QStringLiteral("docs/gone.pdf"));                 // deleted
@@ -51,7 +57,11 @@ private slots:
         states.put(kept_, ViewState{}, now);
         QVERIFY(states.save(ViewStateStore::defaultFile()));
     }
-    void cleanup() { ConfigPaths::setOverrideDir({}); }
+    void cleanup()
+    {
+        QVERIFY(mervin::appfiles::flush(10000));
+        ConfigPaths::setOverrideDir({});
+    }
 
     void dropsRemovedFilesByDefaultButNotDetachedVolumes()
     {
@@ -63,9 +73,11 @@ private slots:
         QCOMPARE(wm.recentEntries().at(1).path, away_);
 
         RecentStore onDisk;
+        QVERIFY(mervin::appfiles::flush(10000));
         QVERIFY(onDisk.load(RecentStore::defaultFile()));
         QCOMPARE(onDisk.count(), 2);
         ViewStateStore states;
+        QVERIFY(mervin::appfiles::flush(10000));
         QVERIFY(states.load(ViewStateStore::defaultFile()));
         QVERIFY(!states.get(gone_));
         QVERIFY(states.get(kept_));
@@ -77,10 +89,11 @@ private slots:
     void keepsFilesWhoseRecordedMountIsGone()
     {
 #ifndef Q_OS_WIN
-        const QDir root(profile_.path());
+        const QDir root(profile_->path());
         QVERIFY(root.mkpath(QStringLiteral("share")));
         const QString onShare = root.filePath(QStringLiteral("share/plan.pdf"));
         RecentStore recent;
+        QVERIFY(mervin::appfiles::flush(10000));
         QVERIFY(recent.load(RecentStore::defaultFile()));
         recent.add(onShare, QDateTime::currentMSecsSinceEpoch(), 0,
                    root.filePath(QStringLiteral("share")));
@@ -116,6 +129,7 @@ private slots:
         QCOMPARE(shown.count(), 1);
         QCOMPARE(shown.at(0).at(0).toInt(), 7);
         RecentStore onDisk;
+        QVERIFY(mervin::appfiles::flush(10000));
         QVERIFY(onDisk.load(RecentStore::defaultFile()));
         QCOMPARE(onDisk.count(), 3); // the oldest, away, trimmed
 
@@ -125,7 +139,7 @@ private slots:
     }
 
 private:
-    QTemporaryDir profile_;
+    std::unique_ptr<QTemporaryDir> profile_;
     QString kept_, gone_, goneFolder_, away_;
 };
 

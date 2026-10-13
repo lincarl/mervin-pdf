@@ -16,6 +16,7 @@
 #include "config/Settings.h"
 #include "dialogs/FirstRunDialog.h"
 #include "i18n/UiLanguage.h"
+#include "io/AppFiles.h"
 #include "io/Background.h"
 #include "ipc/Message.h"
 #include "ipc/PipeName.h"
@@ -55,6 +56,9 @@ using mervin::ipc::MessageDecoder;
 using mervin::ipc::SingleInstanceServer;
 
 namespace {
+
+// How long quitting waits for the app's own files to be written.
+constexpr int kFlushMs = 5000;
 
 // Non-flags are paths; unknown flags are ignored. --profile <dir> (or =<dir>) redirects
 // persistent state and isolates single-instance/session handling. --quit-after-startup exits
@@ -252,7 +256,8 @@ FirstRunChoices startUiLanguage(const CliOptions &cli, SingleInstanceServer *ser
     // Saving ui_language consumes the first-run offer before networking starts.
     // Failed, stalled or interrupted downloads never create work for a later launch.
     // If saving fails, make no attempt that could be repeated next time.
-    if (!settings.save())
+    QString saveError;
+    if (!settings.save(&saveError))
         choices.ocrModels.clear();
     return choices;
 }
@@ -454,6 +459,11 @@ int main(int argc, char *argv[])
     // A restart asked for while running (a new UI language) starts the new copy here,
     // after runUi has released the single-instance pipe.
     const auto finish = [&app](int code) {
+        // The settings, Recent and the session are written on a background thread.
+        // A restarted copy reads them, so they are on disk first, unless the profile
+        // folder stopped answering, in which case the last writes are lost.
+        if (!mervin::appfiles::flush(kFlushMs))
+            std::fprintf(stderr, "MervinPDF: could not finish saving settings\n");
         if (mervin::relaunch::requested() && !mervin::relaunch::start())
             std::fprintf(stderr, "MervinPDF: could not restart\n");
         app.reset();

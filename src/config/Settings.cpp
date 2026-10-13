@@ -1,28 +1,32 @@
 #include "config/Settings.h"
 
 #include "config/ConfigPaths.h"
+#include "io/AppFiles.h"
 
 #include <QFile>
-#include <QSaveFile>
 #include <QDebug>
 
 #include <toml++/toml.hpp>
 
+#include <mutex>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
 
 namespace mervin {
 
-static Settings loadValues()
+namespace {
+
+// How long a save that reports its result waits for its write.
+constexpr int kOrderedSaveWaitMs = 5000;
+
+} // namespace
+
+// The settings in the text of a config file. Keys it lacks keep their defaults.
+static Settings parsedValues(const QByteArray &data)
 {
     Settings s;
-    QFile f(ConfigPaths::configFile());
-    if (!f.open(QIODevice::ReadOnly))
-        return s;
-    const QByteArray data = f.readAll();
-    f.close();
-
     try {
         const toml::table tbl =
             toml::parse(std::string_view(data.constData(), static_cast<size_t>(data.size())));
@@ -99,6 +103,13 @@ static Settings loadValues()
     return s;
 }
 
+// The settings in the config file, read on the calling thread.
+static Settings loadValues()
+{
+    QFile f(ConfigPaths::configFile());
+    return parsedValues(f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray());
+}
+
 static toml::table settingsTable(const Settings &s)
 {
     toml::table tbl;
@@ -156,9 +167,34 @@ void Settings::assignValues(const Settings &other)
     baseline_ = baseline;
 }
 
+namespace {
+
+// The values in effect, by the config file they belong to, so a test or a
+// --profile run with another folder reads its own file.
+std::mutex cacheMutex;
+QString cachedFile;              // guarded by cacheMutex
+std::optional<Settings> cached;  // guarded by cacheMutex
+
+// The values in effect for `file`, read from it the first time. Call with
+// cacheMutex held.
+Settings &current(const QString &file)
+{
+    if (!cached || cachedFile != file) {
+        cached = loadValues();
+        cachedFile = file;
+    }
+    return *cached;
+}
+
+} // namespace
+
 Settings Settings::load()
 {
-    Settings result = loadValues();
+    Settings result;
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        result = current(ConfigPaths::configFile());
+    }
     result.baseline_ = serializeTable(settingsTable(result));
     return result;
 }
@@ -174,8 +210,10 @@ bool Settings::save(QString *error) const
                          .arg(kMaxUnloadInactiveMinutes);
         return false;
     }
+    const QString path = ConfigPaths::configFile();
+    std::unique_lock<std::mutex> lock(cacheMutex);
     const auto desired = settingsTable(*this);
-    auto merged = settingsTable(loadValues());
+    auto merged = settingsTable(current(path));
     if (baseline_.isEmpty()) {
         merged = desired;
     } else {
@@ -190,13 +228,22 @@ bool Settings::save(QString *error) const
         }
     }
     const QByteArray bytes = serializeTable(merged);
-    QSaveFile file(ConfigPaths::configFile());
-    file.setDirectWriteFallback(false);
-    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
-        if (error)
-            *error = file.errorString();
-        qWarning() << "Could not save settings:" << file.errorString();
+    if (!error) {
+        current(path) = parsedValues(bytes);
+        lock.unlock();
+        appfiles::write(path, bytes);
+        baseline_ = serializeTable(desired);
+        return true;
+    }
+    lock.unlock();
+    // In order with the writes asked for before, so none of them can land later and
+    // undo it. A write still waiting after that lands in its turn and counts as
+    // saved; only one that failed is reported.
+    if (appfiles::writeAndWait(path, bytes, kOrderedSaveWaitMs, error) == appfiles::Wait::Failed)
         return false;
+    {
+        std::lock_guard<std::mutex> relock(cacheMutex);
+        current(path) = parsedValues(bytes);
     }
     baseline_ = serializeTable(desired);
     return true;

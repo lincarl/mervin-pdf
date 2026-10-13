@@ -155,11 +155,15 @@ add_library(mervin_core STATIC
     src/config/ConfigPaths.h
     src/config/Settings.cpp
     src/config/Settings.h
+    src/io/AppFiles.cpp
+    src/io/AppFiles.h
     src/io/Background.cpp
     src/io/Background.h
     src/io/FileFacts.h
     src/io/FileProbe.cpp
     src/io/FileProbe.h
+    src/io/MemoryFiles.cpp
+    src/io/MemoryFiles.h
     src/recent/RecentEntry.h
     src/recent/ViewState.h
     src/recent/PathKey.h

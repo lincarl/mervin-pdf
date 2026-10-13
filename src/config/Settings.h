@@ -113,7 +113,17 @@ struct Settings
     QByteArray windowGeometry;
     QByteArray windowState;
 
+    // The settings in effect. The file is read once per profile, at startup, and
+    // later loads and saves use the values in memory, so they never touch the disk
+    // on the calling thread.
     static Settings load();
+    // Merges the values this copy changed into those in effect and saves them.
+    // appfiles::write saves them on a background thread, in order with the other
+    // writes, and logs a failure. With `error` the caller waits, up to 5 s, to learn
+    // whether the write failed, as the Settings window and the first-run window keep
+    // their question open then. A write still waiting after that lands in its turn
+    // and counts as saved. Values in effect are this process's: an edit made to the
+    // file by anything else while it runs is overwritten by its next save.
     bool save(QString *error = nullptr) const;
 
     // Equal when every saved value matches. The save baseline is not compared.

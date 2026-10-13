@@ -1,14 +1,14 @@
 #include "ui/Theme.h"
 
-#include "config/ConfigPaths.h"
 #include "config/Settings.h"
+#include "io/MemoryFiles.h"
 #include "ui/Icons.h"
 #include "ui/ThemeTokens.h"
 
 #include <QAbstractSpinBox>
 #include <QApplication>
+#include <QBuffer>
 #include <QColor>
-#include <QDir>
 #include <QEvent>
 #include <QGuiApplication>
 #include <QLineEdit>
@@ -16,7 +16,6 @@
 #include <QPalette>
 #include <QPixmap>
 #include <QScopedValueRollback>
-#include <QStandardPaths>
 #include <QStyle>
 #include <QStyleFactory>
 #include <QStyleHints>
@@ -82,8 +81,8 @@ QColor resolveAccent(const QString &hex, const QPalette &pal)
 }
 
 // ---- Generated indicator glyphs ---------------------------------------------
-// QSS can only point at glyph images via image: url(...) on disk, so the icons
-// it needs are rendered at runtime into the cache dir, tinted to the theme. They
+// QSS reaches glyph images only through image: url(...), so the icons it needs
+// are rendered at runtime into PNGs kept in memory, tinted to the theme. They
 // are the app's Lucide icons (mervin::icons), drawn with a heavier stroke than
 // the set's 1.5 units: at 10-15 px that line would thin to about a pixel.
 
@@ -113,25 +112,24 @@ QPixmap paintDot(const QColor &color, int sz)
     return pm;
 }
 
-// Rasterize QSS glyphs into the cache and return its forward-slash path, or empty on failure.
-// Both themes need arrows/close; dark additionally supplies menu/check/radio indicators.
+// Rasterize QSS glyphs into PNG files kept in memory (see memoryfiles::publish) and
+// return their resource folder, such as ":/mervin-theme-2", or empty on failure. The
+// style sheet engine loads image:url() files on the UI thread as it paints, so
+// these never touch the disk. Both themes need arrows/close; dark additionally
+// supplies menu/check/radio indicators.
 QString writeThemeAssets(const theme::Chrome &t)
 {
-    // A --profile instance keeps its glyph cache inside the profile: the file
-    // names are fixed and the pixels depend on the palette, so a profile
-    // instance running ALONGSIDE the installed app with a different theme
-    // would otherwise overwrite the shared cache under it (and vice versa).
-    QString dir = ConfigPaths::overrideDir().isEmpty()
-                      ? QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
-                      : QDir(ConfigPaths::overrideDir()).filePath(QStringLiteral("cache"));
-    if (dir.isEmpty() || !QDir().mkpath(dir))
-        return {};
-
-    // Every glyph is written at 1x and 2x ("<name>@2x.png"): the stylesheet
+    // Every glyph is made at 1x and 2x ("<name>@2x.png"): the stylesheet
     // engine resolves image:url() through Qt's @Nx lookup, so displays scaled
     // above 100% (125/150/200%) pick the 2x pixels instead of blurring 1x up.
-    const auto save = [&dir](const QPixmap &pm, const char *file) {
-        return pm.save(dir + QLatin1Char('/') + QLatin1String(file), "PNG");
+    QList<QPair<QString, QByteArray>> files;
+    const auto save = [&files](const QPixmap &pm, const char *file) {
+        QByteArray png;
+        QBuffer buffer(&png);
+        if (!buffer.open(QIODevice::WriteOnly) || !pm.save(&buffer, "PNG"))
+            return false;
+        files.append({QLatin1String(file), png});
+        return true;
     };
 
     constexpr int sz = 16;
@@ -201,7 +199,7 @@ QString writeThemeAssets(const theme::Chrome &t)
                 return {};
         }
     }
-    return QDir::fromNativeSeparators(dir);
+    return memoryfiles::publish(QStringLiteral("mervin-theme"), files);
 }
 
 } // namespace

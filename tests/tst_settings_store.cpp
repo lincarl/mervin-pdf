@@ -1,5 +1,6 @@
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
+#include "io/AppFiles.h"
 
 #include <QFile>
 #include <QTemporaryDir>
@@ -9,7 +10,11 @@ class TstSettingsStore : public QObject
 {
     Q_OBJECT
 private slots:
-    void cleanup() { mervin::ConfigPaths::setOverrideDir({}); }
+    void cleanup()
+    {
+        QVERIFY(mervin::appfiles::flush(10000)); // before the test's folder goes
+        mervin::ConfigPaths::setOverrideDir({});
+    }
 
     void staleWindowPreservesNewPreferences()
     {
@@ -52,6 +57,7 @@ private slots:
             QCOMPARE(loaded.unloadInactiveMinutes, minutes);
             QVERIFY(!loaded.closeToTray);
         }
+        QVERIFY(mervin::appfiles::flush(10000)); // saves are written in the background
         QFile file(mervin::ConfigPaths::configFile());
         QVERIFY(file.open(QIODevice::ReadOnly));
         const QByteArray saved = file.readAll();
@@ -71,6 +77,7 @@ private slots:
         QFETCH(QByteArray, value);
         QTemporaryDir dir;
         mervin::ConfigPaths::setOverrideDir(dir.path());
+        QVERIFY(mervin::appfiles::flush(10000)); // saves are written in the background
         QFile file(mervin::ConfigPaths::configFile());
         QVERIFY(file.open(QIODevice::WriteOnly));
         file.write("unload_inactive_minutes = " + value + "\nclose_to_tray = \"invalid\"\n");
@@ -117,6 +124,7 @@ private slots:
             QCOMPARE(loaded.accentColor, s.accentColor);
             QCOMPARE(loaded.recentKeepMissing, keepMissing);
         }
+        QVERIFY(mervin::appfiles::flush(10000)); // saves are written in the background
         QFile file(mervin::ConfigPaths::configFile());
         QVERIFY(file.open(QIODevice::ReadOnly));
         QVERIFY(file.readAll().contains("recent_keep_removed = false"));
@@ -130,6 +138,7 @@ private slots:
     {
         QTemporaryDir dir;
         mervin::ConfigPaths::setOverrideDir(dir.path());
+        QVERIFY(mervin::appfiles::flush(10000)); // saves are written in the background
         QFile file(mervin::ConfigPaths::configFile());
         QVERIFY(file.open(QIODevice::WriteOnly));
         file.write("recent_keep_missing = true\nrecent_visible_count = 42\n");
@@ -142,6 +151,7 @@ private slots:
         QVERIFY(s.save());
         QVERIFY(!mervin::Settings::load().recentKeepMissing);
         // Read it last, because Windows won't replace a file that is open.
+        QVERIFY(mervin::appfiles::flush(10000));
         QVERIFY(file.open(QIODevice::ReadOnly));
         const QByteArray saved = file.readAll();
         QVERIFY(saved.contains("recent_keep_removed = false"));
@@ -184,6 +194,7 @@ private slots:
         QVERIFY(s.save());
         QCOMPARE(mervin::Settings::load().uiLanguage, QStringLiteral("pt_BR"));
         // Read it last, because Windows won't replace a file that is open.
+        QVERIFY(mervin::appfiles::flush(10000)); // saves are written in the background
         QFile file(mervin::ConfigPaths::configFile());
         QVERIFY(file.open(QIODevice::ReadOnly));
         const QByteArray saved = file.readAll();
