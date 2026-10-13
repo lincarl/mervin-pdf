@@ -2752,7 +2752,7 @@ void MainWindow::listThenRecognize(int pageNo, const QRectF &pageRect, bool offe
         this, [this, viewer = QPointer<ViewerWidget>(currentViewer()), pageNo, pageRect, request,
                asked, offered](const QList<mervin::TessdataManager::Model> &models) {
             if (request == ocrRequest_ && asked.elapsed() < kOcrLanguagesWaitMs && viewer
-                && viewer == currentViewer() && viewer->document())
+                && !recentActive_ && viewer == currentViewer() && viewer->document())
                 recognizeRegion(pageNo, pageRect, languageCodes(models), offered);
         });
 }

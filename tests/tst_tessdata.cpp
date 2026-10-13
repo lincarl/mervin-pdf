@@ -226,6 +226,20 @@ void TstTessdata::modelsAreListedSavedAndRemovedInOrder()
     QVERIFY(!QFile::exists(QDir(Models::directory()).filePath(QStringLiteral("swe.traineddata"))));
     QCOMPARE(listed.size(), 1);
 
+    // An invalid file leaves the installed model as it was.
+    invalid = Models::Saved::Ok;
+    Models::saveModel(QStringLiteral("eng"), QByteArrayLiteral("not a model either"), &context,
+                      [&](Models::Saved result, const QString &, const QList<Models::Model> &models) {
+                          invalid = result;
+                          listed = models;
+                      });
+    QTRY_VERIFY(!Models::busy());
+    QCOMPARE(invalid, Models::Saved::Invalid);
+    QCOMPARE(listed.size(), 1);
+    QCOMPARE(listed.first().bytes, validContainer().size());
+    QCOMPARE(QDir(Models::directory()).entryList(QDir::Files | QDir::Hidden),
+             QStringList({QStringLiteral("eng.traineddata")}));
+
     bool removed = false;
     Models::removeModel(QStringLiteral("eng"), &context,
                         [&](bool result, const QList<Models::Model> &models) {

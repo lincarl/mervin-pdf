@@ -12,6 +12,7 @@
 #include <QLocale>
 #include <QPointer>
 #include <QSaveFile>
+#include <QTemporaryFile>
 #include <QUrl>
 
 #include <algorithm>
@@ -341,16 +342,18 @@ void TessdataManager::saveModel(const QString &code, const QByteArray &data, QOb
         context,
         [code, data, dir = directory()] {
             QDir().mkpath(dir);
-            const QString path = modelPath(dir, code);
-            QSaveFile output(path);
+            // Checked before it replaces anything, so an invalid file leaves an
+            // installed model as it was.
+            QTemporaryFile check(QDir(dir).filePath(QStringLiteral(".ocr-check-XXXXXX")));
+            if (!check.open() || check.write(data) != data.size() || !check.flush())
+                return std::make_tuple(Saved::Failed, check.errorString(), installedModels(dir));
+            QString detail;
+            if (!TessdataFile::validate(check.fileName(), &detail))
+                return std::make_tuple(Saved::Invalid, detail, installedModels(dir));
+            QSaveFile output(modelPath(dir, code));
             if (!output.open(QIODevice::WriteOnly) || output.write(data) != data.size()
                 || !output.commit())
                 return std::make_tuple(Saved::Failed, output.errorString(), installedModels(dir));
-            QString detail;
-            if (!TessdataFile::validateLanguages(dir, {code}, &detail)) {
-                QFile::remove(path);
-                return std::make_tuple(Saved::Invalid, detail, installedModels(dir));
-            }
             return std::make_tuple(Saved::Ok, QString(), installedModels(dir));
         },
         std::move(done));

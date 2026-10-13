@@ -401,13 +401,15 @@ to MuPDF's OCR device. The selected Tesseract language code and the per-user tes
 directory are passed explicitly; there is no automatic language-selection stage.
 
 `TessdataManager` locates installed `.traineddata` files. The language manager reads
-the official `tessdata_best` catalog from GitHub, validates downloaded model files,
-and stores them in the writable per-user tessdata directory. That directory is in the
+the official `tessdata_best` catalog from GitHub, validates downloaded model files
+before they replace anything, and stores them in the writable per-user tessdata
+directory. That directory is in the
 profile, so listing, saving and removing models runs on one background thread for
 the folder, in the order asked (`listModels`, `saveModel`, `removeModel`), and
 Settings, the language manager and the OCR selection take the answers as they come.
-An OCR selection goes on only for the newest one and only if the languages arrive
-within 5 s, so a profile that stopped answering does not bring up OCR windows later. The OCR dialog displays
+An OCR selection goes on only for the newest one, only while its document is still on
+screen, and only if the languages arrive within 5 s, so a profile that stopped answering
+does not bring up OCR windows later. The OCR dialog displays
 and edits the result, while the caller retains the selected page rectangle so a
 language change can submit the recognition again. OCR captures a display list under the
 document lock, then recognizes on a private context in a serial background worker.
@@ -423,7 +425,9 @@ both use `nor`; Montenegrin and Romansh have no matching model. Simplified Chine
 uses `chi_sim.traineddata`, and Traditional Chinese (`zh_TW`, including OS matches
 for Hong Kong and Macao) uses `chi_tra.traineddata`. Explicit Hans or Hant scripts
 take precedence over territory. The selected language's model becomes the initial
-OCR default, or the OS model when only that one matches.
+OCR default, or the OS model when only that one matches. Canceling, as when the app
+quits, also stops a finished download whose file the folder's thread has not started
+to install.
 
 Saving `ui_language` consumes the first-run offer before any network request.
 Downloads fail silently, stop after 30 seconds without data, and are cancelled

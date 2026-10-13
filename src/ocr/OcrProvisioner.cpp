@@ -196,8 +196,9 @@ void OcrProvisioner::complete(Download *download)
     const auto installed = std::make_shared<bool>(false);
     ++installing_;
     TessdataManager::runInFolder(
-        [staging = download->staging, target = download->target, received, installed] {
-            *installed = received && installStaged(*staging, target);
+        [staging = download->staging, target = download->target, received, installed,
+         canceled = canceled_] {
+            *installed = received && !canceled->load() && installStaged(*staging, target);
         },
         this, [this, model, installed] { finishInstall(model, *installed); });
     download->reply->disconnect(this);
@@ -236,6 +237,7 @@ void OcrProvisioner::cancel()
     if (finished_)
         return;
     finished_ = true;
+    canceled_->store(true);
     abortDownloads();
     emit finished();
 }

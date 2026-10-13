@@ -13,8 +13,10 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QThread>
 #include <QtEndian>
 
+#include <atomic>
 #include <cstring>
 
 namespace {
@@ -153,6 +155,7 @@ private slots:
     void replacesExistingModelOnlyOnSuccess();
     void failureDoesNotStopOtherLanguage();
     void cancelAndDestructionAbandonDownloads();
+    void cancelStopsAnInstallationNotStarted();
     void inactivityAbandonsDownload();
     void unwritableDestinationDoesNotRequest();
 };
@@ -349,6 +352,37 @@ void TstOcrProvisioner::cancelAndDestructionAbandonDownloads()
         QTRY_VERIFY(!mervin::TessdataManager::busy()); // the staging files go on its thread
         QVERIFY(files(directory.path()).isEmpty());
     }
+}
+
+// A download can finish while the folder's thread is busy. Canceling before its
+// installation starts leaves the installed model as it was.
+void TstOcrProvisioner::cancelStopsAnInstallationNotStarted()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString target = directory.filePath("eng.traineddata");
+    const QByteArray original = modelData('A');
+    QVERIFY(writeFile(target, original));
+    ModelNetwork network;
+    mervin::ocr::OcrProvisioner provisioner(nullptr, &network);
+    QSignalSpy installed(&provisioner, &mervin::ocr::OcrProvisioner::modelInstalled);
+    QSignalSpy finished(&provisioner, &mervin::ocr::OcrProvisioner::finished);
+    provisioner.start({"eng"}, directory.path());
+    QTRY_COMPARE(network.requests.size(), 1);
+    std::atomic<bool> held{true};
+    mervin::TessdataManager::runInFolder([&held] {
+        for (int i = 0; held.load() && i < 2000; ++i)
+            QThread::msleep(5);
+    });
+    network.replies.first()->supply(modelData('B'));
+    network.replies.first()->finish();
+    provisioner.cancel();
+    held = false;
+    QTRY_VERIFY(!mervin::TessdataManager::busy());
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(installed.count(), 0);
+    QCOMPARE(readFile(target), original);
+    QCOMPARE(files(directory.path()), QStringList({"eng.traineddata"}));
 }
 
 void TstOcrProvisioner::inactivityAbandonsDownload()

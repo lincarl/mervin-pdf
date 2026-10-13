@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QStringList>
 
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -26,6 +27,8 @@ public:
     // Existing files are replaced only after the best model validates. Each
     // model is requested at most once, even if start() is called repeatedly.
     void start(const QStringList &models, const QString &directory);
+    // Stops the downloads, and the installation of any that finished but whose
+    // file the folder's thread has not started to install.
     void cancel();
 
 signals:
@@ -47,6 +50,8 @@ private:
     bool started_ = false;
     bool finished_ = false;
     int installing_ = 0; // completed downloads whose file is still being installed
+    // Read by the installations waiting on the folder's thread.
+    std::shared_ptr<std::atomic<bool>> canceled_ = std::make_shared<std::atomic<bool>>(false);
     std::vector<std::unique_ptr<Download>> downloads_;
 };
 
