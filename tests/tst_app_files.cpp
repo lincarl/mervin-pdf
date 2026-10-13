@@ -6,8 +6,12 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QTest>
+
+#include <mutex>
 
 namespace appfiles = mervin::appfiles;
 namespace memoryfiles = mervin::memoryfiles;
@@ -28,6 +32,7 @@ class TstAppFiles : public QObject
 
 private slots:
     void writesLandInTheOrderAsked();
+    void queuedJobsKeepTheirOrder();
     void writeCreatesItsFolder();
     void aWaitedWriteReportsItsResult();
     void publishedFilesReadFromMemory();
@@ -60,6 +65,48 @@ void TstAppFiles::writesLandInTheOrderAsked()
     QVERIFY(appfiles::flush(0));
 }
 
+// Jobs held back in the queue, to see which run and in what order.
+void TstAppFiles::queuedJobsKeepTheirOrder()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString a = dir.filePath(QStringLiteral("a.json"));
+    const QString b = dir.filePath(QStringLiteral("b.json"));
+    std::mutex seenMutex;
+    QStringList seen; // what each job left on disk, as it finished
+    const auto release = qScopeGuard([] {
+        appfiles::testing::hold(false);
+        appfiles::testing::observe({});
+    });
+    appfiles::testing::observe([&](const QString &path, bool removed) {
+        const QString name = QFileInfo(path).fileName();
+        const QString result = removed ? name + QStringLiteral(" removed")
+                                       : name + QLatin1Char('=') + QString::fromUtf8(read(path));
+        std::lock_guard<std::mutex> lock(seenMutex);
+        seen << result;
+    });
+
+    // A newer write of a drops the older one and queues after b's removal, which
+    // was asked for between them.
+    appfiles::testing::hold(true);
+    appfiles::write(a, "1");
+    appfiles::remove(b);
+    appfiles::write(a, "2");
+    appfiles::testing::hold(false);
+    QVERIFY(appfiles::flush(10000));
+    QCOMPARE(seen, QStringList({QStringLiteral("b.json removed"), QStringLiteral("a.json=2")}));
+
+    // A write someone waits for is never dropped, so its result is its own.
+    seen.clear();
+    appfiles::testing::hold(true);
+    QCOMPARE(appfiles::writeAndWait(a, "3", 0), appfiles::Wait::Pending);
+    appfiles::write(a, "4");
+    appfiles::write(a, "5");
+    appfiles::testing::hold(false);
+    QVERIFY(appfiles::flush(10000));
+    QCOMPARE(seen, QStringList({QStringLiteral("a.json=3"), QStringLiteral("a.json=5")}));
+}
+
 void TstAppFiles::writeCreatesItsFolder()
 {
     QTemporaryDir dir;
@@ -80,8 +127,8 @@ void TstAppFiles::aWaitedWriteReportsItsResult()
     QCOMPARE(read(file), QByteArray("a = 1"));
     QVERIFY(error.isEmpty());
 
-    // A folder where the file belongs cannot be replaced, and the reason comes back,
-    // even when later writes have finished by the time the caller looks.
+    // A folder where the file belongs cannot be replaced, and the reason comes back.
+    // A write asked for before it finishing first does not answer for it.
     const QString blocked = dir.filePath(QStringLiteral("blocked.toml"));
     QVERIFY(QDir().mkdir(blocked));
     appfiles::write(dir.filePath(QStringLiteral("before.json")), "{}");

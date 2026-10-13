@@ -847,6 +847,9 @@ WindowManager::~WindowManager()
     windows_.clear();
     for (MainWindow *w : copy)
         delete w;
+    // The next copy reads the settings, Recent and the session once it gets the
+    // single-instance pipe, which instanceServer_ holds until after this body.
+    appfiles::flush(appfiles::kExitWaitMs);
 }
 
 MainWindow *WindowManager::createWindow()

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <map>
 #include <memory>
+#include <vector>
 
 namespace mervin::memoryfiles {
 
@@ -86,9 +87,12 @@ QString publish(const QString &prefix, const QList<QPair<QString, QByteArray>> &
     QResource::registerResource(reinterpret_cast<const uchar *>(next.data->constData()), next.root);
 
     Published &slot = current[prefix];
-    if (slot.data)
-        QResource::unregisterResource(reinterpret_cast<const uchar *>(slot.data->constData()),
-                                      slot.root);
+    // Qt keeps reading a root it could not unregister, so its data stays.
+    static std::vector<std::unique_ptr<QByteArray>> retired;
+    if (slot.data
+        && !QResource::unregisterResource(reinterpret_cast<const uchar *>(slot.data->constData()),
+                                          slot.root))
+        retired.push_back(std::move(slot.data));
     slot = std::move(next);
     return QLatin1Char(':') + slot.root;
 }

@@ -485,11 +485,14 @@ Startup reads the settings, the three stores and the recovery manifests before t
 first window, which needs them; `ConfigPaths` creates the folders then, once. Later
 `Settings::load()` returns the values in memory, and `appfiles::write`
 (`io/AppFiles`) saves the settings and stores on a background thread through
-`QSaveFile`, in the order asked, a newer write of a file replacing one not yet
-started. Closing a tab removes its recovery files the same way, and tabs restored
-lazily adopt the recovery manifests startup found. Quitting waits up to 5 s for the
-writes, so a restarted copy reads them; with a profile folder that stopped answering
-the last writes are lost and the process says so on stderr. The Settings window and
+`QSaveFile`, in the order asked. A newer write of a file drops a write of it that
+has not started and that nobody waits for. Closing a tab removes its recovery files
+the same way, and tabs restored lazily adopt the recovery manifests startup found.
+Quitting waits up to 5 s for the writes before `WindowManager` lets go of the
+single-instance pipe, so the next copy reads them. With a profile folder that
+stopped answering, the last writes land when it answers again or never, the process
+says so on stderr, and a restart asked for (a new UI language) is skipped, as the
+new copy would read the files without them. The Settings window and
 the first-run window keep their question open when a save fails, so they wait up to
 5 s for their own write, in its turn among the others. A write still waiting after
 that lands later and counts as saved. The values in effect are the running

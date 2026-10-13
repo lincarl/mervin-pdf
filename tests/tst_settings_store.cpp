@@ -246,8 +246,13 @@ private slots:
         mervin::ConfigPaths::setOverrideDir(dir.path());
         QVERIFY(QDir().mkdir(mervin::ConfigPaths::configFile()));
         QString error;
-        QVERIFY(!mervin::Settings{}.save(&error));
+        mervin::Settings changed = mervin::Settings::load();
+        const QString before = changed.annotationAuthor;
+        changed.annotationAuthor = QStringLiteral("Not saved");
+        QVERIFY(!changed.save(&error));
         QVERIFY(!error.isEmpty());
+        // The settings in memory keep matching the file.
+        QCOMPARE(mervin::Settings::load().annotationAuthor, before);
         mervin::ConfigPaths::setOverrideDir({});
     }
 };

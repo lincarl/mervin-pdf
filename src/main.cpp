@@ -57,9 +57,6 @@ using mervin::ipc::SingleInstanceServer;
 
 namespace {
 
-// How long quitting waits for the app's own files to be written.
-constexpr int kFlushMs = 5000;
-
 // Non-flags are paths; unknown flags are ignored. --profile <dir> (or =<dir>) redirects
 // persistent state and isolates single-instance/session handling. --quit-after-startup exits
 // once startup completes, for process timing. --language <id> (or =<id>) shows the UI in that
@@ -460,12 +457,18 @@ int main(int argc, char *argv[])
     // after runUi has released the single-instance pipe.
     const auto finish = [&app](int code) {
         // The settings, Recent and the session are written on a background thread.
-        // A restarted copy reads them, so they are on disk first, unless the profile
-        // folder stopped answering, in which case the last writes are lost.
-        if (!mervin::appfiles::flush(kFlushMs))
+        // WindowManager waited for them before it let go of the single-instance pipe,
+        // so a restarted copy reads them. Writes still queued are stuck on a profile
+        // folder that stopped answering. They land if it answers again, or never. A
+        // restarted copy would read the files without them, and they could land over
+        // its own writes, so it is not started.
+        if (!mervin::appfiles::flush(0)) {
             std::fprintf(stderr, "MervinPDF: could not finish saving settings\n");
-        if (mervin::relaunch::requested() && !mervin::relaunch::start())
+            if (mervin::relaunch::requested())
+                std::fprintf(stderr, "MervinPDF: not restarting\n");
+        } else if (mervin::relaunch::requested() && !mervin::relaunch::start()) {
             std::fprintf(stderr, "MervinPDF: could not restart\n");
+        }
         app.reset();
         // Background work told to stop gets a moment. Work still running then is
         // stuck on a drive that stopped answering and holds its threads, and static

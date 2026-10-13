@@ -12,6 +12,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <map>
 #include <set>
 #include <mutex>
@@ -25,7 +26,8 @@ struct Job
     QString path;
     QByteArray data;
     bool remove = false;
-    quint64 serial = 0; // tells a caller waiting for this write when it is done
+    bool waited = false; // a caller waits for this write's own result
+    quint64 serial = 0;  // tells that caller when it is done
 };
 
 std::mutex mutex;
@@ -33,9 +35,9 @@ std::condition_variable changed; // notified when a job finishes or the queue em
 std::deque<Job> jobs;            // guarded by mutex
 bool working = false;            // guarded by mutex: a thread is draining jobs
 quint64 lastSerial = 0;          // guarded by mutex
-// Guarded by mutex: the serials of jobs not finished yet. A write replaced in place
-// takes a newer serial but keeps its place, so serials do not finish in order.
-std::set<quint64> outstanding;
+std::set<quint64> outstanding;   // guarded by mutex: the serials of jobs not finished yet
+bool held = false;               // guarded by mutex: see testing::hold
+std::function<void(const QString &, bool)> observer; // guarded by mutex: see testing::observe
 // Guarded by mutex: why recent jobs failed, by serial, for writeAndWait. Old ones are
 // dropped, as nobody waits for most jobs.
 std::map<quint64, QString> failures;
@@ -67,8 +69,10 @@ void drain()
 {
     for (;;) {
         Job job;
+        std::function<void(const QString &, bool)> notify;
         {
-            std::lock_guard<std::mutex> lock(mutex);
+            std::unique_lock<std::mutex> lock(mutex);
+            changed.wait(lock, [] { return !held; });
             if (jobs.empty()) {
                 working = false;
                 changed.notify_all();
@@ -76,9 +80,12 @@ void drain()
             }
             job = std::move(jobs.front());
             jobs.pop_front();
+            notify = observer;
         }
         bool failed = false;
         const QString error = perform(job, &failed);
+        if (notify)
+            notify(job.path, job.remove);
         std::lock_guard<std::mutex> lock(mutex);
         outstanding.erase(job.serial);
         if (failed) {
@@ -98,18 +105,20 @@ quint64 add(Job job)
     {
         std::lock_guard<std::mutex> lock(mutex);
         serial = job.serial = ++lastSerial;
-        // The last job waiting for the file, if it is a write, takes the new data in
-        // place, so the files keep the order they were asked for. Anything else,
-        // such as a removal after that write, waits its turn.
-        const auto last = std::find_if(jobs.rbegin(), jobs.rend(),
-                                       [&job](const Job &waiting) { return waiting.path == job.path; });
-        if (!job.remove && last != jobs.rend() && !last->remove) {
-            last->data = std::move(job.data);
-            outstanding.erase(last->serial);
-            last->serial = serial;
-        } else {
-            jobs.push_back(std::move(job));
+        // A newer write of a file makes the last job waiting for it unneeded when
+        // that job is a write nobody waits for, so it goes. The new one queues last,
+        // after everything asked for before it, so the files change in the order
+        // asked and repeated saves of a file do not pile up while the folder stalls.
+        if (!job.remove) {
+            const auto last = std::find_if(jobs.rbegin(), jobs.rend(), [&job](const Job &waiting) {
+                return waiting.path == job.path;
+            });
+            if (last != jobs.rend() && !last->remove && !last->waited) {
+                outstanding.erase(last->serial);
+                jobs.erase(std::next(last).base());
+            }
         }
+        jobs.push_back(std::move(job));
         outstanding.insert(serial);
         start = !std::exchange(working, true);
     }
@@ -128,7 +137,7 @@ void write(const QString &path, const QByteArray &data)
 
 Wait writeAndWait(const QString &path, const QByteArray &data, int ms, QString *error)
 {
-    const quint64 serial = add({path, data, false});
+    const quint64 serial = add({path, data, false, true});
     std::unique_lock<std::mutex> lock(mutex);
     if (!changed.wait_for(lock, std::chrono::milliseconds(ms),
                           [serial] { return !outstanding.contains(serial); }))
@@ -147,6 +156,23 @@ void remove(const QString &path)
     if (!path.isEmpty())
         add({path, {}, true});
 }
+
+namespace testing {
+
+void hold(bool on)
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    held = on;
+    changed.notify_all();
+}
+
+void observe(std::function<void(const QString &, bool)> done)
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    observer = std::move(done);
+}
+
+} // namespace testing
 
 bool flush(int ms)
 {
