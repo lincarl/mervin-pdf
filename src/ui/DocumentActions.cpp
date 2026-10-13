@@ -292,6 +292,11 @@ bool MainWindow::saveTab(TabPage *t)
     QScopedValueRollback<int> operation(documentOperationDepth_, documentOperationDepth_ + 1);
     if (!t)
         return false;
+    // An unloaded tab keeps its edits in a recovery copy. Without one there is
+    // nothing to save, so do not load the document, which can stall on a network
+    // path or fail for a file that is gone.
+    if (!t->isLoaded() && !t->hasUnsavedEdits())
+        return true;
     QString openError;
     bool needsPassword = false;
     if (!t->isLoaded() && !t->resume(&openError, &needsPassword)) {

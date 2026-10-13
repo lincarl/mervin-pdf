@@ -1606,30 +1606,34 @@ void MainWindow::setUiEnabled(bool enabled)
     pageEdit_->setEnabled(docEnabled);
     zoomCombo_->setEnabled(docEnabled);
     // Save acts on the current document; dead with no document or on the Recent view.
+    // Ctrl+S follows the button.
     if (saveButton_)
         saveButton_->setEnabled(docEnabled);
+    saveEditsAction_->setEnabled(docEnabled);
     // Document tools (page operations + security) likewise need an open document.
     if (documentButton_)
         documentButton_->setEnabled(docEnabled);
 
     closeTabAction_->setEnabled(currentTab() != nullptr);
-    // Selection / find stay tied to having a loaded document. Find itself
+    // Selection, find and the tools also need the document on screen. Find itself
     // stays enabled: it focuses the Recent search field, also with no document
     // open, and its handler ignores a tab that is not loaded.
     findAction_->setEnabled(true);
     for (QAction *a : {findNextAction_, findPrevAction_,
                        copyAction_, selectAllAction_, measureAction_})
-        a->setEnabled(enabled);
+        a->setEnabled(docEnabled);
     syncOcrAction();
     // Fill Forms is additionally gated on the document actually having fields.
     ViewerWidget *v = currentViewer();
     if (formAction_)
-        formAction_->setEnabled(enabled && v && v->hasFormFields());
+        formAction_->setEnabled(docEnabled && v && v->hasFormFields());
     // Highlight / Comment are available for any PDF document (any PDF can carry
     // annotations); disabled for non-PDF formats and when no document is open.
-    const bool annot = enabled && v && v->hasAnnotationSupport();
+    const bool annot = docEnabled && v && v->hasAnnotationSupport();
     if (commentAction_)
         commentAction_->setEnabled(annot);
+    // The page layout of the document shown.
+    syncViewActions(docEnabled ? v : nullptr);
 }
 
 bool MainWindow::openFile(const QString &path, bool allowDuplicate, int atIndex, bool makeCurrent,
@@ -1989,6 +1993,9 @@ void MainWindow::showRecentPanel()
     statusInfo_->setText(recentPanel_->statusSummary());
     updateRecentButton();
     setCommandBarMode(true);
+    // Turn off the document shortcuts too, such as Ctrl+P and Ctrl+S, which would
+    // otherwise act on the hidden document.
+    setUiEnabled(currentViewer() != nullptr);
     recentPanel_->focusSearch();
 }
 
@@ -2083,7 +2090,6 @@ void MainWindow::updateForCurrentTab()
     updateSidebars();
     refreshCommentsSidebar(); // reflect the current tab's annotations (if shown)
     setUiEnabled(v != nullptr);
-    syncViewActions(v);
 
     if (!v) {
         //: Window title. %1 is the name of the document shown.
@@ -2948,7 +2954,8 @@ void MainWindow::onTabMergeRequested(mervin::DetachableTabBar *source, int sourc
 
 void MainWindow::syncViewActions(ViewerWidget *viewer)
 {
-    const bool has = viewer != nullptr;
+    // Off on the Recent view too, also when the hidden document's layout changes.
+    const bool has = viewer != nullptr && !recentActive_;
     // The document theme is a global radio group (always available); only the
     // per-document page-layout actions hinge on having an open viewer here.
     for (QAction *a : {continuousAction_, singleAction_, twoPageAction_})
