@@ -582,8 +582,13 @@ void WindowManager::restoreLate(const QString &path, const FileFacts &facts)
 void WindowManager::holdSession(bool hold)
 {
     sessionHeld_ = hold;
-    if (!hold && stagedQueue_.isEmpty())
+    if (!hold && stagedQueue_.isEmpty()) {
+        // Nothing else would save it, so record what the restore decided and the
+        // documents opened while it was held. A batch still opening saves the
+        // complete set with its last document.
+        updateSession();
         openLateWaiting();
+    }
 }
 
 void WindowManager::openLateWaiting()

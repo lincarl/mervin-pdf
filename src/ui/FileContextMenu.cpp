@@ -118,8 +118,9 @@ void showFileContextMenu(QWidget *parent, const QString &path, const QPoint &glo
         // while the menu is up, in which case the clipboard stays untouched - do
         // not let that look like a successful copy.
         const QString file = fi.absoluteFilePath();
+        QObject *context = parent ? static_cast<QObject *>(parent) : QCoreApplication::instance();
         background::run(
-            parent, [file] { return isCopyableFile(file); },
+            context, [file] { return isCopyableFile(file); },
             [parent, file, copyFileText, fileNative](bool copyable) {
                 if (copyable) {
                     copyFileToClipboard(file);

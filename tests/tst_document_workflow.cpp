@@ -909,6 +909,28 @@ private slots:
 #endif
     }
 
+    // A file opened while startup holds the session, as a command-line file is, is
+    // saved once the hold ends, even when there is no session to restore.
+    void releasingTheHoldSavesTheSession()
+    {
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        const QString path = root.filePath(QStringLiteral("plan.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        SessionStore empty;
+        QVERIFY(empty.save());
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        manager.holdSession(true);
+        QVERIFY(window->openFile(path));
+        SessionStore onDisk;
+        QVERIFY(onDisk.load());
+        QVERIFY(onDisk.paths().isEmpty());
+        manager.holdSession(false);
+        QVERIFY(onDisk.load());
+        QCOMPARE(onDisk.paths(), QStringList{path});
+    }
+
     // A check answers after the last window has closed, as one on a slow share can.
     // The session the window left behind stays: there is nothing left to record.
     void lateAnswerKeepsTheSessionOfTheLastWindow()
