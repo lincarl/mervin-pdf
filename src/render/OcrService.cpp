@@ -46,7 +46,8 @@ QString stextToString(fz_stext_page *stext)
 } // namespace
 
 OcrService::OcrService(RenderEngine *engine)
-    : ctx_(engine ? fz_clone_context(engine->baseContext()) : nullptr)
+    : base_(engine ? engine->baseContext() : nullptr)
+    , ctx_(base_ ? fz_clone_context(base_.get()) : nullptr)
 {
 }
 
@@ -123,6 +124,15 @@ QString OcrService::recognize(const std::shared_ptr<DocumentLifetime> &lifetime,
             return {};
         }
     }
+    if (canceled && canceled->load()) {
+        fz_drop_display_list(ctx, list);
+        return {};
+    }
+    // MuPDF runs one Tesseract recognition at a time in a process; a second one
+    // fails with "Attempt to use Leptonica from 2 threads at once!". A canceled run
+    // can still be finishing when the next one starts, so they take turns here.
+    static std::mutex oneAtATime;
+    std::lock_guard<std::mutex> turn(oneAtATime);
     fz_device *ocr = nullptr;
     fz_device *sdev = nullptr;
     fz_stext_page *stext = nullptr;

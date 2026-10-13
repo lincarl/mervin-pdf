@@ -1,5 +1,6 @@
 #include "render/RenderEngine.h"
 
+#include "io/Background.h"
 #include "render/ComfortTransform.h"
 #include "render/Document.h"
 #include "render/MuPdfLocks.h"
@@ -7,11 +8,20 @@
 #include <mupdf/fitz.h>
 
 #include <QByteArray>
+#include <QPointer>
 #include <QtGlobal>
 
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
+#include <deque>
+#include <mutex>
+#include <thread>
+#include <utility>
+#include <vector>
 
 namespace mervin {
 
@@ -408,6 +418,23 @@ void imageRectStrokeText(fz_context *ctx, fz_device *dev, const fz_text *text,
 
 } // namespace
 
+struct RenderEngine::Shared
+{
+    struct Job
+    {
+        RenderRequest request;
+        std::shared_ptr<DocumentLifetime> lifetime;
+        std::atomic<bool> canceled{false};
+    };
+
+    std::mutex queueMutex;
+    std::condition_variable queueCv;
+    std::deque<std::shared_ptr<Job>> queue; // guarded by queueMutex
+    std::vector<std::weak_ptr<Job>> jobs;   // includes active jobs; guarded by queueMutex
+    std::atomic<bool> stop{false};
+    QPointer<QObject> owner; // the engine, which results go to on its thread
+};
+
 const fz_locks_context *sharedMuPdfLocks()
 {
     // Never destroyed, for contexts that outlive their owner (see the header).
@@ -423,57 +450,85 @@ const fz_locks_context *sharedMuPdfLocks()
 
 RenderEngine::RenderEngine(QObject *parent)
     : QObject(parent)
+    , shared_(std::make_shared<Shared>())
 {
     qRegisterMetaType<mervin::RenderResult>("mervin::RenderResult");
 
-    base_ = fz_new_context(nullptr, sharedMuPdfLocks(), FZ_STORE_DEFAULT);
-    if (!base_)
+    fz_context *base = fz_new_context(nullptr, sharedMuPdfLocks(), FZ_STORE_DEFAULT);
+    if (!base)
         qFatal("Mervin: failed to create MuPDF context");
-    fz_set_warning_callback(base_, warningCallback, nullptr);
-    fz_register_document_handlers(base_);
+    fz_set_warning_callback(base, warningCallback, nullptr);
+    fz_register_document_handlers(base);
+    base_.reset(base, fz_drop_context);
 
+    shared_->owner = this;
     const unsigned hw = std::thread::hardware_concurrency();
     const int nworkers = static_cast<int>(std::clamp(hw / 2u, 2u, 4u));
-    workers_.reserve(nworkers);
     for (int i = 0; i < nworkers; ++i) {
-        fz_context *ctx = fz_clone_context(base_);
-        workers_.emplace_back([this, ctx] { workerLoop(ctx); });
+        fz_context *ctx = fz_clone_context(base);
+        background::start([shared = shared_, base = base_, ctx]() mutable {
+            workerLoop(shared, ctx);
+            base.reset(); // after the clone (see baseContext())
+        });
     }
 }
 
 RenderEngine::~RenderEngine()
 {
+    // Workers and documents can outlive the engine; they keep the base context.
     shutdown();
-    if (base_) {
-        fz_drop_context(base_);
-        base_ = nullptr;
-    }
 }
 
 void RenderEngine::shutdown()
 {
-    stop_.store(true);
+    shared_->stop.store(true);
     {
-        std::lock_guard<std::mutex> lk(queueMutex_);
-        for (auto &weak : jobs_)
+        std::lock_guard<std::mutex> lk(shared_->queueMutex);
+        for (auto &weak : shared_->jobs)
             if (auto job = weak.lock())
                 job->canceled.store(true);
-        queue_.clear();
+        shared_->queue.clear();
     }
-    queueCv_.notify_all();
-    for (auto &t : workers_)
-        if (t.joinable())
-            t.join();
-    workers_.clear();
+    shared_->queueCv.notify_all();
 }
 
 std::unique_ptr<Document> RenderEngine::openDocument(const QString &path, const QString &password,
                                                      QString *error, bool *needsPassword)
 {
+    return opener()->open(path, password, error, needsPassword);
+}
+
+std::shared_ptr<DocumentOpener> RenderEngine::opener()
+{
+    return std::make_shared<DocumentOpener>(base_);
+}
+
+DocumentOpener::DocumentOpener(std::shared_ptr<fz_context> base)
+    : base_(std::move(base))
+    , ctx_(fz_clone_context(base_.get()))
+{
+}
+
+DocumentOpener::~DocumentOpener()
+{
+    if (ctx_)
+        fz_drop_context(ctx_);
+}
+
+std::unique_ptr<Document> DocumentOpener::open(const QString &path, const QString &password,
+                                               QString *error, bool *needsPassword)
+{
+    return RenderEngine::open(std::exchange(ctx_, nullptr), base_, path, password, error,
+                              needsPassword);
+}
+
+std::unique_ptr<Document> RenderEngine::open(fz_context *ctx, std::shared_ptr<fz_context> base,
+                                             const QString &path, const QString &password,
+                                             QString *error, bool *needsPassword)
+{
     if (needsPassword)
         *needsPassword = false;
 
-    fz_context *ctx = fz_clone_context(base_);
     if (!ctx) {
         if (error)
             *error = tr("Could not allocate a document context.");
@@ -510,12 +565,13 @@ std::unique_ptr<Document> RenderEngine::openDocument(const QString &path, const 
             return nullptr;
         }
     }
-    return std::make_unique<Document>(ctx, doc, true);
+    return std::make_unique<Document>(ctx, doc, true, std::move(base));
 }
 
 QImage RenderEngine::renderPageImage(Document *doc, int pageNo, double scale, int rotation)
 {
-    if (!doc || !base_)
+    fz_context *base = base_.get();
+    if (!doc)
         return {};
 
     // Serialize against the worker pool / TextIndex: a single fz_document's
@@ -529,25 +585,25 @@ QImage RenderEngine::renderPageImage(Document *doc, int pageNo, double scale, in
     fz_var(page);
     fz_var(pix);
     QImage out;
-    fz_try(base_) {
-        page = fz_load_page(base_, fdoc, pageNo);
+    fz_try(base) {
+        page = fz_load_page(base, fdoc, pageNo);
         const fz_matrix ctm = fz_pre_rotate(
             fz_scale(static_cast<float>(scale), static_cast<float>(scale)),
             static_cast<float>(rotation));
-        pix = fz_new_pixmap_from_page(base_, page, ctm, fz_device_rgb(base_), 0);
-        const int w = fz_pixmap_width(base_, pix);
-        const int h = fz_pixmap_height(base_, pix);
-        const int stride = fz_pixmap_stride(base_, pix);
-        unsigned char *samples = fz_pixmap_samples(base_, pix);
+        pix = fz_new_pixmap_from_page(base, page, ctm, fz_device_rgb(base), 0);
+        const int w = fz_pixmap_width(base, pix);
+        const int h = fz_pixmap_height(base, pix);
+        const int stride = fz_pixmap_stride(base, pix);
+        unsigned char *samples = fz_pixmap_samples(base, pix);
         out = QImage(samples, w, h, stride, QImage::Format_RGB888).copy();
     }
-    fz_always(base_) {
+    fz_always(base) {
         if (pix)
-            fz_drop_pixmap(base_, pix);
+            fz_drop_pixmap(base, pix);
         if (page)
-            fz_drop_page(base_, page);
+            fz_drop_page(base, page);
     }
-    fz_catch(base_) {
+    fz_catch(base) {
         out = QImage();
     }
     return out;
@@ -557,15 +613,15 @@ void RenderEngine::submit(const RenderRequest &req)
 {
     if (!req.document)
         return;
-    auto job = std::make_shared<Job>();
+    auto job = std::make_shared<Shared::Job>();
     job->request = req;
     job->lifetime = req.document->lifetime();
     job->request.document = nullptr; // workers resolve through the lifetime gate
     {
-        std::lock_guard<std::mutex> lk(queueMutex_);
-        if (stop_.load())
+        std::lock_guard<std::mutex> lk(shared_->queueMutex);
+        if (shared_->stop.load())
             return;
-        std::erase_if(jobs_, [&](const auto &weak) {
+        std::erase_if(shared_->jobs, [&](const auto &weak) {
             auto old = weak.lock();
             if (!old)
                 return true;
@@ -574,42 +630,47 @@ void RenderEngine::submit(const RenderRequest &req)
                 old->canceled.store(true);
             return false;
         });
-        std::erase_if(queue_, [](const auto &old) { return old->canceled.load(); });
-        jobs_.push_back(job);
-        queue_.push_back(std::move(job));
+        std::erase_if(shared_->queue, [](const auto &old) { return old->canceled.load(); });
+        shared_->jobs.push_back(job);
+        shared_->queue.push_back(std::move(job));
     }
-    queueCv_.notify_one();
+    shared_->queueCv.notify_one();
 }
 
 void RenderEngine::cancelRequests(quint64 requester)
 {
-    std::lock_guard<std::mutex> lk(queueMutex_);
-    for (auto &weak : jobs_)
+    std::lock_guard<std::mutex> lk(shared_->queueMutex);
+    for (auto &weak : shared_->jobs)
         if (auto job = weak.lock(); job && job->request.requester == requester)
             job->canceled.store(true);
-    std::erase_if(queue_, [](const auto &job) { return job->canceled.load(); });
+    std::erase_if(shared_->queue, [](const auto &job) { return job->canceled.load(); });
 }
 
 void RenderEngine::trimCache()
 {
-    if (!base_)
-        return;
-    fz_empty_store(base_);
-    fz_purge_glyph_cache(base_);
+    fz_empty_store(base_.get());
+    fz_purge_glyph_cache(base_.get());
 }
 
-void RenderEngine::workerLoop(fz_context *ctx)
+void RenderEngine::workerLoop(const std::shared_ptr<Shared> &shared, fz_context *ctx)
 {
+    // Results go to the engine's thread, unless the engine has stopped by then.
+    const auto deliver = [&shared](RenderResult result) {
+        background::post(shared->owner, [shared, result = std::move(result)] {
+            if (!shared->stop.load())
+                emit static_cast<RenderEngine *>(shared->owner.data())->resultReady(result);
+        });
+    };
     for (;;) {
-        std::shared_ptr<Job> job;
+        std::shared_ptr<Shared::Job> job;
         {
-            std::unique_lock<std::mutex> lk(queueMutex_);
-            queueCv_.wait(lk, [this] { return stop_.load() || !queue_.empty(); });
-            if (stop_.load())
+            std::unique_lock<std::mutex> lk(shared->queueMutex);
+            shared->queueCv.wait(lk, [&shared] { return shared->stop.load() || !shared->queue.empty(); });
+            if (shared->stop.load())
                 break;
             // Most-recently-requested first: keeps the visible viewport responsive.
-            job = queue_.back();
-            queue_.pop_back();
+            job = shared->queue.back();
+            shared->queue.pop_back();
         }
 
         if (job->canceled.load())
@@ -664,7 +725,7 @@ void RenderEngine::workerLoop(fz_context *ctx)
             continue;
         }
         if (!list) {
-            emit resultReady(res); // phase 1 failed; res carries the error
+            deliver(std::move(res)); // phase 1 failed; res carries the error
             continue;
         }
 
@@ -889,7 +950,7 @@ void RenderEngine::workerLoop(fz_context *ctx)
             applyComfortTransform(res.image, imageRects);
 
         if (!job->canceled.load())
-            emit resultReady(res);
+            deliver(std::move(res));
     }
 
     fz_drop_context(ctx);

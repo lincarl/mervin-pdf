@@ -79,10 +79,11 @@ main() / runUi()
 `WindowManager` is the process-level coordinator. It owns the shared render engine,
 tracks every window, routes file-open requests, prevents duplicate tabs for the same
 canonical path during normal opens, moves tabs between windows, and is the sole
-writer of the shared recent, view-state, and session files. The render engine
-outlives every open `Document`. Queued jobs hold a shared lifetime gate:
-document destruction clears its pointer under the gate lock, waiting only for active
-document access. Rasterization of an independent display list can finish afterward.
+writer of the shared recent, view-state, and session files. Queued jobs hold a
+shared lifetime gate: document destruction clears its pointer under the gate lock,
+waiting only for active document access. Rasterization of an independent display
+list can finish afterward. A document, a render worker or a search can outlive the
+engine (see Rendering and document access).
 
 The explicit Duplicate to new window command bypasses normal path deduplication and
 creates a second independent view.
@@ -98,7 +99,25 @@ Nothing joins these threads. Closing a window or quitting leaves stuck work behi
 and the process ends without running static destructors while any is left
 (`main.cpp`). A stuck call keeps its thread, so
 work is bounded by its caller, one task per drive or per user action, never one per
-file.
+file. `background::SerialQueue` runs a caller's jobs one at a time on such a task,
+so one that is stuck holds up only the jobs behind it, on one thread.
+
+Work that reads a document follows the same rule. The render workers, the find
+search, OCR recognition and a tab's asynchronous load all run on background tasks,
+and closing a tab, the OCR popup or a window never waits for them. Destroying a
+`Document` waits for the work in it and closes its file, so a closing tab, and a tab
+unloaded when its window goes to the tray or after a time inactive, hands its
+document to `Document::closeInBackground`. Each close takes its own task: closing is
+the user's action, one tab or window at a time. A load still running when its tab
+closes closes what it opened itself. A recovery copy the document has open is
+removed only after it is closed, as Windows cannot remove an open file, while its
+manifest goes at once so it is never offered again. Quitting waits for those
+removals within the time it gives the app's own files (see Persistence). MuPDF's
+Tesseract runs one recognition at a time in a process, so a canceled OCR still
+finishing makes the next one wait its turn on its background thread. At exit,
+`main.cpp` flushes only standard output and error before leaving with stuck work
+behind, as flushing every C stream would wait for one that a stuck read of a
+document holds.
 
 `FileProbe` (`io/FileProbe`) checks files for the UI: whether each exists, its size,
 the mount it is on, and for a missing file whether its volume is attached and its
@@ -121,6 +140,29 @@ each file is checked once whichever list shows it.
 Each `TabPage` groups one tab with its viewer, document when loaded, and retained
 state when unloaded. Tab detachment and merging reparent this tab object rather
 than reopening the file.
+
+#### Disk access still on the UI thread
+
+These still touch the disk on the UI thread and are planned work:
+
+- Reading a document while it is shown. MuPDF reads a document lazily, so the
+  thumbnails, the outline, the comments list, form fields, measurements, text
+  selection and the link and item lookups under the pointer read the file on the UI
+  thread. They also wait for a render worker that holds the document's lock while it
+  reads. Two fixes were considered. Reading the whole file into memory when it opens
+  (`fz_open_document_with_buffer`) makes every later read come from memory, at the
+  cost of memory equal to the file's size and a first page that waits for the whole
+  file on a slow share. Moving every viewer call to background threads avoids both
+  costs but is a much larger change to the viewer. Neither is done yet.
+- Opening a document in a new tab, saving, Save as copy, export, print, the page
+  tools, merge, split, extract, security, and the recovery copy written when a tab
+  unloads. The chosen design shows such a wait in its tab: a bar over the tab's
+  document, which stays locked meanwhile, and a placeholder tab for a file being
+  opened, so other tabs and windows stay usable.
+- Path checks while typing in the Extract and Merge dialogs.
+- The updater's state and downloads, and listing and installing OCR languages.
+- Reads at startup before the first window, and the system file dialogs, which
+  run on the UI thread by design.
 
 ## Startup and single-instance behavior
 
@@ -245,6 +287,9 @@ rendered pages, extracted text, geometry, and editing models. It cancels outstan
 render and search work so old results cannot repopulate a suspended viewer or replace
 the resumed document's state. Closing to the tray requests suspension immediately
 unless the interval is Never. Selecting a suspended tab reloads it asynchronously.
+Closing a tab while it loads does not wait for the load. Saving and the other
+operations that read or replace the document's file on the UI thread still wait for
+a load in progress first.
 
 Before releasing a document with unsaved edits, the tab writes a local recovery
 snapshot with its forms, annotations, measurements, and manual scales. It retains
@@ -278,7 +323,15 @@ released, so process resident memory is not the sum of the live tab caches.
 
 `RenderEngine` owns one base MuPDF context and a small worker pool. Each worker uses
 a cloned context, which is MuPDF's supported multithreaded pattern. Requests are
-processed newest-first so pages that just became visible take priority.
+processed newest-first so pages that just became visible take priority. The workers
+run on `background::start` tasks and deliver results through `background::post`.
+`shutdown()` stops them without joining, so a worker stuck reading a document from a
+share that stopped answering cannot hold up a closing window or the end of the
+process. Workers, documents, text indexes and OCR services can therefore outlive the
+engine. Each keeps the base context alive and drops its own clone first: MuPDF frees
+the base context's memory before the parts it shares with its clones, so the base
+must be the last of them dropped. `RenderEngine::opener()` clones a context on the
+UI thread for an open that runs later on another thread.
 
 A single MuPDF document handle is not safe for concurrent access. `Document`
 therefore provides an access mutex used while loading pages, parsing content,
@@ -309,6 +362,8 @@ user space for rotated pages and non-zero page origins.
 selection, hit testing, copying, and find highlights. The in-document matcher adds
 case-sensitive and whole-word behavior on top of the extracted text. `DocumentSearch`
 owns a separate serial worker and text cache so changing queries leaves the UI responsive.
+Nothing waits for the worker: a newer query or closing the tab cancels the running
+search, and one stuck reading a page ends once the read returns.
 
 Recent-file content search runs on its own worker and opens files independently. It
 returns the first matching page and a short snippet for each file. The Recent page's
@@ -350,7 +405,8 @@ and stores them in the writable per-user tessdata directory. The OCR dialog disp
 and edits the result, while the caller retains the selected page rectangle so a
 language change can submit the recognition again. OCR captures a display list under the
 document lock, then recognizes on a private context in a serial background worker.
-Closing the popup or changing languages invalidates results and signals Tesseract cancellation.
+Closing the popup or changing languages invalidates results and signals Tesseract
+cancellation without waiting for the worker.
 
 Installers include the OCR engine but no language models. When enabled in the
 first-run window, `OcrProvisioner` downloads the official `tessdata_best` files for
@@ -487,9 +543,10 @@ first window, which needs them; `ConfigPaths` creates the folders then, once. La
 (`io/AppFiles`) saves the settings and stores on a background thread through
 `QSaveFile`, in the order asked. A newer write of a file drops a write of it that
 has not started and that nobody waits for. Closing a tab removes its recovery files
-the same way, and tabs restored lazily adopt the recovery manifests startup found.
-Quitting waits up to 5 s for the writes before `WindowManager` lets go of the
-single-instance pipe, so the next copy reads them. With a profile folder that
+the same way, the copy only once its document has closed on a background thread, and
+tabs restored lazily adopt the recovery manifests startup found. Quitting waits up
+to 5 s in all for those closes and then the writes before `WindowManager` lets go of
+the single-instance pipe, so the next copy reads them. With a profile folder that
 stopped answering, the last writes land when it answers again or never, the process
 says so on stderr, and a restart asked for (a new UI language) is skipped, as the
 new copy would read the files without them. The Settings window and

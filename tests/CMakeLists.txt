@@ -52,6 +52,7 @@ set(_mervin_tests
     tst_session_store
     tst_file_probe
     tst_app_files
+    tst_background
     tst_startup_plan
     tst_closed_tab_stack
     tst_document

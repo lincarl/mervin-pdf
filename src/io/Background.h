@@ -4,6 +4,7 @@
 #include <QPointer>
 
 #include <functional>
+#include <memory>
 #include <type_traits>
 #include <utility>
 
@@ -42,6 +43,28 @@ void run(QObject *context, Work work, Done done)
         }
     });
 }
+
+// Jobs that run one at a time, in the order added, on a background task that ends
+// when none is left. Nothing waits for it: a job stuck on a drive that stopped
+// answering holds up only the jobs behind it, all on one thread, and the queue can
+// go away meanwhile. Safe to use from any thread.
+class SerialQueue
+{
+public:
+    SerialQueue();
+    // Drops the jobs not started yet. A running job finishes on its own.
+    ~SerialQueue();
+    SerialQueue(const SerialQueue &) = delete;
+    SerialQueue &operator=(const SerialQueue &) = delete;
+
+    void add(std::function<void()> job);
+    // Drops the jobs not started yet, as when only the newest request counts.
+    void clear();
+
+private:
+    struct State; // the jobs, shared with the task that runs them
+    std::shared_ptr<State> state_;
+};
 
 // Background tasks started and not yet finished.
 int running();

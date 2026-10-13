@@ -1,7 +1,6 @@
 #pragma once
 
 #include <QWidget>
-#include <QThreadPool>
 #include "recent/ViewState.h"
 
 #include <memory>
@@ -12,6 +11,7 @@ namespace mervin {
 
 class RenderEngine;
 class Document;
+class DocumentOpener;
 class ViewerWidget;
 class MeasurePanel;
 class AnnotPanel;
@@ -31,6 +31,8 @@ public:
     static QString resolvedAnnotAuthor(const QString &configured);
 
     explicit TabPage(RenderEngine *engine, QWidget *parent = nullptr);
+    // Never waits for the document: a load or render stuck on a drive that stopped
+    // answering would hang the window. The document closes on a background thread.
     ~TabPage() override;
 
     // Open `path`. For an encrypted document, pass the user password; if one is
@@ -69,9 +71,9 @@ public:
     // Their canonical paths, or original ones where no canonical path was recorded.
     static QStringList recoverablePaths();
 
-    // Release the open Document so the underlying file handle is closed (needed
-    // before replacing the file on disk, e.g. an in-place "Save Measurements").
-    // The viewer shows a blank page until open() is called again.
+    // Release the open Document and close its file here, waiting for any work in it
+    // (needed before replacing the file on disk, e.g. an in-place "Save
+    // Measurements"). The viewer shows a blank page until open() is called again.
     void detachDocument();
     bool recoverSnapshot(const QString &snapshot, QString *error);
     bool hasRecoverySnapshot() const { return !recoveryPath_.isEmpty(); }
@@ -97,7 +99,8 @@ signals:
 private:
     struct SavedState;
     struct OpenResult;
-    static std::shared_ptr<OpenResult> readDocument(RenderEngine *engine, const QString &path,
+    struct Load;
+    static std::shared_ptr<OpenResult> readDocument(DocumentOpener &opener, const QString &path,
                                                   const QString &password);
     void installDocument(const std::shared_ptr<OpenResult> &result);
     bool finishResume(const std::shared_ptr<OpenResult> &result);
@@ -108,7 +111,12 @@ private:
     // The tab's path and canonical path. `resolve` follows links on the disk;
     // without it `path` is taken as canonical.
     void setPath(const QString &path, bool resolve = true);
+    void finishLoad(const std::shared_ptr<Load> &load);
+    // Drops the load in progress, waiting for it, for the callers that read or
+    // replace the document's file on this thread next.
     void stopLoading();
+    // Takes the document away from the viewer and the tab, for its caller to close.
+    std::unique_ptr<Document> releaseDocument();
     void restoreViewer(); // restoreResumeState from saved_, without a search the card hides
 
     RenderEngine *engine_;
@@ -129,8 +137,7 @@ private:
     QWidget *retryButton_ = nullptr;
     bool loading_ = false;
     bool retainedEdits_ = false;
-    quint64 loadGeneration_ = 0;
-    QThreadPool loadPool_;
+    std::shared_ptr<Load> load_; // the resumeAsync() load in progress
 };
 
 } // namespace mervin

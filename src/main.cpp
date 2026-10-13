@@ -473,9 +473,11 @@ int main(int argc, char *argv[])
         // Background work told to stop gets a moment. Work still running then is
         // stuck on a drive that stopped answering and holds its threads, and static
         // destructors could free what they use. Leave without running them, as
-        // nothing is left to save.
+        // nothing is left to save. Only our own output is flushed: flushing every
+        // stream would wait for one that a stuck read of a document holds.
         if (!mervin::background::settle(200)) {
-            std::fflush(nullptr);
+            std::fflush(stdout);
+            std::fflush(stderr);
             std::_Exit(code);
         }
         return code;

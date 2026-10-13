@@ -1,6 +1,5 @@
 #include "security/DocumentOutput.h"
 #include <QTemporaryFile>
-#include <QThreadPool>
 #include "ui/MainWindow.h"
 
 #include "app/WindowManager.h"
@@ -13,6 +12,7 @@
 #include "dialogs/PrintDialog.h"
 #include "dialogs/SecurityDialog.h"
 #include "dialogs/SettingsDialog.h"
+#include "io/Background.h"
 #include "ui/Icons.h"
 #include "ui/MeasurePanel.h"
 #include "ui/Theme.h"
@@ -588,9 +588,8 @@ MainWindow::~MainWindow()
         unwireTabLifecycle(tab);
 }
 // The engine is owned by WindowManager (process-level) and outlives every
-// window; it stops the render workers before the last window's Documents are
-// freed and drops the MuPDF context last. Tabs (and their Documents) are
-// destroyed here as ordinary child widgets, with the engine still alive.
+// window. Tabs are destroyed here as ordinary child widgets, and their Documents
+// close on background threads (see TabPage).
 
 mervin::TabPage *MainWindow::currentTab() const
 {
@@ -1921,7 +1920,7 @@ void MainWindow::removeTabAt(int index)
     syncDocTabBar();
     if (auto *tab = qobject_cast<TabPage *>(w))
         unwireTabLifecycle(tab);
-    delete w; // drops the Document (engine base context still alive)
+    delete w; // its Document closes on a background thread
     if (wm_)
         wm_->updateSession();
 }
@@ -2755,11 +2754,12 @@ void MainWindow::onOcrRegionSelected(int pageNo, const QRectF &pageRect)
             return;
     }
 
-    mervin::OcrService ocr(engine_);
+    // Shared with the recognition, which nothing waits for: closing the popup leaves
+    // one stuck reading a page from a drive that stopped answering behind.
+    const auto ocr = std::make_shared<mervin::OcrService>(engine_);
     mervin::OcrPopup popup(installed, settings_.ocrDefaultLanguage, this);
 
-    QThreadPool worker;
-    worker.setMaxThreadCount(1);
+    mervin::background::SerialQueue worker;
     std::shared_ptr<std::atomic<bool>> canceled;
     const auto lifetime = v->document()->lifetime();
     const QString tessdata = mervin::TessdataManager::directory();
@@ -2769,16 +2769,20 @@ void MainWindow::onOcrRegionSelected(int pageNo, const QRectF &pageRect)
         worker.clear();
         canceled = std::make_shared<std::atomic<bool>>(false);
         popup.setRawText(tr("Recognizing…"));
-        worker.start([&, token = canceled, langs, lifetime, tessdata] {
+        worker.add([ocr, target = QPointer<QObject>(&popup), token = canceled, langs, lifetime,
+                    tessdata, pageNo, pageRect] {
+            if (token->load())
+                return;
             QString error;
-            const QString text = ocr.recognize(lifetime, pageNo, pageRect, langs,
-                                               tessdata, &error, token.get());
-            QMetaObject::invokeMethod(&popup, [&, token, text, error] {
+            const QString text = ocr->recognize(lifetime, pageNo, pageRect, langs,
+                                                tessdata, &error, token.get());
+            mervin::background::post(target, [target, token, text, error] {
                 //: Shown in place of the recognised text. %1 is the error message.
                 const QString failed = tr("[OCR failed: %1]");
                 if (!token->load())
-                    popup.setRawText(error.isEmpty() ? text : failed.arg(error));
-            }, Qt::QueuedConnection);
+                    static_cast<mervin::OcrPopup *>(target.data())
+                        ->setRawText(error.isEmpty() ? text : failed.arg(error));
+            });
         });
     };
 
@@ -2805,8 +2809,6 @@ void MainWindow::onOcrRegionSelected(int pageNo, const QRectF &pageRect)
     popup.exec();
     if (canceled)
         canceled->store(true);
-    worker.clear();
-    worker.waitForDone();
 }
 
 void MainWindow::toggleMeasure(bool on)

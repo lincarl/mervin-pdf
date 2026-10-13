@@ -4,23 +4,17 @@
 
 #include <QObject>
 
-#include <array>
-#include <atomic>
-#include <condition_variable>
-#include <deque>
 #include <memory>
-#include <mutex>
-#include <thread>
-#include <vector>
 
 typedef struct fz_context fz_context;
 
 namespace mervin {
 
 class Document;
-struct DocumentLifetime;
+class DocumentOpener;
 
-// Owns the base MuPDF context and worker pool. Each worker uses a cloned context; mutex
+// Owns the worker pool and the base MuPDF context, which lives on while any context
+// cloned from it does (see baseContext()). Each worker uses a cloned context; mutex
 // callbacks protect shared MuPDF caches. Contexts themselves are not thread-safe.
 class RenderEngine : public QObject
 {
@@ -30,15 +24,21 @@ public:
     explicit RenderEngine(QObject *parent = nullptr);
     ~RenderEngine() override;
 
-    // Opens a document on its own cloned context, safe on a background thread.
-    // The engine must outlive the returned document. For an encrypted document, `password`
+    // Opens a document on its own cloned context. For an encrypted document, `password`
     // is used to authenticate; if a (correct) password is required but not
     // supplied, returns nullptr and sets *needsPassword to true so the caller can
-    // prompt and retry. Other failures return nullptr with *error set.
+    // prompt and retry. Other failures return nullptr with *error set. The document
+    // can outlive the engine.
     std::unique_ptr<Document> openDocument(const QString &path, const QString &password = QString(),
                                            QString *error = nullptr, bool *needsPassword = nullptr);
 
-    // Thread-safe. Workers process requests and emit resultReady().
+    // openDocument() for another thread: the context is cloned here, on the thread
+    // that owns the engine, and the open can run later on any thread, after the
+    // engine is gone too.
+    std::shared_ptr<DocumentOpener> opener();
+
+    // Thread-safe. Workers process requests; resultReady() follows on this
+    // object's thread.
     // Each request carries the requester's own epoch (echoed back in the result);
     // the engine does not interpret it, so epochs are private to each viewer.
     void submit(const RenderRequest &req);
@@ -48,7 +48,9 @@ public:
     // Release unused shared MuPDF resources after document contents have unloaded.
     void trimCache();
 
-    void shutdown(); // stop and join workers (idempotent)
+    // Stops the workers without waiting for them (idempotent). A worker stuck reading
+    // a document on a drive that stopped answering ends once the read returns.
+    void shutdown();
 
     // Synchronous, on-the-calling-thread render of a single page (used by Print,
     // which needs page pixmaps at the printer's resolution). Renders on the base
@@ -59,27 +61,45 @@ public:
 
     // The base MuPDF context. Exposed so render/ helpers (e.g. TextIndex) can
     // clone their own context off it; not for use outside the render subsystem.
-    fz_context *baseContext() const { return base_; }
+    // Whatever holds a clone holds this too and drops its clone first: MuPDF frees
+    // the base context before the parts it shares with its clones, so it must be
+    // the last of them dropped.
+    const std::shared_ptr<fz_context> &baseContext() const { return base_; }
 
 signals:
     void resultReady(const mervin::RenderResult &result);
 
 private:
-    void workerLoop(fz_context *ctx);
+    friend class DocumentOpener;
+    struct Shared; // the queue, shared with the workers, which may outlive the engine
 
-    fz_context *base_ = nullptr; // locked with sharedMuPdfLocks()
+    static std::unique_ptr<Document> open(fz_context *ctx, std::shared_ptr<fz_context> base,
+                                          const QString &path, const QString &password,
+                                          QString *error, bool *needsPassword);
+    // Runs on a background::start task until the engine stops, then drops `ctx`.
+    static void workerLoop(const std::shared_ptr<Shared> &shared, fz_context *ctx);
 
-    std::vector<std::thread> workers_;
-    struct Job {
-        RenderRequest request;
-        std::shared_ptr<DocumentLifetime> lifetime;
-        std::atomic<bool> canceled{false};
-    };
-    std::deque<std::shared_ptr<Job>> queue_;
-    std::vector<std::weak_ptr<Job>> jobs_; // includes active jobs; guarded by queueMutex_
-    std::mutex queueMutex_;
-    std::condition_variable queueCv_;
-    std::atomic<bool> stop_{false};
+    std::shared_ptr<fz_context> base_; // locked with sharedMuPdfLocks()
+    std::shared_ptr<Shared> shared_;
+};
+
+// Opens one document on a context cloned when RenderEngine::opener() made it.
+class DocumentOpener
+{
+public:
+    explicit DocumentOpener(std::shared_ptr<fz_context> base);
+    // Drops the context unless open() took it.
+    ~DocumentOpener();
+    DocumentOpener(const DocumentOpener &) = delete;
+    DocumentOpener &operator=(const DocumentOpener &) = delete;
+
+    // RenderEngine::openDocument(), once, on any thread.
+    std::unique_ptr<Document> open(const QString &path, const QString &password = QString(),
+                                   QString *error = nullptr, bool *needsPassword = nullptr);
+
+private:
+    std::shared_ptr<fz_context> base_; // see RenderEngine::baseContext()
+    fz_context *ctx_ = nullptr;
 };
 
 } // namespace mervin

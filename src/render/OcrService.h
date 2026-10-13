@@ -16,7 +16,8 @@ struct DocumentLifetime;
 
 // MuPDF's built-in Tesseract recognizes a selected region at fixed high DPI, independent of
 // viewer zoom. Capture the display list under the document lock; recognize on a private
-// context. Worker use is allowed, but serialize calls per service instance.
+// context. Worker use is allowed, but serialize calls per service instance. Recognition
+// itself runs one at a time in the process, as MuPDF's Tesseract allows no more.
 class OcrService
 {
 public:
@@ -42,6 +43,7 @@ public:
     static constexpr int kOcrDpi = 300;
 
 private:
+    std::shared_ptr<fz_context> base_; // see RenderEngine::baseContext()
     fz_context *ctx_ = nullptr; // private context; calls must be serial
 };
 

@@ -77,8 +77,26 @@ class Document
 {
 public:
     // Own the document and, when requested, the independently cloned context.
-    Document(fz_context *baseCtx, fz_document *doc, bool ownsContext = false);
+    // `base` is the context `ctx` was cloned from, kept until `ctx` is dropped (see
+    // RenderEngine::baseContext()).
+    Document(fz_context *ctx, fz_document *doc, bool ownsContext = false,
+             std::shared_ptr<fz_context> base = {});
+    // Waits for render, search and OCR work in the document, then closes its file.
+    // Both can stall on a drive that stopped answering, so the UI thread uses
+    // closeInBackground() instead.
     ~Document();
+
+    // Destroys `document` on a background thread, then runs `then` there. Each
+    // close takes its own thread: closing is the user's action, one tab or window
+    // at a time.
+    static void closeInBackground(std::unique_ptr<Document> document,
+                                  std::function<void()> then = {});
+    // Closes closeInBackground() has not finished.
+    static int closing();
+    // Waits up to `ms` milliseconds for the closes with a `then`, for the end of the
+    // process: a `then` removes files the next copy must not find, such as a recovery
+    // copy. True when none is left. Closes without one are not waited for.
+    static bool waitForCloses(int ms);
 
     Document(const Document &) = delete;
     Document &operator=(const Document &) = delete;
@@ -155,6 +173,7 @@ public:
 
 private:
     std::shared_ptr<DocumentLifetime> lifetime_ = std::make_shared<DocumentLifetime>();
+    std::shared_ptr<fz_context> base_;
     fz_context *ctx_ = nullptr;
     bool ownsContext_ = false;
     fz_document *doc_ = nullptr; // owned
