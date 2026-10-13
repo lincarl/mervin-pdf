@@ -2,6 +2,7 @@
 #include "config/Settings.h"
 #include "io/AppFiles.h"
 #include "dialogs/SettingsDialog.h"
+#include "ocr/TessdataManager.h"
 #include "i18n/UiLanguage.h"
 #include "ui/LanguageCombo.h"
 #include "render/AnnotTypes.h"
@@ -39,6 +40,8 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QTranslator>
+
+#include <future>
 #include <QWheelEvent>
 #include <QWindow>
 
@@ -85,6 +88,7 @@ private slots:
     void ocrPageShowsAnInstalledDefaultButKeepsTheSavedOne();
     void removingAnOcrLanguageAsksFirst();
     void theLastOcrLanguageStays();
+    void oneOcrRemovalAtATime();
     void newUiLanguageRestartsOnApply();
     void untouchedUiLanguageKeepsTheStoredValue();
     void pendingUiLanguageShowsUntilChanged();
@@ -100,6 +104,14 @@ private:
 };
 
 namespace {
+
+// The OCR page reads the installed languages off the UI thread; true once they have
+// arrived.
+bool ocrListed()
+{
+    return QTest::qWaitFor([] { return !mervin::TessdataManager::busy(); }, 5000);
+}
+
 
 QLabel *labelStartingWith(QWidget *root, const QString &prefix)
 {
@@ -882,6 +894,7 @@ void TstSettingsDialog::everyKindOfControlEnablesApply()
          }},
         {"OCR language",
          [](SettingsDialog &d) {
+             QVERIFY(QTest::qWaitFor([] { return !mervin::TessdataManager::busy(); }, 5000));
              auto *combo = d.findChild<QComboBox *>(QStringLiteral("ocrDefaultLanguage"));
              const int swe = combo->findData(QStringLiteral("swe"));
              combo->setCurrentIndex(swe);
@@ -1024,6 +1037,7 @@ void TstSettingsDialog::ocrPageShowsAnInstalledDefaultButKeepsTheSavedOne()
     mervin::Settings in;
     in.ocrDefaultLanguage = QStringLiteral("deu"); // not installed in this profile
     SettingsDialog dialog(in);
+    QVERIFY(ocrListed());
     auto *combo = dialog.findChild<QComboBox *>(QStringLiteral("ocrDefaultLanguage"));
     QVERIFY(combo);
     QCOMPARE(combo->count(), 2);
@@ -1067,6 +1081,7 @@ void TstSettingsDialog::removingAnOcrLanguageAsksFirst()
     mervin::Settings in;
     in.ocrDefaultLanguage = QStringLiteral("swe");
     SettingsDialog dialog(in, {}, Page::Ocr);
+    QVERIFY(ocrListed());
 
     QToolButton *removeSwe = removeButtonFor(&dialog, QStringLiteral("Swedish"));
     QVERIFY(removeSwe);
@@ -1077,6 +1092,7 @@ void TstSettingsDialog::removingAnOcrLanguageAsksFirst()
 
     answerNextBox(this, QMessageBox::Yes);
     removeSwe->click();
+    QVERIFY(ocrListed()); // removed on the OCR folder's thread
     QVERIFY(!QFile::exists(tessdataPath("swe")));
     QVERIFY(!removeButtonFor(&dialog, QStringLiteral("Swedish")));
     QCOMPARE(dialog.findChild<QComboBox *>(QStringLiteral("ocrDefaultLanguage"))->count(), 1);
@@ -1089,10 +1105,41 @@ void TstSettingsDialog::theLastOcrLanguageStays()
 {
     QVERIFY(QFile::remove(tessdataPath("swe")));
     SettingsDialog dialog(mervin::Settings{}, {}, Page::Ocr);
+    QVERIFY(ocrListed());
     const auto buttons =
         dialog.findChildren<QToolButton *>(QStringLiteral("settingsListRemove"));
     QCOMPARE(buttons.size(), 1);
     QVERIFY(!buttons.first()->isEnabled());
+}
+
+// The file goes on the OCR folder's thread, which can be slow on a share. Until
+// it has gone, no other language can be removed, so one always stays, and the
+// default is already the one that stays.
+void TstSettingsDialog::oneOcrRemovalAtATime()
+{
+    mervin::Settings in;
+    in.ocrDefaultLanguage = QStringLiteral("eng");
+    SettingsDialog dialog(in, {}, Page::Ocr);
+    QVERIFY(ocrListed());
+    std::promise<void> answer;
+    mervin::TessdataManager::runInFolder(
+        [answered = answer.get_future().share()] { answered.wait(); });
+    auto release = qScopeGuard([&answer] { answer.set_value(); });
+
+    answerNextBox(this, QMessageBox::Yes);
+    removeButtonFor(&dialog, QStringLiteral("English"))->click();
+    QToolButton *removeSwe = removeButtonFor(&dialog, QStringLiteral("Swedish"));
+    QVERIFY(removeSwe && !removeSwe->isEnabled());
+    QCOMPARE(dialog.settings().ocrDefaultLanguage, QStringLiteral("swe"));
+
+    release.dismiss();
+    answer.set_value();
+    QVERIFY(ocrListed());
+    QVERIFY(!QFile::exists(tessdataPath("eng")));
+    QVERIFY(QFile::exists(tessdataPath("swe")));
+    const auto buttons = dialog.findChildren<QToolButton *>(QStringLiteral("settingsListRemove"));
+    QCOMPARE(buttons.size(), 1);
+    QVERIFY(!buttons.first()->isEnabled()); // the last one stays
 }
 
 // Picking a language other than the one Mervin shows says "Mervin will restart.";

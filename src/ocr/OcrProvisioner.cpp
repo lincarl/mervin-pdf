@@ -2,6 +2,7 @@
 
 #include "net/UrlOpen.h"
 #include "ocr/TessdataFile.h"
+#include "ocr/TessdataManager.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -15,6 +16,7 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <atomic>
 
 namespace mervin::ocr {
 namespace {
@@ -24,15 +26,51 @@ constexpr qint64 kMaximumModelBytes = 128 * 1024 * 1024;
 
 } // namespace
 
+// The file a download is written to until it validates. Its file is used only on
+// the OCR folder's thread (TessdataManager::runInFolder), as the profile can be on a
+// share; the UI thread reads `failed` to stop a download that cannot be saved.
+struct Staging
+{
+    QTemporaryFile file;
+    std::atomic<bool> failed{false}; // it could not be created or written
+};
+
 struct OcrProvisioner::Download
 {
     QString model;
     QString target;
-    QTemporaryFile staging;
+    std::shared_ptr<Staging> staging = std::make_shared<Staging>();
+    qint64 received = 0; // bytes handed to the staging file
     QPointer<QNetworkReply> reply;
     QTimer timeout;
     bool writeFailed = false;
+    // The staging file goes on the folder's thread, after the writes asked for.
+    ~Download() { TessdataManager::runInFolder([staging = std::move(staging)] {}); }
 };
+
+namespace {
+
+// Validates the complete staging file, then copies it over `target` with QSaveFile,
+// which keeps the existing model intact if writing or committing fails.
+bool installStaged(Staging &staging, const QString &target)
+{
+    if (staging.failed.load() || !staging.file.flush()
+        || !TessdataFile::validate(staging.file.fileName())
+        || !staging.file.seek(0))
+        return false;
+    QSaveFile output(target);
+    output.setDirectWriteFallback(false);
+    if (!output.open(QIODevice::WriteOnly))
+        return false;
+    while (!staging.file.atEnd()) {
+        const QByteArray chunk = staging.file.read(kBufferSize);
+        if (chunk.isEmpty() || output.write(chunk) != chunk.size())
+            return false;
+    }
+    return output.commit();
+}
+
+} // namespace
 
 OcrProvisioner::OcrProvisioner(QObject *parent, QNetworkAccessManager *network,
                              int inactivityTimeoutMs)
@@ -57,7 +95,7 @@ void OcrProvisioner::start(const QStringList &models, const QString &directory)
 
     static const QRegularExpression safeModel(QStringLiteral("^[a-z]{3}(?:_[a-z]+)?$"));
     QSet<QString> seen;
-    if (!directory.isEmpty() && QDir().mkpath(directory)) {
+    if (!directory.isEmpty()) {
         for (const QString &model : models) {
             if (!safeModel.match(model).hasMatch() || seen.contains(model))
                 continue;
@@ -65,25 +103,49 @@ void OcrProvisioner::start(const QStringList &models, const QString &directory)
             auto download = std::make_unique<Download>();
             download->model = model;
             download->target = QDir(directory).filePath(model + QStringLiteral(".traineddata"));
-            download->staging.setFileTemplate(
-                QDir(directory).filePath(QStringLiteral(".ocr-download-XXXXXX")));
-            if (!download->staging.open())
-                continue;
             downloads_.push_back(std::move(download));
         }
     }
+    if (downloads_.empty()) {
+        finished_ = true;
+        emit finished();
+        return;
+    }
 
+    // The folder and the staging files are made on the OCR folder's thread. Only
+    // the downloads that have one start, so an unwritable folder costs no download.
+    std::vector<std::shared_ptr<Staging>> stagings;
+    for (const auto &download : downloads_)
+        stagings.push_back(download->staging);
+    TessdataManager::runInFolder(
+        [stagings, directory] {
+            const bool folder = QDir().mkpath(directory);
+            for (const auto &staging : stagings) {
+                staging->file.setFileTemplate(
+                    QDir(directory).filePath(QStringLiteral(".ocr-download-XXXXXX")));
+                staging->failed.store(!folder || !staging->file.open());
+            }
+        },
+        this, [this] { request(); });
+}
+
+void OcrProvisioner::request()
+{
+    if (finished_)
+        return; // canceled meanwhile
+    std::erase_if(downloads_,
+                  [](const auto &download) { return download->staging->failed.load(); });
     for (const auto &entry : downloads_) {
         Download *download = entry.get();
         const QUrl url(QStringLiteral(
             "https://raw.githubusercontent.com/tesseract-ocr/tessdata_best/main/%1.traineddata")
                            .arg(download->model));
-        QNetworkRequest request = urlopen::makeRequest(url);
-        request.setRawHeader("Accept", QByteArrayLiteral("application/octet-stream"));
-        request.setTransferTimeout(inactivityTimeoutMs_);
-        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+        QNetworkRequest get = urlopen::makeRequest(url);
+        get.setRawHeader("Accept", QByteArrayLiteral("application/octet-stream"));
+        get.setTransferTimeout(inactivityTimeoutMs_);
+        get.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                              QNetworkRequest::ManualRedirectPolicy);
-        download->reply = network_->get(request);
+        download->reply = network_->get(get);
         download->reply->setReadBufferSize(kBufferSize);
         download->timeout.setSingleShot(true);
         connect(&download->timeout, &QTimer::timeout, this, [download] {
@@ -107,50 +169,48 @@ void OcrProvisioner::start(const QStringList &models, const QString &directory)
 
 bool OcrProvisioner::readAvailable(Download &download)
 {
-    if (download.writeFailed)
+    if (download.writeFailed || download.staging->failed.load())
         return false;
     while (download.reply->bytesAvailable() > 0) {
         const QByteArray chunk = download.reply->read(kBufferSize);
-        if (chunk.isEmpty() || download.staging.size() + chunk.size() > kMaximumModelBytes
-            || download.staging.write(chunk) != chunk.size()) {
+        if (chunk.isEmpty() || download.received + chunk.size() > kMaximumModelBytes) {
             download.writeFailed = true;
             return false;
         }
+        download.received += chunk.size();
+        TessdataManager::runInFolder([staging = download.staging, chunk] {
+            if (!staging->failed.load() && staging->file.write(chunk) != chunk.size())
+                staging->failed.store(true);
+        });
     }
     return true;
-}
-
-bool OcrProvisioner::install(Download &download)
-{
-    if (!readAvailable(download) || !download.staging.flush()
-        || !TessdataFile::validate(download.staging.fileName()) || !download.staging.seek(0))
-        return false;
-
-    // QSaveFile keeps the existing model intact if writing or committing fails.
-    // Validate the complete staging file before opening the replacement.
-    QSaveFile output(download.target);
-    output.setDirectWriteFallback(false);
-    if (!output.open(QIODevice::WriteOnly))
-        return false;
-    while (!download.staging.atEnd()) {
-        const QByteArray chunk = download.staging.read(kBufferSize);
-        if (chunk.isEmpty() || output.write(chunk) != chunk.size())
-            return false;
-    }
-    return output.commit();
 }
 
 void OcrProvisioner::complete(Download *download)
 {
     download->timeout.stop();
-    const bool success = download->reply->error() == QNetworkReply::NoError
+    const bool received = download->reply->error() == QNetworkReply::NoError
         && download->reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200
-        && install(*download);
+        && readAvailable(*download);
     const QString model = download->model;
+    const auto installed = std::make_shared<bool>(false);
+    ++installing_;
+    TessdataManager::runInFolder(
+        [staging = download->staging, target = download->target, received, installed] {
+            *installed = received && installStaged(*staging, target);
+        },
+        this, [this, model, installed] { finishInstall(model, *installed); });
     download->reply->disconnect(this);
     download->reply->deleteLater();
     std::erase_if(downloads_, [download](const auto &entry) { return entry.get() == download; });
-    const bool allFinished = downloads_.empty();
+}
+
+void OcrProvisioner::finishInstall(const QString &model, bool success)
+{
+    --installing_;
+    if (finished_)
+        return; // canceled meanwhile
+    const bool allFinished = downloads_.empty() && installing_ == 0;
     if (allFinished)
         finished_ = true;
     if (success)

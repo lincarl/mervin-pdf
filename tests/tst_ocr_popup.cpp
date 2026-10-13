@@ -2,6 +2,7 @@
 #include "config/Settings.h"
 #include "io/AppFiles.h"
 #include "dialogs/ManageLanguagesDialog.h"
+#include "ocr/TessdataManager.h"
 #include "dialogs/OcrPopup.h"
 #include "i18n/UiLanguage.h"
 
@@ -161,6 +162,8 @@ void TstOcrPopup::managerShowsDefaultAndEqualWidthLists()
     }
 
     ManageLanguagesDialog manager(QStringLiteral("swe"));
+    // The installed languages are read off the UI thread.
+    QTRY_VERIFY(!mervin::TessdataManager::busy());
     auto *defaultCombo =
         manager.findChild<QComboBox *>(QStringLiteral("ocrDefaultLanguage"));
     QVERIFY(defaultCombo);

@@ -1,13 +1,23 @@
 #include "ocr/TessdataManager.h"
 
 #include "config/ConfigPaths.h"
+#include "io/Background.h"
+#include "ocr/TessdataFile.h"
 
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QLocale>
+#include <QPointer>
+#include <QSaveFile>
 #include <QUrl>
+
+#include <algorithm>
+#include <atomic>
+#include <memory>
+#include <tuple>
 
 namespace mervin {
 
@@ -251,21 +261,115 @@ constexpr ModelName kModelNames[] = {
 
 } // namespace
 
-QString TessdataManager::directory()
+namespace {
+
+// The folder's thread: one at a time, in order, whoever asks.
+background::SerialQueue &folder()
 {
-    const QString dir = QDir(ConfigPaths::configDir()).filePath(QStringLiteral("tessdata"));
-    QDir().mkpath(dir);
-    return dir;
+    static background::SerialQueue queue;
+    return queue;
 }
 
-QStringList TessdataManager::installedLanguages()
+std::atomic<int> calls{0}; // see busy()
+
+// Counts a call from the request until its result is handed over or dropped.
+struct Call
 {
-    QDir dir(directory());
-    QStringList langs;
-    for (const QString &f : dir.entryList({QStringLiteral("*.traineddata")}, QDir::Files, QDir::Name))
-        langs << QFileInfo(f).completeBaseName();
-    langs.sort();
-    return langs;
+    Call() { ++calls; }
+    ~Call() { --calls; }
+};
+
+QString modelPath(const QString &dir, const QString &code)
+{
+    return QDir(dir).filePath(code + QStringLiteral(".traineddata"));
+}
+
+// Runs `work` on the folder's thread, then hands its result to `done` on the UI
+// thread unless `context` is gone.
+template <class Work, class Done>
+void inFolder(QObject *context, Work work, Done done)
+{
+    folder().add([guard = QPointer<QObject>(context), call = std::make_shared<Call>(),
+                  work = std::move(work), done = std::move(done)]() mutable {
+        background::post(guard, [call, result = work(), done]() mutable { std::apply(done, result); });
+    });
+}
+
+} // namespace
+
+QString TessdataManager::directory()
+{
+    return QDir(ConfigPaths::configDir()).filePath(QStringLiteral("tessdata"));
+}
+
+QList<TessdataManager::Model> TessdataManager::installedModels(const QString &dir)
+{
+    QList<Model> models;
+    for (const QFileInfo &file :
+         QDir(dir).entryInfoList({QStringLiteral("*.traineddata")}, QDir::Files, QDir::Name))
+        models.append({file.completeBaseName(), file.size()});
+    std::sort(models.begin(), models.end(),
+              [](const Model &a, const Model &b) { return a.code < b.code; });
+    return models;
+}
+
+void TessdataManager::listModels(QObject *context,
+                                 std::function<void(const QList<Model> &)> done)
+{
+    // The folder is resolved here: a test can change the profile before the job runs.
+    inFolder(context, [dir = directory()] { return std::make_tuple(installedModels(dir)); },
+             std::move(done));
+}
+
+void TessdataManager::removeModel(const QString &code, QObject *context,
+                                  std::function<void(bool, const QList<Model> &)> done)
+{
+    inFolder(
+        context,
+        [code, dir = directory()] {
+            const QString path = modelPath(dir, code);
+            const bool removed = !QFileInfo::exists(path) || QFile::remove(path);
+            return std::make_tuple(removed, installedModels(dir));
+        },
+        std::move(done));
+}
+
+void TessdataManager::saveModel(const QString &code, const QByteArray &data, QObject *context,
+                                std::function<void(Saved, const QString &, const QList<Model> &)> done)
+{
+    inFolder(
+        context,
+        [code, data, dir = directory()] {
+            QDir().mkpath(dir);
+            const QString path = modelPath(dir, code);
+            QSaveFile output(path);
+            if (!output.open(QIODevice::WriteOnly) || output.write(data) != data.size()
+                || !output.commit())
+                return std::make_tuple(Saved::Failed, output.errorString(), installedModels(dir));
+            QString detail;
+            if (!TessdataFile::validateLanguages(dir, {code}, &detail)) {
+                QFile::remove(path);
+                return std::make_tuple(Saved::Invalid, detail, installedModels(dir));
+            }
+            return std::make_tuple(Saved::Ok, QString(), installedModels(dir));
+        },
+        std::move(done));
+}
+
+void TessdataManager::runInFolder(std::function<void()> work, QObject *context,
+                                  std::function<void()> done)
+{
+    folder().add([guard = QPointer<QObject>(context), call = std::make_shared<Call>(),
+                  work = std::move(work), done = std::move(done)] {
+        work();
+        if (done)
+            background::post(guard, [call, done] { done(); });
+    });
+}
+
+bool TessdataManager::busy()
+{
+    return calls.load() > 0;
 }
 
 QString TessdataManager::languageName(const QString &code)
@@ -291,7 +395,12 @@ QString TessdataManager::englishLanguageName(const QString &code)
 
 void TessdataManager::openFolder()
 {
-    QDesktopServices::openUrl(QUrl::fromLocalFile(directory()));
+    inFolder(
+        qApp, [dir = directory()] { return std::make_tuple(QDir().mkpath(dir), dir); },
+        [](bool made, const QString &dir) {
+            if (made)
+                QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+        });
 }
 
 void TessdataManager::openRepository()

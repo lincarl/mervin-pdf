@@ -12,7 +12,8 @@ namespace mervin::ocr {
 
 // A silent, single-use downloader for first-start OCR setup. The caller must
 // persist consumption of the first-start choice before calling start(), so an
-// interrupted or failed attempt is never scheduled again by a later process.
+// interrupted or failed attempt is never scheduled again by a later process. The
+// files are written on the OCR folder's thread (TessdataManager::runInFolder).
 class OcrProvisioner final : public QObject
 {
     Q_OBJECT
@@ -33,15 +34,19 @@ signals:
 
 private:
     struct Download;
+    void request(); // starts the downloads whose staging file exists
+    // Hands what has arrived to the staging file, on the OCR folder's thread.
     bool readAvailable(Download &download);
-    bool install(Download &download);
+    // A download ended: its file is checked and installed on the folder's thread.
     void complete(Download *download);
+    void finishInstall(const QString &model, bool success);
     void abortDownloads();
 
     QNetworkAccessManager *network_;
     int inactivityTimeoutMs_;
     bool started_ = false;
     bool finished_ = false;
+    int installing_ = 0; // completed downloads whose file is still being installed
     std::vector<std::unique_ptr<Download>> downloads_;
 };
 

@@ -2366,7 +2366,7 @@ Otvorite Postavke vašeg sustava → Zadane aplikacije (ili desnom tipkom miša 
     </message>
     <message>
         <source>Working...</source>
-        <extracomment>Button text while a language downloads.</extracomment>
+        <extracomment>Button text while a language downloads or is removed.</extracomment>
         <translation>U tijeku...</translation>
     </message>
     <message numerus="yes">

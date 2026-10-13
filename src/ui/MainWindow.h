@@ -135,6 +135,12 @@ private slots:
     void onTabDetachRequested(int index, const QPoint &globalPos);
     void onTabMergeRequested(mervin::DetachableTabBar *source, int sourceIndex, int targetIndex);
     void onOcrRegionSelected(int pageNo, const QRectF &pageRect);
+    // Reads the installed OCR languages off the UI thread, then recognizeRegion().
+    void listThenRecognize(int pageNo, const QRectF &pageRect, bool offered);
+    // OCR of the region with `installed` languages; `offered` once the language
+    // manager was offered because none was installed.
+    void recognizeRegion(int pageNo, const QRectF &pageRect, const QStringList &installed,
+                         bool offered);
     void toggleMeasure(bool on);
     void toggleForms(bool on);   // Fill-Forms tool (Ctrl+Shift+F)
     void toggleComment(bool on); // Comment tool window (Ctrl+Shift+N): highlight + comment
@@ -267,6 +273,10 @@ private:
     bool resumeScheduled_ = false;
     bool removingTab_ = false; // a tab is leaving this window (removeTabAt, releaseTab)
     int documentOperationDepth_ = 0;
+    // The newest OCR selection, which alone goes on once the installed languages
+    // have been read, if that took less than kOcrLanguagesWaitMs.
+    quint64 ocrRequest_ = 0;
+    static constexpr int kOcrLanguagesWaitMs = 5000;
     Qt::WindowStates beforeTrayState_;
 
     mervin::Settings settings_;

@@ -2359,7 +2359,7 @@ Apri le Impostazioni del sistema → Applicazioni predefinite (o fai clic con il
     </message>
     <message>
         <source>Working...</source>
-        <extracomment>Button text while a language downloads.</extracomment>
+        <extracomment>Button text while a language downloads or is removed.</extracomment>
         <translation>Elaborazione...</translation>
     </message>
     <message numerus="yes">

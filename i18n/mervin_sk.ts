@@ -2366,7 +2366,7 @@ Otvorte nastavenia svojho systému → Predvolené aplikácie (alebo kliknite pr
     </message>
     <message>
         <source>Working...</source>
-        <extracomment>Button text while a language downloads.</extracomment>
+        <extracomment>Button text while a language downloads or is removed.</extracomment>
         <translation>Pracuje sa...</translation>
     </message>
     <message numerus="yes">

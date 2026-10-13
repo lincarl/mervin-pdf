@@ -2373,7 +2373,7 @@ Odprite sistemske nastavitve → Privzete aplikacije (ali z desno miškino tipko
     </message>
     <message>
         <source>Working...</source>
-        <extracomment>Button text while a language downloads.</extracomment>
+        <extracomment>Button text while a language downloads or is removed.</extracomment>
         <translation>Obdelava ...</translation>
     </message>
     <message numerus="yes">

@@ -159,9 +159,11 @@ These still touch the disk on the UI thread and are planned work:
   unloads. The chosen design shows such a wait in its tab: a bar over the tab's
   document, which stays locked meanwhile, and a placeholder tab for a file being
   opened, so other tabs and windows stay usable.
-- The updater's state and downloads, and listing and installing OCR languages.
+- The updater's state and downloads.
 - Reads at startup before the first window, and the system file dialogs, which
   run on the UI thread by design.
+- Opening a folder or a link with the system's handler (`QDesktopServices::openUrl`),
+  which on Windows waits for `ShellExecute`.
 
 ## Startup and single-instance behavior
 
@@ -400,7 +402,12 @@ directory are passed explicitly; there is no automatic language-selection stage.
 
 `TessdataManager` locates installed `.traineddata` files. The language manager reads
 the official `tessdata_best` catalog from GitHub, validates downloaded model files,
-and stores them in the writable per-user tessdata directory. The OCR dialog displays
+and stores them in the writable per-user tessdata directory. That directory is in the
+profile, so listing, saving and removing models runs on one background thread for
+the folder, in the order asked (`listModels`, `saveModel`, `removeModel`), and
+Settings, the language manager and the OCR selection take the answers as they come.
+An OCR selection goes on only for the newest one and only if the languages arrive
+within 5 s, so a profile that stopped answering does not bring up OCR windows later. The OCR dialog displays
 and edits the result, while the caller retains the selected page rectangle so a
 language change can submit the recognition again. OCR captures a display list under the
 document lock, then recognizes on a private context in a serial background worker.
@@ -420,7 +427,12 @@ OCR default, or the OS model when only that one matches.
 
 Saving `ui_language` consumes the first-run offer before any network request.
 Downloads fail silently, stop after 30 seconds without data, and are cancelled
-on application exit. There is no retry or resume on a later launch, including
+on application exit; a model already received is still installed. The folder and
+the staging files are made on the folder's thread first, and a download starts only
+once its staging file exists, so an unwritable folder costs no download. Received
+data and the final check and copy go to the same thread, and a write that fails
+stops the download. A quit that leaves the folder's thread busy can leave a staging
+file behind. There is no retry or resume on a later launch, including
 after a failed download or a later display-language change. If saving the choice
 fails, no download starts. Completed files are validated before atomic installation;
 failed downloads never replace an existing model. The language manager remains

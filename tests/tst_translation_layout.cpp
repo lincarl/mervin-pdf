@@ -15,6 +15,7 @@
 #include "dialogs/SettingsDialog.h"
 #include "i18n/UiLanguage.h"
 #include "io/SaveCheck.h"
+#include "ocr/TessdataManager.h"
 #include "print/PrintPreviewWidget.h"
 #include "render/Document.h"
 #include "render/RenderEngine.h"
@@ -705,6 +706,7 @@ void TstTranslationLayout::manageLanguages()
         CatalogNetwork network(catalogPayload());
         mervin::ManageLanguagesDialog dialog(QStringLiteral("chi_tra"), nullptr, &network);
         QTRY_COMPARE(network.completed, 1);
+        QTRY_VERIFY(!mervin::TessdataManager::busy()); // the installed languages
         QCOMPARE(network.requests, 1);
         inspect(dialog, QStringLiteral("OCR languages installed and available"));
         for (const char *name : {"ocrInstalledLanguages", "ocrAvailableLanguages"}) {
@@ -741,6 +743,7 @@ void TstTranslationLayout::manageLanguages()
         CatalogNetwork network(QByteArrayLiteral("invalid-json"), error);
         mervin::ManageLanguagesDialog dialog(QStringLiteral("eng"), nullptr, &network);
         QTRY_COMPARE(network.completed, 1);
+        QTRY_VERIFY(!mervin::TessdataManager::busy()); // the installed languages
         QCOMPARE(network.requests, 1);
         inspect(dialog, error == QNetworkReply::NoError ? QStringLiteral("OCR catalog invalid")
                                                        : QStringLiteral("OCR catalog unavailable"));
@@ -750,6 +753,7 @@ void TstTranslationLayout::manageLanguages()
     CatalogNetwork network(catalogPayload());
     mervin::ManageLanguagesDialog empty(QString(), nullptr, &network);
     QTRY_COMPARE(network.completed, 1);
+    QTRY_VERIFY(!mervin::TessdataManager::busy()); // the installed languages
     inspect(empty, QStringLiteral("OCR languages none installed"));
 }
 
@@ -852,6 +856,7 @@ void TstTranslationLayout::settings()
     updates.canSelfUpdate = true;
     updates.lastCheck = QDateTime(QDate(2026, 9, 28), QTime(12, 30), QTimeZone::utc());
     SettingsDialog dialog(values, updates, SettingsDialog::Page::General);
+    QTRY_VERIFY(!mervin::TessdataManager::busy()); // the installed OCR languages
     const auto pages = QMetaEnum::fromType<SettingsDialog::Page>();
     for (int i = 0; i < pages.keyCount(); ++i) {
         const auto page = static_cast<SettingsDialog::Page>(pages.value(i));
@@ -880,6 +885,7 @@ void TstTranslationLayout::settings()
     auto portableUpdates = updates;
     portableUpdates.canSelfUpdate = false;
     SettingsDialog portable(values, portableUpdates, SettingsDialog::Page::Updates);
+    QTRY_VERIFY(!mervin::TessdataManager::busy());
     inspect(portable, QStringLiteral("Settings updates without automatic installation"));
     dialog.showPage(SettingsDialog::Page::General);
     auto *duration = dialog.findChild<QSpinBox *>(QStringLiteral("unloadInactiveMinutes"));

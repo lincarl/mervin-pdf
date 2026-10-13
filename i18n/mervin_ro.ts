@@ -2366,7 +2366,7 @@ Deschideți Setările sistemului dvs. → Aplicații implicite (sau faceți clic
     </message>
     <message>
         <source>Working...</source>
-        <extracomment>Button text while a language downloads.</extracomment>
+        <extracomment>Button text while a language downloads or is removed.</extracomment>
         <translation>Se procesează...</translation>
     </message>
     <message numerus="yes">

@@ -1,3 +1,4 @@
+#include "config/ConfigPaths.h"
 #include "i18n/UiLanguage.h"
 #include "ocr/TessdataFile.h"
 #include "ocr/TessdataManager.h"
@@ -5,6 +6,7 @@
 #include <QByteArray>
 #include <QDir>
 #include <QFile>
+#include <QScopeGuard>
 #include <QString>
 #include <QTemporaryDir>
 #include <QTest>
@@ -27,6 +29,7 @@ private slots:
     void missingLanguageIsNotOurError();
     void repositoryOffersOnlyBestModels();
     void languageNamesAreFriendly();
+    void modelsAreListedSavedAndRemovedInOrder();
 };
 
 namespace {
@@ -179,6 +182,68 @@ void TstTessdata::repositoryOffersOnlyBestModels()
     const QString url = mervin::TessdataManager::repositoryUrl();
     QVERIFY(url.contains(QStringLiteral("/tessdata_best")));
     QVERIFY(!url.contains(QStringLiteral("tessdata_fast")));
+}
+
+// The folder is in the profile, so the UI reads and changes it through calls that
+// run on one background thread, in the order asked.
+void TstTessdata::modelsAreListedSavedAndRemovedInOrder()
+{
+    namespace Models = mervin::TessdataManager;
+    QTemporaryDir profile;
+    QVERIFY(profile.isValid());
+    mervin::ConfigPaths::setOverrideDir(profile.path());
+    auto restore = qScopeGuard([] { mervin::ConfigPaths::setOverrideDir({}); });
+    QObject context;
+
+    QList<Models::Model> listed{{QStringLiteral("none yet"), 1}};
+    Models::listModels(&context, [&listed](const QList<Models::Model> &models) { listed = models; });
+    QTRY_VERIFY(!Models::busy());
+    QVERIFY(listed.isEmpty()); // no folder yet
+
+    // Asked one after another without waiting.
+    Models::Saved saved = Models::Saved::Failed;
+    QList<Models::Model> afterSave;
+    Models::saveModel(QStringLiteral("eng"), validContainer(), &context,
+                      [&](Models::Saved result, const QString &, const QList<Models::Model> &models) {
+                          saved = result;
+                          afterSave = models;
+                      });
+    Models::Saved invalid = Models::Saved::Ok;
+    QString detail;
+    Models::saveModel(QStringLiteral("swe"), QByteArrayLiteral("not a model"), &context,
+                      [&](Models::Saved result, const QString &why, const QList<Models::Model> &) {
+                          invalid = result;
+                          detail = why;
+                      });
+    Models::listModels(&context, [&listed](const QList<Models::Model> &models) { listed = models; });
+    QTRY_VERIFY(!Models::busy());
+    QCOMPARE(saved, Models::Saved::Ok);
+    QCOMPARE(afterSave.size(), 1);
+    QCOMPARE(afterSave.first().code, QStringLiteral("eng"));
+    QCOMPARE(afterSave.first().bytes, validContainer().size());
+    QCOMPARE(invalid, Models::Saved::Invalid);
+    QVERIFY(!detail.isEmpty());
+    QVERIFY(!QFile::exists(QDir(Models::directory()).filePath(QStringLiteral("swe.traineddata"))));
+    QCOMPARE(listed.size(), 1);
+
+    bool removed = false;
+    Models::removeModel(QStringLiteral("eng"), &context,
+                        [&](bool result, const QList<Models::Model> &models) {
+                            removed = result;
+                            listed = models;
+                        });
+    QTRY_VERIFY(!Models::busy());
+    QVERIFY(removed);
+    QVERIFY(listed.isEmpty());
+
+    // An answer for a window that has closed is dropped.
+    bool called = false;
+    {
+        QObject gone;
+        Models::listModels(&gone, [&called](const QList<Models::Model> &) { called = true; });
+    }
+    QTRY_VERIFY(!Models::busy());
+    QVERIFY(!called);
 }
 
 QTEST_GUILESS_MAIN(TstTessdata)

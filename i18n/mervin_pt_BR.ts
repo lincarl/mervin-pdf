@@ -2359,7 +2359,7 @@ Abra Configurações → Aplicativos padrão do seu sistema (ou clique com o bot
     </message>
     <message>
         <source>Working...</source>
-        <extracomment>Button text while a language downloads.</extracomment>
+        <extracomment>Button text while a language downloads or is removed.</extracomment>
         <translation>Trabalhando...</translation>
     </message>
     <message numerus="yes">

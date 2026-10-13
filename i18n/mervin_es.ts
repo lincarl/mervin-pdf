@@ -2359,7 +2359,7 @@ Abra la Configuración de su sistema → Aplicaciones predeterminadas (o haga cl
     </message>
     <message>
         <source>Working...</source>
-        <extracomment>Button text while a language downloads.</extracomment>
+        <extracomment>Button text while a language downloads or is removed.</extracomment>
         <translation>Trabajando...</translation>
     </message>
     <message numerus="yes">

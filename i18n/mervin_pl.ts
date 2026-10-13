@@ -2366,7 +2366,7 @@ Otwórz Ustawienia systemu → Aplikacje domyślne (lub kliknij plik PDF prawym 
     </message>
     <message>
         <source>Working...</source>
-        <extracomment>Button text while a language downloads.</extracomment>
+        <extracomment>Button text while a language downloads or is removed.</extracomment>
         <translation>Pracuję...</translation>
     </message>
     <message numerus="yes">

@@ -24,10 +24,7 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QDialogButtonBox>
-#include <QDir>
 #include <QEvent>
-#include <QFile>
-#include <QFileInfo>
 #include <QFormLayout>
 #include <QFrame>
 #include <QKeyEvent>
@@ -1221,7 +1218,19 @@ bool SettingsDialog::selfUpdating() const
 
 void SettingsDialog::refreshOcrLanguages(int focusRow)
 {
-    const QStringList installed = mervin::TessdataManager::installedLanguages();
+    mervin::TessdataManager::listModels(
+        this, [this, focusRow](const QList<mervin::TessdataManager::Model> &models) {
+            showOcrLanguages(models, focusRow);
+        });
+}
+
+void SettingsDialog::showOcrLanguages(const QList<mervin::TessdataManager::Model> &models,
+                                      int focusRow)
+{
+    QStringList installed;
+    for (const mervin::TessdataManager::Model &model : models)
+        installed << model.code;
+    ocrShown_ = installed;
 
     // Show an installed model as the default, falling back to the first one as
     // the OCR picker does. settings() writes it only if the user picks it.
@@ -1244,9 +1253,9 @@ void SettingsDialog::refreshOcrLanguages(int focusRow)
         delete item->widget();
         delete item;
     }
-    const QDir dir(mervin::TessdataManager::directory());
     QList<QToolButton *> removeButtons;
-    for (const QString &code : installed) {
+    for (const mervin::TessdataManager::Model &model : models) {
+        const QString &code = model.code;
         auto *row = new QWidget;
         row->setObjectName(QStringLiteral("settingsListRow"));
         auto *rowLayout = new QHBoxLayout(row);
@@ -1254,8 +1263,7 @@ void SettingsDialog::refreshOcrLanguages(int focusRow)
         rowLayout->setSpacing(10);
         rowLayout->addWidget(new QLabel(mervin::TessdataManager::languageName(code), row));
         rowLayout->addStretch(1);
-        const qint64 bytes = QFileInfo(dir.filePath(code + QStringLiteral(".traineddata"))).size();
-        auto *meta = new QLabel(QStringLiteral("%1 · %2").arg(code, formattedSize(bytes)), row);
+        auto *meta = new QLabel(QStringLiteral("%1 · %2").arg(code, formattedSize(model.bytes)), row);
         meta->setObjectName(QStringLiteral("settingsHint"));
         rowLayout->addWidget(meta);
         auto *removeButton = new QToolButton(row);
@@ -1309,6 +1317,8 @@ void SettingsDialog::refreshOcrLanguages(int focusRow)
 
 void SettingsDialog::removeOcrLanguage(const QString &code)
 {
+    if (ocrRemoving_)
+        return; // one at a time, so the last language stays
     // Removal deletes the model file at once, so Cancel cannot undo it: ask first.
     const QString name = mervin::TessdataManager::languageName(code);
     const auto answer = QMessageBox::question(
@@ -1318,19 +1328,34 @@ void SettingsDialog::removeOcrLanguage(const QString &code)
         QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
     if (answer != QMessageBox::Yes)
         return;
-    const int row = int(mervin::TessdataManager::installedLanguages().indexOf(code));
-    const QString path =
-        QDir(mervin::TessdataManager::directory()).filePath(code + QStringLiteral(".traineddata"));
-    if (!QFile::remove(path)) {
-        QMessageBox::warning(this, tr("Remove OCR Language"),
-                             //: %1 is the name of an OCR language.
-                             tr("Could not remove %1 from the OCR language folder.").arg(name));
-        return;
-    }
-    // The saved default is gone with its model, so the fallback becomes a choice.
-    if (code == ocrLanguage_)
+    const int row = int(ocrShown_.indexOf(code));
+    // The file goes on the OCR folder's thread. Meanwhile no other language can be
+    // removed, and the default is already the one that stays, so OK saves it.
+    ocrRemoving_ = true;
+    for (auto *button : findChildren<QToolButton *>(QStringLiteral("settingsListRemove")))
+        button->setEnabled(false);
+    if (code == ocrLanguage_) {
+        // The saved default is gone with its model, so the fallback becomes a choice.
         ocrLanguagePicked_ = true;
-    refreshOcrLanguages(std::max(0, row));
+        const auto other = std::find_if(ocrShown_.cbegin(), ocrShown_.cend(),
+                                        [&code](const QString &shown) { return shown != code; });
+        ocrLanguage_ = other != ocrShown_.cend() ? *other : QString();
+        refreshButtons();
+    }
+    mervin::TessdataManager::removeModel(
+        code, this,
+        [this, name, row](bool removed, const QList<mervin::TessdataManager::Model> &models) {
+            ocrRemoving_ = false;
+            if (!removed) {
+                showOcrLanguages(models, -1);
+                QMessageBox::warning(this, tr("Remove OCR Language"),
+                                     //: %1 is the name of an OCR language.
+                                     tr("Could not remove %1 from the OCR language folder.")
+                                         .arg(name));
+                return;
+            }
+            showOcrLanguages(models, std::max(0, row));
+        });
 }
 
 void SettingsDialog::manageOcrLanguages()

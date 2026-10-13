@@ -1,6 +1,7 @@
 #pragma once
 
 #include "config/Settings.h"
+#include "ocr/TessdataManager.h"
 
 #include <QColor>
 #include <QDateTime>
@@ -110,9 +111,10 @@ private:
     void refreshLastCheck();     // "Last checked ..." under Check for Updates
     std::optional<int> unloadMinutes() const; // validates the numeric duration unless Never is checked
     void refreshUnloadHint();
-    // Re-read the installed OCR models; focusRow moves focus to that row's remove
-    // button (or the nearest one left) after a removal.
+    // Re-read the installed OCR models, off the UI thread; focusRow moves focus to
+    // that row's remove button (or the nearest one left) after a removal.
     void refreshOcrLanguages(int focusRow = -1);
+    void showOcrLanguages(const QList<mervin::TessdataManager::Model> &models, int focusRow);
     bool selfUpdating() const;   // this copy checks for and installs updates itself
     void removeOcrLanguage(const QString &code);
     void manageOcrLanguages();   // the full catalog: Manage OCR Languages
@@ -124,6 +126,8 @@ private:
     QColor accent_;         // current accent choice ("#RRGGBB")
     QColor annotColor_;     // current default highlight/comment colour
     QString ocrLanguage_;   // default OCR language shown (Tesseract code); empty if none installed
+    QStringList ocrShown_;  // the installed OCR models listed, by code
+    bool ocrRemoving_ = false; // a removal is on the OCR folder's thread
     bool ocrLanguagePicked_ = false; // the user chose ocrLanguage_ here, so settings() saves it
 
     QListWidget *nav_ = nullptr;
