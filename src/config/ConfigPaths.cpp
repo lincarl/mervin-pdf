@@ -28,7 +28,7 @@ const QString &made(const QString &dir)
         if (done.contains(dir))
             return dir;
     }
-    QDir().mkpath(dir); // two first callers both make it, which is harmless
+    QDir().mkpath(dir); // if two threads ask first, both make it, which is harmless
     std::lock_guard<std::mutex> lock(mutex);
     done.insert(dir);
     return dir;

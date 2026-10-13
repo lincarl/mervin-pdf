@@ -108,8 +108,9 @@ void savePending(const QString &version, const QString &file)
 }
 
 // The download in progress (<asset>.part), open from the start of the transfer to
-// its end. Only disk jobs use it, so it is never written or closed on the screen
-// thread, even when the operation that opened it has ended.
+// its end. Only disk jobs use it (and tests, while the disk thread is idle), so it
+// is never written or closed on the screen thread, even when the operation that
+// opened it has ended.
 QFile *g_part = nullptr;
 
 void closePart()
@@ -187,6 +188,14 @@ void warn(const QString &text)
 {
     //: Window title (noun): the software update.
     QMessageBox::warning(dialogParent(), Updater::tr("Update"), text);
+}
+
+void warnInstallerNotStarted(const QString &file)
+{
+    //: %1 is the path of the downloaded installer.
+    warn(Updater::tr("Couldn't start the installer. It is saved at:\n\n%1\n\n"
+                     "Run it to finish updating.")
+             .arg(QDir::toNativeSeparators(file)));
 }
 
 // Closes every window the way the user would, so unsaved work gets its prompt.
@@ -443,8 +452,8 @@ void Updater::download(const update::ReleaseAsset &asset, const QString &version
     asset_ = asset;
     downloadVersion_ = version;
     hash_.reset();
-    // An operation that ends meanwhile leaves the file open until its downloads
-    // are discarded, on the disk thread too.
+    // If the operation ends while the file opens, the file stays open until the
+    // discard that follows closes it on the disk thread.
     onDisk(
         [name = asset.name] {
             return openPart(QDir(ConfigPaths::updatesDir()).filePath(name + kPartSuffix));
@@ -658,16 +667,24 @@ void Updater::install(const QString &file, const QString &version)
     switch (kind_) {
     case update::PackageKind::Msi:
         // The helper relaunches even if MSI fails or is cancelled, so this attempt
-        // is consumed before the handoff: the old app must not enter an
-        // install/relaunch loop. The file stays until the installer exits and
-        // startup cleans it up.
+        // is consumed before the handoff, and only once that is written. The old
+        // app must not enter an install/relaunch loop. The file stays until the
+        // installer exits and startup cleans it up.
         onDisk(
             [] {
                 QSettings st;
                 st.remove(kPendingVersionKey);
                 st.remove(kPendingFileKey);
+                st.sync();
+                return st.status() == QSettings::NoError;
             },
-            [this, file, version] {
+            [this, file, version](bool consumed) {
+                if (!consumed) {
+                    onDiskThread([file, version] { savePending(version, file); });
+                    warnInstallerNotStarted(file);
+                    endOperation();
+                    return;
+                }
                 if (shouldWaitForDialogs()) { // one opened meanwhile
                     onDiskThread([file, version] { savePending(version, file); });
                     installing_ = false;
@@ -708,7 +725,7 @@ void Updater::install(const QString &file, const QString &version)
 
 // The installer replaces files this process holds open, so the windows close
 // first (each may still save, or cancel the update), then the installer starts
-// detached and this process quits. All in this one call: a dialog's event loop
+// detached and this process quits, all in this one call. A dialog's event loop
 // that ran in between would delete the closed windows under the dialog. The
 // pending update was consumed before; it is put back if the handoff fails.
 void Updater::handOffToInstaller(const QString &file, const QString &version)
@@ -720,10 +737,7 @@ void Updater::handOffToInstaller(const QString &file, const QString &version)
     }
     if (!update::startWindowsInstaller(file)) {
         onDiskThread([file, version] { savePending(version, file); });
-        //: %1 is the path of the downloaded installer.
-        warn(tr("Couldn't start the installer. It is saved at:\n\n%1\n\n"
-                "Run it to finish updating.")
-                 .arg(QDir::toNativeSeparators(file)));
+        warnInstallerNotStarted(file);
         endOperation();
         QApplication::quit();
         return;

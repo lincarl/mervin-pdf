@@ -13,6 +13,7 @@
 #include <QDialog>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QLabel>
 #include <QMainWindow>
 #include <QMessageBox>
@@ -20,6 +21,7 @@
 #include <QNetworkReply>
 #include <QPointer>
 #include <QProgressDialog>
+#include <QScopeGuard>
 #include <QSettings>
 
 #include <atomic>
@@ -31,6 +33,10 @@
 #include <QTimer>
 
 #include <cstring>
+
+#ifndef Q_OS_WIN
+#  include <unistd.h>
+#endif
 
 namespace {
 
@@ -202,6 +208,8 @@ private slots:
     void manualCompletionInstallsOverSettings_data();
     void manualCompletionInstallsOverSettings();
     void handoffQuitsBeforeSettingsLosesItsWindow();
+    void automaticHandoffWaitsForADialogOpenedMeanwhile();
+    void unwrittenConsumeStopsTheHandoff();
     void automaticRestartWaitsForADialogOpenedDuringTheCopy();
     void automaticCompletionWaitsForSettings();
     void queuedAutomaticInstallCanBecomeManual();
@@ -296,6 +304,7 @@ void TestUpdater::init()
 
 void TestUpdater::cleanup()
 {
+    appImageCopyHeld = false; // a failed test can leave the copy waiting
     QVERIFY(settled());
     QDesktopServices::unsetUrlHandler(QStringLiteral("ms-windows-store"));
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
@@ -472,13 +481,15 @@ void TestUpdater::handoffQuitsBeforeSettingsLosesItsWindow()
     network->hasUpdate = true;
     PromptObserver observer;
     QTimer::singleShot(0, &context, [&] {
-        QDialog settings(window);
-        settings.setAttribute(Qt::WA_DontShowOnScreen);
-        settings.setModal(true);
-        QTimer::singleShot(0, &settings, [&] { updater.checkNow(); });
+        // On the heap, so a window deleted under it fails the test, not the process.
+        QPointer<QDialog> settings = new QDialog(window);
+        settings->setAttribute(Qt::WA_DontShowOnScreen);
+        settings->setModal(true);
+        QTimer::singleShot(0, settings, [&] { updater.checkNow(); });
         settingsOpen = true;
-        settings.exec();
+        settings->exec();
         settingsOpen = false;
+        delete settings;
     });
     QTimer timeout;
     timeout.setSingleShot(true);
@@ -491,6 +502,75 @@ void TestUpdater::handoffQuitsBeforeSettingsLosesItsWindow()
     QVERIFY(!alive);
     QVERIFY(!deletedUnderSettings);
     QVERIFY(observer.messages.isEmpty());
+}
+
+// The pending update is consumed before the Windows handoff. A dialog opened
+// meanwhile puts it back, and the automatic installation waits for the dialog.
+void TestUpdater::automaticHandoffWaitsForADialogOpenedMeanwhile()
+{
+    QVERIFY(savePending());
+    Updater updater;
+    updater.setCloseWindowsHandler([] { return true; });
+    QVERIFY(settled());
+    updater.busy_ = true;
+    updater.installing_ = true;
+    updater.install(downloadedPath(), kVersion);
+    QDialog dialog; // shown before the consume answers
+    dialog.setAttribute(Qt::WA_DontShowOnScreen);
+    dialog.setModal(true);
+    dialog.show();
+    QVERIFY(settled());
+    QVERIFY(installerFiles.isEmpty());
+    QVERIFY(updater.installQueued_);
+    QVERIFY(!updater.installing_);
+    QCOMPARE(QSettings().value(QStringLiteral("update/pendingFile")).toString(), downloadedPath());
+    dialog.hide();
+    QTRY_COMPARE(installerFiles.size(), 1);
+    QVERIFY(settled());
+    QVERIFY(!QSettings().contains(QStringLiteral("update/pendingFile")));
+}
+
+// Without a written consume, a failed or cancelled MSI would relaunch this copy
+// into the same installation again, so the handoff does not happen.
+void TestUpdater::unwrittenConsumeStopsTheHandoff()
+{
+#ifdef Q_OS_WIN
+    QSKIP("Read-only folders do not stop writes on Windows");
+#else
+    if (::geteuid() == 0)
+        QSKIP("Read-only files do not stop root");
+    QVERIFY(savePending());
+    QVERIFY(settled());
+    const QString ini = QSettings().fileName();
+    const QString folder = QFileInfo(ini).absolutePath();
+    const auto folderPermissions = QFile::permissions(folder);
+    const auto iniPermissions = QFile::permissions(ini);
+    const auto writable = qScopeGuard([&] {
+        QFile::setPermissions(folder, folderPermissions);
+        QFile::setPermissions(ini, iniPermissions);
+    });
+    QVERIFY(QFile::setPermissions(ini, QFileDevice::ReadOwner));
+    QVERIFY(QFile::setPermissions(folder, QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+    Updater updater;
+    int closes = 0;
+    updater.setCloseWindowsHandler([&] {
+        ++closes;
+        return true;
+    });
+    PromptObserver observer;
+    updater.busy_ = true;
+    updater.installing_ = true;
+    updater.install(downloadedPath(), kVersion);
+    QTRY_VERIFY(!updater.busy_);
+    QVERIFY(settled());
+    QCOMPARE(closes, 0);
+    QVERIFY(installerFiles.isEmpty());
+    QTRY_COMPARE(observer.messages.size(), 1);
+    QVERIFY(observer.messages.first().contains(QStringLiteral("Couldn't start the installer")));
+    QFile file(ini);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QVERIFY(file.readAll().contains("pendingFile"));
+#endif
 }
 
 // The AppImage copy runs in the background while the windows stay usable. An

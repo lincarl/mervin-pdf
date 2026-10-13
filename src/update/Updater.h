@@ -62,8 +62,9 @@ public:
     void checkNow();
 
     // Auto update was switched on or off through WindowManager. Off cancels
-    // background checks, downloads and queued installations. A manual operation
-    // or an installation that has already started runs to its end.
+    // background checks, downloads and automatic installations that have not
+    // started, including one that went back to wait for a dialog. A manual
+    // operation, or an installation step already running, runs to its end.
     void onAutoUpdateChanged(bool on);
 
     // The application supplies its explicit quit path, which bypasses close-to-tray.
@@ -85,7 +86,7 @@ private:
     void onDisk(Work work, Done done, bool forOperation = true);
     // For tests: disk work, or its completion, has not finished.
     static bool diskBusy();
-    // For tests, with the disk thread idle: opens `path` as the download in progress.
+    // For tests, with the disk thread idle. Opens `path` as the download in progress.
     static bool openPartForTesting(const QString &path);
 
     void check(bool manual);
