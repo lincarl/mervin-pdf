@@ -218,6 +218,7 @@ def start(api, number, sha, retry=False):
         if previous["state"] == "pending" or request["created_at"] <= previous["created_at"]:
             print("An overlapping request already handled this revision. Skipping duplicate.")
             return None
+    evidence = inspect(api, number, sha)
     api.status(sha, "pending", "Authorized revision is running full CI",
                run_url(api, os.environ["GITHUB_RUN_ID"]))
     return evidence

@@ -295,6 +295,16 @@ class InspectionTests(GateFixture):
 
 @patch.dict(os.environ, ENV)
 class LifecycleTests(GateFixture):
+    def test_changed_eligibility_during_deduplication_rejects_authorization(self):
+        def previous_status(*_args):
+            self.comments = [summary(OLD_SHA)]
+            return None
+
+        with patch.object(gate, "latest_status", side_effect=previous_status):
+            with self.assertRaisesRegex(gate.GateError, "current PR commit"):
+                gate.start(self.api, "7", SHA)
+        self.api.status.assert_not_called()
+
     def test_authorized_dispatch_publishes_pending_on_pr_sha(self):
         self.assertEqual(gate.start(self.api, "7", SHA)["sha"], SHA)
         self.api.status.assert_called_once_with(

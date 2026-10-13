@@ -25,6 +25,12 @@ jobs:
   repository-checks:
     runs-on: ubuntu-latest
     steps:
+      - name: Reject native reruns of reviewed PR builds
+        if: inputs.reviewed_pr && github.run_attempt != 1
+        run: |
+          echo 'Reviewed PR builds require a new Start CI authorization.' >&2
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.sha }}
