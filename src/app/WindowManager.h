@@ -193,6 +193,17 @@ public:
     QStringList sessionPathsToRestore();
     void updateSession();
 
+    // Close the unloaded tabs whose file is gone: deleted, moved or renamed from a
+    // folder that is still there, while its drive, share or mount is attached
+    // (RecentStore::isRemovedFromDisk, given the mount recorded when the file was
+    // opened). That is the rule session restore uses to drop a document. Other tabs
+    // stay. A loaded tab still shows its document, a tab with unsaved edits reloads
+    // from its recovery copy, and a tab whose folder or volume is away keeps Retry. Windows in the tray
+    // keep their tabs until they are shown again. The disk is checked on a worker
+    // thread, since network paths can stall. Runs when a window is activated and
+    // after an unloaded tab fails to load.
+    void closeRemovedTabs();
+
     // The document that was on screen when the session was recorded. Valid after
     // sessionPathsToRestore() has loaded the file; empty when the session predates
     // the field, recorded no current document, or that document is not restored.
@@ -251,6 +262,12 @@ private:
     // The windows hidden in the tray, in the order they were hidden.
     QList<MainWindow *> trayWindows() const;
     void applyViewStateIfStored(const QString &canonicalPath);
+    // The mount a document was opened from: the session's copy, else Recent's.
+    QString recordedMount(const QString &canonicalPath) const;
+    // Close the tabs of the files the last closeRemovedTabs scan found gone. A
+    // window that cannot close a tab yet (MainWindow::closeRemovedTabs) keeps its
+    // file listed here, and the activity timer tries again.
+    void closeFoundRemovedTabs();
 
     // Rebuild the app-wide Theme stylesheet on the next event-loop turn. Deferred
     // (and coalesced) because the colour-scheme signals that drive it fire BEFORE
@@ -291,12 +308,18 @@ private:
     bool keepMissingRecent_ = false;   // Settings::recentKeepMissing
     bool pruneRunning_ = false;        // a pruneMissingRecent scan is on the worker
     bool prunePending_ = false;        // ...and another was asked for meanwhile
+    bool movingTab_ = false;           // detachTab or mergeTab is moving a tab
+    bool tabScanRunning_ = false;      // a closeRemovedTabs scan is on its worker
+    bool tabScanPending_ = false;      // ...and another was asked for meanwhile
+    QStringList removedTabFiles_;      // canonical paths whose tabs still have to close
     // Set on shutdown so a scan stuck on slow network paths stops between paths
     // instead of keeping the process alive.
-    std::atomic<bool> pruneCancel_{false};
-    // Declared last so it is destroyed first: its destructor waits for a running
-    // scan while the rest of this object is still intact.
+    std::atomic<bool> scanCancel_{false};
+    // Declared last so they are destroyed first: their destructors wait for a
+    // running scan while the rest of this object is still intact. Tab checks get
+    // their own thread, so they never wait behind a long Recent scan.
     QThreadPool prunePool_;
+    QThreadPool tabScanPool_;
 };
 
 } // namespace mervin

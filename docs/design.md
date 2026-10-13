@@ -212,6 +212,23 @@ Passwords are held only in memory, never in the recovery metadata or settings.
 Snapshot failure leaves the live document available. Reload failure keeps the tab
 and saved recovery state for retry instead of discarding them.
 
+`WindowManager::closeRemovedTabs` closes unloaded tabs without unsaved edits whose
+file is gone, by the rule session restore uses to drop a saved document. The file
+must be missing from a folder that is still there, on a volume that is attached
+(`RecentStore::isRemovedFromDisk`, judged by the mount the session or Recent recorded
+for the document). A missing folder can be another volume under the same drive
+letter, so it keeps the tab, as it keeps a session document. Tabs with unsaved edits
+reload from their recovery snapshot and stay. The check runs on window activation and
+after a failed asynchronous reload, on its own worker thread, since network paths can
+stall. The window then removes the tab on the UI thread without a prompt, a
+view-state write or a reopen history entry. It defers that while a modal dialog,
+popup, document operation, mouse press or tab drag may hold tab indexes, and the
+one-second activity timer retries. The file is checked once more just before the
+tab goes. Windows in the tray keep their tabs until shown. Loaded tabs stay open,
+because they still show their document. Removing a tab never leaves the Recent
+screen, and moving a tab between windows saves the session once, after the move, so
+the document keeps its recorded mount.
+
 The shared MuPDF store and allocator can retain memory after individual objects are
 released, so process resident memory is not the sum of the live tab caches.
 
