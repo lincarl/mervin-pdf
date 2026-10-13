@@ -483,14 +483,17 @@ void TstTranslationLayout::inspect(QWidget &widget, const QString &state)
         // in both matrix entries. The smaller size can raise the minimum again,
         // as when a list gains its scroll bar, so resize until the size holds.
         const bool window = qobject_cast<QDialog *>(&widget);
-        for (int turn = 0; turn < 10; ++turn) {
-            const QSize minimum = window ? widget.minimumSize()
-                                         : widget.minimumSize().expandedTo(widget.minimumSizeHint());
-            if (widget.size() == minimum)
-                break;
-            widget.resize(minimum);
+        const auto minimum = [&widget, window] {
+            return window ? widget.minimumSize()
+                          : widget.minimumSize().expandedTo(widget.minimumSizeHint());
+        };
+        for (int turn = 0; turn < 10 && widget.size() != minimum(); ++turn) {
+            widget.resize(minimum());
             settle();
         }
+        // Otherwise the check below would pass at a larger size.
+        QVERIFY2(widget.size() == minimum(),
+                 qPrintable(state + QStringLiteral(" did not settle at its minimum size")));
     }
     const QStringList problems = textfit::check(widget);
     const QString details = state + QLatin1Char('\n') + problems.join(QLatin1Char('\n'));
