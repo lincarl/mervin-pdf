@@ -20,8 +20,10 @@ public:
 
     // Move `path` to the front, stamped with `whenMs`, deduping any prior entry
     // for the same file (normalized match). `mount` is the file system the file
-    // is on now (mountOf), kept as RecentEntry::mount. No-op for an empty path.
-    // Returns true if the list changed.
+    // is on now (mountOf), kept as RecentEntry::mount. A `pageCount` of 0 means
+    // unknown, as for a tab restored without loading its document, and keeps the
+    // count stored for the file. No-op for an empty path. Returns true if the list
+    // changed.
     bool add(const QString &path, qint64 whenMs, int pageCount = 0,
              const QString &mount = QString());
 

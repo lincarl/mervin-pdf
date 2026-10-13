@@ -40,9 +40,11 @@ bool RecentStore::add(const QString &path, qint64 whenMs, int pageCount, const Q
 
     const QString key = normalizePathKey(path);
     bool wasFavorite = false;
+    int knownPages = 0;
     for (int i = 0; i < entries_.size(); ++i) {
         if (normalizePathKey(entries_.at(i).path) == key) {
             wasFavorite = entries_.at(i).favorite; // preserve the flag on re-open
+            knownPages = entries_.at(i).pageCount;
             entries_.removeAt(i);
             break; // keys are unique, so at most one match
         }
@@ -51,7 +53,7 @@ bool RecentStore::add(const QString &path, qint64 whenMs, int pageCount, const Q
     RecentEntry e;
     e.path = path;
     e.lastOpened = whenMs;
-    e.pageCount = pageCount;
+    e.pageCount = pageCount > 0 ? pageCount : knownPages;
     e.favorite = wasFavorite;
     e.mount = mount;
     entries_.prepend(e);

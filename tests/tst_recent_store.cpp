@@ -15,6 +15,7 @@ class TstRecentStore : public QObject
 private slots:
     void addPrependsMostRecent();
     void addDedupesAndMovesToFront();
+    void addKeepsTheKnownPageCount();
 #ifdef Q_OS_WIN
     void dedupIsCaseInsensitiveOnWindows();
 #endif
@@ -50,6 +51,21 @@ void TstRecentStore::addDedupesAndMovesToFront()
     QCOMPARE(s.entries()[0].path, QStringLiteral("C:/a.pdf"));
     QCOMPARE(s.entries()[0].lastOpened, qint64(300)); // timestamp refreshed
     QCOMPARE(s.entries()[1].path, QStringLiteral("C:/b.pdf"));
+}
+
+// A tab restored without loading its document does not know the page count yet.
+// Recording it keeps the count Recent already shows, and a known count replaces it.
+void TstRecentStore::addKeepsTheKnownPageCount()
+{
+    RecentStore s;
+    s.add(QStringLiteral("C:/a.pdf"), 100, 12);
+    s.add(QStringLiteral("C:/a.pdf"), 200, 0);
+    QCOMPARE(s.entries()[0].pageCount, 12);
+    QCOMPARE(s.entries()[0].lastOpened, qint64(200));
+    s.add(QStringLiteral("C:/a.pdf"), 300, 5);
+    QCOMPARE(s.entries()[0].pageCount, 5);
+    s.add(QStringLiteral("C:/b.pdf"), 400, 0);
+    QCOMPARE(s.entries()[0].pageCount, 0); // a new file has no count to keep
 }
 
 #ifdef Q_OS_WIN
