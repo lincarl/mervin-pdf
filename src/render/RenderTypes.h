@@ -34,7 +34,7 @@ struct RenderRequest
     PageTheme theme = PageTheme::Light;
 };
 
-// The result of a render, delivered to the UI thread via a queued signal.
+// The result of a render, posted to the UI thread and emitted there as resultReady.
 // resultReady is broadcast to every viewer, so `requester` identifies which one
 // issued the request; a viewer ignores results whose requester is not its own.
 struct RenderResult

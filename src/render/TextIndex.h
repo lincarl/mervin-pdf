@@ -39,12 +39,12 @@ struct TextLink
 
 // Lazily cache MuPDF page text, character/line geometry and links for selection and case/whole-
 // word search. Coordinates are unscaled, unrotated page points at 72 dpi.
-// Owns a cloned MuPDF context. Serialize calls; viewer and background search use separate
-// indexes. Destroy before RenderEngine.
+// Owns a cloned MuPDF context, which may outlive the RenderEngine. Serialize calls; viewer and
+// background search use separate indexes.
 class TextIndex
 {
 public:
-    TextIndex(fz_context *baseCtx, Document *doc);
+    TextIndex(std::shared_ptr<fz_context> baseCtx, Document *doc);
     ~TextIndex();
 
     TextIndex(const TextIndex &) = delete;
@@ -101,6 +101,7 @@ private:
                                               const QString &query,
                                               bool caseSensitive, bool wholeWord);
 
+    std::shared_ptr<fz_context> base_; // see RenderEngine::baseContext()
     fz_context *ctx_ = nullptr; // cloned from the base context; owned
     std::shared_ptr<DocumentLifetime> lifetime_;
     Document *doc_ = nullptr;   // not owned

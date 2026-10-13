@@ -24,6 +24,7 @@
 // height half of the fit would never be exercised.
 //
 // Reuse one viewer and engine across cases; tst_render_lifetime covers concurrent teardown.
+#include "io/Background.h"
 #include "render/Document.h"
 #include "render/RenderEngine.h"
 #include "ui/ViewerWidget.h"
@@ -190,14 +191,14 @@ void TstViewerFit::cleanupTestCase()
 {
     // This test walks three documents through every page mode, rotation and fit
     // mode without ever waiting for a render, so it leaves the worker threads a
-    // long queue. Join them explicitly before anything is destroyed: without this
-    // the process passes all its cases and then dies in MuPDF at teardown
-    // ("uninitialized font structure"), because a worker is still rasterising a
-    // document whose context is being torn down under it. tst_viewer_preview gets
-    // away without it only because it settles after each step.
+    // long queue. Nothing joins them: a worker keeps the MuPDF context it renders
+    // with, and shutdown() drops the queue. Wait for them to finish before the
+    // process ends, as one still rasterising when static destructors run could
+    // crash it. tst_viewer_preview settles after each step instead.
     engine_->shutdown();
     viewer_.reset();
     QCoreApplication::processEvents();
+    QVERIFY(mervin::background::settle(30000));
 }
 
 void TstViewerFit::use(mervin::Document *d, int w, int h)

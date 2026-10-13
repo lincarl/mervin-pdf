@@ -18,6 +18,10 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QDateTime>
+#include <QDir>
+#include <QElapsedTimer>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -29,6 +33,16 @@
 #include <QTemporaryDir>
 #include <QToolButton>
 #include <QtTest>
+
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+
+#ifdef Q_OS_UNIX
+#  include <fcntl.h>
+#  include <sys/stat.h>
+#  include <unistd.h>
+#endif
 
 using namespace mervin;
 
@@ -79,6 +93,97 @@ void showForLayout(QWidget &widget)
     widget.show();
     QCoreApplication::processEvents();
 }
+
+// Holds a document's lifetime lock on another thread, as a render stuck reading the
+// document from a share that stopped answering does, until released or for at most
+// `ms` milliseconds.
+class Stall
+{
+public:
+    explicit Stall(std::mutex &held, int ms = 3000)
+        : thread_([this, &held, ms] {
+            std::lock_guard<std::mutex> holding(held);
+            std::unique_lock<std::mutex> lock(mutex_);
+            locked_ = true;
+            changed_.notify_all();
+            changed_.wait_for(lock, std::chrono::milliseconds(ms), [this] { return released_; });
+        })
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        changed_.wait(lock, [this] { return locked_; });
+    }
+    ~Stall()
+    {
+        release();
+        thread_.join();
+    }
+    void release()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        released_ = true;
+        changed_.notify_all();
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable changed_;
+    bool locked_ = false;
+    bool released_ = false;
+    std::thread thread_; // last: it uses the members above
+};
+
+bool closed(const std::shared_ptr<DocumentLifetime> &lifetime)
+{
+    std::lock_guard<std::mutex> lock(lifetime->mutex);
+    return !lifetime->document;
+}
+
+#ifdef Q_OS_UNIX
+// Opening a named pipe waits for a writer, as a read from a share that stopped
+// answering waits for the share. This lets every such open through, by opening and
+// closing the writing end, once released or after `ms` milliseconds.
+class PipeWriter
+{
+public:
+    explicit PipeWriter(const QString &path, int ms = 30000)
+        : thread_([this, path = QFile::encodeName(path), ms] {
+            std::unique_lock<std::mutex> lock(mutex_);
+            changed_.wait_for(lock, std::chrono::milliseconds(ms), [this] { return released_; });
+            while (!stopped_) {
+                lock.unlock();
+                const int fd = ::open(path.constData(), O_WRONLY | O_NONBLOCK);
+                if (fd >= 0)
+                    ::close(fd);
+                lock.lock();
+                changed_.wait_for(lock, std::chrono::milliseconds(10), [this] { return stopped_; });
+            }
+        })
+    {
+    }
+    ~PipeWriter()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            released_ = stopped_ = true;
+            changed_.notify_all();
+        }
+        thread_.join();
+    }
+    void release()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        released_ = true;
+        changed_.notify_all();
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable changed_;
+    bool released_ = false;
+    bool stopped_ = false;
+    std::thread thread_; // last: it uses the members above
+};
+#endif
 } // namespace
 
 class TstDocumentSuspension : public QObject
@@ -135,10 +240,7 @@ private slots:
         QVERIFY(!tab.hasRecoverySnapshot());
         QVERIFY(!tab.hasUnsavedEdits());
         QCOMPARE(tab.path(), path);
-        {
-            std::lock_guard lock(lifetime->mutex);
-            QVERIFY(!lifetime->document);
-        }
+        QTRY_VERIFY_WITH_TIMEOUT(closed(lifetime), 10000); // on a background thread
 
         QSignalSpy resumed(&tab, &TabPage::resumeFinished);
         tab.resumeAsync();
@@ -246,10 +348,84 @@ private slots:
                      QStringLiteral("Uncommitted field value"));
             checkpoint = tab.recoveryPath();
         }
-        QVERIFY(mervin::appfiles::flush(10000)); // recovery files go in the background
-        QVERIFY(!QFileInfo::exists(checkpoint));
+        // The open recovery copy goes once its document has closed in the background.
+        QTRY_VERIFY_WITH_TIMEOUT(!QFileInfo::exists(checkpoint), 10000);
+        QVERIFY(mervin::appfiles::flush(10000));
         QCOMPARE(readFile(path), original);
     }
+
+    void closingATabDoesNotWaitForItsDocument()
+    {
+        RenderEngine engine;
+        auto tab = std::make_unique<TabPage>(&engine);
+        QVERIFY(tab->open(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        const auto lifetime = tab->viewer()->document()->lifetime();
+        Stall stall(lifetime->mutex);
+
+        QElapsedTimer timer;
+        timer.start();
+        tab.reset();
+        QVERIFY2(timer.elapsed() < 1000, qPrintable(QStringLiteral("closing took %1 ms")
+                                                        .arg(timer.elapsed())));
+        stall.release();
+        QTRY_VERIFY_WITH_TIMEOUT(closed(lifetime), 10000); // on a background thread
+    }
+
+    // Closing a window to the tray, and the inactivity timer, unload documents.
+    void unloadingDoesNotWaitForItsDocument()
+    {
+        RenderEngine engine;
+        TabPage tab(&engine);
+        QVERIFY(tab.open(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        const auto lifetime = tab.viewer()->document()->lifetime();
+        Stall stall(lifetime->mutex);
+
+        QElapsedTimer timer;
+        timer.start();
+        QString error;
+        QVERIFY2(tab.suspend(&error), qPrintable(error));
+        QVERIFY2(timer.elapsed() < 1000, qPrintable(QStringLiteral("unloading took %1 ms")
+                                                        .arg(timer.elapsed())));
+        QVERIFY(tab.isSuspended());
+        stall.release();
+        QTRY_VERIFY_WITH_TIMEOUT(closed(lifetime), 10000); // on a background thread
+    }
+
+#ifdef Q_OS_UNIX
+    void closingALoadingTabRemovesItsRecoveryCopyAfterTheLoad()
+    {
+        const QDir recovery(QDir(ConfigPaths::configDir()).filePath(QStringLiteral("recovery")));
+        QVERIFY(recovery.mkpath(QStringLiteral(".")));
+        const QString snapshot = recovery.filePath(QStringLiteral("document-stalled.pdf"));
+        QCOMPARE(::mkfifo(QFile::encodeName(snapshot).constData(), 0600), 0);
+        const QString original = recovery.filePath(QStringLiteral("original.pdf"));
+        QVERIFY(writeFile(snapshot + QStringLiteral(".json"),
+                          QJsonDocument(QJsonObject{{"version", 1},
+                                                    {"original", original},
+                                                    {"canonical", original},
+                                                    {"snapshot", "document-stalled.pdf"}})
+                              .toJson()));
+        QCOMPARE(TabPage::recoverablePaths(), QStringList{original});
+        PipeWriter writer(snapshot);
+        RenderEngine engine;
+        auto tab = std::make_unique<TabPage>(&engine);
+        tab->initializeSuspended(original);
+        QCOMPARE(tab->recoveryPath(), snapshot);
+        tab->resumeAsync();
+        QTest::qWait(200); // the load waits in the open of the recovery copy
+
+        QElapsedTimer timer;
+        timer.start();
+        tab.reset();
+        QVERIFY2(timer.elapsed() < 1000, qPrintable(QStringLiteral("closing took %1 ms")
+                                                        .arg(timer.elapsed())));
+        QVERIFY(mervin::appfiles::flush(10000));
+        QVERIFY(TabPage::recoverablePaths().isEmpty());
+        QVERIFY(QFileInfo::exists(snapshot)); // the load still has it open
+        writer.release();
+        QTRY_VERIFY_WITH_TIMEOUT(!QFileInfo::exists(snapshot), 10000);
+    }
+#endif
 
     void unloadCommitsTheActiveFormEditor()
     {
@@ -767,10 +943,9 @@ private slots:
             tab.viewer()->startFind(QStringLiteral("STANDARD"), false, false);
             const auto lifetime = tab.viewer()->document()->lifetime();
             QVERIFY(tab.suspend());
-            {
-                std::lock_guard lock(lifetime->mutex);
-                QVERIFY(!lifetime->document);
-            }
+            // The document closes on a background thread once its render and search
+            // work has stopped.
+            QTRY_VERIFY_WITH_TIMEOUT(closed(lifetime), 10000);
             QCoreApplication::processEvents();
             QVERIFY(!tab.viewer()->document());
             QVERIFY(tab.resume());

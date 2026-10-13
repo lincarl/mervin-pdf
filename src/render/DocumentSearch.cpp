@@ -2,22 +2,22 @@
 #include "render/Document.h"
 #include "render/RenderEngine.h"
 
+#include <QPointer>
+
 namespace mervin {
 DocumentSearch::DocumentSearch(RenderEngine *engine) : engine_(engine)
 {
-    pool_.setMaxThreadCount(1);
 }
 
 DocumentSearch::~DocumentSearch()
 {
     cancel();
-    pool_.waitForDone();
 }
 
 void DocumentSearch::cancel()
 {
-    ++generation_;
-    pool_.clear();
+    ++*generation_;
+    searches_.clear();
 }
 
 void DocumentSearch::clear()
@@ -37,15 +37,15 @@ void DocumentSearch::start(Document *document, const QString &query, bool matchC
         document_ = document->lifetime();
         index_ = std::make_shared<TextIndex>(engine_->baseContext(), document);
     }
-    const quint64 generation = generation_.load();
-    pool_.start([this, index = index_, query, matchCase, wholeWord, generation,
-                 completed = std::move(completed)] {
-        auto result = index->search(query, matchCase, wholeWord,
-                                    [this, generation] { return generation_.load() != generation; });
-        QMetaObject::invokeMethod(this, [this, generation, result = std::move(result), completed] {
-            if (generation_.load() == generation)
+    const quint64 generation = generation_->load();
+    searches_.add([owner = QPointer<QObject>(this), generations = generation_, index = index_,
+                   query, matchCase, wholeWord, generation, completed = std::move(completed)] {
+        const auto canceled = [&generations, generation] { return generations->load() != generation; };
+        auto result = index->search(query, matchCase, wholeWord, canceled);
+        background::post(owner, [generations, generation, result = std::move(result), completed] {
+            if (generations->load() == generation)
                 completed(result);
-        }, Qt::QueuedConnection);
+        });
     });
 }
 }

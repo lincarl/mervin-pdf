@@ -1,5 +1,7 @@
 #include "render/Document.h"
 
+#include "io/Background.h"
+
 #include <mupdf/fitz.h>
 #include <mupdf/pdf.h>
 
@@ -7,14 +9,18 @@
 #include <QCoreApplication>
 
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <unordered_map>
 
 namespace mervin {
 
-Document::Document(fz_context *baseCtx, fz_document *doc, bool ownsContext)
-    : ctx_(baseCtx), ownsContext_(ownsContext), doc_(doc)
+Document::Document(fz_context *ctx, fz_document *doc, bool ownsContext,
+                   std::shared_ptr<fz_context> base)
+    : base_(std::move(base)), ctx_(ctx), ownsContext_(ownsContext), doc_(doc)
 {
     lifetime_->document = this;
     int n = 0;
@@ -96,6 +102,45 @@ Document::~Document()
         fz_drop_document(ctx_, doc_);
     if (ownsContext_)
         fz_drop_context(ctx_);
+}
+
+namespace {
+std::atomic<int> closesInFlight{0};
+std::mutex followUpsMutex;
+std::condition_variable followUpsDone;
+int followUps = 0; // guarded by followUpsMutex: closes with a `then` not finished
+} // namespace
+
+void Document::closeInBackground(std::unique_ptr<Document> document, std::function<void()> then)
+{
+    ++closesInFlight;
+    if (then) {
+        std::lock_guard<std::mutex> lock(followUpsMutex);
+        ++followUps;
+    }
+    background::start([document = std::shared_ptr<Document>(std::move(document)),
+                       then = std::move(then)]() mutable {
+        document.reset();
+        --closesInFlight;
+        if (!then)
+            return;
+        then();
+        std::lock_guard<std::mutex> lock(followUpsMutex);
+        if (--followUps == 0)
+            followUpsDone.notify_all();
+    });
+}
+
+int Document::closing()
+{
+    return closesInFlight.load();
+}
+
+bool Document::waitForCloses(int ms)
+{
+    std::unique_lock<std::mutex> lock(followUpsMutex);
+    return followUpsDone.wait_for(lock, std::chrono::milliseconds(ms),
+                                  [] { return followUps == 0; });
 }
 
 QSizeF Document::pageSize(int pageNo) const

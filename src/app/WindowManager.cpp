@@ -7,6 +7,7 @@
 #include "ipc/Message.h"
 #include "ipc/SingleInstanceServer.h"
 #include "recent/PathKey.h"
+#include "render/Document.h"
 #include "render/RenderEngine.h"
 #include "ui/MainWindow.h"
 #include "ui/TabPage.h"
@@ -20,6 +21,7 @@
 #include <QScopedValueRollback>
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QLocalSocket>
@@ -838,9 +840,10 @@ WindowManager::~WindowManager()
     if (tray_)
         tray_->hide();
     *scanCancel_ = true; // nothing waits for a running scan; let it stop early
-    // Stop the render workers first, then free any windows still alive (their
-    // Documents), then let engine_ drop the MuPDF context (member destruction,
-    // after this body) - Documents are all gone by then.
+    // Stop the render workers, then free any windows still alive. Nothing waits for
+    // either: their Documents close on background threads, which wait for any work
+    // in them. Each holder of a context cloned from the engine's keeps that context
+    // alive (see RenderEngine::baseContext()), so engine_ can go after this body.
     if (engine_)
         engine_->shutdown();
     const QList<MainWindow *> copy = windows_;
@@ -848,8 +851,13 @@ WindowManager::~WindowManager()
     for (MainWindow *w : copy)
         delete w;
     // The next copy reads the settings, Recent and the session once it gets the
-    // single-instance pipe, which instanceServer_ holds until after this body.
-    appfiles::flush(appfiles::kExitWaitMs);
+    // single-instance pipe, which instanceServer_ holds until after this body. A
+    // tab's recovery copy is removed once its document has closed on a background
+    // thread, so those closes come first, within the same time.
+    QElapsedTimer exitWait;
+    exitWait.start();
+    Document::waitForCloses(appfiles::kExitWaitMs);
+    appfiles::flush(std::max(0, appfiles::kExitWaitMs - static_cast<int>(exitWait.elapsed())));
 }
 
 MainWindow *WindowManager::createWindow()
@@ -885,9 +893,9 @@ void WindowManager::onWindowDestroyed(MainWindow *w)
         stagedWindow_ = nullptr; // stagedStep then abandons the rest of the batch
 
     if (windows_.isEmpty() && !shuttingDown_) {
-        // Last window gone: stop workers before this window's Documents are
-        // freed (children are deleted right after this destroyed() handler),
-        // then quit the process. Nothing is left running afterwards.
+        // Last window gone: stop the render workers, then quit the process. This
+        // window's Documents, deleted right after this destroyed() handler, close
+        // on background threads.
         if (engine_)
             engine_->shutdown();
         QCoreApplication::quit();
@@ -1141,7 +1149,9 @@ void WindowManager::checkDocumentActivity()
         cacheTrimmed_ = false;
     else if (!cacheTrimmed_) {
         engine_->trimCache();
-        cacheTrimmed_ = true;
+        // Unloaded documents close on background threads, and what MuPDF cached
+        // for one goes at the first trim after it has closed.
+        cacheTrimmed_ = Document::closing() == 0;
     }
 }
 

@@ -9,6 +9,7 @@
 #include <QTest>
 
 #include <memory>
+#include <thread>
 
 using mervin::OcrService;
 using mervin::RenderEngine;
@@ -21,6 +22,7 @@ class TstOcr : public QObject
 
 private slots:
     void recognizesTextOnFirstPage();
+    void twoRecognitionsAtOnceBothFinish();
 };
 
 namespace {
@@ -77,6 +79,46 @@ void TstOcr::recognizesTextOnFirstPage()
     const bool found = up.contains(QStringLiteral("DEPARTMENT")) || up.contains(QStringLiteral("DEFENSE"))
                        || up.contains(QStringLiteral("STANDARD")) || up.contains(QStringLiteral("TEST"));
     QVERIFY2(found, qPrintable(QStringLiteral("unexpected OCR text: %1").arg(text.left(200))));
+}
+
+// A canceled recognition can still be running when the next one starts, each on
+// its own background thread and service. MuPDF's Tesseract allows one at a time
+// in a process, so the second used to fail ("Attempt to use Leptonica from 2
+// threads at once!"); now it waits its turn.
+void TstOcr::twoRecognitionsAtOnceBothFinish()
+{
+    QByteArray pdf = qgetenv("MERVIN_TEST_PDF");
+#ifdef MERVIN_OCR_PDF
+    if (pdf.isEmpty())
+        pdf = QByteArray(MERVIN_OCR_PDF);
+#endif
+    if (pdf.isEmpty())
+        QSKIP("set MERVIN_TEST_PDF to a text PDF to run the OCR test");
+    const QString tessdata = tessdataDirForTest();
+    QVERIFY(QFileInfo::exists(QDir(tessdata).filePath(QStringLiteral("eng.traineddata"))));
+
+    RenderEngine engine;
+    QString err;
+    std::unique_ptr<mervin::Document> doc =
+        engine.openDocument(QString::fromUtf8(pdf), QString(), &err);
+    QVERIFY2(doc != nullptr, qPrintable(err));
+    const QSizeF sz = doc->pageSize(0);
+    const QRectF whole(0, 0, sz.width(), sz.height());
+
+    OcrService first(&engine);
+    OcrService second(&engine);
+    QString texts[2];
+    QString errors[2];
+    std::thread a([&] {
+        texts[0] = first.recognize(doc.get(), 0, whole, {QStringLiteral("eng")}, tessdata, &errors[0]);
+    });
+    std::thread b([&] {
+        texts[1] = second.recognize(doc.get(), 0, whole, {QStringLiteral("eng")}, tessdata, &errors[1]);
+    });
+    a.join();
+    b.join();
+    for (int i = 0; i < 2; ++i)
+        QVERIFY2(!texts[i].isEmpty(), qPrintable(QStringLiteral("run %1 failed: %2").arg(i).arg(errors[i])));
 }
 
 QTEST_GUILESS_MAIN(TstOcr)

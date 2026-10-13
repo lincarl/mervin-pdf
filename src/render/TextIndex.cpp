@@ -36,14 +36,14 @@ QString normalizedWebUrl(const QString &raw)
 
 } // namespace
 
-TextIndex::TextIndex(fz_context *baseCtx, Document *doc)
-    : lifetime_(doc ? doc->lifetime() : nullptr), doc_(doc)
+TextIndex::TextIndex(std::shared_ptr<fz_context> baseCtx, Document *doc)
+    : base_(std::move(baseCtx)), lifetime_(doc ? doc->lifetime() : nullptr), doc_(doc)
 {
     // Clone the base context so text extraction runs on its own context,
     // independent of the render workers (MuPDF's documented multi-thread model;
     // the shared store is protected by the base context's lock callbacks).
-    if (baseCtx)
-        ctx_ = fz_clone_context(baseCtx);
+    if (base_)
+        ctx_ = fz_clone_context(base_.get());
     pages_.resize(doc_ ? doc_->pageCount() : 0);
 }
 

@@ -102,7 +102,7 @@ QSizeF loadedPageSize(fz_context *ctx, fz_document *doc, int pageNo)
 // Reported through QTest so a mismatch names the file and the page.
 void verifyEveryPage(RenderEngine &engine, const Document &doc, const QString &label)
 {
-    fz_context *ctx = engine.baseContext();
+    fz_context *ctx = engine.baseContext().get();
     std::lock_guard<std::mutex> lk(doc.accessMutex()); // same contract the workers honour
     for (int i = 0; i < doc.pageCount(); ++i) {
         const QSizeF ref = loadedPageSize(ctx, doc.handle(), i);

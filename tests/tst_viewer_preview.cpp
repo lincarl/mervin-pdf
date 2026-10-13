@@ -3,10 +3,10 @@
 // viewer used to show for the length of a full page render (tens of ms at normal
 // zoom, hundreds at deep zoom - see tst_perf_render).
 //
-// It is deterministic, not timing-dependent: RenderEngine emits resultReady from
-// its worker threads, so the connection is queued and no fresh render can be
-// delivered between a zoom call and a synchronous viewport grab. Whatever the
-// grab shows is what the user would have seen in that gap.
+// It is deterministic, not timing-dependent: RenderEngine's workers post their
+// results to the UI thread's event loop, so no fresh render can be delivered
+// between a zoom call and a synchronous viewport grab. Whatever the grab shows is
+// what the user would have seen in that gap.
 //
 // Two things keep the proof honest. Every claim is checked twice - once through
 // ViewerWidget::paintStats() (how each page was drawn) and once by counting ink

@@ -1,8 +1,8 @@
 #pragma once
 
+#include "io/Background.h"
 #include "render/TextIndex.h"
 #include <QObject>
-#include <QThreadPool>
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -16,6 +16,8 @@ class DocumentSearch : public QObject
 {
 public:
     explicit DocumentSearch(RenderEngine *engine);
+    // Cancels the search without waiting for it. One stuck reading a page from a
+    // drive that stopped answering ends once the read returns.
     ~DocumentSearch() override;
     void start(Document *document, const QString &query, bool matchCase, bool wholeWord,
                std::function<void(std::vector<TextMatch>)> completed);
@@ -25,8 +27,9 @@ public:
 
 private:
     RenderEngine *engine_;
-    QThreadPool pool_;
-    std::atomic<quint64> generation_{0};
+    background::SerialQueue searches_;
+    // Shared with the searches, which may outlive this.
+    std::shared_ptr<std::atomic<quint64>> generation_ = std::make_shared<std::atomic<quint64>>(0);
     std::shared_ptr<DocumentLifetime> document_;
     std::shared_ptr<TextIndex> index_;
 };

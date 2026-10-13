@@ -3,6 +3,7 @@
 #include "config/Settings.h"
 #include "config/ConfigPaths.h"
 #include "io/AppFiles.h"
+#include "io/Background.h"
 #include "render/Document.h"
 #include "render/MeasureContent.h"
 #include "render/MeasureMath.h"
@@ -17,14 +18,13 @@
 
 #include <QFileInfo>
 #include <QFile>
-#include <QCoreApplication>
-#include <QEvent>
 #include <QDateTime>
 #include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QPointer>
 #include <QPushButton>
 #include <QSaveFile>
 #include <QSet>
@@ -32,6 +32,8 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <condition_variable>
+#include <mutex>
 
 namespace mervin {
 
@@ -180,6 +182,15 @@ struct TabPage::OpenResult {
     bool needsPassword = false;
 };
 
+// A resumeAsync() read on a background thread, shared with the tab.
+struct TabPage::Load {
+    std::mutex mutex;
+    std::condition_variable finished;   // notified when `result` is set
+    std::shared_ptr<OpenResult> result; // guarded by mutex: set when the read is done
+    bool abandoned = false;             // guarded by mutex: the tab went away first
+    QString removeAfter;                // guarded by mutex: a recovery copy, see ~TabPage
+};
+
 QString TabPage::resolvedAnnotAuthor(const QString &configured)
 {
     QString author = configured.trimmed();
@@ -196,7 +207,6 @@ TabPage::TabPage(RenderEngine *engine, QWidget *parent)
     , engine_(engine)
     , saved_(std::make_unique<SavedState>())
 {
-    loadPool_.setMaxThreadCount(1);
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
@@ -355,32 +365,55 @@ TabPage::TabPage(RenderEngine *engine, QWidget *parent)
 
 TabPage::~TabPage()
 {
-    stopLoading();
     // Child widgets otherwise die after the Document member.
     delete viewer_;
     viewer_ = nullptr;
-    doc_.reset();
+    // The manifest goes now, so the recovery copy is never offered again. The copy
+    // itself goes once no document has it open, as Windows cannot remove an open file.
+    const QString snapshot = std::exchange(recoveryPath_, QString());
     clearRecovery();
+    Q_ASSERT(!doc_ || !load_); // a tab loads only while it has no document
+    std::unique_ptr<Document> document = std::move(doc_);
+    if (load_) {
+        std::lock_guard<std::mutex> lock(load_->mutex);
+        if (!load_->result) {
+            // Still reading: the load closes what it opened, then removes the copy.
+            load_->abandoned = true;
+            load_->removeAfter = snapshot;
+            return;
+        }
+        document = std::move(load_->result->document);
+    }
+    if (!document)
+        appfiles::remove(snapshot);
+    else if (snapshot.isEmpty())
+        Document::closeInBackground(std::move(document));
+    else
+        Document::closeInBackground(std::move(document), [snapshot] { appfiles::remove(snapshot); });
 }
 
 void TabPage::stopLoading()
 {
-    ++loadGeneration_;
     loading_ = false;
-    loadPool_.clear();
-    loadPool_.waitForDone();
-    // A finished worker can still have a queued result owning an open recovery PDF.
-    // Destroy that result before removing checkpoint files, especially on Windows.
-    QCoreApplication::removePostedEvents(this, QEvent::MetaCall);
+    const std::shared_ptr<Load> load = std::exchange(load_, nullptr);
+    if (!load)
+        return;
+    std::shared_ptr<OpenResult> result;
+    std::unique_lock<std::mutex> lock(load->mutex);
+    load->finished.wait(lock, [&load] { return load->result != nullptr; });
+    result = std::move(load->result);
+    lock.unlock();
+    // `result` closes its document here, before the caller removes or replaces a
+    // file it may have open.
 }
 
-std::shared_ptr<TabPage::OpenResult> TabPage::readDocument(RenderEngine *engine,
+std::shared_ptr<TabPage::OpenResult> TabPage::readDocument(DocumentOpener &opener,
                                                          const QString &path,
                                                          const QString &password)
 {
     auto result = std::make_shared<OpenResult>();
     result->source = sourceStamp(path);
-    result->document = engine->openDocument(path, password, &result->error, &result->needsPassword);
+    result->document = opener.open(path, password, &result->error, &result->needsPassword);
     if (!result->document)
         return result;
     if (result->document->hasMervinMeasurements()) {
@@ -423,7 +456,7 @@ bool TabPage::open(const QString &path, const QString &password, QString *error,
                    bool *needsPassword)
 {
     stopLoading();
-    const auto result = readDocument(engine_, path, password);
+    const auto result = readDocument(*engine_->opener(), path, password);
     if (needsPassword)
         *needsPassword = result->needsPassword;
     if (!result->document) {
@@ -471,7 +504,7 @@ bool TabPage::recoverSnapshot(const QString &snapshot, QString *error)
         QFile::remove(privateCopy);
         return false;
     }
-    auto result = readDocument(engine_, privateCopy, password_);
+    auto result = readDocument(*engine_->opener(), privateCopy, password_);
     if (!result->document) {
         if (error)
             *error = result->error;
@@ -702,14 +735,20 @@ bool TabPage::suspend(QString *error)
         previousManifest = oldManifest;
         retainedEdits_ = true;
     }
-    detachDocument();
-    // MuPDF may still be reading the previous checkpoint until detachDocument closes its
-    // file handle. Keep its manifest if removal fails so that file remains discoverable.
-    if (previousSnapshot.isEmpty() || QFile::remove(previousSnapshot)) {
-        if (!previousManifest.isEmpty()) {
-            claimedRecoveries.remove(previousManifest);
-            QFile::remove(previousManifest);
-        }
+    // The document closes on a background thread, as a render stuck reading it from
+    // a share that stopped answering would otherwise hold up the window. It can have
+    // the previous checkpoint open until then, so that goes after it. Its manifest
+    // stays if the removal fails, so that file remains discoverable.
+    if (!previousManifest.isEmpty())
+        claimedRecoveries.remove(previousManifest);
+    if (previousSnapshot.isEmpty() && previousManifest.isEmpty()) {
+        Document::closeInBackground(releaseDocument());
+    } else {
+        Document::closeInBackground(releaseDocument(), [previousSnapshot, previousManifest] {
+            if ((previousSnapshot.isEmpty() || QFile::remove(previousSnapshot))
+                && !previousManifest.isEmpty())
+                QFile::remove(previousManifest);
+        });
     }
     showPlaceholder(tr("Document is unloaded."), false);
     emit stateChanged();
@@ -752,7 +791,8 @@ bool TabPage::resume(QString *error, bool *needsPassword)
     if (doc_)
         return true;
     stopLoading();
-    const auto result = readDocument(engine_, recoveryPath_.isEmpty() ? path_ : recoveryPath_, password_);
+    const auto result = readDocument(*engine_->opener(),
+                                     recoveryPath_.isEmpty() ? path_ : recoveryPath_, password_);
     if (error)
         *error = result->error;
     if (needsPassword)
@@ -765,24 +805,50 @@ void TabPage::resumeAsync()
     if (doc_ || loading_)
         return;
     loading_ = true;
-    const quint64 generation = ++loadGeneration_;
     //: Shown in place of the page while the document loads.
     showPlaceholder(tr("Loading"), false);
     emit stateChanged();
-    const QString source = recoveryPath_.isEmpty() ? path_ : recoveryPath_;
-    const QString password = password_;
-    loadPool_.start([this, generation, source, password] {
-        auto result = readDocument(engine_, source, password);
-        QMetaObject::invokeMethod(this, [this, generation, result] {
-            if (generation != loadGeneration_)
-                return;
-            const bool success = finishResume(result);
-            emit resumeFinished(success, result->error, result->needsPassword);
-        }, Qt::QueuedConnection);
+    const auto load = std::make_shared<Load>();
+    load_ = load;
+    background::start([tab = QPointer<QObject>(this), load, opener = engine_->opener(),
+                       source = recoveryPath_.isEmpty() ? path_ : recoveryPath_,
+                       password = password_] {
+        auto result = readDocument(*opener, source, password);
+        std::unique_lock<std::mutex> lock(load->mutex);
+        if (load->abandoned) {
+            const QString removeAfter = load->removeAfter;
+            lock.unlock();
+            result.reset(); // closes the document on this thread
+            appfiles::remove(removeAfter);
+            return;
+        }
+        load->result = std::move(result);
+        load->finished.notify_all();
+        lock.unlock();
+        background::post(tab, [tab, load] { static_cast<TabPage *>(tab.data())->finishLoad(load); });
     });
 }
 
+void TabPage::finishLoad(const std::shared_ptr<Load> &load)
+{
+    if (load != load_)
+        return; // stopLoading() took its result
+    load_.reset();
+    std::shared_ptr<OpenResult> result;
+    {
+        std::lock_guard<std::mutex> lock(load->mutex);
+        result = std::move(load->result);
+    }
+    const bool success = finishResume(result);
+    emit resumeFinished(success, result->error, result->needsPassword);
+}
+
 void TabPage::detachDocument()
+{
+    releaseDocument(); // closes the file handle here
+}
+
+std::unique_ptr<Document> TabPage::releaseDocument()
 {
     stopLoading();
     if (doc_) {
@@ -790,7 +856,7 @@ void TabPage::detachDocument()
         saved_->restoreTools = true;
     }
     viewer_->setDocument(nullptr); // clear the viewer's raw Document* first
-    doc_.reset();                  // then drop the owner, closing the file handle
+    return std::move(doc_);
 }
 
 QString TabPage::tabTitle() const

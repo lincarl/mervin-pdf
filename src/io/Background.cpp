@@ -6,7 +6,9 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <mutex>
+#include <utility>
 
 namespace mervin::background {
 
@@ -57,6 +59,55 @@ void post(const QPointer<QObject> &context, std::function<void()> fn)
                 fn();
         },
         Qt::QueuedConnection);
+}
+
+struct SerialQueue::State
+{
+    std::mutex mutex;
+    std::deque<std::function<void()>> jobs; // guarded by mutex
+    bool working = false;                   // guarded by mutex: a task is running the jobs
+};
+
+SerialQueue::SerialQueue()
+    : state_(std::make_shared<State>())
+{
+}
+
+SerialQueue::~SerialQueue()
+{
+    clear();
+}
+
+void SerialQueue::add(std::function<void()> job)
+{
+    {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        state_->jobs.push_back(std::move(job));
+        if (std::exchange(state_->working, true))
+            return;
+    }
+    start([state = state_] {
+        for (;;) {
+            std::function<void()> job;
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                if (state->jobs.empty()) {
+                    state->working = false;
+                    return;
+                }
+                job = std::move(state->jobs.front());
+                state->jobs.pop_front();
+            }
+            job();
+        }
+    });
+}
+
+void SerialQueue::clear()
+{
+    std::deque<std::function<void()>> dropped;
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    dropped.swap(state_->jobs);
 }
 
 int running()
