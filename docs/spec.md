@@ -169,8 +169,9 @@ writes a copy, by default `<name>-edited.pdf` beside the document, which keeps t
 document's structure and encryption; the original file is never changed. Extract and
 Delete share one remembered Open when done choice.
 
-Extract and Delete copy pages from the saved file, so unsaved comments and form
-entries are not included; their window says so when the open document has any. The
+Extract and Delete copy pages from the saved file, so unsaved comments, form entries
+and measurements are not included; their window says so when the open document has
+any, including edits kept while the document was unloaded. The
 password typed to open an encrypted document is remembered for that tab, in memory
 only, and reused by Extract, Delete, the other page operations, Save edits, Security
 and Merge PDFs, so they do not ask again. Opening a copy written by Rotate, Delete,

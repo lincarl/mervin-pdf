@@ -502,7 +502,9 @@ void MainWindow::pagesDialog(mervin::ExtractPlan::Mode mode, std::optional<int> 
     src.password = t->password();
     src.viewerPageCount = v->pageCount();
     src.seedPage = seedPage;
-    src.hasUnsavedEdits = v->hasFormEdits() || v->hasAnnotEdits();
+    // The tab's own state, since a document reloaded from its recovery copy shows
+    // edits the viewer does not count as unsaved.
+    src.hasUnsavedEdits = t->hasUnsavedEdits();
     src.openWhenDone = settings_.extractOpenWhenDone;
     src.doc = v->document();
     src.engine = engine_;

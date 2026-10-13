@@ -20,6 +20,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QLabel>
 #include <QLineEdit>
 #include <QMap>
 #include <QMenu>
@@ -333,6 +334,49 @@ private slots:
         rightClick(pointOn.value(target));
         QVERIFY(menuItems.contains(QStringLiteral("Save Page As")));
         QTRY_COMPARE(seeded, QString::number(target + 1));
+        driver.stop();
+    }
+
+    // Extract and Delete copy pages from the file on disk. Their window says that
+    // unsaved changes are left out, also for edits that a document kept while it
+    // was unloaded, which the viewer no longer counts once it is reloaded.
+    void pageToolsNoteEditsKeptWhileUnloaded()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("edited.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        QVERIFY(window.openFile(path));
+        auto *tab = window.findChild<TabPage *>();
+        QVERIFY(tab);
+
+        QStringList summaries;
+        QTimer driver;
+        connect(&driver, &QTimer::timeout, this, [&] {
+            if (auto *dialog = qobject_cast<ExtractDialog *>(QApplication::activeModalWidget())) {
+                summaries << dialog->findChild<QLabel *>(QStringLiteral("extractSummary"))->text();
+                dialog->reject();
+            }
+        });
+        driver.start(10);
+        const QString note = QStringLiteral("Unsaved changes are not included.");
+        QVERIFY(QMetaObject::invokeMethod(&window, "extractPagesOp"));
+        QCOMPARE(summaries.size(), 1);
+        QVERIFY(!summaries.last().contains(note));
+
+        QVERIFY(tab->viewer()->annotModel()->addTextNote(
+                    0, {40, 40}, Qt::yellow, {}, QStringLiteral("Kept edit")) >= 0);
+        QVERIFY(tab->suspend());
+        QString error;
+        QVERIFY2(tab->resume(&error), qPrintable(error));
+        QVERIFY(!tab->viewer()->hasUnsavedEdits());
+        QVERIFY(tab->hasUnsavedEdits());
+        for (const char *op : {"extractPagesOp", "deletePagesOp"}) {
+            QVERIFY(QMetaObject::invokeMethod(&window, op));
+            QVERIFY2(summaries.last().contains(note), qPrintable(summaries.last()));
+        }
+        QCOMPARE(summaries.size(), 3);
         driver.stop();
     }
 
