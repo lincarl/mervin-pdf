@@ -1,7 +1,10 @@
+#include "io/FileProbe.h"
 #include "session/SessionStore.h"
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -10,25 +13,51 @@
 
 #include <functional>
 
+using mervin::FileCheck;
+using mervin::FileFacts;
+using mervin::FileProbe;
 using mervin::SessionStore;
 
 namespace {
 
 const QDate kToday(2026, 10, 12);
 
-// An empty file standing in for a PDF; prepareRestore only checks that it exists.
+using Found = std::function<std::optional<FileFacts>(const QString &)>;
+
+// An empty file standing in for a PDF; restore only checks that it exists.
 bool touch(const QString &path)
 {
     QFile f(path);
     return f.open(QIODevice::WriteOnly);
 }
 
-// A volume check for prepareRestore that treats `dir`/away as a detached drive and
-// everything else as attached.
+// A volume check that treats `dir`/away as a detached drive and everything else
+// as attached.
 std::function<bool(const QString &)> awayIsDetached(const QTemporaryDir &dir)
 {
     const QString away = dir.filePath(QStringLiteral("away")) + QLatin1Char('/');
     return [away](const QString &path) { return !path.startsWith(away); };
+}
+
+// The answers prepareRestore gets for the files filesToCheck() lists, checked on
+// this thread the way FileProbe checks them. `attached`, when given, stands in for
+// the volume check. `recordedMount` is Recent's, as WindowManager passes it.
+Found checked(SessionStore &s, const std::function<bool(const QString &)> &attached = {},
+              const std::function<QString(const QString &)> &recordedMount = {})
+{
+    QHash<QString, FileFacts> answers;
+    for (const FileCheck &file : s.filesToCheck(kToday, recordedMount)) {
+        FileFacts facts = FileProbe::examine(file);
+        if (!facts.exists && attached) {
+            facts.volumeAttached = attached(file.path);
+            facts.folderExists = facts.volumeAttached && QFileInfo(file.path).absoluteDir().exists();
+        }
+        answers.insert(file.path, facts);
+    }
+    return [answers](const QString &path) -> std::optional<FileFacts> {
+        const auto it = answers.constFind(path);
+        return it == answers.cend() ? std::nullopt : std::optional<FileFacts>(*it);
+    };
 }
 
 } // namespace
@@ -49,7 +78,8 @@ private slots:
     void fileOnDetachedVolumeIsKept();
     void fileInMissingFolderIsKept();
     void readableFileIsRestoredWhateverTheVolumeCheck();
-    void eachVolumeIsCheckedOnce();
+    void fileWithoutAnAnswerIsKept();
+    void checksListOpenThenKeptFiles();
     void unmountedMountPointIsDetached();
     void eachRecordedMountIsCheckedOnItsOwn();
     void sessionMountOutlivesRecent();
@@ -183,7 +213,7 @@ void TstSessionStore::removedFileIsDropped()
     SessionStore s;
     s.setPaths({removed, present});
     s.setActivePath(removed);
-    QCOMPARE(s.prepareRestore(kToday), QStringList{present});
+    QCOMPARE(s.prepareRestore(kToday, checked(s)), QStringList{present});
     QCOMPARE(s.paths(), QStringList{present});
     QVERIFY(s.unavailable().isEmpty());
     QVERIFY(s.activePath().isEmpty());
@@ -214,7 +244,7 @@ void TstSessionStore::fileOnDetachedVolumeIsKept()
     QCOMPARE(s.activePath(), away);
     QVERIFY(s.unavailable().isEmpty());
 
-    QCOMPARE(s.prepareRestore(kToday, awayIsDetached(dir)), QStringList{present});
+    QCOMPARE(s.prepareRestore(kToday, checked(s, awayIsDetached(dir))), QStringList{present});
     QCOMPARE(s.unavailable().size(), 1);
     QCOMPARE(s.unavailable().first().path, away);
     QCOMPARE(s.unavailable().first().since, kToday);
@@ -230,7 +260,7 @@ void TstSessionStore::fileInMissingFolderIsKept()
     const QString inMissingFolder = dir.filePath(QStringLiteral("nas/docs/plan.pdf"));
     SessionStore s;
     s.setPaths({inMissingFolder});
-    QVERIFY(s.prepareRestore(kToday, [](const QString &) { return true; }).isEmpty());
+    QVERIFY(s.prepareRestore(kToday, checked(s, [](const QString &) { return true; })).isEmpty());
     QCOMPARE(s.unavailable().size(), 1);
     QCOMPARE(s.unavailable().first().path, inMissingFolder);
 }
@@ -245,28 +275,61 @@ void TstSessionStore::readableFileIsRestoredWhateverTheVolumeCheck()
     QVERIFY(touch(present));
     SessionStore s;
     s.setPaths({present});
-    QCOMPARE(s.prepareRestore(kToday, [](const QString &) { return false; }),
+    QCOMPARE(s.prepareRestore(kToday, checked(s, [](const QString &) { return false; })),
              QStringList{present});
     QVERIFY(s.unavailable().isEmpty());
 }
 
-void TstSessionStore::eachVolumeIsCheckedOnce()
+void TstSessionStore::fileWithoutAnAnswerIsKept()
 {
-    // On an offline share every check can stall, so files on one share share one.
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    QVERIFY(QDir(dir.path()).mkpath(QStringLiteral("away")));
-    int checks = 0;
+    // A share that stopped answering gives no answer in time. Its documents are
+    // kept like those on an unplugged drive, the others restore as usual, and
+    // none is dropped.
+    const QString answered = QStringLiteral("C:/docs/a.pdf");
+    const QString silent = QStringLiteral("//server/share/b.pdf");
+    const QString keptSilent = QStringLiteral("//server/share/c.pdf");
     SessionStore s;
-    s.setPaths({dir.filePath(QStringLiteral("away/a.pdf")),
-                dir.filePath(QStringLiteral("away/b.pdf"))});
-    s.setUnavailable({{dir.filePath(QStringLiteral("away/c.pdf")), kToday}});
-    s.prepareRestore(kToday, [&checks](const QString &) {
-        ++checks;
-        return false;
+    s.setPaths({silent, answered});
+    s.setActivePath(silent);
+    s.setUnavailable({{keptSilent, kToday.addDays(-4)}});
+    const Found found = [&](const QString &path) -> std::optional<FileFacts> {
+        if (path != answered)
+            return std::nullopt;
+        FileFacts there;
+        there.exists = true;
+        return there;
+    };
+    QCOMPARE(s.prepareRestore(kToday, found), QStringList{answered});
+    QCOMPARE(s.unavailable().size(), 2);
+    QCOMPARE(s.unavailable().at(0).path, silent);
+    QCOMPARE(s.unavailable().at(0).since, kToday);
+    QCOMPARE(s.unavailable().at(1).path, keptSilent);
+    QCOMPARE(s.unavailable().at(1).since, kToday.addDays(-4));
+    QVERIFY(s.activePath().isEmpty());
+}
+
+void TstSessionStore::checksListOpenThenKeptFiles()
+{
+    // The open documents first, then kept ones that have not expired, each with
+    // the mount it is judged by, the session's or else Recent's, which the
+    // session keeps from then on.
+    const QString open = QStringLiteral("/home/ann/nas/a.pdf");
+    const QString kept = QStringLiteral("/home/ann/nas/b.pdf");
+    const QString expired = QStringLiteral("/home/ann/nas/c.pdf");
+    const QString nas = QStringLiteral("/home/ann/nas");
+    SessionStore s;
+    s.setMount(open, nas);
+    s.setUnavailable({{kept, kToday.addDays(-29)}, {expired, kToday.addDays(-30)}});
+    s.setPaths({open});
+    const QList<FileCheck> files = s.filesToCheck(kToday, [&](const QString &path) {
+        return path == kept ? nas : QString();
     });
-    QCOMPARE(checks, 1);
-    QCOMPARE(s.unavailable().size(), 3);
+    QCOMPARE(files.size(), 2);
+    QCOMPARE(files.at(0).path, open);
+    QCOMPARE(files.at(0).mount, nas);
+    QCOMPARE(files.at(1).path, kept);
+    QCOMPARE(files.at(1).mount, nas);
+    QCOMPARE(s.mount(kept), nas);
 }
 
 // Two documents in one folder, one with a recorded mount that no longer holds the
@@ -287,7 +350,7 @@ void TstSessionStore::eachRecordedMountIsCheckedOnItsOwn()
     for (const QStringList &order : {QStringList{local, fromShare}, QStringList{fromShare, local}}) {
         SessionStore s;
         s.setPaths(order);
-        QVERIFY(s.prepareRestore(kToday, {}, recordedMount).isEmpty());
+        QVERIFY(s.prepareRestore(kToday, checked(s, {}, recordedMount)).isEmpty());
         QCOMPARE(s.unavailable().size(), 1);
         QCOMPARE(s.unavailable().first().path, fromShare);
     }
@@ -321,7 +384,7 @@ void TstSessionStore::sessionMountOutlivesRecent()
         };
         SessionStore s;
         QVERIFY(s.load(file));
-        QVERIFY(s.prepareRestore(kToday, {}, recordedMount).isEmpty());
+        QVERIFY(s.prepareRestore(kToday, checked(s, {}, recordedMount)).isEmpty());
         QCOMPARE(s.unavailable().size(), 2);
         QCOMPARE(s.unavailable().at(0).path, fromShare);
         QCOMPARE(s.unavailable().at(1).path, older);
@@ -342,7 +405,7 @@ void TstSessionStore::unmountedMountPointIsDetached()
 #endif
     SessionStore s;
     s.setPaths({away});
-    QVERIFY(s.prepareRestore(kToday).isEmpty());
+    QVERIFY(s.prepareRestore(kToday, checked(s)).isEmpty());
     QCOMPARE(s.unavailable().size(), 1);
     QCOMPARE(s.unavailable().first().path, away);
 }
@@ -363,7 +426,7 @@ void TstSessionStore::keptFileExpires()
     s.setUnavailable({{recent, kToday.addDays(-29)},
                       {expired, kToday.addDays(-30)},
                       {future, kToday.addDays(5)}});
-    QVERIFY(s.prepareRestore(kToday, awayIsDetached(dir)).isEmpty());
+    QVERIFY(s.prepareRestore(kToday, checked(s, awayIsDetached(dir))).isEmpty());
     QCOMPARE(s.unavailable().size(), 2);
     QCOMPARE(s.unavailable().at(0).path, recent);
     QCOMPARE(s.unavailable().at(0).since, kToday.addDays(-29));
@@ -389,7 +452,7 @@ void TstSessionStore::keptFileFoundAgainIsRestored()
     SessionStore s;
     s.setPaths({present});
     s.setUnavailable({{back, since}, {removed, since}, {away, since}});
-    QCOMPARE(s.prepareRestore(kToday, awayIsDetached(dir)), (QStringList{present, back}));
+    QCOMPARE(s.prepareRestore(kToday, checked(s, awayIsDetached(dir))), (QStringList{present, back}));
     QCOMPARE(s.unavailable().size(), 1);
     QCOMPARE(s.unavailable().first().path, away);
     QCOMPARE(s.unavailable().first().since, since);

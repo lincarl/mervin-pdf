@@ -91,11 +91,8 @@ bool RecentStore::remove(const QString &path)
     return false;
 }
 
-QStringList RecentStore::removeMissingFiles(const QStringList &paths)
+QStringList RecentStore::removeEntries(const QStringList &paths)
 {
-    if (paths.isEmpty())
-        return {};
-
     QSet<QString> keys;
     keys.reserve(paths.size());
     for (const QString &path : paths) {
@@ -107,7 +104,7 @@ QStringList RecentStore::removeMissingFiles(const QStringList &paths)
 
     QStringList removed;
     for (auto it = entries_.begin(); it != entries_.end(); ) {
-        if (!keys.contains(normalizePathKey(it->path)) || QFileInfo::exists(it->path)) {
+        if (!keys.contains(normalizePathKey(it->path))) {
             ++it;
             continue;
         }
@@ -115,6 +112,20 @@ QStringList RecentStore::removeMissingFiles(const QStringList &paths)
         it = entries_.erase(it);
     }
     return removed;
+}
+
+bool RecentStore::setMount(const QString &path, const QString &mount)
+{
+    const QString key = normalizePathKey(path);
+    for (RecentEntry &e : entries_) {
+        if (normalizePathKey(e.path) == key) {
+            if (e.mount == mount)
+                return false;
+            e.mount = mount;
+            return true;
+        }
+    }
+    return false;
 }
 
 namespace {

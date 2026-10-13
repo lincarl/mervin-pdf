@@ -1,13 +1,17 @@
 #pragma once
 
+#include "io/FileFacts.h"
 #include "recent/RecentEntry.h"
 #include "ui/RecentSearchField.h"
 
 #include <QHash>
 #include <QList>
+#include <QPointer>
 #include <QSet>
 #include <QStringList>
 #include <QWidget>
+
+#include <optional>
 
 class QLabel;
 class QListWidget;
@@ -17,11 +21,16 @@ class QTimer;
 
 namespace mervin {
 
+class FileProbe;
+
 // Recent history, newest first. Starred files sit in a "Favourites" section at the
 // top, followed by the rest under "Recent" (no captions while nothing is starred).
 // The search field above the list searches file names, inside the documents, or
 // both (names first, then contents); content-search results stream in through
-// addContentHit(). Missing files offer Locate/Remove/Cancel.
+// addContentHit(). Missing files offer Locate/Remove/Cancel. A FileProbe tells the
+// panel which files are missing and how large the others are; it never touches the
+// disk itself. Until a file's check answers, its row shows no size and counts as
+// there.
 class RecentFilesPanel : public QWidget
 {
     Q_OBJECT
@@ -34,6 +43,10 @@ public:
     // Replace the displayed history (entries most-recent first). The current file
     // and the scroll offset are kept.
     void setEntries(const QList<RecentEntry> &entries);
+
+    // The checker that finds missing files and file sizes for the listed rows,
+    // shared with the other windows. Without one no file shows as missing.
+    void setFileProbe(FileProbe *probe);
 
     // How many non-starred entries to show when the search is empty (spec default
     // 100). Starred files are always shown.
@@ -114,7 +127,9 @@ private:
     bool nameMatches(const RecentEntry &entry) const;
     const RecentEntry *entryFor(const QString &path) const;
     void onItemActivated(QListWidgetItem *item);
-    void handleMissingFile(const QString &path);
+    // Locate, remove or keep a missing file. The Locate dialog opens in the file's
+    // folder when a check found the folder there.
+    void handleMissingFile(const QString &path, bool folderThere);
     void toggleItemFavorite(QListWidgetItem *item);
     QStringList missingFilesInCurrentFilter() const;
 
@@ -125,12 +140,21 @@ private:
     void showEmptyNote(const QString &text);
     QListWidgetItem *makeFileItem(const RecentEntry &entry);
     QListWidgetItem *makeHitItem(const RecentEntry &entry, const ContentHit &hit);
+    // Show what a check found on the file's row, and ask for checks of the listed
+    // files whose answer is old or missing.
+    void applyFacts(QListWidgetItem *item, const std::optional<FileFacts> &facts);
+    void onFileChecked(const FileCheck &file, const FileFacts &facts);
+    // The check for a listed file, with the mount Recent recorded for it.
+    FileCheck checkFor(const QString &path) const;
+    void checkListedFiles();
 
     RecentSearchField *search_ = nullptr;
     QLabel *status_ = nullptr;
     QToolButton *stopBtn_ = nullptr;
     QListWidget *list_ = nullptr;
     QTimer *debounce_ = nullptr;
+    QPointer<FileProbe> probe_;
+    QHash<QString, QListWidgetItem *> rows_; // file rows by normalizePathKey
     QList<RecentEntry> entries_;
     int visibleCount_ = 100;
     bool searching_ = false;

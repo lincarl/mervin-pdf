@@ -1,5 +1,7 @@
 #pragma once
 
+#include "io/FileFacts.h"
+
 #include <QDate>
 #include <QHash>
 #include <QList>
@@ -7,6 +9,7 @@
 #include <QStringList>
 
 #include <functional>
+#include <optional>
 
 namespace mervin {
 
@@ -32,8 +35,8 @@ public:
 
     // The open documents. A kept document among them is open again, so it leaves
     // unavailable() and a later close drops it like any other tab. Kept documents
-    // are not checked on disk here: saves run on the UI thread, and a check on an
-    // unreachable share can stall for seconds.
+    // are not checked on disk here, or anywhere in this class. A check on an
+    // unreachable share can stall for minutes, so FileProbe makes them.
     void setPaths(const QStringList &paths);
     const QStringList &paths() const { return paths_; }
 
@@ -49,6 +52,8 @@ public:
     // as they are, without checking the disk.
     void setUnavailable(const QList<Unavailable> &entries) { unavailable_ = entries; }
     const QList<Unavailable> &unavailable() const { return unavailable_; }
+    // Drops a kept document, as one found gone from its folder after startup.
+    void forgetUnavailable(const QString &path);
 
     // The mount point a document was opened from (RecentEntry::mount). The session
     // keeps its own copy, so a share that is away is still told from a deleted file
@@ -58,20 +63,26 @@ public:
     void setMount(const QString &path, const QString &mount);
     QString mount(const QString &path) const;
 
-    // The startup decision for a loaded session. A missing document whose folder is
-    // still there on an attached volume was deleted, moved or renamed, and is
-    // dropped. Any other missing document, on a volume that is away or in a missing
-    // folder, is kept in unavailable(), dated `today` when first found. Kept
-    // documents found again are restored after the open ones, and those kept for
-    // kKeepUnavailableDays are dropped without checking the disk. Replaces paths()
-    // with the documents to reopen, in order, and returns them. Each document is
-    // judged by its mount(), or else by `recordedMount`, which WindowManager looks
-    // up in Recent for a session saved before sessions recorded mounts. A mount
-    // found that way is kept from then on. `volumeAttached` defaults to
-    // RecentStore::isVolumeAttached with that mount, and tests pass their own.
+    // The documents the startup decision needs checked: the open ones, then the kept
+    // ones that have not expired, each with the mount it is judged by. That is its
+    // mount(), or else `recordedMount`, which WindowManager looks up in Recent for a
+    // session saved before sessions recorded mounts. A mount found that way is kept
+    // from then on.
+    QList<FileCheck> filesToCheck(const QDate &today,
+                                  const std::function<QString(const QString &)> &recordedMount = {});
+
+    // The startup decision for a loaded session, from what the checks of
+    // filesToCheck() found. `found` gives the answer for a path, or nothing when no
+    // answer has arrived, as for a share that stopped answering. A document that is
+    // there is restored. A missing document whose folder is still there on an
+    // attached volume (FileFacts::goneFromFolder) was deleted, moved or renamed, and
+    // is dropped. Any other document, including one without an answer, is kept in
+    // unavailable(), dated `today` when first found. Kept documents found again are
+    // restored after the open ones, and those kept for kKeepUnavailableDays are
+    // dropped unchecked. Replaces paths() with the documents to reopen, in order, and
+    // returns them.
     QStringList prepareRestore(const QDate &today,
-                               const std::function<bool(const QString &)> &volumeAttached = {},
-                               const std::function<QString(const QString &)> &recordedMount = {});
+                               const std::function<std::optional<FileFacts>(const QString &)> &found);
 
     void clear()
     {
@@ -89,6 +100,9 @@ public:
 private:
     // Forgets the mounts of documents that are neither open nor kept.
     void keepListedMounts();
+    // The date an entry counts from, and whether it has been kept long enough.
+    static QDate keptSince(const Unavailable &entry, const QDate &today);
+    static bool expired(const Unavailable &entry, const QDate &today);
 
     QStringList paths_;
     QString activePath_;

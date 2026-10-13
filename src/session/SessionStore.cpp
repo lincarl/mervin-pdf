@@ -2,11 +2,9 @@
 
 #include "config/ConfigPaths.h"
 #include "recent/PathKey.h"
-#include "recent/RecentStore.h"
 
 #include <QDir>
 #include <QFile>
-#include <QFileInfo>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -117,6 +115,15 @@ void SessionStore::setPaths(const QStringList &paths)
     keepListedMounts();
 }
 
+void SessionStore::forgetUnavailable(const QString &path)
+{
+    const QString key = normalizePathKey(path);
+    if (unavailable_.removeIf([&key](const Unavailable &entry) {
+            return normalizePathKey(entry.path) == key;
+        }) > 0)
+        keepListedMounts();
+}
+
 void SessionStore::setMount(const QString &path, const QString &mount)
 {
     if (mount.isEmpty())
@@ -142,55 +149,67 @@ void SessionStore::keepListedMounts()
     mounts_.removeIf([&listed](const auto &it) { return !listed.contains(it.key()); });
 }
 
-QStringList SessionStore::prepareRestore(const QDate &today,
-                                         const std::function<bool(const QString &)> &volumeAttached,
-                                         const std::function<QString(const QString &)> &recordedMount)
+QList<FileCheck> SessionStore::filesToCheck(const QDate &today,
+                                            const std::function<QString(const QString &)> &recordedMount)
+{
+    QList<FileCheck> files;
+    const auto add = [&](const QString &path) {
+        QString m = mount(path);
+        if (m.isEmpty() && recordedMount) {
+            m = recordedMount(path);
+            setMount(path, m);
+        }
+        files.append({path, m});
+    };
+    for (const QString &path : std::as_const(paths_))
+        add(path);
+    for (const Unavailable &entry : std::as_const(unavailable_))
+        if (!expired(entry, today) && !paths_.contains(entry.path))
+            add(entry.path);
+    return files;
+}
+
+bool SessionStore::expired(const Unavailable &entry, const QDate &today)
+{
+    return keptSince(entry, today).daysTo(today) >= kKeepUnavailableDays;
+}
+
+QDate SessionStore::keptSince(const Unavailable &entry, const QDate &today)
+{
+    // A date that is unreadable or in the future (a wrong clock) counts from today.
+    return entry.since.isValid() && entry.since <= today ? entry.since : today;
+}
+
+QStringList SessionStore::prepareRestore(
+    const QDate &today, const std::function<std::optional<FileFacts>(const QString &)> &found)
 {
     enum class Found { File, Gone, Away };
-    // Each drive or share is checked once, since on an offline share every check
-    // can stall for seconds. Documents in one folder share an answer only when
-    // they were opened from the same mount.
-    QHash<QString, bool> attachedByVolume;
     const auto find = [&](const QString &path) {
-        const QFileInfo info(path);
-        if (info.exists())
+        const std::optional<FileFacts> facts = found ? found(path) : std::nullopt;
+        if (!facts)
+            return Found::Away;
+        if (facts->exists)
             return Found::File;
-        QString mount = this->mount(path);
-        if (mount.isEmpty() && recordedMount) {
-            mount = recordedMount(path);
-            setMount(path, mount);
-        }
-        const QString volume = RecentStore::volumeKey(path) + QLatin1Char('\n') + mount;
-        auto it = attachedByVolume.constFind(volume);
-        if (it == attachedByVolume.cend())
-            it = attachedByVolume.insert(volume, volumeAttached
-                                                     ? volumeAttached(path)
-                                                     : RecentStore::isVolumeAttached(path, mount));
-        // Gone only from a folder that is still there on an attached volume. A
-        // missing folder can be a drive mounted where the volume check does not
-        // look, such as a share mounted in the home folder.
-        return *it && info.absoluteDir().exists() ? Found::Gone : Found::Away;
+        return facts->goneFromFolder() ? Found::Gone : Found::Away;
     };
 
     QStringList restore;
     QList<Unavailable> kept;
     for (const QString &path : std::as_const(paths_)) {
-        const Found found = find(path);
-        if (found == Found::File)
+        const Found f = find(path);
+        if (f == Found::File)
             restore.append(path);
-        else if (found == Found::Away)
+        else if (f == Found::Away)
             kept.append({path, today});
     }
     for (const Unavailable &entry : std::as_const(unavailable_)) {
-        // A date that is unreadable or in the future (a wrong clock) counts from today.
-        const QDate since = entry.since.isValid() && entry.since <= today ? entry.since : today;
-        if (since.daysTo(today) >= kKeepUnavailableDays || paths_.contains(entry.path))
+        if (expired(entry, today) || paths_.contains(entry.path))
             continue;
-        const Found found = find(entry.path);
-        if (found == Found::File)
+        const Found f = find(entry.path);
+        if (f == Found::File)
             restore.append(entry.path);
-        else if (found == Found::Away)
-            kept.append({entry.path, since});
+        else if (f == Found::Away)
+            kept.append({entry.path, keptSince(entry, today)});
     }
 
     paths_ = restore;

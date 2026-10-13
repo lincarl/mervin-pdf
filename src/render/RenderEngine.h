@@ -67,10 +67,7 @@ signals:
 private:
     void workerLoop(fz_context *ctx);
 
-    fz_context *base_ = nullptr;
-    // Sized to MuPDF's FZ_LOCK_MAX (currently 3); 4 is a safe upper bound
-    // (static_assert in the .cpp guards against growth).
-    std::array<std::mutex, 4> locks_;
+    fz_context *base_ = nullptr; // locked with sharedMuPdfLocks()
 
     std::vector<std::thread> workers_;
     struct Job {

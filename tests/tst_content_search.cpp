@@ -1,5 +1,4 @@
 #include "render/ContentSearch.h"
-#include "render/RenderEngine.h"
 
 #include <QFileInfo>
 #include <QSignalSpy>
@@ -8,7 +7,6 @@
 #include <QTest>
 
 using mervin::ContentSearch;
-using mervin::RenderEngine;
 
 // ContentSearch drives MuPDF text extraction across files on a worker thread, so
 // a meaningful test needs a real PDF. It uses an optional local fixture when
@@ -50,8 +48,7 @@ QByteArray searchPdf()
 
 void TstContentSearch::blankQueryFinishesImmediately()
 {
-    RenderEngine engine;
-    ContentSearch cs(&engine);
+    ContentSearch cs;
     QSignalSpy done(&cs, &ContentSearch::finished);
     cs.start({QStringLiteral("C:/whatever.pdf")}, QStringLiteral("   "));
     QCOMPARE(done.count(), 1);          // blank query -> immediate finish
@@ -61,8 +58,7 @@ void TstContentSearch::blankQueryFinishesImmediately()
 
 void TstContentSearch::emptyPathListFinishes()
 {
-    RenderEngine engine;
-    ContentSearch cs(&engine);
+    ContentSearch cs;
     QSignalSpy done(&cs, &ContentSearch::finished);
     cs.start({}, QStringLiteral("anything"));
     QCOMPARE(done.count(), 1);
@@ -78,8 +74,7 @@ void TstContentSearch::findsTermInRealPdf()
     if (term.isEmpty())
         term = QStringLiteral("the");
 
-    RenderEngine engine;
-    ContentSearch cs(&engine);
+    ContentSearch cs;
     QSignalSpy hits(&cs, &ContentSearch::hit);
     QSignalSpy done(&cs, &ContentSearch::finished);
 
@@ -98,8 +93,7 @@ void TstContentSearch::missesAbsentTerm()
     if (pdf.isEmpty())
         QSKIP("no search document: set MERVIN_TEST_PDF to a PDF containing the term");
 
-    RenderEngine engine;
-    ContentSearch cs(&engine);
+    ContentSearch cs;
     QSignalSpy hits(&cs, &ContentSearch::hit);
     QSignalSpy done(&cs, &ContentSearch::finished);
 
@@ -113,8 +107,7 @@ void TstContentSearch::missesAbsentTerm()
 
 void TstContentSearch::replacedQueryRejectsQueuedResults()
 {
-    RenderEngine engine;
-    ContentSearch search(&engine);
+    ContentSearch search;
     QSignalSpy hits(&search, &ContentSearch::hit);
     QSignalSpy done(&search, &ContentSearch::finished);
     search.start({QStringLiteral(MERVIN_FIXTURE_PDF)}, "STANDARD");

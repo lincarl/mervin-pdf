@@ -4,6 +4,7 @@
 #include <QFileInfo>
 #include <QLocalSocket>
 #include <QLockFile>
+#include <QPointer>
 #include <QLocale>
 #include <QSettings>
 #include <QSet>
@@ -15,6 +16,7 @@
 #include "config/Settings.h"
 #include "dialogs/FirstRunDialog.h"
 #include "i18n/UiLanguage.h"
+#include "io/Background.h"
 #include "ipc/Message.h"
 #include "ipc/PipeName.h"
 #include "ipc/SingleInstanceServer.h"
@@ -24,6 +26,7 @@
 #include "ui/Icons.h"
 #include "ui/MainWindow.h"
 #include "mervin_version.h"
+#include "recent/PathKey.h"
 #include "session/StartupPlan.h"
 #include "ui/TabPage.h"
 #include "ui/Theme.h"
@@ -34,8 +37,10 @@
 #endif
 
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <memory>
+#include <optional>
 
 #ifdef Q_OS_WIN
 #  define WIN32_LEAN_AND_MEAN
@@ -290,34 +295,21 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
     if (firstRun.makeDefaultApp)
         mervin::FirstRunDialog::setAsDefaultPdfApp(firstWindow);
 
-    // Crash recovery / session restore (M11): reopen the documents that were
-    // open last time and still exist (see SessionStore::prepareRestore). On by
-    // default. When off, the saved session is never loaded, so the first save
-    // forgets it.
-    QStringList restore;
-    if (mervin::Settings::load().restoreSession)
-        restore = wm.sessionPathsToRestore();
-
     // Recover unsaved work even if the original moved or ordinary session restore is off.
     // Passwords are deliberately absent from these manifests and are requested on selection.
     const QStringList recovery = mervin::TabPage::recoverablePaths();
-    for (const QString &path : recovery)
-        if (!restore.contains(path))
-            restore.append(path);
-
-    // Keep command-line/session duplicates in the restore list: planStartupOpens opens them
-    // once while reserving their saved tab positions.
-    QList<mervin::StagedOpen> batch =
-        mervin::planStartupOpens(paths, restore, wm.sessionActivePath());
-    for (auto &open : batch)
-        if (recovery.contains(open.path))
-            open.lazy = true;
-    QSet<QString> recovered;
-    for (const QString &path : recovery) {
-        if (recovered.contains(path))
-            batch.append({path, static_cast<int>(restore.indexOf(path)), false, true, true});
-        recovered.insert(path);
-    }
+    const QList<mervin::TabPage::RecoverableDocument> recoverable =
+        mervin::TabPage::recoverableDocuments();
+    // The path a command-line file with a recovery copy opens under, lazily so the copy
+    // is used, or "" when it has none.
+    const auto recoveredPath = [&recoverable](const QString &path) {
+        const QString key = mervin::normalizePathKey(path);
+        for (const auto &document : recoverable)
+            if (mervin::normalizePathKey(document.original) == key
+                || (!document.canonical.isEmpty() && mervin::normalizePathKey(document.canonical) == key))
+                return document.canonical.isEmpty() ? document.original : document.canonical;
+        return QString();
+    };
 
     // --quit-after-startup waits for all tab shells and the selected document load.
     // tst_perf_startup times this process as plain runtime, and
@@ -325,7 +317,75 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
     std::function<void()> onDone;
     if (cli.quitAfterStartup)
         onDone = [] { QCoreApplication::quit(); };
-    wm.openStaged(batch, restore, onDone);
+
+    // Command-line files open at once. The session's documents follow once their
+    // checks have answered (WindowManager::restoreSession), so a share that stopped
+    // answering never holds up the window or the files asked for.
+    struct Startup
+    {
+        bool filesOpened = false;
+        std::optional<QStringList> restore;
+    };
+    const auto startup = std::make_shared<Startup>();
+    // Both batches open into the first window, even if another one appears meanwhile.
+    const QPointer<MainWindow> startWindow(firstWindow);
+    // Nothing saves the session until its documents are queued (see holdSession).
+    wm.holdSession(true);
+    const auto openSession = [&wm, startup, startWindow, paths, recovery, onDone] {
+        if (!startup->filesOpened || !startup->restore)
+            return;
+        // A document opened during the wait, from Recent or another launch, keeps the
+        // view, as a command-line file does.
+        const bool keepView = !startWindow || startWindow->tabCount() > 0;
+        QStringList restore = *startup->restore;
+        for (const QString &path : recovery)
+            if (!restore.contains(path))
+                restore.append(path);
+
+        // Keep command-line/session duplicates in the restore list: planStartupOpens opens them
+        // once while reserving their saved tab positions. The command-line files at the front of
+        // its plan are open already.
+        QList<mervin::StagedOpen> batch =
+            mervin::planStartupOpens(paths, restore, wm.sessionActivePath()).mid(paths.size());
+        for (auto &open : batch) {
+            if (recovery.contains(open.path))
+                open.lazy = true;
+            if (keepView)
+                open.makeCurrent = false;
+        }
+        QSet<QString> recovered;
+        for (const QString &path : recovery) {
+            if (recovered.contains(path))
+                batch.append({path, static_cast<int>(restore.indexOf(path)), false, true, true});
+            recovered.insert(path);
+        }
+        wm.openStaged(batch, restore, onDone, startWindow.data());
+        wm.holdSession(false);
+    };
+    QList<mervin::StagedOpen> files = mervin::planStartupOpens(paths, {}, {});
+    for (auto &open : files) {
+        if (const QString recovered = recoveredPath(open.path); !recovered.isEmpty()) {
+            open.path = recovered;
+            open.lazy = true;
+        }
+    }
+    wm.openStaged(files, {}, [startup, openSession] {
+        startup->filesOpened = true;
+        openSession();
+    }, startWindow.data());
+
+    // Crash recovery / session restore (M11): reopen the documents that were
+    // open last time and still exist (see SessionStore::prepareRestore). On by
+    // default. When off, the saved session is never loaded, so the first save
+    // forgets it.
+    const auto restored = [startup, openSession](const QStringList &restore) {
+        startup->restore = restore;
+        openSession();
+    };
+    if (mervin::Settings::load().restoreSession)
+        wm.restoreSession(restored);
+    else
+        restored({});
 
     // The first-run picker applies its language live, so no restart is needed.
     // Start once the main window can paint and stop with this process.
@@ -345,7 +405,10 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
     if (!cli.quitAfterStartup)
         QTimer::singleShot(2500, &updater, &mervin::Updater::onStartup);
 
-    return app.exec();
+    const int code = app.exec();
+    // Nothing that is torn down from here on hears from background work again.
+    mervin::background::shutDown();
+    return code;
 }
 
 } // namespace
@@ -355,7 +418,10 @@ int main(int argc, char *argv[])
 #ifdef Q_OS_WIN
     attachParentConsole(); // keep qDebug visible when run from a terminal (see above)
 #endif
-    QApplication app(argc, argv);
+    // Held so it can be torn down before the process ends without static destructors
+    // (see finish): its teardown hands the clipboard over to the system.
+    std::optional<QApplication> app;
+    app.emplace(argc, argv);
     QApplication::setApplicationName(QStringLiteral(MERVIN_APP_NAME));
     QApplication::setOrganizationName(QStringLiteral(MERVIN_ORG_NAME));
     QApplication::setApplicationVersion(QStringLiteral(MERVIN_VERSION_STRING));
@@ -387,9 +453,18 @@ int main(int argc, char *argv[])
 
     // A restart asked for while running (a new UI language) starts the new copy here,
     // after runUi has released the single-instance pipe.
-    const auto finish = [](int code) {
+    const auto finish = [&app](int code) {
         if (mervin::relaunch::requested() && !mervin::relaunch::start())
             std::fprintf(stderr, "MervinPDF: could not restart\n");
+        app.reset();
+        // Background work told to stop gets a moment. Work still running then is
+        // stuck on a drive that stopped answering and holds its threads, and static
+        // destructors could free what they use. Leave without running them, as
+        // nothing is left to save.
+        if (!mervin::background::settle(200)) {
+            std::fflush(nullptr);
+            std::_Exit(code);
+        }
         return code;
     };
 
@@ -399,7 +474,7 @@ int main(int argc, char *argv[])
     auto server = std::make_unique<SingleInstanceServer>();
     for (int attempt = 0; attempt < 2; ++attempt) {
         if (server->start())
-            return finish(runUi(app, cli, paths, std::move(server))); // we are the primary
+            return finish(runUi(*app, cli, paths, std::move(server))); // we are the primary
         if (handOffToPrimary(paths, behavior))
             return 0; // delivered to the running instance
         // The primary released the pipe between our failed start and the connect
@@ -408,5 +483,5 @@ int main(int argc, char *argv[])
 
     // Could not coordinate (extremely unlikely). Open standalone so the user
     // still gets their file; this launch simply isn't the single-instance owner.
-    return finish(runUi(app, cli, paths, nullptr));
+    return finish(runUi(*app, cli, paths, nullptr));
 }
