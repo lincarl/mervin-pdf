@@ -53,6 +53,9 @@ struct Settings
     // until cleared by hand. When false, WindowManager drops them from the history
     // whenever the Recent list is shown, unless their drive or share is detached
     // (see RecentStore::isRemovedFromDisk and WindowManager::pruneMissingRecent).
+    // Saved as `recent_keep_removed`, a new key on purpose. The retired
+    // `recent_keep_missing` defaulted to on through 1.65.0 and every saved config
+    // wrote it, so honouring it would have kept this on for nearly everyone.
     bool recentKeepMissing = false;
     // Where the Recent page's search looks when a window opens: "names" (file
     // names), "contents" (inside the documents), or "all" (names, then contents).

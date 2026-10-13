@@ -70,7 +70,7 @@ static Settings loadValues()
         s.closeToTray = boolean("close_to_tray", s.closeToTray);
         s.recentVisibleCount = integer("recent_visible_count", s.recentVisibleCount);
         s.recentRetention = integer("recent_retention", s.recentRetention);
-        s.recentKeepMissing = boolean("recent_keep_missing", s.recentKeepMissing);
+        s.recentKeepMissing = boolean("recent_keep_removed", s.recentKeepMissing);
         const QString scope = str("recent_search_scope", s.recentSearchScope);
         if (scope == QLatin1String("names") || scope == QLatin1String("contents")
             || scope == QLatin1String("all"))
@@ -113,7 +113,7 @@ static toml::table settingsTable(const Settings &s)
     tbl.insert("close_to_tray", s.closeToTray);
     tbl.insert("recent_visible_count", static_cast<int64_t>(s.recentVisibleCount));
     tbl.insert("recent_retention", static_cast<int64_t>(s.recentRetention));
-    tbl.insert("recent_keep_missing", s.recentKeepMissing);
+    tbl.insert("recent_keep_removed", s.recentKeepMissing);
     tbl.insert("recent_search_scope", s.recentSearchScope.toStdString());
     tbl.insert("measurement_unit", s.measurementUnit.toStdString());
     tbl.insert("measurement_type", s.measurementType.toStdString());
