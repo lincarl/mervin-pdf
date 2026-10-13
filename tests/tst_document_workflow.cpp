@@ -487,6 +487,42 @@ private slots:
         QCOMPARE(clicked_.last(), QStringLiteral("Don't save"));
     }
 
+    // The unsaved-changes question runs its own event loop, in which a session
+    // restore can insert tabs before the one being closed. The answer still
+    // closes the tab it was about.
+    void closingAfterTheQuestionClosesTheSameTab()
+    {
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        const QString edited = root.filePath(QStringLiteral("edited.pdf"));
+        const QString other = root.filePath(QStringLiteral("other.pdf"));
+        for (const QString &path : {edited, other})
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        QVERIFY(window.openFile(edited));
+        auto *tab = window.findChild<TabPage *>();
+        QVERIFY(tab);
+        QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {50, 50}, Qt::yellow, {}, "pending") >= 0);
+
+        // Answer the question here, after a tab arrives in front of the edited one.
+        dialogs_.stop();
+        bool inserted = false;
+        QTimer answer;
+        connect(&answer, &QTimer::timeout, this, [&] {
+            auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            if (!box || inserted)
+                return;
+            inserted = window.openFile(other, false, 0, /*makeCurrent=*/false);
+            box->button(QMessageBox::Discard)->click();
+        });
+        answer.start(5);
+        QVERIFY(QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0)));
+        answer.stop();
+        QVERIFY(inserted);
+        QCOMPARE(tabFiles(window), QStringList{QStringLiteral("other.pdf")});
+    }
+
     void canceledQuitPreservesSuspendedDocumentsAcrossWindows()
     {
         QTemporaryDir files;

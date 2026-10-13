@@ -80,6 +80,7 @@
 #include <QPrintDialog>
 #include <QPrinter>
 #include <QAbstractButton>
+#include <QPointer>
 #include <QPushButton>
 #include <QProgressDialog>
 #include <QSaveFile>
@@ -1885,11 +1886,16 @@ void MainWindow::closeTab(int index)
 
 void MainWindow::closeTabAt(int index, bool remember)
 {
-    QWidget *w = tabs_->widget(index);
+    const QPointer<QWidget> w = tabs_->widget(index);
     if (!w)
         return;
-    if (auto *t = qobject_cast<TabPage *>(w)) {
+    if (auto *t = qobject_cast<TabPage *>(w.data())) {
         if (!confirmClose(t))
+            return;
+        // The question runs its own event loop, in which a session restore can
+        // insert tabs before this one, so find it again.
+        index = w ? tabs_->indexOf(w) : -1;
+        if (index < 0)
             return;
         saveTabViewState(t); // remember where the user left off
         if (remember)
