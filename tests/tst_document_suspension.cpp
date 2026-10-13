@@ -240,10 +240,7 @@ private slots:
         QVERIFY(!tab.hasRecoverySnapshot());
         QVERIFY(!tab.hasUnsavedEdits());
         QCOMPARE(tab.path(), path);
-        {
-            std::lock_guard lock(lifetime->mutex);
-            QVERIFY(!lifetime->document);
-        }
+        QTRY_VERIFY_WITH_TIMEOUT(closed(lifetime), 10000); // on a background thread
 
         QSignalSpy resumed(&tab, &TabPage::resumeFinished);
         tab.resumeAsync();
