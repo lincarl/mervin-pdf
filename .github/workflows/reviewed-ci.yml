@@ -59,10 +59,10 @@ jobs:
     permissions:
       contents: read
       actions: read
+    cache-mode: read
     uses: ./.github/workflows/full-ci.yml
     with:
       sha: ${{ needs.authorize.outputs.sha }}
-      cache_prefix: reviewed-pr-${{ inputs.pr_number }}-
       reviewed_pr: true
 
   report:

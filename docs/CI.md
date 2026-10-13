@@ -24,6 +24,13 @@ workflow on `main`. The caller needs repository write access. The gate rejects
 closed or draft PRs, a changed head SHA, a branch behind `main`, unresolved review
 threads, and incomplete reviews. PRs must target `main`.
 
+Repository writers with permission to edit workflows are trusted maintainers.
+The `main` check prevents accidental dispatch from another ref. It cannot stop a
+writer from creating another workflow that publishes a status with its own
+GitHub Actions token. Defending against a malicious workflow maintainer requires
+a separate status-publishing app with credentials that branch workflows cannot
+access. Changing the dispatch trigger alone would not provide that protection.
+
 CodeRabbit's `Review completed` status is insufficient on its own because a
 skipped review can also publish that status. The gate verifies the bot's identity
 and requires its summary's `final_review_risk_coverage` to say `reviewed` for the
@@ -37,11 +44,11 @@ CodeRabbit's formal approval must also cover the current revision.
 Every checkout in full CI uses the immutable authorized head SHA. Write-enabled
 controller jobs use the trusted workflow revision and never run PR code or load
 its artifacts. Build jobs have read-only repository permissions and receive no
-repository secrets. They still execute reviewed code in a default-branch Actions
-run, so authorization is a trust decision, including for changes from forks.
-Dependency cache keys are separate for each PR and for `main`. This prevents
-accidental cache contamination, but does not isolate deliberately malicious code
-from the runner's Actions runtime credentials.
+repository secrets. They still execute reviewed code, so authorization is a trust
+decision, including for changes from forks. The caller sets `cache-mode: read`.
+GitHub enforces read-only cache access through scoped runtime tokens, including
+inside the reusable workflow. PR builds can restore existing dependency caches
+but cannot save caches that a later main or release build might consume.
 
 The required `reviewed-ci` commit status appears on the PR head, with a link to
 the dispatched run. It succeeds only after repository checks, both Linux test

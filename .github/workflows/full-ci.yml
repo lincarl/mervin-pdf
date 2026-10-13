@@ -12,11 +12,6 @@ on:
         required: false
         default: ''
         type: string
-      cache_prefix:
-        description: Separate reviewed PR dependency caches from main
-        required: false
-        default: ''
-        type: string
       reviewed_pr:
         description: 'Require a new authorization instead of native job reruns.'
         required: false
@@ -201,12 +196,11 @@ jobs:
           target: desktop
           arch: linux_gcc_64
           cache: true
-          cache-key-prefix: ${{ inputs.cache_prefix }}install-qt-action
       - name: Cache MuPDF
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ~/src/mupdf-1.28.5-source
-          key: ${{ inputs.cache_prefix }}mupdf-1.28.5-ubuntu24-tests-v1
+          key: mupdf-1.28.5-ubuntu24-tests-v1
       - name: Build MuPDF
         run: echo "MUPDF_DIR=$(scripts/build-mupdf-linux.sh)" >> "$GITHUB_ENV"
       - name: Configure
@@ -271,14 +265,13 @@ jobs:
           target: desktop
           arch: win64_msvc2022_64
           cache: true
-          cache-key-prefix: ${{ inputs.cache_prefix }}install-qt-action
 
       - name: Cache MuPDF
         id: mupdf-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: C:\dev\src\mupdf-${{ env.MUPDF_VERSION }}-tests-source
-          key: ${{ inputs.cache_prefix }}mupdf-${{ env.MUPDF_VERSION }}-${{ env.MUPDF_SHA256 }}-windows-msvc2022-v143-tests-native-jpeg-prefix-v1
+          key: mupdf-${{ env.MUPDF_VERSION }}-${{ env.MUPDF_SHA256 }}-windows-msvc2022-v143-tests-native-jpeg-prefix-v1
 
       - name: Build MuPDF
         shell: pwsh
@@ -298,8 +291,8 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~\AppData\Local\vcpkg\archives
-          key: ${{ inputs.cache_prefix }}vcpkg-x64-windows-static-md-${{ hashFiles('vcpkg.json', 'CMakePresets.json') }}
-          restore-keys: ${{ inputs.cache_prefix }}vcpkg-x64-windows-static-md-
+          key: vcpkg-x64-windows-static-md-${{ hashFiles('vcpkg.json', 'CMakePresets.json') }}
+          restore-keys: vcpkg-x64-windows-static-md-
 
       - name: Configure
         shell: pwsh
