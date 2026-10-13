@@ -122,16 +122,19 @@ void showFileContextMenu(QWidget *parent, const QString &path, const QPoint &glo
         const QString file = fi.absoluteFilePath();
         QObject *context = parent ? static_cast<QObject *>(parent) : QCoreApplication::instance();
         // The check can wait on a slow share. Anything copied meanwhile is newer
-        // and stays, so the late answer then does nothing.
+        // and stays, so the late answer then does nothing: another Copy file asked
+        // for later, or a copy made elsewhere.
+        static quint64 latestCopy = 0;
+        const quint64 request = ++latestCopy;
         const auto overtaken = std::make_shared<bool>(false);
         const QMetaObject::Connection watch =
             QObject::connect(QApplication::clipboard(), &QClipboard::dataChanged, context,
                              [overtaken] { *overtaken = true; });
         background::run(
             context, [file] { return isCopyableFile(file); },
-            [parent, file, copyFileText, fileNative, overtaken, watch](bool copyable) {
+            [parent, file, copyFileText, fileNative, overtaken, watch, request](bool copyable) {
                 QObject::disconnect(watch);
-                if (*overtaken)
+                if (*overtaken || request != latestCopy)
                     return;
                 if (copyable) {
                     copyFileToClipboard(file);

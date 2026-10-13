@@ -11,12 +11,23 @@
 #include <atomic>
 #include <cstring>
 #include <functional>
+#include <mutex>
+#include <optional>
 #include <utility>
 
 namespace mervin {
 
 struct ContentSearch::Shared
 {
+    struct Request
+    {
+        QStringList paths;
+        QString query;
+        quint64 generation = 0;
+    };
+    std::mutex mutex;
+    std::optional<Request> pending; // guarded by mutex: the newest query not started yet
+    bool running = false;           // guarded by mutex: a task is running searches
     // Bumped on every start()/cancel(); a search whose generation is stale stops
     // without emitting (guards against a just-canceled run racing the next one).
     std::atomic<quint64> generation{0};
@@ -109,11 +120,17 @@ ContentSearch::ContentSearch(QObject *parent)
 ContentSearch::~ContentSearch()
 {
     shared_->generation.fetch_add(1);
+    std::lock_guard lock(shared_->mutex);
+    shared_->pending.reset();
 }
 
 void ContentSearch::cancel()
 {
     shared_->generation.fetch_add(1);
+    {
+        std::lock_guard lock(shared_->mutex);
+        shared_->pending.reset();
+    }
     if (std::exchange(running_, false))
         emit finished(true, 0);
 }
@@ -124,25 +141,48 @@ void ContentSearch::start(const QStringList &paths, const QString &query)
     const bool empty = query.trimmed().isEmpty() || paths.isEmpty();
     running_ = !empty;
     if (empty) {
+        {
+            std::lock_guard lock(shared_->mutex);
+            shared_->pending.reset();
+        }
         emit finished(false, 0);
         return;
     }
-    // A task per search: an earlier one stops at its next file or page, or, stuck in
-    // a file, once that file answers.
-    background::start([shared = shared_, paths, query, generation] {
-        // A context of its own, with a store of its own, so it does not depend on
-        // the render engine. It shares the process's MuPDF locks, which guard
-        // MuPDF's global state. Each file is dropped once scanned, so a small store
-        // is enough.
-        fz_context *ctx = fz_new_context(nullptr, sharedMuPdfLocks(), 32 << 20);
-        if (ctx) {
-            fz_set_warning_callback(ctx, [](void *, const char *) {}, nullptr);
-            fz_register_document_handlers(ctx);
+    bool startTask = false;
+    {
+        std::lock_guard lock(shared_->mutex);
+        shared_->pending = Shared::Request{paths, query, generation};
+        startTask = !std::exchange(shared_->running, true);
+    }
+    if (startTask)
+        background::start([shared = shared_] { drain(shared); });
+}
+
+void ContentSearch::drain(const std::shared_ptr<Shared> &shared)
+{
+    // A context of its own, with a store of its own, so it does not depend on the
+    // render engine. It shares the process's MuPDF locks, which guard MuPDF's
+    // global state. Each file is dropped once scanned, so a small store is enough.
+    fz_context *ctx = fz_new_context(nullptr, sharedMuPdfLocks(), 32 << 20);
+    if (ctx) {
+        fz_set_warning_callback(ctx, [](void *, const char *) {}, nullptr);
+        fz_register_document_handlers(ctx);
+    }
+    for (;;) {
+        Shared::Request request;
+        {
+            std::lock_guard lock(shared->mutex);
+            if (!shared->pending) {
+                shared->running = false;
+                break;
+            }
+            request = std::move(*shared->pending);
+            shared->pending.reset();
         }
-        run(shared, paths, query, generation, ctx);
-        if (ctx)
-            fz_drop_context(ctx);
-    });
+        run(shared, request.paths, request.query, request.generation, ctx);
+    }
+    if (ctx)
+        fz_drop_context(ctx);
 }
 
 void ContentSearch::run(const std::shared_ptr<Shared> &shared, const QStringList &paths,

@@ -12,9 +12,11 @@ namespace mervin {
 
 // Search recent files with a MuPDF context of its own, streaming the first matching page per
 // file. start()/cancel() supersede earlier work. Matching is a case-insensitive substring,
-// independent of in-page find options. Each search is a background::start task that nothing
-// waits for, so a file on a share that stopped answering cannot hold up the window, and no
-// thread is kept while no search runs. It shares nothing with the render engine.
+// independent of in-page find options. Searches run on one background::start task at a time,
+// which takes the newest query waiting and ends when none is. Nothing waits for it, so a file on
+// a share that stopped answering cannot hold up the window. A task stuck in such a file keeps
+// only the newest query waiting and starts it once the file answers, so stuck searches never
+// collect threads. It shares nothing with the render engine.
 class ContentSearch : public QObject
 {
     Q_OBJECT
@@ -45,7 +47,9 @@ signals:
     void finished(bool canceled, int matched);
 
 private:
-    struct Shared; // the generation and owner, shared with searches, which may outlive this
+    struct Shared; // the queue, shared with the task, which may outlive this
+    // Runs the waiting queries, newest only, until none is left.
+    static void drain(const std::shared_ptr<Shared> &shared);
     static void run(const std::shared_ptr<Shared> &shared, const QStringList &paths,
                     const QString &query, quint64 generation, fz_context *ctx);
 

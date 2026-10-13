@@ -313,11 +313,13 @@ owns a separate serial worker and text cache so changing queries leaves the UI r
 Recent-file content search runs on its own worker and opens files independently. It
 returns the first matching page and a short snippet for each file. The Recent page's
 All scope lists file-name matches at once and scans only the remaining files. Generation tokens are checked when queued results reach the UI.
-Each search is a `background::start` task with a MuPDF context of its own, which
-shares the process's MuPDF locks, and no thread is kept between searches. Nothing
-joins a search. A newer search or destroying the service stops it at its next file
-or page, and one busy in a file on a share that stopped answering is left behind.
-Files are scanned in order, so later files wait while one does not answer.
+Searches run on one `background::start` task per window at a time, with a MuPDF
+context of its own that shares the process's MuPDF locks. The task takes the newest
+query waiting and ends when none is, so no thread is kept between searches. Nothing
+joins it. A newer search or destroying the service stops the running one at its next
+file or page. One stuck in a file on a share that stopped answering keeps only the
+newest query waiting, so stuck searches never collect threads. Files are scanned in
+order, so later files wait while one does not answer.
 
 PDF links, search state, and viewer state remain tab-local. The window-owned sidebars
 are rebound to the active tab. Per-file view state is written when tabs or windows
