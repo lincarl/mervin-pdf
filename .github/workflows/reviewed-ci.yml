@@ -1,0 +1,89 @@
+name: Start CI
+run-name: 'reviewed-ci PR #${{ inputs.pr_number }} @ ${{ inputs.expected_sha }}'
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number. Dispatch only after validating and addressing the CodeRabbit review.'
+        required: true
+        type: string
+      expected_sha:
+        description: 'Full reviewed PR head SHA. A changed PR is rejected.'
+        required: true
+        type: string
+      retry:
+        description: 'Explicitly retry a revision that already has a CI attempt.'
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+# Serialize requests for one PR. The gate skips an existing attempt unless the
+# dispatcher explicitly requests a retry. New pushes cancel obsolete runs through
+# pr-ci-lifecycle.yml, without affecting main builds.
+concurrency:
+  group: reviewed-ci-pr-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      statuses: write
+    outputs:
+      authorized: ${{ steps.gate.outputs.authorized }}
+      sha: ${{ steps.gate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate review completion and authorize this revision
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          RETRY: ${{ inputs.retry }}
+        run: python3 -B scripts/reviewed_ci.py start
+
+  build:
+    needs: authorize
+    if: needs.authorize.outputs.authorized == 'true'
+    permissions:
+      contents: read
+      actions: read
+    cache-mode: read
+    uses: ./.github/workflows/full-ci.yml
+    with:
+      sha: ${{ needs.authorize.outputs.sha }}
+      reviewed_pr: true
+
+  report:
+    needs: [authorize, build]
+    if: always() && needs.authorize.outputs.authorized == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Publish the actual build result on the reviewed PR commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: python3 -B scripts/reviewed_ci.py finish
