@@ -2,6 +2,7 @@
 
 #include "app/Relaunch.h"
 #include "config/Settings.h"
+#include "io/AppFiles.h"
 #include "io/Background.h"
 #include "ipc/Message.h"
 #include "ipc/SingleInstanceServer.h"
@@ -74,6 +75,7 @@ WindowManager::WindowManager()
     : engine_(std::make_unique<RenderEngine>())
     , recentFile_(RecentStore::defaultFile())
     , viewStateFile_(ViewStateStore::defaultFile())
+    , sessionFile_(SessionStore::defaultFile())
 {
     Settings s = Settings::load();
     unloadInactiveMinutes_ = s.unloadInactiveMinutes;
@@ -259,7 +261,7 @@ void WindowManager::recordOpen(const QString &canonicalPath, bool restoreViewSta
     // The session keeps it too, for when Recent no longer lists the file.
     session_.setMount(canonicalPath, mount);
     if (recent_.add(canonicalPath, QDateTime::currentMSecsSinceEpoch(), pageCount, mount)) {
-        recent_.save(recentFile_);
+        appfiles::write(recentFile_, recent_.toJson());
         emit recentListChanged(recent_.entries());
     }
     mountWanted_.insert(FileProbe::keyOf({canonicalPath, mount}));
@@ -296,7 +298,7 @@ void WindowManager::saveViewStates(const QList<QPair<QString, ViewState>> &state
         if (!path.isEmpty())
             viewState_.put(path, state, now);
     if (!states.isEmpty())
-        viewState_.save(viewStateFile_);
+        appfiles::write(viewStateFile_, viewState_.toJson());
 }
 
 void WindowManager::removeRecent(const QString &canonicalPath)
@@ -306,11 +308,11 @@ void WindowManager::removeRecent(const QString &canonicalPath)
     const bool removedRecent = recent_.remove(canonicalPath);
     const bool removedState = viewState_.remove(canonicalPath); // drop its resume state too
     if (removedRecent) {
-        recent_.save(recentFile_);
+        appfiles::write(recentFile_, recent_.toJson());
         emit recentListChanged(recent_.entries());
     }
     if (removedState)
-        viewState_.save(viewStateFile_);
+        appfiles::write(viewStateFile_, viewState_.toJson());
 }
 
 void WindowManager::clearMissingRecent(const QStringList &paths)
@@ -340,14 +342,14 @@ void WindowManager::dropFoundRecent()
     if (removed.isEmpty())
         return;
 
-    recent_.save(recentFile_);
+    appfiles::write(recentFile_, recent_.toJson());
     emit recentListChanged(recent_.entries());
 
     bool removedState = false;
     for (const QString &path : removed)
         removedState = viewState_.remove(path) || removedState;
     if (removedState)
-        viewState_.save(viewStateFile_);
+        appfiles::write(viewStateFile_, viewState_.toJson());
 }
 
 void WindowManager::setFavorite(const QString &canonicalPath, bool favorite)
@@ -355,7 +357,7 @@ void WindowManager::setFavorite(const QString &canonicalPath, bool favorite)
     if (canonicalPath.isEmpty())
         return;
     if (recent_.setFavorite(canonicalPath, favorite)) {
-        recent_.save(recentFile_);
+        appfiles::write(recentFile_, recent_.toJson());
         emit recentListChanged(recent_.entries());
     }
 }
@@ -379,11 +381,11 @@ void WindowManager::applyRecentSettings(int visibleCount, int retention, bool ke
     viewState_.setRetention(retention);
     // setRetention trims in memory only; persist now rather than on the next open.
     if (recent_.count() != recentBefore) {
-        recent_.save(recentFile_);
+        appfiles::write(recentFile_, recent_.toJson());
         emit recentListChanged(recent_.entries());
     }
     if (viewState_.count() != statesBefore)
-        viewState_.save(viewStateFile_);
+        appfiles::write(viewStateFile_, viewState_.toJson());
     keepMissingRecent_ = keepMissing;
     emit recentVisibleCountChanged(visibleCount);
     pruneMissingRecent();
@@ -410,7 +412,7 @@ void WindowManager::onFileChecked(const FileCheck &file, const FileFacts &facts)
     const QString &path = file.path;
     if (mountWanted_.remove(key) && facts.exists) {
         if (recent_.setMount(path, facts.mount)) {
-            recent_.save(recentFile_);
+            appfiles::write(recentFile_, recent_.toJson());
             // The panels ask for checks with the mount they were given.
             emit recentListChanged(recent_.entries());
         }
@@ -501,7 +503,7 @@ void WindowManager::closeFoundRemovedTabs(const QStringList &canonicalPaths)
 
 void WindowManager::restoreSession(std::function<void(const QStringList &)> done)
 {
-    session_.load();
+    session_.load(sessionFile_);
     // Each file is judged by the file system it was on when opened, as the session
     // recorded it. A session saved before sessions recorded mounts has them in Recent.
     const QList<FileCheck> files =
@@ -640,7 +642,7 @@ void WindowManager::updateSession()
         }
     }
     session_.setActivePath(all.contains(activePath) ? activePath : QString());
-    session_.save();
+    appfiles::write(sessionFile_, session_.toJson());
 }
 
 void WindowManager::openStaged(const QList<StagedOpen> &batch, const QStringList &savedOrder,
@@ -845,6 +847,9 @@ WindowManager::~WindowManager()
     windows_.clear();
     for (MainWindow *w : copy)
         delete w;
+    // The next copy reads the settings, Recent and the session once it gets the
+    // single-instance pipe, which instanceServer_ holds until after this body.
+    appfiles::flush(appfiles::kExitWaitMs);
 }
 
 MainWindow *WindowManager::createWindow()

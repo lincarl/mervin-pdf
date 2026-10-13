@@ -63,7 +63,8 @@ public:
         QString canonical;
     };
     // The documents with a recovery copy, duplicates included when independent
-    // edited views have recoverable copies.
+    // edited views have recoverable copies. Reads the recovery folder, which
+    // startup does once; tabs restored lazily adopt the copies found then.
     static QList<RecoverableDocument> recoverableDocuments();
     // Their canonical paths, or original ones where no canonical path was recorded.
     static QStringList recoverablePaths();

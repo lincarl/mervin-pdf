@@ -2,6 +2,7 @@
 
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
+#include "io/AppFiles.h"
 #include "dialogs/CalibrationDialog.h"
 #include "dialogs/ExportMeasureDialog.h"
 #include "dialogs/ExtractDialog.h"
@@ -371,6 +372,7 @@ void TstTranslationLayout::cleanup()
 
 void TstTranslationLayout::cleanupTestCase()
 {
+    QVERIFY(mervin::appfiles::flush(10000));
     i18n::apply(originalLanguage_);
     QLocale::setDefault(originalLocale_);
     QApplication::setFont(originalFont_);

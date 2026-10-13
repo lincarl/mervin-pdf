@@ -325,8 +325,11 @@ private:
     ClosedTabStack closedTabs_; // in-memory undo history for Ctrl+Shift+T
     RecentStore recent_;        // recent-files history (single writer = this process)
     ViewStateStore viewState_;  // per-file resume state (page/zoom/rotation)
+    // Where the stores are kept. They are read once, at startup, and written by
+    // appfiles::write on a background thread.
     QString recentFile_;        // persisted path for recent_
     QString viewStateFile_;     // persisted path for viewState_
+    QString sessionFile_;       // persisted path for session_
     QList<MainWindow *> windows_;
     QList<StagedOpen> stagedQueue_;      // documents still to open, front first
     QStringList stagedOrder_;            // the session's saved order, for tab placement

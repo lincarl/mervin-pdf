@@ -2,6 +2,7 @@
 
 #include "config/Settings.h"
 #include "config/ConfigPaths.h"
+#include "io/AppFiles.h"
 #include "render/Document.h"
 #include "render/MeasureContent.h"
 #include "render/MeasureMath.h"
@@ -81,6 +82,11 @@ QString createRecoveryFile(QString *error)
 
 // Manifests are adopted once per process, including independent views of the same file.
 QSet<QString> claimedRecoveries;
+
+// The manifests TabPage::recoverableDocuments() found, by path, so a tab restored
+// lazily adopts its recovery copy without reading the folder on the UI thread.
+// Manifests written later belong to the tab that wrote them.
+QList<QPair<QString, QJsonObject>> foundManifests;
 
 QJsonObject resumeJson(const ViewerWidget::ResumeState &state)
 {
@@ -503,13 +509,15 @@ bool TabPage::recoverSnapshot(const QString &snapshot, QString *error)
 
 void TabPage::clearRecovery()
 {
+    // On the background thread that writes the app's files, after the writes
+    // asked for before.
     if (!recoveryManifest_.isEmpty()) {
         claimedRecoveries.remove(recoveryManifest_);
-        QFile::remove(recoveryManifest_);
+        appfiles::remove(recoveryManifest_);
         recoveryManifest_.clear();
     }
     if (!recoveryPath_.isEmpty()) {
-        QFile::remove(recoveryPath_);
+        appfiles::remove(recoveryPath_);
         recoveryPath_.clear();
     }
 }
@@ -517,13 +525,17 @@ void TabPage::clearRecovery()
 QList<TabPage::RecoverableDocument> TabPage::recoverableDocuments()
 {
     QList<RecoverableDocument> documents;
+    foundManifests.clear();
     const QDir directory(recoveryDirectory());
     for (const QString &name : directory.entryList({QStringLiteral("*.json")}, QDir::Files,
                                                   QDir::Time)) {
-        const auto manifest = readManifest(directory.filePath(name));
-        if (!manifest.isEmpty())
-            documents.append({manifest.value("original").toString(),
-                              manifest.value("canonical").toString()});
+        const QString path = directory.filePath(name);
+        const auto manifest = readManifest(path);
+        if (manifest.isEmpty())
+            continue;
+        foundManifests.append({path, manifest});
+        documents.append({manifest.value("original").toString(),
+                          manifest.value("canonical").toString()});
     }
     return documents;
 }
@@ -541,15 +553,17 @@ QStringList TabPage::recoverablePaths()
 bool TabPage::adoptRecovery()
 {
     const QDir directory(recoveryDirectory());
-    for (const QString &name : directory.entryList({QStringLiteral("*.json")}, QDir::Files,
-                                                  QDir::Time)) {
-        const QString path = directory.filePath(name);
+    for (qsizetype i = 0; i < foundManifests.size(); ++i) {
+        const QString path = foundManifests.at(i).first;
+        const QJsonObject manifest = foundManifests.at(i).second;
         if (claimedRecoveries.contains(path))
             continue;
-        const auto manifest = readManifest(path);
         if (manifest.value("original").toString() != path_
             && manifest.value("canonical").toString() != canonicalPath_)
             continue;
+        // Adopted once: the tab keeps the copy or removes it, so it is never
+        // offered again, even after the tab lets it go.
+        foundManifests.removeAt(i);
         recoveryManifest_ = path;
         recoveryPath_ = directory.filePath(manifest.value("snapshot").toString());
         saved_->viewer = readResumeJson(manifest.value("view").toObject());

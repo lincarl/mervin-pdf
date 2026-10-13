@@ -16,6 +16,7 @@
 #include "config/Settings.h"
 #include "dialogs/FirstRunDialog.h"
 #include "i18n/UiLanguage.h"
+#include "io/AppFiles.h"
 #include "io/Background.h"
 #include "ipc/Message.h"
 #include "ipc/PipeName.h"
@@ -252,7 +253,8 @@ FirstRunChoices startUiLanguage(const CliOptions &cli, SingleInstanceServer *ser
     // Saving ui_language consumes the first-run offer before networking starts.
     // Failed, stalled or interrupted downloads never create work for a later launch.
     // If saving fails, make no attempt that could be repeated next time.
-    if (!settings.save())
+    QString saveError;
+    if (!settings.save(&saveError))
         choices.ocrModels.clear();
     return choices;
 }
@@ -454,8 +456,19 @@ int main(int argc, char *argv[])
     // A restart asked for while running (a new UI language) starts the new copy here,
     // after runUi has released the single-instance pipe.
     const auto finish = [&app](int code) {
-        if (mervin::relaunch::requested() && !mervin::relaunch::start())
+        // The settings, Recent and the session are written on a background thread.
+        // WindowManager waited for them before it let go of the single-instance pipe,
+        // so a restarted copy reads them. Writes still queued are stuck on a profile
+        // folder that stopped answering. They land if it answers again, or never. A
+        // restarted copy would read the files without them, and they could land over
+        // its own writes, so it is not started.
+        if (!mervin::appfiles::flush(0)) {
+            std::fprintf(stderr, "MervinPDF: could not finish saving settings\n");
+            if (mervin::relaunch::requested())
+                std::fprintf(stderr, "MervinPDF: not restarting\n");
+        } else if (mervin::relaunch::requested() && !mervin::relaunch::start()) {
             std::fprintf(stderr, "MervinPDF: could not restart\n");
+        }
         app.reset();
         // Background work told to stop gets a moment. Work still running then is
         // stuck on a drive that stopped answering and holds its threads, and static

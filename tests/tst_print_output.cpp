@@ -1,4 +1,5 @@
 #include "config/ConfigPaths.h"
+#include "io/AppFiles.h"
 #include "dialogs/PrintDialog.h"
 #include "render/Document.h"
 #include "render/RenderEngine.h"
@@ -64,6 +65,7 @@ void TstPrintOutput::initTestCase()
 
 void TstPrintOutput::cleanupTestCase()
 {
+    QVERIFY(mervin::appfiles::flush(10000));
     ConfigPaths::setOverrideDir({});
 }
 

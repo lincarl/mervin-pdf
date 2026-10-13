@@ -1,20 +1,33 @@
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
+#include "io/AppFiles.h"
 
 #include <QFile>
 #include <QTemporaryDir>
 #include <QtTest>
 
+#include <memory>
+
 class TstSettingsStore : public QObject
 {
     Q_OBJECT
 private slots:
-    void cleanup() { mervin::ConfigPaths::setOverrideDir({}); }
+    // Each test gets a profile of its own, which outlives the saves it queued.
+    void init()
+    {
+        profile_ = std::make_unique<QTemporaryDir>();
+        QVERIFY(profile_->isValid());
+        mervin::ConfigPaths::setOverrideDir(profile_->path());
+    }
+    void cleanup()
+    {
+        QVERIFY(mervin::appfiles::flush(10000)); // before the test's folder goes
+        mervin::ConfigPaths::setOverrideDir({});
+        profile_.reset();
+    }
 
     void staleWindowPreservesNewPreferences()
     {
-        QTemporaryDir dir;
-        mervin::ConfigPaths::setOverrideDir(dir.path());
         auto first = mervin::Settings::load();
         auto second = mervin::Settings::load();
         first.annotationAuthor = "Updated";
@@ -34,13 +47,10 @@ private slots:
         QVERIFY(second.save());
         QCOMPARE(mervin::Settings::load().annotationAuthor, first.annotationAuthor);
         QVERIFY(!mervin::Settings::load().measurementSnap);
-        mervin::ConfigPaths::setOverrideDir({});
     }
 
     void memoryAndTrayDefaultsAndRoundTrip()
     {
-        QTemporaryDir dir;
-        mervin::ConfigPaths::setOverrideDir(dir.path());
         auto s = mervin::Settings::load();
         QCOMPARE(s.unloadInactiveMinutes, 30);
         QVERIFY(s.closeToTray);
@@ -52,6 +62,7 @@ private slots:
             QCOMPARE(loaded.unloadInactiveMinutes, minutes);
             QVERIFY(!loaded.closeToTray);
         }
+        QVERIFY(mervin::appfiles::flush(10000)); // saves are written in the background
         QFile file(mervin::ConfigPaths::configFile());
         QVERIFY(file.open(QIODevice::ReadOnly));
         const QByteArray saved = file.readAll();
@@ -69,8 +80,6 @@ private slots:
     void invalidMemorySettingsUseDefaults()
     {
         QFETCH(QByteArray, value);
-        QTemporaryDir dir;
-        mervin::ConfigPaths::setOverrideDir(dir.path());
         QFile file(mervin::ConfigPaths::configFile());
         QVERIFY(file.open(QIODevice::WriteOnly));
         file.write("unload_inactive_minutes = " + value + "\nclose_to_tray = \"invalid\"\n");
@@ -82,8 +91,6 @@ private slots:
 
     void invalidMemoryTimeoutCannotBeSaved()
     {
-        QTemporaryDir dir;
-        mervin::ConfigPaths::setOverrideDir(dir.path());
         auto s = mervin::Settings::load();
         s.unloadInactiveMinutes = 17;
         QVERIFY(s.save());
@@ -100,8 +107,6 @@ private slots:
     // and remove missing recent files. Saved values survive the new defaults.
     void appearanceAndRecentDefaultsRespectSavedValues()
     {
-        QTemporaryDir dir;
-        mervin::ConfigPaths::setOverrideDir(dir.path());
         auto s = mervin::Settings::load();
         QCOMPARE(s.colorScheme, QStringLiteral("system"));
         QCOMPARE(s.accentColor, QStringLiteral("system"));
@@ -117,10 +122,10 @@ private slots:
             QCOMPARE(loaded.accentColor, s.accentColor);
             QCOMPARE(loaded.recentKeepMissing, keepMissing);
         }
+        QVERIFY(mervin::appfiles::flush(10000)); // saves are written in the background
         QFile file(mervin::ConfigPaths::configFile());
         QVERIFY(file.open(QIODevice::ReadOnly));
         QVERIFY(file.readAll().contains("recent_keep_removed = false"));
-        mervin::ConfigPaths::setOverrideDir({});
     }
 
     // Versions up to 1.65.0 saved recent_keep_missing = true as their default in
@@ -128,8 +133,6 @@ private slots:
     // current default, and the next save drops it.
     void retiredKeepMissingKeyIsIgnored()
     {
-        QTemporaryDir dir;
-        mervin::ConfigPaths::setOverrideDir(dir.path());
         QFile file(mervin::ConfigPaths::configFile());
         QVERIFY(file.open(QIODevice::WriteOnly));
         file.write("recent_keep_missing = true\nrecent_visible_count = 42\n");
@@ -142,19 +145,17 @@ private slots:
         QVERIFY(s.save());
         QVERIFY(!mervin::Settings::load().recentKeepMissing);
         // Read it last, because Windows won't replace a file that is open.
+        QVERIFY(mervin::appfiles::flush(10000));
         QVERIFY(file.open(QIODevice::ReadOnly));
         const QByteArray saved = file.readAll();
         QVERIFY(saved.contains("recent_keep_removed = false"));
         QVERIFY(!saved.contains("recent_keep_missing"));
-        mervin::ConfigPaths::setOverrideDir({});
     }
 
     // The Recent search starts in Names unless Settings says otherwise; a value
     // the app does not know (a hand edit, a newer version) falls back to Names.
     void recentSearchScopeDefaultsToNamesAndRoundTrips()
     {
-        QTemporaryDir dir;
-        mervin::ConfigPaths::setOverrideDir(dir.path());
         QCOMPARE(mervin::Settings::load().recentSearchScope, QStringLiteral("names"));
         auto s = mervin::Settings::load();
         s.recentSearchScope = QStringLiteral("all");
@@ -164,7 +165,6 @@ private slots:
         s.recentSearchScope = QStringLiteral("everything");
         QVERIFY(s.save());
         QCOMPARE(mervin::Settings::load().recentSearchScope, QStringLiteral("names"));
-        mervin::ConfigPaths::setOverrideDir({});
     }
 
     // The UI language stays empty until the first-run window stores a choice,
@@ -172,8 +172,6 @@ private slots:
     // written, including one this build doesn't ship (a newer version's).
     void uiLanguageStartsEmptyAndRoundTrips()
     {
-        QTemporaryDir dir;
-        mervin::ConfigPaths::setOverrideDir(dir.path());
         QVERIFY(mervin::Settings::load().uiLanguage.isEmpty());
         auto s = mervin::Settings::load();
         s.uiLanguage = QStringLiteral("zh_CN");
@@ -184,20 +182,18 @@ private slots:
         QVERIFY(s.save());
         QCOMPARE(mervin::Settings::load().uiLanguage, QStringLiteral("pt_BR"));
         // Read it last, because Windows won't replace a file that is open.
+        QVERIFY(mervin::appfiles::flush(10000)); // saves are written in the background
         QFile file(mervin::ConfigPaths::configFile());
         QVERIFY(file.open(QIODevice::ReadOnly));
         const QByteArray saved = file.readAll();
         QVERIFY(saved.contains("ui_language = "));
         QVERIFY(saved.contains("pt_BR"));
-        mervin::ConfigPaths::setOverrideDir({});
     }
 
     // Equality compares the saved values only, not what each copy was last
     // loaded or saved against.
     void equalityComparesValuesOnly()
     {
-        QTemporaryDir dir;
-        mervin::ConfigPaths::setOverrideDir(dir.path());
         const auto loaded = mervin::Settings::load();
         QVERIFY(loaded == mervin::Settings{});
         auto changed = loaded;
@@ -206,7 +202,6 @@ private slots:
         changed = loaded;
         changed.windowGeometry = "geometry";
         QVERIFY(changed != loaded);
-        mervin::ConfigPaths::setOverrideDir({});
     }
 
     // Settings' Apply and OK both save the window's copy. Taking new values must
@@ -214,8 +209,6 @@ private slots:
     // opened would not be written after an earlier Apply.
     void assignedValuesSaveAgainstTheLastSave()
     {
-        QTemporaryDir dir;
-        mervin::ConfigPaths::setOverrideDir(dir.path());
         auto window = mervin::Settings::load();
         const auto opened = window;
         auto edited = opened;
@@ -226,19 +219,23 @@ private slots:
         window.assignValues(opened);
         QVERIFY(window.save());
         QCOMPARE(mervin::Settings::load().defaultZoom, QStringLiteral("fit-width"));
-        mervin::ConfigPaths::setOverrideDir({});
     }
 
     void writeFailureIsReported()
     {
-        QTemporaryDir dir;
-        mervin::ConfigPaths::setOverrideDir(dir.path());
         QVERIFY(QDir().mkdir(mervin::ConfigPaths::configFile()));
         QString error;
-        QVERIFY(!mervin::Settings{}.save(&error));
+        mervin::Settings changed = mervin::Settings::load();
+        const QString before = changed.annotationAuthor;
+        changed.annotationAuthor = QStringLiteral("Not saved");
+        QVERIFY(!changed.save(&error));
         QVERIFY(!error.isEmpty());
-        mervin::ConfigPaths::setOverrideDir({});
+        // The settings in memory keep matching the file.
+        QCOMPARE(mervin::Settings::load().annotationAuthor, before);
     }
+
+private:
+    std::unique_ptr<QTemporaryDir> profile_;
 };
 QTEST_GUILESS_MAIN(TstSettingsStore)
 #include "tst_settings_store.moc"

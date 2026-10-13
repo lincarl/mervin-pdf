@@ -1,5 +1,6 @@
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
+#include "io/AppFiles.h"
 #include "i18n/UiLanguage.h"
 #include "ui/Theme.h"
 #include "ui/ThemeTokens.h"
@@ -278,6 +279,7 @@ void TestUpdater::cleanup()
 
 void TestUpdater::cleanupTestCase()
 {
+    QVERIFY(mervin::appfiles::flush(10000));
     ConfigPaths::setOverrideDir(previousProfile_);
 }
 

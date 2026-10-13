@@ -1,5 +1,6 @@
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
+#include "io/AppFiles.h"
 #include "dialogs/SettingsDialog.h"
 #include "i18n/UiLanguage.h"
 #include "ui/LanguageCombo.h"
@@ -172,6 +173,7 @@ QString TstSettingsDialog::tessdataPath(const char *code) const
 
 void TstSettingsDialog::cleanupTestCase()
 {
+    QVERIFY(mervin::appfiles::flush(10000));
     mervin::ConfigPaths::setOverrideDir({});
 }
 

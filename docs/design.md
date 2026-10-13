@@ -478,6 +478,27 @@ The files are:
 
 Paths are normalized before deduplication and lookup, with case folding on Windows.
 Corrupt or missing state files fall back to defaults instead of blocking startup.
+
+The directory can be on a network share, as with a roaming or redirected Windows
+profile or a home folder on NFS, so after startup the UI thread does not touch it.
+Startup reads the settings, the three stores and the recovery manifests before the
+first window, which needs them; `ConfigPaths` creates the folders then, once. Later
+`Settings::load()` returns the values in memory, and `appfiles::write`
+(`io/AppFiles`) saves the settings and stores on a background thread through
+`QSaveFile`, in the order asked. A newer write of a file drops a write of it that
+has not started and that nobody waits for. Closing a tab removes its recovery files
+the same way, and tabs restored lazily adopt the recovery manifests startup found.
+Quitting waits up to 5 s for the writes before `WindowManager` lets go of the
+single-instance pipe, so the next copy reads them. With a profile folder that
+stopped answering, the last writes land when it answers again or never, the process
+says so on stderr, and a restart asked for (a new UI language) is skipped, as the
+new copy would read the files without them. The Settings window and
+the first-run window keep their question open when a save fails, so they wait up to
+5 s for their own write, in its turn among the others. A write still waiting after
+that lands later and counts as saved. The values in effect are the running
+process's, so an edit made to `config.toml` by anything else while Mervin runs is
+overwritten by its next save.
+
 Settings saves merge only fields changed since that window's last load/save, preventing
 stale windows from overwriting newer preferences, and commit through `QSaveFile`.
 Every save writes all known keys and drops keys this version does not read. A default
@@ -583,6 +604,9 @@ The interface icons are [Lucide](https://lucide.dev) SVGs, vendored unmodified i
 resource. `ui/Icons` renders them through Qt SVG in the theme's ink, so Windows and
 Linux show identical artwork without depending on a platform icon font; the
 stylesheet's check marks, close crosses and arrows are rendered from the same set.
+Those are PNGs in memory, published as Qt resources (`io/MemoryFiles`) under a new
+root for each theme, because the style sheet engine loads `image:url()` files on the
+UI thread as it paints.
 Icons use a 1.5-unit stroke on Lucide's 24-unit grid, which is one logical pixel in
 the menus' 16 px icons. The toolbar's 20 px icons keep that one-pixel line, 1.2
 units, so they match the menus at every display scale. Each icon is drawn from its

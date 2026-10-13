@@ -1,5 +1,6 @@
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
+#include "io/AppFiles.h"
 #include "dialogs/ManageLanguagesDialog.h"
 #include "dialogs/OcrPopup.h"
 #include "i18n/UiLanguage.h"
@@ -142,6 +143,7 @@ void TstOcrPopup::defaultLanguagePersistsInSettings()
     settings.ocrDefaultLanguage = QStringLiteral("swe");
     settings.save();
     QCOMPARE(mervin::Settings::load().ocrDefaultLanguage, QStringLiteral("swe"));
+    QVERIFY(mervin::appfiles::flush(10000)); // before the profile goes
 }
 
 void TstOcrPopup::managerShowsDefaultAndEqualWidthLists()

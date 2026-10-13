@@ -86,6 +86,8 @@ public:
     // I/O / parse failure.
     bool load(const QString &file);
     bool save(const QString &file) const;
+    // What save() writes, for a write on another thread (appfiles::write).
+    QByteArray toJson() const;
 
     // Default location: %APPDATA%/MervinPDF/recent.json.
     static QString defaultFile();

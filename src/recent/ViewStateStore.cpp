@@ -99,6 +99,15 @@ bool ViewStateStore::load(const QString &file)
 
 bool ViewStateStore::save(const QString &file) const
 {
+    QSaveFile f(file); // atomic write
+    if (!f.open(QIODevice::WriteOnly))
+        return false;
+    f.write(toJson());
+    return f.commit();
+}
+
+QByteArray ViewStateStore::toJson() const
+{
     QJsonObject root;
     for (auto it = states_.constBegin(); it != states_.constEnd(); ++it) {
         const Record &r = it.value();
@@ -112,12 +121,7 @@ bool ViewStateStore::save(const QString &file) const
         o.insert(QStringLiteral("upd"), r.updated);
         root.insert(it.key(), o);
     }
-
-    QSaveFile f(file); // atomic write
-    if (!f.open(QIODevice::WriteOnly))
-        return false;
-    f.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
-    return f.commit();
+    return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
 
 QString ViewStateStore::defaultFile()

@@ -1,7 +1,10 @@
 #include "config/ConfigPaths.h"
 
 #include <QDir>
+#include <QSet>
 #include <QStandardPaths>
+
+#include <mutex>
 
 namespace mervin {
 
@@ -9,6 +12,21 @@ namespace {
 
 // Set by --profile (see main.cpp); redirects the whole state directory.
 QString g_overrideDir;
+
+// Creates `dir` the first time it is asked for, at startup, so later calls from the
+// UI thread do not touch the disk. The background writer creates a folder that
+// went missing meanwhile (see appfiles::write).
+const QString &made(const QString &dir)
+{
+    static std::mutex mutex;
+    static QSet<QString> done;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!done.contains(dir)) {
+        QDir().mkpath(dir);
+        done.insert(dir);
+    }
+    return dir;
+}
 
 } // namespace
 
@@ -24,10 +42,8 @@ QString ConfigPaths::overrideDir()
 
 QString ConfigPaths::configDir()
 {
-    if (!g_overrideDir.isEmpty()) {
-        QDir().mkpath(g_overrideDir);
-        return g_overrideDir;
-    }
+    if (!g_overrideDir.isEmpty())
+        return made(g_overrideDir);
 #ifdef Q_OS_WIN
     // The spec calls for %APPDATA%/MervinPDF/ exactly (not Org/App nested).
     QString base = qEnvironmentVariable("APPDATA");
@@ -43,8 +59,7 @@ QString ConfigPaths::configDir()
         base = QDir::homePath() + QStringLiteral("/.config");
     const QString dir = QDir(base).filePath(QStringLiteral("mervin-pdf"));
 #endif
-    QDir().mkpath(dir);
-    return dir;
+    return made(dir);
 }
 
 QString ConfigPaths::configFile()
@@ -71,8 +86,7 @@ QString ConfigPaths::updatesDir()
         dir = QDir(base).filePath(QStringLiteral("mervin-pdf/updates"));
 #endif
     }
-    QDir().mkpath(dir);
-    return dir;
+    return made(dir);
 }
 
 } // namespace mervin

@@ -324,6 +324,15 @@ bool RecentStore::load(const QString &file)
 
 bool RecentStore::save(const QString &file) const
 {
+    QSaveFile f(file); // atomic write: a crash mid-save can't corrupt the file
+    if (!f.open(QIODevice::WriteOnly))
+        return false;
+    f.write(toJson());
+    return f.commit();
+}
+
+QByteArray RecentStore::toJson() const
+{
     QJsonArray arr;
     for (const RecentEntry &e : entries_) {
         QJsonObject o;
@@ -337,12 +346,7 @@ bool RecentStore::save(const QString &file) const
             o.insert(QStringLiteral("m"), e.mount);
         arr.append(o);
     }
-
-    QSaveFile f(file); // atomic write: a crash mid-save can't corrupt the file
-    if (!f.open(QIODevice::WriteOnly))
-        return false;
-    f.write(QJsonDocument(arr).toJson(QJsonDocument::Compact));
-    return f.commit();
+    return QJsonDocument(arr).toJson(QJsonDocument::Compact);
 }
 
 QString RecentStore::defaultFile()

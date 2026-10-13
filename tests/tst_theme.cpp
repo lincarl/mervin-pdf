@@ -8,6 +8,7 @@
 
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
+#include "io/AppFiles.h"
 #include "ui/Theme.h"
 #include "ui/ThemeTokens.h"
 
@@ -370,6 +371,7 @@ void TstTheme::applyAppInstallsTheChosenAccent()
     const QString styleName = QApplication::style()->name();
     const QPalette saved = qApp->palette();
     const auto restore = qScopeGuard([&styleName, &saved] {
+        mervin::appfiles::flush(10000);
         ConfigPaths::setOverrideDir({});
         qApp->setStyleSheet(QString());
         QStyle *style = QStyleFactory::create(styleName);
@@ -452,6 +454,7 @@ void TstTheme::applyAppHonorsTheThemePreference()
     ConfigPaths::setOverrideDir(profile.path());
     const QPalette saved = qApp->palette();
     const auto restore = qScopeGuard([&saved] {
+        mervin::appfiles::flush(10000);
         ConfigPaths::setOverrideDir({});
         qApp->setStyleSheet(QString());
         qApp->setPalette(saved);
