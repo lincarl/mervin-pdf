@@ -2,6 +2,7 @@
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
 #include "io/AppFiles.h"
+#include "ocr/TessdataManager.h"
 #include "dialogs/ExtractDialog.h"
 #include "dialogs/SettingsDialog.h"
 #include "render/AnnotModel.h"
@@ -35,10 +36,12 @@
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QTimer>
 #include <QToolButton>
 #include <QtTest>
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -565,6 +568,34 @@ private slots:
         // No "cannot open" box, which the dialog handler would report.
         QVERIFY(QMetaObject::invokeMethod(&window, "saveMeasurements"));
         QVERIFY(tab->isSuspended());
+    }
+
+    // OCR goes on once the installed languages are listed, but not after the user
+    // switched to the Recent view meanwhile. With no language installed, it would
+    // ask to add one, which the dialog handler reports.
+    void ocrDoesNotGoOnOverTheRecentView()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("ocr.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.show();
+        QVERIFY(window.openFile(path));
+        std::atomic<bool> held{true};
+        mervin::TessdataManager::runInFolder([&held] {
+            for (int i = 0; held.load() && i < 2000; ++i)
+                QThread::msleep(5);
+        });
+        QVERIFY(QMetaObject::invokeMethod(&window, "onOcrRegionSelected", Q_ARG(int, 0),
+                                          Q_ARG(QRectF, QRectF(10, 10, 100, 40))));
+        auto *recent = window.findChild<QPushButton *>(QStringLiteral("recentPillBtn"));
+        QVERIFY(recent);
+        QTest::mouseClick(recent, Qt::LeftButton);
+        held = false;
+        QTRY_VERIFY(!mervin::TessdataManager::busy());
+        QTest::qWait(50);
     }
 
     void closingDirtyTabCanBeCanceled()

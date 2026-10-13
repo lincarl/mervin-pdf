@@ -2366,7 +2366,7 @@ Atveriet sistēmas Iestatījumi → Noklusējuma lietojumprogrammas (vai ar pele
     </message>
     <message>
         <source>Working...</source>
-        <extracomment>Button text while a language downloads.</extracomment>
+        <extracomment>Button text while a language downloads or is removed.</extracomment>
         <translation>Strādā...</translation>
     </message>
     <message numerus="yes">

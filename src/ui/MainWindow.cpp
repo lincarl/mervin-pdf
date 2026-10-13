@@ -50,6 +50,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QDockWidget>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -2723,7 +2724,41 @@ void MainWindow::updateSidebars()
         thumbnailSidebar_->setCurrentPage(v->currentPage());
 }
 
+namespace {
+QStringList languageCodes(const QList<mervin::TessdataManager::Model> &models)
+{
+    QStringList codes;
+    for (const mervin::TessdataManager::Model &model : models)
+        codes << model.code;
+    return codes;
+}
+} // namespace
+
 void MainWindow::onOcrRegionSelected(int pageNo, const QRectF &pageRect)
+{
+    listThenRecognize(pageNo, pageRect, /*offered=*/false);
+}
+
+void MainWindow::listThenRecognize(int pageNo, const QRectF &pageRect, bool offered)
+{
+    // The installed languages are read off the UI thread, as the profile can be on
+    // a share that stopped answering. OCR goes on once they are known, for the
+    // newest request only, if its document is still the one shown and the answer
+    // came soon enough that the user still waits for it.
+    const quint64 request = ++ocrRequest_;
+    QElapsedTimer asked;
+    asked.start();
+    mervin::TessdataManager::listModels(
+        this, [this, viewer = QPointer<ViewerWidget>(currentViewer()), pageNo, pageRect, request,
+               asked, offered](const QList<mervin::TessdataManager::Model> &models) {
+            if (request == ocrRequest_ && asked.elapsed() < kOcrLanguagesWaitMs && viewer
+                && !recentActive_ && viewer == currentViewer() && viewer->document())
+                recognizeRegion(pageNo, pageRect, languageCodes(models), offered);
+        });
+}
+
+void MainWindow::recognizeRegion(int pageNo, const QRectF &pageRect, const QStringList &installed,
+                                 bool offered)
 {
     QScopedValueRollback<int> operation(documentOperationDepth_, documentOperationDepth_ + 1);
     ViewerWidget *v = currentViewer();
@@ -2734,8 +2769,9 @@ void MainWindow::onOcrRegionSelected(int pageNo, const QRectF &pageRect)
     // loaded its copy.
     settings_.ocrDefaultLanguage = mervin::Settings::load().ocrDefaultLanguage;
 
-    QStringList installed = mervin::TessdataManager::installedLanguages();
     if (installed.isEmpty()) {
+        if (offered)
+            return; // the language manager was open and none was added
         const auto choice = QMessageBox::question(
             //: Message box title. OCR is optical character recognition.
             this, tr("OCR Selection"),
@@ -2749,9 +2785,8 @@ void MainWindow::onOcrRegionSelected(int pageNo, const QRectF &pageRect)
         manager.exec();
         settings_.ocrDefaultLanguage = manager.defaultLanguage();
         settings_.save();
-        installed = mervin::TessdataManager::installedLanguages();
-        if (installed.isEmpty())
-            return;
+        listThenRecognize(pageNo, pageRect, /*offered=*/true);
+        return;
     }
 
     // Shared with the recognition, which nothing waits for: closing the popup leaves
@@ -2797,12 +2832,16 @@ void MainWindow::onOcrRegionSelected(int pageNo, const QRectF &pageRect)
 
                 settings_.ocrDefaultLanguage = manager.defaultLanguage();
                 settings_.save();
-                const QStringList refreshed = mervin::TessdataManager::installedLanguages();
-                const QString preferred = settings_.ocrDefaultLanguage != previousDefault
-                    || !refreshed.contains(selected)
-                    ? settings_.ocrDefaultLanguage
-                    : selected;
-                popup.refreshLanguages(refreshed, preferred);
+                mervin::TessdataManager::listModels(
+                    &popup, [this, &popup, selected, previousDefault](
+                                const QList<mervin::TessdataManager::Model> &models) {
+                        const QStringList refreshed = languageCodes(models);
+                        const QString preferred = settings_.ocrDefaultLanguage != previousDefault
+                                || !refreshed.contains(selected)
+                            ? settings_.ocrDefaultLanguage
+                            : selected;
+                        popup.refreshLanguages(refreshed, preferred);
+                    });
             });
 
     recognize(popup.selectedLanguages());

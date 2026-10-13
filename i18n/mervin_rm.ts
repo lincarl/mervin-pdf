@@ -2359,7 +2359,7 @@ Avra ils Parameters → Applicaziuns predefinidas dal sistem (u clicca cun la ta
     </message>
     <message>
         <source>Working...</source>
-        <extracomment>Button text while a language downloads.</extracomment>
+        <extracomment>Button text while a language downloads or is removed.</extracomment>
         <translation>En elavuraziun...</translation>
     </message>
     <message numerus="yes">

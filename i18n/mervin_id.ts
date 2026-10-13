@@ -2352,7 +2352,7 @@ Buka Pengaturan sistem Anda → Aplikasi Default (atau klik kanan PDF → Buka D
     </message>
     <message>
         <source>Working...</source>
-        <extracomment>Button text while a language downloads.</extracomment>
+        <extracomment>Button text while a language downloads or is removed.</extracomment>
         <translation>Bekerja...</translation>
     </message>
     <message numerus="yes">

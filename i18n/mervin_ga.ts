@@ -2366,7 +2366,7 @@ Oscail Socruithe do chórais → Feidhmchláir Réamhshocraithe (nó deaschlice�
     </message>
     <message>
         <source>Working...</source>
-        <extracomment>Button text while a language downloads.</extracomment>
+        <extracomment>Button text while a language downloads or is removed.</extracomment>
         <translation>Ag obair...</translation>
     </message>
     <message numerus="yes">

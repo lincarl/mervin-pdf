@@ -1,6 +1,7 @@
 #include "i18n/UiLanguage.h"
 #include "ocr/OcrLanguageMapping.h"
 #include "ocr/OcrProvisioner.h"
+#include "ocr/TessdataManager.h"
 #include "ocr/TessdataFile.h"
 
 #include <QDir>
@@ -12,8 +13,10 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QThread>
 #include <QtEndian>
 
+#include <atomic>
 #include <cstring>
 
 namespace {
@@ -152,6 +155,7 @@ private slots:
     void replacesExistingModelOnlyOnSuccess();
     void failureDoesNotStopOtherLanguage();
     void cancelAndDestructionAbandonDownloads();
+    void cancelStopsAnInstallationNotStarted();
     void inactivityAbandonsDownload();
     void unwritableDestinationDoesNotRequest();
 };
@@ -219,7 +223,8 @@ void TstOcrProvisioner::downloadsBestModelsOnce()
     const QStringList models = {"swe", "eng", "swe", "../fra", "", "en"};
     provisioner.start(models, directory.path());
     provisioner.start(models, directory.path());
-    QCOMPARE(network.requests.size(), 2);
+    // The downloads start once the OCR folder's thread has made their files.
+    QTRY_COMPARE(network.requests.size(), 2);
     for (int i = 0; i < 2; ++i) {
         QCOMPARE(network.requests.at(i).url(), QUrl(QStringLiteral(
             "https://raw.githubusercontent.com/tesseract-ocr/tessdata_best/main/%1.traineddata")
@@ -232,6 +237,7 @@ void TstOcrProvisioner::downloadsBestModelsOnce()
     QVERIFY(!QFile::exists(directory.filePath("swe.traineddata")));
     network.replies.at(0)->supply(data.mid(data.size() / 2));
     network.replies.at(0)->finish();
+    QTRY_VERIFY(!mervin::TessdataManager::busy()); // the files are written on its thread
     QCOMPARE(installed.count(), 1);
     QCOMPARE(finished.count(), 0);
     QCOMPARE(readFile(directory.filePath("swe.traineddata")), data);
@@ -239,6 +245,7 @@ void TstOcrProvisioner::downloadsBestModelsOnce()
 
     network.replies.at(1)->supply(data);
     network.replies.at(1)->finish();
+    QTRY_VERIFY(!mervin::TessdataManager::busy());
     QCOMPARE(installed.count(), 2);
     QCOMPARE(finished.count(), 1);
     QCOMPARE(files(directory.path()), QStringList({"eng.traineddata", "swe.traineddata"}));
@@ -285,10 +292,12 @@ void TstOcrProvisioner::replacesExistingModelOnlyOnSuccess()
     QSignalSpy installed(&provisioner, &mervin::ocr::OcrProvisioner::modelInstalled);
     QSignalSpy finished(&provisioner, &mervin::ocr::OcrProvisioner::finished);
     provisioner.start({"eng"}, directory.path());
-    QCOMPARE(network.requests.size(), 1);
+    QTRY_COMPARE(network.requests.size(), 1);
     network.replies.first()->supply(data);
+    QTRY_VERIFY(!mervin::TessdataManager::busy()); // the files are written on its thread
     QCOMPARE(readFile(target), original);
     network.replies.first()->finish(QNetworkReply::NetworkError(error), status);
+    QTRY_VERIFY(!mervin::TessdataManager::busy());
     QCOMPARE(installed.count(), success ? 1 : 0);
     QCOMPARE(finished.count(), 1);
     QCOMPARE(readFile(target), success ? data : original);
@@ -306,9 +315,11 @@ void TstOcrProvisioner::failureDoesNotStopOtherLanguage()
     QSignalSpy installed(&provisioner, &mervin::ocr::OcrProvisioner::modelInstalled);
     QSignalSpy finished(&provisioner, &mervin::ocr::OcrProvisioner::finished);
     provisioner.start({"swe", "eng"}, directory.path());
+    QTRY_COMPARE(network.requests.size(), 2);
     network.replies.first()->finish(QNetworkReply::HostNotFoundError, 0);
     network.replies.last()->supply(modelData());
     network.replies.last()->finish();
+    QTRY_VERIFY(!mervin::TessdataManager::busy());
     QCOMPARE(installed.count(), 1);
     QCOMPARE(installed.first().first().toString(), QStringLiteral("eng"));
     QCOMPARE(finished.count(), 1);
@@ -326,6 +337,7 @@ void TstOcrProvisioner::cancelAndDestructionAbandonDownloads()
             QSignalSpy installed(&provisioner, &mervin::ocr::OcrProvisioner::modelInstalled);
             QSignalSpy finished(&provisioner, &mervin::ocr::OcrProvisioner::finished);
             provisioner.start({"swe", "eng"}, directory.path());
+            QTRY_COMPARE(network.requests.size(), 2);
             network.replies.first()->supply(modelData().first(50));
             if (cancelExplicitly) {
                 provisioner.cancel();
@@ -337,8 +349,40 @@ void TstOcrProvisioner::cancelAndDestructionAbandonDownloads()
         }
         QCOMPARE(network.requests.size(), 2);
         QCOMPARE(network.aborts, 2);
+        QTRY_VERIFY(!mervin::TessdataManager::busy()); // the staging files go on its thread
         QVERIFY(files(directory.path()).isEmpty());
     }
+}
+
+// A download can finish while the folder's thread is busy. Canceling before its
+// installation starts leaves the installed model as it was.
+void TstOcrProvisioner::cancelStopsAnInstallationNotStarted()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString target = directory.filePath("eng.traineddata");
+    const QByteArray original = modelData('A');
+    QVERIFY(writeFile(target, original));
+    ModelNetwork network;
+    mervin::ocr::OcrProvisioner provisioner(nullptr, &network);
+    QSignalSpy installed(&provisioner, &mervin::ocr::OcrProvisioner::modelInstalled);
+    QSignalSpy finished(&provisioner, &mervin::ocr::OcrProvisioner::finished);
+    provisioner.start({"eng"}, directory.path());
+    QTRY_COMPARE(network.requests.size(), 1);
+    std::atomic<bool> held{true};
+    mervin::TessdataManager::runInFolder([&held] {
+        for (int i = 0; held.load() && i < 2000; ++i)
+            QThread::msleep(5);
+    });
+    network.replies.first()->supply(modelData('B'));
+    network.replies.first()->finish();
+    provisioner.cancel();
+    held = false;
+    QTRY_VERIFY(!mervin::TessdataManager::busy());
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(installed.count(), 0);
+    QCOMPARE(readFile(target), original);
+    QCOMPARE(files(directory.path()), QStringList({"eng.traineddata"}));
 }
 
 void TstOcrProvisioner::inactivityAbandonsDownload()
@@ -346,12 +390,17 @@ void TstOcrProvisioner::inactivityAbandonsDownload()
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     ModelNetwork network;
-    mervin::ocr::OcrProvisioner provisioner(nullptr, &network, 20);
+    // Long enough to supply data once the download has started, which waits for its
+    // staging file on the OCR folder's thread.
+    mervin::ocr::OcrProvisioner provisioner(nullptr, &network, 300);
     QSignalSpy finished(&provisioner, &mervin::ocr::OcrProvisioner::finished);
     provisioner.start({"swe"}, directory.path());
+    QVERIFY(QTest::qWaitFor([&network] { return network.requests.size() == 1; }, 5000));
+    QVERIFY(network.replies.first());
     network.replies.first()->supply(modelData().first(50));
     QTRY_COMPARE(finished.count(), 1);
     QCOMPARE(network.aborts, 1);
+    QTRY_VERIFY(!mervin::TessdataManager::busy()); // the staging file goes on its thread
     QVERIFY(files(directory.path()).isEmpty());
     provisioner.start({"swe"}, directory.path());
     QCOMPARE(network.requests.size(), 1);
@@ -367,7 +416,7 @@ void TstOcrProvisioner::unwritableDestinationDoesNotRequest()
     mervin::ocr::OcrProvisioner provisioner(nullptr, &network);
     QSignalSpy finished(&provisioner, &mervin::ocr::OcrProvisioner::finished);
     provisioner.start({"eng"}, path);
-    QCOMPARE(finished.count(), 1);
+    QTRY_COMPARE(finished.count(), 1);
     QVERIFY(network.requests.isEmpty());
     provisioner.start({"eng"}, directory.path());
     QVERIFY(network.requests.isEmpty());

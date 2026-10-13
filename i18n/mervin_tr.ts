@@ -2352,7 +2352,7 @@ Sisteminizin Ayarlar → Varsayılan Uygulamalar&apos;ı açın (veya bir PDF&ap
     </message>
     <message>
         <source>Working...</source>
-        <extracomment>Button text while a language downloads.</extracomment>
+        <extracomment>Button text while a language downloads or is removed.</extracomment>
         <translation>Çalışıyor...</translation>
     </message>
     <message numerus="yes">

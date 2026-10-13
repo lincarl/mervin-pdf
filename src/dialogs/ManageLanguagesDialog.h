@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ocr/TessdataManager.h"
+
 #include <QDialog>
 #include <QList>
 #include <QStringList>
@@ -25,13 +27,16 @@ public:
                                    QNetworkAccessManager *network = nullptr);
 
     // The language selected for the next OCR selection. Empty means that no
-    // language remains installed.
+    // language remains installed. The one the dialog was opened with until the
+    // installed languages have been read, and never one being removed.
     QString defaultLanguage() const;
 
 private:
     struct Language { QString code, name, url; qint64 size = 0; };
     void fetchCatalog();
-    void refreshInstalled();
+    void refreshInstalled(); // reads the folder off the UI thread, then showInstalled()
+    void showInstalled(const QList<TessdataManager::Model> &models);
+    bool isInstalled(const QString &code) const;
     void rebuildDefaultLanguages();
     void rebuildLists();
     void applyFilter();
@@ -49,7 +54,9 @@ private:
     QLabel *installedTotal_ = nullptr;
     QLabel *availableStatus_ = nullptr;
     QList<Language> catalog_;
-    QStringList installed_;
+    QList<TessdataManager::Model> installed_;
+    bool listed_ = false; // installed_ has been read
+    QString removing_;    // a language being removed on the OCR folder's thread
     QString initialDefaultLanguage_;
     QString busyCode_;
 };

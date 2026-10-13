@@ -2366,7 +2366,7 @@ Otevřete Nastavení systému → Výchozí aplikace (nebo klepněte pravým tla
     </message>
     <message>
         <source>Working...</source>
-        <extracomment>Button text while a language downloads.</extracomment>
+        <extracomment>Button text while a language downloads or is removed.</extracomment>
         <translation>Pracuji...</translation>
     </message>
     <message numerus="yes">

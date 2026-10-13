@@ -2359,7 +2359,7 @@ Opne Innstillingar → Standardprogram i systemet (eller høgreklikk på ei PDF-
     </message>
     <message>
         <source>Working...</source>
-        <extracomment>Button text while a language downloads.</extracomment>
+        <extracomment>Button text while a language downloads or is removed.</extracomment>
         <translation>Arbeider...</translation>
     </message>
     <message numerus="yes">

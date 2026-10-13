@@ -2359,7 +2359,7 @@ Opnaðu stillingar kerfisins þíns → Sjálfgefin forrit (eða hægrismelltu �
     </message>
     <message>
         <source>Working...</source>
-        <extracomment>Button text while a language downloads.</extracomment>
+        <extracomment>Button text while a language downloads or is removed.</extracomment>
         <translation>Vinnur...</translation>
     </message>
     <message numerus="yes">

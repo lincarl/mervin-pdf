@@ -2352,7 +2352,7 @@ Mở Cài đặt của hệ thống → Ứng dụng mặc định (hoặc nhấ
     </message>
     <message>
         <source>Working...</source>
-        <extracomment>Button text while a language downloads.</extracomment>
+        <extracomment>Button text while a language downloads or is removed.</extracomment>
         <translation>Đang làm việc...</translation>
     </message>
     <message numerus="yes">

@@ -2359,7 +2359,7 @@ Obriu la configuració del vostre sistema → Aplicacions predeterminades (o feu
     </message>
     <message>
         <source>Working...</source>
-        <extracomment>Button text while a language downloads.</extracomment>
+        <extracomment>Button text while a language downloads or is removed.</extracomment>
         <translation>Treballant...</translation>
     </message>
     <message numerus="yes">
