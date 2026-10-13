@@ -264,10 +264,10 @@ private:
     void applyViewStateIfStored(const QString &canonicalPath);
     // The mount a document was opened from: the session's copy, else Recent's.
     QString recordedMount(const QString &canonicalPath) const;
-    // Close the tabs of the files the last closeRemovedTabs scan found gone. A
-    // window that cannot close a tab yet (MainWindow::closeRemovedTabs) keeps its
-    // file listed here, and the activity timer tries again.
-    void closeFoundRemovedTabs();
+    // Close the tabs of the files a closeRemovedTabs scan just found gone. A window
+    // that cannot close a tab yet (MainWindow::closeRemovedTabs) makes the activity
+    // timer run the whole check again.
+    void closeFoundRemovedTabs(const QStringList &canonicalPaths);
 
     // Rebuild the app-wide Theme stylesheet on the next event-loop turn. Deferred
     // (and coalesced) because the colour-scheme signals that drive it fire BEFORE
@@ -311,7 +311,7 @@ private:
     bool movingTab_ = false;           // detachTab or mergeTab is moving a tab
     bool tabScanRunning_ = false;      // a closeRemovedTabs scan is on its worker
     bool tabScanPending_ = false;      // ...and another was asked for meanwhile
-    QStringList removedTabFiles_;      // canonical paths whose tabs still have to close
+    bool removedTabsWaiting_ = false;  // a busy window kept a tab whose file is gone
     // Set on shutdown so a scan stuck on slow network paths stops between paths
     // instead of keeping the process alive.
     std::atomic<bool> scanCancel_{false};

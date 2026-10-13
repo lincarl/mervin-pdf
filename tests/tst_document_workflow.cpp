@@ -803,20 +803,25 @@ private slots:
     }
 
     // While a dialog is open the window keeps the tab, since the dialog may depend
-    // on the tab bar. The tab closes once the dialog is gone.
+    // on the tab bar. The tab closes once the dialog is gone, after a fresh check
+    // that spares a file which came back meanwhile.
     void busyWindowClosesARemovedTabLater()
     {
         QTemporaryDir files;
         const QDir root(QFileInfo(files.path()).canonicalFilePath());
         const QString gone = root.filePath(QStringLiteral("attachment.pdf"));
-        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), gone));
+        const QString back = root.filePath(QStringLiteral("restored.pdf"));
+        for (const QString &path : {gone, back})
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
 
         WindowManager manager;
         MainWindow *window = manager.createWindow();
         QVERIFY(window->openFile(gone));
+        QVERIFY(window->openFile(back));
         QVERIFY(window->openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
         unloadBackgroundTabs(*window);
         QVERIFY(QFile::remove(gone));
+        QVERIFY(QFile::remove(back));
 
         QDialog dialog(window);
         dialog.setModal(true);
@@ -824,9 +829,12 @@ private slots:
         QTRY_COMPARE(QApplication::activeModalWidget(), &dialog);
         manager.closeRemovedTabs();
         QTest::qWait(1500); // the check, then at least one retry
-        QCOMPARE(window->tabCount(), 2);
+        QCOMPARE(window->tabCount(), 3);
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), back));
         dialog.close();
-        QTRY_COMPARE_WITH_TIMEOUT(tabFiles(*window), QStringList{QStringLiteral("properties.pdf")}, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(tabFiles(*window),
+                                  (QStringList{QStringLiteral("restored.pdf"), QStringLiteral("properties.pdf")}),
+                                  5000);
     }
 
     void savingSuspendedEditsRequiresConfirmingExternalChanges()

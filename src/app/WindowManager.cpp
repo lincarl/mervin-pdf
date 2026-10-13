@@ -124,11 +124,12 @@ WindowManager::WindowManager()
     activityTimer_->setInterval(1000);
     connect(activityTimer_, &QTimer::timeout, this, [this] {
         checkDocumentActivity();
-        // Tabs a busy window could not close at the end of the last scan. Only this
-        // tick retries. The other callers of checkDocumentActivity run inside
-        // MainWindow handlers, which must not lose a tab under them.
-        if (!removedTabFiles_.isEmpty())
-            closeFoundRemovedTabs();
+        // A busy window kept a tab the last check found gone. Check again rather
+        // than act on that old answer: the file may be back, or its share away.
+        // Only this tick retries. The other callers of checkDocumentActivity run
+        // inside MainWindow handlers.
+        if (std::exchange(removedTabsWaiting_, false))
+            closeRemovedTabs();
     });
     activityTimer_->start();
 }
@@ -449,11 +450,7 @@ void WindowManager::closeRemovedTabs()
             this,
             [this, removed] {
                 tabScanRunning_ = false;
-                for (const QString &path : removed)
-                    if (!removedTabFiles_.contains(path))
-                        removedTabFiles_ << path;
-                if (!removedTabFiles_.isEmpty())
-                    closeFoundRemovedTabs();
+                closeFoundRemovedTabs(removed);
                 if (std::exchange(tabScanPending_, false))
                     closeRemovedTabs();
             },
@@ -461,19 +458,14 @@ void WindowManager::closeRemovedTabs()
     });
 }
 
-void WindowManager::closeFoundRemovedTabs()
+void WindowManager::closeFoundRemovedTabs(const QStringList &canonicalPaths)
 {
     if (shuttingDown_ || quitting_)
         return;
-    QStringList waiting;
-    for (const QString &path : std::as_const(removedTabFiles_)) {
-        bool closed = true;
+    for (const QString &path : canonicalPaths)
         for (MainWindow *w : std::as_const(windows_)) // closing a tab keeps its window
-            closed = w->closeRemovedTabs(path) && closed;
-        if (!closed)
-            waiting << path;
-    }
-    removedTabFiles_ = waiting;
+            if (!w->closeRemovedTabs(path))
+                removedTabsWaiting_ = true;
 }
 
 QStringList WindowManager::sessionPathsToRestore()

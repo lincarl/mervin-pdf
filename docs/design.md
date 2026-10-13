@@ -221,10 +221,11 @@ letter, so it keeps the tab, as it keeps a session document. Tabs with unsaved e
 reload from their recovery snapshot and stay. The check runs on window activation and
 after a failed asynchronous reload, on its own worker thread, since network paths can
 stall. The window then removes the tab on the UI thread without a prompt, a
-view-state write or a reopen history entry. It defers that while a modal dialog,
-popup, document operation, mouse press or tab drag may hold tab indexes, and the
-one-second activity timer retries. The file is checked once more just before the
-tab goes. Windows in the tray keep their tabs until shown. Loaded tabs stay open,
+view-state write or a reopen history entry, and without touching the disk. While a
+modal dialog, popup, document operation, mouse press or tab drag may hold tab
+indexes, the window keeps the tab, and the one-second activity timer runs the whole
+check again. A close therefore always follows a fresh check, which also spares a tab
+whose file came back meanwhile. Windows in the tray keep their tabs until shown. Loaded tabs stay open,
 because they still show their document. Removing a tab never leaves the Recent
 screen, and moving a tab between windows saves the session once, after the move, so
 the document keeps its recorded mount.

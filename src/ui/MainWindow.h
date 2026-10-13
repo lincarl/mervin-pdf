@@ -105,11 +105,11 @@ public:
     // Tabs without their document in memory: unloaded, or failed to load.
     QList<mervin::TabPage *> unloadedTabs() const;
     // Close, without asking, every unloaded tab of `canonicalPath` that has no
-    // unsaved edits and whose file is still missing (see
-    // WindowManager::closeRemovedTabs). It is neither remembered for Ctrl+Shift+T
-    // nor given a view state. A window in the tray keeps its tabs. False when a tab
-    // has to stay for now, because a dialog, menu, drag or document operation may
-    // depend on the tab bar. Call it again later.
+    // unsaved edits. WindowManager::closeRemovedTabs has just found the file gone,
+    // so this touches no disk. The tab is neither remembered for Ctrl+Shift+T nor
+    // given a view state. A window in the tray keeps its tabs. False when a tab has
+    // to stay for now, because a dialog, menu, drag or document operation may
+    // depend on the tab bar.
     bool closeRemovedTabs(const QString &canonicalPath);
 
 protected:

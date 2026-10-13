@@ -1927,11 +1927,9 @@ bool MainWindow::closeRemovedTabs(const QString &canonicalPath)
         if (!tab || tab->canonicalPath() != canonicalPath || !tab->isSuspended()
             || tab->hasUnsavedEdits())
             continue;
-        // Ask the disk only when the tab can go, since a network path can stall.
         if (busy)
             return false;
-        if (!QFileInfo::exists(tab->path())) // not back since the check
-            removeTabAt(i);
+        removeTabAt(i);
     }
     return true;
 }
