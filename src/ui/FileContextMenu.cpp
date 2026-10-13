@@ -127,12 +127,13 @@ void showFileContextMenu(QWidget *parent, const QString &path, const QPoint &glo
         static quint64 latestCopy = 0;
         const quint64 request = ++latestCopy;
         const auto overtaken = std::make_shared<bool>(false);
-        const QMetaObject::Connection watch =
+        // Not const: disconnecting clears the handle it is given.
+        QMetaObject::Connection watch =
             QObject::connect(QApplication::clipboard(), &QClipboard::dataChanged, context,
                              [overtaken] { *overtaken = true; });
         background::run(
             context, [file] { return isCopyableFile(file); },
-            [parent, file, copyFileText, fileNative, overtaken, watch, request](bool copyable) {
+            [parent, file, copyFileText, fileNative, overtaken, watch, request](bool copyable) mutable {
                 QObject::disconnect(watch);
                 if (*overtaken || request != latestCopy)
                     return;
