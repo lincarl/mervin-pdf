@@ -242,6 +242,14 @@ QList<PageOps::MergeInput> MergePlan::inputs() const
     return out;
 }
 
+QString MergePlan::plainOutputPath() const
+{
+    if (entries_.isEmpty())
+        return {};
+    const QFileInfo fi(entries_.first().path);
+    return fi.dir().filePath(fi.completeBaseName() + QStringLiteral("-merged.pdf"));
+}
+
 QString MergePlan::defaultOutputPath() const
 {
     if (entries_.isEmpty())

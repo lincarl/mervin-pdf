@@ -1,6 +1,7 @@
 #include "dialogs/ExtractDialog.h"
 #include "dialogs/ExtractStrip.h"
 #include "i18n/UiLanguage.h"
+#include "io/SaveCheck.h"
 #include "security/PageOps.h"
 #include "security/QpdfService.h"
 
@@ -20,6 +21,7 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QScopeGuard>
 #include <QScrollBar>
 #include <QTemporaryDir>
 #include <QTest>
@@ -29,6 +31,7 @@
 #include <memory>
 
 using mervin::ExtractDialog;
+using mervin::SaveCheck;
 using mervin::ExtractPlan;
 using mervin::ExtractStrip;
 using mervin::PageOps;
@@ -111,6 +114,8 @@ private slots:
     void destinationCannotBeTheSource();
     void outputOpenInATabIsRefused();
     void failedWriteKeepsTheRows();
+    void slowSaveAsCheckSaysSoAndExtractWaitsForIt();
+    void editAfterExtractNeedsAnotherPress();
     void encryptedSourceAsksOnceInline();
     void encryptedSourceUsesTheTabPassword();
     void staleTabPasswordFallsBackToTheRow();
@@ -166,6 +171,7 @@ private:
         d.setAttribute(Qt::WA_DontShowOnScreen, true);
         d.show(); // realises the layout without ever putting a window on screen
         QTest::qWait(1);
+        settle(&d);
     }
     template<typename T>
     static T *child(ExtractDialog &d, const char *name)
@@ -202,6 +208,14 @@ private:
             out << e->text();
         return out;
     }
+    // Lets the Save as check answer: it runs on a background thread, and the error
+    // line and Extract wait for it.
+    static void settle(QWidget *dialog)
+    {
+        const auto *check = dialog->findChild<mervin::SaveCheck *>();
+        QVERIFY(check);
+        QVERIFY(QTest::qWaitFor([check] { return !check->pending(); }, 5000));
+    }
     // Replace a field's text the way a user does: select all, type.
     static void type(QLineEdit *field, const QString &text)
     {
@@ -210,6 +224,7 @@ private:
             QTest::keyClick(field, Qt::Key_Delete);
         else
             QTest::keyClicks(field, text);
+        settle(field->window());
     }
     // Answer the next "Replace it?" box with Yes once it is up. The box runs its
     // own event loop, so a polling timer started beforehand is what reaches it.
@@ -230,9 +245,15 @@ private:
         timer->start(10);
     }
     // What the dialog would write: Extract, then its job's pages.
-    static QList<int> accepted(ExtractDialog &d)
+    // Extract checks Save as again on a background thread, then writes.
+    static void press(ExtractDialog &d)
     {
         extract(d)->click();
+        settle(&d);
+    }
+    static QList<int> accepted(ExtractDialog &d)
+    {
+        press(d);
         return d.result() == QDialog::Accepted ? d.job().pages : QList<int>{-1};
     }
 };
@@ -421,6 +442,7 @@ void TstExtractDialog::addedRangeBlocksUntilFilledOrRemoved()
     QVERIFY(!rows(d).at(1)->property("invalid").toBool()); // unfinished, not wrong
 
     QTest::keyClicks(rows(d).at(1), QStringLiteral("9"));
+    settle(&d);
     QVERIFY(extract(d)->isEnabled());
 
     // Added below the current row, not at the end.
@@ -430,6 +452,7 @@ void TstExtractDialog::addedRangeBlocksUntilFilledOrRemoved()
     QVERIFY(!extract(d)->isEnabled());
     button(d, QStringLiteral("&Remove"))->click();
     QCOMPARE(texts(d), QStringList({QStringLiteral("7"), QStringLiteral("9")}));
+    settle(&d);
     QVERIFY(extract(d)->isEnabled());
 
     // No rows at all has its own reason.
@@ -635,7 +658,7 @@ void TstExtractDialog::failedWriteKeepsTheRows()
     QVERIFY(extract(d)->isEnabled());
 
     answerReplaceWithYes(); // the file exists, so Extract asks first
-    extract(d)->click();
+    press(d);
     QVERIFY(d.result() != QDialog::Accepted);                 // still open...
     QCOMPARE(texts(d), QStringList({QStringLiteral("5-7")})); // ...with its rows
     QVERIFY2(error(d).startsWith(QStringLiteral("Could not write \"read-only.pdf\".")),
@@ -646,12 +669,80 @@ void TstExtractDialog::failedWriteKeepsTheRows()
     QVERIFY(QFile::setPermissions(target, QFileDevice::ReadOwner | QFileDevice::WriteOwner
                                               | QFileDevice::ReadUser | QFileDevice::WriteUser));
     answerReplaceWithYes();
-    extract(d)->click();
+    press(d);
     QCOMPARE(d.result(), int(QDialog::Accepted));
     int count = 0;
     QString err;
     QCOMPARE(PageOps::probe(target, &count, QString(), &err), PageOps::Status::Ok);
     QCOMPARE(count, 3);
+}
+
+// Save as is checked on a background thread, as its folder can be on a share that
+// stopped answering. A quick check changes nothing on screen; a slow one says so,
+// and Extract pressed meanwhile writes once it answers.
+void TstExtractDialog::slowSaveAsCheckSaysSoAndExtractWaitsForIt()
+{
+    const QString target = dir_.filePath(QStringLiteral("checked-slowly.pdf"));
+    ExtractDialog d(source(plain_));
+    prepare(d);
+    settle(&d);
+    auto release = qScopeGuard([] { SaveCheck::holdForTesting(false); });
+    SaveCheck::holdForTesting(true);
+    output(d)->selectAll();
+    QTest::keyClicks(output(d), QDir::toNativeSeparators(target));
+    QVERIFY(error(d).isEmpty());
+    QVERIFY(extract(d)->isEnabled());
+    QTRY_COMPARE(error(d), QStringLiteral("Checking the folder…"));
+    QVERIFY(!extract(d)->isEnabled());
+    // A row's own reason shows meanwhile, and the check's comes back after it.
+    rows(d).at(0)->selectAll();
+    QTest::keyClicks(rows(d).at(0), QStringLiteral("99"));
+    QCOMPARE(error(d), QStringLiteral("Page 99 is out of range (1-31)."));
+    rows(d).at(0)->selectAll();
+    QTest::keyClicks(rows(d).at(0), QStringLiteral("7"));
+    QCOMPARE(error(d), QStringLiteral("Checking the folder…"));
+    QVERIFY(!extract(d)->isEnabled());
+    SaveCheck::holdForTesting(false);
+    settle(&d);
+    QVERIFY(error(d).isEmpty());
+    QVERIFY(extract(d)->isEnabled());
+
+    // Pressed for a name already checked, while the folder stops answering.
+    SaveCheck::holdForTesting(true);
+    extract(d)->click();
+    QTRY_COMPARE(error(d), QStringLiteral("Checking the folder…"));
+    QVERIFY(!extract(d)->isEnabled());
+    QVERIFY(d.result() != QDialog::Accepted);
+    QVERIFY(!QFileInfo::exists(target));
+    SaveCheck::holdForTesting(false);
+    settle(&d);
+    QCOMPARE(d.result(), int(QDialog::Accepted));
+    QVERIFY(QFileInfo::exists(target));
+}
+
+// Extract writes what it was pressed for. Typing another name while the check runs
+// takes that press back.
+void TstExtractDialog::editAfterExtractNeedsAnotherPress()
+{
+    const QString first = dir_.filePath(QStringLiteral("pressed-for.pdf"));
+    const QString second = dir_.filePath(QStringLiteral("typed-after.pdf"));
+    ExtractDialog d(source(plain_));
+    prepare(d);
+    type(output(d), QDir::toNativeSeparators(first));
+    auto release = qScopeGuard([] { SaveCheck::holdForTesting(false); });
+    SaveCheck::holdForTesting(true);
+    extract(d)->click();
+    output(d)->selectAll();
+    QTest::keyClicks(output(d), QDir::toNativeSeparators(second));
+    SaveCheck::holdForTesting(false);
+    settle(&d);
+    QVERIFY(d.result() != QDialog::Accepted);
+    QVERIFY(!QFileInfo::exists(first));
+    QVERIFY(!QFileInfo::exists(second));
+    QVERIFY(extract(d)->isEnabled());
+    press(d);
+    QCOMPARE(d.result(), int(QDialog::Accepted));
+    QVERIFY(QFileInfo::exists(second));
 }
 
 void TstExtractDialog::encryptedSourceAsksOnceInline()
@@ -665,14 +756,14 @@ void TstExtractDialog::encryptedSourceAsksOnceInline()
 
     QTest::keyClicks(password, QStringLiteral("nope"));
     QVERIFY(extract(d)->isEnabled());
-    extract(d)->click();
+    press(d);
     QVERIFY(d.result() != QDialog::Accepted); // stays open
     QCOMPARE(error(d), QStringLiteral("That password is not correct."));
     QCOMPARE(password->selectedText(), QStringLiteral("nope")); // ready to retype
 
     QTest::keyClicks(password, QStringLiteral("secret"));
     QVERIFY(error(d).isEmpty()); // editing clears the verdict
-    extract(d)->click();
+    press(d);
     QCOMPARE(d.result(), int(QDialog::Accepted));
     QCOMPARE(d.password(), QStringLiteral("secret"));
     QCOMPARE(d.job().pages, QList<int>({6}));
@@ -689,7 +780,7 @@ void TstExtractDialog::encryptedSourceUsesTheTabPassword()
     QVERIFY(error(d).isEmpty());
     QVERIFY(extract(d)->isEnabled());
 
-    extract(d)->click();
+    press(d);
     QCOMPARE(d.result(), int(QDialog::Accepted));
     QCOMPARE(d.password(), QStringLiteral("secret"));
 
@@ -862,7 +953,7 @@ void TstExtractDialog::deleteWritesTheRemainingPages()
     QTRY_COMPARE(rows(d).size(), 2);
     type(output(d), QDir::toNativeSeparators(target));
     QVERIFY(extract(d)->isEnabled());
-    extract(d)->click();
+    press(d);
     QCOMPARE(d.result(), int(QDialog::Accepted));
     QCOMPARE(d.job().mode, ExtractPlan::Mode::Delete);
     QCOMPARE(d.job().pages, QList<int>({1, 4, 5}));
@@ -881,7 +972,7 @@ void TstExtractDialog::deleteWritesTheRemainingPages()
     prepare(e);
     QVERIFY(!child<QLineEdit>(e, "extractPassword"));
     type(output(e), QDir::toNativeSeparators(locked));
-    extract(e)->click();
+    press(e);
     QCOMPARE(e.result(), int(QDialog::Accepted));
     QCOMPARE(e.password(), QStringLiteral("secret"));
     int count = 0;

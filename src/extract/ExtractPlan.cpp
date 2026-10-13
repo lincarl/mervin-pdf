@@ -60,10 +60,12 @@ QString withPdfSuffix(const QString &path)
 constexpr int kKeptRuns = 8;
 } // namespace
 
-ExtractPlan::ExtractPlan(const QString &sourcePath, int pageCount, Mode mode)
+ExtractPlan::ExtractPlan(const QString &sourcePath, int pageCount, Mode mode,
+                         const QString &canonicalPath)
     : mode_(mode)
     , sourcePath_(sourcePath)
-    , sourceKey_(fileKey(sourcePath))
+    , sourceKey_(normalizePathKey(canonicalPath.isEmpty() ? QFileInfo(sourcePath).absoluteFilePath()
+                                                          : canonicalPath))
     , pageCount_(pageCount)
 {
 }
@@ -560,6 +562,11 @@ QString ExtractPlan::resolvePath(const QString &destination) const
     return QDir::cleanPath(QFileInfo(sourcePath_).absoluteDir().absoluteFilePath(d));
 }
 
+QString ExtractPlan::plainOutputPath() const
+{
+    return QDir::cleanPath(QFileInfo(sourcePath_).absoluteDir().filePath(fileName()));
+}
+
 QString ExtractPlan::defaultOutputPath() const
 {
     const QDir dir = QFileInfo(sourcePath_).absoluteDir();
@@ -573,7 +580,22 @@ QString ExtractPlan::defaultOutputPath() const
     }
 }
 
-QString ExtractPlan::destinationError(const QString &destination) const
+ExtractPlan::Destination ExtractPlan::examine(const QString &destination) const
+{
+    Destination facts;
+    if (destination.trimmed().isEmpty())
+        return facts;
+    const QString path = resolvePath(destination);
+    facts.isFolder = QFileInfo(path).isDir();
+    const QString file = withPdfSuffix(path);
+    const QFileInfo info(file);
+    facts.folderExists = info.absoluteDir().exists();
+    facts.exists = info.exists();
+    facts.key = fileKey(file);
+    return facts;
+}
+
+QString ExtractPlan::destinationError(const QString &destination, const Destination &facts) const
 {
     const QString d = destination.trimmed();
     if (d.isEmpty()) {
@@ -584,18 +606,16 @@ QString ExtractPlan::destinationError(const QString &destination) const
         }
         return tr("Choose where to save the extracted pages.");
     }
-    const QString path = resolvePath(destination);
     // A file name is needed: resolvePath() drops a trailing separator, so a folder
     // would otherwise become "<folder>.pdf" beside it.
-    if (d.endsWith(QLatin1Char('/')) || d.endsWith(QLatin1Char('\\')) || QFileInfo(path).isDir())
-        return QFileInfo(path).isDir() ? tr("That is a folder. Add a file name.")
-                                       : tr("That folder does not exist.");
-    const QString file = withPdfSuffix(path);
-    if (!QFileInfo(file).absoluteDir().exists())
+    if (d.endsWith(QLatin1Char('/')) || d.endsWith(QLatin1Char('\\')) || facts.isFolder)
+        return facts.isFolder ? tr("That is a folder. Add a file name.")
+                              : tr("That folder does not exist.");
+    if (!facts.folderExists)
         return tr("That folder does not exist.");
     // qpdf reads the source while it writes, so replacing it destroys the very
     // file being copied from.
-    const QString key = fileKey(file);
+    const QString &key = facts.key;
     if (key == sourceKey_) {
         if (mode_ == Mode::Delete) {
             //: Delete pages always writes a new file and never changes the original.
@@ -614,7 +634,7 @@ void ExtractPlan::setOpenFiles(const QStringList &paths)
 {
     openKeys_.clear();
     for (const QString &p : paths)
-        openKeys_ << fileKey(p);
+        openKeys_ << normalizePathKey(p);
 }
 
 ExtractPlan::Job ExtractPlan::job(const QString &destination) const

@@ -3173,6 +3173,14 @@ Bu fayl artıq diskdə deyil.</translation>
     </message>
 </context>
 <context>
+    <name>mervin::SaveCheck</name>
+    <message>
+        <source>Checking the folder…</source>
+        <extracomment>Shown under Save as while the app checks the folder the file would be saved in. On a network drive this can take a while; the button that saves stays disabled until the check is done.</extracomment>
+        <translation>Qovluq yoxlanılır...</translation>
+    </message>
+</context>
+<context>
     <name>mervin::SecurityDialog</name>
     <message>
         <source>Document Security</source>

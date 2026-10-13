@@ -3,6 +3,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -46,9 +47,10 @@ private slots:
     void deleteWritesAnEditedCopy();
 
 private:
+    // The source as its tab gives it: with its canonical path when it exists.
     static ExtractPlan plan(const QStringList &rows, const QString &source = sourcePath())
     {
-        ExtractPlan p(source, 31);
+        ExtractPlan p(source, 31, ExtractPlan::Mode::Extract, canonical(source));
         for (const QString &r : rows)
             p.append(r);
         return p;
@@ -58,10 +60,16 @@ private:
     static ExtractPlan deleting(const QStringList &rows, int pageCount = 6,
                                 const QString &source = sourcePath())
     {
-        ExtractPlan p(source, pageCount, ExtractPlan::Mode::Delete);
+        ExtractPlan p(source, pageCount, ExtractPlan::Mode::Delete, canonical(source));
         for (const QString &r : rows)
             p.append(r);
         return p;
+    }
+    static QString canonical(const QString &path) { return QFileInfo(path).canonicalFilePath(); }
+    // What the dialog shows for `destination` once its check has answered.
+    static QString error(const ExtractPlan &p, const QString &destination)
+    {
+        return p.destinationError(destination, p.examine(destination));
     }
     static QList<int> pages(const ExtractPlan &p) { return p.job(QStringLiteral("x")).pages; }
     // "PPFP": one letter per cell (Page, Fold, Bad).
@@ -417,26 +425,26 @@ void TstExtractPlan::destinationRules()
     f.close();
     const ExtractPlan p = plan({QStringLiteral("7")}, source);
 
-    QCOMPARE(p.destinationError(QStringLiteral("  ")),
+    QCOMPARE(error(p, QStringLiteral("  ")),
              QStringLiteral("Choose where to save the extracted pages."));
     const QString missing = dir.filePath(QStringLiteral("missing"));
-    QCOMPARE(p.destinationError(missing + QStringLiteral("/out.pdf")),
+    QCOMPARE(error(p, missing + QStringLiteral("/out.pdf")),
              QStringLiteral("That folder does not exist."));
     const QString replace = QStringLiteral("The extract cannot replace the document it comes from.");
-    QCOMPARE(p.destinationError(source), replace);
+    QCOMPARE(error(p, source), replace);
     // ".pdf" is appended before comparing, so leaving it off does not get round it.
-    QCOMPARE(p.destinationError(dir.filePath(QStringLiteral("annual-report"))), replace);
+    QCOMPARE(error(p, dir.filePath(QStringLiteral("annual-report"))), replace);
 
     // A relative name lands beside the source.
-    QVERIFY(p.destinationError(QStringLiteral("out.pdf")).isEmpty());
+    QVERIFY(error(p, QStringLiteral("out.pdf")).isEmpty());
     QCOMPARE(p.job(QStringLiteral("out")).path, dir.filePath(QStringLiteral("out.pdf")));
 
     // A folder, or text ending in a separator, is not a file name (cleaning it
     // would otherwise write "<folder>.pdf" beside it).
     const QString folder = QStringLiteral("That is a folder. Add a file name.");
-    QCOMPARE(p.destinationError(dir.path()), folder);
-    QCOMPARE(p.destinationError(QDir::toNativeSeparators(dir.path() + QLatin1Char('/'))), folder);
-    QCOMPARE(p.destinationError(missing + QLatin1Char('/')),
+    QCOMPARE(error(p, dir.path()), folder);
+    QCOMPARE(error(p, QDir::toNativeSeparators(dir.path() + QLatin1Char('/'))), folder);
+    QCOMPARE(error(p, missing + QLatin1Char('/')),
              QStringLiteral("That folder does not exist."));
 
     // A file open in a tab cannot be replaced: the viewer holds it open, so the
@@ -449,18 +457,18 @@ void TstExtractPlan::destinationRules()
         QVERIFY(out.open(QIODevice::WriteOnly));
     }
     ExtractPlan withTabs = plan({QStringLiteral("7")}, source);
-    withTabs.setOpenFiles({source, opened});
+    withTabs.setOpenFiles({canonical(source), canonical(opened)}); // as the tabs hold them
     const QString inTab = QStringLiteral("That file is open in a tab. Choose another name.");
-    QCOMPARE(withTabs.destinationError(opened), inTab);
-    QCOMPARE(withTabs.destinationError(QStringLiteral("opened")), inTab); // relative, no ".pdf"
-    QCOMPARE(withTabs.destinationError(QDir::toNativeSeparators(opened)), inTab);
+    QCOMPARE(error(withTabs, opened), inTab);
+    QCOMPARE(error(withTabs, QStringLiteral("opened")), inTab); // relative, no ".pdf"
+    QCOMPARE(error(withTabs, QDir::toNativeSeparators(opened)), inTab);
 #ifdef Q_OS_WIN
-    QCOMPARE(withTabs.destinationError(opened.toUpper()), inTab);
+    QCOMPARE(error(withTabs, opened.toUpper()), inTab);
 #endif
-    QVERIFY(withTabs.destinationError(closed).isEmpty());
-    QCOMPARE(withTabs.destinationError(source), replace); // the source's own reason wins
+    QVERIFY(error(withTabs, closed).isEmpty());
+    QCOMPARE(error(withTabs, source), replace); // the source's own reason wins
     withTabs.setOpenFiles({});
-    QVERIFY(withTabs.destinationError(opened).isEmpty());
+    QVERIFY(error(withTabs, opened).isEmpty());
 }
 
 void TstExtractPlan::jobFollowsRowOrder()
@@ -630,11 +638,11 @@ void TstExtractPlan::deleteWritesAnEditedCopy()
     taken.close();
     QCOMPARE(p.defaultOutputPath(), dir.filePath(QStringLiteral("annual-report-edited-2.pdf")));
 
-    QCOMPARE(p.destinationError(QStringLiteral(" ")),
+    QCOMPARE(error(p, QStringLiteral(" ")),
              QStringLiteral("Choose where to save the edited copy."));
-    QCOMPARE(p.destinationError(source),
+    QCOMPARE(error(p, source),
              QStringLiteral("The edited copy cannot replace the document it comes from."));
-    QVERIFY(p.destinationError(QStringLiteral("out")).isEmpty());
+    QVERIFY(error(p, QStringLiteral("out")).isEmpty());
 
     // The job lists the pages to leave out, in page order, for PageOps::deletePages.
     const ExtractPlan::Job job = p.job(QStringLiteral("out"));

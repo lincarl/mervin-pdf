@@ -3,6 +3,7 @@
 
 #include "dialogs/LayoutMinimum.h"
 #include "dialogs/RowList.h"
+#include "io/SaveCheck.h"
 #include "print/PageRange.h"
 #include "recent/PathKey.h"
 #include "ui/Icons.h"
@@ -216,6 +217,9 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
     connect(buttons, &QDialogButtonBox::rejected, this, &MergeDialog::reject);
     layout->addWidget(buttons);
 
+    saveCheck_ = new SaveCheck(this);
+    connect(saveCheck_, &SaveCheck::slow, this, &MergeDialog::showProblem);
+
     if (!initialPath.isEmpty()) {
         // Probe the current document with qpdf like any input: MuPDF accepts files qpdf may
         // reject. Use the tab's password; probing never prompts.
@@ -345,8 +349,9 @@ void MergeDialog::moveCurrent(int delta)
 
 void MergeDialog::browseForOutput()
 {
+    // The file dialog asks before replacing a file, so the plain default will do.
     const QString suggested =
-        outputEdit_->text().isEmpty() ? plan_.defaultOutputPath() : outputEdit_->text();
+        outputEdit_->text().isEmpty() ? plan_.plainOutputPath() : outputEdit_->text();
     const QString out = QFileDialog::getSaveFileName(this, tr("Save Merged PDF"), suggested,
                                                      tr("PDF documents (*.pdf)"));
     if (out.isEmpty())
@@ -460,42 +465,134 @@ void MergeDialog::refreshFooter()
 
     // Native separators: QDir hands back '/' on Windows too, and a path with
     // forward slashes in a Save-as field reads as something the app generated
-    // rather than somewhere on this machine.
-    if (!outputEdited_)
-        outputEdit_->setText(QDir::toNativeSeparators(plan_.defaultOutputPath()));
+    // rather than somewhere on this machine. The check steps the default past a
+    // name in use when it answers.
+    if (!outputEdited_ && plan_.plainOutputPath() != defaultPath_) {
+        defaultPath_ = plan_.plainOutputPath();
+        outputEdit_->setText(QDir::toNativeSeparators(defaultPath_));
+    }
+    if (outputEdit_->text() != checking_ || files() != checkedFiles_)
+        checkOutput();
 
-    // Set after the auto-refill so it sees the field's final text. A missing
-    // destination has to reach this line: it disables Merge, and without a
-    // reason here the button would grey out with nothing on screen saying why.
-    QString problem = plan_.errorText();
-    if (problem.isEmpty() && !plan_.isEmpty() && outputEdit_->text().trimmed().isEmpty())
-        problem = tr("Choose where to save the merged PDF.");
-    // The viewer keeps an open tab's file open, so the write would fail only once
-    // Merge was pressed.
-    if (problem.isEmpty() && !plan_.isEmpty()
-        && openKeys_.contains(normalizePathKey(canonicalOrAbsolute(withPdf(outputEdit_->text())))))
-        problem = tr("That file is open in a tab. Choose another name.");
-    // A disabled Merge always has its reason here. A failed write shows here too
-    // but leaves Merge enabled, so closing the file in the program that holds it
-    // and pressing Merge again is enough.
-    const bool showWrite = problem.isEmpty() && !writeError_.isEmpty();
-    error_->setText(showWrite ? writeError_ : problem);
-    error_->setToolTip(showWrite ? writeErrorDetail_ : QString());
-
-    const bool has = !plan_.isEmpty();
     const int cur = currentRow();
     removeBtn_->setEnabled(cur >= 0);
     duplicateBtn_->setEnabled(cur >= 0);
     upBtn_->setEnabled(cur > 0);
     downBtn_->setEnabled(cur >= 0 && cur < plan_.count() - 1);
-    mergeBtn_->setEnabled(has && plan_.isValid() && problem.isEmpty());
+    showProblem();
+}
+
+std::optional<QString> MergeDialog::problem() const
+{
+    const QString planError = plan_.errorText();
+    if (!planError.isEmpty() || plan_.isEmpty())
+        return planError;
+    return saveAsProblem();
+}
+
+std::optional<QString> MergeDialog::saveAsProblem() const
+{
+    // Read after the auto-refill so it sees the field's final text. A missing
+    // destination has to reach the error line: it disables Merge, and without a
+    // reason there the button would grey out with nothing on screen saying why.
+    const QString text = outputEdit_->text();
+    if (text.trimmed().isEmpty())
+        return tr("Choose where to save the merged PDF.");
+    if (!checked_ || checked_->text != text)
+        return std::nullopt;
+    // The viewer keeps an open tab's file open, so the write would fail only once
+    // Merge was pressed.
+    if (openKeys_.contains(checked_->key))
+        return tr("That file is open in a tab. Choose another name.");
+    return QString();
+}
+
+void MergeDialog::showProblem()
+{
+    const QString planReason = plan_.errorText();
+    const bool planOk = planReason.isEmpty() && !plan_.isEmpty();
+    const std::optional<QString> saveAsReason =
+        planOk ? saveAsProblem() : std::optional<QString>(QString());
+    // A slow check of the text, or the one Merge asked for when pressed, says so and
+    // holds Merge.
+    if (planOk && saveCheck_->isSlow() && (!saveAsReason || pressed_)) {
+        error_->setText(SaveCheck::checkingText());
+        error_->setToolTip({});
+        mergeBtn_->setEnabled(false);
+        saveAsReasonShown_ = true;
+        return;
+    }
+    // Until the Save as check answers, a reason about Save as stays up, so typing
+    // in it does not make the line flicker. Any other reason no longer applies, and
+    // Merge waits for the check when pressed.
+    if (!saveAsReason && saveAsReasonShown_)
+        return;
+    const QString why = planReason.isEmpty() ? saveAsReason.value_or(QString()) : planReason;
+    saveAsReasonShown_ = planReason.isEmpty() && !why.isEmpty();
+    // A disabled Merge always has its reason here. A failed write shows here too
+    // but leaves Merge enabled, so closing the file in the program that holds it
+    // and pressing Merge again is enough.
+    const bool showWrite = why.isEmpty() && !writeError_.isEmpty();
+    error_->setText(showWrite ? writeError_ : why);
+    error_->setToolTip(showWrite ? writeErrorDetail_ : QString());
+    mergeBtn_->setEnabled(!plan_.isEmpty() && plan_.isValid() && why.isEmpty());
+}
+
+QStringList MergeDialog::files() const
+{
+    QStringList files;
+    for (const MergePlan::Entry &e : plan_.entries())
+        files << e.path + QLatin1Char('\n') + e.spec;
+    return files;
+}
+
+void MergeDialog::checkOutput()
+{
+    checking_ = outputEdit_->text();
+    checkedFiles_ = files();
+    const bool stepDefault = !outputEdited_;
+    // The inputs matter only to a write, and one on a share that stopped answering
+    // would hold up checks of Save as.
+    const bool forWrite = pressed_.has_value();
+    saveCheck_->run(
+        [plan = plan_, text = checking_, stepDefault, forWrite] {
+            Checked checked;
+            checked.text = stepDefault ? QDir::toNativeSeparators(plan.defaultOutputPath()) : text;
+            const QString out = withPdf(checked.text);
+            checked.canonical = QFileInfo(out).canonicalFilePath();
+            checked.key = normalizePathKey(canonicalOrAbsolute(out));
+            if (forWrite)
+                for (const MergePlan::Entry &e : plan.entries())
+                    checked.inputs << QFileInfo(e.path).canonicalFilePath();
+            return checked;
+        },
+        [this](const Checked &checked) {
+            if (!outputEdited_ && checked.text != outputEdit_->text()) {
+                // The default, past a name in use. Text selected for typing over
+                // stays selected.
+                const bool selected = outputEdit_->selectedText() == outputEdit_->text();
+                outputEdit_->setText(checked.text);
+                if (selected)
+                    outputEdit_->selectAll();
+                checking_ = checked.text;
+            }
+            checked_ = checked;
+            showProblem();
+            // Merge writes what it was pressed for. The default Save as can have
+            // stepped past a name in use meanwhile, which the user did not choose.
+            if (const auto pressed = std::exchange(pressed_, std::nullopt);
+                pressed && pressed->second == files()
+                && (pressed->first == outputEdit_->text() || !outputEdited_))
+                write();
+        });
 }
 
 void MergeDialog::setOpenFiles(const QStringList &paths)
 {
+    // The tabs hold canonical paths.
     openKeys_.clear();
     for (const QString &p : paths)
-        openKeys_ << normalizePathKey(canonicalOrAbsolute(p));
+        openKeys_ << normalizePathKey(p);
     refreshFooter();
 }
 
@@ -511,23 +608,31 @@ void MergeDialog::accept()
         outputEdit_->setFocus();
         return;
     }
+    pressed_ = std::pair(outputEdit_->text(), files());
+    checkOutput();
+}
+
+void MergeDialog::write()
+{
+    // Pressed before the check answered: the answer can be a reason not to write,
+    // such as a file open in a tab.
+    if (const std::optional<QString> why = problem(); !why || !why->isEmpty())
+        return;
     const QString out = withPdf(outputEdit_->text());
 
     // The merge reads every source while it writes the output, so naming an input
     // as the output destroys the file it is copying from. canonicalFilePath()
     // resolves symlinks and case, and is empty for a file that does not exist yet
     // - which is the normal case and correctly matches nothing.
-    const QString outCanonical = QFileInfo(out).canonicalFilePath();
+    const QString &outCanonical = checked_->canonical;
     if (!outCanonical.isEmpty()) {
-        for (const MergePlan::Entry &e : plan_.entries()) {
-            if (QFileInfo(e.path).canonicalFilePath() == outCanonical) {
-                QMessageBox::warning(this, tr("Merge PDFs"),
-                                     tr("The merged file cannot replace one of the files being "
-                                        "merged. Choose a different name."));
-                outputEdit_->setFocus();
-                outputEdit_->selectAll();
-                return;
-            }
+        if (checked_->inputs.contains(outCanonical)) {
+            QMessageBox::warning(this, tr("Merge PDFs"),
+                                 tr("The merged file cannot replace one of the files being "
+                                    "merged. Choose a different name."));
+            outputEdit_->setFocus();
+            outputEdit_->selectAll();
+            return;
         }
         if (QMessageBox::question(this, tr("Merge PDFs"),
                                   //: %1 is a file path.

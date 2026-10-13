@@ -102,9 +102,12 @@ public:
     // The plan as the backend wants it. Only meaningful when isValid().
     QList<PageOps::MergeInput> inputs() const;
 
-    // "<dir of row 0>/<base of row 0>-merged.pdf", stepping to "-merged-2.pdf"
-    // and so on while the name is taken, and never colliding with a file already
-    // in the plan. Empty when the plan is empty.
+    // "<dir of row 0>/<base of row 0>-merged.pdf": the Save as default before
+    // defaultOutputPath() steps past names in use. Empty when the plan is empty.
+    QString plainOutputPath() const;
+    // plainOutputPath(), stepping to "-merged-2.pdf" and so on while the name is
+    // taken, and never colliding with a file already in the plan. Empty when the
+    // plan is empty. Touches the disk.
     QString defaultOutputPath() const;
 
 private:

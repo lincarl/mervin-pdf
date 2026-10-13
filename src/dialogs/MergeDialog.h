@@ -7,6 +7,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <optional>
+
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -14,6 +16,7 @@ class QPushButton;
 namespace mervin {
 
 class RowList;
+class SaveCheck;
 
 // MergePlan-backed editor: each row contributes a file/page range in output order. Rebuild rows
 // after every mutation so captured row indices remain valid.
@@ -33,7 +36,7 @@ public:
     void setOpenFiles(const QStringList &paths);
 
     // Valid after exec() == Accepted, by which time the merged file is written:
-    // accept() writes it and stays open on a failure, so the plan survives it.
+    // write() writes it and keeps the dialog open on a failure, so the plan survives it.
     QList<PageOps::MergeInput> inputs() const { return plan_.inputs(); }
     QString outputPath() const { return outputPath_; }
 
@@ -44,9 +47,27 @@ public:
     void addPaths(const QStringList &paths);
 
 private:
-    // Validate, confirm an overwrite, then write the merged file. Closes only
-    // once the write succeeded; a failure goes on the error line instead.
+    // Validate, then check Save as again, as the disk can have changed since the
+    // last answer, and write once that answers (write()) if the rows and Save as
+    // are still what Merge was pressed for.
     void accept() override;
+    // Confirm an overwrite, then write the merged file. Closes only once the write
+    // succeeded; a failure goes on the error line instead.
+    void write();
+    // Checks the Save as text off the UI thread (see SaveCheck). While Save as is
+    // not edited, the check also steps the default past names in use.
+    // refreshFooter() asks for one when the text or the files change.
+    void checkOutput();
+    // The error line's text: the first problem only. Empty when there is none, and
+    // nothing while the check of the Save as text has not answered.
+    std::optional<QString> problem() const;
+    std::optional<QString> saveAsProblem() const; // Save as, once its check answered
+    // The error line and Merge. Until the Save as check answers, a reason about
+    // Save as stays, so a quick check does not make it flicker; SaveCheck::slow()
+    // says when it takes long.
+    void showProblem();
+    // The rows' files and ranges, which a write depends on.
+    QStringList files() const;
     void resizeEvent(QResizeEvent *event) override;
 
     void addFiles();
@@ -75,6 +96,22 @@ private:
     QStringList openKeys_;      // normalizePathKey() of every file open in a tab
     QString writeError_;        // the last failed write, until the plan or Save as changes
     QString writeErrorDetail_;  // qpdf's message for it, the error line's tooltip
+    // The last Save as check's answer.
+    struct Checked
+    {
+        QString text;       // the Save as text it is for
+        QString canonical;  // the merged file's canonical path, empty when it does not exist
+        QString key;        // normalizePathKey() of the merged file, symlinks resolved
+        QStringList inputs; // each row's file's canonical path, in row order; for a write
+    };
+    std::optional<Checked> checked_;
+    QString checking_;        // the text the last check asked for was for...
+    QStringList checkedFiles_; // ...and files() then
+    QString defaultPath_;     // plan_.plainOutputPath() when the default text was set
+    // What Merge was pressed for, until written: the Save as text and files().
+    std::optional<std::pair<QString, QStringList>> pressed_;
+    SaveCheck *saveCheck_ = nullptr;
+    bool saveAsReasonShown_ = false; // the error line's reason is about Save as
 
     int specWidth_ = 0;          // the Pages column: its caption and fields
     RowList *list_ = nullptr;

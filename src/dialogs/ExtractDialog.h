@@ -21,6 +21,7 @@ class Document;
 class ExtractStrip;
 class RenderEngine;
 class RowList;
+class SaveCheck;
 
 // ExtractPlan-backed editor with reorderable page/range rows and an output thumbnail strip.
 // Rows and strip write into the plan; all displayed state is rebuilt from it. Shares RowList
@@ -37,6 +38,7 @@ public:
     {
         ExtractPlan::Mode mode = ExtractPlan::Mode::Extract;
         QString path;            // the file on disk: what qpdf reads
+        QString canonicalPath;   // its tab's, which Save as may not name either
         QString password;        // the tab's, tried before the password row is shown
         int viewerPageCount = 0; // used only when qpdf cannot count (locked)
         // 0-based: the one row holds this page (Save Page As, and in Delete mode the
@@ -56,7 +58,7 @@ public:
     explicit ExtractDialog(const Source &source, QWidget *parent = nullptr);
 
     // Valid after exec() == Accepted, by which time the file has been written:
-    // accept() writes it and stays open on a failure, so the rows survive it.
+    // write() writes it and keeps the dialog open on a failure, so the rows survive it.
     ExtractPlan::Job job() const { return job_; }
     // Verified: the Source's password when it worked, else the one typed in the
     // row. Empty when the file is not encrypted.
@@ -64,9 +66,17 @@ public:
     bool openWhenDone() const;
 
 private:
+    // Checks Save as again, as the disk can have changed since the last answer, and
+    // writes once that answers (write()) if what Extract was pressed for is still
+    // what the window shows.
+    void accept() override;
     // Verify the password, confirm an overwrite, then write the file. Closes only
     // once the write succeeded; a failure goes on the error line instead.
-    void accept() override;
+    void write();
+    // Checks the Save as text off the UI thread (see SaveCheck). While Save as is
+    // not edited, the check also steps the default past names in use. refresh()
+    // asks for one when the text changes.
+    void checkOutput();
 
     // Tear down and rebuild every row from plan_, refresh(), then make `selectRow`
     // (clamped) current and, when `reveal`, scroll the strip to it. Field puts the
@@ -93,7 +103,15 @@ private:
     void expand(const ExtractPlan::RunKey &run);
     void updateActions(); // the strip's context menu follows its current cell
     void browseForOutput();
-    QString problem() const; // the error line's text: the first problem only
+    // The error line's text: the first problem only. Empty when there is none, and
+    // nothing while the check of the Save as text has not answered.
+    std::optional<QString> problem() const;
+    QString planProblem() const;                 // the problems before Save as
+    std::optional<QString> saveAsProblem() const; // Save as, once its check answered
+    // The error line and the button. Until the Save as check answers, a reason
+    // about Save as stays, so a quick check does not make it flicker;
+    // SaveCheck::slow() says when it takes long.
+    void showProblem();
 
     Source source_;
     ExtractPlan plan_;
@@ -107,6 +125,18 @@ private:
     QString readErrorDetail_;             // qpdf's message, the error line's tooltip
     QString writeError_;                  // the last failed write, until Save as changes
     QString writeErrorDetail_;            // qpdf's message for it, the tooltip
+    // The last Save as check's answer: the text it is for, and what it found.
+    struct Checked
+    {
+        QString text;
+        ExtractPlan::Destination facts;
+    };
+    std::optional<Checked> checked_;
+    QString checking_;    // the text the last check asked for was for
+    QString defaultName_; // plan_.fileName() when the default Save as text was set
+    std::optional<ExtractPlan::Job> pressed_; // what Extract was pressed for, until written
+    SaveCheck *saveCheck_ = nullptr;
+    bool saveAsReasonShown_ = false; // the error line's reason is about Save as
 
     // Row fields carry the generation they were built in and ignore their edits
     // once it is behind: a rebuild replaced them, or a pending split outdated them.

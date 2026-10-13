@@ -13,8 +13,8 @@ namespace mervin {
 // In Extract mode the rows are the new file's pages, so page order and duplicates are kept.
 // In Delete mode they are the pages a copy of the source leaves out. They form a set, so row
 // order and repeats do not matter, the strip shows every source page, and nothing folds.
-// API pages are zero-based; row text and UI strings are one-based. Filesystem access is limited
-// to output validation and resolving the source path at construction.
+// API pages are zero-based; row text and UI strings are one-based. Only examine() and
+// defaultOutputPath() touch the disk, and the dialog calls them off the UI thread.
 class ExtractPlan
 {
     Q_DECLARE_TR_FUNCTIONS(mervin::ExtractPlan)
@@ -22,7 +22,10 @@ class ExtractPlan
 public:
     enum class Mode { Extract, Delete };
 
-    ExtractPlan(const QString &sourcePath, int pageCount, Mode mode = Mode::Extract);
+    // `canonicalPath` is the source's, as its tab holds it; without it the source
+    // path is taken as it is.
+    ExtractPlan(const QString &sourcePath, int pageCount, Mode mode = Mode::Extract,
+                const QString &canonicalPath = {});
 
     Mode mode() const { return mode_; }
     const QString &sourcePath() const { return sourcePath_; }
@@ -174,19 +177,34 @@ public:
     // "<base>-p7.pdf" / "<base>-p12-18.pdf" when the output is one ascending run,
     // otherwise "<base>-extract.pdf". Delete mode: "<base>-edited.pdf".
     QString fileName() const;
+    // fileName() in the source's folder: the Save as default before
+    // defaultOutputPath() steps past names in use.
+    QString plainOutputPath() const;
     // Save as default: fileName() in the source's folder, stepping to "-2", "-3"...
-    // while the name exists or is the source.
+    // while the name exists or is the source. Touches the disk.
     QString defaultOutputPath() const;
-    // Files open in the app's tabs. The viewer holds each one open, so writing
-    // over one fails on Windows; destinationError() refuses them up front.
+    // Files open in the app's tabs, by their canonical paths as the tabs hold them.
+    // The viewer holds each one open, so writing over one fails on Windows;
+    // destinationError() refuses them up front.
     void setOpenFiles(const QStringList &paths);
-    // First problem with `destination`, "" when usable. Relative paths are taken
-    // against the source's folder. "Choose where to save the extracted pages." /
-    // "That folder does not exist." / "That is a folder. Add a file name." / "The
-    // extract cannot replace the document it comes from." / "That file is open in
-    // a tab. Choose another name." Delete mode words the first and fourth for the
-    // edited copy rather than an extract.
-    QString destinationError(const QString &destination) const;
+    // What destinationError() and the overwrite question need to know about the disk
+    // for one Save as text.
+    struct Destination
+    {
+        bool isFolder = false;     // the path as typed names a folder
+        bool folderExists = false; // the folder the file would go in exists
+        bool exists = false;       // the file exists
+        QString key;               // the file, with symlinks resolved when it exists
+    };
+    // Finds those facts for `destination`. Touches the disk.
+    Destination examine(const QString &destination) const;
+    // First problem with `destination`, "" when usable, from what examine() found for
+    // it. Relative paths are taken against the source's folder. "Choose where to save
+    // the extracted pages." / "That folder does not exist." / "That is a folder. Add
+    // a file name." / "The extract cannot replace the document it comes from." /
+    // "That file is open in a tab. Choose another name." Delete mode words the first
+    // and fourth for the edited copy rather than an extract.
+    QString destinationError(const QString &destination, const Destination &facts) const;
     // What to write: `destination` resolved with ".pdf" appended if missing, and
     // every page in row order (deletedPages() in Delete mode). Only meaningful when
     // isValid() and destinationError(destination) is empty.
@@ -218,8 +236,8 @@ private:
 
     Mode mode_ = Mode::Extract;
     QString sourcePath_;
-    QString sourceKey_; // fileKey(sourcePath_), once: it opens the file on Windows
-    QStringList openKeys_; // fileKey() of every file open in a tab
+    QString sourceKey_;    // the source's comparison key, from its canonical path
+    QStringList openKeys_; // the key of every file open in a tab
     int pageCount_ = 0;
     QList<Row> rows_;
 };
