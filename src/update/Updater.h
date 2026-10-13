@@ -7,11 +7,12 @@
 #include <QObject>
 #include <QPointer>
 #include <QString>
+#include <atomic>
 #include <functional>
+#include <memory>
 #include <utility>
 
 QT_BEGIN_NAMESPACE
-class QFile;
 class QNetworkAccessManager;
 class QNetworkReply;
 class QProgressDialog;
@@ -24,7 +25,10 @@ namespace mervin {
 // installs it and restarts. Manual checks use the same installation flow and show
 // progress. Unsupported/dev/portable copies link to the release. MSIX copies
 // open Microsoft Store for manual checks and never contact the release API.
-// Asset URLs come only from the configured release API response.
+// Asset URLs come only from the configured release API response. Its state in
+// QSettings, the downloads and the installation steps touch the disk on one
+// background thread, in order, as the profile can be on a share that stopped
+// answering; each step goes on when its disk work answers.
 class Updater : public QObject
 {
     Q_OBJECT
@@ -35,8 +39,9 @@ public:
 
     static Updater *instance(); // nullptr when none exists
 
-    // Last definite check or Windows installer handoff (UTC); invalid if never.
-    // A failed check leaves the previous date.
+    // Last definite check or Windows installer handoff (UTC); invalid if never, or
+    // until it has been read at start (see lastCheckChanged). A failed check leaves
+    // the previous date.
     static QDateTime lastCheck();
 
     // Whether this copy can download and install updates itself. Portable and dev
@@ -67,9 +72,21 @@ public:
 signals:
     // The automatic check interval was reset at `utc`; lastCheck() now returns it.
     void checked(const QDateTime &utc);
+    // lastCheck() changed: read from the profile at start, or reset by a check.
+    void lastCheckChanged(const QDateTime &utc);
 
 private:
     friend class TestUpdater;
+
+    // Runs `work` on the disk thread after what was asked before, then `done` with
+    // its result here, unless the updater is gone or, `forOperation`, the operation
+    // that asked has ended meanwhile (see operation_).
+    template <class Work, class Done>
+    void onDisk(Work work, Done done, bool forOperation = true);
+    // For tests: disk work, or its completion, has not finished.
+    static bool diskBusy();
+    // For tests, with the disk thread idle: opens `path` as the download in progress.
+    static bool openPartForTesting(const QString &path);
 
     void check(bool manual);
     void onReleaseReply(QNetworkReply *reply);
@@ -78,12 +95,16 @@ private:
     void onDownloadFinished();
     void installWhenIdle(); // manual checks can finish over Settings
     void pollInstall();
+    bool shouldWaitForDialogs() const;
     void install(const QString &file, const QString &version);
+    void handOffToInstaller(const QString &file, const QString &version);
     void installWithPackageManager(const QString &file, const QString &version);
+    void runPackageManager(const QStringList &command, const QString &file, const QString &version);
     void restart(const QString &exe);
     void endOperation();
     bool closeWindows();
     void markChecked();
+    void startDownload(); // the network part of download(), once the .part file is open
 
     const update::PackageKind kind_;
     const QString exePath_; // captured at start: a package upgrade replaces the file behind it
@@ -93,12 +114,17 @@ private:
     bool installQueued_ = false; // a verified download is waiting for other dialogs
     bool installing_ = false;  // do not remove the package once installation starts
     QPointer<QNetworkReply> reply_;
-    QFile *part_ = nullptr;    // the download in progress (<asset>.part)
+    // While a download runs: whether a write to its .part file failed. The file
+    // itself belongs to the disk thread.
+    std::shared_ptr<std::atomic<bool>> partFailed_;
     QCryptographicHash hash_{QCryptographicHash::Sha256};
     update::ReleaseAsset asset_;
     QString downloadVersion_;
     QPointer<QProgressDialog> progress_;
     std::function<bool()> closeWindows_;
+    QDateTime lastCheck_;
+    bool lastCheckKnown_ = false; // read at start, or set by a check
+    quint64 operation_ = 0;       // bumped by endOperation(), see onDisk()
 };
 
 } // namespace mervin

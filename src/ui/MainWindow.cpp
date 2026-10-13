@@ -2251,7 +2251,9 @@ void MainWindow::openSettings(SettingsDialog::Page page)
     if (updater) {
         connect(&dlg, &SettingsDialog::checkForUpdatesRequested, updater,
                 &mervin::Updater::checkNow);
-        connect(updater, &mervin::Updater::checked, &dlg, &SettingsDialog::setLastUpdateCheck);
+        // Also when the date is read at start, which a dialog opened right away misses.
+        connect(updater, &mervin::Updater::lastCheckChanged, &dlg,
+                &SettingsDialog::setLastUpdateCheck);
     }
     // Another window can change automatic updates while this dialog is open.
     // Keep the checkbox current so OK does not write the old value back.

@@ -13,18 +13,24 @@ namespace {
 // Set by --profile (see main.cpp); redirects the whole state directory.
 QString g_overrideDir;
 
-// Creates `dir` the first time it is asked for, at startup, so later calls from the
-// UI thread do not touch the disk. The background writer creates a folder that
-// went missing meanwhile (see appfiles::write).
+// Creates `dir` the first time it is asked for, so later calls do not touch the
+// disk. The config folder is made at startup; the updates folder first on the
+// updater's disk thread. The lock covers only the bookkeeping, so a folder on a
+// share that stopped answering holds up the thread that makes it, not every
+// thread that asks for a path. The background writer creates a folder that went
+// missing meanwhile (see appfiles::write).
 const QString &made(const QString &dir)
 {
     static std::mutex mutex;
     static QSet<QString> done;
-    std::lock_guard<std::mutex> lock(mutex);
-    if (!done.contains(dir)) {
-        QDir().mkpath(dir);
-        done.insert(dir);
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (done.contains(dir))
+            return dir;
     }
+    QDir().mkpath(dir); // two first callers both make it, which is harmless
+    std::lock_guard<std::mutex> lock(mutex);
+    done.insert(dir);
     return dir;
 }
 
