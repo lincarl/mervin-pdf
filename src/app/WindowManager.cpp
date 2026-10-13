@@ -434,7 +434,6 @@ void WindowManager::closeRemovedTabs()
         return;
     tabScanRunning_ = true;
     tabScanPool_.start([this, files] {
-        QStringList removed;
         for (const File &f : files) {
             if (scanCancel_)
                 return;
@@ -443,14 +442,18 @@ void WindowManager::closeRemovedTabs()
             // volume away, such as another USB stick under the same drive letter.
             const QFileInfo file(f.canonicalPath);
             if (!QFileInfo::exists(f.path) && file.absoluteDir().exists()
-                && RecentStore::isRemovedFromDisk(f.canonicalPath, f.mount))
-                removed << f.canonicalPath;
+                && RecentStore::isRemovedFromDisk(f.canonicalPath, f.mount)) {
+                // Close it now. Waiting for the other files, which can stall on a
+                // network path, would leave time for this one to come back.
+                QMetaObject::invokeMethod(
+                    this, [this, path = f.canonicalPath] { closeFoundRemovedTabs({path}); },
+                    Qt::QueuedConnection);
+            }
         }
         QMetaObject::invokeMethod(
             this,
-            [this, removed] {
+            [this] {
                 tabScanRunning_ = false;
-                closeFoundRemovedTabs(removed);
                 if (std::exchange(tabScanPending_, false))
                     closeRemovedTabs();
             },

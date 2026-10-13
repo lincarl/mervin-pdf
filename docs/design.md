@@ -220,7 +220,7 @@ for the document). A missing folder can be another volume under the same drive
 letter, so it keeps the tab, as it keeps a session document. Tabs with unsaved edits
 reload from their recovery snapshot and stay. The check runs on window activation and
 after a failed asynchronous reload, on its own worker thread, since network paths can
-stall. The window then removes the tab on the UI thread without a prompt, a
+stall. Each file found gone is reported at once, not after the other files. The window then removes the tab on the UI thread without a prompt, a
 view-state write or a reopen history entry, and without touching the disk. While a
 modal dialog, popup, document operation, mouse press or tab drag may hold tab
 indexes, the window keeps the tab, and the one-second activity timer runs the whole

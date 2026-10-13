@@ -264,9 +264,10 @@ private:
     void applyViewStateIfStored(const QString &canonicalPath);
     // The mount a document was opened from: the session's copy, else Recent's.
     QString recordedMount(const QString &canonicalPath) const;
-    // Close the tabs of the files a closeRemovedTabs scan just found gone. A window
-    // that cannot close a tab yet (MainWindow::closeRemovedTabs) makes the activity
-    // timer run the whole check again.
+    // Close the tabs of files a closeRemovedTabs scan has just found gone, each as
+    // soon as it is found. A window that cannot close a tab yet
+    // (MainWindow::closeRemovedTabs) makes the activity timer run the whole check
+    // again.
     void closeFoundRemovedTabs(const QStringList &canonicalPaths);
 
     // Rebuild the app-wide Theme stylesheet on the next event-loop turn. Deferred
