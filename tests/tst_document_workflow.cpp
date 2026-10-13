@@ -20,6 +20,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMap>
@@ -66,6 +67,9 @@ class TstDocumentWorkflow : public QObject
 public:
     TstDocumentWorkflow()
     {
+        // Native file dialogs cannot be driven from a test, and on Windows they do
+        // not run its timers.
+        QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
         connect(&dialogs_, &QTimer::timeout, this, [this] {
             auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
             if (!box)
@@ -378,6 +382,68 @@ private slots:
         }
         QCOMPARE(summaries.size(), 3);
         driver.stop();
+    }
+
+    // A tab whose original was deleted reloads its edits from the recovery copy.
+    // Save as Copy rescues them under a new name, and still refuses the
+    // original's own name, also when it is spelled through a linked folder.
+    void saveAsCopyWorksAfterTheOriginalIsDeleted()
+    {
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        QVERIFY(root.mkpath(QStringLiteral("real")));
+#ifdef Q_OS_WIN
+        const QString folder = root.filePath(QStringLiteral("real"));
+#else
+        const QString folder = root.filePath(QStringLiteral("link"));
+        QVERIFY(QFile::link(root.filePath(QStringLiteral("real")), folder));
+#endif
+        const QString original = folder + QStringLiteral("/attachment.pdf"); // as opened
+        const QString resolved = root.filePath(QStringLiteral("real/attachment.pdf"));
+        const QString copy = root.filePath(QStringLiteral("rescued.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), resolved));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        QVERIFY(window.openFile(original));
+        auto *tab = window.findChild<TabPage *>();
+        QVERIFY(tab);
+        QVERIFY(tab->viewer()->annotModel()->addTextNote(
+                    0, {40, 40}, Qt::yellow, {}, QStringLiteral("Rescued edit")) >= 0);
+        QVERIFY(tab->suspend());
+        QVERIFY(QFile::remove(original));
+        QString error;
+        QVERIFY2(tab->resume(&error), qPrintable(error));
+
+        // Type the name into the save dialog, as a user would.
+        QString chosen;
+        QTimer picker;
+        connect(&picker, &QTimer::timeout, this, [&] {
+            auto *dialog = qobject_cast<QFileDialog *>(QApplication::activeModalWidget());
+            auto *name = dialog ? dialog->findChild<QLineEdit *>(QStringLiteral("fileNameEdit")) : nullptr;
+            if (!name)
+                return;
+            name->setText(QDir::toNativeSeparators(chosen));
+            QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection);
+        });
+        picker.start(10);
+
+        chosen = copy;
+        answers_.append(QMessageBox::No); // "Open it now?"
+        QVERIFY(QMetaObject::invokeMethod(&window, "saveAsCopy"));
+        auto saved = engine.openDocument(copy);
+        QVERIFY(saved);
+        const auto notes = AnnotModel(*saved).pageAnnots(0);
+        QCOMPARE(notes.size(), 1u);
+        QCOMPARE(notes.front().contents, QStringLiteral("Rescued edit"));
+
+        for (const QString &name : {original, resolved}) {
+            chosen = name;
+            answers_.append(QMessageBox::Ok); // "Choose a different file name"
+            QVERIFY(QMetaObject::invokeMethod(&window, "saveAsCopy"));
+            QVERIFY2(!QFileInfo::exists(resolved), qPrintable(name));
+        }
+        picker.stop();
+        QCOMPARE(clicked_.size(), 3);
     }
 
     void closingDirtyTabCanBeCanceled()

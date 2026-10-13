@@ -11,6 +11,7 @@
 #include "render/MeasureContent.h"
 #include "render/MeasureMath.h"
 #include "render/RenderEngine.h"
+#include "recent/PathKey.h"
 #include "security/DocumentOutput.h"
 #include "security/MeasureExport.h"
 #include "security/PageOps.h"
@@ -59,6 +60,25 @@ using mervin::ExportMeasureDialog;
 namespace {
 
 using mervin::PageOps;
+
+// A comparison key for a file that may not exist, with links resolved as far as
+// the disk allows: the whole path, or else the folder the file would be in.
+QString fileKey(const QFileInfo &file)
+{
+    if (file.exists())
+        return mervin::normalizePathKey(file.canonicalFilePath());
+    const QString folder = QFileInfo(file.absolutePath()).canonicalFilePath();
+    return mervin::normalizePathKey(folder.isEmpty() ? file.absoluteFilePath()
+                                                     : folder + QLatin1Char('/') + file.fileName());
+}
+
+// Whether two paths name the same file. QFileInfo equality also holds for two
+// paths that do not exist, so with a tab's original deleted every new name looked
+// like the original.
+bool sameFile(const QString &a, const QString &b)
+{
+    return fileKey(QFileInfo(a)) == fileKey(QFileInfo(b));
+}
 
 // Retry once with a prompted password and remember it only on success. Its
 // strings belong to the window that runs it (context "MainWindow").
@@ -196,7 +216,7 @@ void MainWindow::saveAsCopy()
                                                      tr("PDF documents (*.pdf)"));
     if (out.isEmpty())
         return;
-    if (QFileInfo(out) == fi) {
+    if (sameFile(out, t->path())) {
         QMessageBox::warning(this, tr("Save as Copy"),
                              //: "Save edits" is a command in the Save menu. Use its
                              //: translation here.
