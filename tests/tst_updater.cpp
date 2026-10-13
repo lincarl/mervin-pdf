@@ -209,7 +209,9 @@ private slots:
     void manualCompletionInstallsOverSettings();
     void handoffQuitsBeforeSettingsLosesItsWindow();
     void automaticHandoffWaitsForADialogOpenedMeanwhile();
+#ifndef Q_OS_WIN // read-only folders do not stop writes on Windows
     void unwrittenConsumeStopsTheHandoff();
+#endif
     void automaticRestartWaitsForADialogOpenedDuringTheCopy();
     void quittingWaitsForTheDiskWithinItsTime();
     void automaticCompletionWaitsForSettings();
@@ -531,13 +533,11 @@ void TestUpdater::automaticHandoffWaitsForADialogOpenedMeanwhile()
     QVERIFY(!QSettings().contains(QStringLiteral("update/pendingFile")));
 }
 
+#ifndef Q_OS_WIN
 // Without a written consume, a failed or cancelled MSI would relaunch this copy
 // into the same installation again, so the handoff does not happen.
 void TestUpdater::unwrittenConsumeStopsTheHandoff()
 {
-#ifdef Q_OS_WIN
-    QSKIP("Read-only folders do not stop writes on Windows");
-#else
     if (::geteuid() == 0)
         QSKIP("Read-only files do not stop root");
     QVERIFY(savePending());
@@ -571,8 +571,8 @@ void TestUpdater::unwrittenConsumeStopsTheHandoff()
     QFile file(ini);
     QVERIFY(file.open(QIODevice::ReadOnly));
     QVERIFY(file.readAll().contains("pendingFile"));
-#endif
 }
+#endif
 
 // The AppImage copy runs in the background while the windows stay usable. An
 // automatic update does not close them over a dialog opened meanwhile.
