@@ -804,11 +804,16 @@ void WindowManager::duplicateToNewWindow(const QString &path, const QString &pas
     if (path.isEmpty())
         return;
     MainWindow *w = createWindow();
-    if (w->openFile(path, /*allowDuplicate=*/true, /*atIndex=*/-1, /*makeCurrent=*/true,
-                    password)) {
-        w->applyViewState(canonicalOf(path), state); // mirror the source view
-        w->move(globalPos);                           // offset from the source window
+    if (!w->openFile(path, /*allowDuplicate=*/true, /*atIndex=*/-1, /*makeCurrent=*/true,
+                     password)) {
+        // openFile has said why. Keep no empty window, as mergeTab does. A file
+        // opened from Explorer while its error box was up can have landed here.
+        if (w->tabCount() == 0)
+            w->closeForQuit();
+        return;
     }
+    w->applyViewState(canonicalOf(path), state); // mirror the source view
+    w->move(globalPos);                           // offset from the source window
     w->raise();
     w->activateWindow();
 }

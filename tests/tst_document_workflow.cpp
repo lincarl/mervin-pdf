@@ -881,6 +881,33 @@ private slots:
                                   5000);
     }
 
+    // Duplicating a tab whose file is gone says why it failed and leaves no empty
+    // window behind.
+    void failedDuplicateLeavesNoEmptyWindow()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("attachment.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        const auto windows = [] {
+            int count = 0;
+            for (QWidget *w : QApplication::topLevelWidgets())
+                count += qobject_cast<MainWindow *>(w) != nullptr;
+            return count;
+        };
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        QVERIFY(window->openFile(path));
+        manager.duplicateToNewWindow(path, {}, {}, {});
+        QCOMPARE(windows(), 2);
+
+        // A path with no file, as for an unloaded tab whose file was deleted. The
+        // open tabs keep their file open, so Windows would not let the test delete it.
+        answers_.append(QMessageBox::Ok); // "Could not open"
+        manager.duplicateToNewWindow(files.filePath(QStringLiteral("gone.pdf")), {}, {}, {});
+        QCOMPARE(clicked_.size(), 1);
+        QTRY_COMPARE(windows(), 2);
+    }
+
     void savingSuspendedEditsRequiresConfirmingExternalChanges()
     {
         QTemporaryDir files;
