@@ -13,6 +13,7 @@
 #include "ui/TabPage.h"
 #include "ui/Icons.h"
 #include "ui/Theme.h"
+#include "update/Updater.h"
 
 #include <QCoreApplication>
 #include <QApplication>
@@ -853,11 +854,16 @@ WindowManager::~WindowManager()
     // The next copy reads the settings, Recent and the session once it gets the
     // single-instance pipe, which instanceServer_ holds until after this body. A
     // tab's recovery copy is removed once its document has closed on a background
-    // thread, so those closes come first, within the same time.
+    // thread, so those closes come first, and the updater's state, as a pending
+    // update it put back, comes last, all within the same time.
     QElapsedTimer exitWait;
     exitWait.start();
+    const auto left = [&exitWait] {
+        return std::max(0, appfiles::kExitWaitMs - static_cast<int>(exitWait.elapsed()));
+    };
     Document::waitForCloses(appfiles::kExitWaitMs);
-    appfiles::flush(std::max(0, appfiles::kExitWaitMs - static_cast<int>(exitWait.elapsed())));
+    appfiles::flush(left());
+    Updater::waitForDisk(left());
 }
 
 MainWindow *WindowManager::createWindow()

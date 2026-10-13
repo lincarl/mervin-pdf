@@ -28,6 +28,8 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+#include <chrono>
+#include <future>
 #include <type_traits>
 
 namespace mervin {
@@ -265,6 +267,14 @@ Updater *Updater::instance()
 bool Updater::diskBusy()
 {
     return diskCalls.load() > 0;
+}
+
+bool Updater::waitForDisk(int ms)
+{
+    auto reached = std::make_shared<std::promise<void>>();
+    std::future<void> done = reached->get_future();
+    disk().add([reached] { reached->set_value(); });
+    return done.wait_for(std::chrono::milliseconds(ms)) == std::future_status::ready;
 }
 
 bool Updater::openPartForTesting(const QString &path)

@@ -663,9 +663,11 @@ The last check date is read when the updater starts and kept in memory, so Setti
 shows it without reading the profile. Handing off to the Windows installer consumes
 the pending update first, then closes the windows, starts the installer and quits in
 one step, as a quit that came later would let an open dialog's event loop delete the
-closed windows under it. An automatic installation checks again for other open
-dialogs after each disk step and waits for them before it closes any window. Windows
-file-handler registration uses the per-user registry. A profile redirects the Qt
+closed windows under it. The handoff goes ahead only once the consumed state is
+written. Quitting waits for the updater's writes, such as an update put back after
+the installer did not start, within the same 5 s it gives the app files. An automatic
+installation checks again for other open dialogs after each disk step and waits for
+them before it closes any window. Windows file-handler registration uses the per-user registry. A profile redirects the Qt
 settings as well as the files above.
 
 ## Theme and icons

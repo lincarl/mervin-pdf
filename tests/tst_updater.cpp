@@ -211,6 +211,7 @@ private slots:
     void automaticHandoffWaitsForADialogOpenedMeanwhile();
     void unwrittenConsumeStopsTheHandoff();
     void automaticRestartWaitsForADialogOpenedDuringTheCopy();
+    void quittingWaitsForTheDiskWithinItsTime();
     void automaticCompletionWaitsForSettings();
     void queuedAutomaticInstallCanBecomeManual();
     void startupRespectsSetting_data();
@@ -606,6 +607,24 @@ void TestUpdater::automaticRestartWaitsForADialogOpenedDuringTheCopy()
     QTRY_COMPARE(closes, 1);
     QVERIFY(!dialogOpenAtClose);
     QVERIFY(!updater.busy_);
+}
+
+// Quitting waits a bounded time for the updater's disk work, such as a pending
+// update put back after the installer did not start.
+void TestUpdater::quittingWaitsForTheDiskWithinItsTime()
+{
+    installedKind = update::PackageKind::AppImage;
+    appImageReplaced = true;
+    appImageCopyHeld = true;
+    Updater updater;
+    updater.setCloseWindowsHandler([] { return false; });
+    updater.busy_ = true;
+    updater.installing_ = true;
+    updater.install(downloadedPath(), kVersion); // the copy holds the disk thread
+    QVERIFY(!Updater::waitForDisk(50));
+    appImageCopyHeld = false;
+    QVERIFY(Updater::waitForDisk(5000));
+    QVERIFY(settled());
 }
 
 void TestUpdater::automaticCompletionWaitsForSettings()

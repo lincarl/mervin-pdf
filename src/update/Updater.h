@@ -70,6 +70,11 @@ public:
     // The application supplies its explicit quit path, which bypasses close-to-tray.
     void setCloseWindowsHandler(std::function<bool()> handler) { closeWindows_ = std::move(handler); }
 
+    // Waits up to `ms` milliseconds for the disk work asked for so far, such as a
+    // pending update put back as the app quits. For the end of the process; works
+    // after the updater is gone. True when nothing is left.
+    static bool waitForDisk(int ms);
+
 signals:
     // The automatic check interval was reset at `utc`; lastCheck() now returns it.
     void checked(const QDateTime &utc);
