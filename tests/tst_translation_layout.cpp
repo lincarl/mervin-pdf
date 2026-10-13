@@ -14,6 +14,7 @@
 #include "dialogs/SecurityDialog.h"
 #include "dialogs/SettingsDialog.h"
 #include "i18n/UiLanguage.h"
+#include "io/SaveCheck.h"
 #include "print/PrintPreviewWidget.h"
 #include "render/Document.h"
 #include "render/RenderEngine.h"
@@ -40,6 +41,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QScopeGuard>
 #include <QLayout>
 #include <QLineEdit>
 #include <QListWidget>
@@ -570,7 +572,19 @@ void TstTranslationLayout::extract()
     inspect(dialog, QStringLiteral("Extract with unsaved changes"));
     auto *range = dialog.findChild<QLineEdit *>(QStringLiteral("extractRowSpec"));
     auto *error = dialog.findChild<QLabel *>(QStringLiteral("extractError"));
-    QVERIFY(range && error);
+    auto *output = dialog.findChild<QLineEdit *>(QStringLiteral("extractOutput"));
+    QVERIFY(range && error && output);
+    {
+        // A Save as check that takes long, as on a share that stopped answering.
+        auto release = qScopeGuard([] { mervin::SaveCheck::holdForTesting(false); });
+        mervin::SaveCheck::holdForTesting(true);
+        output->setText(profile_.filePath(QStringLiteral("held.pdf")));
+        QTest::keyClick(output, Qt::Key_End); // an edit, which checks the new text
+        QTest::keyClicks(output, QStringLiteral("x"));
+        QTRY_COMPARE(error->text(), mervin::SaveCheck::checkingText());
+        inspect(dialog, QStringLiteral("Extract checking the folder"));
+    }
+    QTRY_VERIFY(!dialog.findChild<mervin::SaveCheck *>()->pending());
     range->selectAll();
     QTest::keyClicks(range, QStringLiteral("999999"));
     QVERIFY(!error->text().isEmpty());
@@ -595,6 +609,7 @@ void TstTranslationLayout::extract()
     inspect(locked, QStringLiteral("Extract encrypted document"));
     QTest::keyClicks(password, QStringLiteral("incorrect-password"));
     accept->click();
+    QTRY_VERIFY(!locked.findChild<mervin::SaveCheck *>()->pending()); // Save as is checked first
     QCOMPARE(locked.result(), int(QDialog::Rejected));
     inspect(locked, QStringLiteral("Extract rejected password"));
 
@@ -661,6 +676,7 @@ void TstTranslationLayout::deletePages()
     inspect(locked, QStringLiteral("Delete pages encrypted document"));
     QTest::keyClicks(password, QStringLiteral("incorrect-password"));
     accept->click();
+    QTRY_VERIFY(!locked.findChild<mervin::SaveCheck *>()->pending()); // Save as is checked first
     QCOMPARE(locked.result(), int(QDialog::Rejected));
     inspect(locked, QStringLiteral("Delete pages rejected password"));
 
@@ -742,6 +758,20 @@ void TstTranslationLayout::merge()
     mervin::MergeDialog dialog(plain_, 12);
     dialog.addPaths({plain_});
     inspect(dialog, QStringLiteral("Merge populated documents"));
+    {
+        // A Save as check that takes long, as on a share that stopped answering.
+        auto *output = dialog.findChild<QLineEdit *>(QStringLiteral("mergeOutput"));
+        auto *error = dialog.findChild<QLabel *>(QStringLiteral("mergeError"));
+        QVERIFY(output && error);
+        auto release = qScopeGuard([] { mervin::SaveCheck::holdForTesting(false); });
+        mervin::SaveCheck::holdForTesting(true);
+        output->setText(profile_.filePath(QStringLiteral("held.pdf")));
+        QTest::keyClick(output, Qt::Key_End); // an edit, which checks the new text
+        QTest::keyClicks(output, QStringLiteral("x"));
+        QTRY_COMPARE(error->text(), mervin::SaveCheck::checkingText());
+        inspect(dialog, QStringLiteral("Merge checking the folder"));
+    }
+    QTRY_VERIFY(!dialog.findChild<mervin::SaveCheck *>()->pending());
     auto *range = dialog.findChild<QLineEdit *>(QStringLiteral("mergeRowSpec"));
     QVERIFY(range);
     range->selectAll();

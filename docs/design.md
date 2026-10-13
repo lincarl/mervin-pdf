@@ -159,7 +159,6 @@ These still touch the disk on the UI thread and are planned work:
   unloads. The chosen design shows such a wait in its tab: a bar over the tab's
   document, which stays locked meanwhile, and a placeholder tab for a file being
   opened, so other tabs and windows stay usable.
-- Path checks while typing in the Extract and Merge dialogs.
 - The updater's state and downloads, and listing and installing OCR languages.
 - Reads at startup before the first window, and the system file dialogs, which
   run on the UI thread by design.
@@ -451,6 +450,22 @@ only renders its plan and writes edits back to it. Both dialogs show their rows 
 the same reorderable `RowList`. Extract writes through `PageOps::merge`, which fails
 on an out-of-range page instead of skipping it, so a stale page count cannot silently
 shorten the output.
+
+Neither plan touches the disk on the UI thread. Each dialog checks its Save as text
+with `SaveCheck` (`io/SaveCheck`) on a background thread. Extract checks whether the
+folder exists, whether the name is a folder and whether the file exists. Both find
+the file's canonical path, for telling it from the source, Merge's inputs and the
+files open in tabs; Merge canonicalizes its inputs only for a write. While Save as
+is not edited, the same check steps the default name past files in use. The tabs
+hold canonical paths already, so the open files are compared as given. A newer check
+drops one that has not started and only the newest answer counts, so a folder that
+stopped answering holds one thread per dialog, and later checks in that dialog wait
+behind it. Until a check answers, the error line keeps a reason about Save as, so
+typing does not make it flicker, and drops any other reason; after 300 ms it says
+the folder is being checked and disables the button. Pressing Extract or Merge
+checks Save as again and writes once that answers, if the rows and Save as are still
+what it was pressed for. A default name that stepped past a file in use meanwhile
+still counts, as the user did not choose it.
 
 Delete Pages is the same `ExtractDialog` and `ExtractStrip` over an `ExtractPlan` in
 `Mode::Delete`, not a separate dialog. The rows, Save as, the password row, writing

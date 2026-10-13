@@ -524,6 +524,7 @@ void MainWindow::pagesDialog(mervin::ExtractPlan::Mode mode, std::optional<int> 
     mervin::ExtractDialog::Source src;
     src.mode = mode;
     src.path = t->path();
+    src.canonicalPath = t->canonicalPath();
     src.password = t->password();
     src.viewerPageCount = v->pageCount();
     src.seedPage = seedPage;

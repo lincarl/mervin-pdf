@@ -164,6 +164,8 @@ add_library(mervin_core STATIC
     src/io/FileProbe.h
     src/io/MemoryFiles.cpp
     src/io/MemoryFiles.h
+    src/io/SaveCheck.cpp
+    src/io/SaveCheck.h
     src/recent/RecentEntry.h
     src/recent/ViewState.h
     src/recent/PathKey.h

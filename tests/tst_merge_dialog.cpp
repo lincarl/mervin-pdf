@@ -1,4 +1,5 @@
 #include "dialogs/MergeDialog.h"
+#include "io/SaveCheck.h"
 #include "security/QpdfService.h"
 
 #include <qpdf/QPDF.hh>
@@ -17,6 +18,7 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -67,6 +69,8 @@ class TstMergeDialog : public QObject
 
 private slots:
     void initTestCase();
+    void slowSaveAsCheckSaysSoAndMergeWaitsForIt();
+    void pressedBeforeTheCheckKeepsAnOpenFile();
 
     void seededPlainDocumentIsReadyToMerge();
     void seededEncryptedDocumentIsBlockedUpFront();
@@ -87,6 +91,7 @@ private:
         d.setAttribute(Qt::WA_DontShowOnScreen, true);
         d.show(); // realises the layout without ever putting a window on screen
         QTest::qWait(1);
+        settle(&d);
     }
     static QListWidget *list(MergeDialog &d)
     {
@@ -104,11 +109,26 @@ private:
     {
         return d.findChild<QLabel *>(QStringLiteral("mergeError"))->text();
     }
+    // Lets the Save as check answer: it runs on a background thread, and the error
+    // line and Merge wait for it.
+    static void settle(QWidget *dialog)
+    {
+        const auto *check = dialog->findChild<mervin::SaveCheck *>();
+        QVERIFY(check);
+        QVERIFY(QTest::qWaitFor([check] { return !check->pending(); }, 5000));
+    }
     static void replaceText(QLineEdit *field, const QString &text)
     {
         field->setFocus();
         field->selectAll();
         QTest::keyClicks(field, text);
+        settle(field->window());
+    }
+    // Merge checks Save as again on a background thread, then writes.
+    static void press(MergeDialog &d)
+    {
+        mergeBtn(d)->click();
+        settle(&d);
     }
     // Answer the next "Replace it?" box with Yes once it is up. The box runs its
     // own event loop, so a polling timer started beforehand is what reaches it.
@@ -246,6 +266,7 @@ void TstMergeDialog::outputFieldCanBeEmptied()
 
     QTest::keyClicks(out, QStringLiteral("combined.pdf"));
     QCOMPARE(out->text(), QStringLiteral("combined.pdf"));
+    settle(&d);
     QVERIFY(mergeBtn(d)->isEnabled());
 }
 
@@ -283,7 +304,8 @@ void TstMergeDialog::outputOpenInATabIsRefused()
     makePdf(opened, 1);
     MergeDialog d(plain_, 6);
     prepare(d);
-    d.setOpenFiles({plain_, opened});
+    // As the tabs hold them.
+    d.setOpenFiles({QFileInfo(plain_).canonicalFilePath(), QFileInfo(opened).canonicalFilePath()});
     const QString inTab = QStringLiteral("That file is open in a tab. Choose another name.");
     replaceText(output(d), QDir::toNativeSeparators(opened));
     QCOMPARE(error(d), inTab);
@@ -295,6 +317,68 @@ void TstMergeDialog::outputOpenInATabIsRefused()
     replaceText(output(d), QDir::toNativeSeparators(dir_.filePath(QStringLiteral("fresh.pdf"))));
     QVERIFY(error(d).isEmpty());
     QVERIFY(mergeBtn(d)->isEnabled());
+}
+
+// Save as is checked on a background thread, as its folder can be on a share that
+// stopped answering. A slow check says so, and Merge pressed meanwhile writes once
+// it answers.
+void TstMergeDialog::slowSaveAsCheckSaysSoAndMergeWaitsForIt()
+{
+    const QString target = dir_.filePath(QStringLiteral("merged-slowly.pdf"));
+    MergeDialog d(plain_, 6);
+    prepare(d);
+    settle(&d);
+    auto release = qScopeGuard([] { mervin::SaveCheck::holdForTesting(false); });
+    mervin::SaveCheck::holdForTesting(true);
+    output(d)->setFocus();
+    output(d)->selectAll();
+    QTest::keyClicks(output(d), QDir::toNativeSeparators(target));
+    QVERIFY(mergeBtn(d)->isEnabled());
+    QTRY_COMPARE(error(d), QStringLiteral("Checking the folder…"));
+    QVERIFY(!mergeBtn(d)->isEnabled());
+    mervin::SaveCheck::holdForTesting(false);
+    settle(&d);
+    QVERIFY(error(d).isEmpty());
+    QVERIFY(mergeBtn(d)->isEnabled());
+
+    mervin::SaveCheck::holdForTesting(true);
+    mergeBtn(d)->click();
+    QTRY_COMPARE(error(d), QStringLiteral("Checking the folder…"));
+    QVERIFY(d.result() != QDialog::Accepted);
+    QVERIFY(!QFileInfo::exists(target));
+    mervin::SaveCheck::holdForTesting(false);
+    settle(&d);
+    QCOMPARE(d.result(), int(QDialog::Accepted));
+    QVERIFY(QFileInfo::exists(target));
+}
+
+// Merge pressed before the check of a new name answers writes nothing when the
+// answer is a reason not to, such as the file being open in a tab.
+void TstMergeDialog::pressedBeforeTheCheckKeepsAnOpenFile()
+{
+    const QString opened = dir_.filePath(QStringLiteral("open-when-pressed.pdf"));
+    makePdf(opened, 1);
+    const QByteArray before = [&opened] {
+        QFile f(opened);
+        return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+    }();
+    MergeDialog d(plain_, 6);
+    prepare(d);
+    d.setOpenFiles({QFileInfo(plain_).canonicalFilePath(), QFileInfo(opened).canonicalFilePath()});
+    auto release = qScopeGuard([] { mervin::SaveCheck::holdForTesting(false); });
+    mervin::SaveCheck::holdForTesting(true);
+    output(d)->setFocus();
+    output(d)->selectAll();
+    QTest::keyClicks(output(d), QDir::toNativeSeparators(opened));
+    QVERIFY(mergeBtn(d)->isEnabled()); // no answer yet
+    mergeBtn(d)->click();
+    mervin::SaveCheck::holdForTesting(false);
+    settle(&d);
+    QVERIFY(d.result() != QDialog::Accepted);
+    QCOMPARE(error(d), QStringLiteral("That file is open in a tab. Choose another name."));
+    QFile f(opened);
+    QVERIFY(f.open(QIODevice::ReadOnly));
+    QCOMPARE(f.readAll(), before);
 }
 
 void TstMergeDialog::failedWriteKeepsThePlan()
@@ -313,7 +397,7 @@ void TstMergeDialog::failedWriteKeepsThePlan()
     QVERIFY(mergeBtn(d)->isEnabled());
 
     answerReplaceWithYes(); // the file exists, so Merge asks first
-    mergeBtn(d)->click();
+    press(d);
     QVERIFY(d.result() != QDialog::Accepted);                 // still open...
     QCOMPARE(specs(d).at(0)->text(), QStringLiteral("2-3")); // ...with its plan
     QVERIFY2(error(d).startsWith(QStringLiteral("Could not write \"read-only.pdf\".")),
@@ -324,7 +408,7 @@ void TstMergeDialog::failedWriteKeepsThePlan()
     QVERIFY(QFile::setPermissions(target, QFileDevice::ReadOwner | QFileDevice::WriteOwner
                                               | QFileDevice::ReadUser | QFileDevice::WriteUser));
     answerReplaceWithYes();
-    mergeBtn(d)->click();
+    press(d);
     QCOMPARE(d.result(), int(QDialog::Accepted));
     QCOMPARE(QFileInfo(d.outputPath()), QFileInfo(target));
     int count = 0;

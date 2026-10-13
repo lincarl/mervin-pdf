@@ -3,6 +3,7 @@
 #include "dialogs/ExtractStrip.h"
 #include "dialogs/LayoutMinimum.h"
 #include "dialogs/RowList.h"
+#include "io/SaveCheck.h"
 #include "security/PageOps.h"
 #include "ui/Icons.h"
 #include "ui/TextLayout.h"
@@ -52,7 +53,7 @@ QHBoxLayout *row()
 ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
     : QDialog(parent)
     , source_(source)
-    , plan_(source.path, source.viewerPageCount, source.mode)
+    , plan_(source.path, source.viewerPageCount, source.mode, source.canonicalPath)
 {
     const bool deleting = source.mode == ExtractPlan::Mode::Delete;
     if (deleting) {
@@ -87,6 +88,8 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
         break;
     }
     plan_.setOpenFiles(source.openPaths);
+    saveCheck_ = new SaveCheck(this);
+    connect(saveCheck_, &SaveCheck::slow, this, &ExtractDialog::showProblem);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(12, 12, 12, 12);
@@ -508,9 +511,14 @@ void ExtractDialog::syncCurrentRow(bool reveal)
 void ExtractDialog::refresh()
 {
     // Save as first: the error line and the button read it. Native separators, as
-    // in Merge: a '/' path reads as generated, not local.
-    if (!outputEdited_)
-        output_->setText(QDir::toNativeSeparators(plan_.defaultOutputPath()));
+    // in Merge: a '/' path reads as generated, not local. The check steps the
+    // default past a name in use when it answers.
+    if (!outputEdited_ && plan_.fileName() != defaultName_) {
+        defaultName_ = plan_.fileName();
+        output_->setText(QDir::toNativeSeparators(plan_.plainOutputPath()));
+    }
+    if (output_->text() != checking_)
+        checkOutput();
 
     const QList<ExtractPlan::RowText> texts = plan_.rowTexts();
     for (int i = 0; i < specs_.size() && i < texts.size(); ++i) {
@@ -553,17 +561,83 @@ void ExtractDialog::refresh()
     }
     summary_->setText(summary);
 
+    showProblem();
+}
+
+void ExtractDialog::showProblem()
+{
     // A disabled Extract always has its reason on the error line. A failed write
     // shows there too but leaves Extract enabled, so closing the file in the
     // program that holds it and pressing Extract again is enough.
-    const QString why = problem();
+    const QString planReason = planProblem();
+    const std::optional<QString> saveAsReason =
+        planReason.isEmpty() ? saveAsProblem() : std::optional<QString>(QString());
+    // A slow check of the text, or the one Extract asked for when pressed, says so
+    // and holds Extract.
+    if (planReason.isEmpty() && saveCheck_->isSlow() && (!saveAsReason || pressed_)) {
+        error_->setText(SaveCheck::checkingText());
+        error_->setToolTip({});
+        acceptBtn_->setEnabled(false);
+        saveAsReasonShown_ = true;
+        return;
+    }
+    // Until the Save as check answers, a reason about Save as stays up, so typing
+    // in it does not make the line flicker. Any other reason no longer applies, and
+    // Extract waits for the check when pressed.
+    if (!saveAsReason && saveAsReasonShown_)
+        return;
+    const QString why = planReason.isEmpty() ? saveAsReason.value_or(QString()) : planReason;
+    saveAsReasonShown_ = planReason.isEmpty() && !why.isEmpty();
     const bool showWrite = why.isEmpty() && !writeError_.isEmpty();
     error_->setText(showWrite ? writeError_ : why);
     error_->setToolTip(showWrite ? writeErrorDetail_ : readError_ ? readErrorDetail_ : QString());
     acceptBtn_->setEnabled(why.isEmpty());
 }
 
-QString ExtractDialog::problem() const
+void ExtractDialog::checkOutput()
+{
+    checking_ = output_->text();
+    const bool stepDefault = !outputEdited_;
+    saveCheck_->run(
+        [plan = plan_, text = checking_, stepDefault] {
+            Checked checked{text, {}};
+            if (stepDefault)
+                checked.text = QDir::toNativeSeparators(plan.defaultOutputPath());
+            checked.facts = plan.examine(checked.text);
+            return checked;
+        },
+        [this](const Checked &checked) {
+            if (!outputEdited_ && checked.text != output_->text()) {
+                // The default, past a name in use. Text selected for typing over
+                // stays selected.
+                const bool selected = output_->selectedText() == output_->text();
+                output_->setText(checked.text);
+                if (selected)
+                    output_->selectAll();
+                checking_ = checked.text;
+            }
+            checked_ = checked;
+            showProblem();
+            // Extract writes what it was pressed for. The default Save as can have
+            // stepped past a name in use meanwhile, which the user did not choose.
+            if (const auto pressed = std::exchange(pressed_, std::nullopt)) {
+                const ExtractPlan::Job job = plan_.job(output_->text());
+                if (pressed->pages == job.pages && pressed->mode == job.mode
+                    && (pressed->path == job.path || !outputEdited_))
+                    write();
+            }
+        });
+}
+
+std::optional<QString> ExtractDialog::problem() const
+{
+    const QString planReason = planProblem();
+    if (!planReason.isEmpty())
+        return planReason;
+    return saveAsProblem();
+}
+
+QString ExtractDialog::planProblem() const
 {
     if (readError_) {
         if (plan_.mode() == ExtractPlan::Mode::Delete) {
@@ -580,7 +654,17 @@ QString ExtractDialog::problem() const
         return tr("Enter the password for this PDF.");
     if (passwordRejected_)
         return tr("That password is not correct.");
-    return plan_.destinationError(output_->text());
+    return {};
+}
+
+std::optional<QString> ExtractDialog::saveAsProblem() const
+{
+    const QString text = output_->text();
+    if (text.trimmed().isEmpty())
+        return plan_.destinationError(text, {});
+    if (!checked_ || checked_->text != text)
+        return std::nullopt;
+    return plan_.destinationError(text, checked_->facts);
 }
 
 void ExtractDialog::browseForOutput()
@@ -603,8 +687,16 @@ void ExtractDialog::browseForOutput()
 void ExtractDialog::accept()
 {
     applySplit(); // Enter queued behind a comma judges the rows the field shows
-    if (!problem().isEmpty())
+    if (const std::optional<QString> why = problem(); why && !why->isEmpty())
         return; // Enter with a disabled Extract does nothing
+    pressed_ = plan_.job(output_->text());
+    checkOutput();
+}
+
+void ExtractDialog::write()
+{
+    if (const std::optional<QString> why = problem(); !why || !why->isEmpty())
+        return;
 
     // Verify the password before closing, so a wrong one is fixed here rather
     // than after the dialog has gone.
@@ -632,13 +724,18 @@ void ExtractDialog::accept()
         if (count > 0 && count != plan_.pageCount()) {
             plan_.setPageCount(count);
             refresh();
-            if (!problem().isEmpty())
+            const std::optional<QString> why = problem();
+            if (!why) {
+                pressed_ = plan_.job(output_->text()); // the new default name is being checked
+                return;
+            }
+            if (!why->isEmpty())
                 return;
         }
     }
 
     const ExtractPlan::Job job = plan_.job(output_->text());
-    if (QFileInfo::exists(job.path)
+    if (checked_->facts.exists
         && QMessageBox::question(this, windowTitle(),
                                  //: %1 is a file path.
                                  tr("\"%1\" already exists. Replace it?")
