@@ -467,6 +467,70 @@ private slots:
         QCOMPARE(clicked_.size(), 3);
     }
 
+    // Document actions and their shortcuts, such as Ctrl+S, Ctrl+P and Ctrl+A, are
+    // off on the Recent view, and Ctrl+S also on a tab whose document is not loaded.
+    // Saving such a tab without edits does nothing, even when its file is gone.
+    void documentShortcutsNeedTheDocumentOnScreen()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("attachment.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.show();
+        QVERIFY(window.openFile(path));
+        auto *tab = window.findChild<TabPage *>();
+        QVERIFY(tab);
+        const auto action = [&](QKeySequence::StandardKey key) -> QAction * {
+            for (QAction *a : window.findChildren<QAction *>())
+                if (a->shortcuts().contains(QKeySequence(key)))
+                    return a;
+            return nullptr;
+        };
+        QAction *save = action(QKeySequence::Save);
+        QAction *print = action(QKeySequence::Print);
+        QAction *selectAll = action(QKeySequence::SelectAll);
+        QAction *measure = nullptr;
+        QAction *singlePage = nullptr;
+        for (QAction *a : window.findChildren<QAction *>()) {
+            if (a->shortcut() == QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_M))
+                measure = a;
+            if (a->text().remove(QLatin1Char('&')) == QStringLiteral("Single Page Scroll"))
+                singlePage = a;
+        }
+        const QList<QAction *> documentActions{save, print, selectAll, measure, singlePage};
+        for (QAction *a : documentActions) {
+            QVERIFY(a);
+            QVERIFY2(a->isEnabled(), qPrintable(a->text()));
+        }
+
+        auto *recent = window.findChild<QPushButton *>(QStringLiteral("recentPillBtn"));
+        auto *bar = window.findChild<QTabBar *>(QStringLiteral("docTabBar"));
+        QVERIFY(recent);
+        QVERIFY(bar);
+        QTest::mouseClick(recent, Qt::LeftButton);
+        for (QAction *a : documentActions)
+            QVERIFY2(!a->isEnabled(), qPrintable(a->text()));
+        // A layout change of the hidden document, as from Settings, keeps them off.
+        tab->viewer()->setLayoutMode({ViewLayout::Scroll::Single, true});
+        QVERIFY(!singlePage->isEnabled());
+        QTest::mouseClick(bar, Qt::LeftButton, Qt::NoModifier, bar->tabRect(0).center());
+        for (QAction *a : documentActions)
+            QVERIFY2(a->isEnabled(), qPrintable(a->text()));
+
+        QVERIFY(tab->suspend());
+        QVERIFY(QFile::remove(path));
+        QSignalSpy resumed(tab, &TabPage::resumeFinished);
+        tab->resumeAsync();
+        QTRY_COMPARE_WITH_TIMEOUT(resumed.size(), 1, 10000);
+        QVERIFY(tab->isSuspended());
+        QVERIFY(!save->isEnabled());
+        // No "cannot open" box, which the dialog handler would report.
+        QVERIFY(QMetaObject::invokeMethod(&window, "saveMeasurements"));
+        QVERIFY(tab->isSuspended());
+    }
+
     void closingDirtyTabCanBeCanceled()
     {
         RenderEngine engine;
