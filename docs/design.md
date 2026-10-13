@@ -159,11 +159,13 @@ These still touch the disk on the UI thread and are planned work:
   unloads. The chosen design shows such a wait in its tab: a bar over the tab's
   document, which stays locked meanwhile, and a placeholder tab for a file being
   opened, so other tabs and windows stay usable.
-- The updater's state and downloads.
 - Reads at startup before the first window, and the system file dialogs, which
   run on the UI thread by design.
 - Opening a folder or a link with the system's handler (`QDesktopServices::openUrl`),
   which on Windows waits for `ShellExecute`.
+- Two small updater steps: telling how this copy was installed when the updater
+  starts (a registry read on Windows, a check that `$APPIMAGE` is a file on Linux),
+  and starting the Windows installer, whose working folder is the updates folder.
 
 ## Startup and single-instance behavior
 
@@ -647,13 +649,25 @@ unmounted.
 
 `SettingsDialog` edits a copy of the settings. It emits a request for a manual update
 check, and on Apply, or OK with changes pending, a request to apply the edited copy;
-only its OCR language list changes files directly. `MainWindow::applySettings` saves
+only its OCR language list changes files, through the OCR folder's thread. `MainWindow::applySettings` saves
 that copy, re-applies viewing defaults to the open document only when they changed,
 and broadcasts theme and annotation defaults through `WindowManager`.
 The last update check's UTC timestamp and pending download use `QSettings`; the downloads
 themselves live in a machine-local `updates/` folder (`%LOCALAPPDATA%\MervinPDF` on
-Windows, `$XDG_CACHE_HOME/mervin-pdf` on Linux, or inside the profile). Windows
-file-handler registration uses the per-user registry. A profile redirects the Qt
+Windows, `$XDG_CACHE_HOME/mervin-pdf` on Linux, or inside the profile). `Updater`
+reads and writes them, streams a download to disk, and finds the package manager or
+replaces the AppImage on one background thread, in the order asked, and each step of
+a check, download or installation goes on when its disk work answers. A step whose
+operation ended meanwhile, as when automatic updates were switched off, is dropped.
+The last check date is read when the updater starts and kept in memory, so Settings
+shows it without reading the profile. Handing off to the Windows installer consumes
+the pending update first, then closes the windows, starts the installer and quits in
+one step, as a quit that came later would let an open dialog's event loop delete the
+closed windows under it. The handoff goes ahead only once the consumed state is
+written. Quitting waits for the updater's writes, such as an update put back after
+the installer did not start, within the same 5 s it gives the app files. An automatic
+installation checks again for other open dialogs after each disk step and waits for
+them before it closes any window. Windows file-handler registration uses the per-user registry. A profile redirects the Qt
 settings as well as the files above.
 
 ## Theme and icons
