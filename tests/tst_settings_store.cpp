@@ -97,8 +97,7 @@ private slots:
     }
 
     // Fresh profiles follow the system's light or dark chrome, use the system accent,
-    // and remove missing recent files. Explicit saved preferences survive the new
-    // defaults.
+    // and remove missing recent files. Saved values survive the new defaults.
     void appearanceAndRecentDefaultsRespectSavedValues()
     {
         QTemporaryDir dir;
@@ -120,7 +119,33 @@ private slots:
         }
         QFile file(mervin::ConfigPaths::configFile());
         QVERIFY(file.open(QIODevice::ReadOnly));
-        QVERIFY(file.readAll().contains("recent_keep_missing = false"));
+        QVERIFY(file.readAll().contains("recent_keep_removed = false"));
+        mervin::ConfigPaths::setOverrideDir({});
+    }
+
+    // Versions up to 1.65.0 saved recent_keep_missing = true as their default in
+    // every config. Mervin ignores that retired key, so those profiles get the
+    // current default, and the next save drops it.
+    void retiredKeepMissingKeyIsIgnored()
+    {
+        QTemporaryDir dir;
+        mervin::ConfigPaths::setOverrideDir(dir.path());
+        QFile file(mervin::ConfigPaths::configFile());
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("recent_keep_missing = true\nrecent_visible_count = 42\n");
+        file.close();
+        auto s = mervin::Settings::load();
+        QVERIFY(!s.recentKeepMissing);
+        QCOMPARE(s.recentVisibleCount, 42);
+
+        s.annotationAuthor = QStringLiteral("Ann");
+        QVERIFY(s.save());
+        QVERIFY(!mervin::Settings::load().recentKeepMissing);
+        // Read it last, because Windows won't replace a file that is open.
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray saved = file.readAll();
+        QVERIFY(saved.contains("recent_keep_removed = false"));
+        QVERIFY(!saved.contains("recent_keep_missing"));
         mervin::ConfigPaths::setOverrideDir({});
     }
 

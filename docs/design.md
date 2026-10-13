@@ -416,6 +416,9 @@ Paths are normalized before deduplication and lookup, with case folding on Windo
 Corrupt or missing state files fall back to defaults instead of blocking startup.
 Settings saves merge only fields changed since that window's last load/save, preventing
 stale windows from overwriting newer preferences, and commit through `QSaveFile`.
+Every save writes all known keys and drops keys this version does not read. A default
+that should also reach existing profiles therefore needs a new key, as `auto_update`
+and `recent_keep_removed` have.
 Closing a window batches view-state updates into one write.
 When the Recent setting to keep deleted or moved files is off, `WindowManager` checks
 the recent paths on a worker thread whenever the list is shown and drops entries

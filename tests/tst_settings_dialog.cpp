@@ -287,7 +287,7 @@ void TstSettingsDialog::everyFieldRoundTrips()
     in.closeToTray = false;
     in.recentVisibleCount = 42;
     in.recentRetention = 900;
-    in.recentKeepMissing = false;
+    in.recentKeepMissing = true; // the default is off
     in.recentSearchScope = QStringLiteral("contents"); // neither the default nor the first item
     in.autoUpdate = false;
     in.measurementSnap = false;

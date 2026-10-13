@@ -47,12 +47,12 @@ The Recent screen provides:
   default. A search inside documents shows which file it is reading and can be
   stopped, keeping what it found;
 - page count, file size, and last-opened information;
-- recovery choices for files that were moved or deleted, which stay listed until
-  cleared unless Settings is set to drop them automatically. Entries on a detached
-  drive, an offline network share or another unmounted volume are never dropped
-  automatically. On Linux the exceptions are a file last opened by an older version
-  on a volume mounted by hand outside the system's mount configuration, and a file
-  whose folder now holds another volume; and
+- recovery choices for files that were moved or deleted. By default they drop out
+  of the list automatically. With Keep removed files in list on, they stay listed
+  until cleared. Entries on a detached drive, an offline network share or another
+  unmounted volume are never dropped automatically. On Linux the exceptions are a
+  file last opened by an older version on a volume mounted by hand outside the
+  system's mount configuration, and a file whose folder now holds another volume; and
 - file and folder actions such as copying paths or opening the containing folder.
 
 The application can restore the previous session. It opens the selected document and
@@ -222,7 +222,9 @@ editing and scrolling an opened dropdown remain available.
 
 New profiles follow the system theme and use the system accent. Turning off the system
 accent keeps its current colour; Reset selects the custom default `#62c9ff`.
-Keep removed files in list defaults to off. Explicit saved preferences are preserved.
+Keep removed files in list is off by default. Versions up to 1.65.0 saved it as on in
+nearly every profile, so it starts off once after updating to 1.65.4 or later from any
+earlier version. Later choices are kept.
 
 The interface is available in 53 languages, including English, Swedish, Simplified
 Chinese and Traditional Chinese. See [TRANSLATING.md](TRANSLATING.md) for coverage.
