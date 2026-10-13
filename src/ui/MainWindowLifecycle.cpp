@@ -37,7 +37,14 @@ void MainWindow::wireTabLifecycle(TabPage *tab)
                     QTimer::singleShot(0, this, [this] { suspendHiddenDocuments(); });
                 return;
             }
-            if (!needsPassword || currentTab() != tab || !isVisible() || isMinimized())
+            // A file that is gone takes its tab with it. The check runs on a worker
+            // and closes the tab later, never inside this signal from the tab.
+            if (!needsPassword) {
+                if (wm_)
+                    wm_->closeRemovedTabs();
+                return;
+            }
+            if (currentTab() != tab || !isVisible() || isMinimized())
                 return;
             bool accepted = false;
             //: %1 is the name of the document.
@@ -174,6 +181,15 @@ bool MainWindow::hasResidentDocuments() const
         if (auto *tab = qobject_cast<TabPage *>(tabs_->widget(i)); tab && (tab->isLoaded() || tab->isLoading()))
             return true;
     return false;
+}
+
+QList<TabPage *> MainWindow::unloadedTabs() const
+{
+    QList<TabPage *> unloaded;
+    for (int i = 0; i < tabs_->count(); ++i)
+        if (auto *tab = qobject_cast<TabPage *>(tabs_->widget(i)); tab && tab->isSuspended())
+            unloaded << tab;
+    return unloaded;
 }
 
 bool MainWindow::hasLoadingDocuments() const

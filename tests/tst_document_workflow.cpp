@@ -18,6 +18,7 @@
 #include <QComboBox>
 #include <QContextMenuEvent>
 #include <QDateTime>
+#include <QDialog>
 #include <QDir>
 #include <QFile>
 #include <QLabel>
@@ -25,9 +26,12 @@
 #include <QMap>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPointer>
 #include <QPushButton>
 #include <QScopeGuard>
+#include <QSignalSpy>
 #include <QTabBar>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QToolButton>
@@ -39,6 +43,23 @@
 using namespace mervin;
 
 namespace {
+
+// The files of a window's tabs, in tab order.
+QStringList tabFiles(const MainWindow &window)
+{
+    QStringList files;
+    for (const QString &path : window.tabPaths())
+        files << QFileInfo(path).fileName();
+    return files;
+}
+
+// Unload every tab of `window` except the one on screen, as after half an hour
+// in the background.
+void unloadBackgroundTabs(MainWindow &window)
+{
+    window.updateDocumentActivity(0, 30);
+    window.updateDocumentActivity(31 * 60 * 1000, 30);
+}
 
 // Counts the events of one type sent to qApp while it is installed as a filter.
 class EventCounter : public QObject
@@ -593,6 +614,271 @@ private slots:
         QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
         manager.recordOpen(path, false);
         QCOMPARE(mountOf(manager, path), RecentStore::mountOf(path));
+    }
+
+    // An unloaded tab whose file was deleted, such as a mail attachment's temporary
+    // copy, closes without a question and without entering the reopen history.
+    // Other tabs stay: a file that is there, a file whose folder is gone too, as
+    // when another volume took the drive letter, a file on a drive that is away,
+    // and the document on screen. The window keeps showing Recent while tabs go.
+    void unloadedTabsOfRemovedFilesClose()
+    {
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        const QString gone = root.filePath(QStringLiteral("attachment.pdf"));
+        const QString kept = root.filePath(QStringLiteral("kept.pdf"));
+        const QString shown = root.filePath(QStringLiteral("shown.pdf"));
+        const QString inFolder = root.filePath(QStringLiteral("folder/inside.pdf"));
+        QVERIFY(root.mkpath(QStringLiteral("folder")));
+#ifdef Q_OS_WIN
+        const QString away = QStringLiteral("//mervin-test-no-such-server/share/plan.pdf");
+#else
+        const QString away = QStringLiteral("/mnt/mervin-test-absent/plan.pdf");
+#endif
+        for (const QString &path : {gone, kept, shown, inFolder})
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        QVERIFY(window->openFile(gone));
+        QVERIFY(window->openFile(gone, /*allowDuplicate=*/true)); // a second view
+        QVERIFY(window->openFile(kept));
+        QVERIFY(window->openFile(inFolder));
+        QVERIFY(window->openFile(away, false, -1, /*makeCurrent=*/false, {}, /*lazy=*/true));
+        QVERIFY(window->openFile(shown));
+        unloadBackgroundTabs(*window);
+        const QStringList before{QStringLiteral("attachment.pdf"), QStringLiteral("attachment.pdf"),
+                                 QStringLiteral("kept.pdf"), QStringLiteral("inside.pdf"),
+                                 QStringLiteral("plan.pdf"), QStringLiteral("shown.pdf")};
+        QCOMPARE(tabFiles(*window), before);
+        QCOMPARE(window->unloadedTabs().size(), 5);
+        auto *recent = window->findChild<QPushButton *>(QStringLiteral("recentPillBtn"));
+        QVERIFY(recent);
+        QTest::mouseClick(recent, Qt::LeftButton);
+        QVERIFY(recent->property("recentActive").toBool());
+
+        QVERIFY(QFile::remove(gone));
+        QVERIFY(QDir(root.filePath(QStringLiteral("folder"))).removeRecursively());
+        manager.closeRemovedTabs();
+        const QStringList after{QStringLiteral("kept.pdf"), QStringLiteral("inside.pdf"),
+                                QStringLiteral("plan.pdf"), QStringLiteral("shown.pdf")};
+        // Checking the share that is away can take a while on Windows.
+        QTRY_COMPARE_WITH_TIMEOUT(tabFiles(*window), after, 30000);
+        QVERIFY(recent->property("recentActive").toBool());
+        SessionStore onDisk;
+        QVERIFY(onDisk.load());
+        QVERIFY(!onDisk.paths().contains(gone));
+        QCOMPARE(onDisk.paths().size(), 4);
+
+        // The file coming back does not make Ctrl+Shift+T offer the tab.
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), gone));
+        QCOMPARE(manager.reopenClosedTab(window), WindowManager::Reopen::NothingToReopen);
+        QCOMPARE(tabFiles(*window), after);
+    }
+
+    // A tab of a file on a share mounted by hand keeps Retry while the share is
+    // unmounted: its folder is still there, but not the mount it was opened from.
+    // A deleted file closing in the same check shows that the check ran.
+    void tabOnAnUnmountedShareStays()
+    {
+#ifndef Q_OS_WIN
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        QVERIFY(root.mkpath(QStringLiteral("share")));
+        const QString share = root.filePath(QStringLiteral("share"));
+        const QString away = root.filePath(QStringLiteral("share/plan.pdf"));
+        const QString gone = root.filePath(QStringLiteral("attachment.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), gone));
+        const QString recentFile = RecentStore::defaultFile();
+        RecentStore recent;
+        recent.load(recentFile);
+        const RecentStore before = recent;
+        const auto restoreRecent = qScopeGuard([&] { before.save(recentFile); });
+        recent.add(away, QDateTime::currentMSecsSinceEpoch(), 0, share);
+        QVERIFY(recent.save(recentFile));
+
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        QVERIFY(window->openFile(away, false, -1, true, {}, /*lazy=*/true));
+        QVERIFY(window->openFile(gone));
+        QVERIFY(window->openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        unloadBackgroundTabs(*window);
+        QVERIFY(QFile::remove(gone));
+        manager.closeRemovedTabs();
+        QTRY_COMPARE(tabFiles(*window),
+                     (QStringList{QStringLiteral("plan.pdf"), QStringLiteral("properties.pdf")}));
+#endif
+    }
+
+    // Moving a tab to another window keeps the mount the session recorded for its
+    // file, which tells a share that is away from a deleted file.
+    void movingATabKeepsItsRecordedMount()
+    {
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        const QString moved = root.filePath(QStringLiteral("moved.pdf"));
+        const QString other = root.filePath(QStringLiteral("other.pdf"));
+        for (const QString &path : {moved, other})
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        QVERIFY(window->openFile(moved));
+        QVERIFY(window->openFile(other));
+        SessionStore onDisk;
+        QVERIFY(onDisk.load());
+        const QString mount = onDisk.mount(moved);
+#ifndef Q_OS_WIN
+        QVERIFY(!mount.isEmpty()); // Windows records no mounts
+#endif
+
+        manager.detachTab(window, 0, {});
+        QCOMPARE(window->tabPaths(), QStringList{other});
+        QVERIFY(onDisk.load());
+        QCOMPARE(onDisk.mount(moved), mount);
+        MainWindow *detached = nullptr;
+        for (QWidget *w : QApplication::topLevelWidgets())
+            if (auto *candidate = qobject_cast<MainWindow *>(w); candidate && candidate != window)
+                detached = candidate;
+        QVERIFY(detached);
+
+        manager.mergeTab(detached, 0, window, 0);
+        QCOMPARE(window->tabPaths(), (QStringList{moved, other}));
+        QVERIFY(onDisk.load());
+        QCOMPARE(onDisk.mount(moved), mount);
+        QCOMPARE(onDisk.paths().size(), 2);
+    }
+
+    // Coming back to Mervin is when it notices a deleted file. The tab goes without
+    // being selected.
+    void activatingAWindowClosesRemovedTabs()
+    {
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        const QString gone = root.filePath(QStringLiteral("attachment.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), gone));
+
+        WindowManager manager;
+        MainWindow *documents = manager.createWindow();
+        QVERIFY(documents->openFile(gone));
+        QVERIFY(documents->openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        unloadBackgroundTabs(*documents);
+        MainWindow *other = manager.createWindow();
+        other->activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(other));
+        QTest::qWait(200); // let the activation's own check finish
+        QVERIFY(QFile::remove(gone));
+        QCOMPARE(documents->tabCount(), 2);
+
+        documents->activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(documents));
+        QTRY_COMPARE(tabFiles(*documents), QStringList{QStringLiteral("properties.pdf")});
+    }
+
+    // Selecting an unloaded tab whose file was deleted closes it, instead of
+    // leaving the load error with Retry on screen.
+    void failedReloadOfARemovedFileClosesTheTab()
+    {
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        const QString gone = root.filePath(QStringLiteral("attachment.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), gone));
+
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        QVERIFY(window->openFile(gone));
+        QVERIFY(window->openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        unloadBackgroundTabs(*window);
+        auto *tabs = window->findChild<QTabWidget *>();
+        QVERIFY(tabs);
+        QPointer<TabPage> tab = qobject_cast<TabPage *>(tabs->widget(0));
+        QVERIFY(tab);
+        QVERIFY(tab->isSuspended());
+        QVERIFY(QFile::remove(gone));
+
+        QSignalSpy resumed(tab.data(), &TabPage::resumeFinished);
+        tabs->setCurrentIndex(0);
+        QTRY_COMPARE_WITH_TIMEOUT(resumed.size(), 1, 10000);
+        QVERIFY(!resumed.first().at(0).toBool());
+        QTRY_VERIFY(tab.isNull());
+        QCOMPARE(tabFiles(*window), QStringList{QStringLiteral("properties.pdf")});
+        QVERIFY(window->findChild<TabPage *>()->isLoaded());
+    }
+
+    // A tab with unsaved edits reloads from its recovery copy, so it stays when
+    // its original is deleted. A clean tab of a deleted file closing in the same
+    // check shows that the check ran.
+    void editedTabOfARemovedFileStays()
+    {
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        const QString edited = root.filePath(QStringLiteral("edited.pdf"));
+        const QString clean = root.filePath(QStringLiteral("clean.pdf"));
+        for (const QString &path : {edited, clean})
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        QVERIFY(window->openFile(edited));
+        auto *editedTab = window->findChild<TabPage *>();
+        QVERIFY(editedTab);
+        QVERIFY(editedTab->viewer()->annotModel()->addTextNote(
+                    0, {40, 40}, Qt::yellow, {}, QStringLiteral("Kept edit")) >= 0);
+        QVERIFY(window->openFile(clean));
+        QVERIFY(window->openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        unloadBackgroundTabs(*window);
+        QVERIFY(editedTab->isSuspended());
+        QVERIFY(editedTab->hasUnsavedEdits());
+        QVERIFY(QFile::remove(edited));
+        QVERIFY(QFile::remove(clean));
+
+        manager.closeRemovedTabs();
+        QTRY_COMPARE(tabFiles(*window),
+                     (QStringList{QStringLiteral("edited.pdf"), QStringLiteral("properties.pdf")}));
+        auto *tabs = window->findChild<QTabWidget *>();
+        QVERIFY(tabs);
+        tabs->setCurrentIndex(0);
+        QTRY_VERIFY_WITH_TIMEOUT(editedTab->isLoaded(), 10000);
+        QCOMPARE(editedTab->viewer()->annotModel()->pageAnnots(0).front().contents,
+                 QStringLiteral("Kept edit"));
+        // Closing it still asks about the edits.
+        answers_.append(QMessageBox::Discard);
+        QVERIFY(QMetaObject::invokeMethod(window, "closeTab", Q_ARG(int, 0)));
+        QCOMPARE(window->tabCount(), 1);
+    }
+
+    // While a dialog is open the window keeps the tab, since the dialog may depend
+    // on the tab bar. The tab closes once the dialog is gone, after a fresh check
+    // that spares a file which came back meanwhile.
+    void busyWindowClosesARemovedTabLater()
+    {
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        const QString gone = root.filePath(QStringLiteral("attachment.pdf"));
+        const QString back = root.filePath(QStringLiteral("restored.pdf"));
+        for (const QString &path : {gone, back})
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        QVERIFY(window->openFile(gone));
+        QVERIFY(window->openFile(back));
+        QVERIFY(window->openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        unloadBackgroundTabs(*window);
+        QVERIFY(QFile::remove(gone));
+        QVERIFY(QFile::remove(back));
+
+        QDialog dialog(window);
+        dialog.setModal(true);
+        dialog.show();
+        QTRY_COMPARE(QApplication::activeModalWidget(), &dialog);
+        manager.closeRemovedTabs();
+        QTest::qWait(1500); // the check, then at least one retry
+        QCOMPARE(window->tabCount(), 3);
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), back));
+        dialog.close();
+        QTRY_COMPARE_WITH_TIMEOUT(tabFiles(*window),
+                                  (QStringList{QStringLiteral("restored.pdf"), QStringLiteral("properties.pdf")}),
+                                  5000);
     }
 
     void savingSuspendedEditsRequiresConfirmingExternalChanges()

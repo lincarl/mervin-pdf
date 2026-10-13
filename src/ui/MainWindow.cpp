@@ -1871,8 +1871,9 @@ void MainWindow::onCurrentTabChanged(int)
 {
     scheduleCurrentResume();
     syncDocTabBar();
-    // Clicking a tab exits the Recent view and returns to the document.
-    if (tabCount() > 0)
+    // Clicking a tab exits the Recent view and returns to the document. Closing a
+    // tab does not, even when another tab becomes current.
+    if (tabCount() > 0 && !removingTab_)
         recentActive_ = false;
     updateForCurrentTab();
 }
@@ -1894,13 +1895,43 @@ void MainWindow::closeTabAt(int index, bool remember)
         if (remember)
             rememberClosedTab(t, index);
     }
-    tabs_->removeTab(index);
+    removeTabAt(index);
+}
+
+void MainWindow::removeTabAt(int index)
+{
+    QWidget *w = tabs_->widget(index);
+    {
+        const QScopedValueRollback<bool> removing(removingTab_, true);
+        tabs_->removeTab(index);
+    }
     syncDocTabBar();
     if (auto *tab = qobject_cast<TabPage *>(w))
         unwireTabLifecycle(tab);
     delete w; // drops the Document (engine base context still alive)
     if (wm_)
         wm_->updateSession();
+}
+
+bool MainWindow::closeRemovedTabs(const QString &canonicalPath)
+{
+    if (hiddenToTray_)
+        return true;
+    // Closing a tab shifts the indexes that a nested dialog or menu, a document
+    // operation or a tab drag may still hold.
+    const bool busy = !canSuspendDocuments() || QGuiApplication::mouseButtons() != Qt::NoButton;
+    for (int i = tabs_->count() - 1; i >= 0; --i) {
+        auto *tab = qobject_cast<TabPage *>(tabs_->widget(i));
+        // A tab that is loading stays. If its file is gone, the failed load
+        // starts another check.
+        if (!tab || tab->canonicalPath() != canonicalPath || !tab->isSuspended()
+            || tab->hasUnsavedEdits())
+            continue;
+        if (busy)
+            return false;
+        removeTabAt(i);
+    }
+    return true;
 }
 
 void MainWindow::rememberClosedTab(TabPage *tab, int index)
@@ -2858,7 +2889,10 @@ mervin::TabPage *MainWindow::releaseTab(int index)
     if (!t)
         return nullptr;
     unwireTabLifecycle(t);
-    tabs_->removeTab(index); // does NOT delete the page; fires currentChanged
+    {
+        const QScopedValueRollback<bool> removing(removingTab_, true);
+        tabs_->removeTab(index); // does NOT delete the page; fires currentChanged
+    }
     syncDocTabBar();
     t->setParent(nullptr);   // detach from the old tab widget before re-homing
     updateForCurrentTab();   // re-wire to the new current tab / show start page

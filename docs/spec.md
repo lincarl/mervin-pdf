@@ -76,6 +76,14 @@ passwords remain in memory only. Unloading does not save edits into the original
 file. If a snapshot cannot be written, the document stays loaded. A failed reload
 keeps the tab and its recovery state available for retry.
 
+The exception is an unloaded tab without unsaved edits whose file was deleted, moved
+or renamed, such as the temporary copy of a mail attachment. It closes without a
+question, and Reopen Closed Tab does not offer it. Mervin judges the file as session
+restore judges a saved one, so a tab whose folder, drive or share is away keeps
+Retry. It checks when one of its windows becomes active and when such a tab fails to
+reload. A window in the tray keeps its tabs until it is shown, and a loaded document
+stays open.
+
 ## Measuring drawings
 
 The measuring tool is intended for scaled plans, CAD exports, and maps.

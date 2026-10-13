@@ -6,6 +6,7 @@
 #include "ipc/SingleInstanceServer.h"
 #include "render/RenderEngine.h"
 #include "ui/MainWindow.h"
+#include "ui/TabPage.h"
 #include "ui/Icons.h"
 #include "ui/Theme.h"
 
@@ -15,6 +16,7 @@
 #include <QSystemTrayIcon>
 #include <QScopedValueRollback>
 #include <QDateTime>
+#include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QLocalSocket>
@@ -100,6 +102,7 @@ WindowManager::WindowManager()
     viewState_.load(viewStateFile_);
     keepMissingRecent_ = s.recentKeepMissing;
     prunePool_.setMaxThreadCount(1);
+    tabScanPool_.setMaxThreadCount(1);
 
     activityClock_.start();
     trayMenu_ = std::make_unique<QMenu>();
@@ -119,7 +122,15 @@ WindowManager::WindowManager()
     updateTrayAvailability();
     activityTimer_ = new QTimer(this);
     activityTimer_->setInterval(1000);
-    connect(activityTimer_, &QTimer::timeout, this, &WindowManager::checkDocumentActivity);
+    connect(activityTimer_, &QTimer::timeout, this, [this] {
+        checkDocumentActivity();
+        // A busy window kept a tab the last check found gone. Check again rather
+        // than act on that old answer: the file may be back, or its share away.
+        // Only this tick retries. The other callers of checkDocumentActivity run
+        // inside MainWindow handlers.
+        if (std::exchange(removedTabsWaiting_, false))
+            closeRemovedTabs();
+    });
     activityTimer_->start();
 }
 
@@ -242,11 +253,8 @@ void WindowManager::recordOpen(const QString &canonicalPath, bool restoreViewSta
     // A file that is not there now, such as a crash recovery tab opened lazily or a
     // tab focused again after its share went away, keeps the mount it was opened
     // from. Recording now would store the file system below the empty folder.
-    QString mount;
-    if (QFileInfo::exists(canonicalPath))
-        mount = RecentStore::mountOf(canonicalPath);
-    else if (mount = session_.mount(canonicalPath); mount.isEmpty())
-        mount = recent_.recordedMount(canonicalPath);
+    const QString mount = QFileInfo::exists(canonicalPath) ? RecentStore::mountOf(canonicalPath)
+                                                           : recordedMount(canonicalPath);
     // The session keeps it too, for when Recent no longer lists the file.
     session_.setMount(canonicalPath, mount);
     if (recent_.add(canonicalPath, QDateTime::currentMSecsSinceEpoch(), pageCount, mount)) {
@@ -255,6 +263,12 @@ void WindowManager::recordOpen(const QString &canonicalPath, bool restoreViewSta
     }
     if (restoreViewState)
         applyViewStateIfStored(canonicalPath);
+}
+
+QString WindowManager::recordedMount(const QString &canonicalPath) const
+{
+    const QString mount = session_.mount(canonicalPath);
+    return mount.isEmpty() ? recent_.recordedMount(canonicalPath) : mount;
 }
 
 void WindowManager::applyViewStateIfStored(const QString &canonicalPath)
@@ -368,7 +382,7 @@ void WindowManager::pruneMissingRecent()
     prunePool_.start([this, paths] {
         QStringList removed;
         for (const auto &[path, mount] : paths) {
-            if (pruneCancel_)
+            if (scanCancel_)
                 return;
             if (RecentStore::isRemovedFromDisk(path, mount))
                 removed << path;
@@ -388,6 +402,75 @@ void WindowManager::pruneMissingRecent()
     });
 }
 
+void WindowManager::closeRemovedTabs()
+{
+    if (shuttingDown_ || quitting_)
+        return;
+    if (tabScanRunning_) {
+        tabScanPending_ = true;
+        return;
+    }
+    // Each unloaded tab's file, once per canonical path, with the mount it was
+    // opened from. Tabs with unsaved edits reload from their recovery copy.
+    struct File
+    {
+        QString path;
+        QString canonicalPath;
+        QString mount;
+    };
+    QList<File> files;
+    QSet<QString> listed;
+    for (MainWindow *w : std::as_const(windows_)) {
+        if (w->isInTray())
+            continue;
+        for (const TabPage *tab : w->unloadedTabs()) {
+            if (tab->hasUnsavedEdits() || listed.contains(tab->canonicalPath()))
+                continue;
+            listed.insert(tab->canonicalPath());
+            files.append({tab->path(), tab->canonicalPath(), recordedMount(tab->canonicalPath())});
+        }
+    }
+    if (files.isEmpty())
+        return;
+    tabScanRunning_ = true;
+    tabScanPool_.start([this, files] {
+        for (const File &f : files) {
+            if (scanCancel_)
+                return;
+            // The rule session restore uses (SessionStore::prepareRestore): gone only
+            // from a folder that is still there. A missing folder can also be a
+            // volume away, such as another USB stick under the same drive letter.
+            const QFileInfo file(f.canonicalPath);
+            if (!QFileInfo::exists(f.path) && file.absoluteDir().exists()
+                && RecentStore::isRemovedFromDisk(f.canonicalPath, f.mount)) {
+                // Close it now. Waiting for the other files, which can stall on a
+                // network path, would leave time for this one to come back.
+                QMetaObject::invokeMethod(
+                    this, [this, path = f.canonicalPath] { closeFoundRemovedTabs({path}); },
+                    Qt::QueuedConnection);
+            }
+        }
+        QMetaObject::invokeMethod(
+            this,
+            [this] {
+                tabScanRunning_ = false;
+                if (std::exchange(tabScanPending_, false))
+                    closeRemovedTabs();
+            },
+            Qt::QueuedConnection);
+    });
+}
+
+void WindowManager::closeFoundRemovedTabs(const QStringList &canonicalPaths)
+{
+    if (shuttingDown_ || quitting_)
+        return;
+    for (const QString &path : canonicalPaths)
+        for (MainWindow *w : std::as_const(windows_)) // closing a tab keeps its window
+            if (!w->closeRemovedTabs(path))
+                removedTabsWaiting_ = true;
+}
+
 QStringList WindowManager::sessionPathsToRestore()
 {
     session_.load();
@@ -402,8 +485,8 @@ void WindowManager::updateSession()
 {
     // Do not persist an incomplete restore: pending entries would disappear from the saved
     // session. The final entry leaves the queue before opening, so its following save sees the
-    // complete set.
-    if (!stagedQueue_.isEmpty())
+    // complete set. Nor a tab halfway between windows, which would lose its recorded mount.
+    if (!stagedQueue_.isEmpty() || movingTab_)
         return;
 
     // Union of every live window's open documents, in first-seen order.
@@ -570,7 +653,7 @@ WindowManager::~WindowManager()
         activityTimer_->stop();
     if (tray_)
         tray_->hide();
-    pruneCancel_ = true; // prunePool_ waits for the scan; make it stop early
+    scanCancel_ = true; // the scan pools wait for their scans; make them stop early
     // Stop the render workers first, then free any windows still alive (their
     // Documents), then let engine_ drop the MuPDF context (member destruction,
     // after this body) - Documents are all gone by then.
@@ -700,11 +783,16 @@ void WindowManager::detachTab(MainWindow *source, int index, const QPoint &globa
 {
     if (!source || source->tabCount() <= 1)
         return; // dragging the only tab out would just leave an empty window
-    TabPage *page = source->releaseTab(index);
-    if (!page)
-        return;
-    MainWindow *w = createWindow();
-    w->adoptTab(page, -1);
+    MainWindow *w = nullptr;
+    {
+        const QScopedValueRollback<bool> moving(movingTab_, true);
+        TabPage *page = source->releaseTab(index);
+        if (!page)
+            return;
+        w = createWindow();
+        w->adoptTab(page, -1);
+    }
+    updateSession();
     w->move(globalPos); // drop position becomes the new window's top-left
     w->raise();
     w->activateWindow();
@@ -730,10 +818,14 @@ void WindowManager::mergeTab(MainWindow *source, int sourceIndex, MainWindow *ta
 {
     if (!source || !target || source == target)
         return; // same-window reorder is handled in MainWindow
-    TabPage *page = source->releaseTab(sourceIndex);
-    if (!page)
-        return;
-    target->adoptTab(page, targetIndex);
+    {
+        const QScopedValueRollback<bool> moving(movingTab_, true);
+        TabPage *page = source->releaseTab(sourceIndex);
+        if (!page)
+            return;
+        target->adoptTab(page, targetIndex);
+    }
+    updateSession();
     target->raise();
     target->activateWindow();
     active_ = target;
@@ -869,8 +961,12 @@ void WindowManager::notifySuspensionFailure(const QString &message)
 
 void WindowManager::notifyActivated(MainWindow *w)
 {
-    if (windows_.contains(w))
-        active_ = w;
+    if (!windows_.contains(w))
+        return;
+    active_ = w;
+    // Returning to Mervin is when a file deleted meanwhile, such as a mail
+    // attachment's temporary copy, should take its unloaded tab with it.
+    closeRemovedTabs();
 }
 
 } // namespace mervin

@@ -102,6 +102,15 @@ public:
     bool suspendHiddenDocuments();
     bool hasResidentDocuments() const;
     bool hasLoadingDocuments() const;
+    // Tabs without their document in memory: unloaded, or failed to load.
+    QList<mervin::TabPage *> unloadedTabs() const;
+    // Close, without asking, every unloaded tab of `canonicalPath` that has no
+    // unsaved edits. WindowManager::closeRemovedTabs has just found the file gone,
+    // so this touches no disk. The tab is neither remembered for Ctrl+Shift+T nor
+    // given a view state. A window in the tray keeps its tabs. False when a tab has
+    // to stay for now, because a dialog, menu, drag or document operation may
+    // depend on the tab bar.
+    bool closeRemovedTabs(const QString &canonicalPath);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override; // tab-bar middle-click
@@ -224,6 +233,9 @@ private:
     // history (Ctrl+Shift+T); it is false for a bulk close, whose caller has
     // already recorded the whole bar through rememberOpenTabs().
     void closeTabAt(int index, bool remember);
+    // Remove and delete the tab at `index`, then record the session. The caller has
+    // already asked about unsaved edits.
+    void removeTabAt(int index);
     bool confirmClose(mervin::TabPage *tab);
     bool saveTab(mervin::TabPage *tab);
     // Push one tab onto the reopen history. `index` is the slot to restore it to,
@@ -253,6 +265,7 @@ private:
     bool closeConfirmed_ = false;
     bool suspending_ = false;
     bool resumeScheduled_ = false;
+    bool removingTab_ = false; // a tab is leaving this window (removeTabAt, releaseTab)
     int documentOperationDepth_ = 0;
     Qt::WindowStates beforeTrayState_;
 
