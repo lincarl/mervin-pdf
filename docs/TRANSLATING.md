@@ -248,15 +248,15 @@ The fonts are test dependencies, not bundled application fonts. At runtime the
 app uses installed system fonts. Linux installations need fonts covering the
 selected language, such as Noto Sans and the corresponding Noto CJK families.
 
-`tst_translation_layout` opens the ten custom dialogs in `src/dialogs/`, plus
-the measurement and annotation panels, using real Qt widgets and the default
-dark stylesheet. It discovers every compiled language through
-`i18n::availableLanguages()` and repeats each scenario at the default and minimum
-layout dimensions with 10-point and 15-point base fonts. CTest runs a separate
+`tst_translation_layout` opens the ten custom dialogs in `src/dialogs/`, plus the
+measurement and annotation panels, using real Qt widgets and the default dark
+stylesheet. It discovers every compiled language through `i18n::availableLanguages()`
+and repeats each scenario at the default size and at the smallest size a user can
+resize each dialog to, with 10-point and 15-point base fonts. CTest runs a separate
 `tst_translation_layout_<id>` test for each language to keep failures and timeouts
 independent. `MERVIN_TEST_LANGUAGE=<id>` selects one language when invoking the
-executable directly; without it the executable checks them all. Text with a fixed pixel
-font size in the stylesheet retains that size.
+executable directly; without it the executable checks them all. Text with a fixed
+pixel font size in the stylesheet retains that size.
 
 The scenarios include both calibration modes, all Settings pages, long filenames,
 populated lists, document security states, print range validation and selected
@@ -273,6 +273,13 @@ affect layout. When fixing a clipping problem, add a focused regression case.
 Editable values may scroll horizontally, and scrollable lists may extend beyond
 their viewport. For other intentional text clipping, record a specific allowance
 and its reason in the test. Do not exempt a whole dialog to hide one failure.
+
+A dialog's minimum size must follow its layout. Qt stops raising a window's minimum
+once code sets one, and a minimum measured in the constructor misses later growth,
+such as a list gaining its scroll bar or a longer translated choice. Give the
+dialog's smallest comfortable size to `followLayoutMinimum()` in
+`src/dialogs/LayoutMinimum.h` instead of calling `setMinimumSize()`. Settings keeps a
+fixed minimum because its pages scroll.
 
 Wrapped labels need enough height at the dialog's minimum width, including after
 their text changes. Check sibling overlap as well as each label's own text area.

@@ -91,7 +91,9 @@ target_sources(tst_ocr_popup PRIVATE
     ${CMAKE_SOURCE_DIR}/src/dialogs/OcrPopup.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/OcrPopup.h
     ${CMAKE_SOURCE_DIR}/src/dialogs/ManageLanguagesDialog.cpp
-    ${CMAKE_SOURCE_DIR}/src/dialogs/ManageLanguagesDialog.h)
+    ${CMAKE_SOURCE_DIR}/src/dialogs/ManageLanguagesDialog.h
+    ${CMAKE_SOURCE_DIR}/src/dialogs/LayoutMinimum.cpp
+    ${CMAKE_SOURCE_DIR}/src/dialogs/LayoutMinimum.h)
 target_link_libraries(tst_ocr_popup PRIVATE Qt6::Widgets)
 
 # Settings pages: navigation, the round trip of every field, the update
@@ -102,6 +104,8 @@ target_sources(tst_settings_dialog PRIVATE
     ${CMAKE_SOURCE_DIR}/src/dialogs/SettingsDialog.h
     ${CMAKE_SOURCE_DIR}/src/dialogs/ManageLanguagesDialog.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/ManageLanguagesDialog.h
+    ${CMAKE_SOURCE_DIR}/src/dialogs/LayoutMinimum.cpp
+    ${CMAKE_SOURCE_DIR}/src/dialogs/LayoutMinimum.h
     ${CMAKE_SOURCE_DIR}/src/ui/Theme.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/Theme.h
     ${CMAKE_SOURCE_DIR}/src/ui/DocumentThemePicker.cpp
@@ -257,7 +261,7 @@ set_target_properties(dump_icons PROPERTIES WIN32_EXECUTABLE OFF)
 target_link_libraries(tst_qpdf PRIVATE qpdf::libqpdf)
 
 # Widget-level guard rails for the merge dialog. MergeDialog and the UI sources
-# it uses (its shared row list, theme) belong to the application target, so they
+# it uses (its shared row list and minimum size helper, theme) belong to the application target, so they
 # are compiled in here (as tst_viewer_preview does for the viewer; the icons come
 # from mervin_icons); the headers are listed so AUTOMOC processes them. The
 # dialog is flagged WA_DontShowOnScreen and never exec()d, so no window appears and the normal
@@ -266,6 +270,8 @@ target_link_libraries(tst_qpdf PRIVATE qpdf::libqpdf)
 qt_add_executable(tst_merge_dialog tst_merge_dialog.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/MergeDialog.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/MergeDialog.h
+    ${CMAKE_SOURCE_DIR}/src/dialogs/LayoutMinimum.cpp
+    ${CMAKE_SOURCE_DIR}/src/dialogs/LayoutMinimum.h
     ${CMAKE_SOURCE_DIR}/src/dialogs/RowList.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/RowList.h
     ${CMAKE_SOURCE_DIR}/src/ui/Theme.cpp
@@ -279,8 +285,8 @@ set_tests_properties(tst_merge_dialog PROPERTIES
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
 # Widget-level guard rails for the extract dialog, arranged like tst_merge_dialog
-# above: the dialog, its strip, the row list it shares with Merge and the theme
-# source they paint with belong to the application target, so they are compiled
+# above: the dialog, its strip, the row list and minimum size helper it shares
+# with Merge and the theme source they paint with belong to the application target, so they are compiled
 # in here (the icons come from mervin_icons), and the test builds its plain and encrypted fixtures with qpdf
 # at runtime.
 qt_add_executable(tst_extract_dialog tst_extract_dialog.cpp
@@ -288,6 +294,8 @@ qt_add_executable(tst_extract_dialog tst_extract_dialog.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/ExtractDialog.h
     ${CMAKE_SOURCE_DIR}/src/dialogs/ExtractStrip.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/ExtractStrip.h
+    ${CMAKE_SOURCE_DIR}/src/dialogs/LayoutMinimum.cpp
+    ${CMAKE_SOURCE_DIR}/src/dialogs/LayoutMinimum.h
     ${CMAKE_SOURCE_DIR}/src/dialogs/RowList.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/RowList.h
     ${CMAKE_SOURCE_DIR}/src/ui/Theme.cpp

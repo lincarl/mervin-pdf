@@ -325,6 +325,8 @@ add_library(mervin_app STATIC
     src/dialogs/ExtractDialog.h
     src/dialogs/ExtractStrip.cpp
     src/dialogs/ExtractStrip.h
+    src/dialogs/LayoutMinimum.cpp
+    src/dialogs/LayoutMinimum.h
     src/update/Installer.cpp
     src/update/Installer.h
     src/update/ReleaseConfig.h

@@ -28,6 +28,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QElapsedTimer>
@@ -76,6 +77,14 @@ QStringList layoutLanguages()
 {
     const QString requested = qEnvironmentVariable("MERVIN_TEST_LANGUAGE");
     return requested.isEmpty() ? i18n::availableLanguages() : QStringList{requested};
+}
+
+// Runs the event loop until it is idle, so queued layout work has reached every
+// widget. A single pass can stop halfway, as when a list gains its scroll bar and
+// widens its header before the dialog's minimum follows.
+void settle()
+{
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 1000);
 }
 
 // Every new compiled catalog automatically enters the same layout matrix.
@@ -465,12 +474,26 @@ void TstTranslationLayout::inspect(QWidget &widget, const QString &state)
     widget.setAttribute(Qt::WA_DontShowOnScreen);
     widget.ensurePolished();
     widget.show();
-    QTest::qWait(1);
+    settle();
     if (minimumSize_) {
-        // Respect the actual layout minimum, including translated labels. A
-        // fixed-size dialog has the same dimensions in both matrix entries.
-        widget.resize(widget.minimumSize().expandedTo(widget.minimumSizeHint()));
-        QTest::qWait(1);
+        // The smallest size the user can reach. A window can be dragged down to
+        // its minimum size, even below what its layout needs, so a dialog's
+        // minimum has to follow its layout. A layout gives an embedded panel at
+        // least its minimum size hint. A fixed-size dialog has the same dimensions
+        // in both matrix entries. The smaller size can raise the minimum again,
+        // as when a list gains its scroll bar, so resize until the size holds.
+        const bool window = qobject_cast<QDialog *>(&widget);
+        const auto minimum = [&widget, window] {
+            return window ? widget.minimumSize()
+                          : widget.minimumSize().expandedTo(widget.minimumSizeHint());
+        };
+        for (int turn = 0; turn < 10 && widget.size() != minimum(); ++turn) {
+            widget.resize(minimum());
+            settle();
+        }
+        // Otherwise the check below would pass at a larger size.
+        QVERIFY2(widget.size() == minimum(),
+                 qPrintable(state + QStringLiteral(" did not settle at its minimum size")));
     }
     const QStringList problems = textfit::check(widget);
     const QString details = state + QLatin1Char('\n') + problems.join(QLatin1Char('\n'));

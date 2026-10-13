@@ -1,6 +1,7 @@
 #include "dialogs/MergeDialog.h"
 #include "ui/TextLayout.h"
 
+#include "dialogs/LayoutMinimum.h"
 #include "dialogs/RowList.h"
 #include "print/PageRange.h"
 #include "recent/PathKey.h"
@@ -66,7 +67,6 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
 {
     setWindowTitle(tr("Merge PDFs"));
     resize(760, 520);
-    setMinimumSize(660, 440);
 
     auto *layout = new QVBoxLayout(this);
 
@@ -225,8 +225,7 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
         plan_.append(e);
     }
     rebuild(plan_.isEmpty() ? -1 : 0);
-    ensurePolished();
-    setMinimumSize(minimumSize().expandedTo(minimumSizeHint()));
+    followLayoutMinimum(*this, QSize(660, 440));
 }
 
 MergePlan::Entry MergeDialog::probeEntry(const QString &path, const QString &password)

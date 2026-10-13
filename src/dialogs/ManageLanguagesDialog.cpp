@@ -1,5 +1,6 @@
 #include "dialogs/ManageLanguagesDialog.h"
 
+#include "dialogs/LayoutMinimum.h"
 #include "net/UrlOpen.h"
 #include "ocr/TessdataFile.h"
 #include "ocr/TessdataManager.h"
@@ -85,7 +86,6 @@ ManageLanguagesDialog::ManageLanguagesDialog(const QString &defaultLanguage, QWi
       initialDefaultLanguage_(defaultLanguage)
 {
     setWindowTitle(tr("Manage OCR Languages"));
-    setMinimumSize(650, 430);
     resize(720, 470);
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(18, 16, 18, 14);
@@ -154,6 +154,7 @@ ManageLanguagesDialog::ManageLanguagesDialog(const QString &defaultLanguage, QWi
     connect(search_, &QLineEdit::textChanged, this, &ManageLanguagesDialog::applyFilter);
     refreshInstalled();
     fetchCatalog();
+    followLayoutMinimum(*this, QSize(650, 430));
 }
 
 QString ManageLanguagesDialog::defaultLanguage() const
@@ -177,13 +178,11 @@ void ManageLanguagesDialog::fetchCatalog()
             //: %1 is the network error message.
             availableStatus_->setText(tr("Check your connection, then reopen this dialog. %1")
                                           .arg(detail));
-            setMinimumHeight(qMax(minimumHeight(), layout()->totalHeightForWidth(minimumWidth())));
             return;
         }
         const QJsonDocument doc = QJsonDocument::fromJson(payload);
         if (!doc.isArray()) {
             availableStatus_->setText(tr("The language catalog returned an invalid response."));
-            setMinimumHeight(qMax(minimumHeight(), layout()->totalHeightForWidth(minimumWidth())));
             return;
         }
         for (const QJsonValue &value : doc.array()) {

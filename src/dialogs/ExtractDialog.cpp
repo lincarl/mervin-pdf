@@ -1,6 +1,7 @@
 #include "dialogs/ExtractDialog.h"
 
 #include "dialogs/ExtractStrip.h"
+#include "dialogs/LayoutMinimum.h"
 #include "dialogs/RowList.h"
 #include "security/PageOps.h"
 #include "ui/Icons.h"
@@ -328,9 +329,7 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
     rebuild(0, Focus::SelectAll);
 
     resize(kWidth, kHeight);
-    ensurePolished();
-    setMinimumSize(QSize(kMinWidth, kMinHeight).expandedTo(minimumSizeHint()));
-    setMinimumHeight(qMax(minimumHeight(), layout->totalHeightForWidth(minimumWidth())));
+    followLayoutMinimum(*this, QSize(kMinWidth, kMinHeight));
 }
 
 bool ExtractDialog::openWhenDone() const
