@@ -39,6 +39,8 @@ public:
     // Remove and return the most recently closed tab; a default-constructed
     // ClosedTab when the history is empty.
     ClosedTab pop();
+    // The tab pop() would return, left in place. The history must not be empty.
+    const ClosedTab &top() const { return tabs_.last(); }
 
     // Drop every entry `keep` rejects. The caller owns the policy (is the file
     // open again? is it still on disk?); this only knows how to forget. Run

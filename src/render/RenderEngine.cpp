@@ -2,6 +2,7 @@
 
 #include "render/ComfortTransform.h"
 #include "render/Document.h"
+#include "render/MuPdfLocks.h"
 
 #include <mupdf/fitz.h>
 
@@ -14,10 +15,11 @@
 
 namespace mervin {
 
-static_assert(FZ_LOCK_MAX <= 4, "locks_ array is too small for MuPDF's FZ_LOCK_MAX");
+static_assert(FZ_LOCK_MAX <= 4, "the lock array is too small for MuPDF's FZ_LOCK_MAX");
 
 namespace {
 
+// Sized to MuPDF's FZ_LOCK_MAX (currently 3); 4 is a safe upper bound.
 using LockArray = std::array<std::mutex, 4>;
 
 void lockCallback(void *user, int lock)
@@ -406,17 +408,25 @@ void imageRectStrokeText(fz_context *ctx, fz_device *dev, const fz_text *text,
 
 } // namespace
 
+const fz_locks_context *sharedMuPdfLocks()
+{
+    // Never destroyed, for contexts that outlive their owner (see the header).
+    static const fz_locks_context *locks = [] {
+        auto *context = new fz_locks_context;
+        context->user = new LockArray;
+        context->lock = lockCallback;
+        context->unlock = unlockCallback;
+        return context;
+    }();
+    return locks;
+}
+
 RenderEngine::RenderEngine(QObject *parent)
     : QObject(parent)
 {
     qRegisterMetaType<mervin::RenderResult>("mervin::RenderResult");
 
-    fz_locks_context locks;
-    locks.user = &locks_;
-    locks.lock = lockCallback;
-    locks.unlock = unlockCallback;
-
-    base_ = fz_new_context(nullptr, &locks, FZ_STORE_DEFAULT);
+    base_ = fz_new_context(nullptr, sharedMuPdfLocks(), FZ_STORE_DEFAULT);
     if (!base_)
         qFatal("Mervin: failed to create MuPDF context");
     fz_set_warning_callback(base_, warningCallback, nullptr);

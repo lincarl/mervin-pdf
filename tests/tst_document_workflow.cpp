@@ -40,6 +40,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 
 using namespace mervin;
 
@@ -60,6 +61,27 @@ void unloadBackgroundTabs(MainWindow &window)
 {
     window.updateDocumentActivity(0, 30);
     window.updateDocumentActivity(31 * 60 * 1000, 30);
+}
+
+// The documents WindowManager::restoreSession decides to reopen, once it calls back.
+QStringList restoredSession(WindowManager &manager)
+{
+    std::optional<QStringList> restored;
+    manager.restoreSession([&restored](const QStringList &paths) { restored = paths; });
+    // A share that does not answer is given up on after kRestoreWaitMs.
+    if (!QTest::qWaitFor([&] { return restored.has_value(); }, 30000))
+        return {QStringLiteral("restoreSession did not call back")};
+    return *restored;
+}
+
+// The outcome of a Ctrl+Shift+T press, once its file check has answered.
+WindowManager::Reopen reopened(WindowManager &manager, MainWindow *into)
+{
+    std::optional<WindowManager::Reopen> outcome;
+    manager.reopenClosedTab(into, [&outcome](WindowManager::Reopen r) { outcome = r; });
+    if (!QTest::qWaitFor([&] { return outcome.has_value(); }, 30000))
+        qWarning("reopenClosedTab did not answer");
+    return outcome.value_or(WindowManager::Reopen::Failed);
 }
 
 // Counts the events of one type sent to qApp while it is installed as a filter.
@@ -683,8 +705,8 @@ private slots:
         QVERIFY(saved.save());
 
         WindowManager manager;
-        QCOMPARE(manager.sessionPathsToRestore(), QStringList{open});
         MainWindow *window = manager.createWindow();
+        QCOMPARE(restoredSession(manager), QStringList{open});
         QVERIFY(window->openFile(open));
         SessionStore onDisk;
         QVERIFY(onDisk.load());
@@ -732,11 +754,20 @@ private slots:
         QVERIFY(saved.save());
 
         WindowManager manager;
-        QCOMPARE(manager.sessionPathsToRestore(), QStringList{open});
         MainWindow *window = manager.createWindow();
+        QCOMPARE(restoredSession(manager), QStringList{open});
         QVERIFY(window->openFile(open));
+        // The file system the document is on is recorded once its check answers.
+        const auto recentMount = [&manager](const QString &file) {
+            for (const RecentEntry &e : manager.recentEntries())
+                if (e.path == file)
+                    return e.mount;
+            return QStringLiteral("no entry");
+        };
+        QTRY_COMPARE(recentMount(open), RecentStore::mountOf(open));
+        // ...and saved in the session by then, without another save.
         SessionStore onDisk;
-        QVERIFY(onDisk.load());
+        QTRY_VERIFY(onDisk.load() && onDisk.mount(open) == RecentStore::mountOf(open));
         QCOMPARE(onDisk.paths(), QStringList{open});
         QCOMPARE(onDisk.unavailable().size(), 2);
         QCOMPARE(onDisk.mount(inSession), share);
@@ -776,10 +807,12 @@ private slots:
 
         WindowManager manager;
         manager.recordOpen(path, false);
+        // The check finds no file and leaves the mount alone.
+        QTRY_VERIFY(manager.fileProbe()->facts({path, share}).has_value());
         QCOMPARE(mountOf(manager, path), share);
         QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
         manager.recordOpen(path, false);
-        QCOMPARE(mountOf(manager, path), RecentStore::mountOf(path));
+        QTRY_COMPARE(mountOf(manager, path), RecentStore::mountOf(path));
     }
 
     // An unloaded tab whose file was deleted, such as a mail attachment's temporary
@@ -838,7 +871,7 @@ private slots:
 
         // The file coming back does not make Ctrl+Shift+T offer the tab.
         QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), gone));
-        QCOMPARE(manager.reopenClosedTab(window), WindowManager::Reopen::NothingToReopen);
+        QCOMPARE(reopened(manager, window), WindowManager::Reopen::NothingToReopen);
         QCOMPARE(tabFiles(*window), after);
     }
 
@@ -876,6 +909,29 @@ private slots:
 #endif
     }
 
+    // A check answers after the last window has closed, as one on a slow share can.
+    // The session the window left behind stays: there is nothing left to record.
+    void lateAnswerKeepsTheSessionOfTheLastWindow()
+    {
+#ifdef Q_OS_WIN
+        QSKIP("Windows records no mounts, so the answer saves nothing there");
+#endif
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        const QString path = root.filePath(QStringLiteral("plan.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        WindowManager manager;
+        QPointer<MainWindow> window = manager.createWindow();
+        QVERIFY(window->openFile(path));
+        // The file's mount is recorded once its check answers, which saves the session.
+        QVERIFY(manager.fileProbe()->isChecking({path, {}}));
+        delete window.data();
+        QTRY_VERIFY(!manager.fileProbe()->isChecking({path, {}}));
+        SessionStore onDisk;
+        QVERIFY(onDisk.load());
+        QCOMPARE(onDisk.paths(), QStringList{path});
+    }
+
     // Moving a tab to another window keeps the mount the session recorded for its
     // file, which tells a share that is away from a deleted file.
     void movingATabKeepsItsRecordedMount()
@@ -891,11 +947,13 @@ private slots:
         QVERIFY(window->openFile(moved));
         QVERIFY(window->openFile(other));
         SessionStore onDisk;
+#ifndef Q_OS_WIN
+        // Windows records no mounts. Elsewhere the session saves the mount once the
+        // file's check has found it.
+        QTRY_VERIFY(onDisk.load() && !onDisk.mount(moved).isEmpty());
+#endif
         QVERIFY(onDisk.load());
         const QString mount = onDisk.mount(moved);
-#ifndef Q_OS_WIN
-        QVERIFY(!mount.isEmpty()); // Windows records no mounts
-#endif
 
         manager.detachTab(window, 0, {});
         QCOMPARE(window->tabPaths(), QStringList{other});

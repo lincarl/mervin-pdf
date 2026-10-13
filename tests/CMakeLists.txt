@@ -50,6 +50,7 @@ set(_mervin_tests
     tst_tessdata
     tst_ocr_provisioner
     tst_session_store
+    tst_file_probe
     tst_startup_plan
     tst_closed_tab_stack
     tst_document

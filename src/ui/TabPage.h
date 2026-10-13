@@ -39,7 +39,9 @@ public:
     bool open(const QString &path, const QString &password = QString(), QString *error = nullptr,
               bool *needsPassword = nullptr);
 
-    // Create a tab without reading its PDF. A recovery checkpoint takes precedence over disk.
+    // Create a tab without reading its PDF or touching the disk for it: `path` is
+    // taken as the canonical path, as the session and Recent store it. A recovery
+    // checkpoint takes precedence over disk.
     void initializeSuspended(const QString &path);
     void initializeSuspended(const QString &path, const ViewState &state);
     bool isLoaded() const { return doc_ != nullptr; }
@@ -53,7 +55,17 @@ public:
     void setSavedViewState(const ViewState &state);
     bool sourceChangedOnDisk() const;
     QString recoveryPath() const { return recoveryPath_; }
-    // Include duplicate paths when independent edited views have recoverable copies.
+    // A document with a recovery copy: the path it was opened with, and its
+    // canonical path, which the session stores.
+    struct RecoverableDocument
+    {
+        QString original;
+        QString canonical;
+    };
+    // The documents with a recovery copy, duplicates included when independent
+    // edited views have recoverable copies.
+    static QList<RecoverableDocument> recoverableDocuments();
+    // Their canonical paths, or original ones where no canonical path was recorded.
     static QStringList recoverablePaths();
 
     // Release the open Document so the underlying file handle is closed (needed
@@ -92,7 +104,9 @@ private:
     void clearRecovery();
     bool writeRecoveryManifest(QString *error);
     bool adoptRecovery();
-    void setPath(const QString &path);
+    // The tab's path and canonical path. `resolve` follows links on the disk;
+    // without it `path` is taken as canonical.
+    void setPath(const QString &path, bool resolve = true);
     void stopLoading();
     void restoreViewer(); // restoreResumeState from saved_, without a search the card hides
 

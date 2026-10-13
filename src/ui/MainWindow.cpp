@@ -324,12 +324,13 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
                 [this](const QList<mervin::RecentEntry> &entries) {
                     recentPanel_->setEntries(entries);
                 });
+        recentPanel_->setFileProbe(wm_->fileProbe());
         recentPanel_->setEntries(wm_->recentEntries()); // seed from the cached snapshot
     }
 
     // On-demand content search over the recent history (M7). The panel is a pure
     // view; this window owns the MuPDF-backed search and routes hits back to it.
-    contentSearch_ = new mervin::ContentSearch(engine_, this);
+    contentSearch_ = new mervin::ContentSearch(this);
     connect(recentPanel_, &RecentFilesPanel::contentSearchRequested, this,
             [this](const QString &query, const QStringList &paths) {
                 contentSearch_->start(paths, query);
@@ -1641,7 +1642,9 @@ bool MainWindow::openFile(const QString &path, bool allowDuplicate, int atIndex,
                           const QString &knownPassword, bool lazy)
 {
     QFileInfo fi(path);
-    QString canon = fi.canonicalFilePath();
+    // A lazy tab is restored from the session or Recent, which store canonical
+    // paths, and does not touch the disk until it loads.
+    QString canon = lazy ? QDir::cleanPath(fi.absoluteFilePath()) : fi.canonicalFilePath();
     if (canon.isEmpty())
         canon = fi.absoluteFilePath();
 
@@ -1947,7 +1950,7 @@ bool MainWindow::closeRemovedTabs(const QString &canonicalPath)
 void MainWindow::rememberClosedTab(TabPage *tab, int index)
 {
     if (wm_ && tab)
-        wm_->rememberClosedTab(tab->path(), tabPaths(), index);
+        wm_->rememberClosedTab(tab->path(), tab->canonicalPath(), tabPaths(), index);
 }
 
 void MainWindow::rememberOpenTabs()
@@ -1983,8 +1986,10 @@ void MainWindow::reopenClosedTab()
     if (!wm_)
         return;
     // Show a status message only for an empty history; open failures already report their own error.
-    if (wm_->reopenClosedTab(this) == mervin::WindowManager::Reopen::NothingToReopen)
-        statusBar()->showMessage(tr("No recently closed tab to reopen"), 3000);
+    wm_->reopenClosedTab(this, [window = QPointer<MainWindow>(this)](mervin::WindowManager::Reopen r) {
+        if (window && r == mervin::WindowManager::Reopen::NothingToReopen)
+            window->statusBar()->showMessage(tr("No recently closed tab to reopen"), 3000);
+    });
 }
 
 void MainWindow::showRecentPanel()

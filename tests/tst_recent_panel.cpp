@@ -1,4 +1,5 @@
 #include "i18n/UiLanguage.h"
+#include "io/FileProbe.h"
 #include "ui/RecentFilesPanel.h"
 
 #include <QDir>
@@ -46,6 +47,7 @@ private slots:
     void statusAndStopFollowTheScan();
     void stopKeepsWhatWasFound();
     void summaryCountsWhatIsListed();
+    void checksMarkMissingFilesAndSizes();
 
 private:
     QString file(const QString &name) const { return dir_.filePath(name); }
@@ -109,6 +111,52 @@ void TstRecentPanel::cleanup()
 {
     delete panel_;
     panel_ = nullptr;
+}
+
+// The panel learns from a FileProbe which files are missing and how large the
+// others are. Until a check answers, a row shows no size and counts as there. A
+// file deleted later shows as missing once the row is checked again.
+void TstRecentPanel::checksMarkMissingFilesAndSizes()
+{
+    {
+        QFile sized(file(QStringLiteral("notes.pdf")));
+        QVERIFY(sized.open(QIODevice::WriteOnly));
+        QCOMPARE(sized.write(QByteArray(2048, 'x')), 2048);
+    }
+    const QString gone = file(QStringLiteral("gone.pdf"));
+    const auto row = [this](const QString &path) -> const QListWidgetItem * {
+        for (int i = 0; i < list_->count(); ++i)
+            if (list_->item(i)->data(Qt::UserRole).toString() == path)
+                return list_->item(i);
+        return nullptr;
+    };
+    const auto missing = [&row](const QString &path) {
+        return row(path)->data(Qt::UserRole + 1).toBool();
+    };
+    const auto size = [&row](const QString &path) {
+        return row(path)->data(Qt::UserRole + 8).toLongLong();
+    };
+
+    RecentEntry deleted;
+    deleted.path = gone;
+    deleted.lastOpened = 10;
+    panel_->setEntries({entry("notes.pdf", 30), deleted});
+    QVERIFY(!missing(gone));
+    QCOMPARE(size(file(QStringLiteral("notes.pdf"))), 0);
+
+    mervin::FileProbe probe;
+    panel_->setFileProbe(&probe);
+    QTRY_VERIFY(missing(gone));
+    QVERIFY(row(gone)->toolTip().contains(QStringLiteral("no longer on disk")));
+    QTRY_COMPARE(size(file(QStringLiteral("notes.pdf"))), 2048);
+    QVERIFY(!missing(file(QStringLiteral("notes.pdf"))));
+
+    // Shown again after the answers have aged, the rows are checked again.
+    QVERIFY(QFile::remove(file(QStringLiteral("notes.pdf"))));
+    QTest::qWait(2100);
+    panel_->setEntries({entry("notes.pdf", 30), deleted});
+    QTRY_VERIFY(missing(file(QStringLiteral("notes.pdf"))));
+    panel_->setFileProbe(nullptr);
 }
 
 void TstRecentPanel::favouritesSitAboveTheRest()

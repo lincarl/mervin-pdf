@@ -1,5 +1,7 @@
 #include "ui/RecentFilesPanel.h"
 
+#include "io/FileProbe.h"
+#include "recent/PathKey.h"
 #include "ui/FileContextMenu.h"
 #include "ui/Icons.h"
 #include "ui/Theme.h"
@@ -44,6 +46,12 @@ constexpr int kFavoriteRole  = Qt::UserRole + 4; // bool favorite
 constexpr int kQueryRole     = Qt::UserRole + 5; // QString search term to highlight
 constexpr int kSnippetRole   = Qt::UserRole + 6; // QString content preview (content search)
 constexpr int kCaptionRole   = Qt::UserRole + 7; // bool: a section caption, not a file
+constexpr int kSizeRole      = Qt::UserRole + 8; // qint64 bytes, 0 = not known
+constexpr int kFoundRole     = Qt::UserRole + 9; // bool: a check has answered for the file
+constexpr int kFolderRole    = Qt::UserRole + 10; // bool: the file's folder is there
+
+// Rows are checked again when shown after this long.
+constexpr int kRecheckMs = 2000;
 
 constexpr int kContentDebounceMs = 400;
 constexpr int kRowHeight = 64;
@@ -224,13 +232,13 @@ public:
         const bool hasEntry  = idx.data(kEpochRole).isValid();
         const bool isFav     = idx.data(kFavoriteRole).toBool();
         const int  pages     = idx.data(kPageCountRole).toInt();
-        const QFileInfo fi(path);
+        const QFileInfo fi(path); // names only, as painting never touches the disk
         const QString name   = fi.fileName().isEmpty() ? path : fi.fileName();
         // Full native path; the ElideLeft below trims it to the column width, so
         // it shrinks automatically as the window narrows (no fixed char cap).
         const QString pDisp  = QDir::toNativeSeparators(path);
         const QString date   = formatDate(idx.data(kEpochRole).toLongLong());
-        const QString size   = (fi.exists() && fi.size() > 0) ? formatSize(fi.size()) : QString();
+        const QString size   = formatSize(idx.data(kSizeRole).toLongLong());
         const QString query  = idx.data(kQueryRole).toString();
         const QString snippet = idx.data(kSnippetRole).toString();
         const bool hasSnippet = !snippet.isEmpty();
@@ -470,7 +478,13 @@ bool RecentFilesPanel::eventFilter(QObject *obj, QEvent *event)
                                          !missingPaths.isEmpty(),
                                          icons::glyph(icons::Glyph::Broom, ink)});
                 }
-                showFileContextMenu(this, path, ce->globalPos(), surfaceItems);
+                std::optional<FileFacts> facts;
+                if (item->data(kFoundRole).toBool()) {
+                    facts.emplace();
+                    facts->exists = !missing;
+                    facts->folderExists = item->data(kFolderRole).toBool();
+                }
+                showFileContextMenu(this, path, ce->globalPos(), surfaceItems, facts);
                 return true;
             }
         }
@@ -560,6 +574,56 @@ void RecentFilesPanel::setEntries(const QList<RecentEntry> &entries)
 {
     entries_ = entries;
     rebuildKeepingPlace();
+}
+
+void RecentFilesPanel::setFileProbe(FileProbe *probe)
+{
+    if (probe_)
+        disconnect(probe_, nullptr, this, nullptr);
+    probe_ = probe;
+    if (probe_)
+        connect(probe_, &FileProbe::checked, this, &RecentFilesPanel::onFileChecked);
+    rebuildKeepingPlace();
+}
+
+void RecentFilesPanel::applyFacts(QListWidgetItem *item, const std::optional<FileFacts> &facts)
+{
+    const bool missing = facts && !facts->exists;
+    item->setData(kFoundRole, facts.has_value());
+    item->setData(kMissingRole, missing);
+    item->setData(kSizeRole, facts && facts->exists ? facts->size : qint64(0));
+    item->setData(kFolderRole, facts && (facts->exists || facts->folderExists));
+    // A content hit's tooltip names the page with the match instead.
+    if (item->data(kSnippetRole).toString().isEmpty()) {
+        const QString native = QDir::toNativeSeparators(item->data(kPathRole).toString());
+        //: Tooltip of a recent file that was moved or deleted. %1 is its path.
+        item->setToolTip(missing ? tr("%1\nThis file is no longer on disk.").arg(native) : native);
+    }
+}
+
+void RecentFilesPanel::onFileChecked(const FileCheck &file, const FileFacts &facts)
+{
+    QListWidgetItem *item = rows_.value(normalizePathKey(file.path));
+    // Another window may ask with a mount this list no longer has.
+    if (item && file.mount == checkFor(file.path).mount)
+        applyFacts(item, facts);
+}
+
+FileCheck RecentFilesPanel::checkFor(const QString &path) const
+{
+    const RecentEntry *entry = entryFor(path);
+    return {path, entry ? entry->mount : QString()};
+}
+
+void RecentFilesPanel::checkListedFiles()
+{
+    if (!probe_)
+        return;
+    QList<FileCheck> files;
+    files.reserve(rows_.size());
+    for (QListWidgetItem *item : std::as_const(rows_))
+        files.append(checkFor(item->data(kPathRole).toString()));
+    probe_->check(files, kRecheckMs);
 }
 
 void RecentFilesPanel::setVisibleCount(int count)
@@ -716,6 +780,8 @@ void RecentFilesPanel::addContentHit(const QString &path, int page, const QStrin
     const ContentHit &hit = *hits_.insert(path, {page, snippet});
     hitOrder_.append(path);
     insertResult(makeHitItem(*entry, hit), entry->favorite);
+    if (probe_)
+        probe_->check({checkFor(entry->path)}, kRecheckMs);
 }
 
 void RecentFilesPanel::setContentProgress(int scanned, int total)
@@ -755,6 +821,7 @@ void RecentFilesPanel::endContentSearch(bool canceled, int matched)
 
 void RecentFilesPanel::clearList()
 {
+    rows_.clear();
     list_->clear();
     favCaption_ = nullptr;
     recentCaption_ = nullptr;
@@ -767,6 +834,7 @@ void RecentFilesPanel::clearList()
 // the list is the plain history it always was.
 void RecentFilesPanel::insertResult(QListWidgetItem *item, bool favourite)
 {
+    rows_.insert(normalizePathKey(item->data(kPathRole).toString()), item);
     if (emptyNote_) {
         delete list_->takeItem(list_->row(emptyNote_));
         emptyNote_ = nullptr;
@@ -822,20 +890,15 @@ QListWidgetItem *RecentFilesPanel::makeHitItem(const RecentEntry &entry, const C
 
 QListWidgetItem *RecentFilesPanel::makeFileItem(const RecentEntry &entry)
 {
-    const QFileInfo fi(entry.path);
-    const bool missing = !fi.exists();
-    auto *item = new QListWidgetItem(fi.fileName());
+    auto *item = new QListWidgetItem(QFileInfo(entry.path).fileName());
     item->setData(kPathRole,      entry.path);
-    item->setData(kMissingRole,   missing);
     item->setData(kEpochRole,     entry.lastOpened);
     item->setData(kPageCountRole, entry.pageCount);
     item->setData(kFavoriteRole,  entry.favorite);
     // While searching, record the term so the delegate highlights it.
     if (!needle().isEmpty())
         item->setData(kQueryRole, needle());
-    const QString native = QDir::toNativeSeparators(entry.path);
-    //: Tooltip of a recent file that was moved or deleted. %1 is its path.
-    item->setToolTip(missing ? tr("%1\nThis file is no longer on disk.").arg(native) : native);
+    applyFacts(item, probe_ ? probe_->facts({entry.path, entry.mount}) : std::nullopt);
     return item;
 }
 
@@ -888,6 +951,7 @@ void RecentFilesPanel::rebuild()
         // Otherwise a scan is pending or running, and the status says so.
     }
     updateSummary(listed);
+    checkListedFiles();
 }
 
 void RecentFilesPanel::rebuildKeepingPlace()
@@ -938,12 +1002,12 @@ void RecentFilesPanel::onItemActivated(QListWidgetItem *item)
     const QString path = item->data(kPathRole).toString();
     if (path.isEmpty()) return;
     if (item->data(kMissingRole).toBool())
-        handleMissingFile(path);
+        handleMissingFile(path, item->data(kFolderRole).toBool());
     else
         emit openRequested(path);
 }
 
-void RecentFilesPanel::handleMissingFile(const QString &path)
+void RecentFilesPanel::handleMissingFile(const QString &path, bool folderThere)
 {
     const QString native = QDir::toNativeSeparators(path);
     QMessageBox box(this);
@@ -960,9 +1024,13 @@ void RecentFilesPanel::handleMissingFile(const QString &path)
     box.exec();
     if (box.clickedButton() == locate) {
         const QFileInfo fi(path);
+        // The dialog lists its folder on this thread, so it starts in the file's
+        // folder only when a check found that folder. Without a folder it would
+        // open the last one visited, often the share that stopped answering.
         const QString picked = QFileDialog::getOpenFileName(
             //: Title of the file dialog. %1 is the missing file's name.
-            this, tr("Locate \"%1\"").arg(fi.fileName()), fi.absolutePath(),
+            this, tr("Locate \"%1\"").arg(fi.fileName()),
+            folderThere ? fi.absolutePath() : QDir::homePath(),
             //: File type filter. Keep the patterns in parentheses and the ";;".
             tr("PDF documents (*.pdf);;All files (*)"));
         if (!picked.isEmpty()) { emit removeRequested(path); emit openRequested(picked); }

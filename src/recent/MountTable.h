@@ -14,6 +14,9 @@ struct Mount
 {
     QString point;   // the folder it is mounted on, without a trailing slash
     QByteArray type; // "ext4", "cifs", "autofs" and so on
+    // An automount map that mounts each share on a folder below its point, as
+    // autofs "indirect" maps do, rather than on the point itself.
+    bool mapsFolders = false;
 };
 
 // The mounts in the text of /proc/self/mountinfo, in the order listed.
@@ -36,5 +39,12 @@ QString deepestMount(const QString &path, const QList<Mount> &mounted);
 // mounted below that folder.
 QString holdingMount(const QString &path, const QList<Mount> &mounted,
                      const QStringList &configured);
+
+// The folder whose file system answers for `path`, a clean absolute path with '/'
+// separators, so that one share that stopped answering stalls only checks below
+// it. It is the deepest mount point above the path, an automount point included.
+// Below an automount map or a GVFS mount, where each server or share is a folder of
+// its own, it is that folder.
+QString answeringFolder(const QString &path, const QList<Mount> &mounted);
 
 } // namespace mervin::mounts

@@ -30,9 +30,16 @@ public:
     // Remove the entry for `path` if present. Returns true if one was removed.
     bool remove(const QString &path);
 
-    // Remove listed entries whose paths no longer exist on disk. Existing files
-    // are left untouched even if listed. Returns removed paths.
-    QStringList removeMissingFiles(const QStringList &paths);
+    // Remove the listed entries, as WindowManager does for files a check found
+    // gone. Returns the removed paths.
+    QStringList removeEntries(const QStringList &paths);
+
+    // Record `mount` (mountOf) for the entry of `path`, a file just found on disk.
+    // Returns true if the entry exists and its mount changed.
+    bool setMount(const QString &path, const QString &mount);
+
+    // The checks below touch the disk and can stall on an unreachable drive. Only
+    // threads other than the UI thread call them (see FileProbe).
 
     // True when `path` is gone from a volume that is attached: the file, or a
     // folder above it, was deleted, moved or renamed. False while the file exists,

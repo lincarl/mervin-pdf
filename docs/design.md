@@ -87,6 +87,37 @@ document access. Rasterization of an independent display list can finish afterwa
 The explicit Duplicate to new window command bypasses normal path deduplication and
 creates a second independent view.
 
+### Disk access off the UI thread
+
+A file call on a drive or network share that stopped answering blocks its thread
+until the system gives up, which can take minutes or never happen on a hard NFS
+mount, and nothing can cancel it. The UI thread therefore hands disk work to
+`background::start` (`io/Background`) and never waits for it. Results come back
+through `background::post`, which drops them if the object that asked is gone.
+Nothing joins these threads. Closing a window or quitting leaves stuck work behind,
+and the process ends without running static destructors while any is left
+(`main.cpp`). A stuck call keeps its thread, so
+work is bounded by its caller, one task per drive or per user action, never one per
+file.
+
+`FileProbe` (`io/FileProbe`) checks files for the UI: whether each exists, its size,
+the mount it is on, and for a missing file whether its volume is attached and its
+folder is still there (`FileFacts`). Each drive, share or mount gets one thread at a
+time, which checks its files in order, so a share that stopped answering holds up
+only its own files and never collects more threads. On Windows the volume is the
+drive or share in the path. Elsewhere it is the deepest mount point above the path
+(`mounts::answeringFolder`), and below an automount map or GVFS, the server's or
+share's own folder. Every file is checked, and within one run of a thread, files in
+the same folder with the same recorded mount share a volume check that found the
+volume away, since an offline share can stall each check. An attached answer is not
+reused, as a volume that went away meanwhile would then have files forgotten as
+removed. A check is the file with the mount recorded for
+it, which the volume check depends on. One already waiting is not queued twice, an
+answer younger than the caller's limit is announced again rather than checked again,
+and checks that a decision waits for, such as session restore's, go ahead of those
+already waiting on their volume. `WindowManager` owns one probe for every window, so
+each file is checked once whichever list shows it.
+
 Each `TabPage` groups one tab with its viewer, document when loaded, and retained
 state when unloaded. Tab detachment and merging reparent this tab object rather
 than reopening the file.
@@ -102,21 +133,31 @@ If the primary process disappears during handoff, the new process retries owners
 and can fall back to a standalone window. Session restoration creates the tab list
 but opens only the selected document. Other restored tabs load when selected.
 
-Before that, `SessionStore::prepareRestore` checks each saved path. A file that is
-there is restored. A missing file whose folder is still there on an attached volume
-was deleted, moved or renamed and is dropped. Any other missing file gets no tab.
-Its volume is away, as for a detached drive, an offline network share or an
-unmounted volume, or its folder is missing, which can be a share mounted where the
-volume check does not look. `RecentStore::isVolumeAttached` checks the volume, as it
-does for pruning Recent, once per drive or share because an offline share can stall
-each check. The file stays in `session.json` under `unavailable`, next to `open`,
-with the date it was first found missing.
-`WindowManager::updateSession` writes these entries back without checking the disk,
-because a check on an unreachable share can block the UI thread for seconds. An
-entry leaves the list once its file is open in a tab. A later start that finds the
-file reopens it after the other restored tabs. Entries expire 30 days after that
-date, without a disk check. With session restore off, the saved session is not
-loaded and nothing is kept.
+The first window is shown before any document is checked, and command-line files
+open at once. `WindowManager::restoreSession` has `FileProbe` check each saved path
+(`SessionStore::filesToCheck`) and waits, with the window live, until every check has
+answered or `kRestoreWaitMs` (1.5 s) has passed. `SessionStore::prepareRestore` then
+decides from the answers, without touching the disk. A file that is there is
+restored. A missing file whose folder is still there on an attached volume was
+deleted, moved or renamed and is dropped. Any other missing file gets no tab. Its
+volume is away, as for a detached drive, an offline network share or an unmounted
+volume, or its folder is missing, which can be a share mounted where the volume
+check does not look. A file whose check has not answered in time counts as away
+too. The file stays in `session.json` under `unavailable`, next to `open`, with the
+date it was first found missing. If its check answers later in the same run, a file
+that is there opens as an unloaded tab in its saved place, once the session's other
+tabs are in, without taking the view unless the window shows no document yet. One
+gone from its folder is dropped. The session is not saved from the start until its
+documents are queued (`WindowManager::holdSession`), so nothing the restore has not
+decided on yet can be lost. A document the user opens during the wait keeps the
+view, as a command-line file does, and a command-line file with a recovery copy
+opens from that copy.
+`WindowManager::updateSession` writes the kept entries back without checking the
+disk. An entry leaves the list once its file is open in a tab. A later start that
+finds the file reopens it after the other restored tabs. Entries expire 30 days
+after that date, without a disk check. With session restore off, the saved session
+is not loaded and nothing is kept. Restored tabs take the canonical paths the
+session stores, so creating them does not touch the disk either.
 
 `WindowManager` owns the system tray lifecycle. With Close to tray enabled, a window
 close hides that window without destroying its tabs. Tray actions restore windows
@@ -272,8 +313,10 @@ owns a separate serial worker and text cache so changing queries leaves the UI r
 Recent-file content search runs on its own worker and opens files independently. It
 returns the first matching page and a short snippet for each file. The Recent page's
 All scope lists file-name matches at once and scans only the remaining files. Generation tokens are checked when queued results reach the UI.
-A persistent worker takes the newest pending query; cancellation never joins on the
-UI thread, except when the service is destroyed.
+A persistent `background::start` worker with a MuPDF context of its own takes the
+newest pending query. Nothing joins it. Destroying the service tells it to stop, and
+a worker busy in a file on a share that stopped answering is left behind. Files are
+scanned in order, so later files wait while one does not answer.
 
 PDF links, search state, and viewer state remain tab-local. The window-owned sidebars
 are rebound to the active tab. Per-file view state is written when tabs or windows
@@ -438,10 +481,15 @@ Every save writes all known keys and drops keys this version does not read. A de
 that should also reach existing profiles therefore needs a new key, as `auto_update`
 and `recent_keep_removed` have.
 Closing a window batches view-state updates into one write.
-When the Recent setting to keep deleted or moved files is off, `WindowManager` checks
-the recent paths on a worker thread whenever the list is shown and drops entries
-whose file is gone while its volume is attached (`RecentStore::isRemovedFromDisk`),
-together with their view state.
+When the Recent setting to keep deleted or moved files is off, `WindowManager` has
+`FileProbe` check the recent paths whenever the list is shown and drops entries
+whose file is gone while its volume is attached (`FileFacts::removed`), together
+with their view state, in one save. Clear missing files checks its entries again
+first, so a file back in the meantime stays. The Recent page never touches the disk
+itself. Its rows show the missing state and the file size from the probe's answers,
+and a row shows no size and counts as there until its check answers. Rows are
+checked again when listed after their answer is two seconds old. The Locate dialog
+for a missing file starts in its folder only when a check found the folder.
 
 On Windows the volume is the drive or UNC share. Elsewhere a GVFS path counts while
 its share folder exists. Otherwise `RecentStore::isVolumeAttached` reads the mounted
@@ -474,11 +522,12 @@ that the mount list calls away. A folder that went with its volume, as udisks an
 per-login mounts such as KDE's kio-fuse leave it, falls back to the mount list. Only
 the folder is recorded, so another volume mounted on the same folder counts as the
 file's volume, unless that folder is `/media`, `/run/media`, `/mnt` or `/net` itself.
+`recordOpen` keeps the recorded mount at first and has `FileProbe` check the file;
+the mount it is on now replaces it once the check finds the file there.
 `recordOpen` gives the mount to the session too, which saves it for each open or kept
 document in `"mounts"` of `session.json`. Restore therefore still has it after Recent
 trims or clears the file. For a session saved before that field existed, restore
-takes the mount from Recent and keeps it from then on. It checks each folder once
-per recorded mount. A missing file under a folder that was a mount point when the
+takes the mount from Recent and keeps it from then on. A missing file under a folder that was a mount point when the
 file was opened, and is no longer used as one, stays listed as away until it is
 cleared by hand or opened again. An entry from an older version has no recorded
 mount, so on a share mounted by hand it is not recognised once the share is

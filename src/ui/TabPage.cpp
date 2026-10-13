@@ -404,11 +404,11 @@ void TabPage::installDocument(const std::shared_ptr<OpenResult> &result)
     viewer_->show();
 }
 
-void TabPage::setPath(const QString &path)
+void TabPage::setPath(const QString &path, bool resolve)
 {
     const QFileInfo fi(path);
     path_ = fi.absoluteFilePath();
-    canonicalPath_ = fi.canonicalFilePath();
+    canonicalPath_ = resolve ? fi.canonicalFilePath() : QDir::cleanPath(path_);
     if (canonicalPath_.isEmpty())
         canonicalPath_ = path_;
 }
@@ -514,16 +514,27 @@ void TabPage::clearRecovery()
     }
 }
 
-QStringList TabPage::recoverablePaths()
+QList<TabPage::RecoverableDocument> TabPage::recoverableDocuments()
 {
-    QStringList paths;
+    QList<RecoverableDocument> documents;
     const QDir directory(recoveryDirectory());
     for (const QString &name : directory.entryList({QStringLiteral("*.json")}, QDir::Files,
                                                   QDir::Time)) {
         const auto manifest = readManifest(directory.filePath(name));
         if (!manifest.isEmpty())
-            paths.append(manifest.value("original").toString());
+            documents.append({manifest.value("original").toString(),
+                              manifest.value("canonical").toString()});
     }
+    return documents;
+}
+
+QStringList TabPage::recoverablePaths()
+{
+    // The canonical path, as the session stores it, so a document both restored
+    // and recovered gets one tab: lazy tabs take their path as canonical.
+    QStringList paths;
+    for (const RecoverableDocument &document : recoverableDocuments())
+        paths.append(document.canonical.isEmpty() ? document.original : document.canonical);
     return paths;
 }
 
@@ -588,7 +599,7 @@ void TabPage::initializeSuspended(const QString &path, const ViewState &state)
 {
     if (doc_ || loading_)
         return;
-    setPath(path);
+    setPath(path, /*resolve=*/false);
     saved_->viewer = viewer_->captureResumeState();
     saved_->viewer.view = state;
     adoptRecovery();

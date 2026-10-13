@@ -12,9 +12,10 @@ namespace {
 
 // One mountinfo line for a file system of `type` mounted on `point`, written as
 // the kernel writes it.
-QByteArray line(const QByteArray &point, const QByteArray &type)
+QByteArray line(const QByteArray &point, const QByteArray &type,
+                const QByteArray &options = "rw")
 {
-    return "40 22 0:51 / " + point + " rw,relatime shared:7 - " + type + " src rw\n";
+    return "40 22 0:51 / " + point + " rw,relatime shared:7 - " + type + " src " + options + "\n";
 }
 
 // The system the holdingMount cases describe:
@@ -26,7 +27,8 @@ QByteArray line(const QByteArray &point, const QByteArray &type)
 // - /nas, an autofs map that mounts each share below it, with /nas/docs mounted;
 // - a USB drive in /media, with its mount point's space escaped.
 const QByteArray kMountInfo = line("/", "ext4") + line("/home", "ext4") + line("/mnt", "ext4")
-    + line("/archive", "xfs") + line("/srv/nas", "autofs") + line("/nas", "autofs")
+    + line("/archive", "xfs") + line("/srv/nas", "autofs", "rw,fd=4,pgrp=1,direct")
+    + line("/nas", "autofs", "rw,fd=5,pgrp=1,indirect")
     + line("/nas/docs", "nfs4") + line("/media/ann/My\\040Disk", "vfat");
 
 const QByteArray kFstab = "# <file system> <mount point> <type> <options> <dump> <pass>\n"
@@ -48,10 +50,17 @@ private slots:
     void holdingMount_data();
     void holdingMount();
     void mountedAutomountHoldsItsFiles();
+    void answeringFolder_data();
+    void answeringFolder();
 };
 
 void TstMountTable::parseMountInfoReadsFoldersAndTypes()
 {
+    {
+        const QList<Mount> mounted = mervin::mounts::parseMountInfo(kMountInfo);
+        for (const Mount &m : mounted)
+            QCOMPARE(m.mapsFolders, m.point == QLatin1String("/nas"));
+    }
     const QList<Mount> mounts = mervin::mounts::parseMountInfo(
         // Optional fields before the "-", none, and several.
         "22 1 8:2 / / rw,relatime shared:1 - ext4 /dev/sda2 rw,errors=remount-ro\n"
@@ -151,6 +160,36 @@ void TstMountTable::mountedAutomountHoldsItsFiles()
              QStringLiteral("/"));
     QCOMPARE(mervin::mounts::holdingMount(QStringLiteral("/data/plan.pdf"), {}, configured),
              QString());
+}
+
+void TstMountTable::answeringFolder_data()
+{
+    QTest::addColumn<QString>("path");
+    QTest::addColumn<QString>("folder");
+
+    QTest::newRow("system disk") << "/opt/docs/plan.pdf" << "/";
+    QTest::newRow("second disk") << "/home/ann/plan.pdf" << "/home";
+    QTest::newRow("share mounted below an automount map") << "/nas/docs/plan.pdf" << "/nas/docs";
+    // Each share of the map has a folder of its own, mounted or not, so one that
+    // stops answering holds up only its own files.
+    QTest::newRow("automount map, share not mounted") << "/nas/photos/2026/plan.pdf"
+                                                      << "/nas/photos";
+    QTest::newRow("automount point itself") << "/nas" << "/nas";
+    // A systemd automount mounts its share on the point itself.
+    QTest::newRow("fstab automount, not mounted") << "/srv/nas/2026/plan.pdf" << "/srv/nas";
+    QTest::newRow("removable") << "/media/ann/My Disk/plan.pdf" << "/media/ann/My Disk";
+    QTest::newRow("GVFS share") << "/run/user/1000/gvfs/smb-share:server=nas,share=docs/a/plan.pdf"
+                                << "/run/user/1000/gvfs/smb-share:server=nas,share=docs";
+}
+
+void TstMountTable::answeringFolder()
+{
+    QFETCH(QString, path);
+    QFETCH(QString, folder);
+    const QList<Mount> mounted = mervin::mounts::parseMountInfo(
+        kMountInfo + line("/run/user/1000/gvfs", "fuse.gvfsd-fuse"));
+    QCOMPARE(mervin::mounts::answeringFolder(path, mounted), folder);
+    QCOMPARE(mervin::mounts::answeringFolder(path, {}), QStringLiteral("/"));
 }
 
 QTEST_GUILESS_MAIN(TstMountTable)

@@ -22,8 +22,8 @@ private slots:
     void retentionTrimsOldest();
     void loweringRetentionRetrims();
     void removeDeletesEntry();
-    void removeMissingFilesDeletesAbsentEntries();
-    void removeMissingFilesOnlyRemovesRequestedEntries();
+    void removeEntriesRemovesOnlyThoseListed();
+    void setMountRecordsTheCurrentMount();
     void removedFromDiskNeedsAnAttachedVolume();
     void recordedMountJudgesTheVolume();
     void emptyPathIgnored();
@@ -111,44 +111,34 @@ void TstRecentStore::removeDeletesEntry()
     QVERIFY(!s.remove(QStringLiteral("C:/missing.pdf")));
 }
 
-void TstRecentStore::removeMissingFilesDeletesAbsentEntries()
+void TstRecentStore::removeEntriesRemovesOnlyThoseListed()
 {
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    const QString existing = dir.filePath(QStringLiteral("existing.pdf"));
-    QFile file(existing);
-    QVERIFY(file.open(QIODevice::WriteOnly));
-    file.close();
-
-    const QString missing = dir.filePath(QStringLiteral("missing.pdf"));
-
+    // The checks happen elsewhere, so the store removes what it is told to, in
+    // any spelling of the path, without looking at the disk.
     RecentStore s;
-    s.add(existing, 100);
-    s.add(missing, 200);
+    s.add(QStringLiteral("C:/a.pdf"), 100);
+    s.add(QStringLiteral("C:/b.pdf"), 200);
+    s.add(QStringLiteral("C:/c.pdf"), 300);
 
-    QCOMPARE(s.removeMissingFiles({existing, missing}), QStringList{missing});
+    QCOMPARE(s.removeEntries({QStringLiteral("C:/b.pdf"), QStringLiteral("C:/x.pdf")}),
+             QStringList{QStringLiteral("C:/b.pdf")});
+    QCOMPARE(s.count(), 2);
+    QCOMPARE(s.entries()[0].path, QStringLiteral("C:/c.pdf"));
+    QCOMPARE(s.entries()[1].path, QStringLiteral("C:/a.pdf"));
+    QCOMPARE(s.removeEntries({QStringLiteral("C:/./a.pdf")}), QStringList{QStringLiteral("C:/a.pdf")});
+    QVERIFY(s.removeEntries({}).isEmpty());
     QCOMPARE(s.count(), 1);
-    QCOMPARE(s.entries()[0].path, existing);
-    QVERIFY(s.removeMissingFiles({missing}).isEmpty());
 }
 
-void TstRecentStore::removeMissingFilesOnlyRemovesRequestedEntries()
+void TstRecentStore::setMountRecordsTheCurrentMount()
 {
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    const QString missingA = dir.filePath(QStringLiteral("missing-a.pdf"));
-    const QString missingB = dir.filePath(QStringLiteral("missing-b.pdf"));
-
     RecentStore s;
-    s.add(missingA, 100);
-    s.add(missingB, 200);
-
-    QCOMPARE(s.removeMissingFiles({missingA}), QStringList{missingA});
+    s.add(QStringLiteral("/home/ann/nas/a.pdf"), 100, 0, QStringLiteral("/home/ann/nas"));
+    QVERIFY(!s.setMount(QStringLiteral("/home/ann/nas/a.pdf"), QStringLiteral("/home/ann/nas")));
+    QVERIFY(s.setMount(QStringLiteral("/home/ann/nas/a.pdf"), QStringLiteral("/")));
+    QCOMPARE(s.recordedMount(QStringLiteral("/home/ann/nas/a.pdf")), QStringLiteral("/"));
+    QVERIFY(!s.setMount(QStringLiteral("/home/ann/other.pdf"), QStringLiteral("/")));
     QCOMPARE(s.count(), 1);
-    QCOMPARE(s.entries()[0].path, missingB);
-
-    QCOMPARE(s.removeMissingFiles({missingB}), QStringList{missingB});
-    QCOMPARE(s.count(), 0);
 }
 
 // Automatic pruning forgets a file that was deleted or moved, including with its

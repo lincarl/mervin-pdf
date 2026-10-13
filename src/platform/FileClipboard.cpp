@@ -8,13 +8,17 @@
 
 namespace mervin {
 
+bool isCopyableFile(const QString &path)
+{
+    return !path.isEmpty() && QFileInfo(path).isFile();
+}
+
 bool copyFileToClipboard(const QString &path)
 {
-    const QFileInfo fi(path);
-    if (!fi.isFile())
+    if (path.isEmpty())
         return false;
 
-    const QUrl url = QUrl::fromLocalFile(fi.absoluteFilePath());
+    const QUrl url = QUrl::fromLocalFile(path);
     auto *mime = new QMimeData;
     mime->setUrls({url});
 

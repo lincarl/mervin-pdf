@@ -58,7 +58,11 @@ QList<Mount> parseMountInfo(const QByteArray &text)
         const qsizetype separator = fields.indexOf(QByteArrayLiteral("-"), 6);
         if (separator < 0 || separator + 1 >= fields.size() || !fields.at(4).startsWith('/'))
             continue;
-        mounts.append({folder(fields.at(4)), fields.at(separator + 1)});
+        Mount m{folder(fields.at(4)), fields.at(separator + 1)};
+        // The super options follow the type and the source.
+        if (m.type == "autofs" && separator + 3 < fields.size())
+            m.mapsFolders = fields.at(separator + 3).trimmed().split(',').contains("indirect");
+        mounts.append(m);
     }
     return mounts;
 }
@@ -118,6 +122,26 @@ QString holdingMount(const QString &path, const QList<Mount> &mounted,
             return {};
     }
     return holder;
+}
+
+QString answeringFolder(const QString &path, const QList<Mount> &mounted)
+{
+    const Mount *deepest = nullptr;
+    for (const Mount &m : mounted) {
+        if (holds(m.point, path) && (!deepest || m.point.size() > deepest->point.size()))
+            deepest = &m;
+    }
+    if (!deepest)
+        return QStringLiteral("/");
+    // An automount map mounts each server or share on its own folder below it,
+    // and GVFS lists each share as a folder of its one FUSE mount.
+    if (!deepest->mapsFolders && deepest->type != "fuse.gvfsd-fuse")
+        return deepest->point;
+    const qsizetype start = deepest->point == QLatin1String("/") ? 1 : deepest->point.size() + 1;
+    if (start >= path.size())
+        return deepest->point;
+    const qsizetype end = path.indexOf(QLatin1Char('/'), start);
+    return end < 0 ? path : path.left(end);
 }
 
 } // namespace mervin::mounts

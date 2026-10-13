@@ -1,14 +1,42 @@
 #include "render/ContentSearch.h"
 
-#include "render/RenderEngine.h"
+#include "io/Background.h"
+#include "render/MuPdfLocks.h"
 
 #include <mupdf/fitz.h>
 
 #include <QByteArray>
+#include <QPointer>
 
+#include <atomic>
+#include <condition_variable>
 #include <cstring>
+#include <functional>
+#include <mutex>
+#include <optional>
+#include <utility>
 
 namespace mervin {
+
+struct ContentSearch::Shared
+{
+    struct Request
+    {
+        QStringList paths;
+        QString query;
+        quint64 generation = 0;
+    };
+    std::mutex mutex;
+    std::condition_variable ready;
+    std::optional<Request> pending; // guarded by mutex
+    bool stopping = false;          // guarded by mutex
+    // Bumped on every start()/cancel(); a worker whose generation is stale exits
+    // without emitting (guards against a just-canceled run racing the next one).
+    std::atomic<quint64> generation{0};
+    // Set on the UI thread and only copied elsewhere: making a QPointer from the
+    // object, or converting one, reads the object, which may be going.
+    QPointer<QObject> owner;
+};
 
 namespace {
 
@@ -84,78 +112,100 @@ QString makeSnippet(const QString &text, const QString &query)
 
 } // namespace
 
-ContentSearch::ContentSearch(RenderEngine *engine, QObject *parent)
-    : QObject(parent), engine_(engine)
+ContentSearch::ContentSearch(QObject *parent)
+    : QObject(parent)
+    , shared_(std::make_shared<Shared>())
 {
-    fz_context *ctx = engine_ ? fz_clone_context(engine_->baseContext()) : nullptr;
-    worker_ = std::thread([this, ctx] { workerLoop(ctx); });
+    shared_->owner = this;
+    background::start([shared = shared_] { workerLoop(shared); });
 }
 
 ContentSearch::~ContentSearch()
 {
-    generation_.fetch_add(1);
+    shared_->generation.fetch_add(1);
     {
-        std::lock_guard lock(mutex_);
-        stopping_ = true;
-        pending_.reset();
+        std::lock_guard lock(shared_->mutex);
+        shared_->stopping = true;
+        shared_->pending.reset();
     }
-    ready_.notify_one();
-    worker_.join();
+    shared_->ready.notify_one();
 }
 
 void ContentSearch::cancel()
 {
-    generation_.fetch_add(1);
+    shared_->generation.fetch_add(1);
     {
-        std::lock_guard lock(mutex_);
-        pending_.reset();
+        std::lock_guard lock(shared_->mutex);
+        shared_->pending.reset();
     }
-    if (running_.exchange(false))
+    if (std::exchange(running_, false))
         emit finished(true, 0);
 }
 
 void ContentSearch::start(const QStringList &paths, const QString &query)
 {
-    const quint64 generation = generation_.fetch_add(1) + 1;
+    const quint64 generation = shared_->generation.fetch_add(1) + 1;
     const bool empty = query.trimmed().isEmpty() || paths.isEmpty();
     {
-        std::lock_guard lock(mutex_);
-        pending_.reset();
+        std::lock_guard lock(shared_->mutex);
+        shared_->pending.reset();
         if (!empty)
-            pending_ = Request{paths, query, generation};
+            shared_->pending = Shared::Request{paths, query, generation};
     }
-    running_.store(!empty);
+    running_ = !empty;
     if (empty)
         emit finished(false, 0);
     else
-        ready_.notify_one();
+        shared_->ready.notify_one();
 }
 
-void ContentSearch::workerLoop(fz_context *ctx)
+void ContentSearch::workerLoop(const std::shared_ptr<Shared> &shared)
 {
+    // A context of its own, with a store of its own, so it does not depend on the
+    // render engine. It shares the process's MuPDF locks, which guard MuPDF's
+    // global state. Each file is dropped once scanned, so a small store is enough.
+    fz_context *ctx = fz_new_context(nullptr, sharedMuPdfLocks(), 32 << 20);
+    if (ctx) {
+        fz_set_warning_callback(ctx, [](void *, const char *) {}, nullptr);
+        fz_register_document_handlers(ctx);
+    }
     for (;;) {
-        Request request;
+        Shared::Request request;
         {
-            std::unique_lock lock(mutex_);
-            ready_.wait(lock, [this] { return stopping_ || pending_.has_value(); });
-            if (stopping_)
+            std::unique_lock lock(shared->mutex);
+            shared->ready.wait(lock, [&] { return shared->stopping || shared->pending.has_value(); });
+            if (shared->stopping)
                 break;
-            request = std::move(*pending_);
-            pending_.reset();
+            request = std::move(*shared->pending);
+            shared->pending.reset();
         }
-        run(std::move(request.paths), std::move(request.query), request.generation, ctx);
+        run(shared, request.paths, request.query, request.generation, ctx);
     }
     if (ctx)
         fz_drop_context(ctx);
 }
 
-void ContentSearch::run(QStringList paths, QString query, quint64 generation, fz_context *ctx)
+void ContentSearch::run(const std::shared_ptr<Shared> &shared, const QStringList &paths,
+                        const QString &query, quint64 generation, fz_context *ctx)
 {
     int matched = 0;
     int scanned = 0;
     bool canceled = false;
 
-    auto current = [&] { return generation_.load() == generation; };
+    auto current = [&] { return shared->generation.load() == generation; };
+    QPointer<QObject> owner;
+    {
+        std::lock_guard lock(shared->mutex);
+        owner = shared->owner;
+    }
+    // Runs `fn` on the owner's thread if the owner is still there and this run is
+    // still the current one.
+    const auto deliver = [owner, shared, generation](std::function<void(ContentSearch *)> fn) {
+        background::post(owner, [owner, shared, generation, fn] {
+            if (shared->generation.load() == generation)
+                fn(static_cast<ContentSearch *>(owner.data()));
+        });
+    };
 
     if (ctx) {
         for (const QString &path : paths) {
@@ -199,24 +249,20 @@ void ContentSearch::run(QStringList paths, QString query, quint64 generation, fz
             }
             if (matchPage > 0) {
                 ++matched;
-                QMetaObject::invokeMethod(this, [this, generation, path, matchPage, snippet] {
-                    if (generation_.load() == generation)
-                        emit hit(path, matchPage, snippet);
-                }, Qt::QueuedConnection);
+                deliver([path, matchPage, snippet](ContentSearch *search) {
+                    emit search->hit(path, matchPage, snippet);
+                });
             }
-            QMetaObject::invokeMethod(this, [this, generation, scanned, total = int(paths.size())] {
-                if (generation_.load() == generation)
-                    emit progress(scanned, total);
-            }, Qt::QueuedConnection);
+            deliver([scanned, total = int(paths.size())](ContentSearch *search) {
+                emit search->progress(scanned, total);
+            });
         }
     }
 
-    QMetaObject::invokeMethod(this, [this, generation, canceled, matched] {
-        if (generation_.load() == generation) {
-            running_.store(false);
-            emit finished(canceled, matched);
-        }
-    }, Qt::QueuedConnection);
+    deliver([canceled, matched](ContentSearch *search) {
+        search->running_ = false;
+        emit search->finished(canceled, matched);
+    });
 }
 
 } // namespace mervin

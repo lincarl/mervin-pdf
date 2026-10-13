@@ -95,6 +95,7 @@ add_library(mervin_core STATIC
     src/render/Document.h
     src/render/RenderEngine.cpp
     src/render/RenderEngine.h
+    src/render/MuPdfLocks.h
     src/render/PageCache.cpp
     src/render/PageCache.h
     src/render/PreviewLayer.cpp
@@ -154,6 +155,11 @@ add_library(mervin_core STATIC
     src/config/ConfigPaths.h
     src/config/Settings.cpp
     src/config/Settings.h
+    src/io/Background.cpp
+    src/io/Background.h
+    src/io/FileFacts.h
+    src/io/FileProbe.cpp
+    src/io/FileProbe.h
     src/recent/RecentEntry.h
     src/recent/ViewState.h
     src/recent/PathKey.h

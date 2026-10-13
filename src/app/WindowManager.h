@@ -1,5 +1,6 @@
 #pragma once
 
+#include "io/FileProbe.h"
 #include "ipc/Message.h"
 #include "recent/RecentEntry.h"
 #include "recent/RecentStore.h"
@@ -13,11 +14,14 @@
 #include <QElapsedTimer>
 #include <QObject>
 #include <QPoint>
+#include <QHash>
+#include <QPointer>
+#include <QSet>
 #include <QString>
 #include <QStringList>
-#include <QThreadPool>
 
 #include <atomic>
+#include <optional>
 
 #include <functional>
 #include <memory>
@@ -65,11 +69,12 @@ public:
     // new-tab). Files already open in any window are focused, not duplicated.
     void openPaths(const QStringList &paths, const QString &behavior);
 
-    // Open one document per event-loop turn in a fixed target window. Replace any pending
-    // batch. onDone runs even for an empty batch; startup timing waits for it. savedOrder
-    // contains canonical session paths for insertion against the live tab bar.
+    // Open one document per event-loop turn in a fixed target window: `into`, or the
+    // active window when that is null or gone. Replace any pending batch. onDone runs
+    // even for an empty batch; startup timing waits for it. savedOrder contains
+    // canonical session paths for insertion against the live tab bar.
     void openStaged(const QList<StagedOpen> &batch, const QStringList &savedOrder = {},
-                    std::function<void()> onDone = {});
+                    std::function<void()> onDone = {}, MainWindow *into = nullptr);
 
     // True when `canonicalPath` is open in any window of this process. Unlike
     // focusExistingTab this only answers the question - it does not select the tab
@@ -152,7 +157,9 @@ public:
     // ---- Recent files + view-state (M6), owned in-process ---------------------
     // Record that a file was opened (push to recent history). When
     // restoreViewState is true (a freshly opened tab), the file's saved view
-    // state (if any) is applied to the matching tab immediately.
+    // state (if any) is applied to the matching tab immediately. The entry keeps
+    // the mount it was opened from until a check on a background thread finds the
+    // file and records the mount it is on now.
     void recordOpen(const QString &canonicalPath, bool restoreViewState, int pageCount = 0);
 
     // Persist a tab's current view state (called on tab/window close).
@@ -162,7 +169,8 @@ public:
     // Remove a file from the recent history (panel "Remove from history").
     void removeRecent(const QString &canonicalPath);
 
-    // Remove the listed recent entries whose files no longer exist on disk.
+    // Remove the listed recent entries whose files no longer exist on disk, as a
+    // check on a background thread finds them.
     void clearMissingRecent(const QStringList &paths);
 
     // Set or clear the favourite flag on a recent entry.
@@ -178,20 +186,35 @@ public:
     void applyRecentSettings(int visibleCount, int retention, bool keepMissing);
 
     // With that setting off, forget entries whose file is gone while its drive,
-    // share or mount is attached (RecentStore::isRemovedFromDisk, given the mount
-    // recorded when the file was opened). The disk is checked on a worker thread,
-    // since network paths can stall. A no-op while the setting is on.
+    // share or mount is attached (FileFacts::removed, given the mount recorded when
+    // the file was opened). fileProbe() checks the disk. A no-op while the setting
+    // is on.
     void pruneMissingRecent();
 
-    // Crash recovery / session restore (M11). sessionPathsToRestore() loads the
-    // saved session and returns the documents to reopen. Documents on an
-    // unavailable drive, share or mount stay in the session unopened (see
-    // SessionStore::prepareRestore), judged by the mount recorded for each file
-    // when there is one (SessionStore::mount). updateSession() saves the current
-    // open set (union across live windows) followed by those kept documents. The
+    // Crash recovery / session restore (M11). restoreSession() loads the saved
+    // session, has fileProbe() check its documents and calls `done` with the ones
+    // to reopen. It waits until every check has answered or kRestoreWaitMs has
+    // passed, with the window live. Documents on an unavailable drive, share or
+    // mount stay in the session unopened (see SessionStore::prepareRestore), judged
+    // by the mount recorded for each file when there is one (SessionStore::mount),
+    // and so do those whose check has not answered in time. One that answers later
+    // opens then, as an unloaded tab in its saved place, without taking the view
+    // unless the window shows no document yet.
+    // updateSession() saves the current open set (union across live windows)
+    // followed by those kept documents, and waits while the restore does. The
     // single UI process is the only writer.
-    QStringList sessionPathsToRestore();
+    static constexpr int kRestoreWaitMs = 1500;
+    void restoreSession(std::function<void(const QStringList &)> done);
     void updateSession();
+    // While held, updateSession() saves nothing. Startup holds it from the restore
+    // until the restored documents are queued with openStaged(), so a save in
+    // between, such as for a command-line file, cannot drop them from the session.
+    // Documents that answered late open once it is released and the batch is in.
+    void holdSession(bool hold);
+
+    // Checks files for the UI on background threads (see FileProbe). Shared by
+    // every window, so each file is checked once whichever list shows it.
+    FileProbe *fileProbe() { return &probe_; }
 
     // Close the unloaded tabs whose file is gone: deleted, moved or renamed from a
     // folder that is still there, while its drive, share or mount is attached
@@ -204,9 +227,9 @@ public:
     // after an unloaded tab fails to load.
     void closeRemovedTabs();
 
-    // The document that was on screen when the session was recorded. Valid after
-    // sessionPathsToRestore() has loaded the file; empty when the session predates
-    // the field, recorded no current document, or that document is not restored.
+    // The document that was on screen when the session was recorded. Valid once
+    // restoreSession() has called back; empty when the session predates the field,
+    // recorded no current document, or that document is not restored.
     QString sessionActivePath() const { return session_.activePath(); }
 
     // The current recent list (so a newly shown panel has data immediately).
@@ -214,7 +237,8 @@ public:
 
     // Remember canonical sibling order and the closed index so reopening derives a position in
     // the live bar. Memory-only undo history; updateSession separately persists open tabs.
-    void rememberClosedTab(const QString &path, const QStringList &siblings, int index);
+    void rememberClosedTab(const QString &path, const QString &canonicalPath,
+                           const QStringList &siblings, int index);
 
     enum class Reopen {
         Reopened,        // a tab came back
@@ -225,11 +249,17 @@ public:
     };
 
     // Reopen the most recently closed tab into `into` (the window whose shortcut
-    // fired; falls back to the active window). Entries whose file is open again or
-    // gone from disk are skipped rather than spending the press, so the three
-    // outcomes above are genuinely distinct - the caller must not report a Failed
-    // press as an empty history, which would be a lie with entries still waiting.
-    Reopen reopenClosedTab(MainWindow *into = nullptr);
+    // fired; falls back to the active window), and report the outcome to `done`.
+    // A window in the tray, or none, gets no tab: the press fails instead.
+    // Entries whose file is open again or gone from disk are skipped rather than
+    // spending the press, so the three outcomes above are genuinely distinct - the
+    // caller must not report a Failed press as an empty history, which would be a
+    // lie with entries still waiting. fileProbe() checks each file first, and the
+    // press waits for its answer with the window live, for up to kReopenWaitMs.
+    // When the check does not answer by then, the press fails and the entry stays
+    // for the next one. Presses made meanwhile wait their turn.
+    static constexpr int kReopenWaitMs = 5000;
+    void reopenClosedTab(MainWindow *into = nullptr, std::function<void(Reopen)> done = {});
 
 signals:
     void recentListChanged(const QList<mervin::RecentEntry> &entries);
@@ -253,9 +283,18 @@ private:
     void onWindowDestroyed(MainWindow *window);
     void stagedStep(); // opens one document of stagedQueue_, then re-arms itself
 
-    // Forget closed-tab entries that can no longer be brought back: the file is
-    // open again somewhere, or it is no longer on disk.
-    void pruneClosedTabs();
+    // Serve the first waiting reopenClosedTab press, once fileProbe() has
+    // answered for the entry it would bring back.
+    void serveReopen();
+    // Answers from fileProbe() for the checks this object asked for.
+    void onFileChecked(const FileCheck &file, const FileFacts &facts);
+    void finishRestore();
+    // A session document whose check answered after the restore was decided.
+    void restoreLate(const QString &path, const FileFacts &facts);
+    void openLateWaiting();
+    // Forget the recent entries the checks found gone, all in one save.
+    void dropRecent(const QString &path);
+    void dropFoundRecent();
 
     MainWindow *activeOrNewWindow();
     MainWindow *emptyWindow() const; // a document-less window, or nullptr
@@ -280,6 +319,7 @@ private:
 
     // Declared first so it is destroyed LAST (after all windows/Documents).
     std::unique_ptr<RenderEngine> engine_;
+    FileProbe probe_;
     std::unique_ptr<ipc::SingleInstanceServer> instanceServer_; // primary only; may be null
     SessionStore session_;
     ClosedTabStack closedTabs_; // in-memory undo history for Ctrl+Shift+T
@@ -307,20 +347,39 @@ private:
     QString documentTheme_;
     bool themeRefreshPending_ = false; // a deferred Theme::applyApp() is queued
     bool keepMissingRecent_ = false;   // Settings::recentKeepMissing
-    bool pruneRunning_ = false;        // a pruneMissingRecent scan is on the worker
-    bool prunePending_ = false;        // ...and another was asked for meanwhile
     bool movingTab_ = false;           // detachTab or mergeTab is moving a tab
     bool tabScanRunning_ = false;      // a closeRemovedTabs scan is on its worker
     bool tabScanPending_ = false;      // ...and another was asked for meanwhile
     bool removedTabsWaiting_ = false;  // a busy window kept a tab whose file is gone
-    // Set on shutdown so a scan stuck on slow network paths stops between paths
-    // instead of keeping the process alive.
-    std::atomic<bool> scanCancel_{false};
-    // Declared last so they are destroyed first: their destructors wait for a
-    // running scan while the rest of this object is still intact. Tab checks get
-    // their own thread, so they never wait behind a long Recent scan.
-    QThreadPool prunePool_;
-    QThreadPool tabScanPool_;
+    // Set on shutdown so a closeRemovedTabs scan stops between paths. Nothing waits
+    // for the scan, so one stuck on an unreachable share is left behind.
+    std::shared_ptr<std::atomic<bool>> scanCancel_ = std::make_shared<std::atomic<bool>>(false);
+
+    // Checks whose fileProbe() answer is awaited, each set by FileProbe::keyOf.
+    QSet<QString> restoreWaiting_; // session documents, while the restore waits
+    QSet<QString> restoreLate_;    // ...still unanswered when it stopped waiting
+    QSet<QString> mountWanted_;    // recordOpen: record the mount if the file is there
+    QSet<QString> pruneWanted_;    // pruneMissingRecent: forget it if removed from disk
+    QSet<QString> clearWanted_;    // clearMissingRecent: forget it if missing
+    bool restorePending_ = false;  // restoreSession is waiting for its checks
+    bool sessionHeld_ = false;     // see holdSession
+    bool sessionFinal_ = false;    // quitting saved the session for the last time
+    std::function<void(const QStringList &)> restoreDone_;
+    QHash<QString, FileCheck> restoreChecks_; // by normalizePathKey: each document's check
+    QStringList restoreOrder_;          // the saved session order, for late documents
+    QPointer<MainWindow> restoreWindow_; // where late documents open
+    QStringList lateWaiting_;           // late documents waiting for the session's tabs
+    QStringList recentDue_;             // found by pruneWanted_ and clearWanted_
+    // Ctrl+Shift+T presses waiting for an answer, oldest first.
+    struct ReopenPress
+    {
+        QPointer<MainWindow> into;
+        std::function<void(Reopen)> done;
+    };
+    QList<ReopenPress> reopenPresses_;
+    std::optional<FileCheck> reopenCheck_; // the check the first press waits on
+    quint64 reopenAttempt_ = 0;            // tells a stale timeout from the current one
+    quint64 reopenTimedOut_ = 0;           // the attempt whose wait ran out
 };
 
 } // namespace mervin

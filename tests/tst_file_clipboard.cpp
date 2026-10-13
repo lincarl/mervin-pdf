@@ -16,6 +16,7 @@
 #endif
 
 using mervin::copyFileToClipboard;
+using mervin::isCopyableFile;
 
 #ifdef Q_OS_WIN
 // Clipboard-history/RDP listeners briefly hold the clipboard open right after
@@ -45,7 +46,7 @@ class TstFileClipboard : public QObject
     Q_OBJECT
 
 private slots:
-    void missingFileLeavesClipboardAlone();
+    void missingFileIsNotCopyable();
     void directoryRejected();
     void copyPlacesFileUrlOnClipboard();
 #ifdef Q_OS_WIN
@@ -69,20 +70,22 @@ QString TstFileClipboard::makeFile(const QString &name)
     return path;
 }
 
-void TstFileClipboard::missingFileLeavesClipboardAlone()
+void TstFileClipboard::missingFileIsNotCopyable()
 {
     QVERIFY(dir_.isValid());
     const QString sentinel = QStringLiteral("mervin-clipboard-sentinel");
     QGuiApplication::clipboard()->setText(sentinel);
 
-    QVERIFY(!copyFileToClipboard(dir_.filePath(QStringLiteral("does-not-exist.pdf"))));
+    QVERIFY(!isCopyableFile(dir_.filePath(QStringLiteral("does-not-exist.pdf"))));
+    QVERIFY(!isCopyableFile(QString()));
     QVERIFY(!copyFileToClipboard(QString()));
     QCOMPARE(QGuiApplication::clipboard()->text(), sentinel);
 }
 
 void TstFileClipboard::directoryRejected()
 {
-    QVERIFY(!copyFileToClipboard(dir_.path()));
+    QVERIFY(!isCopyableFile(dir_.path()));
+    QVERIFY(isCopyableFile(makeFile(QStringLiteral("plain.pdf"))));
 }
 
 void TstFileClipboard::copyPlacesFileUrlOnClipboard()
