@@ -1,5 +1,6 @@
 #include "dialogs/PrintDialog.h"
 
+#include "dialogs/LayoutMinimum.h"
 #include "print/PageRange.h"
 #include "print/PrintPreviewWidget.h"
 #include "render/Document.h"
@@ -54,7 +55,6 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     //: Dialog title.
     setWindowTitle(tr("Print"));
     setObjectName(QStringLiteral("printDialog"));
-    setMinimumSize(800, 480);
     const QPageLayout initialLayout = printer_->pageLayout();
     const int initialCopies = printer_->copyCount();
     const QPrinter::ColorMode initialColour = printer_->colorMode();
@@ -420,12 +420,11 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
         }
     });
 
-    ensurePolished();
-    setMinimumSize(minimumSize().expandedTo(minimumSizeHint()));
     const QRect screenArea = screen() ? screen()->availableGeometry() : QRect(0, 0, 1280, 900);
     resize(qMin(1180, screenArea.width() - 60), qMin(800, screenArea.height() - 80));
     refreshPreview();
-    setMinimumHeight(qMax(minimumHeight(), layout->totalHeightForWidth(minimumWidth())));
+    // Wrapped selection captions must not push navigation over the preview.
+    mervin::followLayoutMinimum(*this, QSize(800, 480));
 }
 
 mervin::printing::Settings PrintDialog::printSettings() const
@@ -581,8 +580,6 @@ void PrintDialog::updateNavigation()
                                 .arg(pages_.at(previewIndex_)).arg(previewIndex_ + 1)
                                 .arg(pages_.size()));
     }
-    // Wrapped selection captions must not push navigation over the preview.
-    setMinimumHeight(qMax(minimumHeight(), layout()->totalHeightForWidth(minimumWidth())));
 }
 
 void PrintDialog::accept()

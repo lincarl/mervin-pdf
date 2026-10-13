@@ -28,6 +28,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QElapsedTimer>
@@ -475,12 +476,16 @@ void TstTranslationLayout::inspect(QWidget &widget, const QString &state)
     widget.show();
     settle();
     if (minimumSize_) {
-        // Respect the actual layout minimum, including translated labels. A
-        // fixed-size dialog has the same dimensions in both matrix entries. The
-        // smaller size can raise the minimum again, as when a list gains its
-        // scroll bar, so resize until the size holds.
+        // The smallest size the user can reach. A window can be dragged down to
+        // its minimum size, even below what its layout needs, so a dialog's
+        // minimum has to follow its layout. A layout gives an embedded panel at
+        // least its minimum size hint. A fixed-size dialog has the same dimensions
+        // in both matrix entries. The smaller size can raise the minimum again,
+        // as when a list gains its scroll bar, so resize until the size holds.
+        const bool window = qobject_cast<QDialog *>(&widget);
         for (int turn = 0; turn < 10; ++turn) {
-            const QSize minimum = widget.minimumSize().expandedTo(widget.minimumSizeHint());
+            const QSize minimum = window ? widget.minimumSize()
+                                         : widget.minimumSize().expandedTo(widget.minimumSizeHint());
             if (widget.size() == minimum)
                 break;
             widget.resize(minimum);
