@@ -15,6 +15,8 @@
 #include <QMessageBox>
 #include <QUrl>
 
+#include <memory>
+
 #ifdef Q_OS_WIN
 #  define WIN32_LEAN_AND_MEAN
 #  define NOMINMAX
@@ -119,9 +121,18 @@ void showFileContextMenu(QWidget *parent, const QString &path, const QPoint &glo
         // not let that look like a successful copy.
         const QString file = fi.absoluteFilePath();
         QObject *context = parent ? static_cast<QObject *>(parent) : QCoreApplication::instance();
+        // The check can wait on a slow share. Anything copied meanwhile is newer
+        // and stays, so the late answer then does nothing.
+        const auto overtaken = std::make_shared<bool>(false);
+        const QMetaObject::Connection watch =
+            QObject::connect(QApplication::clipboard(), &QClipboard::dataChanged, context,
+                             [overtaken] { *overtaken = true; });
         background::run(
             context, [file] { return isCopyableFile(file); },
-            [parent, file, copyFileText, fileNative](bool copyable) {
+            [parent, file, copyFileText, fileNative, overtaken, watch](bool copyable) {
+                QObject::disconnect(watch);
+                if (*overtaken)
+                    return;
                 if (copyable) {
                     copyFileToClipboard(file);
                     return;
