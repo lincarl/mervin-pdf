@@ -1074,14 +1074,19 @@ private slots:
     void movedToolResultSurvivesItsQueuedOwner_data()
     {
         QTest::addColumn<QString>("result");
-        QTest::newRow("success") << QStringLiteral("success");
-        QTest::newRow("failure") << QStringLiteral("failure");
-        QTest::newRow("password") << QStringLiteral("password");
+        QTest::addColumn<bool>("unmoved");
+        QTest::newRow("success") << QStringLiteral("success") << false;
+        QTest::newRow("failure") << QStringLiteral("failure") << false;
+        QTest::newRow("password") << QStringLiteral("password") << false;
+        QTest::newRow("unmoved success") << QStringLiteral("success") << true;
+        QTest::newRow("unmoved failure") << QStringLiteral("failure") << true;
+        QTest::newRow("unmoved password") << QStringLiteral("password") << true;
     }
 
     void movedToolResultSurvivesItsQueuedOwner()
     {
         QFETCH(QString, result);
+        QFETCH(bool, unmoved);
         QTemporaryDir files;
         const QString source = files.filePath(QStringLiteral("plan.pdf"));
         const QString kept = files.filePath(QStringLiteral("kept.pdf"));
@@ -1121,6 +1126,16 @@ private slots:
         QTRY_COMPARE(finished.size(), 1);
         QVERIFY(page->isUsable());
         QVERIFY(told_.isEmpty());
+        if (unmoved) {
+            delete first.data();
+            guard.close();
+            QTest::qWait(100);
+            QVERIFY(!first && !page);
+            QVERIFY(told_.isEmpty());
+            QVERIFY(unexpected_.isEmpty());
+            QCOMPARE(second->tabPaths(), QStringList{kept});
+            return;
+        }
         second->adoptTab(first->releaseTab(0));
         // Destroy the former owner while the result still waits in its queue.
         delete first.data();

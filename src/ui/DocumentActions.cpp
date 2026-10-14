@@ -42,6 +42,7 @@
 #include <QStatusBar>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
+#include <QTimer>
 #include <QToolButton>
 #include <QWidgetAction>
 
@@ -135,8 +136,10 @@ void MainWindow::deliverPageTool(TabPage *tab, const std::shared_ptr<const PageT
     // its result delivered through the surviving owner's queue.
     const auto discarded = connect(window, &QObject::destroyed, tab,
         [page, tool, password, asked, result] {
-            if (page)
-                deliverPageTool(page, tool, password, asked, result);
+            QTimer::singleShot(0, page, [page, tool, password, asked, result] {
+                if (page)
+                    deliverPageTool(page, tool, password, asked, result);
+            });
         });
     window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window),
                               tool, password, asked, result, discarded] {
