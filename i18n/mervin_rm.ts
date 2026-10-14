@@ -3390,6 +3390,11 @@ Avrir ussa?</translation>
         <translation>Chalar da spetgar</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>I vegn scrit en questa datoteca. Empruvai anc ina giada cur che l&apos;operaziun è terminada.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>Il document n&apos;è betg pli en la memoria.</translation>
     </message>

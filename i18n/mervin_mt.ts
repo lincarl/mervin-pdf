@@ -3430,6 +3430,11 @@ Iftaħ issa?</translation>
         <translation>Waqqaf l-istennija</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>Qed jinkiteb f&apos;dan il-fajl. Erġa&apos; pprova meta l-operazzjoni tintemm.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>Id-dokument tneħħa mill-memorja.</translation>
     </message>

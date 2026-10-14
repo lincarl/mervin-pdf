@@ -612,6 +612,25 @@ void TabPage::setPath(const QString &path, bool resolve)
         canonicalPath_ = path_;
 }
 
+bool TabPage::claimPath(const QString &path)
+{
+    const QString key = normalizePathKey(path);
+    if (openPath_ && openPath_->key() == key)
+        return true;
+    auto claim = std::make_unique<job::OpenPath>(key);
+    if (!claim->admitted())
+        return false;
+    openPath_ = std::move(claim);
+    return true;
+}
+
+QString TabPage::pathBeingWrittenError()
+{
+    //: Reason when opening a page-tool output is refused until the tool finishes
+    //: writing it. This is an active write reservation, not a password or permission.
+    return tr("This file is being written. Try again when the operation finishes.");
+}
+
 bool TabPage::open(const QString &path, const QString &password, QString *error,
                    bool *needsPassword)
 {

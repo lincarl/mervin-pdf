@@ -3390,6 +3390,11 @@ Vill du öppna den nu?</translation>
         <translation>Sluta vänta</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>Det skrivs till den här filen. Försök igen när åtgärden är klar.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>Dokumentet har frigjorts från minnet.</translation>
     </message>

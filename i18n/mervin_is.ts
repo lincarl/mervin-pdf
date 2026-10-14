@@ -3390,6 +3390,11 @@ Opna það núna?</translation>
         <translation>Hætta að bíða</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>Verið er að skrifa í þessa skrá. Reyndu aftur þegar aðgerðinni er lokið.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>Skjalið hefur verið fjarlægt úr minni.</translation>
     </message>

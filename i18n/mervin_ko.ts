@@ -3370,6 +3370,11 @@ Open it now?</source>
         <translation>대기 중지</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>이 파일에 쓰는 중입니다. 작업이 끝나면 다시 시도하세요.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>문서가 메모리에서 해제되었습니다.</translation>
     </message>

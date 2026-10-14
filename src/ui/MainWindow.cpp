@@ -1679,6 +1679,15 @@ bool MainWindow::openFile(const QString &path, bool allowDuplicate, int atIndex,
     }
 
     auto *page = new TabPage(engine_);
+    if (!page->claimPath(canon)) {
+        delete page;
+        //: %1 is the file path, %2 the reason the file could not be opened.
+        const QString message = tr("Could not open \"%1\".\n\n%2");
+        QMessageBox::warning(this, tr("Mervin PDF"),
+                             message.arg(QDir::toNativeSeparators(path),
+                                         TabPage::pathBeingWrittenError()));
+        return false;
+    }
     wireTabLifecycle(page);
     applySettingsToViewer(page->viewer());
     QString error;

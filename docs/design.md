@@ -622,9 +622,12 @@ files it committed before the stop.
 Each job first refuses an output that is open in a tab, the source included, with
 "The destination is open in a tab." It compares `fileKey()` of the output, on its own
 thread, with the tabs' canonical paths. Split checks all its names before it writes
-the first. This check uses the open tabs captured when the operation starts. It does
-not reserve an output against a tab opened later. Such a tab keeps its loaded bytes
-if the operation replaces its file, and Save checks whether that file changed.
+the first. A shared in-memory admission registry also checks the tabs opened after
+the operation started. The job reserves all resolved outputs before any write,
+atomically with tab admission. A later open is refused while the reservation lasts.
+Stop releases the reservation before a commit, so a canceled writer cannot block a
+new tab. A commit already started retains it until the replacement returns. Normal
+completion and failure release it when the job's scope closes.
 When the tab's password does not open the file, the window asks for one
 and runs the tool again with it, and the tab keeps a password that worked. Everything
 a finished operation raises, the password prompt, an error or "Open it now?", is

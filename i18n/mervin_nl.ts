@@ -3390,6 +3390,11 @@ Nu openen?</translation>
         <translation>Stoppen met wachten</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>Er wordt naar dit bestand geschreven. Probeer het opnieuw als de bewerking is voltooid.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>Document is uit het geheugen gehaald.</translation>
     </message>

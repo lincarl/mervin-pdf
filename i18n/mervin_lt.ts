@@ -3410,6 +3410,11 @@ Atidaryti dabar?</translation>
         <translation>Nutraukti laukimą</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>Į šį failą rašoma. Bandykite dar kartą, kai operacija bus baigta.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>Dokumentas pašalintas iš atminties.</translation>
     </message>

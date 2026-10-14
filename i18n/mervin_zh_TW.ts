@@ -3370,6 +3370,11 @@ Open it now?</source>
         <translation>停止等待</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>正在寫入此檔案。請在操作完成後再試。</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>文件已卸載。</translation>
     </message>

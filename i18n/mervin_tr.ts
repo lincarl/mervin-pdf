@@ -3370,6 +3370,11 @@ Open it now?</source>
         <translation>Beklemeyi durdur</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>Bu dosyaya yazılıyor. İşlem tamamlandığında yeniden deneyin.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>Doküman boşaltıldı.</translation>
     </message>

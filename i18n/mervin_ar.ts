@@ -3470,6 +3470,11 @@ Open it now?</source>
         <translation>إيقاف الانتظار</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>تجري الكتابة إلى هذا الملف. حاول مرة أخرى بعد انتهاء العملية.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>أُزيل المستند من الذاكرة.</translation>
     </message>

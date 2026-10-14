@@ -576,7 +576,8 @@ void MainWindow::rotatePagesOp()
                      const QString &password) {
         PageToolResult result;
         // The viewer holds an open file, which a replace would fail on or corrupt.
-        if (open.contains(mervin::fileKey(QFileInfo(out))))
+        const QString key = mervin::fileKey(QFileInfo(out));
+        if (open.contains(key) || !mervin::job::reserveDestinations({key}))
             result.destinationOpen = true;
         else
             result.status = PageOps::rotatePages(in, out, pages, angle, true, password,
@@ -676,9 +677,14 @@ void MainWindow::splitDocument()
                 result.error = mervin::job::notRunError();
                 return false;
             }
-            for (const QString &output : outputs)
-                result.destinationOpen = result.destinationOpen
-                                         || open.contains(mervin::fileKey(QFileInfo(output)));
+            QSet<QString> keys;
+            for (const QString &output : outputs) {
+                const QString key = mervin::fileKey(QFileInfo(output));
+                keys.insert(key);
+                result.destinationOpen = result.destinationOpen || open.contains(key);
+            }
+            if (!result.destinationOpen && !mervin::job::stopped())
+                result.destinationOpen = !mervin::job::reserveDestinations(keys);
             return !result.destinationOpen;
         };
         result.status = PageOps::split(in, dir, base, password, &result.written, &result.error,

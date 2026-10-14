@@ -3410,6 +3410,11 @@ Otvoriti sada?</translation>
         <translation>Prekini čekanje</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>U ovu datoteku se upisuje. Pokušajte ponovo kada se operacija završi.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>Dokument je uklonjen iz memorije.</translation>
     </message>

@@ -3390,6 +3390,11 @@ E hap tani?</translation>
         <translation>Ndalo pritjen</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>Po shkruhet në këtë skedar. Provoni sërish kur të përfundojë veprimi.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>Dokumenti është hequr nga memoria.</translation>
     </message>

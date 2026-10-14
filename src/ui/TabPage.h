@@ -147,6 +147,10 @@ public:
     FindCard *findCard() const { return findCard_; }
     QString path() const { return path_; }
     QString canonicalPath() const { return canonicalPath_; }
+    // Claims a known path in memory before opening or installing a tab. False if
+    // a page tool reserved it for an output. Canonicalization belongs to its caller.
+    bool claimPath(const QString &path);
+    static QString pathBeingWrittenError();
     QString tabTitle() const;      // file name
     QString documentTitle() const; // embedded PDF title, or file name
 
@@ -225,6 +229,7 @@ private:
     PanelStack *panelStack_ = nullptr; // docks findCard_, measurePanel_ and annotPanel_
     QString path_;
     QString canonicalPath_;
+    std::unique_ptr<job::OpenPath> openPath_;
     QString recoveryPath_;
     QString recoveryManifest_;
     QString password_; // see password()

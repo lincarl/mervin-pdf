@@ -813,6 +813,97 @@ private slots:
         QCOMPARE(file.readAll(), before);
     }
 
+    void runningToolsReserveEveryOutput_data()
+    {
+        QTest::addColumn<bool>("splitPages");
+        QTest::newRow("rotate") << false;
+        QTest::newRow("split") << true;
+    }
+
+    // A writer reserves all outputs before its first write. An attempted new tab
+    // cannot admit an old version and save edits that the tool would then overwrite.
+    void runningToolsReserveEveryOutput()
+    {
+        QFETCH(bool, splitPages);
+        QTemporaryDir files;
+        QVERIFY(QDir(files.path()).mkpath(QStringLiteral("out")));
+        const QString source = files.filePath(QStringLiteral("plan.pdf"));
+        const QString folder = files.filePath(QStringLiteral("out"));
+        const QString output = QDir(folder).filePath(QStringLiteral("plan-002.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), output));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(window.openFile(source));
+        TabPage *tab = currentTab(window);
+        QVERIFY(tab);
+        job::testing::holdWhen([folder, splitPages, writes = 0](
+                                  job::Step step, const QString &path) mutable {
+            if (step != job::Step::Writing || path != folder)
+                return false;
+            ++writes;
+            return !splitPages || writes > 1; // Split's first report is its preflight
+        });
+        if (splitPages)
+            split(window, folder);
+        else {
+            answers_ << QMessageBox::Yes;
+            rotate(window, output);
+        }
+        QTRY_COMPARE(job::testing::held(), 1);
+        answers_ << QMessageBox::Ok;
+        QVERIFY(!window.openFile(output));
+        QCOMPARE(window.tabCount(), 1);
+        QVERIFY(told_.last().contains(TabPage::pathBeingWrittenError()));
+        tab->stopWaiting();
+        QVERIFY(window.openFile(output)); // canceled writer releases admission at once
+        QCOMPARE(window.tabCount(), 2);
+        job::testing::release();
+        QTRY_COMPARE(job::testing::held(), 0);
+        QTRY_COMPARE(filesIn(folder), QStringList{QStringLiteral("plan-002.pdf")});
+    }
+
+    // Split cannot know its names until qpdf reads the source. A tab admitted before
+    // that reservation wins, and Split must preserve the edits it saved meanwhile.
+    void tabOpenedDuringSplitPreventsEveryWrite()
+    {
+        QTemporaryDir files;
+        QVERIFY(QDir(files.path()).mkpath(QStringLiteral("out")));
+        const QString source = files.filePath(QStringLiteral("plan.pdf"));
+        const QString folder = files.filePath(QStringLiteral("out"));
+        const QString output = QDir(folder).filePath(QStringLiteral("plan-002.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), output));
+        WindowManager manager;
+        MainWindow *host = manager.createWindow();
+        showForLayout(*host);
+        QVERIFY(host->openFile(source));
+        TabPage *busy = currentTab(*host);
+        QSignalSpy finished(busy, &TabPage::operationFinished);
+        holdAt(job::Step::Reading, source);
+        split(*host, folder);
+        QTRY_COMPARE(job::testing::held(), 1);
+        MainWindow *editor = manager.createWindow();
+        showForLayout(*editor);
+        QVERIFY(editor->openFile(output));
+        QVERIFY(currentTab(*editor)->viewer()->annotModel()->addTextNote(
+                    0, {50, 50}, Qt::yellow, {}, QStringLiteral("Saved during Split")) >= 0);
+        QVERIFY(QMetaObject::invokeMethod(editor, "saveMeasurements"));
+        QVERIFY(!currentTab(*editor)->hasUnsavedEdits());
+        answers_ << QMessageBox::Ok;
+        job::testing::release();
+        QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 10000);
+        QTRY_VERIFY(answers_.isEmpty());
+        QVERIFY(told_.last().contains(QStringLiteral("The destination is open in a tab.")));
+        QCOMPARE(filesIn(folder), QStringList{QStringLiteral("plan-002.pdf")});
+        auto saved = manager.engine()->openDocument(output);
+        QVERIFY(saved);
+        const auto notes = AnnotModel(*saved).pageAnnots(0);
+        QCOMPARE(notes.size(), 1u);
+        QCOMPARE(notes.front().contents, QStringLiteral("Saved during Split"));
+    }
+
     // A tab can move to another window while it waits. Its tool asks there once done.
     void finishedToolAsksInTheTabsWindow()
     {

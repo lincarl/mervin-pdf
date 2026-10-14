@@ -3410,6 +3410,11 @@ Deschide-l acum?</translation>
         <translation>Opriți așteptarea</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>Se scrie în acest fișier. Încercați din nou când operația se încheie.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>Documentul a fost eliminat din memorie.</translation>
     </message>

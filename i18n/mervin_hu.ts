@@ -3370,6 +3370,11 @@ Most nyitja meg?</translation>
         <translation>Várakozás leállítása</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>A fájl írása folyamatban van. Próbálja újra, amikor a művelet befejeződött.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>A dokumentum kikerül a memóriából.</translation>
     </message>

@@ -3390,6 +3390,11 @@ Abrir agora?</translation>
         <translation>Parar de esperar</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>Este arquivo está sendo gravado. Tente novamente quando a operação terminar.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>O documento foi descarregado da memória.</translation>
     </message>

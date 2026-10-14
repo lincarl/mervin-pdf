@@ -3410,6 +3410,11 @@ Oscail anois é?</translation>
         <translation>Stop ag fanacht</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>Táthar ag scríobh chuig an gcomhad seo. Bain triail eile as nuair a bheidh an oibríocht críochnaithe.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>Tá an doiciméad díluchtaithe.</translation>
     </message>

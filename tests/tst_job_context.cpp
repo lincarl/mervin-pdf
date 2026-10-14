@@ -221,6 +221,55 @@ class TstJobContext : public QObject
 {
     Q_OBJECT
 private slots:
+    void tabAdmissionAndOutputReservations()
+    {
+        const QSet<QString> keys{QStringLiteral("/out/one.pdf"), QStringLiteral("/out/two.pdf")};
+        job::State state;
+        const job::Scope scope(state);
+        {
+            const job::OpenPath open(QStringLiteral("/out/two.pdf"));
+            QVERIFY(open.admitted());
+            QVERIFY(!job::reserveDestinations(keys));
+            const job::OpenPath other(QStringLiteral("/out/one.pdf"));
+            QVERIFY(other.admitted()); // failure reserves none of the outputs
+        }
+        QVERIFY(job::reserveDestinations(keys));
+        const job::OpenPath refused(QStringLiteral("/out/two.pdf"));
+        QVERIFY(!refused.admitted());
+        QCOMPARE(state.stop(), job::State::Stop::Stopped);
+        const job::OpenPath afterStop(QStringLiteral("/out/two.pdf"));
+        QVERIFY(afterStop.admitted());
+        QVERIFY(!job::reserveDestinations(keys)); // Stop wins over a late reservation
+    }
+
+    void committingReservationLastsUntilCommitReturns()
+    {
+        const QString path = QStringLiteral("/out/committing.pdf");
+        job::State state;
+        const job::Scope scope(state);
+        QVERIFY(job::reserveDestinations({path}));
+        QVERIFY(state.beginCommit());
+        QCOMPARE(state.stop(), job::State::Stop::Committing);
+        const job::OpenPath duringCommit(path);
+        QVERIFY(!duringCommit.admitted());
+        state.endCommit();
+        const job::OpenPath afterCommit(path);
+        QVERIFY(afterCommit.admitted());
+    }
+
+    void completedJobReleasesOutputReservations()
+    {
+        const QString path = QStringLiteral("/out/completed.pdf");
+        job::State state;
+        {
+            const job::Scope scope(state);
+            QVERIFY(job::reserveDestinations({path}));
+            const job::OpenPath duringWork(path);
+            QVERIFY(!duringWork.admitted());
+        }
+        const job::OpenPath afterWork(path);
+        QVERIFY(afterWork.admitted());
+    }
     void cleanup()
     {
         job::testing::release();

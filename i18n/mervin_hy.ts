@@ -3390,6 +3390,11 @@ Open it now?</source>
         <translation>Դադարեցնել սպասումը</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>Այս ֆայլում տվյալներ են գրվում։ Կրկին փորձեք, երբ գործողությունն ավարտվի։</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>Փաստաթուղթը հեռացված է հիշողությունից։</translation>
     </message>

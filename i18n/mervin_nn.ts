@@ -3390,6 +3390,11 @@ Vil du opne fila no?</translation>
         <translation>Slutt å vente</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>Det blir skrive til denne fila. Prøv igjen når operasjonen er ferdig.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>Dokumentet er lasta ut.</translation>
     </message>

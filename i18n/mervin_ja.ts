@@ -3370,6 +3370,11 @@ Open it now?</source>
         <translation>待機を中止</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>このファイルへの書き込み中です。処理が完了してから再度お試しください。</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>文書はメモリから解放されています。</translation>
     </message>

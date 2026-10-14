@@ -3,6 +3,7 @@
 #include "recent/PathKey.h"
 
 #include <QFileInfo>
+#include <QHash>
 #include <QSet>
 #include <QThread>
 
@@ -26,6 +27,21 @@ constexpr std::chrono::milliseconds kLockStep{20};
 std::mutex locksMutex;
 std::condition_variable locksFreed; // notified when a destination lock is released
 QSet<QString> taken;                // guarded by locksMutex: keys of the held locks
+
+// These locks cover memory only. A tab never waits for an output writer or performs
+// filesystem work while holding them. State always takes its own mutex first.
+std::mutex pathsMutex;
+QHash<QString, int> openPaths;
+QHash<QString, int> reservedPaths;
+
+void releaseDestinations(QSet<QString> &keys)
+{
+    std::lock_guard<std::mutex> lock(pathsMutex);
+    for (const QString &key : keys)
+        if (--reservedPaths[key] == 0)
+            reservedPaths.remove(key);
+    keys.clear();
+}
 
 // The test hooks (see testing).
 std::mutex hooksMutex;
@@ -86,6 +102,11 @@ void forgetLastStep()
 
 } // namespace
 
+State::~State()
+{
+    releaseDestinations(destinations_);
+}
+
 State::Stop State::stop()
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -94,6 +115,7 @@ State::Stop State::stop()
         return Stop::Done;
     if (committing_)
         return Stop::Committing;
+    releaseDestinations(destinations_);
     if (holding_)
         return Stop::Holding;
     return Stop::Stopped;
@@ -112,6 +134,26 @@ void State::endCommit()
 {
     std::lock_guard<std::mutex> lock(mutex_);
     committing_ = false;
+    if (stopped_)
+        releaseDestinations(destinations_);
+}
+
+bool State::reserveDestinations(const QSet<QString> &keys)
+{
+    std::lock_guard<std::mutex> stateLock(mutex_);
+    if (stopped_)
+        return false;
+    std::lock_guard<std::mutex> pathLock(pathsMutex);
+    for (const QString &key : keys)
+        if (openPaths.contains(key))
+            return false;
+    for (const QString &key : keys) {
+        if (!destinations_.contains(key)) {
+            destinations_.insert(key);
+            ++reservedPaths[key];
+        }
+    }
+    return true;
 }
 
 void State::report(Step step, const QString &path)
@@ -148,13 +190,38 @@ Scope::~Scope()
     current = previous_;
     forgetLastStep();
     std::lock_guard<std::mutex> lock(state_.mutex_);
-    if (--state_.scopes_ == 0)
+    if (--state_.scopes_ == 0) {
         state_.ended_ = true;
+        releaseDestinations(state_.destinations_);
+    }
 }
 
 bool stopped()
 {
     return current && current->stopped();
+}
+
+OpenPath::OpenPath(const QString &key) : key_(key)
+{
+    std::lock_guard<std::mutex> lock(pathsMutex);
+    if (!reservedPaths.contains(key_)) {
+        ++openPaths[key_];
+        admitted_ = true;
+    }
+}
+
+OpenPath::~OpenPath()
+{
+    if (!admitted_)
+        return;
+    std::lock_guard<std::mutex> lock(pathsMutex);
+    if (--openPaths[key_] == 0)
+        openPaths.remove(key_);
+}
+
+bool reserveDestinations(const QSet<QString> &keys)
+{
+    return current && current->reserveDestinations(keys);
 }
 
 bool reading(const QString &file)

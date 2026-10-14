@@ -3390,6 +3390,11 @@ Avaa se nyt?</translation>
         <translation>Lopeta odottaminen</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>Tähän tiedostoon kirjoitetaan. Yritä uudelleen, kun toiminto on valmis.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>Asiakirja on poistettu muistista.</translation>
     </message>

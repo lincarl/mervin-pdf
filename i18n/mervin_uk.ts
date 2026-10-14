@@ -3410,6 +3410,11 @@ Open it now?</source>
         <translation>Припинити очікування</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>У цей файл виконується запис. Спробуйте знову після завершення операції.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>Документ вивантажено.</translation>
     </message>

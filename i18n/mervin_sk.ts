@@ -3410,6 +3410,11 @@ Otvoriť teraz?</translation>
         <translation>Prestať čakať</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>Do tohto súboru sa zapisuje. Skúste to znova po dokončení operácie.</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>Dokument bol uvoľnený z pamäte.</translation>
     </message>

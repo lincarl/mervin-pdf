@@ -3370,6 +3370,11 @@ Open it now?</source>
         <translation>หยุดรอ</translation>
     </message>
     <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>กำลังเขียนไฟล์นี้ ลองอีกครั้งเมื่อการดำเนินการเสร็จสิ้น</translation>
+    </message>
+    <message>
         <source>Document is unloaded.</source>
         <translation>ยกเลิกการโหลดเอกสารแล้ว</translation>
     </message>

@@ -20,6 +20,7 @@
 #include "print/PrintPreviewWidget.h"
 #include "render/Document.h"
 #include "render/RenderEngine.h"
+#include "recent/PathKey.h"
 #include "security/QpdfService.h"
 #include "ui/AnnotPanel.h"
 #include "ui/AnnotPopup.h"
@@ -531,6 +532,14 @@ void TstTranslationLayout::loadPlaceholder()
     QVERIFY(stop);
     QTRY_VERIFY(stop->isVisible());
     inspect(window, QStringLiteral("Slow document load with an unbroken file name"), tab);
+    const QString output = profile_.filePath(
+        QStringLiteral("structural-plan-reserved-for-an-active-page-tool.pdf"));
+    mervin::job::State writing;
+    const mervin::job::Scope scope(writing);
+    QVERIFY(mervin::job::reserveDestinations({mervin::normalizePathKey(output)}));
+    inspectMessage(window, QStringLiteral("Opening an output that is being written"), [&] {
+        QVERIFY(!window.openFile(output));
+    });
 }
 
 // The bar over a tab whose operation waits for a drive that stopped answering, saving
