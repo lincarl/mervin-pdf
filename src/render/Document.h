@@ -122,8 +122,10 @@ public:
     // for a job's Hold. If a Hold holds the document or waits for it, refused() is
     // true, and the caller returns its empty value without locking anything. The
     // refusal is logged with `method` and counted. Otherwise a Hold that comes later
-    // waits until this object is gone. Does nothing on other threads, so render
-    // workers, the find search, OCR and jobs wait for the document as before.
+    // waits until this object is gone. A query made inside another one of the same
+    // document on the screen thread is always let through, since the outer one keeps
+    // later holds waiting. Does nothing on other threads, so render workers, the find
+    // search, OCR and jobs wait for the document as before.
     class ScreenQuery
     {
     public:
@@ -136,6 +138,7 @@ public:
 
     private:
         DocumentLifetime *counted_ = nullptr; // set while counted in screenQueries
+        bool entered_ = false;                // let through, outermost or nested
         bool refused_ = false;
     };
 

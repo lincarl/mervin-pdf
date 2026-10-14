@@ -9,6 +9,7 @@
 #include <QCoreApplication>
 #include <QThread>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -147,6 +148,9 @@ bool Document::waitForCloses(int ms)
 
 namespace {
 std::atomic<int> screenRefusals{0};
+// The documents whose queries the screen thread is inside, innermost last. A query
+// nested in another one of the same document is let through (see ScreenQuery).
+thread_local std::vector<const DocumentLifetime *> screenQueriesInside;
 } // namespace
 
 // A screen-thread query counts itself in screenQueries before it reads holds, and a
@@ -194,9 +198,20 @@ Document::ScreenQuery::ScreenQuery(DocumentLifetime &lifetime, const char *metho
 {
     if (!QThread::isMainThread())
         return;
+    // Inside another query of this document, such as withPdfDocument inside
+    // savePdfTo, the outer query already counts, and a hold that came after it waits
+    // for it. Refusing here would fail a call that was let through.
+    if (std::find(screenQueriesInside.begin(), screenQueriesInside.end(), &lifetime)
+        != screenQueriesInside.end()) {
+        screenQueriesInside.push_back(&lifetime);
+        entered_ = true;
+        return;
+    }
     lifetime.screenQueries.fetch_add(1);
     if (lifetime.holds.load() == 0) {
         counted_ = &lifetime;
+        screenQueriesInside.push_back(&lifetime);
+        entered_ = true;
         return;
     }
     lifetime.screenQueries.fetch_sub(1);
@@ -207,6 +222,8 @@ Document::ScreenQuery::ScreenQuery(DocumentLifetime &lifetime, const char *metho
 
 Document::ScreenQuery::~ScreenQuery()
 {
+    if (entered_)
+        screenQueriesInside.pop_back();
     if (counted_)
         counted_->screenQueries.fetch_sub(1);
 }

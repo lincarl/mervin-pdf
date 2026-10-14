@@ -8,6 +8,7 @@
 #include <QElapsedTimer>
 #include <QImage>
 #include <QFile>
+#include <QFileInfo>
 #include <QSet>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -575,6 +576,43 @@ private slots:
         }
         job.join();
         QVERIFY(got.load());
+    }
+
+    // A call that a screen-thread query makes inside itself, as savePdfTo calls
+    // withPdfDocument, still runs when a hold starts between the two. The hold waits
+    // for the outer query, so refusing the inner one would only fail a call that was
+    // already let through.
+    void nestedQueryRunsWhileAHoldWaits()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        RenderEngine engine;
+        auto doc = engine.openDocument(QStringLiteral(MERVIN_FIXTURE_PDF));
+        QVERIFY(doc);
+        const auto lifetime = doc->lifetime();
+        const int before = Document::testing::refusals();
+        const QString copy = dir.filePath(QStringLiteral("copy.pdf"));
+        std::atomic<bool> got{false};
+        std::thread job;
+        const auto joinJob = qScopeGuard([&] {
+            if (job.joinable())
+                job.join();
+        });
+        {
+            const Document::ScreenQuery outer(*lifetime, "test");
+            QVERIFY(!outer.refused());
+            job = std::thread([&] {
+                const Document::Hold hold(lifetime);
+                got = hold.document() != nullptr;
+            });
+            QTRY_VERIFY_WITH_TIMEOUT(lifetime->holds.load() > 0, 10000);
+            QVERIFY(doc->savePdfTo(copy));
+            QVERIFY(!got.load());
+        }
+        job.join();
+        QVERIFY(got.load());
+        QCOMPARE(Document::testing::refusals() - before, 0);
+        QVERIFY(QFileInfo(copy).size() > 0);
     }
 };
 

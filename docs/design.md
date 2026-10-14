@@ -387,7 +387,9 @@ threads are answered as before. `TextIndex` and `FormModel` do not cache a refus
 page, so its text, links and form fields are read on a later call. A screen-thread
 query counts itself before it checks for a hold, and a hold counts itself before it
 checks for queries, so a query that found no hold ends before the hold takes the
-gate. Nothing changes while no job holds a document.
+gate. A query made inside another query of the same document, such as
+`withPdfDocument` inside `savePdfTo`, is let through, since the outer one keeps the
+hold waiting. Nothing changes while no job holds a document.
 
 Each render request carries the requesting viewer's identifier, view epoch, and
 token. A viewer discards results that belong to an older zoom, rotation, or view.
