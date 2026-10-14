@@ -157,8 +157,10 @@ private slots:
         QVERIFY(!tab.isLoading());
         QCOMPARE(tab.findChild<QLabel *>(QStringLiteral("documentLoadStatus"))->text(),
                  TabPage::pathBeingWrittenError());
+        QSignalSpy retryFinished(&tab, &TabPage::resumeFinished);
         tab.retryLoad();
-        QTest::qWait(100);
+        QTRY_COMPARE(retryFinished.size(), 1);
+        QVERIFY(!retryFinished.first().first().toBool());
         QVERIFY(!tab.isLoading() && !tab.isLoaded());
         QCOMPARE(reads.load(), 0);
         QCOMPARE(tab.findChild<QLabel *>(QStringLiteral("documentLoadStatus"))->text(),
@@ -1063,7 +1065,7 @@ private slots:
         QCOMPARE(original->capturedViewState().scale, saved.scale);
     }
 
-    void backgroundPasswordFailureDoesNotPrompt()
+    void backgroundPasswordFailureWaitsForExplicitRetry()
     {
         QTemporaryDir files;
         const QString encrypted = files.filePath(QStringLiteral("encrypted.pdf"));
@@ -1092,9 +1094,33 @@ private slots:
         QCOMPARE(unexpectedPrompts, 0);
         QVERIFY(!QApplication::activeModalWidget());
         QCOMPARE(tab->findChild<QLabel *>(QStringLiteral("documentLoadStatus"))->text(), QStringLiteral("This document is password-protected."));
-        tab->setPassword(QStringLiteral("correct"));
-        tab->retryLoad();
+        // The approved background-open behavior keeps Retry when selected later.
+        QTest::qWait(100); // let the background prompt request leave the owner queue
+        const quint64 failedGeneration = tab->loadGeneration();
+        window.findChild<QTabWidget *>()->setCurrentWidget(tab);
+        QTest::qWait(100);
+        QCOMPARE(unexpectedPrompts, 0);
+        QCOMPARE(tab->loadGeneration(), failedGeneration);
+        QVERIFY(tab->isSuspended());
+        QVERIFY(tab->findChild<QPushButton *>(QStringLiteral("retryDocumentLoad"))->isVisible());
+        rejectUnexpected.stop();
+        int retryPrompts = 0;
+        QTimer acceptRetry;
+        acceptRetry.setInterval(5);
+        connect(&acceptRetry, &QTimer::timeout, this, [&] {
+            auto *prompt = qobject_cast<QInputDialog *>(QApplication::activeModalWidget());
+            if (!prompt || prompt->property("testSubmitted").toBool())
+                return;
+            prompt->setProperty("testSubmitted", true);
+            ++retryPrompts;
+            QCOMPARE(prompt->windowModality(), Qt::WindowModal);
+            prompt->setTextValue(QStringLiteral("correct"));
+            prompt->accept();
+        });
+        acceptRetry.start();
+        QTest::mouseClick(tab->findChild<QPushButton *>(QStringLiteral("retryDocumentLoad")), Qt::LeftButton);
         QTRY_VERIFY(tab->isLoaded());
+        QCOMPARE(retryPrompts, 1);
         QCOMPARE(tab->password(), QStringLiteral("correct"));
     }
 
