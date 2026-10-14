@@ -247,6 +247,7 @@ private slots:
     void print();
     void security_data() { addLanguageMatrix(); }
     void security();
+    // Selects language, font and minimum-width rows for saved-file recovery warnings.
     void saveRecoveryWarning_data() { addLanguageMatrix(); }
     void saveRecoveryWarning();
     void settings_data() { addLanguageMatrix(); }
@@ -744,6 +745,7 @@ void TstTranslationLayout::inspectMessage(QWidget &parent, const QString &state,
     QVERIFY2(!timedOut && sawMessage, qPrintable(state + QStringLiteral(" did not show the expected message")));
 }
 
+// Checks the actual Save recovery warning across committed replacement failure states.
 void TstTranslationLayout::saveRecoveryWarning()
 {
     QTemporaryDir files(profile_.filePath(QStringLiteral("save-warning-XXXXXX")));

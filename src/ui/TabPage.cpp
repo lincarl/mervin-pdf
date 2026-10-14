@@ -117,6 +117,7 @@ QJsonObject resumeJson(const ViewerWidget::ResumeState &state)
             {"points", points}, {"drawing_page", state.inProgressPage}};
 }
 
+// Builds version-1 recovery metadata from captured document identity and viewer state.
 QJsonObject recoveryJson(const QString &original, const QString &canonical,
                          const QString &snapshot, const ViewerWidget::ResumeState &viewer,
                          const SourceStamp &stamp)
@@ -264,6 +265,7 @@ struct TabPage::SavedState {
     bool restoreTools = false;
 };
 
+// Transfers an opened document, source metadata and path admission to GUI installation.
 struct TabPage::OpenResult {
     OwnedDocument document;
     std::optional<MeasureDoc> measurements;
@@ -307,9 +309,9 @@ struct TabPage::Save {
     std::vector<std::shared_ptr<Job>> priorLoads;
 };
 
-// The tab's background job, the load that resumeAsync() starts or an operation
-// (startOperation), shared by the tab and the job's thread. The tab never destroys a
-// running job. It takes the result, waits for a load (stopLoading) or lets go of the
+// The tab's background load, operation or in-place Save, shared by the tab and
+// the job's thread. The tab never destroys a running job. It takes the result,
+// waits for a load (stopLoading) or lets go of the
 // job (abandon), and the job ends on its own. An operation keeps its result in what
 // its work captured, so its job has no `result`, and it opens no document.
 struct TabPage::Job {
@@ -635,6 +637,7 @@ void TabPage::abandon(const std::shared_ptr<Job> &job, const QString &removeAfte
         appfiles::remove(removeAfter);
 }
 
+// Removes a recovery input only after its retained reader and writer jobs end.
 void TabPage::removeAfterJobs(const QString &copy, std::vector<std::shared_ptr<Job>> jobs)
 {
     if (copy.isEmpty())
@@ -869,6 +872,7 @@ bool TabPage::adoptRecovery()
     return false;
 }
 
+// Writes version-1 metadata for the tab's currently retained recovery copy.
 bool TabPage::writeRecoveryManifest(QString *error)
 {
     if (!commitRecoveryManifest(recoveryManifest_,
@@ -1605,6 +1609,7 @@ void TabPage::startSave(SaveCallbacks callbacks)
     emit stateChanged();
 }
 
+// Answers a worker checkpoint or adopts its durable recovery before original replacement.
 void TabPage::saveCheckpoint(const std::shared_ptr<Job> &job)
 {
     if (job != job_ || job->state.stopped())
@@ -1665,6 +1670,7 @@ void TabPage::saveCheckpoint(const std::shared_ptr<Job> &job)
         emit stateChanged();
 }
 
+// Reports a Save generation result after the tab reaches its final GUI state.
 void TabPage::completeSave(const SaveCompletion &completion)
 {
     const auto finished = std::move(saveCallbacks_.finished);
@@ -1676,6 +1682,7 @@ void TabPage::completeSave(const SaveCompletion &completion)
     }
 }
 
+// Installs the exact Save result or restores its retained recovery on failure or Stop.
 void TabPage::finishSave(const std::shared_ptr<Job> &job)
 {
     if (job != job_)
@@ -1753,7 +1760,7 @@ void TabPage::finishOperation(const std::shared_ptr<Job> &job)
         finished();
 }
 
-// Restores use after a stopped operation releases its live document reservation.
+// Restores a stopped tab after document release, loading adopted Save recovery if needed.
 void TabPage::finishStoppedOperation()
 {
     if (!job_ || job_->state.snapshot().holding)
@@ -1779,6 +1786,7 @@ void TabPage::finishStoppedOperation()
         emit operationFinished(false);
 }
 
+// Clears busy state and restores the viewer only after live document access is safe.
 void TabPage::endOperation()
 {
     busy_ = false;
@@ -1877,7 +1885,7 @@ void TabPage::updateSlowNotice()
         placeholderLabel_->setText(text);
 }
 
-// Shows the current file step or the trapped Stop notice without reading the document.
+// Fits the active job notice and close-flow Stop choice without querying the document.
 void TabPage::showWaitBar(const job::State::Snapshot &now)
 {
     // A write names its folder, and a commit the file it replaces. A read of a file in

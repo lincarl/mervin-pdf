@@ -129,6 +129,7 @@ void TstContentSearch::replacedQueryRejectsQueuedResults()
     QTRY_COMPARE(hits.size(), 1);
 }
 
+// Selects locked or reserved output keys and aliases that must not be searched.
 void TstContentSearch::skipsTakenDestinations_data()
 {
     QTest::addColumn<bool>("reserved");
@@ -141,6 +142,7 @@ void TstContentSearch::skipsTakenDestinations_data()
 #endif
 }
 
+// Checks search skips protected inputs without opening their document bytes.
 void TstContentSearch::skipsTakenDestinations()
 {
     QFETCH(bool, reserved);

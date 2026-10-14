@@ -1638,6 +1638,7 @@ private slots:
         QVERIFY(unexpectedDialogs_.isEmpty());
     }
 
+    // Checks unloaded Save preserves recovery until an external replacement is approved.
     void savingSuspendedEditsRequiresConfirmingExternalChanges()
     {
         QTemporaryDir files;
@@ -1677,6 +1678,7 @@ private slots:
         QCOMPARE(notes.front().contents, QStringLiteral("Preserved edit"));
     }
 
+    // Checks Save persists an empty measurement set after removing the last mark.
     void saveDeletionOfLastMeasurement()
     {
         QTemporaryDir files;
@@ -1705,6 +1707,7 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0)));
     }
 
+    // Checks failed original replacement leaves editable snapshot content available.
     void failedSaveRetainsEditableSnapshot()
     {
         QTemporaryDir files;

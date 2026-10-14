@@ -41,6 +41,7 @@ public:
     // that owns the engine, and the open can run later on any thread, after the
     // engine is gone too.
     std::shared_ptr<DocumentOpener> opener();
+    // Exposes process-wide open counters for worker and unloaded-Save checks.
     struct testing {
         // PDF/document opens attempted by this process, on any thread.
         static int opens();

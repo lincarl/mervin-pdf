@@ -1317,6 +1317,7 @@ private slots:
         QVERIFY(TabPage::recoverablePaths().isEmpty());
     }
 
+    // Checks failure retains a private snapshot that still restores editable data.
     void failedSaveSnapshotGetsARecoverablePrivateCopy()
     {
         QTemporaryDir files;
@@ -1351,6 +1352,7 @@ private slots:
         QCOMPARE(tab.viewer()->scale(), 1.5);
     }
 
+    // Checks the active form editor reaches the background Save snapshot.
     void saveCommitsTheActiveFormEditor()
     {
         const QString path = profile_->filePath(QStringLiteral("form.pdf"));
@@ -1382,6 +1384,7 @@ private slots:
                  QStringLiteral("Text still being typed"));
     }
 
+    // Checks editor-driven tab deletion prevents a Save from using its former owner.
     void saveStopsWhenCommittingTheEditorDeletesItsTab()
     {
         const QString path = profile_->filePath(QStringLiteral("form.pdf"));

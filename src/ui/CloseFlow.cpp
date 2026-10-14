@@ -80,6 +80,7 @@ void CloseFlow::requestQuit(WindowManager *manager, bool restart)
         start(manager, nullptr, restart ? Intent::Restart : Intent::Quit);
 }
 
+// Coalesces compatible close requests and begins collecting their current tab owners.
 CloseFlow *CloseFlow::start(WindowManager *manager, MainWindow *window, Intent intent,
                            TabPage *tab, bool remember)
 {
@@ -265,6 +266,7 @@ void CloseFlow::attention(TabPage *tab)
         window->updateForCurrentTab();
 }
 
+// Observes the active tab prerequisite and makes its Stop choice match the close stage.
 void CloseFlow::wait(Entry &item, WaitReason reason)
 {
     clearWait();
@@ -296,6 +298,7 @@ void CloseFlow::wait(Entry &item, WaitReason reason)
         tab->showWaitImmediately(reason == WaitReason::DocumentReleaseForSave);
 }
 
+// Continues close only after Saved, asking again if completion introduced another edit.
 void CloseFlow::finishSave(TabPage *tab, TabPage::SaveResult result)
 {
     if (ended_ || !tab || !includes(tab))
@@ -330,6 +333,7 @@ void CloseFlow::clearWait()
         tab->clearCloseWait();
 }
 
+// Processes current-owner decisions and asynchronous prerequisites before final close.
 void CloseFlow::advance(MainWindow *readyWindow)
 {
     if (ended_)

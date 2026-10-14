@@ -38,7 +38,7 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
-    // Tracks one tab and the edit generation or Save decision accepted for it.
+    // Tracks a retained close decision and active Save for one guarded tab.
     struct Entry
     {
         QPointer<TabPage> tab;

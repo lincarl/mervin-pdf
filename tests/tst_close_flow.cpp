@@ -132,6 +132,7 @@ private slots:
         QVERIFY(answers_.isEmpty());
     }
 
+    // Selects successful, failed and stopped Save results while Quit waits.
     void quitTakesTheExplicitResultOfAnExistingSave_data()
     {
         QTest::addColumn<int>("outcome");
@@ -140,6 +141,7 @@ private slots:
         QTest::newRow("Stopped cancels Quit") << 2;
     }
 
+    // Checks Quit uses the explicit earlier Save outcome without a duplicate write.
     void quitTakesTheExplicitResultOfAnExistingSave()
     {
         QFETCH(int, outcome);
@@ -198,6 +200,7 @@ private slots:
         QCOMPARE(commits.load(), 1);
     }
 
+    // Checks a new edit during Save completion prevents reuse of the earlier close answer.
     void anEditAtSaveCompletionRequiresAnotherDecision()
     {
         QTemporaryDir files;
@@ -335,7 +338,7 @@ private slots:
         QTest::newRow("Stop cancels close") << true;
     }
 
-    // Checks that close waits asynchronously for recovery loading and Stop preserves its edits.
+    // Checks close-time Save waits for retained recovery instead of blocking the GUI.
     void recoverySaveWait()
     {
         QFETCH(bool, stop);

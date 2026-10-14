@@ -188,6 +188,7 @@ void ContentSearch::drain(const std::shared_ptr<Shared> &shared)
         fz_drop_context(ctx);
 }
 
+// Searches the current generation while excluding paths owned by active output writers.
 void ContentSearch::run(const std::shared_ptr<Shared> &shared, const QStringList &paths,
                         const QString &query, quint64 generation, fz_context *ctx)
 {

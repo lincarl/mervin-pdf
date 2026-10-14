@@ -114,12 +114,14 @@ public:
     void startOperation(Operation operation);
 
     enum class SaveResult { Saved, Failed, Stopped, Canceled };
+    // Describes one Save result and whether replacing the original already succeeded.
     struct SaveCompletion {
         SaveResult result = SaveResult::Failed;
         QString error;
         bool originalSaved = false;
         quint64 generation = 0;
     };
+    // Queues changed-source approval and delivers the explicit terminal Save outcome.
     struct SaveCallbacks {
         // Queue the existing changed-file question in the current owner. Validate
         // again before showing it and after its nested event loop returns.
@@ -135,8 +137,8 @@ public:
     // Stop waiting without joining the worker. Its file call continues until the
     // drive answers. A held snapshot keeps the tab locked until document release;
     // otherwise the operation restores use immediately. Stop suppresses ordinary
-    // operation completion and new commits, but an already-started rename may finish. A fresh
-    // open closes its tab. A recovery load keeps its unloaded tab and copy with
+    // operation completion and new commits. A rename already started may finish.
+    // A fresh open closes its tab. A recovery load keeps its unloaded tab and copy with
     // Retry, which can take back the blocked read.
     void stopWaiting();
     // Retry. Takes back a stopped load that still reads, or starts a new one, which

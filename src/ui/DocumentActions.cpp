@@ -502,11 +502,13 @@ std::vector<mervin::RenderMeasurement> MainWindow::collectRenderMeasurements(Vie
 }
 
 
+// Dispatches the current tab Save through the common background-save entry point.
 void MainWindow::saveMeasurements()
 {
     saveTab(currentTab(), {});
 }
 
+// Starts Save for a usable loaded tab or retained recovery and queues owner delivery.
 void MainWindow::saveTab(TabPage *tab, std::function<void(TabPage::SaveResult)> completion)
 {
     if (!tab || tab->isBusy()) {
@@ -528,6 +530,7 @@ void MainWindow::saveTab(TabPage *tab, std::function<void(TabPage::SaveResult)> 
     tab->startSave(std::move(callbacks));
 }
 
+// Asks the current owner to approve a changed source only while its checkpoint is valid.
 void MainWindow::askSaveReplacement(QPointer<TabPage> page, std::function<bool()> valid,
                                      std::function<void(bool)> answer)
 {
@@ -574,6 +577,7 @@ void MainWindow::askSaveReplacement(QPointer<TabPage> page, std::function<bool()
     });
 }
 
+// Delivers terminal Save status in the surviving owner of the source tab.
 void MainWindow::deliverSave(QPointer<TabPage> page, const TabPage::SaveCompletion &result)
 {
     if (!page || page->saveGeneration() != result.generation)

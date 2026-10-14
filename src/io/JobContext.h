@@ -131,16 +131,20 @@ bool stopped();
 class OpenPath
 {
 public:
+    // Adds a tab admission unless output ownership already blocks this key.
     explicit OpenPath(const QString &key);
+    // Releases this tab identity without changing other admissions of the key.
     ~OpenPath();
     OpenPath(const OpenPath &) = delete;
     OpenPath &operator=(const OpenPath &) = delete;
     bool admitted() const { return admitted_; }
     const QString &key() const { return key_; }
+    // Returns the stable tab admission identity used to authorize in-place Save.
     ClaimId identity() const { return identity_; }
 
 private:
     friend class State;
+    // Adopts an admission already transferred from the current job reservation.
     OpenPath(const QString &key, ClaimId identity);
     QString key_;
     bool admitted_ = false;
@@ -151,6 +155,7 @@ private:
 // stopped or when a tab already owns one of these keys. Reservations last through
 // commit, and otherwise release on Stop or when the last Scope closes.
 bool reserveDestinations(const QSet<QString> &keys);
+// Reserves in-place output for the sole captured tab owner in the current scope.
 bool reserveOwnedDestination(const QString &key, ClaimId owner);
 // Memory-only query for a key already normalized by the caller's worker.
 bool destinationInUse(const QString &key);

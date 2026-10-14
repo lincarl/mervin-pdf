@@ -222,6 +222,7 @@ class TstJobContext : public QObject
 {
     Q_OBJECT
 private slots:
+    // Checks in-place output is reserved only for its sole captured tab admission.
     void inPlaceSaveRequiresItsCapturedOwner()
     {
         const QString key = QStringLiteral("/out/owned.pdf");
@@ -254,6 +255,7 @@ private slots:
         QVERIFY(job::reserveOwnedDestination(key, replacement.identity()));
     }
 
+    // Checks canonical admission remains protected while write reservations are released.
     void canonicalAdmissionProtectsTheGapAfterWorkerScope()
     {
         const QString original = QStringLiteral("/out/original.pdf");
@@ -280,6 +282,7 @@ private slots:
         QVERIFY(job::reserveDestinations({canonical}));
     }
 
+    // Checks transferring a reserved key refuses competing writers.
     void canonicalAdmissionRefusesAnotherWriter()
     {
         const QString original = QStringLiteral("/out/owner.pdf");

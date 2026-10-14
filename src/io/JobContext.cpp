@@ -24,6 +24,7 @@ thread_local QString lastPath;
 // stopped.
 constexpr std::chrono::milliseconds kLockStep{20};
 
+// Tracks admitted tab identities and reserved output keys in process memory.
 // The mutex covers memory only. State always takes its own mutex first. Main's
 // exit path settles workers, or uses _Exit before static destruction if blocked.
 struct PathRegistry {
@@ -35,12 +36,14 @@ struct PathRegistry {
     ClaimId nextIdentity = 1;
 };
 
+// Returns the shared memory-only registry of admitted and reserved path keys.
 PathRegistry &paths()
 {
     static PathRegistry registry;
     return registry;
 }
 
+// Releases a job's output reservations under the registry mutex.
 void releaseDestinations(QSet<QString> &keys)
 {
     auto &registry = paths();

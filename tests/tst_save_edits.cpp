@@ -31,22 +31,26 @@
 using namespace mervin;
 
 namespace {
+// Reads fixture bytes so failed or stopped Save can prove the original is unchanged.
 QByteArray bytes(const QString &path)
 {
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
 
+// Adds an editable note used to check snapshot retention and successful Save.
 bool edit(TabPage &tab, const QString &text = QStringLiteral("preserved"))
 {
     return tab.viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {}, text) >= 0;
 }
 
+// Collects Save questions and completion while supplying a chosen replacement answer.
 struct Outcome {
     std::optional<TabPage::SaveCompletion> completion;
     int questions = 0;
     bool replaceChanged = true;
 
+    // Creates checkpoint and completion callbacks that update this captured outcome.
     TabPage::SaveCallbacks callbacks()
     {
         return {[this](auto valid, auto answer) {
@@ -58,6 +62,7 @@ struct Outcome {
     }
 };
 
+// Lists private recovery artifacts to detect files left after terminal cleanup.
 QStringList recoveryEntries()
 {
     return QDir(QDir(ConfigPaths::configDir()).filePath(QStringLiteral("recovery")))
@@ -65,12 +70,14 @@ QStringList recoveryEntries()
 }
 }
 
+// Checks background Save durability, cancellation, restored edits and completion ownership.
 class TstSaveEdits : public QObject
 {
     Q_OBJECT
     std::unique_ptr<QTemporaryDir> profile_;
 
 private slots:
+    // Creates an isolated profile and resets Save stall hooks for each case.
     void init()
     {
         profile_ = std::make_unique<QTemporaryDir>();
@@ -82,6 +89,7 @@ private slots:
         TabPage::setSlowDelayForTesting(0);
     }
 
+    // Releases stalls and settles closes and profile writes before resetting overrides.
     void cleanup()
     {
         job::testing::release();
@@ -95,6 +103,7 @@ private slots:
         profile_.reset();
     }
 
+    // Checks durable recovery precedes original close and retains full viewer state.
     void loadedSaveRestoresFullStateAndCommitsRecoveryBeforeClosing()
     {
         QTemporaryDir files;
@@ -159,6 +168,7 @@ private slots:
         QCOMPARE(QDir(files.path()).entryList({QStringLiteral(".mervin-save-*")}, QDir::Files | QDir::Hidden).size(), 0);
     }
 
+    // Selects the document gate or its access mutex for a real worker stall.
     void actualDocumentStall_data()
     {
         QTest::addColumn<bool>("gate");
@@ -166,6 +176,7 @@ private slots:
         QTest::newRow("access") << false;
     }
 
+    // Checks the real Save command returns while document access is held elsewhere.
     void saveCommandRunsOffGuiWithActualAccessStall()
     {
         QTemporaryDir files;
@@ -214,6 +225,7 @@ private slots:
         QVERIFY(tab->hasUnsavedEdits());
     }
 
+    // Selects canceled and accepted changed-source questions after an owner move.
     void changedQuestionSurvivesItsQueuedOwnersDestruction_data()
     {
         QTest::addColumn<bool>("replace");
@@ -221,6 +233,7 @@ private slots:
         QTest::newRow("cancel") << false;
     }
 
+    // Checks a queued replacement question follows the tab past old-window destruction.
     void changedQuestionSurvivesItsQueuedOwnersDestruction()
     {
         QFETCH(bool, replace);
@@ -269,6 +282,7 @@ private slots:
             QVERIFY(bytes(path) != external);
     }
 
+    // Selects successful and failed Save reports after an owner move.
     void saveReportSurvivesItsQueuedOwnersDestruction_data()
     {
         QTest::addColumn<bool>("failed");
@@ -276,6 +290,7 @@ private slots:
         QTest::newRow("Save error") << true;
     }
 
+    // Checks Save status is delivered only by the surviving current window.
     void saveReportSurvivesItsQueuedOwnersDestruction()
     {
         QFETCH(bool, failed);
@@ -332,6 +347,7 @@ private slots:
         }
     }
 
+    // Checks the warning distinguishes successful replacement from failed reopening.
     void reopenFailureReportsTheCommittedOriginal()
     {
         QTemporaryDir files;
@@ -382,6 +398,7 @@ private slots:
         QVERIFY(page->hasUnsavedEdits());
     }
 
+    // Checks worker dispatch, independent editing and completion through controlled stalls.
     void actualDocumentStall()
     {
         QFETCH(bool, gate);
@@ -443,6 +460,7 @@ private slots:
         QVERIFY(!tab.hasRecoverySnapshot());
     }
 
+    // Checks Stop retains snapshot lock and edits until the held worker releases access.
     void stopDuringSnapshotKeepsTheTrappedNoticeUntilRelease()
     {
         QTemporaryDir files;
@@ -473,6 +491,7 @@ private slots:
         QVERIFY(recoveryEntries().isEmpty());
     }
 
+    // Selects stops before and during guarded original replacement.
     void stoppedReplacementRecoversAndRetryWaits_data()
     {
         QTest::addColumn<bool>("commitStarted");
@@ -480,6 +499,7 @@ private slots:
         QTest::newRow("commit started") << true;
     }
 
+    // Checks recovery remains editable and retry respects the earlier replacement worker.
     void stoppedReplacementRecoversAndRetryWaits()
     {
         QFETCH(bool, commitStarted);
@@ -528,6 +548,7 @@ private slots:
         QVERIFY(recoveryEntries().isEmpty());
     }
 
+    // Checks unloaded Save copies retained recovery and asks about external source changes.
     void unloadedSaveDoesNotOpenPdfAndChangedSourceRequiresAnswer()
     {
         QTemporaryDir files;
@@ -566,6 +587,7 @@ private slots:
         QCOMPARE(AnnotModel(*saved).pageAnnots(0).front().contents, QStringLiteral("preserved"));
     }
 
+    // Selects manifest commit, original replacement and reopen failures.
     void failedSaveKeepsEdits_data()
     {
         QTest::addColumn<int>("failure");
@@ -574,6 +596,7 @@ private slots:
         QTest::newRow("reopen original") << 2;
     }
 
+    // Checks every failure preserves an editable document or durable recovery.
     void failedSaveKeepsEdits()
     {
         QFETCH(int, failure);
@@ -611,6 +634,7 @@ private slots:
             QVERIFY(recoveryEntries().isEmpty());
     }
 
+    // Checks owner deletion abandons a pending approval without stranding its worker.
     void deletingTabAtChangedQuestionWakesItsWorker()
     {
         QTemporaryDir files;
@@ -639,6 +663,7 @@ private slots:
         QVERIFY(recoveryEntries().isEmpty());
     }
 
+    // Checks direct Stop during viewer detachment preserves the already adopted snapshot.
     void stopFromViewerSignalDuringAdoptionKeepsRecovery()
     {
         QTemporaryDir files;
@@ -670,6 +695,7 @@ private slots:
         QVERIFY(QFileInfo::exists(tab.recoveryPath()));
     }
 
+    // Selects deletion while successful or failed Save restores the tab.
     void deletionDuringDelivery_data()
     {
         QTest::addColumn<bool>("failed");
@@ -679,6 +705,7 @@ private slots:
         QTest::newRow("failed Save recovery finishes") << true << true;
     }
 
+    // Checks callback-driven deletion closes documents and removes owned recovery safely.
     void deletionDuringDelivery()
     {
         QFETCH(bool, failed);
@@ -719,6 +746,7 @@ private slots:
         QCOMPARE(outcome.completion.has_value(), afterRecovery);
     }
 
+    // Selects earlier stopped recovery readers and competing Save outcomes.
     void unloadedSaveRetainsAnAbandonedLoadInput_data()
     {
         QTest::addColumn<bool>("stopFirst");
@@ -726,6 +754,7 @@ private slots:
         QTest::newRow("stopped Save then retry") << true;
     }
 
+    // Checks retained recovery remains present until every abandoned reader closes.
     void unloadedSaveRetainsAnAbandonedLoadInput()
     {
         QFETCH(bool, stopFirst);
@@ -779,6 +808,7 @@ private slots:
     }
 
 #ifdef Q_OS_UNIX
+    // Checks a changed alias retains its new key before the worker scope releases reservations.
     void retargetedAliasKeepsItsNewCanonicalAdmission()
     {
         QTemporaryDir files;
