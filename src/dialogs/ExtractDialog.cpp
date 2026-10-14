@@ -51,6 +51,7 @@ QHBoxLayout *row()
 }
 } // namespace
 
+/// Counts source pages on a worker, retrying only with a supplied open password.
 ExtractDialog::Probe ExtractDialog::probeSource(const QString &path, const QString &knownPassword)
 {
     Probe result;
@@ -63,6 +64,7 @@ ExtractDialog::Probe ExtractDialog::probeSource(const QString &path, const QStri
     return result;
 }
 
+/// Builds the editor from completed source facts and optional retained choices.
 ExtractDialog::ExtractDialog(const Source &source, QWidget *parent,
                              const std::optional<Choices> &choices)
     : QDialog(parent)
@@ -684,6 +686,7 @@ std::optional<QString> ExtractDialog::saveAsProblem() const
     return plan_.destinationError(text, checked_->facts);
 }
 
+/// Applies a chosen destination only if the editor survives its picker.
 void ExtractDialog::browseForOutput()
 {
     //: Title of the file picker for the new file Delete pages writes.
@@ -718,6 +721,7 @@ void ExtractDialog::accept()
     checkOutput();
 }
 
+/// Formats retained worker failures for the dialog or a hidden-owner notice.
 QString ExtractDialog::failureText(const Choices &choices, ExtractPlan::Mode mode)
 {
     switch (choices.failure) {
@@ -757,12 +761,14 @@ QString ExtractDialog::failureText(const Choices &choices, ExtractPlan::Mode mod
     return {};
 }
 
+/// Copies the current plan and editable fields for asynchronous writing or retry.
 ExtractDialog::Choices ExtractDialog::choices() const
 {
     return {plan_.specs(), output_->text(), password_, outputEdited_, openWhenDone(),
             Choices::Failure::None, {}};
 }
 
+/// Captures an accepted plan after destination checks and overwrite approval.
 void ExtractDialog::write()
 {
     if (const std::optional<QString> why = problem(); !why || !why->isEmpty())

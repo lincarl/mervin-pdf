@@ -37,11 +37,13 @@
 using namespace mervin;
 
 namespace {
+/// Finds the current tab through the real window's tab widget.
 TabPage *current(MainWindow &window)
 {
     return qobject_cast<TabPage *>(window.findChild<QTabWidget *>()->currentWidget());
 }
 
+/// Realizes the main window while keeping it off the desktop.
 void showWindow(MainWindow &window)
 {
     window.setAttribute(Qt::WA_DontShowOnScreen);
@@ -50,12 +52,14 @@ void showWindow(MainWindow &window)
     QCoreApplication::processEvents();
 }
 
+/// Sets field text and emits textEdited so production validation runs.
 void edit(QLineEdit *field, const QString &text)
 {
     field->setText(text);
     QMetaObject::invokeMethod(field, "textEdited", Q_ARG(QString, text));
 }
 
+/// Sets page ranges, destination and result-opening choices in the real editor.
 void choose(ExtractDialog &dialog, const QString &output, const QString &ranges = QStringLiteral("1,3"),
             bool open = false)
 {
@@ -72,11 +76,13 @@ void choose(ExtractDialog &dialog, const QString &output, const QString &ranges 
     accept->click();
 }
 
+/// Reads the visible failure reason from the real dialog.
 QString error(ExtractDialog &dialog)
 {
     return dialog.findChild<QLabel *>(QStringLiteral("extractError"))->text();
 }
 
+/// Blocks one matching worker step for deterministic cancellation checks.
 void hold(job::Step step, const QString &path)
 {
     job::testing::holdWhen([step, path](job::Step reported, const QString &where) {
@@ -85,11 +91,13 @@ void hold(job::Step step, const QString &path)
 }
 } // namespace
 
+/// Checks page-tool worker ownership, retained choices and result delivery.
 class TstPageDialogOperations : public QObject
 {
     Q_OBJECT
 
 public:
+    /// Answers each nested editor once while recording unexpected dialogs.
     TstPageDialogOperations()
     {
         connect(&dialogs_, &QTimer::timeout, this, [this] {
@@ -110,6 +118,7 @@ public:
     }
 
 private slots:
+    /// Creates an isolated profile and resets the dialog-driving state.
     void init()
     {
         profile_ = std::make_unique<QTemporaryDir>();
@@ -126,6 +135,7 @@ private slots:
         dialogs_.start(10);
     }
 
+    /// Drains worker cleanup and rejects leftover or unexpected dialog interactions.
     void cleanup()
     {
         job::testing::failWhen({});
@@ -140,6 +150,7 @@ private slots:
         QVERIFY(choices_.isEmpty());
     }
 
+    /// Keeps a stalled source probe responsive and suppresses abandoned UI delivery.
     void heldProbeReturnsAndStopSuppressesTheDialog()
     {
         QTemporaryDir files;
@@ -166,6 +177,7 @@ private slots:
         QCOMPARE(shown_, 0);
     }
 
+    /// Covers asynchronous acceptance for both Extract and Delete.
     void acceptedDialogClosesBeforeTheWrite_data()
     {
         QTest::addColumn<bool>("deleting");
@@ -173,6 +185,7 @@ private slots:
         QTest::newRow("delete") << true;
     }
 
+    /// Closes the editor before stalled output work and preserves the destination on Stop.
     void acceptedDialogClosesBeforeTheWrite()
     {
         QFETCH(bool, deleting);
@@ -204,6 +217,7 @@ private slots:
         QCOMPARE(shown_, 1);
     }
 
+    /// Retains edited ranges and destination when a failed output is retried.
     void failedWriteReopensWithTheSameChoices()
     {
         QTemporaryDir files;
@@ -232,6 +246,7 @@ private slots:
         QVERIFY(!QFileInfo::exists(out));
     }
 
+    /// Requires new acceptance when the source count changes after the initial probe.
     void changedPageCountReopensBeforeWriting()
     {
         QTemporaryDir files;
@@ -259,6 +274,7 @@ private slots:
         QVERIFY(!QFileInfo::exists(out));
     }
 
+    /// Routes a delayed source probe into the tab's new window.
     void probeCompletionFollowsTheCurrentOwner()
     {
         QTemporaryDir files;
@@ -285,6 +301,7 @@ private slots:
         QVERIFY(tab->isUsable());
     }
 
+    /// Covers source-probe and failed-write delivery after the previous owner closes.
     void queuedResultSurvivesItsPreviousOwner_data()
     {
         QTest::addColumn<bool>("writing");
@@ -292,6 +309,7 @@ private slots:
         QTest::newRow("failed write") << true;
     }
 
+    /// Keeps deferred page results attached to the surviving tab after owner changes.
     void queuedResultSurvivesItsPreviousOwner()
     {
         QFETCH(bool, writing);
@@ -338,6 +356,7 @@ private slots:
     }
 
 #ifdef Q_OS_UNIX
+    /// Covers current-source identity protection for Extract and Delete.
     void redirectedSourceCannotReplaceItsNewTarget_data()
     {
         QTest::addColumn<bool>("deleting");
@@ -345,6 +364,7 @@ private slots:
         QTest::newRow("delete") << true;
     }
 
+    /// Refuses output that aliases a source redirected while its editor was open.
     void redirectedSourceCannotReplaceItsNewTarget()
     {
         const int mainThreadSteps = job::testing::stepsOnMainThread();
@@ -392,6 +412,7 @@ private slots:
     }
 #endif
 
+    /// Opens a completed extracted copy through the normal placeholder flow.
     void successfulExtractOpensItsBackgroundResult()
     {
         QTemporaryDir files;
@@ -409,6 +430,7 @@ private slots:
         QCOMPARE(current(window)->viewer()->pageCount(), 2);
     }
 
+    /// Preserves choices and allows a corrected open password after worker rejection.
     void wrongPasswordReopensAndAChangedPasswordCanRetry()
     {
         QTemporaryDir files;
@@ -455,6 +477,7 @@ private slots:
     }
 
 private:
+    /// Creates an isolated multi-page input for the real command flow.
     QString copy(QTemporaryDir &files, const QString &name = QStringLiteral("plan.pdf"))
     {
         const QString path = files.filePath(name);

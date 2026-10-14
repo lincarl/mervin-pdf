@@ -821,6 +821,7 @@ void TstTranslationLayout::exportMeasurements()
     inspect(dialog, QStringLiteral("Export with measurements"));
 }
 
+/// Checks Extract controls with retained password, count-change and read failures.
 void TstTranslationLayout::extract()
 {
     mervin::ExtractDialog::Source source;
@@ -887,6 +888,7 @@ void TstTranslationLayout::extract()
 
 // Document > Delete Pages: the Extract window in its Delete mode, with its own
 // title, button, result line and errors.
+/// Checks Delete controls with retained password, count-change and read failures.
 void TstTranslationLayout::deletePages()
 {
     mervin::ExtractDialog::Source source;

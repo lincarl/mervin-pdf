@@ -35,6 +35,7 @@ class ExtractDialog : public QDialog
     Q_OBJECT
 
 public:
+    /// Carries a worker probe result and its verified open password.
     struct Probe
     {
         PageOps::Status status = PageOps::Status::Failed;
@@ -47,6 +48,7 @@ public:
     // when an unauthenticated probe says the source needs one.
     static Probe probeSource(const QString &path, const QString &knownPassword);
 
+    /// Retains editable rows, destination and failure details across worker attempts.
     struct Choices
     {
         enum class Failure { None, Password, Read, Write, ChangedCount, Source, Destination };
@@ -62,6 +64,7 @@ public:
     // The existing inline reasons, also used when a hidden owner needs a tray notice.
     static QString failureText(const Choices &choices, ExtractPlan::Mode mode);
 
+    /// Combines captured source facts with borrowed thumbnail context for the dialog.
     struct Source
     {
         ExtractPlan::Mode mode = ExtractPlan::Mode::Extract;
@@ -89,10 +92,12 @@ public:
     // Valid after acceptance. The caller writes this job in the tab's worker and
     // can reopen the dialog with choices() after a failure.
     ExtractPlan::Job job() const { return job_; }
+    /// Captures retry choices independently of the dialog widgets.
     Choices choices() const;
     // The probe's verified password, or the row's chosen password that the worker
     // must verify before writing. Empty when the source is not encrypted.
     QString password() const { return password_; }
+    /// Reports whether an accepted copy should open after successful writing.
     bool openWhenDone() const;
 
 private:
@@ -131,6 +136,7 @@ private:
     void togglePage(const ExtractPlan::Cell &cell);
     void expand(const ExtractPlan::RunKey &run);
     void updateActions(); // the strip's context menu follows its current cell
+    /// Runs the destination picker with guarded owner lifetime and window modality.
     void browseForOutput();
     // The error line's text: the first problem only. Empty when there is none, and
     // nothing while the check of the Save as text has not answered.

@@ -892,6 +892,7 @@ struct MainWindow::PagesJob
     bool succeeded = false;
 };
 
+/// Captures the launching tab and starts its source probe before opening the editor.
 void MainWindow::pagesDialog(mervin::ExtractPlan::Mode mode, std::optional<int> seedPage)
 {
     const OperationScope operation(this);
@@ -918,6 +919,7 @@ void MainWindow::pagesDialog(mervin::ExtractPlan::Mode mode, std::optional<int> 
     runPagesJob(tab, job, false);
 }
 
+/// Runs a source probe or accepted page plan as a tab-owned worker operation.
 void MainWindow::runPagesJob(TabPage *tab, const std::shared_ptr<PagesJob> &result, bool write)
 {
     if (!tab || !tab->isUsable())
@@ -1003,6 +1005,7 @@ void MainWindow::runPagesJob(TabPage *tab, const std::shared_ptr<PagesJob> &resu
     tab->startOperation(std::move(operation));
 }
 
+/// Routes completed page work through the surviving tab owner and close guards.
 void MainWindow::queuePagesResult(TabPage *tab, const std::shared_ptr<PagesJob> &result)
 {
     const QPointer<TabPage> page(tab);
@@ -1030,6 +1033,7 @@ void MainWindow::queuePagesResult(TabPage *tab, const std::shared_ptr<PagesJob> 
     });
 }
 
+/// Opens accepted output or restores failed choices in the launching tab context.
 void MainWindow::finishPagesJob(TabPage *tab, const std::shared_ptr<PagesJob> &result)
 {
     const OperationScope operation(this);

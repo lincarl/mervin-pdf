@@ -93,6 +93,7 @@ QList<int> sourcePages(const QString &path, const QString &password = QString())
 
 } // namespace
 
+/// Verifies editor controls against supplied probes and value-owned accepted jobs.
 class TstExtractDialog : public QObject
 {
     Q_OBJECT
@@ -135,6 +136,7 @@ private:
     QString plain_;
     QString encrypted_;
 
+    /// Supplies fixture source facts before constructing the file-free editor.
     ExtractDialog::Source source(const QString &path) const
     {
         ExtractDialog::Source s;
@@ -256,6 +258,7 @@ private:
         extract(d)->click();
         settle(&d);
     }
+    /// Returns the accepted source-page order after asynchronous destination checks.
     static QList<int> accepted(ExtractDialog &d)
     {
         press(d);
@@ -612,6 +615,7 @@ void TstExtractDialog::saveAsFollowsThePlanUntilEdited()
     QVERIFY(!extract(d)->isEnabled());
 }
 
+/// Covers picker acceptance, cancellation and owner destruction.
 void TstExtractDialog::browseKeepsWindowModalityAndOwnerLifetime_data()
 {
     QTest::addColumn<int>("answer");
@@ -620,6 +624,7 @@ void TstExtractDialog::browseKeepsWindowModalityAndOwnerLifetime_data()
     QTest::newRow("owner closes") << 2;
 }
 
+/// Keeps Browse window-modal and ignores answers after its owner disappears.
 void TstExtractDialog::browseKeepsWindowModalityAndOwnerLifetime()
 {
     QFETCH(int, answer);
@@ -679,6 +684,7 @@ void TstExtractDialog::destinationCannotBeTheSource()
     QVERIFY(extract(d)->isEnabled());
 }
 
+/// Keeps an open destination unavailable to an accepted page plan.
 void TstExtractDialog::outputOpenInATabIsRefused()
 {
     // The viewer holds an open tab's file open, so writing over it would fail. The
@@ -701,6 +707,7 @@ void TstExtractDialog::outputOpenInATabIsRefused()
     QVERIFY(extract(d)->isEnabled());
 }
 
+/// Restores ranges and editable fields from a failed worker attempt.
 void TstExtractDialog::failedAttemptRestoresTheChoices()
 {
     const QString target = dir_.filePath(QStringLiteral("failed-output.pdf"));
@@ -729,6 +736,7 @@ void TstExtractDialog::failedAttemptRestoresTheChoices()
 // Save as is checked on a background thread, as its folder can be on a share that
 // stopped answering. A quick check changes nothing on screen; a slow one says so,
 // and Extract pressed meanwhile returns its job once it answers.
+/// Shows the slow-check reason and postpones acceptance until the destination answers.
 void TstExtractDialog::slowSaveAsCheckSaysSoAndExtractWaitsForIt()
 {
     const QString target = dir_.filePath(QStringLiteral("checked-slowly.pdf"));
@@ -772,6 +780,7 @@ void TstExtractDialog::slowSaveAsCheckSaysSoAndExtractWaitsForIt()
 
 // Extract writes what it was pressed for. Typing another name while the check runs
 // takes that press back.
+/// Invalidates a pending acceptance when the user changes its plan.
 void TstExtractDialog::editAfterExtractNeedsAnotherPress()
 {
     const QString first = dir_.filePath(QStringLiteral("pressed-for.pdf"));
@@ -796,6 +805,7 @@ void TstExtractDialog::editAfterExtractNeedsAnotherPress()
     QVERIFY(!QFileInfo::exists(second));
 }
 
+/// Captures an unverified inline password for the worker without reading the source.
 void TstExtractDialog::encryptedSourceAsksOnceInline()
 {
     const auto src = source(encrypted_);
@@ -825,6 +835,7 @@ void TstExtractDialog::encryptedSourceAsksOnceInline()
     QCOMPARE(retry.job().pages, QList<int>({6}));
 }
 
+/// Reuses the worker probe's verified password in the accepted job.
 void TstExtractDialog::encryptedSourceUsesTheTabPassword()
 {
     // The password that opened the tab unlocks the file: the dialog is the plain one.
@@ -845,6 +856,7 @@ void TstExtractDialog::encryptedSourceUsesTheTabPassword()
     QVERIFY(!QFileInfo::exists(d.job().path));
 }
 
+/// Allows a replacement password when the captured tab password fails probing.
 void TstExtractDialog::staleTabPasswordFallsBackToTheRow()
 {
     // A remembered password that no longer opens the file (it changed on disk)
@@ -998,6 +1010,7 @@ void TstExtractDialog::deletingEveryPageIsRefused()
     QVERIFY(!extract(d)->isEnabled());
 }
 
+/// Applies the accepted Delete request and checks retained source-page identities.
 void TstExtractDialog::deleteWritesTheRemainingPages()
 {
     const QString target = dir_.filePath(QStringLiteral("deleted-copy.pdf"));
