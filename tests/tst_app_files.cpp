@@ -27,6 +27,7 @@ QByteArray read(const QString &path)
 
 } // namespace
 
+// Checks ordered application writes and recovery cleanup during session requests.
 class TstAppFiles : public QObject
 {
     Q_OBJECT
@@ -37,7 +38,9 @@ private slots:
     void writeCreatesItsFolder();
     void aWaitedWriteReportsItsResult();
     void publishedFilesReadFromMemory();
+    // Checks that cancellation resumes recovery removal in the ordinary write queue.
     void recoveryRemovalResumesAfterCanceledSession();
+    // Checks that successful session end preserves recovery while ordinary cleanup continues.
     void recoveryRemovalPreservesFilesAfterCompletedSession();
 };
 

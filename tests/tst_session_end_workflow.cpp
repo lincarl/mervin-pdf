@@ -42,12 +42,14 @@
 using namespace mervin;
 
 namespace {
+// Copies a PDF fixture and adds an annotation whose recovery content can be checked.
 bool prepare(TabPage &tab, const QString &path)
 {
     return QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path) && tab.open(path)
         && tab.viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {},
                                                   QStringLiteral("preserved")) >= 0;
 }
+// Holds a recovery manifest before commit admission for controlled grace checks.
 void holdManifest()
 {
     job::testing::holdWhen([](job::Step step, const QString &path) {
@@ -64,6 +66,7 @@ public:
     int keyPresses = 0;
 
 protected:
+    // Records forwarded query flags before allowing Qt to handle the message.
     bool nativeEvent(const QByteArray &type, void *message, qintptr *result) override
     {
         const auto *event = static_cast<const MSG *>(message);
@@ -72,6 +75,7 @@ protected:
         return QWindow::nativeEvent(type, message, result);
     }
 
+    // Counts delivered F12 presses to verify native session input suspension.
     bool event(QEvent *event) override
     {
         if (event->type() == QEvent::KeyPress
@@ -81,6 +85,7 @@ protected:
     }
 };
 
+// Sends an owned window an F12 press and release without changing desktop keyboard state.
 void sendKey(HWND window)
 {
     const LPARAM scan = static_cast<LPARAM>(MapVirtualKey(VK_F12, MAPVK_VK_TO_VSC)) << 16;
@@ -122,12 +127,14 @@ int verifySuccessfulNativeOutcome()
 #endif
 }
 
+// Checks document recovery, session admission and native Windows query outcomes.
 class TstSessionEndWorkflow : public QObject
 {
     Q_OBJECT
     std::unique_ptr<QTemporaryDir> profile_;
 
 private slots:
+    // Creates an isolated profile with automatic updates disabled for each workflow.
     void init()
     {
         profile_ = std::make_unique<QTemporaryDir>();
@@ -138,6 +145,7 @@ private slots:
         QVERIFY(settings.save());
     }
 
+    // Reopens admission and settles document work before removing the isolated profile.
     void cleanup()
     {
         sessionend::finishRequest(false);
@@ -151,6 +159,7 @@ private slots:
         profile_.reset();
     }
 
+    // Checks that manifest durability ends grace before the GUI adopts the Save result.
     void saveManifestCompletionReleasesGraceBeforeGuiAdoption()
     {
         QTemporaryDir files;
@@ -187,6 +196,7 @@ private slots:
         QCOMPARE(AnnotModel(*saved).pageAnnots(0).front().contents, QStringLiteral("preserved"));
     }
 
+    // Checks that committed recovery avoids waiting for original replacement.
     void durableRecoveryDoesNotWaitForOriginalReplacement()
     {
         QTemporaryDir files;
@@ -211,6 +221,7 @@ private slots:
         QVERIFY(!tab.hasUnsavedEdits());
     }
 
+    // Checks that Stop and tab deletion retain protection and committed annotation recovery.
     void detachedStoppedSaveRemainsProtectedAndKeepsCommittedRecovery()
     {
         QTemporaryDir files;
@@ -241,6 +252,7 @@ private slots:
         QCOMPARE(AnnotModel(*recovered).pageAnnots(0).front().contents, QStringLiteral("preserved"));
     }
 
+    // Checks that Save admission closes during the request and cancellation restores it.
     void canceledSessionRestoresSaveAdmission()
     {
         QTemporaryDir files;
@@ -268,6 +280,7 @@ private slots:
         QVERIFY(!tab.hasUnsavedEdits());
     }
 
+    // Checks that the "File changed" question waits for session cancellation.
     void changedSaveQuestionWaitsForCanceledSessionOutcome()
     {
         QTemporaryDir files;
@@ -309,6 +322,7 @@ private slots:
         QVERIFY(tab->hasUnsavedEdits());
     }
 
+    // Checks that session teardown skips the ordinary wait for application file writes.
     void successfulSessionEndAddsNoOrdinaryExitWait()
     {
         appfiles::testing::hold(true);
@@ -325,6 +339,7 @@ private slots:
     }
 
 #ifdef Q_OS_WIN
+    // Checks forwarding, callbacks, native input and cancellation across owned Qt windows.
     void nativeQueryAndCanceledEndReachQtAndRestoreAdmission()
     {
         QCOMPARE(QGuiApplication::platformName(), QStringLiteral("windows"));
@@ -406,6 +421,7 @@ private slots:
         QCOMPARE(native.queries.back().second, otherFlags);
     }
 
+    // Checks that successful native end emits Qt's quit signal once in an isolated child.
     void nativeSuccessfulEndPreservesQtQuitSignalOnce()
     {
         QCOMPARE(QGuiApplication::platformName(), QStringLiteral("windows"));
@@ -418,6 +434,7 @@ private slots:
         QCOMPARE(child.exitCode(), 0);
     }
 
+    // Checks that logoff query returns while a buffered C stream stays locked on a worker.
     void nativeLogoffDoesNotFlushLockedBufferedWriter()
     {
         QCOMPARE(QGuiApplication::platformName(), QStringLiteral("windows"));
@@ -452,6 +469,7 @@ private slots:
 #endif
 };
 
+// Runs isolated native outcome mode or the workflow suite under QApplication.
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);

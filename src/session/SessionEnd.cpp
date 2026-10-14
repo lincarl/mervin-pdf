@@ -11,6 +11,7 @@
 namespace mervin::sessionend {
 
 namespace {
+// Serializes snapshot admission, protection counts and recovery disposal across OS outcomes.
 struct Registry {
     std::mutex mutex;
     std::condition_variable changed;
@@ -20,6 +21,7 @@ struct Registry {
     Result result = Result::Settled;
 };
 
+// Shares one session registry across recovery workers and the GUI callback.
 Registry &registry()
 {
     static Registry value;
@@ -27,11 +29,14 @@ Registry &registry()
 }
 }
 
+// Shares one protected recovery operation across GUI and worker owners.
 struct RecoveryWrite::State {
     bool pending = true; // protected by the registry mutex
 
+    // Releases protection when the final owner drops the shared state.
     ~State() { finish(); }
 
+    // Releases the registry count once, including repeated completion calls.
     void finish()
     {
         auto &r = registry();

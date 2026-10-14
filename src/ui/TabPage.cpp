@@ -611,8 +611,8 @@ TabPage::~TabPage()
     // Child widgets otherwise die after the Document member.
     delete viewer_;
     viewer_ = nullptr;
-    // The manifest goes now, so the recovery copy is never offered again. The copy
-    // itself goes once no document has it open, as Windows cannot remove an open file.
+    // Queue adopted recovery cleanup behind the session outcome gate. The copy
+    // waits until no document has it open, as Windows cannot remove an open file.
     const QString snapshot = std::exchange(recoveryPath_, QString());
     clearRecovery();
     auto readers = recoveryReaders_;
@@ -1817,8 +1817,8 @@ void TabPage::startSave(SaveCallbacks callbacks)
                 save->completion.result = SaveResult::Stopped;
             if (save->completion.result != SaveResult::Saved)
                 save->admission.reset();
-            // Before adoption these files belong only to the job. A late manifest
-            // commit from a stopped job must not leave a false recovery checkpoint.
+            // Before adoption these files belong only to the job. Remove late stopped
+            // checkpoints unless the session outcome requires preserving committed edits.
             if (save->loaded && !save->adopted
                 && (!save->recoveryCommitted || save->recoveryWrite->beginDiscard())) {
                 if (!save->manifest.isEmpty())

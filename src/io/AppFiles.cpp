@@ -22,6 +22,7 @@ namespace mervin::appfiles {
 
 namespace {
 
+// Stores a queued application file write or removal and its completion identity.
 struct Job
 {
     QString path;

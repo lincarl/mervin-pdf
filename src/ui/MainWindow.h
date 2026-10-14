@@ -379,6 +379,7 @@ private:
     // Unloads a usable tab unless a close claim or earlier suspension failure keeps it resident.
     bool suspendTab(mervin::TabPage *tab);
     void clearDocumentSidebars();
+    // Reports whether dialogs, document work and session state permit unloading or tab changes.
     bool canSuspendDocuments() const;
     void persistWindowState();
     // Run the queued tab changes on the next turn of the event loop.

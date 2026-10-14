@@ -52,7 +52,9 @@ class WindowManager : public QObject, public QAbstractNativeEventFilter
     Q_OBJECT
 
 public:
+    // Initializes shared services and Windows session hooks before creating any window.
     WindowManager();
+    // Releases windows and skips the ordinary close and write budget during session end.
     ~WindowManager() override;
 
     // Force Qt's colour scheme for a "light"/"dark" setting, or follow the OS for
@@ -84,6 +86,7 @@ public:
     // focusExistingTab this only answers the question - it does not select the tab
     // or raise the window, which a background open must not do.
     bool isOpenAnywhere(const QString &canonicalPath, const TabPage *except = nullptr) const;
+    // Reports whether shutdown or an active session request blocks new window work.
     bool isClosing() const { return shuttingDown_ || sessionFinal_ || sessionend::active(); }
     bool hasLoadingDocuments() const;
 
@@ -122,6 +125,7 @@ public:
     // none hidden, brings up the active window instead.
     void restoreFromTray();
     void applyMemorySettings(int minutes, bool closeToTray);
+    // Unloads idle documents only when Quit and session requests permit new work.
     void checkDocumentActivity();
     void notifySuspensionFailure(const QString &message);
     // Shows a warning from the tray icon, for a window hidden in the tray.
@@ -291,6 +295,7 @@ signals:
 protected:
     // Reapplies the theme on an OS theme or palette change (see the constructor).
     bool eventFilter(QObject *watched, QEvent *event) override;
+    // Preserves Qt session handling while avoiding its global logoff flush.
     bool nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result) override;
 
 private slots:

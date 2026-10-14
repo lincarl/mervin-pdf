@@ -427,6 +427,7 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
 
 } // namespace
 
+// Initializes the selected profile and routes startup to the UI or the existing instance.
 int main(int argc, char *argv[])
 {
 #ifdef Q_OS_WIN

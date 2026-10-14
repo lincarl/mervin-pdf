@@ -13,8 +13,11 @@ inline constexpr int kGraceMs = 3900;
 class RecoveryWrite
 {
 public:
+    // Atomically admits recovery work unless a session request already closed admission.
     static std::optional<RecoveryWrite> begin();
+    // Releases protection after manifest durability or terminal work completion.
     void finish() const;
+    // Reports whether this reservation still adds to the recovery grace count.
     bool pending() const;
 
     // A worker calls this before removing its committed recovery. It rearms the
@@ -24,6 +27,7 @@ public:
 
 private:
     struct State;
+    // Retains the shared reservation acquired by begin().
     explicit RecoveryWrite(std::shared_ptr<State> state);
     std::shared_ptr<State> state_;
 };
@@ -36,6 +40,7 @@ enum class Result { Settled, TimedOut };
 // Call only on the GUI thread, from the direct session callback. Concurrent
 // requests are unsupported, and the callback must not process GUI events.
 Result waitForRecovery(int graceMs = kGraceMs);
+// Reports whether session end still gates new snapshots and recovery cleanup.
 bool active();
 
 // A canceled OS session restores admission. A successful end keeps it closed.

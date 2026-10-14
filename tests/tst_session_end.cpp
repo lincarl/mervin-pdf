@@ -10,16 +10,19 @@
 
 using namespace mervin::sessionend;
 
+// Checks admission, bounded waits and recovery disposal without file calls.
 class TstSessionEnd : public QObject
 {
     Q_OBJECT
 
 private slots:
+    // Resets the OS outcome gate between isolated controller cases.
     void cleanup()
     {
         finishRequest(false);
     }
 
+    // Checks immediate readiness closes admission when no recovery is pending.
     void readyReturnsWithoutWaitingAndClosesAdmission()
     {
         QElapsedTimer time;
@@ -36,6 +39,7 @@ private slots:
         QVERIFY(admitted->pending());
     }
 
+    // Checks that worker completion releases grace without running queued GUI events.
     void workerCompletionReleasesGraceWithoutGuiEvents()
     {
         auto write = RecoveryWrite::begin();
@@ -57,6 +61,7 @@ private slots:
         QVERIFY(guiDelivered);
     }
 
+    // Checks that unfinished work reaches its deadline and repeated requests reuse the answer.
     void unfinishedRecoveryTimesOutAndRepeatDoesNotWait()
     {
         auto write = RecoveryWrite::begin();
@@ -76,6 +81,7 @@ private slots:
         QVERIFY(!write->pending());
     }
 
+    // Checks that a worker reservation stays counted after its GUI copy is dropped.
     void retainedWorkerCountsAfterGuiCopyIsDestroyed()
     {
         auto guiWrite = RecoveryWrite::begin();
@@ -88,6 +94,7 @@ private slots:
         QCOMPARE(waitForRecovery(0), Result::Settled);
     }
 
+    // Checks that destruction of the final shared reservation releases pending protection.
     void lastDestroyedCopyReleasesRecovery()
     {
         {
@@ -100,6 +107,7 @@ private slots:
         QCOMPARE(waitForRecovery(0), Result::Settled);
     }
 
+    // Checks that the configured grace clamps longer requests below four seconds.
     void maximumGraceIsBelowFourSeconds()
     {
         auto write = RecoveryWrite::begin();
@@ -112,6 +120,7 @@ private slots:
         QVERIFY(write->pending());
     }
 
+    // Races writer admission against observation to detect accepted work missing from grace.
     void admissionAndObservationCannotMissConcurrentWrites()
     {
         std::atomic<bool> go{false};
@@ -132,6 +141,7 @@ private slots:
         }
     }
 
+    // Checks that discard waits for the OS outcome and successful end denies removal.
     void committedRecoverySurvivesDiscardDuringSuccessfulSessionEnd()
     {
         auto write = RecoveryWrite::begin();
@@ -157,6 +167,7 @@ private slots:
         QVERIFY(!write->pending());
     }
 
+    // Checks that cancellation rearms protection before a worker begins disposal.
     void canceledSessionRearmsProtectionBeforeDiscard()
     {
         auto write = RecoveryWrite::begin();
@@ -187,6 +198,7 @@ private slots:
         QCOMPARE(waitForRecovery(0), Result::Settled);
     }
 
+    // Checks that already admitted adopted recovery cleanup adds no snapshot grace.
     void adoptedCleanupDoesNotStartSnapshotGrace()
     {
         std::atomic<bool> admitted{false}, release{false};
