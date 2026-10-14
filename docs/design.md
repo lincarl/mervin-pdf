@@ -622,7 +622,10 @@ files it committed before the stop.
 Each job first refuses an output that is open in a tab, the source included, with
 "The destination is open in a tab." It compares `fileKey()` of the output, on its own
 thread, with the tabs' canonical paths. Split checks all its names before it writes
-the first. When the tab's password does not open the file, the window asks for one
+the first. This check uses the open tabs captured when the operation starts. It does
+not reserve an output against a tab opened later. Such a tab keeps its loaded bytes
+if the operation replaces its file, and Save checks whether that file changed.
+When the tab's password does not open the file, the window asks for one
 and runs the tool again with it, and the tab keeps a password that worked. Everything
 a finished operation raises, the password prompt, an error or "Open it now?", is
 window-modal in the window that holds the tab by then and waits in that window's tab
