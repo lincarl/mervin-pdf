@@ -225,6 +225,7 @@ struct TabPage::OpenResult {
     std::optional<MeasureDoc> measurements;
     SourceStamp source;
     QString canonical;
+    std::unique_ptr<job::OpenPath> admission;
     QString error;
     bool needsPassword = false;
 };
@@ -1011,6 +1012,12 @@ void TabPage::resumeAsync()
 {
     if (doc_ || loading_ || loadStopped_)
         return;
+    startLoad();
+}
+
+void TabPage::startLoad(std::shared_ptr<Job> after)
+{
+    // All new reads, including Retry, must first own their known path.
     if (!claimPath(canonicalPath_)) {
         const auto failure = std::make_shared<OpenResult>();
         failure->error = pathBeingWrittenError();
@@ -1020,11 +1027,6 @@ void TabPage::resumeAsync()
             emit resumeFinished(false, failure->error, false);
         return;
     }
-    startLoad();
-}
-
-void TabPage::startLoad(std::shared_ptr<Job> after)
-{
     const auto job = std::make_shared<Job>(recoveryPath_.isEmpty() ? path_ : recoveryPath_);
     ++loadGeneration_;
     job_ = job;
@@ -1035,7 +1037,7 @@ void TabPage::startLoad(std::shared_ptr<Job> after)
     background::start([tab = QPointer<QObject>(this), job, after = std::move(after),
                        opener = engine_->opener(), password = password_,
                        resolve = freshOpen_.has_value() && recoveryPath_.isEmpty(),
-                       knownCanonical = canonicalPath_] {
+                       knownCanonical = canonicalPath_, writingError = pathBeingWrittenError()] {
         // A stopped load still closing what it read ends first, so a recovery copy left
         // for this job to remove never goes while that load has it open.
         if (after)
@@ -1048,17 +1050,24 @@ void TabPage::startLoad(std::shared_ptr<Job> after)
                 // Resolve links only on this thread. Keep the public key unchanged
                 // until the owner accepts the canonical identity through its queue.
                 QString canonical = knownCanonical;
+                std::unique_ptr<job::OpenPath> admission;
                 if (resolve) {
                     const QFileInfo file(job->source);
                     canonical = file.canonicalFilePath();
                     if (canonical.isEmpty())
                         canonical = QDir::cleanPath(file.absoluteFilePath());
+                    admission = std::make_unique<job::OpenPath>(normalizePathKey(canonical));
                 }
-                if (!job::stopped())
+                if (!job::stopped() && (!admission || admission->admitted()))
                     result = readDocument(*opener, job->source, password);
-                else
+                else {
                     result = std::make_shared<OpenResult>();
+                    if (!job::stopped())
+                        result->error = writingError;
+                }
                 result->canonical = canonical;
+                // Keep the resolved target admitted while the owner's queue waits.
+                result->admission = std::move(admission);
             } else {
                 result = std::make_shared<OpenResult>();
                 result->error = job::notRunError();
@@ -1095,6 +1104,9 @@ void TabPage::finishLoad(const std::shared_ptr<Job> &job)
                 return;
             canonical = job->result->canonical;
         }
+        // Reading has finished. Waiting for the owner's queue is not a drive wait.
+        stopSlowClock();
+        showPlaceholder(tr("Loading"), PlaceholderButton::None);
         emit freshLoadReady(canonical, loadGeneration_);
         return;
     }
@@ -1137,6 +1149,8 @@ bool TabPage::installLoad(const std::shared_ptr<Job> &job)
     job_.reset();
     if (freshOpen_ && result->document) {
         setPath(result->canonical, /*resolve=*/false);
+        if (result->admission)
+            openPath_ = std::move(result->admission);
         freshOpen_.reset();
     }
     const QPointer<TabPage> self(this);

@@ -265,8 +265,12 @@ before installation. An output reserved by a page tool keeps a reason and Retry
 until that writer finishes or releases its reservation. A denied private result
 closes in the background, and Duplicate follows its failure policy below.
 
-The result waits in the tab's job slot until its current window's tab-change queue
-can accept it. A load-generation check rejects old attempts, and a moved tab joins
+The worker admits a fresh load's resolved canonical path before reading the file
+and retains that admission until installation transfers it to the tab. Retry also
+checks the known path before starting another read. The result waits in the tab's
+job slot until its current window's tab-change queue can accept it. Reading has
+finished at that point, so the placeholder returns to Loading and the slow-drive
+clock stops. A load-generation check rejects old attempts, and a moved tab joins
 its new owner's queue. Before installation, the owner compares the resolved canonical
 key against other tabs. It removes an ordinary duplicate newcomer without recording
 history and focuses the existing tab only if the newcomer was still being shown.

@@ -37,6 +37,8 @@
 #include <QTest>
 #include <QTimer>
 
+#include <atomic>
+
 #ifdef Q_OS_UNIX
 #  include <sys/stat.h>
 #endif
@@ -133,7 +135,97 @@ private slots:
         QVERIFY(!tab->freshOpen());
     }
 
+    void lazyRetryWaitsForTheOutputReservation()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("output.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        RenderEngine engine;
+        TabPage tab(&engine);
+        tab.initializeSuspended(path);
+        job::State writing;
+        const job::Scope scope(writing);
+        QVERIFY(job::reserveDestinations({normalizePathKey(path)}));
+        std::atomic<int> reads{0};
+        job::testing::failWhen([&](job::Step step, const QString &file) {
+            if (step == job::Step::Reading && file == path)
+                ++reads;
+            return false;
+        });
+        const auto clearHook = qScopeGuard([] { job::testing::failWhen({}); });
+        tab.resumeAsync();
+        QVERIFY(!tab.isLoading());
+        QCOMPARE(tab.findChild<QLabel *>(QStringLiteral("documentLoadStatus"))->text(),
+                 TabPage::pathBeingWrittenError());
+        tab.retryLoad();
+        QTest::qWait(100);
+        QVERIFY(!tab.isLoading() && !tab.isLoaded());
+        QCOMPARE(reads.load(), 0);
+        QCOMPARE(tab.findChild<QLabel *>(QStringLiteral("documentLoadStatus"))->text(),
+                 TabPage::pathBeingWrittenError());
+        writing.stop();
+        tab.retryLoad();
+        QTRY_VERIFY(tab.isLoaded());
+        QVERIFY(reads.load() > 0);
+    }
+
+    void storedFreshLoadDoesNotReportAnUnresponsiveDrive()
+    {
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        showWindow(*window);
+        QDialog guard(window);
+        guard.setWindowModality(Qt::WindowModal);
+        guard.show();
+        TabPage::setSlowDelayForTesting(0);
+        holdRead(QStringLiteral(MERVIN_FIXTURE_PDF));
+        QVERIFY(window->openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        auto *page = current(*window);
+        auto *stop = page->findChild<QPushButton *>(QStringLiteral("stopDocumentLoad"));
+        QSignalSpy ready(page, &TabPage::freshLoadReady);
+        QTRY_COMPARE(job::testing::held(), 1);
+        QTRY_VERIFY(stop->isVisible());
+        job::testing::release();
+        QTRY_COMPARE(ready.size(), 1);
+        QVERIFY(TabPage::testing::storedDocument(*page));
+        QTest::qWait(750);
+        QVERIFY(page->isLoading() && !page->isLoaded());
+        QCOMPARE(page->findChild<QLabel *>(QStringLiteral("documentLoadStatus"))->text(),
+                 QStringLiteral("Loading"));
+        QVERIFY(stop->isHidden());
+        guard.close();
+        QTRY_VERIFY(page->isLoaded());
+    }
+
 #ifdef Q_OS_UNIX
+    void aliasAdmissionSurvivesQueuedAndInstalledResults()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("output.pdf"));
+        const QString alias = files.filePath(QStringLiteral("alias.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        QVERIFY(QFile::link(path, alias));
+        job::State writing;
+        const job::Scope scope(writing);
+        {
+            WindowManager manager;
+            MainWindow *window = manager.createWindow();
+            showWindow(*window);
+            QDialog guard(window);
+            guard.setWindowModality(Qt::WindowModal);
+            guard.show();
+            QVERIFY(window->openFile(alias));
+            auto *page = current(*window);
+            QTRY_VERIFY(TabPage::testing::storedDocument(*page));
+            QVERIFY(!job::reserveDestinations({normalizePathKey(path)}));
+            guard.close();
+            QTRY_VERIFY(page->isLoaded());
+            QCOMPARE(page->canonicalPath(), path);
+            QVERIFY(!job::reserveDestinations({normalizePathKey(path)}));
+        }
+        QVERIFY(job::reserveDestinations({normalizePathKey(path)}));
+    }
+
     void fifoOpenReturnsBeforeTheDriveAnswers()
     {
         QTemporaryDir files;
@@ -513,16 +605,24 @@ private slots:
         const job::Scope scope(writing);
         if (!canonicalOnly)
             QVERIFY(job::reserveDestinations({normalizePathKey(source)}));
+        else
+            holdRead(alias);
+        std::atomic<int> reads{0};
+        job::testing::failWhen([&](job::Step step, const QString &file) {
+            if (step == job::Step::Reading && file == alias)
+                ++reads;
+            return false;
+        });
+        const auto clearHook = qScopeGuard([] { job::testing::failWhen({}); });
         QVERIFY(window->openFile(canonicalOnly ? alias : source, closeOnFailure,
                                  -1, true, {}, false, std::nullopt, closeOnFailure));
         QPointer<TabPage> page = current(*window);
         QVERIFY(page);
         QSignalSpy installed(page, &TabPage::resumeFinished);
-        std::shared_ptr<DocumentLifetime> privateResult;
         if (canonicalOnly) {
-            QTRY_VERIFY(TabPage::testing::storedDocument(*page));
-            privateResult = TabPage::testing::storedDocument(*page);
+            QTRY_COMPARE(job::testing::held(), 1);
             QVERIFY(job::reserveDestinations({normalizePathKey(source)}));
+            job::testing::release();
         } else {
             QVERIFY(!page->isLoading());
             QVERIFY(!TabPage::testing::storedDocument(*page));
@@ -540,11 +640,8 @@ private slots:
         }
         for (const auto &attempt : installed)
             QVERIFY(!attempt.front().toBool());
-        if (privateResult)
-            QTRY_VERIFY([&] {
-                std::lock_guard lock(privateResult->mutex);
-                return !privateResult->document;
-            }());
+        if (canonicalOnly)
+            QCOMPARE(reads.load(), 1); // only the report before canonical resolution
         writing.stop();
         if (!closeOnFailure) {
             QTest::mouseClick(page->findChild<QPushButton *>(QStringLiteral("retryDocumentLoad")), Qt::LeftButton);
