@@ -186,6 +186,10 @@ private slots:
         job::testing::release();
         TabPage::setSlowDelayForTesting(TabPage::kSlowMs);
         QVERIFY(Document::waitForCloses(10000));
+        // Every other background task of this test too, such as a close without a
+        // follow-up or a render worker that has not ended yet, so the next test starts
+        // with none of them running. Tests that count background tasks depend on that.
+        QVERIFY(mervin::background::settle(10000));
         QVERIFY(mervin::appfiles::flush(10000)); // before the profile goes
         ConfigPaths::setOverrideDir({});
         profile_.reset();
@@ -425,6 +429,9 @@ private slots:
         });
         const auto stopCounting = qScopeGuard([] { job::testing::failWhen({}); });
         holdReadsOf(path);
+        // No other background work, such as the settings write in init(), may end
+        // while the count below is taken or compared.
+        QVERIFY(mervin::background::settle(10000));
         RenderEngine engine;
         auto tab = std::make_unique<TabPage>(&engine);
         tab->initializeSuspended(path);
@@ -433,6 +440,7 @@ private slots:
         QTRY_COMPARE(job::testing::held(), 1);
         tab.reset();
         job::testing::release();
+        QTRY_COMPARE_WITH_TIMEOUT(reads.load(), 1, 10000); // the read went on and stopped
         QTRY_COMPARE_WITH_TIMEOUT(mervin::background::running(), tasks, 10000); // it ended
         QCOMPARE(reads.load(), 1);
     }
