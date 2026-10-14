@@ -779,6 +779,7 @@ in [BUILDING.md](BUILDING.md).
 
 Required tests generate synthetic PDFs in the build directory. The optional photographic
 reference corpus remains local and is labeled `optional-corpus`; CI excludes it and
-fails on skips in every required target. Linux Release and sanitizer jobs and Windows
+fails on skips in every required target. A case that applies to one platform is
+compiled out on the others instead of skipped. Linux Release and sanitizer jobs and Windows
 Release jobs build and run the tests. `tst_perf_layout` compares indexed lookup against
 a full scan on 10,000 pages and reports median and 95th-percentile lookup time.

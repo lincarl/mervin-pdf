@@ -1,6 +1,7 @@
 #include "render/Document.h"
 #include "render/DocumentSearch.h"
 #include "render/RenderEngine.h"
+#include "Stalls.h"
 
 #include <QElapsedTimer>
 #include <QSignalSpy>
@@ -8,51 +9,13 @@
 
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <mutex>
 #include <thread>
 
 using namespace mervin;
+using mervin::testing::Stall;
 
 namespace {
-
-// Holds a document's lifetime lock on another thread, as a render or a search stuck
-// reading the document from a share that stopped answering does, until released or
-// for at most `ms` milliseconds.
-class Stall
-{
-public:
-    explicit Stall(std::mutex &held, int ms = 3000)
-        : thread_([this, &held, ms] {
-            std::lock_guard<std::mutex> holding(held);
-            std::unique_lock<std::mutex> lock(mutex_);
-            locked_ = true;
-            changed_.notify_all();
-            changed_.wait_for(lock, std::chrono::milliseconds(ms), [this] { return released_; });
-        })
-    {
-        std::unique_lock<std::mutex> lock(mutex_);
-        changed_.wait(lock, [this] { return locked_; });
-    }
-    ~Stall()
-    {
-        release();
-        thread_.join();
-    }
-    void release()
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        released_ = true;
-        changed_.notify_all();
-    }
-
-private:
-    std::mutex mutex_;
-    std::condition_variable changed_;
-    bool locked_ = false;
-    bool released_ = false;
-    std::thread thread_; // last: it uses the members above
-};
 
 bool closed(const std::shared_ptr<DocumentLifetime> &lifetime)
 {
