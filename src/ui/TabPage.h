@@ -325,12 +325,9 @@ private:
     bool loadStopped_ = false;
     std::optional<FreshOpen> freshOpen_;
     quint64 loadGeneration_ = 0;
-    // The tab's job slot, with the load in progress or one the user stopped, which may
-    // still read, for Retry to take back, or close what it read, or with the operation
-    // in progress. The tab takes the job's result (finishLoad, finishOperation), lets
-    // go of it without waiting (abandon) or, for the synchronous callers, waits for a
-    // load (stopLoading). A tab loads only without a document and runs an operation
-    // only with one.
+    // Owns the current load, operation or Save, including a stopped load retained for Retry.
+    // The tab adopts results only from its matching job. Abandon releases GUI ownership
+    // without waiting; synchronous file callers use stopLoading only for loads.
     std::shared_ptr<Job> job_;
     // A stopped Save can still read its recovery input or finish a rename. A retry
     // waits on this job on its worker before replacing that recovery copy.
