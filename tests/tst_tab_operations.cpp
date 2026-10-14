@@ -975,9 +975,68 @@ private slots:
         QTest::newRow("window") << true;
     }
 
-    // Closing does not wait for the operation yet. It stops it, then goes on as before:
-    // the unsaved-changes question comes, Save writes the edits in place, and the copy
-    // the tool was making never appears.
+    void cancelingCloseKeepsTheOperation_data()
+    {
+        QTest::addColumn<QString>("intent");
+        QTest::newRow("tab") << QStringLiteral("tab");
+        QTest::newRow("window") << QStringLiteral("window");
+        QTest::newRow("quit canceled in a later window") << QStringLiteral("quit");
+    }
+
+    // A canceled close must leave the requested tool running, including tools in
+    // earlier windows whose close questions already passed during a canceled quit.
+    void cancelingCloseKeepsTheOperation()
+    {
+        QFETCH(QString, intent);
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("plan.pdf"));
+        const QString out = files.filePath(QStringLiteral("plan-rotated.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        WindowManager manager;
+        MainWindow *host = manager.createWindow();
+        showForLayout(*host);
+        QVERIFY(host->openFile(path));
+        const QPointer<TabPage> tab(currentTab(*host));
+        QVERIFY(tab);
+        if (intent != QStringLiteral("quit"))
+            QVERIFY(tab->viewer()->annotModel()->addTextNote(
+                        0, {50, 50}, Qt::yellow, {}, QStringLiteral("Kept")) >= 0);
+        holdAt(job::Step::Reading, path);
+        rotate(*host, out);
+        QTRY_COMPARE(job::testing::held(), 1);
+        QSignalSpy finished(tab, &TabPage::operationFinished);
+
+        if (intent == QStringLiteral("quit")) {
+            const QString laterPath = files.filePath(QStringLiteral("later.pdf"));
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), laterPath));
+            MainWindow *later = manager.createWindow();
+            showForLayout(*later);
+            QVERIFY(later->openFile(laterPath));
+            QVERIFY(currentTab(*later)->viewer()->annotModel()->addTextNote(
+                        0, {50, 50}, Qt::yellow, {}, QStringLiteral("Kept")) >= 0);
+        }
+        answers_ << QMessageBox::Cancel;
+        if (intent == QStringLiteral("tab"))
+            QVERIFY(QMetaObject::invokeMethod(host, "closeTab", Q_ARG(int, 0)));
+        else if (intent == QStringLiteral("window"))
+            QVERIFY(!host->close());
+        else
+            QVERIFY(!manager.closeAllForQuit());
+        QVERIFY(answers_.isEmpty());
+        QVERIFY(tab && tab->isBusy());
+        QCOMPARE(finished.size(), 0);
+
+        answers_ << QMessageBox::No; // the tool's "Open it now?" question
+        job::testing::release();
+        QTRY_VERIFY_WITH_TIMEOUT(tab && tab->isUsable(), 10000);
+        QTRY_VERIFY(answers_.isEmpty());
+        QCOMPARE(finished.size(), 1);
+        QVERIFY(finished.first().first().toBool());
+        QVERIFY(QFileInfo::exists(out));
+    }
+
+    // Closing does not wait for the operation yet. A confirmed Save stops it and
+    // writes the edits in place. The copy the tool was making never appears.
     void closingABusyTabStopsItsOperation()
     {
         QFETCH(bool, window);

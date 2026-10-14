@@ -457,12 +457,9 @@ bool MainWindow::saveTab(TabPage *t)
 bool MainWindow::confirmClose(TabPage *tab)
 {
     const OperationScope operation(this);
-    if (tab->isBusy()) {
-        // Closing a tab, its window or the app does not wait for an operation yet. It
-        // stops it, so no further commit starts. A commit already started can finish.
-        // Its editors were committed when it started.
-        tab->stopWaiting();
-    } else {
+    // A busy tab's editors were committed when its operation started. Cancel keeps
+    // that operation running. Removing the tab stops it in the tab's destructor.
+    if (!tab->isBusy()) {
         auto *viewer = tab->viewer();
         viewer->commitActiveFormEditor();
         viewer->commitActiveAnnotEditor();
@@ -485,6 +482,12 @@ bool MainWindow::confirmClose(TabPage *tab)
     const int answer = box.exec();
     if (!page)
         return answer != QMessageBox::Cancel;
+    // In-place Save requires a usable tab. Stop only after the user chooses Save.
+    if (answer == QMessageBox::Save && page->isBusy()) {
+        page->stopWaiting();
+        if (!page)
+            return true;
+    }
     return answer == QMessageBox::Discard
         || (answer == QMessageBox::Save && saveTab(page));
 }

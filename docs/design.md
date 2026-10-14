@@ -627,8 +627,10 @@ and runs the tool again with it, and the tab keeps a password that worked. Every
 a finished operation raises, the password prompt, an error or "Open it now?", is
 window-modal in the window that holds the tab by then and waits in that window's tab
 change queue. A window in the tray shows an error as a tray message and asks nothing.
-Closing a busy tab, its window or the app stops the operation first and then goes on
-as before, with the unsaved-changes question.
+Closing a busy tab, its window or the app still asks about unsaved changes. Cancel
+keeps the operations running, including those in earlier windows during a quit.
+Choosing Save stops that tab's operation before saving in place. A confirmed close
+without saving stops the operation when it removes the tab.
 
 `MergePlan` and `ExtractPlan` are the GUI-free models behind the Merge PDFs and
 Extract Pages dialogs, tested in `tst_merge_plan` and `tst_extract_plan`; each dialog
