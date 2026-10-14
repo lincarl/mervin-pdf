@@ -696,7 +696,7 @@ void MainWindow::rotatePagesOp()
                   open = openFileKeys(wm_ ? wm_->openTabPaths() : tabPaths())](
                      const QString &password) {
         PageToolResult result;
-        // The viewer holds an open file, which a replace would fail on or corrupt.
+        // Copy tools must not replace a file open in a tab.
         const QString key = mervin::fileKey(QFileInfo(out));
         if (open.contains(key) || !mervin::job::reserveDestinations({key}))
             result.destinationOpen = true;
@@ -791,7 +791,7 @@ void MainWindow::splitDocument()
                   open = openFileKeys(wm_ ? wm_->openTabPaths() : tabPaths())](
                      const QString &password) {
         PageToolResult result;
-        // The viewer holds an open file, which a replace would fail on or corrupt.
+        // Copy tools must not replace a file open in a tab.
         const auto mayWrite = [&result, &open, &dir](const QStringList &outputs) {
             // Resolving an output's canonical path can wait on its drive too.
             if (!mervin::job::writing(dir)) {
