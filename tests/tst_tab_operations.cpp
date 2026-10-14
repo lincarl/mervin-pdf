@@ -305,6 +305,52 @@ private slots:
         }
     }
 
+    // Selects copy and export failures at destination, temporary-root and snapshot writes.
+    void failedCopyWritingStepReportsItsReason_data()
+    {
+        QTest::addColumn<bool>("flatten");
+        QTest::addColumn<int>("writingStep");
+        QTest::newRow("copy destination") << false << 1;
+        QTest::newRow("copy temporary root") << false << 2;
+        QTest::newRow("copy snapshot") << false << 3;
+        QTest::newRow("export destination") << true << 1;
+        QTest::newRow("export temporary root") << true << 2;
+        QTest::newRow("export snapshot") << true << 3;
+    }
+
+    // Checks actual command failure restores editing and reports a nonempty reason.
+    void failedCopyWritingStepReportsItsReason()
+    {
+        QFETCH(bool, flatten);
+        QFETCH(int, writingStep);
+        QTemporaryDir files;
+        const QString output = files.filePath(QStringLiteral("copy.pdf"));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
+        TabPage *tab = currentTab(window);
+        QVERIFY(tab);
+        prepareCopy(*tab);
+        std::atomic<int> writingSteps{0};
+        job::testing::failWhen([&writingSteps, writingStep](job::Step step, const QString &) {
+            return step == job::Step::Writing && ++writingSteps == writingStep;
+        });
+        const auto reset = qScopeGuard([] { job::testing::failWhen({}); });
+        QSignalSpy finished(tab, &TabPage::operationFinished);
+        answers_ << QMessageBox::Ok;
+        copy(window, output, flatten);
+        QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 10000);
+        QTRY_VERIFY(answers_.isEmpty());
+        QCOMPARE(writingSteps.load(), writingStep);
+        QCOMPARE(told_.size(), 1);
+        QVERIFY2(told_.front().endsWith(QStringLiteral("\nThis step was not run.")),
+                 qPrintable(told_.front()));
+        QVERIFY(tab->isUsable());
+        QVERIFY(tab->hasUnsavedEdits());
+        QVERIFY(!QFile::exists(output));
+    }
+
     // Selects copy modes for the actual document access stall.
     void copyAndExportDoNotWaitForDocumentAccess_data() { copyModes(); }
 

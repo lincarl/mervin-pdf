@@ -329,6 +329,7 @@ struct MainWindow::CopyResult
     QString error;
 };
 
+// Copies the tab's edits on a worker, optionally flattening its measurements.
 void MainWindow::startCopy(TabPage *tab, const QString &destination, bool flatten)
 {
     if (!tab || !tab->isUsable())
@@ -348,8 +349,10 @@ void MainWindow::startCopy(TabPage *tab, const QString &destination, bool flatte
     operation.work = [lifetime, measurements, password, sourceKey, open, destination,
                       flatten, result] {
         const QString folder = QFileInfo(destination).absolutePath();
-        if (!mervin::job::writing(folder))
+        if (!mervin::job::writing(folder)) {
+            result->error = mervin::job::notRunError();
             return;
+        }
         const QString outputKey = mervin::fileKey(QFileInfo(destination));
         if (!flatten && outputKey == sourceKey) {
             result->conflict = CopyResult::Conflict::Original;
@@ -359,8 +362,10 @@ void MainWindow::startCopy(TabPage *tab, const QString &destination, bool flatte
             result->conflict = CopyResult::Conflict::OpenTab;
             return;
         }
-        if (!mervin::job::writing(QDir::tempPath()))
+        if (!mervin::job::writing(QDir::tempPath())) {
+            result->error = mervin::job::notRunError();
             return;
+        }
         QTemporaryDir stage;
         if (!stage.isValid()) {
             result->error = QCoreApplication::translate(
@@ -377,12 +382,17 @@ void MainWindow::startCopy(TabPage *tab, const QString &destination, bool flatte
             const auto release = qScopeGuard([] { mervin::job::endHolding(); });
             const Document::Hold hold(lifetime, mervin::job::stopped);
             Document *document = hold.document();
-            if (!document)
+            if (!document) {
+                result->error = mervin::job::notRunError();
                 return;
+            }
             if (flatten)
                 marks = renderMeasurements(*document, measurements);
-            if (!mervin::job::writing(stage.path())
-                || !document->savePdfTo(live, &result->error))
+            if (!mervin::job::writing(stage.path())) {
+                result->error = mervin::job::notRunError();
+                return;
+            }
+            if (!document->savePdfTo(live, &result->error))
                 return;
             mervin::job::progressed();
         }
