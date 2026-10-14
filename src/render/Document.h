@@ -4,6 +4,7 @@
 #include "render/MeasureTypes.h"
 
 #include <QPointF>
+#include <QImage>
 #include <QRectF>
 #include <QSizeF>
 #include <QString>
@@ -247,6 +248,10 @@ public:
     // Caller atomically replaces the destination. Returns false with *error for non-PDFs or
     // write failures.
     bool savePdfTo(const QString &tmpPath, QString *error = nullptr) const;
+
+    // Rasterizes one page on this document's own context under its access lock.
+    // A worker borrowing a live document keeps a Hold for this call.
+    QImage renderPage(int page, double scale, int rotation) const;
 
     // Serializes all access to handle() across threads (see class note).
     std::mutex &accessMutex() const { return access_; }

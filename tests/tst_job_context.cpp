@@ -356,6 +356,7 @@ private slots:
     }
 
     void stopAnswersWhatTheJobIsDoing();
+    void printerCommitKeepsItsStep();
     void scopesNest();
     void switchToReportsOnlyAChange();
     void stoppedAtTheCommitStepLeavesTheDestination_data() { writers(); }
@@ -394,6 +395,19 @@ private:
         QTest::newRow("replace") << Writer::Replace;
     }
 };
+
+void TstJobContext::printerCommitKeepsItsStep()
+{
+    job::State state;
+    const job::Scope scope(state);
+    const QString printer = QStringLiteral("Office Laser");
+    QVERIFY(job::beginPrintingCommit(printer));
+    QCOMPARE(state.snapshot().step, job::Step::Printing);
+    QCOMPARE(state.snapshot().path, printer);
+    QCOMPARE(state.stop(), job::State::Stop::Committing);
+    job::endCommit();
+    QVERIFY(!job::beginPrintingCommit(printer));
+}
 
 // Checks Stop outcomes and rejects document reservations after cancellation.
 void TstJobContext::stopAnswersWhatTheJobIsDoing()

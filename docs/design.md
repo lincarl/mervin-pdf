@@ -828,8 +828,22 @@ failure through its existing tray notice and receives no success question. The
 Export explanation and completion prompts use guarded heap ownership because a
 Quit in another window can destroy their owner during the nested dialog loop.
 
-Printing a document with measurements uses a complete flattened snapshot
-and reports preparation or rendering failures. Closing tabs or windows commits active
+Print captures the committed document state before showing its existing dialog.
+Measured documents first prepare a complete flattened copy on a worker under a
+document hold. Its preview and output use that same owned copy. Cancel closes the
+copy in the background before removing its temporary folder.
+
+After the dialog, the worker owns the QPrinter, begins and ends its QPainter, and
+renders each page with Document::renderPage on the document's own context. A short
+document hold covers rendering and page geometry, then releases before painting or
+calling the printer system. A blocked printer call names its printer in the wait bar.
+Stop aborts further pages and suppresses completion. A print completion already
+submitted may finish. The worker checks painter.end and reports a completion failure.
+
+Print to file reserves and checks the destination against source and open tabs before
+output begins. QPrinter writes a private local PDF, then closes before the worker
+replaces the destination through DocumentOutput. Stop before that guarded replacement
+keeps the destination's previous bytes. Closing tabs or windows commits active
 editors and offers Save, Discard, or Cancel for unsaved changes.
 
 Page deletion, extraction, merge, split, and rotation preserve editable measurement

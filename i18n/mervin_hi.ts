@@ -78,6 +78,11 @@ Open it now?</source>
         <translation>पीडीएफ दस्तावेज़(*.pdf)</translation>
     </message>
     <message>
+        <source>Could not finish the print job.</source>
+        <extracomment>The printer system rejected completion of the print job. It may have accepted earlier pages.</extracomment>
+        <translation>प्रिंट कार्य पूरा नहीं किया जा सका।</translation>
+    </message>
+    <message>
         <source>Choose a different file name - use Save edits to write back to the original.</source>
         <extracomment>&quot;Save edits&quot; is a command in the Save menu. Use its translation here.</extracomment>
         <translation>एक अलग फ़ाइल नाम चुनें - मूल पर वापस लिखने के लिए संपादन सहेजें का उपयोग करें।</translation>
@@ -3421,6 +3426,11 @@ Open it now?</source>
         <source>Stopped waiting. The document stays locked until the drive answers.</source>
         <extracomment>A stopped job still holds the shown document while a file call finishes. Locked means unavailable for viewing or editing, not password protection or file permissions. The tab becomes usable when the job releases it.</extracomment>
         <translation>प्रतीक्षा बंद कर दी गई है। ड्राइव से जवाब आने तक दस्तावेज़ का इस्तेमाल नहीं किया जा सकता।</translation>
+    </message>
+    <message>
+        <source>Printing to %1. The printer is not answering.</source>
+        <extracomment>A print job has waited for the printer system without progress. %1 is the printer name, such as Office Laser. Stop waiting leaves the blocked printer call on a worker and prevents further pages from being submitted.</extracomment>
+        <translation>%1 पर प्रिंट हो रहा है। प्रिंटर जवाब नहीं दे रहा है।</translation>
     </message>
 </context>
 <context>

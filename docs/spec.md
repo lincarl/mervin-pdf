@@ -229,6 +229,12 @@ Saving supports these workflows:
 - Print supports page ranges, scaling, orientation, paper selection, duplex options,
   forms, annotations, and measurements.
 
+Print prepares measured previews and prints pages in background tab jobs. The
+printer wait bar names the printer, while file output writes a private PDF before
+replacing the chosen destination. Printing to the source or another open tab is
+refused. Stop before the file replacement keeps its previous bytes. Printer errors
+include a failure to finish submitting the job.
+
 Save as copy and Export run in the tab's background job. Their wait bar offers Stop
 waiting after two seconds without progress, and other tabs and windows stay usable.
 Stopping during a blocked snapshot keeps the document covered until the drive
