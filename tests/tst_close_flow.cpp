@@ -40,6 +40,7 @@ using namespace mervin;
 
 namespace {
 
+// Finds the selected document tab in a test window.
 TabPage *currentTab(MainWindow *window)
 {
     auto *tabs = window->findChild<QTabWidget *>();
@@ -47,6 +48,7 @@ TabPage *currentTab(MainWindow *window)
 }
 
 
+// Starts a stoppable file operation held at its first read.
 void holdOperation(TabPage *tab, const QString &path)
 {
     job::testing::holdWhen([path](job::Step step, const QString &where) {
@@ -55,11 +57,13 @@ void holdOperation(TabPage *tab, const QString &path)
     tab->startOperation({QFileInfo(path).absolutePath(), [path] { job::reading(path); }, {}});
 }
 
+// Sends the close-tab command through MainWindow's slot.
 void closeTab(MainWindow *window, int index = 0)
 {
     QVERIFY(QMetaObject::invokeMethod(window, "closeTab", Q_ARG(int, index)));
 }
 
+// Reports whether the tab explicitly shows its operation wait bar.
 bool barShown(TabPage *tab)
 {
     auto *bar = tab ? tab->findChild<QWidget *>(QStringLiteral("waitBar")) : nullptr;
@@ -68,11 +72,13 @@ bool barShown(TabPage *tab)
 
 } // namespace
 
+// Checks asynchronous close decisions, ownership changes and updater admission.
 class TstCloseFlow : public QObject
 {
     Q_OBJECT
 
 private slots:
+    // Creates an isolated profile and starts automatic answers for expected close questions.
     void init()
     {
         profile_ = std::make_unique<QTemporaryDir>();
@@ -110,6 +116,7 @@ private slots:
         dialogs_.start(5);
     }
 
+    // Releases held work and checks cleanup and dialog answers before removing the profile.
     void cleanup()
     {
         job::testing::release();
@@ -154,6 +161,7 @@ private slots:
         QCOMPARE(window->tabCount(), 0);
     }
 
+    // Checks that Stop resumes the close question while the abandoned worker remains held.
     void stopOperationContinuesDirtyQuestion()
     {
         QTemporaryDir files;
@@ -175,6 +183,7 @@ private slots:
         QCOMPARE(job::testing::held(), 1);
     }
 
+    // Supplies window-close and Quit variants for retaining an abandoned fresh tab.
     void canceledCloseKeepsAbandonedFreshTab_data()
     {
         QTest::addColumn<bool>("quit");
@@ -182,6 +191,7 @@ private slots:
         QTest::newRow("Quit keeps fresh tab") << true;
     }
 
+    // Checks that Cancel keeps both an edited tab and an abandoned opening placeholder.
     void canceledCloseKeepsAbandonedFreshTab()
     {
         QFETCH(bool, quit);
@@ -220,6 +230,7 @@ private slots:
         QCOMPARE(questions_.size(), 1);
     }
 
+    // Supplies completion and Stop variants for Save waiting on a recovery load.
     void recoverySaveWait_data()
     {
         QTest::addColumn<bool>("stop");
@@ -227,6 +238,7 @@ private slots:
         QTest::newRow("Stop cancels close") << true;
     }
 
+    // Checks that close waits asynchronously for recovery loading and Stop preserves its edits.
     void recoverySaveWait()
     {
         QFETCH(bool, stop);
@@ -277,6 +289,7 @@ private slots:
         }
     }
 
+    // Checks guarded ownership when abandoning a recovery load destroys its standalone window.
     void abandoningRecoveryLoadCanDestroyStandaloneOwner()
     {
         QTemporaryDir files;
@@ -302,6 +315,7 @@ private slots:
         QTRY_VERIFY(!window && !tab);
     }
 
+    // Supplies tab destruction and Quit observers for the recovery retry signal.
     void recoverySaveRetryObserver_data()
     {
         QTest::addColumn<bool>("deleteTab");
@@ -309,6 +323,7 @@ private slots:
         QTest::newRow("Quit preserves chosen Save") << false;
     }
 
+    // Checks that recovery retry tolerates destruction or a broader Quit during state delivery.
     void recoverySaveRetryObserver()
     {
         QFETCH(bool, deleteTab);
@@ -420,6 +435,7 @@ private slots:
     }
 #endif
 
+    // Checks that a later Cancel preserves all windows and earlier unsaved edits.
     void canceledQuitPreservesEarlierDecisions()
     {
         QTemporaryDir files;
@@ -452,6 +468,7 @@ private slots:
         QVERIFY(!relaunch::requested());
     }
 
+    // Supplies tab, window and process scopes for resuming after canceled close.
     void canceledCloseResumesSelectedSuspendedTabs_data()
     {
         QTest::addColumn<QString>("scope");
@@ -461,6 +478,7 @@ private slots:
         QTest::newRow("quit across two windows") << QStringLiteral("multiwindow");
     }
 
+    // Checks that Cancel resumes selected recovery documents even when their originals are gone.
     void canceledCloseResumesSelectedSuspendedTabs()
     {
         QFETCH(QString, scope);
@@ -515,6 +533,7 @@ private slots:
         QVERIFY(!relaunch::requested());
     }
 
+    // Supplies committed and still-open editor variants for edits made after Don't save.
     void editedAfterDontSaveIsAskedAgain_data()
     {
         QTest::addColumn<bool>("inlineEditor");
@@ -522,6 +541,7 @@ private slots:
         QTest::newRow("uncommitted inline editor") << true;
     }
 
+    // Checks that later edits invalidate an earlier Don't save decision before Quit.
     void editedAfterDontSaveIsAskedAgain()
     {
         QFETCH(bool, inlineEditor);
@@ -566,6 +586,7 @@ private slots:
         QCOMPARE(window->tabCount(), 2);
     }
 
+    // Supplies close scopes that either include or preserve newly arrived tabs.
     void arrivingTabsFollowIntent_data()
     {
         QTest::addColumn<bool>("windowClose");
@@ -573,6 +594,7 @@ private slots:
         QTest::newRow("Window close includes arrival") << true;
     }
 
+    // Checks whether a newly opened tab joins the pending close according to its scope.
     void arrivingTabsFollowIntent()
     {
         QFETCH(bool, windowClose);
@@ -609,6 +631,7 @@ private slots:
         }
     }
 
+    // Supplies close scopes for moving a waiting tab to another window.
     void movedTabFollowsIntent_data()
     {
         QTest::addColumn<bool>("allTabs");
@@ -616,6 +639,7 @@ private slots:
         QTest::newRow("Close all skips moved-out tab") << true;
     }
 
+    // Checks whether a waiting tab remains covered after its owner changes.
     void movedTabFollowsIntent()
     {
         QFETCH(bool, allTabs);
@@ -645,6 +669,7 @@ private slots:
         }
     }
 
+    // Supplies tab and window destruction during attention transfer to a moved tab.
     void movedOwnerAttentionCanDestroyWaitingObjects_data()
     {
         QTest::addColumn<bool>("deleteTab");
@@ -652,6 +677,7 @@ private slots:
         QTest::newRow("currentChanged deletes standalone flow owner") << false;
     }
 
+    // Checks that selecting a moved waiting tab tolerates destruction from its signals.
     void movedOwnerAttentionCanDestroyWaitingObjects()
     {
         QFETCH(bool, deleteTab);
@@ -701,6 +727,7 @@ private slots:
         QCOMPARE(job::testing::held(), 1);
     }
 
+    // Checks that broader requests replace narrow flows and repeated closes share one decision.
     void broaderCloseSupersedesAndRepeatedCloseCoalesces()
     {
         QTemporaryDir files;
@@ -726,6 +753,7 @@ private slots:
         QCOMPARE(window->tabCount(), 1);
     }
 
+    // Checks that a question's Cancel transfers to the Quit that supersedes its original flow.
     void quitSupersedesOpenQuestionAndKeepsCancel()
     {
         QTemporaryDir files;
@@ -751,6 +779,7 @@ private slots:
         QCOMPARE(questions_.size(), 1);
     }
 
+    // Checks that a tab moved out of a closing window no longer holds that window open.
     void movedOutTabDoesNotDelayWindowClose()
     {
         QTemporaryDir files;
@@ -772,6 +801,7 @@ private slots:
         QVERIFY(!tab->isClosing());
     }
 
+    // Checks that discarding a former owner's queue still closes a moved tab in its new window.
     void queuedCloseSurvivesOldOwnerDestruction()
     {
         QTemporaryDir files;
@@ -798,6 +828,7 @@ private slots:
         QCOMPARE(target->tabCount(), 0);
     }
 
+    // Checks that Quit includes a window created before its final approval.
     void quitIncludesNewWindowBeforeApproval()
     {
         QTemporaryDir files;
@@ -823,6 +854,7 @@ private slots:
         QCOMPARE(questions_, QStringList{QStringLiteral("Save changes to arrived.pdf?")});
     }
 
+    // Checks that window close also resolves a tab inserted while its question runs.
     void tabArrivingDuringQuestionIsIncluded()
     {
         QTemporaryDir files;
@@ -853,6 +885,7 @@ private slots:
                                          QStringLiteral("Save changes to arrived.pdf?")}));
     }
 
+    // Checks that updater refusal returns promptly and never closes windows after work finishes.
     void updaterDeclinesHeldOperationWithoutLaterClose()
     {
         QTemporaryDir files;
@@ -875,6 +908,7 @@ private slots:
         QVERIFY(questions_.isEmpty());
     }
 
+    // Supplies loaded and recovery-backed documents for updater-requested Save.
     void updaterQueuesSaveAndKeepsWindows_data()
     {
         QTest::addColumn<bool>("recovery");
@@ -882,6 +916,7 @@ private slots:
         QTest::newRow("recovery Save resumes after callback") << true;
     }
 
+    // Checks that updater-requested Save runs later while its refusal keeps the windows open.
     void updaterQueuesSaveAndKeepsWindows()
     {
         QFETCH(bool, recovery);
@@ -925,6 +960,7 @@ private slots:
                  QStringLiteral("Chosen Save"));
     }
 
+    // Checks that updater refusal still completes a Save chosen before another tab's Cancel.
     void updaterKeepsSaveChosenBeforeLaterCancel()
     {
         QTemporaryDir files;
@@ -946,6 +982,7 @@ private slots:
         QCOMPARE(window->tabCount(), 2);
     }
 
+    // Checks that a restart raised inside an updater question prevents update shutdown.
     void updaterDeclinesRestartStartedInQuestion()
     {
         QTemporaryDir files;
@@ -972,6 +1009,7 @@ private slots:
     }
 
 private:
+    // Creates a writable fixture PDF for a test's document path.
     QString copy(const QTemporaryDir &files, const char *name)
     {
         const QString path = files.filePath(QString::fromLatin1(name));
@@ -980,6 +1018,7 @@ private:
         return path;
     }
 
+    // Adds an annotation so the tab has a concrete unsaved edit.
     int addNote(TabPage *tab, const char *text)
     {
         return tab->viewer()->annotModel()->addTextNote(

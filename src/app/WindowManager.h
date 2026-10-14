@@ -97,8 +97,8 @@ public:
     void newWindow(); // Ctrl+N: an empty window
     void quitAll();   // close every window (process then exits)
 
-    // Explicit Quit/update shutdown bypasses closing to the tray. Prompt before destroying
-    // any window, so cancelling preserves every open tab.
+    // Requests Quit approval for every window, bypassing close to tray.
+    // Running tab work finishes first, and Cancel preserves all open tabs.
     void closeAllForQuit();
     // Quit as above, then start Mervin again (see Relaunch.h); used after a change that
     // only takes effect at startup. Cancel keeps the windows open, and the change

@@ -122,6 +122,7 @@ private:
 
 } // namespace
 
+// Checks window commands, tab ownership, session persistence and retained document edits.
 class TstDocumentWorkflow : public QObject
 {
     Q_OBJECT
@@ -681,6 +682,7 @@ private slots:
         QTest::qWait(50);
     }
 
+    // Checks that Cancel retains an edited tab and Don't save closes it through the queued flow.
     void closingDirtyTabCanBeCanceled()
     {
         RenderEngine engine;
@@ -931,6 +933,7 @@ private slots:
         QCOMPARE(tabFiles(*moved), QStringList{QStringLiteral("dragged.pdf")});
     }
 
+    // Checks that canceled Quit resumes recovery edits across windows and preserves chosen saves.
     void canceledQuitPreservesRecoveredEditsAcrossWindows()
     {
         QTemporaryDir files;

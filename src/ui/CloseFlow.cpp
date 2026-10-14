@@ -18,11 +18,13 @@
 namespace mervin {
 namespace {
 
+// Finds a tab's current MainWindow after any move.
 MainWindow *owner(TabPage *tab)
 {
     return tab ? qobject_cast<MainWindow *>(tab->window()) : nullptr;
 }
 
+// Identifies requests that cover every window in the process.
 bool global(CloseFlow::Intent intent)
 {
     return intent == CloseFlow::Intent::Quit || intent == CloseFlow::Intent::Restart;

@@ -40,6 +40,7 @@ public:
     // name when it is empty. Settings shows the fallback as its placeholder.
     static QString resolvedAnnotAuthor(const QString &configured);
 
+    // Builds the document viewer and tab controls using an engine that outlives the page.
     explicit TabPage(RenderEngine *engine, QWidget *parent = nullptr);
     // Never waits for the document: a load or render stuck on a drive that stopped
     // answering would hang the window. The document closes on a background thread.
@@ -122,10 +123,14 @@ public:
     // Close abandons a housekeeping load without blocking or treating that
     // internal abandonment as the user pressing Stop waiting.
     void abandonLoadForClose();
+    // Shows the current load or operation wait immediately for a pending close.
     // Close may offer Stop again while a chosen Save waits for a held document.
     void showWaitImmediately(bool offerStoppedStop = false);
+    // Clears the close-specific wait state and defers any completion signals to the next turn.
     void clearCloseWait();
+    // Returns the edit generation used to invalidate earlier close decisions.
     quint64 editGeneration() const { return editGeneration_; }
+    // Reports whether a CloseFlow currently claims this tab.
     bool isClosing() const { return !closeOwner_.isNull(); }
 
     // How long a load or an operation waits without progress before the tab names

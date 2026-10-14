@@ -79,6 +79,7 @@ bool write(const QString &path, const QByteArray &data)
 }
 } // namespace
 
+// Checks placeholder opens, queued load results and their ownership across windows.
 class TstBackgroundOpen : public QObject
 {
     Q_OBJECT
@@ -779,6 +780,7 @@ private slots:
             QCOMPARE(reasons.last(), QStringLiteral("The password was not accepted."));
     }
 
+    // Supplies password acceptance, cancellation and direct owner destruction during Quit.
     void quittingWithAnActivePasswordPrompt_data()
     {
         QTest::addColumn<int>("disposition");
@@ -787,6 +789,7 @@ private slots:
         QTest::newRow("direct owner destruction") << 2;
     }
 
+    // Checks that Quit waits for a password prompt and direct destruction safely releases it.
     void quittingWithAnActivePasswordPrompt()
     {
         QFETCH(int, disposition);
@@ -923,6 +926,7 @@ private slots:
         QTest::newRow("unmoved stopped fresh open") << 3 << true;
     }
 
+    // Checks that a moved fresh tab retains queued load actions after its former owner is destroyed.
     void lastTabMoveKeepsQueuedLoadActions()
     {
         QFETCH(int, action);

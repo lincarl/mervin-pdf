@@ -24,12 +24,14 @@
 
 using namespace mervin;
 
-// Relaunch's process-wide request has no reset. Keep this in its own executable.
+// Checks restart approval. Relaunch's process-wide request has no reset, so
+// this suite runs in its own executable.
 class TstCloseRestart : public QObject
 {
     Q_OBJECT
 
 private slots:
+    // Checks that canceled close never requests relaunch and approved restart waits for work.
     void restartRequestsRelaunchOnlyAfterApproval()
     {
         QTemporaryDir profile;

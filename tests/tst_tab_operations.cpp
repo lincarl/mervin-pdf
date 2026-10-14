@@ -139,6 +139,7 @@ bool jobsEnded(int tasks)
 
 } // namespace
 
+// Checks page-tool jobs, wait controls, destination safety and completion ownership.
 class TstTabOperations : public QObject
 {
     Q_OBJECT
@@ -871,6 +872,7 @@ private slots:
         QCOMPARE(file.readAll(), before);
     }
 
+    // Supplies tool prompt types and queued Quit or direct owner destruction.
     void quittingWhileAToolPromptIsOpen_data()
     {
         QTest::addColumn<QString>("prompt");
@@ -1071,6 +1073,7 @@ private slots:
         QCOMPARE(toldIn_.first().data(), static_cast<QWidget *>(second));
     }
 
+    // Supplies result kinds and tab movement for discarded owner queues.
     void movedToolResultSurvivesItsQueuedOwner_data()
     {
         QTest::addColumn<QString>("result");
@@ -1083,6 +1086,7 @@ private slots:
         QTest::newRow("unmoved password") << QStringLiteral("password") << true;
     }
 
+    // Checks result delivery in a moved tab's surviving window and silence after tab destruction.
     void movedToolResultSurvivesItsQueuedOwner()
     {
         QFETCH(QString, result);
@@ -1276,6 +1280,7 @@ private slots:
         window.restoreFromTray();
     }
 
+    // Supplies window and tab close variants for Save after stopping the operation wait.
     void stoppingCloseWaitContinuesWithSave_data()
     {
         QTest::addColumn<bool>("window"); // close the window, or else the tab

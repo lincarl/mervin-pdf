@@ -166,6 +166,7 @@ QString withoutBreakMarks(QString text)
 
 } // namespace
 
+// Checks unloaded document state, recovery persistence and asynchronous close lifetimes.
 class TstDocumentSuspension : public QObject
 {
     Q_OBJECT
@@ -1116,6 +1117,7 @@ private slots:
         QVERIFY(tab.isLoaded());
     }
 
+    // Checks that an unloaded tab keeps its close shortcut until the queued close removes it.
     void unloadedTabKeepsItsCloseShortcutEnabled()
     {
         RenderEngine engine;
