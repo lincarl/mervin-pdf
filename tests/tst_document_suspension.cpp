@@ -97,7 +97,7 @@ void showForLayout(QWidget &widget)
 
 bool closed(const std::shared_ptr<DocumentLifetime> &lifetime)
 {
-    std::lock_guard<std::mutex> lock(lifetime->mutex);
+    std::lock_guard lock(lifetime->mutex);
     return !lifetime->document;
 }
 

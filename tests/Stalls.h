@@ -21,6 +21,8 @@ namespace mervin::testing {
 // Holds `held` on another thread, as a render or a search stuck reading a document
 // from a share that stopped answering holds the document's lock, until released or
 // for at most `ms` milliseconds. The constructor returns once the lock is taken.
+// `Mutex` is any type with lock() and unlock(), such as the document's lifetime gate
+// (a std::timed_mutex) or its access lock (a std::mutex).
 template <class Mutex>
 class Stall
 {

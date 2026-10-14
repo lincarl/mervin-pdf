@@ -10,6 +10,8 @@
 #include <QStringList>
 
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <functional>
 #include <mutex>
 #include <memory>
@@ -62,20 +64,86 @@ struct PdfItemProperties
 class Document;
 
 // A job locks this gate before touching a document. Destruction clears the
-// pointer under the same lock; the gate can outlive the document.
+// pointer under the same lock; the gate can outlive the document. Lock the gate
+// before the document's access lock, never after it.
 struct DocumentLifetime
 {
-    std::mutex mutex;
+    // How long a wait for the gate lasts before the waiter checks whether it still
+    // wants the document (Document::Hold, the render workers).
+    static constexpr std::chrono::milliseconds kStep{20};
+
+    std::timed_mutex mutex;
     Document *document = nullptr;
+    // Document::Hold objects that hold the gate or wait for it. While there is one,
+    // the document's queries refuse on the screen thread (see Document::ScreenQuery).
+    std::atomic<int> holds{0};
+    // Document::ScreenQuery objects alive on the screen thread. A Hold waits for
+    // them before it takes the gate.
+    std::atomic<int> screenQueries{0};
 };
 
 // Owns a MuPDF document, cached page sizes and title; created by RenderEngine. All handle
 // access, including page loading and text extraction on cloned contexts, requires
 // accessMutex(). MuPDF context locks protect shared caches, not document state. Playback of an
 // independent display list may run outside the document lock.
+//
+// On the screen thread, the queries below return their empty value while a job holds
+// the document (see Hold and ScreenQuery), instead of waiting for the job.
 class Document
 {
 public:
+    // Lets a job thread use a document that a tab shows, for as long as it lives. It
+    // locks only the lifetime gate. The job calls Document's methods as usual, and
+    // each takes the access lock itself. Not for the screen thread, which never waits
+    // for a job, and never taken while holding accessMutex().
+    class Hold
+    {
+    public:
+        // Waits for the gate in DocumentLifetime::kStep steps. Gives up, leaving
+        // document() null, once `stop` returns true or the document has closed.
+        explicit Hold(std::shared_ptr<DocumentLifetime> lifetime,
+                      const std::function<bool()> &stop = {});
+        ~Hold();
+        Hold(const Hold &) = delete;
+        Hold &operator=(const Hold &) = delete;
+
+        // The held document, or null when the hold gave up.
+        Document *document() const { return document_; }
+
+    private:
+        std::shared_ptr<DocumentLifetime> lifetime_;
+        std::unique_lock<std::timed_mutex> gate_;
+        Document *document_ = nullptr;
+    };
+
+    // Brackets one query of a document on the screen thread, so that it never waits
+    // for a job's Hold. If a Hold holds the document or waits for it, refused() is
+    // true, and the caller returns its empty value without locking anything. The
+    // refusal is logged with `method` and counted. Otherwise a Hold that comes later
+    // waits until this object is gone. Does nothing on other threads, so render
+    // workers, the find search, OCR and jobs wait for the document as before.
+    class ScreenQuery
+    {
+    public:
+        ScreenQuery(DocumentLifetime &lifetime, const char *method);
+        ~ScreenQuery();
+        ScreenQuery(const ScreenQuery &) = delete;
+        ScreenQuery &operator=(const ScreenQuery &) = delete;
+
+        bool refused() const { return refused_; }
+
+    private:
+        DocumentLifetime *counted_ = nullptr; // set while counted in screenQueries
+        bool refused_ = false;
+    };
+
+    // For tests only.
+    struct testing
+    {
+        // ScreenQuery refusals so far in the process.
+        static int refusals();
+    };
+
     // Own the document and, when requested, the independently cloned context.
     // `base` is the context `ctx` was cloned from, kept until `ctx` is dropped (see
     // RenderEngine::baseContext()).

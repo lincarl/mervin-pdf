@@ -367,6 +367,25 @@ therefore provides an access mutex used while loading pages, parsing content,
 extracting text, reading geometry, or changing PDF objects. Workers build display
 lists while holding that mutex, then rasterize the independent lists in parallel.
 
+Work on other threads locks the document's lifetime gate (`DocumentLifetime`) before
+the access mutex, never after it. A background job that uses a document a tab shows
+takes `Document::Hold`, which locks only the gate, and then calls `Document`'s
+methods, which each take the access mutex. The hold waits for the gate in 20 ms
+steps and gives up when its job stops or the document has closed. Render workers
+wait for the gate in the same steps and drop a request canceled meanwhile, so a
+held document does not keep the two to four workers from other tabs once its tab
+has canceled its requests. The find search and OCR keep plain waits, as each runs
+on a queue of its own.
+
+Queries on the screen thread never wait for a job. While a hold holds a document or
+waits for it, the document's queries, `TextIndex` page reads and
+`RenderEngine::renderPageImage` return their empty value on the screen thread, log a
+warning naming the call and count a refusal (`Document::testing::refusals()`). Other
+threads are answered as before. A refused text page is read again on a later call. A
+screen-thread query counts itself before it checks for a hold, and a hold counts
+itself before it checks for queries, so a query that found no hold ends before the
+hold takes the gate. Nothing changes while no job holds a document.
+
 Each render request carries the requesting viewer's identifier, view epoch, and
 token. A viewer discards results that belong to an older zoom, rotation, or view.
 This avoids cross-window cancellation while preventing stale images from replacing

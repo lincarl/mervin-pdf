@@ -62,9 +62,16 @@ const TextIndex::PageText &TextIndex::ensure(int pageNo)
     PageText &pt = pages_[pageNo];
     if (pt.ready)
         return pt;
-    pt.ready = true;
-    if (!ctx_ || !lifetime_)
+    if (!ctx_ || !lifetime_) {
+        pt.ready = true;
         return pt;
+    }
+    // Before the page is marked ready, so a page refused while a job holds the
+    // document is read once the job lets go.
+    const Document::ScreenQuery query(*lifetime_, "TextIndex::ensure");
+    if (query.refused())
+        return empty;
+    pt.ready = true;
     std::lock_guard gate(lifetime_->mutex);
     if (!lifetime_->document)
         return pt;
@@ -307,6 +314,8 @@ std::optional<TextLink> TextIndex::linkAt(int pageNo, QPointF pagePoint)
 
     ensure(pageNo);
     PageText &pt = pages_[pageNo];
+    if (!pt.ready)
+        return std::nullopt; // refused (see ensure()); find the links once it is read
     if (!pt.linksReady) {
         pt.links = detectLinksInText(pt.text, pageNo);
         pt.linksReady = true;
