@@ -37,12 +37,14 @@
 using namespace mervin;
 
 namespace {
+/// Reads exact destination bytes for preservation assertions.
 QByteArray bytes(const QString &path)
 {
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
 
+/// Seeds an existing destination for Stop and replacement checks.
 bool writeBytes(const QString &path, const QByteArray &data)
 {
     QFile file(path);
@@ -50,11 +52,13 @@ bool writeBytes(const QString &path, const QByteArray &data)
 }
 } // namespace
 
+/// Exercises worker writes, recovery dialogs and result delivery through real controls.
 class TstMergeOperations : public QObject
 {
     Q_OBJECT
 
 public:
+    /// Drives Merge controls and nested questions while recording delivered results.
     TstMergeOperations()
     {
         QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
@@ -135,6 +139,7 @@ public:
     }
 
 private slots:
+    /// Creates isolated source files, settings and dialog answers for each case.
     void init()
     {
         files_ = std::make_unique<QTemporaryDir>();
@@ -162,6 +167,7 @@ private slots:
         dialogs_.start(10);
     }
 
+    /// Releases held work and waits for background file cleanup between cases.
     void cleanup()
     {
         job::testing::release();
@@ -175,6 +181,7 @@ private slots:
         QVERIFY2(unexpected_.isEmpty(), qPrintable(unexpected_.join('\n')));
     }
 
+    /// Checks that retry preserves ranges, output choice and remapped measurements.
     void failedWriteKeepsThePlan()
     {
         RenderEngine engine;
@@ -215,6 +222,7 @@ private slots:
         QCOMPARE(retained.measurements.front().pts, measurements.measurements.front().pts);
     }
 
+    /// Checks that a removed input reopens its plan with the failing filename.
     void failedInputNamesItsRow()
     {
         beforeMerge_ = [this] { QVERIFY(QFile::remove(source_)); };
@@ -229,6 +237,7 @@ private slots:
         QVERIFY(!QFileInfo::exists(output_));
     }
 
+    /// Covers Stop during the input read and destination write.
     void stoppedMergeKeepsDestination_data()
     {
         QTest::addColumn<bool>("writing");
@@ -236,6 +245,7 @@ private slots:
         QTest::newRow("destination writing") << true;
     }
 
+    /// Checks that failure recovery selects its source after the user switches tabs.
     void failedMergeSelectsItsLaunchingTab()
     {
         beforeMerge_ = [this] {
@@ -269,6 +279,7 @@ private slots:
         QVERIFY(!QFileInfo::exists(output_));
     }
 
+    /// Covers success and failure around canceled and confirmed Quit.
     void queuedMergeResultsRespectQuit_data()
     {
         QTest::addColumn<bool>("failure");
@@ -279,6 +290,7 @@ private slots:
         QTest::newRow("failure during confirmed quit") << true << false;
     }
 
+    /// Checks result delivery after cancellation and suppression after confirmed shutdown.
     void queuedMergeResultsRespectQuit()
     {
         QFETCH(bool, failure);
@@ -337,6 +349,7 @@ private slots:
         QVERIFY(!deliveredAfterShutdown);
     }
 
+    /// Checks that an earlier queued last-tab move preserves its later failure result.
     void queuedFailureSurvivesOldOwnerDestruction()
     {
         beforeMerge_ = [this] {
@@ -377,6 +390,7 @@ private slots:
         QVERIFY(!QFileInfo::exists(output_));
     }
 
+    /// Checks exact prior destination bytes and no late UI after Stop and release.
     void stoppedMergeKeepsDestination()
     {
         QFETCH(bool, writing);

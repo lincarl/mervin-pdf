@@ -64,6 +64,7 @@ void TstMergePlan::initTestCase()
     mervin::i18n::apply(QStringLiteral("en"));
 }
 
+/// Checks that pending counts block Merge and hide dependent output positions.
 void TstMergePlan::readingBlocksUnknownOutputPositions()
 {
     MergePlan plan;
@@ -86,6 +87,7 @@ void TstMergePlan::readingBlocksUnknownOutputPositions()
     QCOMPARE(plan.outputText(2), QStringLiteral("7-9"));
 }
 
+/// Checks probe identity across duplication, reordered ranges and stale answers.
 void TstMergePlan::probeResolutionFollowsPendingCopies()
 {
     MergePlan plan;
@@ -190,6 +192,7 @@ void TstMergePlan::specPreservesTypedOrderAndDuplicates()
     QCOMPARE(p.pagesFor(0), QList<int>({4, 5, 0, 0}));
 }
 
+/// Checks translated count text for complete, partial and pending inputs.
 void TstMergePlan::countTextDistinguishesAllFromASubset()
 {
     MergePlan p;

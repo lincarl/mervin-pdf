@@ -73,6 +73,7 @@ void makePdf(const QString &path, int n)
 
 } // namespace
 
+/// Checks background row probes, output validation and nested dialog ownership.
 class TstMergeDialog : public QObject
 {
     Q_OBJECT
@@ -130,8 +131,7 @@ private:
     {
         return d.findChild<QLabel *>(QStringLiteral("mergeError"))->text();
     }
-    // Lets the Save as check answer: it runs on a background thread, and the error
-    // line and Merge wait for it.
+    // Waits for input probes and the Save as check before inspecting the controls.
     static void settle(QWidget *dialog)
     {
         const auto *check = dialog->findChild<mervin::SaveCheck *>();
@@ -241,6 +241,7 @@ void TstMergeDialog::seededEncryptedDocumentOpensWithTheTabPassword()
     QCOMPARE(d.inputs().at(0).password, QStringLiteral("secret"));
 }
 
+/// Checks that a settled range editor selects the row its toolbar actions affect.
 void TstMergeDialog::focusingARowEditorMakesThatRowCurrent()
 {
     // Remove / Duplicate / Move Up / Move Down all act on the list's current row.
@@ -347,6 +348,7 @@ void TstMergeDialog::outputOpenInATabIsRefused()
 // Save as is checked on a background thread, as its folder can be on a share that
 // stopped answering. A slow check says so, and Merge pressed meanwhile writes once
 // it answers.
+/// Checks that a pending output probe keeps Merge waiting and shows its status.
 void TstMergeDialog::slowSaveAsCheckSaysSoAndMergeWaitsForIt()
 {
     const QString target = dir_.filePath(QStringLiteral("merged-slowly.pdf"));
@@ -381,6 +383,7 @@ void TstMergeDialog::slowSaveAsCheckSaysSoAndMergeWaitsForIt()
 
 // Merge pressed before the check of a new name answers writes nothing when the
 // answer is a reason not to, such as the file being open in a tab.
+/// Checks that a delayed output verdict still protects a file open in a tab.
 void TstMergeDialog::pressedBeforeTheCheckKeepsAnOpenFile()
 {
     const QString opened = dir_.filePath(QStringLiteral("open-when-pressed.pdf"));
@@ -408,6 +411,7 @@ void TstMergeDialog::pressedBeforeTheCheckKeepsAnOpenFile()
     QCOMPARE(f.readAll(), before);
 }
 
+/// Checks that a failed plan keeps its rows, ranges, output and failure detail.
 void TstMergeDialog::failedPlanCanBeReopened()
 {
     const QString target = dir_.filePath(QStringLiteral("retry.pdf"));
@@ -432,6 +436,7 @@ void TstMergeDialog::failedPlanCanBeReopened()
     QVERIFY(!QFileInfo::exists(target));
 }
 
+/// Releases probe holds and settles detached background work between cases.
 void TstMergeDialog::cleanup()
 {
     mervin::job::testing::release();
@@ -439,6 +444,7 @@ void TstMergeDialog::cleanup()
     QVERIFY(mervin::background::settle(10000));
 }
 
+/// Checks that one held volume does not delay input probes on another volume.
 void TstMergeDialog::volumesProbeIndependently()
 {
     QTemporaryDir files;
@@ -474,6 +480,7 @@ void TstMergeDialog::volumesProbeIndependently()
     QVERIFY(mergeBtn(d)->isEnabled());
 }
 
+/// Checks that probe answers follow pending copies without replacing active editors.
 void TstMergeDialog::pendingRowsKeepTheirProbeIdentity()
 {
     mervin::job::testing::holdWhen([this](mervin::job::Step step, const QString &path) {
@@ -502,6 +509,7 @@ void TstMergeDialog::pendingRowsKeepTheirProbeIdentity()
     QCOMPARE(d.inputs().at(1).pages.size(), 6);
 }
 
+/// Covers fresh and reopened plans when failed rows leave a pending batch.
 void TstMergeDialog::batchWarningWaitsAndIgnoresRemovedRows_data()
 {
     QTest::addColumn<bool>("remove");
@@ -511,6 +519,7 @@ void TstMergeDialog::batchWarningWaitsAndIgnoresRemovedRows_data()
     QTest::newRow("removed failure after reopening") << true << true;
 }
 
+/// Checks one settled batch warning that excludes removed or superseded rows.
 void TstMergeDialog::batchWarningWaitsAndIgnoresRemovedRows()
 {
     QFETCH(bool, remove);
@@ -565,6 +574,7 @@ void TstMergeDialog::batchWarningWaitsAndIgnoresRemovedRows()
     }
 }
 
+/// Covers owner deletion during Add, Browse and Merge questions.
 void TstMergeDialog::ownerDeletionDuringQuestion_data()
 {
     QTest::addColumn<QString>("action");
@@ -574,6 +584,7 @@ void TstMergeDialog::ownerDeletionDuringQuestion_data()
     QTest::newRow("input conflict") << QStringLiteral("input");
 }
 
+/// Checks that nested questions tolerate deletion of their owning dialog.
 void TstMergeDialog::ownerDeletionDuringQuestion()
 {
     QFETCH(QString, action);
@@ -629,6 +640,7 @@ void TstMergeDialog::ownerDeletionDuringQuestion()
 }
 
 #ifdef Q_OS_UNIX
+/// Covers blocked named-pipe probes in seeded and added rows.
 void TstMergeDialog::fifoRowsReturnWithoutWaiting_data()
 {
     QTest::addColumn<bool>("seeded");
@@ -636,6 +648,7 @@ void TstMergeDialog::fifoRowsReturnWithoutWaiting_data()
     QTest::newRow("add files") << false;
 }
 
+/// Checks that adding or constructing a blocked input row returns promptly.
 void TstMergeDialog::fifoRowsReturnWithoutWaiting()
 {
     QFETCH(bool, seeded);

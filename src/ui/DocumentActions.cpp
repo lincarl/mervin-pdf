@@ -1133,12 +1133,14 @@ void MainWindow::splitDocument()
     runPageTool(t, tool, t->password(), false);
 }
 
+/// Captures the probed plan and output path independently of its dialog.
 struct MainWindow::MergeRequest
 {
     mervin::MergePlan plan;
     QString output;
 };
 
+/// Returns the worker outcome and the input or destination that blocked it.
 struct MainWindow::MergeResult
 {
     PageOps::Status status = PageOps::Status::Failed;
@@ -1147,6 +1149,7 @@ struct MainWindow::MergeResult
     mervin::MergeDialog::Conflict conflict = mervin::MergeDialog::Conflict::None;
 };
 
+/// Opens Merge for the current usable tab.
 void MainWindow::mergeDocuments()
 {
     TabPage *tab = currentTab();
@@ -1154,6 +1157,7 @@ void MainWindow::mergeDocuments()
         showMergeDialog(tab);
 }
 
+/// Edits a fresh or failed plan in its launching tab and current owner.
 void MainWindow::showMergeDialog(TabPage *tab, const std::shared_ptr<MergeRequest> &request,
                                  const std::shared_ptr<MergeResult> &result)
 {
@@ -1197,6 +1201,7 @@ void MainWindow::showMergeDialog(TabPage *tab, const std::shared_ptr<MergeReques
         runMerge(page, next);
 }
 
+/// Checks file identities, reserves the output and merges on the tab worker.
 void MainWindow::runMerge(TabPage *tab, const std::shared_ptr<MergeRequest> &request)
 {
     auto *owner = qobject_cast<MainWindow *>(tab->window());
@@ -1233,6 +1238,7 @@ void MainWindow::runMerge(TabPage *tab, const std::shared_ptr<MergeRequest> &req
     tab->startOperation(std::move(operation));
 }
 
+/// Queues the result for its surviving tab owner before reopening or offering output.
 void MainWindow::deliverMergeDialog(TabPage *tab, const std::shared_ptr<MergeRequest> &request,
                                     const std::shared_ptr<MergeResult> &result)
 {

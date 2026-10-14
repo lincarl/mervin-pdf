@@ -66,6 +66,7 @@ QString specPlaceholder()
     return MergeDialog::tr("e.g. 1-3, 5");
 }
 
+/// Shows a window-modal warning that tolerates deletion of its owner.
 void warnInWindow(QWidget *parent, const QString &text)
 {
     const QPointer<QMessageBox> box(new QMessageBox(QMessageBox::Warning,
@@ -76,6 +77,7 @@ void warnInWindow(QWidget *parent, const QString &text)
 }
 } // namespace
 
+/// Collects one warning per surviving failed row after an Add Files batch settles.
 struct MergeDialog::ProbeBatch
 {
     int remaining = 0;
@@ -398,6 +400,7 @@ QString MergeDialog::startDirectory() const
     return QString();
 }
 
+/// Appends files chosen in an owner-guarded, window-modal picker.
 void MergeDialog::addFiles()
 {
     //: File type filter. Keep "(*.pdf)" as it is.
@@ -455,6 +458,7 @@ void MergeDialog::moveCurrent(int delta)
         rebuild(to);
 }
 
+/// Updates the output choice only while the dialog survives its save picker.
 void MergeDialog::browseForOutput()
 {
     // The file dialog asks before replacing a file, so the plain default will do.

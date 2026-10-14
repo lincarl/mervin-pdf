@@ -1032,6 +1032,7 @@ void TstTranslationLayout::manageLanguages()
     inspect(empty, QStringLiteral("OCR languages none installed"));
 }
 
+/// Checks translated Merge layouts while rows read, output checks wait and validation fails.
 void TstTranslationLayout::merge()
 {
     mervin::job::testing::holdWhen([this](mervin::job::Step step, const QString &path) {

@@ -24,6 +24,7 @@ public:
         Reading,    // its background probe has not answered
     };
 
+    /// Retains one input row, its range, load facts and background probe identity.
     struct Entry
     {
         QString path;
@@ -60,6 +61,7 @@ public:
     // Applies load facts to every pending copy of this ticket without changing
     // ranges or row order. False when every corresponding row was removed.
     bool resolveProbe(quint64 ticket, const Entry &result);
+    /// Reports whether any row still awaits its input count and load status.
     bool hasReading() const;
 
     // Pages row `i` contributes, 0-based, in the order they were typed

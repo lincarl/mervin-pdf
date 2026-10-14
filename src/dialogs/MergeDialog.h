@@ -41,6 +41,7 @@ public:
     // inputs again. The output and row ranges remain editable.
     MergeDialog(const MergePlan &plan, const QString &output, const QString &error,
                 int failedIndex, Conflict conflict = Conflict::None, QWidget *parent = nullptr);
+    /// Stops outstanding probe requests without waiting for their workers.
     ~MergeDialog() override;
 
     // Shared failure summary for a reopened plan and its tray notification.
@@ -53,7 +54,9 @@ public:
 
     // Valid after Accepted. The caller writes this plan on its worker.
     QList<PageOps::MergeInput> inputs() const { return plan_.inputs(); }
+    /// Returns the probed rows and editable ranges for the accepted worker request.
     MergePlan plan() const { return plan_; }
+    /// Reports whether any input row still awaits its background probe.
     bool reading() const { return plan_.hasReading(); }
     QString outputPath() const { return outputPath_; }
 
@@ -64,10 +67,10 @@ public:
     void addPaths(const QStringList &paths);
 
 private:
-    // Validate, then check Save as again, as the disk can have changed since the
-    // last answer, and write once that answers (write()) if the rows and Save as
-    // are still what Merge was pressed for.
+    // Validates the plan, then checks the current Save as choice before accepting
+    // the unchanged request for a worker write.
     void accept() override;
+    /// Stops probe states and clears queued probes before closing the dialog.
     void done(int result) override;
     // Confirm an overwrite, then close with the validated plan.
     void write();
@@ -99,8 +102,10 @@ private:
     // row is Ok and keeps the password. Added files have none, so they stay Locked.
     static MergePlan::Entry probeEntry(const QString &path, const QString &password = QString());
     struct ProbeBatch;
+    /// Appends a Reading row and schedules its probe on the volume queue.
     void queueProbe(const QString &path, const QString &password,
                     const std::shared_ptr<ProbeBatch> &batch = {}, int index = 0);
+    /// Resolves the matching rows and reports surviving failures once per batch.
     void finishProbe(quint64 ticket, const MergePlan::Entry &entry,
                      const std::shared_ptr<ProbeBatch> &batch, int index);
     // Refreshes existing widgets so a late probe cannot delete an active drag grip.
