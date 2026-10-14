@@ -69,8 +69,10 @@ void MainWindow::queueFreshLoad(TabPage *tab, const QString &canonical, quint64 
     const QPointer<MainWindow> self(this);
     const QPointer<TabPage> page(tab);
     const auto discarded = connect(this, &QObject::destroyed, tab, [page, canonical, generation] {
-        if (auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr)
-            owner->queueFreshLoad(page, canonical, generation);
+        QTimer::singleShot(0, page, [page, canonical, generation] {
+            if (auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr)
+                owner->queueFreshLoad(page, canonical, generation);
+        });
     });
     whenTabsCanChange([self, page, canonical, generation, discarded] {
         disconnect(discarded);
@@ -131,8 +133,10 @@ void MainWindow::queueFreshRemoval(TabPage *tab, quint64 generation)
     const QPointer<MainWindow> self(this);
     const QPointer<TabPage> page(tab);
     const auto discarded = connect(this, &QObject::destroyed, tab, [page, generation] {
-        if (auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr)
-            owner->queueFreshRemoval(page, generation);
+        QTimer::singleShot(0, page, [page, generation] {
+            if (auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr)
+                owner->queueFreshRemoval(page, generation);
+        });
     });
     whenTabsCanChange([self, page, generation, discarded] {
         disconnect(discarded);
@@ -160,8 +164,10 @@ void MainWindow::queueLoadPassword(TabPage *tab, quint64 generation)
     const QPointer<MainWindow> self(this);
     const QPointer<TabPage> page(tab);
     const auto discarded = connect(this, &QObject::destroyed, tab, [page, generation] {
-        if (auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr)
-            owner->queueLoadPassword(page, generation);
+        QTimer::singleShot(0, page, [page, generation] {
+            if (auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr)
+                owner->queueLoadPassword(page, generation);
+        });
     });
     whenTabsCanChange([self, page, generation, discarded] {
         disconnect(discarded);

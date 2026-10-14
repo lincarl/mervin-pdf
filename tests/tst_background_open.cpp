@@ -886,15 +886,21 @@ private slots:
     void lastTabMoveKeepsQueuedLoadActions_data()
     {
         QTest::addColumn<int>("action");
-        QTest::newRow("ready") << 0;
-        QTest::newRow("password") << 1;
-        QTest::newRow("failed duplicate") << 2;
-        QTest::newRow("stopped fresh open") << 3;
+        QTest::addColumn<bool>("unmoved");
+        QTest::newRow("ready") << 0 << false;
+        QTest::newRow("password") << 1 << false;
+        QTest::newRow("failed duplicate") << 2 << false;
+        QTest::newRow("stopped fresh open") << 3 << false;
+        QTest::newRow("unmoved ready") << 0 << true;
+        QTest::newRow("unmoved password") << 1 << true;
+        QTest::newRow("unmoved failed duplicate") << 2 << true;
+        QTest::newRow("unmoved stopped fresh open") << 3 << true;
     }
 
     void lastTabMoveKeepsQueuedLoadActions()
     {
         QFETCH(int, action);
+        QFETCH(bool, unmoved);
         QTemporaryDir files;
         const QString path = files.filePath(QStringLiteral("plan.pdf"));
         const QString kept = files.filePath(QStringLiteral("kept.pdf"));
@@ -944,6 +950,24 @@ private slots:
             QTRY_COMPARE(finished.size(), 1);
         }
         QCOMPARE(first->tabCount(), 1);
+        if (unmoved) {
+            bool latePrompt = false;
+            QTimer rejectLate;
+            connect(&rejectLate, &QTimer::timeout, this, [&] {
+                if (auto *prompt = qobject_cast<QInputDialog *>(QApplication::activeModalWidget())) {
+                    latePrompt = true;
+                    prompt->reject();
+                }
+            });
+            rejectLate.start(5);
+            delete first.data();
+            guard.close();
+            QTest::qWait(100);
+            QVERIFY(!first && !page);
+            QVERIFY(!latePrompt);
+            QCOMPARE(second->tabPaths(), QStringList{kept});
+            return;
+        }
         const quint64 generation = page->loadGeneration();
         manager.mergeTab(first, 0, second, -1);
         QTRY_VERIFY(!first);
