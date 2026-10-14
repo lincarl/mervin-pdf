@@ -152,6 +152,9 @@ public:
         connect(&dialogs_, &QTimer::timeout, this, [this] {
             QWidget *modal = QApplication::activeModalWidget();
             if (auto *box = qobject_cast<QMessageBox *>(modal)) {
+                if (answeredModal_ == box)
+                    return;
+                answeredModal_ = box;
                 told_ << box->windowTitle() + QStringLiteral(": ") + box->text();
                 toldIn_ << box->parentWidget();
                 QAbstractButton *button = answers_.isEmpty() ? nullptr
@@ -163,6 +166,9 @@ public:
                 }
                 button->click();
             } else if (auto *input = qobject_cast<QInputDialog *>(modal)) {
+                if (answeredModal_ == input)
+                    return;
+                answeredModal_ = input;
                 if (inputs_.isEmpty()) {
                     unexpected_ << input->windowTitle() + QStringLiteral(": ") + input->labelText();
                     input->reject();
@@ -174,6 +180,8 @@ public:
                     input->setTextValue(value);
                 input->accept();
             } else if (auto *dialog = qobject_cast<QFileDialog *>(modal)) {
+                if (submittedFileDialog_ == dialog)
+                    return;
                 auto *name = dialog->findChild<QLineEdit *>(QStringLiteral("fileNameEdit"));
                 if (!name)
                     return;
@@ -182,9 +190,22 @@ public:
                     dialog->reject();
                     return;
                 }
-                name->setText(QDir::toNativeSeparators(files_.takeFirst()));
-                // An overwrite question needs this timer again after acceptance.
-                QMetaObject::invokeMethod(dialog, "accept", Qt::QueuedConnection);
+                // Editing or queued acceptance can leave this dialog active for
+                // another timer turn. Submit each answer once, before any signals.
+                submittedFileDialog_ = dialog;
+                const QString path = QDir::toNativeSeparators(files_.takeFirst());
+                dialog->selectFile(path);
+                name->setText(path);
+                // Keep driving a nested overwrite question. If acceptance leaves
+                // the picker open, the next answer may choose a different path.
+                const QPointer<QFileDialog> guarded(dialog);
+                QMetaObject::invokeMethod(dialog, [this, guarded] {
+                    if (!guarded)
+                        return;
+                    QMetaObject::invokeMethod(guarded, "accept", Qt::DirectConnection);
+                    if (guarded && guarded->isVisible())
+                        submittedFileDialog_.clear();
+                }, Qt::QueuedConnection);
             }
         });
     }
@@ -201,6 +222,8 @@ private slots:
         answers_.clear();
         inputs_.clear();
         files_.clear();
+        answeredModal_.clear();
+        submittedFileDialog_.clear();
         told_.clear();
         toldIn_.clear();
         unexpected_.clear();
@@ -1262,6 +1285,8 @@ private:
 
     std::unique_ptr<QTemporaryDir> profile_;
     QTimer dialogs_;
+    QPointer<QWidget> answeredModal_;
+    QPointer<QFileDialog> submittedFileDialog_;
     QList<QMessageBox::StandardButton> answers_; // for the boxes, in order
     QStringList inputs_;                         // for the prompts, in order
     QStringList files_;                          // for the file dialogs, in order
