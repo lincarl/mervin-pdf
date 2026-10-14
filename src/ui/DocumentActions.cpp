@@ -116,17 +116,40 @@ void MainWindow::runPageTool(TabPage *tab, const std::shared_ptr<const PageTool>
     TabPage::Operation operation;
     operation.destination = tool->destination;
     operation.work = [tool, password, result] { *result = tool->work(password); };
-    // The tab can have moved to another window meanwhile.
     operation.finished = [page = QPointer<TabPage>(tab), tool, password, asked, result] {
-        auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
-        if (!window)
-            return;
-        window->whenTabsCanChange([page, tool, password, asked, result] {
-            if (auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr)
-                window->finishPageTool(page, tool, password, asked, *result);
-        });
+        if (page)
+            deliverPageTool(page, tool, password, asked, result);
     };
     tab->startOperation(std::move(operation));
+}
+
+void MainWindow::deliverPageTool(TabPage *tab, const std::shared_ptr<const PageTool> &tool,
+                                 const QString &password, bool asked,
+                                 const std::shared_ptr<PageToolResult> &result)
+{
+    const QPointer<TabPage> page(tab);
+    auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+    if (!window)
+        return;
+    // The previous owner drops its queue on destruction. A moved tab still needs
+    // its result delivered through the surviving owner's queue.
+    const auto discarded = connect(window, &QObject::destroyed, tab,
+        [page, tool, password, asked, result] {
+            if (page)
+                deliverPageTool(page, tool, password, asked, result);
+        });
+    window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window),
+                              tool, password, asked, result, discarded] {
+        disconnect(discarded);
+        auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!current)
+            return;
+        if (current != owner) {
+            deliverPageTool(page, tool, password, asked, result);
+            return;
+        }
+        current->finishPageTool(page, tool, password, asked, *result);
+    });
 }
 
 void MainWindow::finishPageTool(TabPage *tab, const std::shared_ptr<const PageTool> &tool,

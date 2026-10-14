@@ -227,6 +227,11 @@ private:
     // user typed the password for this run.
     static void runPageTool(mervin::TabPage *tab, const std::shared_ptr<const PageTool> &tool,
                             const QString &password, bool asked);
+    // Queues the result in the tab's current owner, including after its previous
+    // owner is destroyed while the result waits in that window's queue.
+    static void deliverPageTool(mervin::TabPage *tab, const std::shared_ptr<const PageTool> &tool,
+                                const QString &password, bool asked,
+                                const std::shared_ptr<PageToolResult> &result);
     // A file that needs a password asks for one, window-modal, and runs the tool
     // again with it, remembered on the tab if it works. A failure says why, and
     // success runs the tool's own question. A window in the tray shows failures as a

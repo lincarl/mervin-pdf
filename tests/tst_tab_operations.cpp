@@ -1071,6 +1071,74 @@ private slots:
         QCOMPARE(toldIn_.first().data(), static_cast<QWidget *>(second));
     }
 
+    void movedToolResultSurvivesItsQueuedOwner_data()
+    {
+        QTest::addColumn<QString>("result");
+        QTest::newRow("success") << QStringLiteral("success");
+        QTest::newRow("failure") << QStringLiteral("failure");
+        QTest::newRow("password") << QStringLiteral("password");
+    }
+
+    void movedToolResultSurvivesItsQueuedOwner()
+    {
+        QFETCH(QString, result);
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("plan.pdf"));
+        const QString kept = files.filePath(QStringLiteral("kept.pdf"));
+        const QString output = files.filePath(QStringLiteral("rotated.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), kept));
+        if (result == QStringLiteral("password")) {
+            QCOMPARE(QpdfService().encrypt(QStringLiteral(MERVIN_FIXTURE_PDF), source, {},
+                         QStringLiteral("secret"), {}, QpdfService::Algorithm::AES256, {}),
+                     QpdfService::Status::Ok);
+        } else {
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        }
+        WindowManager manager;
+        QPointer<MainWindow> first(manager.createWindow());
+        MainWindow *second = manager.createWindow();
+        showForLayout(*first);
+        showForLayout(*second);
+        QVERIFY(testing::openAndWait(*second, kept));
+        QVERIFY(testing::openAndWait(*first, source, false, -1, true,
+                     result == QStringLiteral("password") ? QStringLiteral("secret") : QString()));
+        QPointer<TabPage> page(currentTab(*first));
+        if (result == QStringLiteral("password"))
+            page->setPassword({});
+        if (result == QStringLiteral("failure"))
+            job::testing::failWhen([folder = files.path()](job::Step step, const QString &path) {
+                return step == job::Step::Writing && path == folder;
+            });
+        const auto restore = qScopeGuard([] { job::testing::failWhen({}); });
+        holdAt(job::Step::Reading, source);
+        rotate(*first, output);
+        QTRY_COMPARE(job::testing::held(), 1);
+        QDialog guard;
+        guard.setWindowModality(Qt::ApplicationModal);
+        guard.show();
+        QSignalSpy finished(page, &TabPage::operationFinished);
+        job::testing::release();
+        QTRY_COMPARE(finished.size(), 1);
+        QVERIFY(page->isUsable());
+        QVERIFY(told_.isEmpty());
+        second->adoptTab(first->releaseTab(0));
+        // Destroy the former owner while the result still waits in its queue.
+        delete first.data();
+        QVERIFY(!first && page && page->window() == second);
+        if (result == QStringLiteral("password"))
+            inputs_ << QStringLiteral("secret");
+        answers_ << (result == QStringLiteral("failure") ? QMessageBox::Ok : QMessageBox::No);
+        guard.close();
+        QTRY_VERIFY_WITH_TIMEOUT(answers_.isEmpty(), 1000);
+        QVERIFY(inputs_.isEmpty());
+        QCOMPARE(toldIn_.size(), 1);
+        QCOMPARE(toldIn_.front().data(), static_cast<QWidget *>(second));
+        QVERIFY(page && page->isUsable());
+        QCOMPARE(QFileInfo::exists(output), result != QStringLiteral("failure"));
+        if (result == QStringLiteral("password"))
+            QCOMPARE(page->password(), QStringLiteral("secret"));
+    }
+
     // A completion observer can destroy its sender before the tool delivers its
     // result. Use direct destruction because an ordinary close is now queued.
     void completionSlotMayCloseItsTab()
