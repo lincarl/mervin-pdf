@@ -100,7 +100,7 @@ Iftaħ issa?</translation>
         <source>Enter the password for %1.</source>
         <extracomment>%1 is the file name.
 ----------
-%1 is the name of the document.</extracomment>
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Daħħal il-password għal %1.</translation>
     </message>
     <message>
@@ -526,20 +526,6 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     <message>
         <source>Password Required</source>
         <translation>Password Meħtieġa</translation>
-    </message>
-    <message>
-        <source>&quot;%1&quot; is password-protected. Enter the password:</source>
-        <extracomment>%1 is the file name.</extracomment>
-        <translation>&quot;%1&quot; huwa protett minn password. Daħħal il-password:</translation>
-    </message>
-    <message>
-        <source>Could not open &quot;%1&quot;.
-
-%2</source>
-        <extracomment>%1 is the file path, %2 the reason the file could not be opened.</extracomment>
-        <translation>Ma setgħetx tiftaħ &quot;%1&quot;.
-
-%2</translation>
     </message>
     <message>
         <source>Open from URL</source>
@@ -3192,8 +3178,23 @@ Dan il-fajl m&apos;għadux fuq disk.</translation>
         <translation>Ma setax jinqara d-dokument.</translation>
     </message>
     <message>
+        <source>The file was not found.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. The reader could not find the source file or one of the folders leading to it.</extracomment>
+        <translation>Il-fajl ma nstabx.</translation>
+    </message>
+    <message>
+        <source>The file is damaged.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. Its data has an unrecoverable format error, rather than a drive or password error.</extracomment>
+        <translation>Il-fajl huwa bil-ħsara.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Dan id-dokument huwa protett minn password.</translation>
+    </message>
+    <message>
+        <source>The password was not accepted.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder after its supplied open password was rejected. Retry can ask for another password.</extracomment>
+        <translation>Il-password ma ġietx aċċettata.</translation>
     </message>
 </context>
 <context>

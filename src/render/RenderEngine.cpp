@@ -593,8 +593,22 @@ std::unique_ptr<Document> RenderEngine::open(fz_context *ctx, std::shared_ptr<fz
         fz_drop_buffer(ctx, buffer);
     }
     fz_catch(ctx) {
-        if (error)
-            *error = QString::fromUtf8(fz_caught_message(ctx));
+        if (error) {
+            const int kind = fz_caught(ctx);
+            if (kind == FZ_ERROR_SYSTEM
+                && (fz_caught_errno(ctx) == ENOENT || fz_caught_errno(ctx) == ENOTDIR)) {
+                //: Reason in a failed document's placeholder. The reader could not
+                //: find the source file or one of the folders leading to it.
+                *error = tr("The file was not found.");
+            } else if (kind == FZ_ERROR_FORMAT) {
+                //: Reason in a failed document's placeholder. Its data has an
+                //: unrecoverable format error, rather than a drive or password error.
+                *error = tr("The file is damaged.");
+            } else {
+                *error = QString::fromUtf8(fz_caught_message(ctx));
+            }
+        }
+        (void)fz_convert_error(ctx, nullptr); // the failure is now the returned error
         fz_drop_context(ctx);
         return nullptr;
     }
@@ -619,8 +633,15 @@ std::unique_ptr<Document> RenderEngine::open(fz_context *ctx, std::shared_ptr<fz
             fz_drop_context(ctx);
             if (needsPassword)
                 *needsPassword = true;
-            if (error)
-                *error = tr("This document is password-protected.");
+            if (error) {
+                if (password.isEmpty())
+                    *error = tr("This document is password-protected.");
+                else {
+                    //: Reason in a failed document's placeholder after its supplied
+                    //: open password was rejected. Retry can ask for another password.
+                    *error = tr("The password was not accepted.");
+                }
+            }
             return nullptr;
         }
     }

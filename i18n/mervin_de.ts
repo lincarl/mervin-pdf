@@ -100,7 +100,7 @@ Jetzt öffnen?</translation>
         <source>Enter the password for %1.</source>
         <extracomment>%1 is the file name.
 ----------
-%1 is the name of the document.</extracomment>
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Geben Sie das Passwort für %1 ein.</translation>
     </message>
     <message>
@@ -522,20 +522,6 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     <message>
         <source>Password Required</source>
         <translation>Passwort erforderlich</translation>
-    </message>
-    <message>
-        <source>&quot;%1&quot; is password-protected. Enter the password:</source>
-        <extracomment>%1 is the file name.</extracomment>
-        <translation>„%1“ ist passwortgeschützt. Geben Sie das Passwort ein:</translation>
-    </message>
-    <message>
-        <source>Could not open &quot;%1&quot;.
-
-%2</source>
-        <extracomment>%1 is the file path, %2 the reason the file could not be opened.</extracomment>
-        <translation>„%1“ konnte nicht geöffnet werden.
-
-%2</translation>
     </message>
     <message>
         <source>Open from URL</source>
@@ -3152,8 +3138,23 @@ Diese Datei befindet sich nicht mehr auf der Festplatte.</translation>
         <translation>Das Dokument konnte nicht gelesen werden.</translation>
     </message>
     <message>
+        <source>The file was not found.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. The reader could not find the source file or one of the folders leading to it.</extracomment>
+        <translation>Die Datei wurde nicht gefunden.</translation>
+    </message>
+    <message>
+        <source>The file is damaged.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. Its data has an unrecoverable format error, rather than a drive or password error.</extracomment>
+        <translation>Die Datei ist beschädigt.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Dieses Dokument ist passwortgeschützt.</translation>
+    </message>
+    <message>
+        <source>The password was not accepted.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder after its supplied open password was rejected. Retry can ask for another password.</extracomment>
+        <translation>Das Passwort wurde nicht akzeptiert.</translation>
     </message>
 </context>
 <context>

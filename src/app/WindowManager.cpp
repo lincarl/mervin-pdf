@@ -44,13 +44,6 @@ namespace mervin {
 
 namespace {
 
-QString canonicalOf(const QString &path)
-{
-    QFileInfo fi(path);
-    const QString c = fi.canonicalFilePath();
-    return c.isEmpty() ? fi.absoluteFilePath() : c;
-}
-
 // Restore without losing maximized state and activate. Windows uses foreground rights granted
 // by the forwarding process; without a grant, fall back to taskbar flashing.
 void surfaceWindow(MainWindow *w)
@@ -481,7 +474,7 @@ void WindowManager::closeRemovedTabs()
         if (w->isInTray())
             continue;
         for (const TabPage *tab : w->unloadedTabs()) {
-            if (tab->hasUnsavedEdits() || listed.contains(tab->canonicalPath()))
+            if (tab->freshOpen() || tab->hasUnsavedEdits() || listed.contains(tab->canonicalPath()))
                 continue;
             listed.insert(tab->canonicalPath());
             files.append({tab->path(), tab->canonicalPath(), recordedMount(tab->canonicalPath())});
@@ -707,12 +700,6 @@ void WindowManager::stagedStep()
         stagedQueue_.clear();
 
     if (stagedQueue_.isEmpty()) {
-        // Background restored tabs stay unloaded. Wait for any selected tab's asynchronous
-        // opening before startup timing or a caller's completion callback can finish.
-        if (stagedWindow_ && stagedWindow_->hasLoadingDocuments()) {
-            QTimer::singleShot(10, this, &WindowManager::stagedStep);
-            return;
-        }
         stagedWindow_ = nullptr;
         stagedOrder_.clear();
         // Move the callback out before running it: it may start another batch.
@@ -728,8 +715,8 @@ void WindowManager::stagedStep()
     const StagedOpen o = stagedQueue_.takeFirst();
     MainWindow *w = stagedWindow_;
     // The tab index comes from the live tab bar, not from the plan: an open that
-    // does not produce a tab (a corrupt file, a cancelled password prompt, a
-    // document already open because it was also named on the command line) then
+    // focuses an existing tab (for example a document also named on the command
+    // line) then
     // leaves the remaining documents in their saved order instead of shifting
     // every one of them.
     const int atIndex = insertIndexForSaved(w->tabPaths(), stagedOrder_, o.savedIndex);
@@ -849,14 +836,22 @@ void WindowManager::serveReopen()
     }
 }
 
-bool WindowManager::isOpenAnywhere(const QString &canonicalPath) const
+bool WindowManager::isOpenAnywhere(const QString &canonicalPath, const TabPage *except) const
 {
     if (canonicalPath.isEmpty())
         return false;
+    const QString key = normalizePathKey(canonicalPath);
     for (MainWindow *w : windows_)
-        if (w->tabPaths().contains(canonicalPath))
-            return true;
+        for (const TabPage *tab : w->findChildren<TabPage *>())
+            if (tab != except && normalizePathKey(tab->canonicalPath()) == key)
+                return true;
     return false;
+}
+
+bool WindowManager::hasLoadingDocuments() const
+{
+    return std::any_of(windows_.cbegin(), windows_.cend(),
+                       [](const MainWindow *window) { return window->hasLoadingDocuments(); });
 }
 
 QStringList WindowManager::openTabPaths() const
@@ -963,13 +958,18 @@ bool WindowManager::focusExistingTab(const QString &canonicalPath)
 {
     if (canonicalPath.isEmpty())
         return false;
+    const QString key = normalizePathKey(canonicalPath);
     for (MainWindow *w : std::as_const(windows_)) {
         if (w->focusTabIfOpen(canonicalPath)) {
             surfaceWindow(w);
             active_ = w;
             // Re-opening an already-open file (e.g. from Explorer) still bumps
             // its recency, but there is no view state to restore - it's live.
-            recordOpen(canonicalPath, /*restoreViewState=*/false);
+            for (const TabPage *tab : w->findChildren<TabPage *>())
+                if (!tab->freshOpen() && normalizePathKey(tab->canonicalPath()) == key) {
+                    recordOpen(tab->canonicalPath(), /*restoreViewState=*/false);
+                    break;
+                }
             return true;
         }
     }
@@ -989,7 +989,7 @@ void WindowManager::openPaths(const QStringList &paths, const QString &behavior)
     MainWindow *batchWindow = nullptr;
 
     for (const QString &path : paths) {
-        const QString canon = canonicalOf(path);
+        const QString canon = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
         if (focusExistingTab(canon))
             continue; // already open somewhere - focused, not duplicated
 
@@ -1040,14 +1040,13 @@ void WindowManager::duplicateToNewWindow(const QString &path, const QString &pas
         return;
     MainWindow *w = createWindow();
     if (!w->openFile(path, /*allowDuplicate=*/true, /*atIndex=*/-1, /*makeCurrent=*/true,
-                     password)) {
-        // openFile has said why. Keep no empty window, as mergeTab does. A file
-        // opened from Explorer while its error box was up can have landed here.
+                     password, false, state, /*closeOnFailure=*/true)) {
+        // A closing process refused the new shell. Keep no empty window.
+        // Background failures follow the policy carried by the duplicate tab.
         if (w->tabCount() == 0)
             w->closeForQuit();
         return;
     }
-    w->applyViewState(canonicalOf(path), state); // mirror the source view
     w->move(globalPos);                           // offset from the source window
     w->raise();
     w->activateWindow();

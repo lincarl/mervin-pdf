@@ -100,7 +100,7 @@ Open it now?</source>
         <source>Enter the password for %1.</source>
         <extracomment>%1 is the file name.
 ----------
-%1 is the name of the document.</extracomment>
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>%1 के लिए पासवर्ड दर्ज करें।</translation>
     </message>
     <message>
@@ -522,20 +522,6 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     <message>
         <source>Password Required</source>
         <translation>पासवर्ड आवश्यक है</translation>
-    </message>
-    <message>
-        <source>&quot;%1&quot; is password-protected. Enter the password:</source>
-        <extracomment>%1 is the file name.</extracomment>
-        <translation>&quot;%1&quot; पासवर्ड से सुरक्षित है। पासवर्ड दर्ज करें:</translation>
-    </message>
-    <message>
-        <source>Could not open &quot;%1&quot;.
-
-%2</source>
-        <extracomment>%1 is the file path, %2 the reason the file could not be opened.</extracomment>
-        <translation>&quot;%1&quot; नहीं खुल सका।
-
-%2</translation>
     </message>
     <message>
         <source>Open from URL</source>
@@ -3152,8 +3138,23 @@ This file is no longer on disk.</source>
         <translation>दस्तावेज़ पढ़ा नहीं जा सका।</translation>
     </message>
     <message>
+        <source>The file was not found.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. The reader could not find the source file or one of the folders leading to it.</extracomment>
+        <translation>फ़ाइल नहीं मिली।</translation>
+    </message>
+    <message>
+        <source>The file is damaged.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. Its data has an unrecoverable format error, rather than a drive or password error.</extracomment>
+        <translation>फ़ाइल क्षतिग्रस्त है।</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>यह दस्तावेज़ पासवर्ड से सुरक्षित है।</translation>
+    </message>
+    <message>
+        <source>The password was not accepted.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder after its supplied open password was rejected. Retry can ask for another password.</extracomment>
+        <translation>पासवर्ड स्वीकार नहीं किया गया।</translation>
     </message>
 </context>
 <context>

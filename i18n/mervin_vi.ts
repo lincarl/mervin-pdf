@@ -100,7 +100,7 @@ Mở nó ngay bây giờ?</translation>
         <source>Enter the password for %1.</source>
         <extracomment>%1 is the file name.
 ----------
-%1 is the name of the document.</extracomment>
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Nhập mật khẩu cho %1.</translation>
     </message>
     <message>
@@ -520,20 +520,6 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     <message>
         <source>Password Required</source>
         <translation>Yêu cầu mật khẩu</translation>
-    </message>
-    <message>
-        <source>&quot;%1&quot; is password-protected. Enter the password:</source>
-        <extracomment>%1 is the file name.</extracomment>
-        <translation>&quot;%1&quot; được bảo vệ bằng mật khẩu. Nhập mật khẩu:</translation>
-    </message>
-    <message>
-        <source>Could not open &quot;%1&quot;.
-
-%2</source>
-        <extracomment>%1 is the file path, %2 the reason the file could not be opened.</extracomment>
-        <translation>Không thể mở &quot;%1&quot;.
-
-%2</translation>
     </message>
     <message>
         <source>Open from URL</source>
@@ -3132,8 +3118,23 @@ Tệp này không còn trên đĩa.</translation>
         <translation>Không thể đọc tài liệu.</translation>
     </message>
     <message>
+        <source>The file was not found.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. The reader could not find the source file or one of the folders leading to it.</extracomment>
+        <translation>Không tìm thấy tệp.</translation>
+    </message>
+    <message>
+        <source>The file is damaged.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. Its data has an unrecoverable format error, rather than a drive or password error.</extracomment>
+        <translation>Tệp bị hỏng.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Tài liệu này được bảo vệ bằng mật khẩu.</translation>
+    </message>
+    <message>
+        <source>The password was not accepted.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder after its supplied open password was rejected. Retry can ask for another password.</extracomment>
+        <translation>Mật khẩu không được chấp nhận.</translation>
     </message>
 </context>
 <context>

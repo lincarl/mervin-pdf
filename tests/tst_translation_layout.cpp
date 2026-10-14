@@ -1,3 +1,4 @@
+#include "TestWaits.h"
 #include "TextFit.h"
 
 #include "config/ConfigPaths.h"
@@ -532,14 +533,36 @@ void TstTranslationLayout::loadPlaceholder()
     QVERIFY(stop);
     QTRY_VERIFY(stop->isVisible());
     inspect(window, QStringLiteral("Slow document load with an unbroken file name"), tab);
+
+    // Keep the real failed-load label and Retry layout while checking reader reasons.
+    tab->stopWaiting();
+    auto *status = tab->findChild<QLabel *>(QStringLiteral("documentLoadStatus"));
+    QVERIFY(status && status->isVisible());
+    const struct {
+        const char *state;
+        QString text;
+    } failures[] = {
+        {"Missing document", mervin::RenderEngine::tr("The file was not found.")},
+        {"Damaged document", mervin::RenderEngine::tr("The file is damaged.")},
+        {"Rejected password", mervin::RenderEngine::tr("The password was not accepted.")},
+        {"Password required", mervin::RenderEngine::tr("This document is password-protected.")},
+    };
+    for (const auto &failure : failures) {
+        status->setText(failure.text);
+        inspect(window, QString::fromLatin1(failure.state), tab);
+    }
     const QString output = profile_.filePath(
         QStringLiteral("structural-plan-reserved-for-an-active-page-tool.pdf"));
     mervin::job::State writing;
     const mervin::job::Scope scope(writing);
     QVERIFY(mervin::job::reserveDestinations({mervin::normalizePathKey(output)}));
-    inspectMessage(window, QStringLiteral("Opening an output that is being written"), [&] {
-        QVERIFY(!window.openFile(output));
-    });
+    QVERIFY(window.openFile(output));
+    auto *reserved = qobject_cast<mervin::TabPage *>(window.findChild<QTabWidget *>()->currentWidget());
+    QVERIFY(reserved);
+    QTRY_VERIFY(!reserved->isLoading());
+    QCOMPARE(reserved->findChild<QLabel *>(QStringLiteral("documentLoadStatus"))->text(),
+             mervin::TabPage::pathBeingWrittenError());
+    inspect(window, QStringLiteral("Opening an output that is being written"), reserved);
 }
 
 // The bar over a tab whose operation waits for a drive that stopped answering, saving
@@ -567,7 +590,7 @@ void TstTranslationLayout::waitBar()
     window.show();
     settle();
     window.setMinimumHeight(window.height());
-    QVERIFY(window.openFile(plain_));
+    QVERIFY(mervin::testing::openAndWait(window, plain_));
     auto *tab = window.findChild<mervin::TabPage *>();
     QVERIFY(tab);
     auto *stop = tab->findChild<QPushButton *>(QStringLiteral("waitBarStop"));

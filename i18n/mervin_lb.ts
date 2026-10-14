@@ -100,7 +100,7 @@ Elo opmaachen?</translation>
         <source>Enter the password for %1.</source>
         <extracomment>%1 is the file name.
 ----------
-%1 is the name of the document.</extracomment>
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Gitt d&apos;Passwuert fir %1 un.</translation>
     </message>
     <message>
@@ -522,20 +522,6 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     <message>
         <source>Password Required</source>
         <translation>Passwuert néideg</translation>
-    </message>
-    <message>
-        <source>&quot;%1&quot; is password-protected. Enter the password:</source>
-        <extracomment>%1 is the file name.</extracomment>
-        <translation>&quot;%1&quot; ass Passwuert geschützt. Gitt d&apos;Passwuert an:</translation>
-    </message>
-    <message>
-        <source>Could not open &quot;%1&quot;.
-
-%2</source>
-        <extracomment>%1 is the file path, %2 the reason the file could not be opened.</extracomment>
-        <translation>Konnt &quot;%1&quot; net opmaachen.
-
-%2</translation>
     </message>
     <message>
         <source>Open from URL</source>
@@ -3152,8 +3138,23 @@ Dëse Fichier ass net méi op der Disk.</translation>
         <translation>D&apos;Dokument konnt net gelies ginn.</translation>
     </message>
     <message>
+        <source>The file was not found.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. The reader could not find the source file or one of the folders leading to it.</extracomment>
+        <translation>D&apos;Datei gouf net fonnt.</translation>
+    </message>
+    <message>
+        <source>The file is damaged.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. Its data has an unrecoverable format error, rather than a drive or password error.</extracomment>
+        <translation>D&apos;Datei ass beschiedegt.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Dëst Dokument ass Passwuert geschützt.</translation>
+    </message>
+    <message>
+        <source>The password was not accepted.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder after its supplied open password was rejected. Retry can ask for another password.</extracomment>
+        <translation>D&apos;Passwuert gouf net akzeptéiert.</translation>
     </message>
 </context>
 <context>

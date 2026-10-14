@@ -104,7 +104,7 @@ Open it now?</source>
         <source>Enter the password for %1.</source>
         <extracomment>%1 is the file name.
 ----------
-%1 is the name of the document.</extracomment>
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>請輸入 %1 的密碼。</translation>
     </message>
     <message>
@@ -520,20 +520,6 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
         <source>Switch to the comfort (dark) document theme</source>
         <extracomment>Traditional and Comfort are the document theme names in Settings &gt; Appearance.</extracomment>
         <translation>切換至舒適（深色）文件主題</translation>
-    </message>
-    <message>
-        <source>&quot;%1&quot; is password-protected. Enter the password:</source>
-        <extracomment>%1 is the file name.</extracomment>
-        <translation>「%1」受密碼保護。請輸入密碼：</translation>
-    </message>
-    <message>
-        <source>Could not open &quot;%1&quot;.
-
-%2</source>
-        <extracomment>%1 is the file path, %2 the reason the file could not be opened.</extracomment>
-        <translation>無法開啟「%1」。
-
-%2</translation>
     </message>
     <message>
         <source>Open from URL</source>
@@ -3132,8 +3118,23 @@ This file is no longer on disk.</source>
         <translation>無法讀取文件。</translation>
     </message>
     <message>
+        <source>The file was not found.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. The reader could not find the source file or one of the folders leading to it.</extracomment>
+        <translation>找不到檔案。</translation>
+    </message>
+    <message>
+        <source>The file is damaged.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. Its data has an unrecoverable format error, rather than a drive or password error.</extracomment>
+        <translation>檔案已損毀。</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>此文件受密碼保護。</translation>
+    </message>
+    <message>
+        <source>The password was not accepted.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder after its supplied open password was rejected. Retry can ask for another password.</extracomment>
+        <translation>密碼未被接受。</translation>
     </message>
 </context>
 <context>

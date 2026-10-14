@@ -100,7 +100,7 @@ Open it now?</source>
         <source>Enter the password for %1.</source>
         <extracomment>%1 is the file name.
 ----------
-%1 is the name of the document.</extracomment>
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>ป้อนรหัสผ่านสำหรับ%1</translation>
     </message>
     <message>
@@ -520,20 +520,6 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     <message>
         <source>Password Required</source>
         <translation>ต้องใช้รหัสผ่าน</translation>
-    </message>
-    <message>
-        <source>&quot;%1&quot; is password-protected. Enter the password:</source>
-        <extracomment>%1 is the file name.</extracomment>
-        <translation>&quot;%1&quot; มีการป้องกันด้วยรหัสผ่าน ใส่รหัสผ่าน:</translation>
-    </message>
-    <message>
-        <source>Could not open &quot;%1&quot;.
-
-%2</source>
-        <extracomment>%1 is the file path, %2 the reason the file could not be opened.</extracomment>
-        <translation>ไม่สามารถเปิด &quot;%1&quot;
-
-%2</translation>
     </message>
     <message>
         <source>Open from URL</source>
@@ -3132,8 +3118,23 @@ This file is no longer on disk.</source>
         <translation>ไม่สามารถอ่านเอกสารได้</translation>
     </message>
     <message>
+        <source>The file was not found.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. The reader could not find the source file or one of the folders leading to it.</extracomment>
+        <translation>ไม่พบไฟล์</translation>
+    </message>
+    <message>
+        <source>The file is damaged.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. Its data has an unrecoverable format error, rather than a drive or password error.</extracomment>
+        <translation>ไฟล์เสียหาย</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>เอกสารนี้มีการป้องกันด้วยรหัสผ่าน</translation>
+    </message>
+    <message>
+        <source>The password was not accepted.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder after its supplied open password was rejected. Retry can ask for another password.</extracomment>
+        <translation>รหัสผ่านไม่ได้รับการยอมรับ</translation>
     </message>
 </context>
 <context>

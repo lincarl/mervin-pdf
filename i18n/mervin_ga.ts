@@ -100,7 +100,7 @@ Oscail anois é?</translation>
         <source>Enter the password for %1.</source>
         <extracomment>%1 is the file name.
 ----------
-%1 is the name of the document.</extracomment>
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Cuir isteach an focal faire le haghaidh %1.</translation>
     </message>
     <message>
@@ -524,20 +524,6 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     <message>
         <source>Password Required</source>
         <translation>Pasfhocal de dhíth</translation>
-    </message>
-    <message>
-        <source>&quot;%1&quot; is password-protected. Enter the password:</source>
-        <extracomment>%1 is the file name.</extracomment>
-        <translation>Tá &quot;%1&quot; cosanta ag pasfhocal. Cuir isteach an pasfhocal:</translation>
-    </message>
-    <message>
-        <source>Could not open &quot;%1&quot;.
-
-%2</source>
-        <extracomment>%1 is the file path, %2 the reason the file could not be opened.</extracomment>
-        <translation>Níorbh fhéidir &quot;%1&quot; a oscailt.
-
-%2</translation>
     </message>
     <message>
         <source>Open from URL</source>
@@ -3172,8 +3158,23 @@ Níl an comhad seo ar diosca a thuilleadh.</translation>
         <translation>Níorbh fhéidir an doiciméad a léamh.</translation>
     </message>
     <message>
+        <source>The file was not found.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. The reader could not find the source file or one of the folders leading to it.</extracomment>
+        <translation>Níor aimsíodh an comhad.</translation>
+    </message>
+    <message>
+        <source>The file is damaged.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. Its data has an unrecoverable format error, rather than a drive or password error.</extracomment>
+        <translation>Tá an comhad damáistithe.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Tá an doiciméad seo cosanta ag pasfhocal.</translation>
+    </message>
+    <message>
+        <source>The password was not accepted.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder after its supplied open password was rejected. Retry can ask for another password.</extracomment>
+        <translation>Níor glacadh leis an bhfocal faire.</translation>
     </message>
 </context>
 <context>

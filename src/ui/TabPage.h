@@ -53,7 +53,23 @@ public:
     // taken as the canonical path, as the session and Recent store it. A recovery
     // checkpoint takes precedence over disk.
     void initializeSuspended(const QString &path);
-    void initializeSuspended(const QString &path, const ViewState &state);
+    void initializeSuspended(const QString &path, const ViewState &state, bool recover = true);
+    // A new open keeps its placeholder on failure. Duplicate's failure can instead
+    // remove its tab and close its empty window. Options travel with a moved tab.
+    struct FreshOpen {
+        bool allowDuplicate = false;
+        bool closeOnFailure = false;
+        std::optional<ViewState> view;
+    };
+    void initializeFresh(const QString &path, const FreshOpen &options);
+    const std::optional<FreshOpen> &freshOpen() const { return freshOpen_; }
+    quint64 loadGeneration() const { return loadGeneration_; }
+    // Accepts the stored result only for this load attempt. Its owner first checks
+    // canonical duplicates through the tab-change queue.
+    bool acceptFreshLoad(quint64 generation);
+    // Keeps Retry when a newly resolved output is still reserved for writing.
+    // Its private result closes in the background, without becoming a document tab.
+    void rejectFreshLoad(quint64 generation);
     bool isLoaded() const { return doc_ != nullptr; }
     bool isLoading() const { return loading_; }
     bool isSuspended() const { return !doc_ && !loading_ && !busy_; }
@@ -162,6 +178,8 @@ public:
 signals:
     void stateChanged();
     void resumeFinished(bool success, const QString &error, bool needsPassword);
+    void freshLoadReady(const QString &canonical, quint64 generation);
+    void freshOpenStopped(quint64 generation);
     // The operation ended and the tab is usable: `completed` when its job returned,
     // false when the user stopped waiting.
     void operationFinished(bool completed);
@@ -193,6 +211,7 @@ private:
     // Starts a load in a new job, which first waits for the job `after` to end.
     void startLoad(std::shared_ptr<Job> after = {});
     void finishLoad(const std::shared_ptr<Job> &job);
+    bool installLoad(const std::shared_ptr<Job> &job);
     // Lets go of `job` without waiting for it. The job ends once what it read is closed,
     // on its own thread or, for a result it already stored, on a background thread, and
     // `removeAfter` goes after that.
@@ -249,9 +268,11 @@ private:
     QString barName_;
     QString barFolder_;
     bool retainedEdits_ = false;
-    // The user stopped waiting for the last load, so selecting the tab does not load it
-    // again until Retry.
+    // A stopped load or fresh failure waits for an explicit Retry or password.
+    // Selecting the tab does not start another read.
     bool loadStopped_ = false;
+    std::optional<FreshOpen> freshOpen_;
+    quint64 loadGeneration_ = 0;
     // The tab's job slot, with the load in progress or one the user stopped, which may
     // still read, for Retry to take back, or close what it read, or with the operation
     // in progress. The tab takes the job's result (finishLoad, finishOperation), lets

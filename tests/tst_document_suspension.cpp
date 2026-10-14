@@ -1,3 +1,4 @@
+#include "TestWaits.h"
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
 #include "io/AppFiles.h"
@@ -567,7 +568,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         QVERIFY(window.openFile(path, false, -1, false, {}, true));
         auto *tabs = window.findChild<QTabWidget *>();
         QVERIFY(tabs);
@@ -916,7 +917,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(path));
+        QVERIFY(mervin::testing::openAndWait(window, path));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
         auto *viewer = tab->viewer();
@@ -967,7 +968,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         auto *tabs = window.findChild<QTabWidget *>();
         QVERIFY(tabs);
         auto *first = qobject_cast<TabPage *>(tabs->widget(0));
@@ -981,7 +982,7 @@ private slots:
         QVERIFY(first->viewer()->ocrMode());
         QVERIFY(ocr->isChecked());
 
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF), true));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF), true));
         auto *second = qobject_cast<TabPage *>(tabs->widget(1));
         QVERIFY(second);
         QVERIFY(!second->viewer()->ocrMode());
@@ -1022,7 +1023,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         auto *tab = window.findChild<TabPage *>();
         auto *recent = window.findChild<QPushButton *>(QStringLiteral("recentPillBtn"));
         auto *bar = window.findChild<QTabBar *>(QStringLiteral("docTabBar"));
@@ -1164,7 +1165,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         auto *tab = window.findChild<TabPage *>();
         auto *sidebar = window.findChild<ThumbnailSidebar *>();
         QVERIFY(tab);
@@ -1377,8 +1378,8 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF), true));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF), true));
         const auto tabs = window.findChildren<TabPage *>();
         QCOMPARE(tabs.size(), 2);
         window.updateDocumentActivity(0, 0);
@@ -1401,8 +1402,8 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF), true));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF), true));
         auto *tabs = window.findChild<QTabWidget *>();
         QVERIFY(tabs);
         auto *first = qobject_cast<TabPage *>(tabs->widget(0));
@@ -1431,8 +1432,8 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF), true));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF), true));
         auto *tabs = window.findChild<QTabWidget *>();
         QVERIFY(tabs);
         auto *first = qobject_cast<TabPage *>(tabs->widget(0));
@@ -1465,7 +1466,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         auto *tabs = window.findChild<QTabWidget *>();
         auto *bar = window.findChild<QTabBar *>(QStringLiteral("docTabBar"));
         QVERIFY(tabs);
@@ -1477,8 +1478,8 @@ private slots:
         first->viewer()->rotateRight();
         first->viewer()->setScale(1.5);
         first->viewer()->goToPage(2);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF), true));
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF), true));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF), true));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF), true));
         auto *second = qobject_cast<TabPage *>(tabs->widget(1));
         auto *third = qobject_cast<TabPage *>(tabs->widget(2));
         QVERIFY(second);
@@ -1547,7 +1548,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
         QEvent deactivated(QEvent::WindowDeactivate);

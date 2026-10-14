@@ -2,6 +2,8 @@
 #include <QTemporaryFile>
 #include "ui/MainWindow.h"
 
+#include "recent/PathKey.h"
+
 #include "app/WindowManager.h"
 #include "dialogs/CalibrationDialog.h"
 #include "dialogs/ExportMeasureDialog.h"
@@ -445,8 +447,7 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
         if (!t) return;
         const QString dupPath = t->path();
         const QString dupPassword = t->password(); // the copy opens without asking
-        const mervin::ViewState dupState =
-            t->viewer() ? captureViewState(t->viewer()) : mervin::ViewState{};
+        const mervin::ViewState dupState = t->capturedViewState();
         const QColor ink = mervin::Theme::iconInk(palette());
         // The menu runs its own event loop, in which tabs can arrive or go, so a
         // command finds the clicked tab again rather than trusting idx.
@@ -611,11 +612,12 @@ ViewerWidget *MainWindow::currentViewer() const
     return t && t->isUsable() ? t->viewer() : nullptr;
 }
 
-int MainWindow::indexOfPath(const QString &canonicalPath) const
+int MainWindow::indexOfPath(const QString &canonicalPath, const TabPage *except) const
 {
+    const QString key = mervin::normalizePathKey(canonicalPath);
     for (int i = 0; i < tabs_->count(); ++i)
         if (auto *t = qobject_cast<TabPage *>(tabs_->widget(i)))
-            if (t->canonicalPath() == canonicalPath)
+            if (t != except && mervin::normalizePathKey(t->canonicalPath()) == key)
                 return i;
     return -1;
 }
@@ -1649,120 +1651,53 @@ void MainWindow::setUiEnabled(bool enabled)
 }
 
 bool MainWindow::openFile(const QString &path, bool allowDuplicate, int atIndex, bool makeCurrent,
-                          const QString &knownPassword, bool lazy)
+                          const QString &knownPassword, bool lazy,
+                          const std::optional<mervin::ViewState> &initialView, bool closeOnFailure)
 {
-    QFileInfo fi(path);
-    // A lazy tab is restored from the session or Recent, which store canonical
-    // paths, and does not touch the disk until it loads.
-    QString canon = lazy ? QDir::cleanPath(fi.absoluteFilePath()) : fi.canonicalFilePath();
-    if (canon.isEmpty())
-        canon = fi.absoluteFilePath();
-
-    // Already open anywhere in this process? Focus it instead of duplicating -
-    // unless the caller explicitly wants a second view ("Duplicate to new
-    // window"), in which case fall through and open a fresh, independent tab.
+    if (closeConfirmed_ || (wm_ && wm_->isClosing()))
+        return false;
+    // This key reads no disk. The worker resolves links before accepting its result.
+    const QString key = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
     if (!allowDuplicate) {
-        // A background open (the staged session restore) must not pull the view
-        // onto an already-open document or raise its window: by the time the batch
-        // reaches that document the user may be reading something else, and not
-        // taking the view is the whole point of makeCurrent=false. Answer "already
-        // open" and leave the UI alone.
         if (!makeCurrent) {
-            if (indexOfPath(canon) >= 0 || (wm_ && wm_->isOpenAnywhere(canon)))
+            if (indexOfPath(key) >= 0 || (wm_ && wm_->isOpenAnywhere(key)))
                 return true;
         } else if (wm_) {
-            if (wm_->focusExistingTab(canon))
+            if (wm_->focusExistingTab(key))
                 return true;
-        } else if (focusTabIfOpen(canon)) {
+        } else if (focusTabIfOpen(key)) {
             return true;
         }
     }
 
     auto *page = new TabPage(engine_);
-    if (!page->claimPath(canon)) {
-        delete page;
-        //: %1 is the file path, %2 the reason the file could not be opened.
-        const QString message = tr("Could not open \"%1\".\n\n%2");
-        QMessageBox::warning(this, tr("Mervin PDF"),
-                             message.arg(QDir::toNativeSeparators(path),
-                                         TabPage::pathBeingWrittenError()));
-        return false;
-    }
     wireTabLifecycle(page);
     applySettingsToViewer(page->viewer());
-    QString error;
-    QString password = knownPassword;
-    bool needsPassword = false;
-    bool ok = true;
-    if (lazy) {
-        page->initializeSuspended(path);
-        page->setPassword(password);
-    } else {
-        ok = page->open(path, password, &error, &needsPassword);
-    }
-    while (!ok && needsPassword) {
-        bool got = false;
-        //: %1 is the file name.
-        const QString prompt = tr("\"%1\" is password-protected. Enter the password:");
-        password = QInputDialog::getText(
-            this, tr("Password Required"), prompt.arg(fi.fileName()),
-            QLineEdit::Password, QString(), &got);
-        if (!got) { // user cancelled
-            delete page;
-            return false;
-        }
-        needsPassword = false;
-        ok = page->open(path, password, &error, &needsPassword);
-    }
-    if (!ok) {
-        delete page;
-        //: %1 is the file path, %2 the reason the file could not be opened.
-        const QString message = tr("Could not open \"%1\".\n\n%2");
-        QMessageBox::warning(this, tr("Mervin PDF"),
-                             message.arg(QDir::toNativeSeparators(path), error));
-        return false;
-    }
-
-    ViewerWidget *v = page->viewer();
-    // The viewer's signals are wired to this window only while it is the current
-    // tab (see wireCurrentViewer), so a tab moved to another window updates the
-    // right toolbar.
-
-    // A window holding no tabs is showing the Recent page, so its first document
-    // must take the view whatever the caller asked for - QTabWidget would make it
-    // current anyway, and the Recent page would then hide a loaded document.
+    if (lazy)
+        page->initializeSuspended(key);
+    else
+        page->initializeFresh(key, {allowDuplicate, closeOnFailure, initialView});
+    const bool admitted = page->claimPath(key);
+    page->setPassword(knownPassword);
     const bool takeView = makeCurrent || tabs_->count() == 0;
     if (takeView)
-        recentActive_ = false; // opening a file exits the Recent view
-    // Insert exactly like adoptTab does when a position is given; QTabWidget keeps
-    // the same widget current across an insert before it, so a background insert
-    // never moves the view off the document on screen.
-    const int idx = (atIndex >= 0 && atIndex <= tabs_->count())
-                        ? tabs_->insertTab(atIndex, page, page->tabTitle())
-                        : tabs_->addTab(page, page->tabTitle());
-    tabs_->setTabToolTip(idx, QDir::toNativeSeparators(page->path()));
+        recentActive_ = false;
+    const int index = atIndex >= 0 && atIndex <= tabs_->count()
+                          ? tabs_->insertTab(atIndex, page, page->tabTitle())
+                          : tabs_->addTab(page, page->tabTitle());
+    tabs_->setTabToolTip(index, QDir::toNativeSeparators(page->path()));
     if (takeView)
-        tabs_->setCurrentIndex(idx);
+        tabs_->setCurrentIndex(index);
     syncDocTabBar();
     if (!lazy)
-        applySettingsToViewer(v); // document opening resets the default zoom
-    // Auto-entering Fill Forms for a document with fields is handled in
-    // ViewerWidget::setDocument (so it fires on every open path - fresh, session
-    // restore, save-reopen - not just this one), seeded from settings_.autoFormFill
-    // via the TabPage constructor.
-
-    // Record in the recent history; recordOpen() also restores this file's saved
-    // view state (if any) synchronously from the in-process store via
-    // applyViewState(). When duplicating, skip that restore: the stored state
-    // would be applied to whichever window holds the file first (possibly the
-    // original), tugging its view - the caller seeds the duplicate's view itself.
-    if (wm_) {
-        wm_->recordOpen(page->canonicalPath(), /*restoreViewState=*/!allowDuplicate,
-                        page->viewer()->pageCount());
-        wm_->updateSession();
-    }
-    if (takeView)
+        page->resumeAsync();
+    else if (takeView)
         scheduleCurrentResume();
+    if (wm_) {
+        if (lazy && admitted)
+            wm_->recordOpen(page->canonicalPath(), !allowDuplicate && !page->hasRecoverySnapshot());
+        wm_->updateSession(); // fresh placeholders belong to the session, not Recent yet
+    }
     return true;
 }
 
@@ -1957,7 +1892,9 @@ bool MainWindow::closeRemovedTabs(const QString &canonicalPath)
         auto *tab = qobject_cast<TabPage *>(tabs_->widget(i));
         // A tab that is loading stays. If its file is gone, the failed load
         // starts another check.
-        if (!tab || tab->canonicalPath() != canonicalPath || !tab->isSuspended()
+        if (!tab || tab->freshOpen()
+            || mervin::normalizePathKey(tab->canonicalPath()) != mervin::normalizePathKey(canonicalPath)
+            || !tab->isSuspended()
             || tab->hasUnsavedEdits())
             continue;
         if (busy)
@@ -1969,7 +1906,7 @@ bool MainWindow::closeRemovedTabs(const QString &canonicalPath)
 
 void MainWindow::rememberClosedTab(TabPage *tab, int index)
 {
-    if (wm_ && tab)
+    if (wm_ && tab && !tab->freshOpen())
         wm_->rememberClosedTab(tab->path(), tab->canonicalPath(), tabPaths(), index);
 }
 
@@ -2511,7 +2448,7 @@ bool MainWindow::applyViewState(const QString &canonicalPath, const mervin::View
 
 void MainWindow::saveTabViewState(TabPage *tab)
 {
-    if (!wm_ || !tab || !tab->viewer())
+    if (!wm_ || !tab || !tab->viewer() || tab->freshOpen())
         return;
     wm_->saveViewState(tab->canonicalPath(), tab->capturedViewState());
 }
@@ -2522,7 +2459,7 @@ void MainWindow::saveAllViewStates()
         return;
     QList<QPair<QString, mervin::ViewState>> states;
     for (int i = 0; i < tabs_->count(); ++i)
-        if (auto *t = qobject_cast<TabPage *>(tabs_->widget(i)))
+        if (auto *t = qobject_cast<TabPage *>(tabs_->widget(i)); t && !t->freshOpen())
             states.append({t->canonicalPath(), t->capturedViewState()});
     wm_->saveViewStates(states);
 }

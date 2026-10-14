@@ -100,7 +100,7 @@ Vil du opne fila no?</translation>
         <source>Enter the password for %1.</source>
         <extracomment>%1 is the file name.
 ----------
-%1 is the name of the document.</extracomment>
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Skriv inn passordet for %1.</translation>
     </message>
     <message>
@@ -522,20 +522,6 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     <message>
         <source>Password Required</source>
         <translation>Passord påkravd</translation>
-    </message>
-    <message>
-        <source>&quot;%1&quot; is password-protected. Enter the password:</source>
-        <extracomment>%1 is the file name.</extracomment>
-        <translation>«%1» er passordverna. Skriv inn passordet:</translation>
-    </message>
-    <message>
-        <source>Could not open &quot;%1&quot;.
-
-%2</source>
-        <extracomment>%1 is the file path, %2 the reason the file could not be opened.</extracomment>
-        <translation>Klarte ikkje å opne «%1».
-
-%2</translation>
     </message>
     <message>
         <source>Open from URL</source>
@@ -3152,8 +3138,23 @@ Denne fila finst ikkje lenger på disken.</translation>
         <translation>Kunne ikkje lese dokumentet.</translation>
     </message>
     <message>
+        <source>The file was not found.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. The reader could not find the source file or one of the folders leading to it.</extracomment>
+        <translation>Fann ikkje fila.</translation>
+    </message>
+    <message>
+        <source>The file is damaged.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. Its data has an unrecoverable format error, rather than a drive or password error.</extracomment>
+        <translation>Fila er skadd.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Dette dokumentet er passordverna.</translation>
+    </message>
+    <message>
+        <source>The password was not accepted.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder after its supplied open password was rejected. Retry can ask for another password.</extracomment>
+        <translation>Passordet vart ikkje godteke.</translation>
     </message>
 </context>
 <context>
