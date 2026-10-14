@@ -996,6 +996,9 @@ private slots:
         }
         const quint64 generation = page->loadGeneration();
         manager.mergeTab(first, 0, second, -1);
+        // CloseFlow waits for this modal guard. Destroy the former owner directly
+        // to keep the queue-discard boundary covered after that integration.
+        delete first.data();
         QTRY_VERIFY(!first);
         QVERIFY(page && page->window() == second);
         QCOMPARE(page->loadGeneration(), generation);
