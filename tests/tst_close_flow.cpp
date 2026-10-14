@@ -741,7 +741,7 @@ private slots:
             edited.append(tab);
             QVERIFY(addNote(tab, i ? "Second retained edit" : "First retained edit") >= 0);
             QVERIFY(testing::openAndWait(*window, copy(files, i ? "second-local.pdf" : "first-local.pdf")));
-            QVERIFY(tab->suspend());
+            QVERIFY(testing::suspendAndWait(*tab));
             QTRY_VERIFY(tab->isSuspended() && tab->hasUnsavedEdits());
             // Resume must use the recovery copy and preserve its edits.
             QVERIFY(QFile::remove(path));
