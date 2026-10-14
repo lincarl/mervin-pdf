@@ -452,6 +452,69 @@ private slots:
         QVERIFY(!relaunch::requested());
     }
 
+    void canceledCloseResumesSelectedSuspendedTabs_data()
+    {
+        QTest::addColumn<QString>("scope");
+        QTest::newRow("tab") << QStringLiteral("tab");
+        QTest::newRow("window") << QStringLiteral("window");
+        QTest::newRow("quit") << QStringLiteral("quit");
+        QTest::newRow("quit across two windows") << QStringLiteral("multiwindow");
+    }
+
+    void canceledCloseResumesSelectedSuspendedTabs()
+    {
+        QFETCH(QString, scope);
+        QTemporaryDir files;
+        WindowManager manager;
+        QList<QPointer<MainWindow>> windows;
+        QList<QPointer<TabPage>> edited;
+        const int count = scope == QStringLiteral("multiwindow") ? 2 : 1;
+        for (int i = 0; i < count; ++i) {
+            MainWindow *window = manager.createWindow();
+            windows.append(window);
+            const QString path = copy(files, i ? "second.pdf" : "first.pdf");
+            QVERIFY(testing::openAndWait(*window, path));
+            const QPointer<TabPage> tab = currentTab(window);
+            edited.append(tab);
+            QVERIFY(addNote(tab, i ? "Second retained edit" : "First retained edit") >= 0);
+            QVERIFY(testing::openAndWait(*window, copy(files, i ? "second-local.pdf" : "first-local.pdf")));
+            QVERIFY(tab->suspend());
+            QTRY_VERIFY(tab->isSuspended() && tab->hasUnsavedEdits());
+            // Resume must use the recovery copy and preserve its edits.
+            QVERIFY(QFile::remove(path));
+        }
+        beforeAnswer_ = [&](QMessageBox *box) {
+            auto *window = qobject_cast<MainWindow *>(box->parentWidget());
+            QVERIFY(window);
+            const QPointer<TabPage> tab = currentTab(window);
+            QVERIFY(edited.contains(tab));
+            QVERIFY(tab->isClosing() && tab->isSuspended());
+        };
+        if (count == 2)
+            answers_.append(QMessageBox::Discard);
+        answers_.append(QMessageBox::Cancel);
+        if (scope == QStringLiteral("tab"))
+            closeTab(windows.front(), 0);
+        else if (scope == QStringLiteral("window"))
+            QVERIFY(!windows.front()->close());
+        else
+            manager.quitAll();
+        QTRY_VERIFY(answers_.isEmpty());
+        for (int i = 0; i < count; ++i) {
+            const QPointer<TabPage> tab = edited[i];
+            QTRY_VERIFY(tab && !tab->isClosing());
+            QVERIFY(windows[i]);
+            QCOMPARE(currentTab(windows[i]), tab.data());
+            QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable(), 5000);
+            QVERIFY(tab->hasUnsavedEdits());
+            QCOMPARE(tab->viewer()->annotModel()->pageAnnots(0).front().contents,
+                     i ? QStringLiteral("Second retained edit") : QStringLiteral("First retained edit"));
+            QCOMPARE(windows[i]->tabCount(), 2);
+        }
+        QCOMPARE(questions_.size(), count);
+        QVERIFY(!relaunch::requested());
+    }
+
     void editedAfterDontSaveIsAskedAgain_data()
     {
         QTest::addColumn<bool>("inlineEditor");

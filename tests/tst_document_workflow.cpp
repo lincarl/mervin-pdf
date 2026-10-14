@@ -931,7 +931,7 @@ private slots:
         QCOMPARE(tabFiles(*moved), QStringList{QStringLiteral("dragged.pdf")});
     }
 
-    void canceledQuitPreservesSuspendedDocumentsAcrossWindows()
+    void canceledQuitPreservesRecoveredEditsAcrossWindows()
     {
         QTemporaryDir files;
         const QString firstPath = files.filePath(QStringLiteral("first.pdf"));
@@ -961,18 +961,23 @@ private slots:
         QTRY_VERIFY(answers_.isEmpty());
         QTRY_VERIFY(!firstTab->isClosing() && !secondTab->isClosing());
         QCOMPARE(manager.openTabPaths().size(), 2);
-        QVERIFY(firstTab->isSuspended());
-        QVERIFY(secondTab->isSuspended());
+        QTRY_VERIFY(firstTab->isUsable() && secondTab->isUsable());
         QVERIFY(firstTab->hasUnsavedEdits());
         QVERIFY(secondTab->hasUnsavedEdits());
+        const auto firstNotes = firstTab->viewer()->annotModel()->pageAnnots(0);
+        const auto secondNotes = secondTab->viewer()->annotModel()->pageAnnots(0);
+        QCOMPARE(firstNotes.size(), 1u);
+        QCOMPARE(secondNotes.size(), 1u);
+        QCOMPARE(firstNotes.front().contents, QStringLiteral("First pending edit"));
+        QCOMPARE(secondNotes.front().contents, QStringLiteral("Second pending edit"));
 
         answers_ << QMessageBox::Save << QMessageBox::Cancel;
         manager.closeAllForQuit();
         QTRY_VERIFY(answers_.isEmpty());
         QTRY_VERIFY(!firstTab->isClosing() && !secondTab->isClosing());
         QCOMPARE(manager.openTabPaths().size(), 2);
+        QTRY_VERIFY(firstTab->isUsable() && secondTab->isUsable());
         QVERIFY(!firstTab->hasUnsavedEdits());
-        QVERIFY(secondTab->isSuspended());
         QVERIFY(secondTab->hasUnsavedEdits());
         auto saved = manager.engine()->openDocument(firstPath);
         QVERIFY(saved);

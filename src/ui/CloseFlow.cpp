@@ -516,11 +516,19 @@ void CloseFlow::advance(MainWindow *readyWindow)
 
 void CloseFlow::releaseClaims()
 {
+    // A close question can select an unloaded tab while its claim blocks resume.
+    // Clear all claims before scheduling each affected window's current tab.
+    QList<QPointer<MainWindow>> owners;
     for (Entry &item : entries_)
         if (item.tab && item.tab->closeOwner_ == this) {
             item.tab->closeOwner_.clear();
             item.tab->removeEventFilter(this);
+            if (MainWindow *window = owner(item.tab); window && !owners.contains(window))
+                owners.append(window);
         }
+    for (const QPointer<MainWindow> &window : owners)
+        if (window)
+            window->scheduleCurrentResume();
 }
 
 void CloseFlow::cancel()

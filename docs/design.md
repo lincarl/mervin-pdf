@@ -700,6 +700,9 @@ ordered tab-change queue. A close claim suppresses automatic resume and suspensi
 but never blocks that queue. Close all tabs removes each resolved original tab
 promptly. Window close, Quit and restart preserve their windows and tabs until all
 decisions pass. Cancel ends the remaining close request, preserving completed saves.
+It releases the close claims and schedules the normal current-tab resume in each
+affected window. A suspended tab selected for its close question therefore resumes
+from its retained recovery copy without another click.
 Cancel after a window close or Quit keeps an abandoned fresh tab with Retry. The
 application records it in Recent after Retry succeeds.
 The relaunch flag is set only after restart approval, before its windows close.
