@@ -232,6 +232,143 @@ private slots:
         QCOMPARE(notes.front().contents, QStringLiteral("Saved edit"));
     }
 
+    // Selects moved Save outcomes and later requests in the original close scope.
+    void completedSaveAfterMovingOutDoesNotBlockClose_data()
+    {
+        QTest::addColumn<bool>("returnToSource");
+        QTest::addColumn<int>("outcome");
+        QTest::newRow("Saved returns to closing window") << true << 0;
+        QTest::newRow("Quit includes saved moved tab") << false << 0;
+        QTest::newRow("Failed preserves remaining window close") << false << 1;
+        QTest::newRow("Stopped preserves remaining window close") << false << 2;
+    }
+
+    // Checks a moved tab's completed Save cannot leave its former close flow waiting.
+    void completedSaveAfterMovingOutDoesNotBlockClose()
+    {
+        QFETCH(bool, returnToSource);
+        QFETCH(int, outcome);
+        QTemporaryDir files;
+        const QString path = copy(files, "saved.pdf");
+        const QString other = copy(files, "held.pdf");
+        const auto pending = std::make_shared<std::mutex>();
+        testing::Stall<std::mutex> otherWork(*pending, 30000);
+        WindowManager manager;
+        const QPointer<MainWindow> source = manager.createWindow();
+        const QPointer<MainWindow> target = manager.createWindow();
+        const auto release = qScopeGuard([&] {
+            otherWork.release();
+            job::testing::release();
+        });
+        QVERIFY(testing::openAndWait(*source, path));
+        const QPointer<TabPage> tab = currentTab(source);
+        QVERIFY(addNote(tab, "Saved after moving") >= 0);
+        QVERIFY(testing::openAndWait(*source, other));
+        const QPointer<TabPage> otherTab = currentTab(source);
+        const auto otherStarted = std::make_shared<std::atomic<bool>>(false);
+        otherTab->startOperation({files.path(), [other, pending, otherStarted] {
+            if (job::reading(other)) {
+                *otherStarted = true;
+                const std::lock_guard<std::mutex> lock(*pending);
+            }
+        }, {}});
+        QTRY_VERIFY(otherStarted->load());
+        job::testing::holdWhen([path](job::Step step, const QString &file) {
+            return step == job::Step::Commit && file == path;
+        });
+        answers_ << QMessageBox::Save;
+        QVERIFY(!source->close());
+        QTRY_COMPARE(job::testing::held(), 1);
+        source->whenTabsCanChange([&manager, source, target] {
+            manager.mergeTab(source, 0, target, 0);
+        });
+        QTRY_VERIFY(tab && tab->window() == target && !tab->isClosing());
+        QVERIFY(source && otherTab->isBusy() && otherTab->isClosing());
+        if (outcome == 1) {
+            job::testing::failWhen([path](job::Step step, const QString &file) {
+                return step == job::Step::Commit && file == path;
+            });
+            answers_ << QMessageBox::Ok;
+        } else if (outcome == 2) {
+            tab->stopWaiting();
+        }
+        job::testing::release();
+        QTRY_VERIFY(tab->isUsable() && tab->hasUnsavedEdits() == (outcome != 0));
+        QTRY_VERIFY(answers_.isEmpty());
+        QVERIFY(source && otherTab->isClosing());
+        if (outcome != 0) {
+            otherWork.release();
+            QTRY_VERIFY_WITH_TIMEOUT(!source, 1500);
+            QVERIFY(target && tab && tab->hasUnsavedEdits());
+            QCOMPARE(questions_.size(), outcome == 1 ? 2 : 1);
+            return;
+        }
+        if (returnToSource) {
+            target->whenTabsCanChange([&manager, source, target] {
+                manager.mergeTab(target, 0, source, 0);
+            });
+            QTRY_VERIFY(tab && tab->window() == source);
+        } else {
+            manager.quitAll();
+        }
+        otherWork.release();
+        QTRY_VERIFY_WITH_TIMEOUT(!source && !target, 1500);
+        QCOMPARE(questions_.size(), 1);
+        auto saved = manager.engine()->openDocument(path);
+        QVERIFY(saved);
+        QCOMPARE(AnnotModel(*saved).pageAnnots(0).front().contents,
+                 QStringLiteral("Saved after moving"));
+    }
+
+    // Checks Quit during pre-Save attention starts the inherited Save exactly once.
+    void quitDuringSaveAttentionStartsTheChosenSave()
+    {
+        QTemporaryDir files;
+        const QString path = copy(files, "saved.pdf");
+        const QString other = copy(files, "other.pdf");
+        WindowManager manager;
+        const QPointer<MainWindow> window = manager.createWindow();
+        QVERIFY(testing::openAndWait(*window, path));
+        const QPointer<TabPage> tab = currentTab(window);
+        QVERIFY(addNote(tab, "Save after attention") >= 0);
+        QVERIFY(testing::openAndWait(*window, other));
+        const QPointer<TabPage> otherTab = currentTab(window);
+        auto *tabs = window->findChild<QTabWidget *>();
+        bool quitStarted = false;
+        const auto commits = std::make_shared<std::atomic<int>>(0);
+        job::testing::holdWhen([path, commits](job::Step step, const QString &file) {
+            if (step == job::Step::Commit && file == path)
+                ++*commits;
+            return false;
+        });
+        QMetaObject::Connection attentionObserver;
+        const auto clearObservers = qScopeGuard([&] {
+            beforeAnswer_ = {};
+            disconnect(attentionObserver);
+        });
+        beforeAnswer_ = [&](QMessageBox *box) {
+            connect(box, &QDialog::finished, this, [&, tab, otherTab] {
+                tabs->setCurrentWidget(otherTab);
+                attentionObserver = connect(tabs, &QTabWidget::currentChanged, this, [&, tab](int) {
+                    if (!quitStarted && tab && currentTab(window) == tab && !tab->isBusy()) {
+                        quitStarted = true;
+                        manager.quitAll();
+                    }
+                });
+            });
+        };
+        answers_ << QMessageBox::Save;
+        closeTab(window);
+        QTRY_VERIFY(quitStarted);
+        QTRY_VERIFY_WITH_TIMEOUT(!window, 1500);
+        QCOMPARE(questions_.size(), 1);
+        QCOMPARE(commits->load(), 1);
+        auto saved = manager.engine()->openDocument(path);
+        QVERIFY(saved);
+        QCOMPARE(AnnotModel(*saved).pageAnnots(0).front().contents,
+                 QStringLiteral("Save after attention"));
+    }
+
     // Closing one held tab must not make another clean tab wait behind it.
     void closeWaitsAndIndependentTabCloses()
     {

@@ -301,17 +301,23 @@ void CloseFlow::wait(Entry &item, WaitReason reason)
 // Continues close only after Saved, asking again if completion introduced another edit.
 void CloseFlow::finishSave(TabPage *tab, TabPage::SaveResult result)
 {
-    if (ended_ || !tab || !includes(tab))
+    if (ended_ || !tab)
         return;
     Entry *item = entry(tab);
     if (!item || !item->saving)
         return;
+    item->save = false;
+    item->saving = false;
+    // A moved-out tab still settles its retained entry. Its result neither
+    // approves nor cancels the remaining close scope in its former window.
+    if (!includes(tab)) {
+        item->accepted.reset();
+        return;
+    }
     if (result != TabPage::SaveResult::Saved) {
         cancel();
         return;
     }
-    item->save = false;
-    item->saving = false;
     // A direct unfreeze observer can introduce another edit before completion.
     // Ask again rather than accepting changes this Save did not write.
     item->accepted = tab->hasUnsavedEdits() ? std::nullopt
@@ -476,14 +482,22 @@ void CloseFlow::advance(MainWindow *readyWindow)
                 return;
             }
             const QPointer<CloseFlow> self(this);
-            item.saving = true;
+            // Attention can transfer the decision before any Save has started.
             wait(item, WaitReason::Save);
             if (!self || ended_ || !tab)
                 return;
+            window = owner(tab);
+            if (!window) {
+                post();
+                return;
+            }
+            item.saving = true;
             // A broader request can take ownership while Save runs. Its explicit
-            // result follows the tab's current close owner, rather than this flow.
-            window->saveTab(tab, [tab](TabPage::SaveResult result) {
-                if (tab && tab->closeOwner_)
+            // result also settles this flow's retained entry after a tab move.
+            window->saveTab(tab, [self, tab](TabPage::SaveResult result) {
+                if (self)
+                    self->finishSave(tab, result);
+                if (tab && tab->closeOwner_ && tab->closeOwner_ != self)
                     tab->closeOwner_->finishSave(tab, result);
             });
             if (self && !ended_ && tab && tab->isBusy())

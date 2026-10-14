@@ -699,7 +699,9 @@ Don't save answer. Tab removals and final window closes use the current owner's
 ordered tab-change queue. A close claim suppresses automatic resume and suspension,
 but never blocks that queue. Close all tabs removes each resolved original tab
 promptly. Window close, Quit and restart preserve their windows and tabs until all
-decisions pass. Cancel ends the remaining close request, preserving completed saves.
+decisions pass. A Save result settles its original retained decision even after the
+tab leaves that window's close scope, and also reaches any current close owner.
+Cancel ends the remaining close request, preserving completed saves.
 It releases the close claims and schedules the normal current-tab resume in each
 affected window. A suspended tab selected for its close question therefore resumes
 from its retained recovery copy without another click.
