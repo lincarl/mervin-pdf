@@ -103,7 +103,9 @@ Open it now?</source>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>%1 için şifreyi girin.</translation>
     </message>
     <message>
@@ -3312,14 +3314,6 @@ Bu dosya artık diskte değil.</translation>
         <translation>&lt;b&gt;Şifrelenmiş&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;Yazdırma: %3 · Kopyalama: %4 · Değiştirme: %5 · Açıklama Ekleme: %6&lt;br&gt;&lt;i&gt;Not: Mervin bu izin işaretlerini hiçbir zaman uygulamaz.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Şifre Gerekli</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Bu belgenin şifresini girin:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Farklı Kaydet</translation>
     </message>
@@ -3348,26 +3342,10 @@ Devam Edilsin mi?</translation>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>İşlem başarısız oldu.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Bitti</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Şuraya kaydedildi:
-%1
-
-Şimdi açılsın mı?</translation>
     </message>
 </context>
 <context>

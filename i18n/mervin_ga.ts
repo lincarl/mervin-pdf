@@ -103,7 +103,9 @@ Oscail anois é?</translation>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Cuir isteach an focal faire le haghaidh %1.</translation>
     </message>
     <message>
@@ -3352,14 +3354,6 @@ Níl an comhad seo ar diosca a thuilleadh.</translation>
         <translation>&lt;b&gt;Criptithe&lt;/b&gt; · %1 (%2-giotán)&lt;br&gt;Priontáil: %3 · Cóipeáil: %4 · Athraithe: %5 · Anótáil: %6&lt;br&gt;&lt;i&gt;Nóta: Ní fhorfheidhmíonn Mervin na bratacha ceada seo choíche.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Pasfhocal de dhíth</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Cuir isteach pasfhocal an doiciméid seo:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Sábháil Mar</translation>
     </message>
@@ -3388,26 +3382,10 @@ Lean ar aghaidh?</translation>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>Theip ar an oibríocht.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Críochnaithe</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Sábháilte chuig:
-%1
-
-Oscail anois é?</translation>
     </message>
 </context>
 <context>

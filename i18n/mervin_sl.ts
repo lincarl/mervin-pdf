@@ -103,7 +103,9 @@ Odpreti zdaj?</translation>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Vnesite geslo za %1.</translation>
     </message>
     <message>
@@ -3372,14 +3374,6 @@ Te datoteke ni več na disku.</translation>
         <translation>&lt;b&gt;Šifrirano&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;Tisk: %3 · Kopiranje: %4 · Spreminjanje: %5 · Komentiranje: %6&lt;br&gt;&lt;i&gt;Opomba: Mervin nikoli ne uveljavi teh zastavic dovoljenj.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Zahtevano geslo</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Vnesite geslo za ta dokument:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Shrani kot</translation>
     </message>
@@ -3408,26 +3402,10 @@ Nadaljevati?</translation>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>Operacija ni uspela.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Končano</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Shranjeno v:
-%1
-
-Odpreti zdaj?</translation>
     </message>
 </context>
 <context>

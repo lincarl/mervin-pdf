@@ -103,7 +103,9 @@ Open it now?</source>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>ป้อนรหัสผ่านสำหรับ%1</translation>
     </message>
     <message>
@@ -3312,14 +3314,6 @@ This file is no longer on disk.</source>
         <translation>&lt;b&gt;เข้ารหัสแล้ว&lt;/b&gt; · %1 (%2-บิต)&lt;br&gt;การพิมพ์: %3 · การทำสำเนา: %4 · การแก้ไข: %5 · การใส่คำอธิบายประกอบ: %6&lt;br&gt;&lt;i&gt;หมายเหตุ: Mervinจะไม่บังคับใช้แฟล็กการอนุญาตเหล่านี้&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>ต้องใช้รหัสผ่าน</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>ป้อนรหัสผ่านสำหรับเอกสารนี้:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>บันทึกเป็น</translation>
     </message>
@@ -3348,26 +3342,10 @@ Continue?</source>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>การดำเนินการล้มเหลว
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>เสร็จแล้ว</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>บันทึกไปที่:
-%1
-
-เปิดตอนนี้หรือไม่?</translation>
     </message>
 </context>
 <context>

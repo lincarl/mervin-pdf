@@ -103,7 +103,9 @@ Iftaħ issa?</translation>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Daħħal il-password għal %1.</translation>
     </message>
     <message>
@@ -3372,14 +3374,6 @@ Dan il-fajl m&apos;għadux fuq disk.</translation>
         <translation>&lt;b&gt;Kriptat&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;Stampar: %3 · Ikkupjar: %4 · Modifika: %5 · Annotazzjoni: %6&lt;br&gt;&lt;i&gt;Nota: Mervin qatt ma jinforza dawn l-indikaturi tal-permessi.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Password Meħtieġa</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Daħħal il-password għal dan id-dokument:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Issejvja bħala</translation>
     </message>
@@ -3408,26 +3402,10 @@ Kompli?</translation>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>L-operazzjoni falliet.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Magħmul</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Issejvjat lil:
-%1
-
-Iftaħ issa?</translation>
     </message>
 </context>
 <context>

@@ -103,7 +103,9 @@ L&apos;ouvrir maintenant ?</translation>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Entrez le mot de passe pour %1.</translation>
     </message>
     <message>
@@ -3332,14 +3334,6 @@ Ce fichier n&apos;est plus sur le disque.</translation>
         <translation>&lt;b&gt;Chiffré&lt;/b&gt; · %1 (%2 bits)&lt;br&gt;Impression : %3 · Copie : %4 · Modification : %5 · Annotation : %6&lt;br&gt;&lt;i&gt;Remarque : Mervin n&apos;applique jamais ces restrictions d&apos;autorisation.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Mot de passe requis</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Saisissez le mot de passe pour ce document&#xa0;:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Enregistrer sous</translation>
     </message>
@@ -3368,26 +3362,10 @@ Continuer ?</translation>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>L&apos;opération a échoué.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Terminé</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Enregistré dans&#xa0;:
-%1
-
-L&apos;ouvrir maintenant ?</translation>
     </message>
 </context>
 <context>

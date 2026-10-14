@@ -103,7 +103,9 @@ Open it now?</source>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>%1 üçün parolu daxil edin.</translation>
     </message>
     <message>
@@ -3332,14 +3334,6 @@ Bu fayl artıq diskdə deyil.</translation>
         <translation>&lt;b&gt;Şifrələnmiş&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;Çap: %3 · Kopyalama: %4 · Dəyişdirmə: %5 · Annotasiya: %6&lt;br&gt;&lt;i&gt;Qeyd: Mervin bu icazə məhdudiyyətlərini heç vaxt məcburi tətbiq etmir.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Şifrə Tələb olunur</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Bu sənəd üçün parolu daxil edin:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Fərqli Saxla</translation>
     </message>
@@ -3368,26 +3362,10 @@ Davam edilsin?</translation>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>Əməliyyat uğursuz oldu.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Bitdi</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Yadda saxlandı:
-%1
-
-İndi açılsın?</translation>
     </message>
 </context>
 <context>

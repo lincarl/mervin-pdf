@@ -103,7 +103,9 @@ Open it now?</source>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Введите пароль для %1.</translation>
     </message>
     <message>
@@ -3352,14 +3354,6 @@ This file is no longer on disk.</source>
         <translation>&lt;b&gt;Зашифровано&lt;/b&gt; · %1 (%2-бит)&lt;br&gt;Печать: %3 · Копирование: %4 · Изменение: %5 · Аннотирование: %6&lt;br&gt;&lt;i&gt;Примечание: Mervin никогда не применяет эти флаги разрешений.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Требуется пароль</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Введите пароль для этого документа:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Сохранить как</translation>
     </message>
@@ -3388,26 +3382,10 @@ Continue?</source>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>Операция не удалась.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Готово</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Сохранено:
-%1
-
-Открыть сейчас?</translation>
     </message>
 </context>
 <context>

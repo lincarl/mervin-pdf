@@ -1158,10 +1158,22 @@ void TstTranslationLayout::print()
 
 void TstTranslationLayout::security()
 {
-    mervin::SecurityDialog clear(plain_);
+    mervin::SecurityDialog clear(plain_, mervin::QpdfService::Info{});
     inspect(clear, QStringLiteral("Security unencrypted document"));
-    mervin::SecurityDialog protectedDocument(encrypted_, QStringLiteral("secret"));
+    mervin::QpdfService::Info info;
+    QCOMPARE(mervin::QpdfService().readInfo(encrypted_, QStringLiteral("secret"), info),
+             mervin::QpdfService::Status::Ok);
+    mervin::SecurityDialog protectedDocument(encrypted_, info);
     inspect(protectedDocument, QStringLiteral("Security restricted encrypted document"));
+    mervin::SecurityDialog::Request choices;
+    choices.output = QStringLiteral("/srv/nas/docs/chosen-encrypted-copy.pdf");
+    choices.userPassword = QStringLiteral("chosen open password");
+    choices.ownerPassword = QStringLiteral("chosen owner password");
+    choices.algorithm = mervin::QpdfService::Algorithm::AES128;
+    choices.permissions = {false, false, false, false};
+    mervin::SecurityDialog failedRead(encrypted_, {},
+        mervin::SecurityDialog::tr("A password is required."), choices);
+    inspect(failedRead, QStringLiteral("Security failed information and retained choices"));
 }
 
 void TstTranslationLayout::settings()

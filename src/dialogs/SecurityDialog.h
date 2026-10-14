@@ -5,6 +5,8 @@
 #include <QDialog>
 #include <QString>
 
+#include <optional>
+
 class QLabel;
 class QLineEdit;
 class QComboBox;
@@ -12,35 +14,40 @@ class QCheckBox;
 
 namespace mervin {
 
-// Document -> Security: shows the document's current encryption / permission
-// metadata and offers the qpdf-backed operations - encrypt / change password
-// (selectable algorithm + permissions), remove password (decrypt), and strip
-// owner restrictions. Every operation writes a NEW file (never in place) and
-// can offer to open the result via openRequested().
+// Shows previously read security information and returns a request to write a
+// separate copy. The dialog never reads or writes the document itself.
 class SecurityDialog : public QDialog
 {
     Q_OBJECT
 
 public:
-    // `password` is the one that opened the document in its tab (empty when it is
-    // not encrypted). It is tried first, so the dialog prompts only if it fails.
-    SecurityDialog(const QString &documentPath, const QString &password = QString(),
-                   QWidget *parent = nullptr);
+    enum class Action { Encrypt, Decrypt, StripRestrictions };
+    struct Request
+    {
+        Action action = Action::Encrypt;
+        QString output;
+        QString userPassword;
+        QString ownerPassword;
+        QpdfService::Algorithm algorithm = QpdfService::Algorithm::AES256;
+        QpdfService::Permissions permissions;
+    };
 
-signals:
-    void openRequested(const QString &path); // user chose to open a written copy
+    // A failed write supplies its request to preserve choices and the suggested
+    // destination. `error` describes an unsuccessful information read.
+    SecurityDialog(const QString &documentPath, const QpdfService::Info &info,
+                   const QString &error = {}, std::optional<Request> choices = std::nullopt,
+                   QWidget *parent = nullptr);
+    const std::optional<Request> &request() const { return request_; }
 
 private:
-    void refreshInfo();           // read + display current security info
-    bool ensurePassword();        // prompt for the open password; only after password_ failed
+    void showInfo(const QpdfService::Info &info, const QString &error);
     void doEncrypt();
     void doDecrypt(bool stripRestrictions); // false = remove password, true = strip
-    QString chooseOutput(const QString &suffix);
-    void reportResult(QpdfService::Status st, const QString &error, const QString &outPath);
+    QString chooseOutput(Action action, const QString &suffix);
+    Request choices() const;
 
     QString path_;
-    QString password_; // the open password supplied so far (the tab's, or typed; may be empty)
-    QpdfService svc_;
+    std::optional<Request> request_;
 
     QLabel *infoLabel_ = nullptr;
     QLineEdit *userEdit_ = nullptr;

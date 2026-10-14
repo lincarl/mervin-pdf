@@ -103,7 +103,9 @@ Deschide-l acum?</translation>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Introduceți parola pentru %1.</translation>
     </message>
     <message>
@@ -3352,14 +3354,6 @@ Acest fișier nu mai este pe disc.</translation>
         <translation>&lt;b&gt;Criptat&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;Tipărire: %3 · Copiere: %4 · Modificare: %5 · Adnotare: %6&lt;br&gt;&lt;i&gt;Notă: Mervin nu aplică niciodată aceste semnalizatoare de permisiune.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Parola necesară</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Introduceți parola pentru acest document:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Salvare ca</translation>
     </message>
@@ -3388,26 +3382,10 @@ Continuați?</translation>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>Operația a eșuat.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Gata</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Salvat în:
-%1
-
-Deschide-l acum?</translation>
     </message>
 </context>
 <context>

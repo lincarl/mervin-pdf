@@ -103,7 +103,9 @@ Avrir ussa?</translation>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Endatescha il pled-clav per %1.</translation>
     </message>
     <message>
@@ -3332,14 +3334,6 @@ Questa datoteca n&apos;è betg pli sin il disc.</translation>
         <translation>&lt;b&gt;Criptà&lt;/b&gt; · %1 (%2 bits)&lt;br&gt;Stampar: %3 · Copiar: %4 · Modifitgar: %5 · Annotar: %6&lt;br&gt;&lt;i&gt;Remartga: Mervin na fa mai valair questas permissiuns.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Pled-clav necessari</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Endatescha il pled-clav per quest document:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Memorisar sco</translation>
     </message>
@@ -3368,26 +3362,10 @@ Cuntinuar?</translation>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>L&apos;acziun n&apos;è betg reussida.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Terminà</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Memorisà en:
-%1
-
-Avrir ussa?</translation>
     </message>
 </context>
 <context>

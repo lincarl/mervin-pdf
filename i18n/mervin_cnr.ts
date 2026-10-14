@@ -103,7 +103,9 @@ Otvoriti sada?</translation>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Unesite lozinku za %1.</translation>
     </message>
     <message>
@@ -3352,14 +3354,6 @@ Ova datoteka više nije na disku.</translation>
         <translation>&lt;b&gt;Šifrovan&lt;/b&gt; · %1 (%2 bita)&lt;br&gt;Štampanje: %3 · Kopiranje: %4 · Izmjene: %5 · Zabilješke: %6&lt;br&gt;&lt;i&gt;Napomena: Mervin nikad ne sprovodi ova ograničenja dozvola.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Potrebna je lozinka</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Unesite lozinku za ovaj dokument:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Sačuvaj kao</translation>
     </message>
@@ -3388,26 +3382,10 @@ Nastaviti?</translation>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>Radnja nije uspjela.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Gotovo</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Sačuvano u:
-%1
-
-Otvoriti sada?</translation>
     </message>
 </context>
 <context>

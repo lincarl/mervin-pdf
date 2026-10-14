@@ -103,7 +103,9 @@ Vil du opne fila no?</translation>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Skriv inn passordet for %1.</translation>
     </message>
     <message>
@@ -3332,14 +3334,6 @@ Denne fila finst ikkje lenger på disken.</translation>
         <translation>&lt;b&gt;Kryptert&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;Utskrift: %3 · Kopiering: %4 · Endring: %5 · Merknader: %6&lt;br&gt;&lt;i&gt;Merk: Mervin handhevar aldri desse løyveflagga.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Passord påkravd</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Skriv inn passordet for dette dokumentet:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Lagre som</translation>
     </message>
@@ -3368,26 +3362,10 @@ Vil du halde fram?</translation>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>Handlinga mislukkast.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Ferdig</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Lagra til:
-%1
-
-Vil du opne fila no?</translation>
     </message>
 </context>
 <context>

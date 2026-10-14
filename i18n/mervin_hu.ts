@@ -103,7 +103,9 @@ Most nyitja meg?</translation>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Írja be a(z) %1 jelszavát.</translation>
     </message>
     <message>
@@ -3312,14 +3314,6 @@ Ez a fájl már nincs a lemezen.</translation>
         <translation>&lt;b&gt;Titkosított&lt;/b&gt; · %1 (%2 bites)&lt;br&gt;Nyomtatás: %3 · Másolás: %4 · Módosítás: %5 · Jegyzetek: %6&lt;br&gt;&lt;i&gt;Megjegyzés: a Mervin soha nem kényszeríti ki ezeket a jogosultsági korlátozásokat.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Jelszó szükséges</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Adja meg a dokumentum jelszavát:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Mentés másként</translation>
     </message>
@@ -3348,26 +3342,10 @@ Folytatja?</translation>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>A művelet meghiúsult.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Kész</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Mentve ide:
-%1
-
-Most nyitja meg?</translation>
     </message>
 </context>
 <context>

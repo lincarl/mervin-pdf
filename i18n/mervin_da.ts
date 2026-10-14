@@ -103,7 +103,9 @@ Open it now?</source>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Indtast adgangskoden til %1.</translation>
     </message>
     <message>
@@ -3332,14 +3334,6 @@ Denne fil er ikke længere på disken.</translation>
         <translation>&lt;b&gt;krypteret&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;Udskrivning: %3 · Kopiering: %4 · Ændring: %5 · Anmærkning: %6&lt;br&gt;&lt;i&gt;Bemærk: Mervin håndhæver aldrig disse tilladelsesflag.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Adgangskode påkrævet</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Indtast adgangskoden til dette dokument:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Gem som</translation>
     </message>
@@ -3368,26 +3362,10 @@ Vil du fortsætte?</translation>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>Handlingen mislykkedes.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Udført</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Gemt i:
-%1
-
-Åbn det nu?</translation>
     </message>
 </context>
 <context>

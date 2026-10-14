@@ -103,7 +103,9 @@ Otevřít nyní?</translation>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Zadejte heslo pro %1.</translation>
     </message>
     <message>
@@ -3352,14 +3354,6 @@ Tento soubor již není na disku.</translation>
         <translation>&lt;b&gt;šifrováno&lt;/b&gt; · %1 (%2bitové)&lt;br&gt;Tisk: %3 · Kopírování: %4 · Úprava: %5 · Poznámky: %6&lt;br&gt;&lt;i&gt;Poznámka: Mervin tyto příznaky oprávnění nikdy nevynucuje.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Je vyžadováno heslo</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Zadejte heslo pro tento dokument:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Uložit jako</translation>
     </message>
@@ -3388,26 +3382,10 @@ Pokračovat?</translation>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>Operace se nezdařila.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Hotovo</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Uloženo do:
-%1
-
-Otevřít nyní?</translation>
     </message>
 </context>
 <context>

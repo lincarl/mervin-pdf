@@ -655,8 +655,9 @@ encryption.
 `QpdfService` inspects and changes encryption and permission settings. These services
 write new files and do not share live MuPDF document handles with the viewer.
 
-Rotate Pages, Split and accepted Merge plans run as their tab's operation (`TabPage::startOperation`), so
-only that tab waits for the file. Their prompts and file dialogs run first, as before.
+Rotate Pages, Split, accepted Merge plans and Security run as their tab's operation
+(`TabPage::startOperation`), so only that tab waits for the file. Page tool prompts
+and file dialogs run first, as before.
 The tab then commits its form and comment editors, takes a still picture of its pages
 (`StillPicture`), pauses the viewer (`ViewerWidget::pauseForOperation`, which stops
 its renders on their way, a find search, a zoom ease, auto scroll, its popups and form
@@ -725,6 +726,18 @@ user operation or another pending close makes it return false immediately. A cho
 Save starts as the tab's background job after the callback returns false, for loaded
 and unloaded tabs alike, and never triggers a later shutdown. The adapter returns
 true only when approved windows close in that call.
+
+Security first reads the document's encryption and permission information as a
+tab operation, including any retry with a newly entered password. `SecurityDialog`
+receives the information or read error as values and does no document I/O. Choosing
+Encrypt, Remove Password or Strip Owner Restrictions closes the dialog and returns
+the destination, passwords, algorithm and permissions to the window. A second tab
+operation checks and reserves the destination before writing the separate copy.
+An encrypted result opens with its new open password. A failed write reopens
+Security with the choices, destination and original information or read error
+retained. Stop discards the result and opens no dialog. Queued results follow a
+moved tab if its previous window disappears, select that tab in its current window
+before showing the dialog, and are suppressed after confirmed shutdown.
 
 `MergePlan` and `ExtractPlan` are the GUI-free models behind the Merge PDFs and
 Extract Pages dialogs, tested in `tst_merge_plan` and `tst_extract_plan`; each dialog

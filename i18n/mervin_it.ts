@@ -103,7 +103,9 @@ Aprirlo adesso?</translation>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Immettere la password per %1.</translation>
     </message>
     <message>
@@ -3332,14 +3334,6 @@ Questo file non è più sul disco.</translation>
         <translation>&lt;b&gt;Crittografato&lt;/b&gt; · %1 (%2 bit)&lt;br&gt;Stampa: %3 · Copia: %4 · Modifica: %5 · Annotazione: %6&lt;br&gt;&lt;i&gt;Nota: Mervin non applica mai questi flag di autorizzazione.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Password richiesta</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Inserisci la password per questo documento:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Salva con nome</translation>
     </message>
@@ -3368,26 +3362,10 @@ Continuare?</translation>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>L&apos;operazione non è riuscita.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Fatto</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Salvato in:
-%1
-
-Aprirlo adesso?</translation>
     </message>
 </context>
 <context>

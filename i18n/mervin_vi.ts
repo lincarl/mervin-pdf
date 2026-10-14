@@ -103,7 +103,9 @@ Mở nó ngay bây giờ?</translation>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Nhập mật khẩu cho %1.</translation>
     </message>
     <message>
@@ -3312,14 +3314,6 @@ Tệp này không còn trên đĩa.</translation>
         <translation>&lt;b&gt;Đã mã hóa&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;In: %3 · Sao chép: %4 · Sửa đổi: %5 · Chú thích: %6&lt;br&gt;&lt;i&gt;Lưu ý: Mervin không bao giờ thực thi các cờ cấp phép này.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Yêu cầu mật khẩu</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Nhập mật khẩu cho tài liệu này:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Lưu dưới dạng</translation>
     </message>
@@ -3348,26 +3342,10 @@ Tiếp tục?</translation>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>Thao tác thất bại.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Xong</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Đã lưu vào:
-%1
-
-Mở nó ngay bây giờ?</translation>
     </message>
 </context>
 <context>
