@@ -65,8 +65,10 @@ ownerEdit_->setPlaceholderText(tr("defaults to the open password"));
 
 `lupdate` copies these comments into `<extracomment>`. Keep explanations specific
 to a string in its source comment rather than editing the extracted comment in
-the catalog. When a fix reveals a reusable translation lesson, add it to this
-guide in the same change so later translators and agents can apply it.
+the catalog. `lupdate` reads a comment's backslashes as escapes, so `\\server\docs`
+arrives as `\serverdocs`. Describe a Windows path in words instead. When a fix
+reveals a reusable translation lesson, add it to this guide in the same change so
+later translators and agents can apply it.
 
 ## Terminology
 
@@ -221,6 +223,14 @@ Review translated wording against the English text and notes, then check its
 actual interface context. Do not shorten a translation by dropping a condition or
 changing an action just to make it fit.
 
+A path or file name inside a translated sentence needs a bidirectional isolate in the
+code (U+2068 before it, U+2069 after it), as the slow load notice in `TabPage` does.
+Without one, Arabic shows a path's leading slash at the wrong end and can reorder its
+folders. Translators keep the placeholder as it is. A long path also needs the code to
+mark where it may wrap. Qt allows no line break after a backslash, so a Windows folder
+otherwise wraps nowhere, and it can end a line on the `\\` of a network share or the
+`/` a path starts with.
+
 Run the translation and layout checks after building the test targets. For a
 local Linux run, set `mervin_build_dir` to your existing isolated build directory:
 
@@ -249,10 +259,11 @@ app uses installed system fonts. Linux installations need fonts covering the
 selected language, such as Noto Sans and the corresponding Noto CJK families.
 
 `tst_translation_layout` opens the ten custom dialogs in `src/dialogs/`, plus the
-measurement and annotation panels, using real Qt widgets and the default dark
-stylesheet. It discovers every compiled language through `i18n::availableLanguages()`
-and repeats each scenario at the default size and at the smallest size a user can
-resize each dialog to, with 10-point and 15-point base fonts. CTest runs a separate
+measurement and annotation panels and a tab's slow load notice in the main window,
+using real Qt widgets and the default dark stylesheet. It discovers every compiled
+language through `i18n::availableLanguages()` and repeats each scenario at the
+default size and at the smallest size a user can resize each dialog to, with
+10-point and 15-point base fonts. CTest runs a separate
 `tst_translation_layout_<id>` test for each language to keep failures and timeouts
 independent. `MERVIN_TEST_LANGUAGE=<id>` selects one language when invoking the
 executable directly; without it the executable checks them all. Text with a fixed
@@ -260,8 +271,10 @@ pixel font size in the stylesheet retains that size.
 
 The scenarios include both calibration modes, all Settings pages, long filenames,
 populated lists, document security states, print range validation and selected
-input, file and network errors. The OCR language catalog uses a fake network
-reply so the test exercises the real dialog without external requests.
+input, file and network errors. The slow load notice is checked at the main window's
+narrowest width, with a long folder and a file name that cannot wrap. The OCR
+language catalog uses a fake network reply so the test exercises the real dialog
+without external requests.
 `tst_text_fit` checks that the fitting helper accepts valid layouts and rejects
 deliberate clipping. Both tests run through CTest in GitHub Actions without AI.
 

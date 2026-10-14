@@ -1,3 +1,4 @@
+#include "io/Background.h"
 #include "render/Document.h"
 #include "render/DocumentSearch.h"
 #include "render/FormModel.h"
@@ -237,6 +238,15 @@ private slots:
         QVERIFY(Document::waitForCloses(100));
         stall.release();
         QTRY_VERIFY_WITH_TIMEOUT(closed(lifetime), 10000);
+    }
+
+    // A close of no document with nothing to run after it starts no thread.
+    void closingNoDocumentStartsNothing()
+    {
+        QVERIFY(background::settle(10000)); // the earlier closes have ended
+        Document::closeInBackground(nullptr);
+        QCOMPARE(Document::closing(), 0);
+        QCOMPARE(background::running(), 0);
     }
 
     void closingDoesNotWaitForAStuckSearch()

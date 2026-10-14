@@ -64,6 +64,10 @@ theme::Chrome nordChrome()
     t.hairline             = rgb(kNordWash, 0x1c);
     t.scrollThumb          = rgb(kNordWash, 0x42);
     t.scrollThumbHover     = rgb(kNordWash, 0x6b);
+
+    t.inkCanvas           = rgb(0xe5e9f0); // 7.6:1 on the canvas
+    t.canvasControl       = rgb(0x4c566a); // its ink at 6.1:1
+    t.borderCanvasControl = rgb(0x616e88);
     return t;
 }
 
@@ -105,6 +109,10 @@ theme::Chrome slateChrome()
     t.hairline             = rgb(kSlateWash, 0x2e);
     t.scrollThumb          = rgb(kSlateWash, 0x47);
     t.scrollThumbHover     = rgb(kSlateWash, 0x73);
+
+    t.inkCanvas           = rgb(0xf2f4f7); // 9.6:1 on the canvas
+    t.canvasControl       = rgb(0x4a505a); // its ink at 7.4:1
+    t.borderCanvasControl = rgb(0x6a717c);
     return t;
 }
 

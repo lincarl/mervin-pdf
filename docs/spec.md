@@ -74,7 +74,10 @@ Unsaved forms, annotations, measurements, and manual scales survive unloading in
 local recovery snapshots. Snapshots preserve the source PDF's encryption, and
 passwords remain in memory only. Unloading does not save edits into the original
 file. If a snapshot cannot be written, the document stays loaded. A failed reload
-keeps the tab and its recovery state available for retry.
+keeps the tab and its recovery state available for retry. When the drive does not
+answer a reload for 2 seconds, the tab names the file and its folder and offers Stop
+waiting. Stopping leaves the tab unloaded with its recovery state and Retry, and
+selecting the tab does not reload it until Retry.
 
 The exception is an unloaded tab without unsaved edits whose file was deleted, moved
 or renamed, such as the temporary copy of a mail attachment. It closes without a

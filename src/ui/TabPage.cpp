@@ -20,6 +20,8 @@
 #include <QFile>
 #include <QDateTime>
 #include <QDir>
+#include <QEvent>
+#include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -29,6 +31,7 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QTemporaryFile>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -155,6 +158,83 @@ QJsonObject readManifest(const QString &path)
     return json;
 }
 
+// How often a tab reads what its load reports.
+constexpr int kPollMs = 250;
+int slowDelayMs = TabPage::kSlowMs;
+
+// The slow notice for document `name` read from `folder`, for a label `width` wide.
+// The sentence wraps where Qt allows, as at spaces, and the folder also after each
+// separator that ends a folder name, which Qt does not allow after a backslash. No line
+// ends inside or right after the separators a path starts with, such as the "\\" of a
+// network share, right before another separator or after the ellipsis of a shortened
+// part. A name or folder with a piece still too wide for a line is shortened in the
+// middle, each only as far as its own pieces need.
+QString slowNotice(const QString &name, const QString &folder, const QFontMetrics &metrics,
+                   int width)
+{
+    //: Shown in place of the page when the drive has not answered for a few seconds
+    //: while the document loads. Below it is the Stop waiting button. %1 is the file
+    //: name (plan.pdf), %2 the folder it is read from (/nas/docs, or a network share
+    //: folder on Windows).
+    const QString sentence = TabPage::tr("Opening %1 from %2. The drive is not answering.");
+    // `text` at most `cap` pixels wide, with the breaks above, as a bidirectional
+    // isolate, so a path keeps its order in a right-to-left sentence.
+    const auto part = [&metrics](const QString &text, int cap, bool path) {
+        // elidedText() measures without rounding, so it can shorten a text that
+        // horizontalAdvance() says is `cap` wide.
+        const QString shown = metrics.horizontalAdvance(text) <= cap
+                                  ? text
+                                  : metrics.elidedText(text, Qt::ElideMiddle, cap);
+        const auto separator = [path](QChar c) { return path && (c == u'/' || c == u'\\'); };
+        QString out = QChar(0x2068); // first strong isolate
+        bool leading = true;         // in the separators the text starts with
+        for (qsizetype i = 0; i < shown.size(); ++i) {
+            const QChar c = shown.at(i);
+            out += c;
+            leading = leading && separator(c);
+            if (i + 1 == shown.size())
+                break;
+            if (leading || c == QChar(0x2026) || separator(shown.at(i + 1)))
+                out += QChar(0x2060); // word joiner, no break here
+            else if (separator(c))
+                out += QChar(0x200B); // zero width space, a break here
+        }
+        return out + QChar(0x2069); // pop directional isolate
+    };
+    const auto compose = [&](int nameCap, int folderCap) {
+        return sentence.arg(part(name, nameCap, false), part(folder, folderCap, true));
+    };
+    const auto fits = [&](const QString &text) {
+        return metrics.boundingRect(QRect(0, 0, width, 1 << 20), Qt::TextWordWrap, text).width()
+            <= width;
+    };
+    const int nameWidth = metrics.horizontalAdvance(name);
+    const int folderWidth = metrics.horizontalAdvance(folder);
+    if (width <= 0 || fits(compose(nameWidth, folderWidth)))
+        return compose(nameWidth, folderWidth);
+    // The widest cap up to `widest` at which `fitsAt` holds, or 0.
+    const auto widestFitting = [](int widest, const auto &fitsAt) {
+        if (fitsAt(widest))
+            return widest;
+        int fitting = 0;
+        int tooWide = widest;
+        while (tooWide - fitting > 1) {
+            const int cap = (fitting + tooWide) / 2;
+            (fitsAt(cap) ? fitting : tooWide) = cap;
+        }
+        return fitting;
+    };
+    // Each part beside the other shortened to nothing, so only its own pieces count.
+    const int nameCap = widestFitting(nameWidth, [&](int cap) { return fits(compose(cap, 0)); });
+    const int folderCap =
+        widestFitting(folderWidth, [&](int cap) { return fits(compose(0, cap)); });
+    // A translation can put pieces of both on one line. Then both are shortened alike.
+    const int cap = widestFitting(std::max(nameCap, folderCap), [&](int cap) {
+        return fits(compose(std::min(nameCap, cap), std::min(folderCap, cap)));
+    });
+    return compose(std::min(nameCap, cap), std::min(folderCap, cap));
+}
+
 MeasureKind kindFromString(const QString &s)
 {
     const QString t = s.trimmed().toLower();
@@ -175,19 +255,56 @@ struct TabPage::SavedState {
 };
 
 struct TabPage::OpenResult {
-    std::unique_ptr<Document> document;
+    OwnedDocument document;
     std::optional<MeasureDoc> measurements;
     SourceStamp source;
     QString error;
     bool needsPassword = false;
 };
 
-// A resumeAsync() read on a background thread, shared with the tab.
-struct TabPage::Load {
+// The tab's background job, for now the load that resumeAsync() starts, shared by the
+// tab and the job's thread. The tab never destroys a running job. It takes the result,
+// waits for it (stopLoading) or lets go of it (abandon), and the job ends on its own.
+struct TabPage::Job {
+    enum class Phase {
+        Reading, // the job reads the document
+        Closing, // the tab let go of the job, and what it read is being closed
+        Stored,  // `result` waits for the tab
+        Ended,   // nothing is left open, as the tab took the result or it was closed
+    };
+
+    explicit Job(const QString &source) : source(source) {}
+
+    // With `mutex` held.
+    void setPhase(Phase next)
+    {
+        phase = next;
+        changed.notify_all();
+    }
+    // Ends the job once what it read is closed, on the thread that closed it, then
+    // removes the recovery copy a closed tab left for it.
+    void endClosed()
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        const QString file = std::exchange(removeAfter, QString());
+        setPhase(Phase::Ended);
+        lock.unlock();
+        appfiles::remove(file);
+    }
+    // Blocks until the job has ended. Only for another job's thread.
+    void waitUntilEnded()
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        changed.wait(lock, [this] { return phase == Phase::Ended; });
+    }
+
+    const QString source;               // the file the load reads
+    job::State state;                   // what the job reports, and its stop
     std::mutex mutex;
-    std::condition_variable finished;   // notified when `result` is set
-    std::shared_ptr<OpenResult> result; // guarded by mutex: set when the read is done
-    bool abandoned = false;             // guarded by mutex: the tab went away first
+    std::condition_variable changed;    // notified when `phase` changes
+    Phase phase = Phase::Reading;       // guarded by mutex
+    std::shared_ptr<OpenResult> result; // guarded by mutex: set while Stored
+    bool abandoned = false;             // guarded by mutex: the tab let go of the job
     QString removeAfter;                // guarded by mutex: a recovery copy, see ~TabPage
 };
 
@@ -213,24 +330,45 @@ TabPage::TabPage(RenderEngine *engine, QWidget *parent)
 
     viewer_ = new ViewerWidget(engine_, this);
     layout->addWidget(viewer_, 1);
+    // Stands in for the pages, on their canvas, while the document is unloaded, loads
+    // or could not be loaded.
     placeholder_ = new QWidget(this);
+    placeholder_->setObjectName(QStringLiteral("documentPlaceholder"));
+    placeholder_->setAttribute(Qt::WA_StyledBackground, true);
     auto *placeholderLayout = new QVBoxLayout(placeholder_);
+    placeholderLayout->setSpacing(6);
     placeholderLayout->addStretch();
     placeholderLabel_ = new QLabel(placeholder_);
     placeholderLabel_->setObjectName(QStringLiteral("documentLoadStatus"));
     placeholderLabel_->setAlignment(Qt::AlignCenter);
     placeholderLabel_->setWordWrap(true);
     placeholderLabel_->setTextFormat(Qt::PlainText);
+    placeholderLabel_->installEventFilter(this); // fits the slow notice to its width
     placeholderLayout->addWidget(placeholderLabel_);
     //: Button that tries to load the document again.
     auto *retry = new QPushButton(tr("Retry"), placeholder_);
     retry->setObjectName(QStringLiteral("retryDocumentLoad"));
     retryButton_ = retry;
-    placeholderLayout->addWidget(retry, 0, Qt::AlignHCenter);
+    //: Button under the notice that the drive is not answering while the document
+    //: loads. It gives up the load and leaves the document unloaded.
+    auto *stop = new QPushButton(tr("Stop waiting"), placeholder_);
+    stop->setObjectName(QStringLiteral("stopDocumentLoad"));
+    stopButton_ = stop;
+    auto *buttons = new QHBoxLayout;
+    buttons->setSpacing(6);
+    buttons->addStretch();
+    buttons->addWidget(retry);
+    buttons->addWidget(stop);
+    buttons->addStretch();
+    placeholderLayout->addLayout(buttons);
     placeholderLayout->addStretch();
-    connect(retry, &QPushButton::clicked, this, &TabPage::resumeAsync);
+    connect(retry, &QPushButton::clicked, this, &TabPage::retryLoad);
+    connect(stop, &QPushButton::clicked, this, &TabPage::stopWaiting);
     layout->addWidget(placeholder_, 1);
     placeholder_->hide();
+    slowPoll_ = new QTimer(this);
+    slowPoll_->setInterval(kPollMs);
+    connect(slowPoll_, &QTimer::timeout, this, &TabPage::pollJob);
 
     // Floating measure controls: parented to the viewport so they overlap the
     // page (and don't scroll with content). Hidden until measure mode turns on.
@@ -372,39 +510,66 @@ TabPage::~TabPage()
     // itself goes once no document has it open, as Windows cannot remove an open file.
     const QString snapshot = std::exchange(recoveryPath_, QString());
     clearRecovery();
-    Q_ASSERT(!doc_ || !load_); // a tab loads only while it has no document
-    std::unique_ptr<Document> document = std::move(doc_);
-    if (load_) {
-        std::lock_guard<std::mutex> lock(load_->mutex);
-        if (!load_->result) {
-            // Still reading: the load closes what it opened, then removes the copy.
-            load_->abandoned = true;
-            load_->removeAfter = snapshot;
-            return;
-        }
-        document = std::move(load_->result->document);
+    Q_ASSERT(!doc_ || !job_); // a tab loads only while it has no document
+    if (job_) {
+        // A load still reading gives up at its next step. The copy goes once what the
+        // load read is closed.
+        job_->state.stop();
+        abandon(job_, snapshot);
+        return;
     }
-    if (!document)
+    if (!doc_)
         appfiles::remove(snapshot);
     else if (snapshot.isEmpty())
-        Document::closeInBackground(std::move(document));
+        Document::closeInBackground(std::move(doc_));
     else
-        Document::closeInBackground(std::move(document), [snapshot] { appfiles::remove(snapshot); });
+        Document::closeInBackground(std::move(doc_), [snapshot] { appfiles::remove(snapshot); });
+}
+
+void TabPage::abandon(const std::shared_ptr<Job> &job, const QString &removeAfter)
+{
+    std::unique_ptr<Document> document;
+    bool ended = false;
+    {
+        std::lock_guard<std::mutex> lock(job->mutex);
+        job->abandoned = true;
+        if (job->phase == Job::Phase::Stored) {
+            document.reset(std::exchange(job->result, nullptr)->document.release());
+            job->setPhase(document ? Job::Phase::Closing : Job::Phase::Ended);
+        }
+        ended = job->phase == Job::Phase::Ended;
+        if (!ended && !removeAfter.isEmpty())
+            job->removeAfter = removeAfter;
+    }
+    // A stored document closes in the background and the job ends after it, as one the
+    // job closes itself, so a file left for removal goes only once nothing has it open.
+    if (document)
+        Document::closeInBackground(std::move(document), [job] { job->endClosed(); });
+    if (ended)
+        appfiles::remove(removeAfter);
 }
 
 void TabPage::stopLoading()
 {
     loading_ = false;
-    const std::shared_ptr<Load> load = std::exchange(load_, nullptr);
-    if (!load)
+    stopSlowClock();
+    const std::shared_ptr<Job> job = std::exchange(job_, nullptr);
+    if (!job)
         return;
+    job->state.stop(); // it gives up at its next step
     std::shared_ptr<OpenResult> result;
-    std::unique_lock<std::mutex> lock(load->mutex);
-    load->finished.wait(lock, [&load] { return load->result != nullptr; });
-    result = std::move(load->result);
-    lock.unlock();
-    // `result` closes its document here, before the caller removes or replaces a
-    // file it may have open.
+    {
+        std::unique_lock<std::mutex> lock(job->mutex);
+        job->changed.wait(lock, [&job] {
+            return job->phase == Job::Phase::Stored || job->phase == Job::Phase::Ended;
+        });
+        result = std::move(job->result);
+        job->setPhase(Job::Phase::Ended);
+    }
+    // Closes here, before the caller removes or replaces a file it may have open. A load
+    // the user stopped ends only once what it read is closed.
+    if (result)
+        delete result->document.release();
 }
 
 std::shared_ptr<TabPage::OpenResult> TabPage::readDocument(DocumentOpener &opener,
@@ -413,7 +578,8 @@ std::shared_ptr<TabPage::OpenResult> TabPage::readDocument(DocumentOpener &opene
 {
     auto result = std::make_shared<OpenResult>();
     result->source = sourceStamp(path);
-    result->document = opener.open(path, password, &result->error, &result->needsPassword);
+    result->document.reset(
+        opener.open(path, password, &result->error, &result->needsPassword).release());
     if (!result->document)
         return result;
     if (result->document->hasMervinMeasurements()) {
@@ -426,10 +592,18 @@ std::shared_ptr<TabPage::OpenResult> TabPage::readDocument(DocumentOpener &opene
     return result;
 }
 
-void TabPage::installDocument(const std::shared_ptr<OpenResult> &result)
+void TabPage::installDocument(const std::shared_ptr<OpenResult> &result,
+                              std::function<void()> afterPrevious)
 {
     viewer_->setDocument(nullptr);
-    doc_ = std::move(result->document);
+    // Closing waits for render work in the document, which can be stuck on a drive
+    // that stopped answering.
+    if (doc_)
+        Document::closeInBackground(std::move(doc_), std::move(afterPrevious));
+    else if (afterPrevious)
+        afterPrevious();
+    doc_.reset(result->document.release());
+    loadStopped_ = false;
     viewer_->setDocument(doc_.get());
     if (result->measurements) {
         const auto &md = *result->measurements;
@@ -439,6 +613,7 @@ void TabPage::installDocument(const std::shared_ptr<OpenResult> &result)
         measurePanel_->setPrecision(md.precision);
         measurePanel_->setLineWidth(md.lineWidth);
     }
+    stopSlowClock();
     placeholder_->hide();
     viewer_->show();
 }
@@ -519,21 +694,26 @@ bool TabPage::recoverSnapshot(const QString &snapshot, QString *error)
     recoveryPath_ = privateCopy;
     recoveryManifest_ = privateCopy + QStringLiteral(".json");
     if (!writeRecoveryManifest(error)) {
-        result.reset(); // close the private copy before removal on Windows
+        // Close the private copy here, before its removal, as Windows cannot remove an
+        // open file.
+        delete result->document.release();
         QFile::remove(privateCopy);
         recoveryPath_ = previousSnapshot;
         recoveryManifest_ = previousManifest;
         return false;
     }
-    installDocument(result);
+    // The document shown before can have the previous copy open, so that goes once it
+    // closed. The manifest stays if the removal fails, so the copy remains
+    // discoverable.
+    if (!previousManifest.isEmpty())
+        claimedRecoveries.remove(previousManifest);
+    installDocument(result, [previousSnapshot, previousManifest] {
+        if ((previousSnapshot.isEmpty() || QFile::remove(previousSnapshot))
+            && !previousManifest.isEmpty())
+            QFile::remove(previousManifest);
+    });
     restoreViewer();
     retainedEdits_ = true;
-    if (previousSnapshot.isEmpty() || QFile::remove(previousSnapshot)) {
-        if (!previousManifest.isEmpty()) {
-            claimedRecoveries.remove(previousManifest);
-            QFile::remove(previousManifest);
-        }
-    }
     if (snapshot != previousSnapshot)
         QFile::remove(snapshot);
     emit stateChanged();
@@ -650,15 +830,16 @@ void TabPage::initializeSuspended(const QString &path, const ViewState &state)
     saved_->viewer = viewer_->captureResumeState();
     saved_->viewer.view = state;
     adoptRecovery();
-    showPlaceholder(tr("Document is unloaded."), false);
+    showPlaceholder(tr("Document is unloaded."), PlaceholderButton::None);
     emit stateChanged();
 }
 
-void TabPage::showPlaceholder(const QString &message, bool retry)
+void TabPage::showPlaceholder(const QString &message, PlaceholderButton button)
 {
     viewer_->hide();
     placeholderLabel_->setText(message);
-    retryButton_->setVisible(retry);
+    retryButton_->setVisible(button == PlaceholderButton::Retry);
+    stopButton_->setVisible(button == PlaceholderButton::StopWaiting);
     placeholder_->show();
 }
 
@@ -750,7 +931,7 @@ bool TabPage::suspend(QString *error)
                 QFile::remove(previousManifest);
         });
     }
-    showPlaceholder(tr("Document is unloaded."), false);
+    showPlaceholder(tr("Document is unloaded."), PlaceholderButton::None);
     emit stateChanged();
     return true;
 }
@@ -758,9 +939,11 @@ bool TabPage::suspend(QString *error)
 bool TabPage::finishResume(const std::shared_ptr<OpenResult> &result)
 {
     loading_ = false;
+    loadStopped_ = false;
+    stopSlowClock();
     if (!result->document) {
         showPlaceholder(result->error.isEmpty() ? tr("Could not load this document.") : result->error,
-                        true);
+                        PlaceholderButton::Retry);
         emit stateChanged();
         return false;
     }
@@ -802,45 +985,187 @@ bool TabPage::resume(QString *error, bool *needsPassword)
 
 void TabPage::resumeAsync()
 {
-    if (doc_ || loading_)
+    if (doc_ || loading_ || loadStopped_)
         return;
-    loading_ = true;
-    //: Shown in place of the page while the document loads.
-    showPlaceholder(tr("Loading"), false);
-    emit stateChanged();
-    const auto load = std::make_shared<Load>();
-    load_ = load;
-    background::start([tab = QPointer<QObject>(this), load, opener = engine_->opener(),
-                       source = recoveryPath_.isEmpty() ? path_ : recoveryPath_,
-                       password = password_] {
-        auto result = readDocument(*opener, source, password);
-        std::unique_lock<std::mutex> lock(load->mutex);
-        if (load->abandoned) {
-            const QString removeAfter = load->removeAfter;
-            lock.unlock();
-            result.reset(); // closes the document on this thread
-            appfiles::remove(removeAfter);
-            return;
-        }
-        load->result = std::move(result);
-        load->finished.notify_all();
-        lock.unlock();
-        background::post(tab, [tab, load] { static_cast<TabPage *>(tab.data())->finishLoad(load); });
-    });
+    startLoad();
 }
 
-void TabPage::finishLoad(const std::shared_ptr<Load> &load)
+void TabPage::startLoad(std::shared_ptr<Job> after)
 {
-    if (load != load_)
-        return; // stopLoading() took its result
-    load_.reset();
+    const auto job = std::make_shared<Job>(recoveryPath_.isEmpty() ? path_ : recoveryPath_);
+    job_ = job;
+    loading_ = true;
+    //: Shown in place of the page while the document loads.
+    showPlaceholder(tr("Loading"), PlaceholderButton::None);
+    startSlowClock();
+    background::start([tab = QPointer<QObject>(this), job, after = std::move(after),
+                       opener = engine_->opener(), password = password_] {
+        // A stopped load still closing what it read ends first, so a recovery copy left
+        // for this job to remove never goes while that load has it open.
+        if (after)
+            after->waitUntilEnded();
+        std::shared_ptr<OpenResult> result;
+        {
+            const job::Scope scope(job->state);
+            // First, so a drive that does not answer the first file call is named.
+            if (job::reading(job->source)) {
+                result = readDocument(*opener, job->source, password);
+            } else {
+                result = std::make_shared<OpenResult>();
+                result->error = job::notRunError();
+            }
+        }
+        std::unique_lock<std::mutex> lock(job->mutex);
+        if (job->abandoned) {
+            job->setPhase(Job::Phase::Closing);
+            lock.unlock();
+            // Closes here, before endClosed() removes the recovery copy, as Windows
+            // cannot remove an open file.
+            delete result->document.release();
+            result.reset();
+            job->endClosed();
+            return;
+        }
+        job->result = std::move(result);
+        job->setPhase(Job::Phase::Stored);
+        lock.unlock();
+        background::post(tab, [tab, job] { static_cast<TabPage *>(tab.data())->finishLoad(job); });
+    });
+    emit stateChanged();
+}
+
+void TabPage::finishLoad(const std::shared_ptr<Job> &job)
+{
+    if (job != job_)
+        return; // stopLoading() took its result, or a newer load replaced it
     std::shared_ptr<OpenResult> result;
     {
-        std::lock_guard<std::mutex> lock(load->mutex);
-        result = std::move(load->result);
+        std::lock_guard<std::mutex> lock(job->mutex);
+        if (job->phase != Job::Phase::Stored || job->abandoned)
+            return; // the user stopped waiting, and abandon() took the result
+        result = std::move(job->result);
+        job->setPhase(Job::Phase::Ended);
     }
+    job_.reset();
     const bool success = finishResume(result);
     emit resumeFinished(success, result->error, result->needsPassword);
+}
+
+void TabPage::stopWaiting()
+{
+    if (!loading_)
+        return;
+    loading_ = false;
+    loadStopped_ = true;
+    stopSlowClock();
+    // The job stays in the slot, so Retry can take back its read while it runs. A
+    // result it already stored closes in the background. The recovery copy stays.
+    abandon(job_, {});
+    showPlaceholder(tr("Document is unloaded."), PlaceholderButton::Retry);
+    emit stateChanged();
+}
+
+void TabPage::retryLoad()
+{
+    loadStopped_ = false;
+    if (doc_ || loading_)
+        return;
+    std::shared_ptr<Job> closing; // a stopped load that still closes what it read
+    if (job_) {
+        std::lock_guard<std::mutex> lock(job_->mutex);
+        if (job_->phase == Job::Phase::Reading) {
+            // The stopped read still runs. Wait for it again rather than read twice.
+            job_->abandoned = false;
+            loading_ = true;
+        } else if (job_->phase == Job::Phase::Closing) {
+            closing = job_;
+        }
+    }
+    if (!loading_) {
+        startLoad(std::move(closing));
+        return;
+    }
+    showPlaceholder(tr("Loading"), PlaceholderButton::None);
+    startSlowClock();
+    emit stateChanged();
+}
+
+void TabPage::setSlowDelayForTesting(int ms)
+{
+    slowDelayMs = ms;
+}
+
+std::shared_ptr<DocumentLifetime> TabPage::testing::storedDocument(const TabPage &tab)
+{
+    if (!tab.job_)
+        return {};
+    std::lock_guard<std::mutex> lock(tab.job_->mutex);
+    const auto &result = tab.job_->result;
+    return result && result->document ? result->document->lifetime() : nullptr;
+}
+
+QString TabPage::testing::slowNotice(const QString &name, const QString &folder,
+                                     const QFontMetrics &metrics, int width)
+{
+    return mervin::slowNotice(name, folder, metrics, width);
+}
+
+void TabPage::startSlowClock()
+{
+    slowFile_.clear();
+    seen_ = {};
+    quiet_.start();
+    slowPoll_->start();
+}
+
+void TabPage::stopSlowClock()
+{
+    slowPoll_->stop();
+    slowFile_.clear();
+}
+
+void TabPage::pollJob()
+{
+    if (!loading_ || !job_) {
+        stopSlowClock();
+        return;
+    }
+    const job::State::Snapshot now = job_->state.snapshot();
+    // The first report starts the job rather than shows progress. A later step or a
+    // piece written does.
+    if ((seen_.step != job::Step::None && (now.step != seen_.step || now.path != seen_.path))
+        || now.ticks != seen_.ticks)
+        quiet_.restart();
+    seen_ = now;
+    if (slowFile_.isEmpty() && quiet_.elapsed() < slowDelayMs)
+        return;
+    // Once shown, the notice stays until the load ends, and names the latest file.
+    const QString file = now.path.isEmpty() ? job_->source : now.path;
+    if (file == slowFile_)
+        return;
+    slowFile_ = file;
+    showPlaceholder({}, PlaceholderButton::StopWaiting);
+    updateSlowNotice();
+}
+
+void TabPage::updateSlowNotice()
+{
+    if (slowFile_.isEmpty())
+        return;
+    // The tab's own name, also while it reads the recovery copy, with the folder of
+    // the file it waits for, so the notice names the drive that does not answer.
+    const QString folder = QDir::toNativeSeparators(QFileInfo(slowFile_).absolutePath());
+    const QString text = slowNotice(tabTitle(), folder, placeholderLabel_->fontMetrics(),
+                                    placeholderLabel_->contentsRect().width());
+    if (text != placeholderLabel_->text())
+        placeholderLabel_->setText(text);
+}
+
+bool TabPage::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == placeholderLabel_ && event->type() == QEvent::Resize)
+        updateSlowNotice();
+    return QWidget::eventFilter(watched, event);
 }
 
 void TabPage::detachDocument()

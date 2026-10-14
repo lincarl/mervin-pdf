@@ -161,9 +161,14 @@ public:
 
     // Destroys `document` on a background thread, then runs `then` there. Each
     // close takes its own thread: closing is the user's action, one tab or window
-    // at a time.
+    // at a time. A null document without a `then` starts nothing.
     static void closeInBackground(std::unique_ptr<Document> document,
                                   std::function<void()> then = {});
+    // The deleter of OwnedDocument.
+    struct CloseInBackground
+    {
+        void operator()(Document *document) const;
+    };
     // Closes closeInBackground() has not finished.
     static int closing();
     // Waits up to `ms` milliseconds for the closes with a `then`, for the end of the
@@ -261,5 +266,12 @@ private:
     mutable std::optional<bool> formCache_;                            // lazy: has /AcroForm
     mutable std::optional<bool> mervinBlobCache_; // lazy: has /Mervin_Measurements
 };
+
+// A document that a background job opened or took over, on its way between threads.
+// Wherever it is dropped, it closes on a background thread (Document::closeInBackground),
+// so a result that nobody takes, such as one in a post that is dropped, never closes
+// on the screen thread. Code that must close the file before it removes or replaces it
+// releases the pointer and destroys the document itself.
+using OwnedDocument = std::unique_ptr<Document, Document::CloseInBackground>;
 
 } // namespace mervin

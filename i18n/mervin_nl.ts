@@ -3360,9 +3360,19 @@ Nu openen?</translation>
         <translation>Kan de documentherstelmap niet maken.</translation>
     </message>
     <message>
+        <source>Opening %1 from %2. The drive is not answering.</source>
+        <extracomment>Shown in place of the page when the drive has not answered for a few seconds while the document loads. Below it is the Stop waiting button. %1 is the file name (plan.pdf), %2 the folder it is read from (/nas/docs, or a network share folder on Windows).</extracomment>
+        <translation>%1 wordt geopend vanuit %2. Het station reageert niet.</translation>
+    </message>
+    <message>
         <source>Retry</source>
         <extracomment>Button that tries to load the document again.</extracomment>
         <translation>Opnieuw proberen</translation>
+    </message>
+    <message>
+        <source>Stop waiting</source>
+        <extracomment>Button under the notice that the drive is not answering while the document loads. It gives up the load and leaves the document unloaded.</extracomment>
+        <translation>Stoppen met wachten</translation>
     </message>
     <message>
         <source>Document is unloaded.</source>

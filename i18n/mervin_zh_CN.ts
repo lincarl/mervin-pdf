@@ -3340,9 +3340,19 @@ Open it now?</source>
         <translation>无法创建文档恢复文件夹。</translation>
     </message>
     <message>
+        <source>Opening %1 from %2. The drive is not answering.</source>
+        <extracomment>Shown in place of the page when the drive has not answered for a few seconds while the document loads. Below it is the Stop waiting button. %1 is the file name (plan.pdf), %2 the folder it is read from (/nas/docs, or a network share folder on Windows).</extracomment>
+        <translation>正在从 %2 打开 %1。驱动器没有响应。</translation>
+    </message>
+    <message>
         <source>Retry</source>
         <extracomment>Button that tries to load the document again.</extracomment>
         <translation>重试</translation>
+    </message>
+    <message>
+        <source>Stop waiting</source>
+        <extracomment>Button under the notice that the drive is not answering while the document loads. It gives up the load and leaves the document unloaded.</extracomment>
+        <translation>停止等待</translation>
     </message>
     <message>
         <source>Document is unloaded.</source>

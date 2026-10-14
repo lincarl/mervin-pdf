@@ -143,16 +143,23 @@ and closing a tab, the OCR popup or a window never waits for them. Destroying a
 `Document` waits for the work in it and closes its file, so a closing tab, and a tab
 unloaded when its window goes to the tray or after a time inactive, hands its
 document to `Document::closeInBackground`. Each close takes its own task: closing is
-the user's action, one tab or window at a time. A load still running when its tab
-closes closes what it opened itself. A recovery copy the document has open is
-removed only after it is closed, as Windows cannot remove an open file, while its
-manifest goes at once so it is never offered again. Quitting waits for those
-removals within the time it gives the app's own files (see Persistence). MuPDF's
-Tesseract runs one recognition at a time in a process, so a canceled OCR still
-finishing makes the next one wait its turn on its background thread. At exit,
+the user's action, one tab or window at a time. A tab's load runs in the tab's job
+slot (`TabPage::Job`). A tab that stops waiting for its load, or closes, lets go of
+it through `abandon()`, which never waits. A load still running closes what it opened
+itself, on its own thread, and a document the load already read closes in the
+background. Either way the load ends only after that close, and a file such as the
+recovery copy of a tab that closed goes after it. A document on its way between
+threads is an `OwnedDocument`, which closes in the background wherever it is dropped,
+so a result that nobody takes never closes on the UI thread. Code that removes or
+replaces the file next closes the document itself first. A recovery copy the document
+has open is removed only after it is closed, as Windows cannot remove an open file,
+while its manifest goes at once so it is never offered again. Quitting waits for
+those removals within the time it gives the app's own files (see Persistence).
+MuPDF's Tesseract runs one recognition at a time in a process, so a canceled OCR
+still finishing makes the next one wait its turn on its background thread. At exit,
 `main.cpp` flushes only standard output and error before leaving with stuck work
-behind, as flushing every C stream would wait for one that a stuck read of a
-document holds.
+behind, as flushing every C stream would wait for one that a stuck read of a document
+holds.
 
 A tab follows and stops the job it started through a `job::State` (`io/JobContext`),
 which the job makes current on its thread with a `job::Scope`. The code that reads and
@@ -219,7 +226,8 @@ These still touch the disk on the UI thread and are planned work:
   tools, merge, split, extract, security, and the recovery copy written when a tab
   unloads. The chosen design shows such a wait in its tab: a bar over the tab's
   document, which stays locked meanwhile, and a placeholder tab for a file being
-  opened, so other tabs and windows stay usable.
+  opened, so other tabs and windows stay usable. Reloading an unloaded tab already
+  works this way (see Inactive documents and memory).
 - Reads at startup before the first window, and the system file dialogs, which
   run on the UI thread by design.
 - Opening a folder or a link with the system's handler (`QDesktopServices::openUrl`),
@@ -353,7 +361,26 @@ the resumed document's state. Closing to the tray requests suspension immediatel
 unless the interval is Never. Selecting a suspended tab reloads it asynchronously.
 Closing a tab while it loads does not wait for the load. Saving and the other
 operations that read or replace the document's file on the UI thread still wait for
-a load in progress first.
+a load in progress, or a stopped one that has not ended, first.
+
+An unloaded or loading tab shows a placeholder on the page canvas, with its own canvas
+tokens for text and buttons in both themes. A load shows "Loading" at once. The tab
+polls what its job reports every 250 ms, and after 2 s without progress
+(`TabPage::kSlowMs`) the placeholder names the document and the folder the load reads,
+"Opening plan.pdf from /nas/docs. The drive is not answering.", with Stop waiting. The
+folder is the recovery folder when the load reads the recovery copy. The folder wraps
+after each separator that ends a folder name, also on Windows, but a line never ends
+on the separators a path starts with or on the ellipsis of a shortened part. A name or
+folder with a piece still too wide for a line is shortened in the middle, each only as
+far as it needs. Both are bidirectional isolates, so a path keeps its order in a
+right-to-left language. Stop waiting never waits. The tab shows "Document is
+unloaded." with Retry, keeps its recovery copy, and selecting it does not load it
+again until Retry. The read goes on until the drive answers, because a thread in a
+file call cannot be stopped, and then closes what it opened. Retry while it still
+reads takes it back instead of starting another read, so a tab keeps at most one read
+waiting for the drive. A document that a load had already read when the user stopped
+closes in the background. A read that Retry starts while the stopped load still closes
+what it read waits for that close.
 
 Before releasing a document with unsaved edits, the tab writes a local recovery
 snapshot with its forms, annotations, measurements, and manual scales. It retains

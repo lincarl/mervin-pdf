@@ -3360,9 +3360,19 @@ Open it now?</source>
         <translation>Չհաջողվեց ստեղծել փաստաթղթերի վերականգնման պանակը:</translation>
     </message>
     <message>
+        <source>Opening %1 from %2. The drive is not answering.</source>
+        <extracomment>Shown in place of the page when the drive has not answered for a few seconds while the document loads. Below it is the Stop waiting button. %1 is the file name (plan.pdf), %2 the folder it is read from (/nas/docs, or a network share folder on Windows).</extracomment>
+        <translation>Բացվում է %1 ֆայլը %2 թղթապանակից։ Սկավառակը չի պատասխանում։</translation>
+    </message>
+    <message>
         <source>Retry</source>
         <extracomment>Button that tries to load the document again.</extracomment>
         <translation>Կրկին փորձեք</translation>
+    </message>
+    <message>
+        <source>Stop waiting</source>
+        <extracomment>Button under the notice that the drive is not answering while the document loads. It gives up the load and leaves the document unloaded.</extracomment>
+        <translation>Դադարեցնել սպասումը</translation>
     </message>
     <message>
         <source>Document is unloaded.</source>

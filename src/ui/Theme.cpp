@@ -720,6 +720,22 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
                        " color:%1; border-color:%2; }")
             .arg(css(t.inkPrimary), css(t.borderPopoverControl)));
 
+    // ── Tab placeholder ─────────────────────────────────────────────────────
+    // Stands in for a tab's pages while its document loads, is unloaded or could not
+    // be loaded, on the canvas the pages sit on. The canvas is dark in both themes, so
+    // the text and buttons take the canvas tokens. The id outranks the generic button
+    // rules, so hover and pressed are set here too. Hover brightens the edge, and
+    // pressed sinks the button into the canvas.
+    add(QStringLiteral("QWidget#documentPlaceholder { background:%1; }").arg(css(t.canvas)));
+    add(QStringLiteral("QLabel#documentLoadStatus { color:%1; }").arg(css(t.inkCanvas)));
+    add(QStringLiteral("QWidget#documentPlaceholder QPushButton { background:%1; color:%2;"
+                       " border-color:%3; }")
+            .arg(css(t.canvasControl), css(t.inkCanvas), css(t.borderCanvasControl)));
+    add(QStringLiteral("QWidget#documentPlaceholder QPushButton:hover { border-color:%1; }")
+            .arg(css(t.inkCanvas)));
+    add(QStringLiteral("QWidget#documentPlaceholder QPushButton:pressed { background:%1; }")
+            .arg(css(t.canvas)));
+
     // ── Find card ───────────────────────────────────────────────────────────
     // Find in document floats over the page in the panel stack; its surface and
     // rim come from the floating-panel rule above.
