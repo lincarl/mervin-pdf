@@ -77,8 +77,7 @@ public:
     bool isLoaded() const { return doc_ != nullptr; }
     bool isLoading() const { return loading_; }
     bool isSuspended() const { return !doc_ && !loading_ && !busy_; }
-    // An operation runs (startOperation). The document stays loaded, but nothing may
-    // use it until the operation ends.
+    // A document operation freezes the tab, with or without a loaded document.
     bool isBusy() const { return busy_; }
     // Stop was chosen for the last operation. A new operation resets this flag.
     bool isOperationStopped() const { return operationStopped_; }
