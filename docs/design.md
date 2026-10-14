@@ -238,11 +238,6 @@ These still touch the disk on the UI thread and are planned work:
   memory buffer, so these calls do not read the original file. Moving every
   viewer query to background threads remains separate work. Directory-dependent
   non-PDF formats retain their path-based lookup of relative resources.
-- Security. The chosen design
-  shows such a wait in its tab, with a bar over its locked document, so other
-  tabs and windows stay usable. New tabs and unloaded tabs already load in their
-  placeholders. Rotate Pages, Split, Extract and Delete run as tab jobs (see Page
-  and security operations).
 - Reads at startup before the first window, and the system file dialogs, which
   run on the UI thread by design.
 - Opening a folder or a link with the system's handler (`QDesktopServices::openUrl`),
