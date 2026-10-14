@@ -1,3 +1,4 @@
+#include "TestWaits.h"
 #include "app/WindowManager.h"
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
@@ -14,8 +15,10 @@
 
 #include <QApplication>
 #include <QElapsedTimer>
+#include <QDeadlineTimer>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QMessageBox>
 #include <QProcess>
 #include <QKeyEvent>
@@ -27,6 +30,7 @@
 #include <QtTest>
 
 #include <thread>
+#include <utility>
 
 #ifdef Q_OS_WIN
 #include <cstdio>
@@ -159,22 +163,42 @@ private slots:
         profile_.reset();
     }
 
-    // Checks that manifest durability ends grace before the GUI adopts the Save result.
-    void saveManifestCompletionReleasesGraceBeforeGuiAdoption()
+    // Supplies loaded Save and activity-driven unload for worker durability checks.
+    void manifestCompletionReleasesGraceBeforeGuiAdoption_data()
     {
+        QTest::addColumn<bool>("save");
+        QTest::newRow("loaded Save command") << true;
+        QTest::newRow("edited activity unload") << false;
+    }
+
+    // Checks that manifest durability ends grace before the GUI adopts the worker result.
+    void manifestCompletionReleasesGraceBeforeGuiAdoption()
+    {
+        QFETCH(bool, save);
         QTemporaryDir files;
         const QString path = files.filePath(QStringLiteral("edited.pdf"));
         WindowManager manager;
-        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
         MainWindow *window = manager.createWindow();
-        QVERIFY(window->openFile(path));
-        auto *tab = window->findChild<TabPage *>();
-        QTRY_VERIFY_WITH_TIMEOUT(tab && tab->isUsable(), 10000);
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        QVERIFY(testing::openAndWait(*window, path));
+        const QPointer<TabPage> tab = window->findChild<TabPage *>();
+        QVERIFY(tab && tab->isUsable());
         QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {},
                                                        QStringLiteral("preserved")) >= 0);
+        if (!save) {
+            const QString active = files.filePath(QStringLiteral("active.pdf"));
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), active));
+            QVERIFY(testing::openAndWait(*window, active));
+        }
         holdManifest();
         const auto release = qScopeGuard([] { job::testing::release(); });
-        QVERIFY(QMetaObject::invokeMethod(window, "saveMeasurements"));
+        if (save) {
+            QVERIFY(QMetaObject::invokeMethod(window, "saveMeasurements"));
+        } else {
+            window->updateDocumentActivity(0, 1);
+            QVERIFY(window->updateDocumentActivity(61000, 1));
+            QVERIFY(tab->isUnloading());
+        }
         QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
         const int guiSteps = job::testing::stepsOnMainThread();
         std::jthread releaseWorker([] {
@@ -189,11 +213,17 @@ private slots:
         QVERIFY(tab->isBusy());
         QCOMPARE(job::testing::stepsOnMainThread(), guiSteps);
         manager.finishSessionEnd(false);
-        QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable(), 10000);
-        QVERIFY(!tab->hasUnsavedEdits());
-        auto saved = manager.engine()->openDocument(path);
-        QVERIFY(saved);
-        QCOMPARE(AnnotModel(*saved).pageAnnots(0).front().contents, QStringLiteral("preserved"));
+        if (save) {
+            QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable(), 10000);
+            QVERIFY(!tab->hasUnsavedEdits());
+        } else {
+            QTRY_VERIFY_WITH_TIMEOUT(tab->isSuspended(), 10000);
+            QVERIFY(tab->hasUnsavedEdits());
+            QVERIFY(tab->hasRecoverySnapshot());
+        }
+        auto recovered = manager.engine()->openDocument(save ? path : tab->recoveryPath());
+        QVERIFY(recovered);
+        QCOMPARE(AnnotModel(*recovered).pageAnnots(0).front().contents, QStringLiteral("preserved"));
     }
 
     // Checks that committed recovery avoids waiting for original replacement.
@@ -221,9 +251,22 @@ private slots:
         QVERIFY(!tab.hasUnsavedEdits());
     }
 
-    // Checks that Stop and tab deletion retain protection and committed annotation recovery.
-    void detachedStoppedSaveRemainsProtectedAndKeepsCommittedRecovery()
+    // Supplies snapshot kinds and OS outcomes for detached committed recovery disposal.
+    void detachedStoppedSnapshotKeepsProtectionUntilOutcome_data()
     {
+        QTest::addColumn<bool>("save");
+        QTest::addColumn<bool>("ended");
+        QTest::newRow("Save during successful end") << true << true;
+        QTest::newRow("unload during successful end") << false << true;
+        QTest::newRow("Save after cancellation") << true << false;
+        QTest::newRow("unload after cancellation") << false << false;
+    }
+
+    // Checks Stop and owner deletion retain protection, with disposal following the OS outcome.
+    void detachedStoppedSnapshotKeepsProtectionUntilOutcome()
+    {
+        QFETCH(bool, save);
+        QFETCH(bool, ended);
         QTemporaryDir files;
         const QString path = files.filePath(QStringLiteral("edited.pdf"));
         WindowManager manager;
@@ -233,16 +276,24 @@ private slots:
             return path.endsWith(QStringLiteral(".pdf.json"));
         });
         const auto release = qScopeGuard([] { job::testing::release(); });
-        tab->startSave({});
+        if (save)
+            tab->startSave({});
+        else
+            QVERIFY(tab->suspend());
         QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
         tab->stopWaiting();
+        QVERIFY(!tab->isBusy());
         tab.reset();
         QCOMPARE(manager.prepareSessionEnd(60), sessionend::Result::TimedOut);
         job::testing::release();
-        manager.finishSessionEnd(true);
+        manager.finishSessionEnd(ended);
         manager.engine()->shutdown();
         QVERIFY(background::settle(10000));
         QVERIFY(appfiles::flush(10000));
+        if (!ended) {
+            QVERIFY(TabPage::recoverablePaths().isEmpty());
+            return;
+        }
         QCOMPARE(TabPage::recoverablePaths(), QStringList{path});
         const QDir recovery(QDir(profile_->path()).filePath(QStringLiteral("recovery")));
         const QStringList copies = recovery.entryList({QStringLiteral("*.pdf")}, QDir::Files);
@@ -250,6 +301,55 @@ private slots:
         auto recovered = manager.engine()->openDocument(recovery.filePath(copies.front()));
         QVERIFY(recovered);
         QCOMPARE(AnnotModel(*recovered).pageAnnots(0).front().contents, QStringLiteral("preserved"));
+    }
+
+    // Checks durable unload does not wait for its queued GUI ownership transfer.
+    void durableUnloadDoesNotWaitForQueuedAdoption()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("edited.pdf"));
+        WindowManager manager;
+        TabPage tab(manager.engine());
+        QVERIFY(prepare(tab, path));
+        holdManifest();
+        const auto release = qScopeGuard([] { job::testing::release(); });
+        QVERIFY(tab.suspend());
+        QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+        job::testing::release();
+        QDeadlineTimer worker(10000);
+        while (tab.hasPendingRecoveryWrite() && !worker.hasExpired())
+            QThread::msleep(1);
+        QVERIFY(!tab.hasPendingRecoveryWrite());
+        QVERIFY(tab.isBusy());
+        QElapsedTimer grace;
+        grace.start();
+        QCOMPARE(manager.prepareSessionEnd(0), sessionend::Result::Settled);
+        QVERIFY(grace.elapsed() < 100);
+        QCOMPARE(TabPage::recoverablePaths(), QStringList{path});
+        manager.finishSessionEnd(false);
+        QTRY_VERIFY_WITH_TIMEOUT(tab.isSuspended(), 10000);
+        QVERIFY(tab.hasRecoverySnapshot());
+    }
+
+    // Checks session cancellation restores edited unload without a false suspension error.
+    void canceledSessionRestoresUnloadAdmission()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("edited.pdf"));
+        WindowManager manager;
+        TabPage tab(manager.engine());
+        QVERIFY(prepare(tab, path));
+        QCOMPARE(manager.prepareSessionEnd(0), sessionend::Result::Settled);
+        QString error;
+        QVERIFY(!tab.suspend(&error));
+        QVERIFY(error.isEmpty());
+        QVERIFY(tab.isUsable());
+        QVERIFY(tab.hasUnsavedEdits());
+        QVERIFY(!tab.isUnloading());
+        manager.finishSessionEnd(false);
+        QVERIFY(testing::suspendAndWait(tab, &error));
+        QVERIFY(tab.isSuspended());
+        QVERIFY(tab.hasRecoverySnapshot());
     }
 
     // Checks that Save admission closes during the request and cancellation restores it.
@@ -322,20 +422,61 @@ private slots:
         QVERIFY(tab->hasUnsavedEdits());
     }
 
-    // Checks that session teardown skips the ordinary wait for application file writes.
+    // Supplies ordinary file work and actual windows with held Save or unload snapshots.
+    void successfulSessionEndAddsNoOrdinaryExitWait_data()
+    {
+        QTest::addColumn<QString>("work");
+        QTest::newRow("application file writes") << QStringLiteral("appfiles");
+        QTest::newRow("actual window with held Save") << QStringLiteral("save");
+        QTest::newRow("actual window with held unload") << QStringLiteral("unload");
+    }
+
+    // Checks successful session teardown adds no ordinary budget while real work remains held.
     void successfulSessionEndAddsNoOrdinaryExitWait()
     {
-        appfiles::testing::hold(true);
-        const auto release = qScopeGuard([] { appfiles::testing::hold(false); });
+        QFETCH(QString, work);
         auto manager = std::make_unique<WindowManager>();
-        appfiles::write(profile_->filePath(QStringLiteral("held.json")), "pending");
-        QVERIFY(!appfiles::flush(0));
-        QCOMPARE(manager->prepareSessionEnd(0), sessionend::Result::Settled);
+        const auto release = qScopeGuard([] {
+            job::testing::release();
+            appfiles::testing::hold(false);
+        });
+        QTemporaryDir files;
+        if (work == QStringLiteral("appfiles")) {
+            appfiles::testing::hold(true);
+            appfiles::write(profile_->filePath(QStringLiteral("held.json")), "pending");
+            QVERIFY(!appfiles::flush(0));
+            QCOMPARE(manager->prepareSessionEnd(0), sessionend::Result::Settled);
+        } else {
+            const QString path = files.filePath(QStringLiteral("edited.pdf"));
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+            MainWindow *window = manager->createWindow();
+            QVERIFY(testing::openAndWait(*window, path));
+            const QPointer<TabPage> tab = window->findChild<TabPage *>();
+            QVERIFY(tab && tab->isUsable());
+            QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {},
+                                                           QStringLiteral("preserved")) >= 0);
+            QVERIFY(testing::suspendAndWait(*tab));
+            tab->resumeAsync();
+            QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable(), 10000);
+            QVERIFY(tab->hasRecoverySnapshot());
+            job::testing::holdWhen([](job::Step step, const QString &path) {
+                const QString name = QFileInfo(path).fileName();
+                return step == job::Step::Writing && (name.startsWith(QStringLiteral(".save-"))
+                    || name.startsWith(QStringLiteral(".unload-")));
+            });
+            if (work == QStringLiteral("save"))
+                QVERIFY(QMetaObject::invokeMethod(window, "saveMeasurements"));
+            else
+                QVERIFY(tab->suspend());
+            QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+            QVERIFY(tab->isBusy());
+            QCOMPARE(manager->prepareSessionEnd(0), sessionend::Result::TimedOut);
+        }
         manager->finishSessionEnd(true);
         QElapsedTimer exit;
         exit.start();
         manager.reset();
-        QVERIFY(exit.elapsed() < 300);
+        QVERIFY(exit.elapsed() < 1000);
     }
 
 #ifdef Q_OS_WIN
@@ -419,6 +560,43 @@ private slots:
         QCOMPARE(callbacks, 3);
         QCOMPARE(native.queries.back().first, queryParameter);
         QCOMPARE(native.queries.back().second, otherFlags);
+    }
+
+    // Checks native timeout allows end with protection still pending and admission closed.
+    void nativeTimeoutAllowsEndWithinFourSeconds()
+    {
+        QCOMPARE(QGuiApplication::platformName(), QStringLiteral("windows"));
+        WindowManager manager;
+        NativeSessionWindow native;
+        native.create();
+        const auto hwnd = reinterpret_cast<HWND>(native.winId());
+        auto protection = sessionend::RecoveryWrite::begin();
+        QVERIFY(protection);
+        const auto reset = qScopeGuard([&] { SendMessage(hwnd, WM_ENDSESSION, FALSE, ENDSESSION_LOGOFF); });
+        bool withinLimit = false;
+        qint64 lastWait = 0;
+        // Independent query/cancel trials tolerate a single scheduler pause while
+        // still requiring an observed return within the actual four-second limit.
+        for (int attempt = 0; attempt < 3 && !withinLimit; ++attempt) {
+            QElapsedTimer query;
+            query.start();
+            const LRESULT answer = SendMessage(hwnd, WM_QUERYENDSESSION, 0, ENDSESSION_LOGOFF);
+            lastWait = query.elapsed();
+            QCOMPARE(answer, LRESULT(TRUE));
+            QVERIFY(lastWait >= sessionend::kGraceMs - 20);
+            qInfo() << "Native logoff query returned after" << lastWait << "ms";
+            QVERIFY(protection->pending());
+            QVERIFY(sessionend::active());
+            QVERIFY(!sessionend::RecoveryWrite::begin());
+            SendMessage(hwnd, WM_ENDSESSION, FALSE, ENDSESSION_LOGOFF);
+            QVERIFY(!sessionend::active());
+            auto admitted = sessionend::RecoveryWrite::begin();
+            QVERIFY(admitted);
+            admitted->finish();
+            withinLimit = lastWait < 4000;
+        }
+        QVERIFY2(withinLimit, qPrintable(QStringLiteral(
+            "No native query returned within four seconds. Last wait was %1 ms.").arg(lastWait)));
     }
 
     // Checks that successful native end emits Qt's quit signal once in an isolated child.

@@ -317,17 +317,32 @@ struct TabPage::Save {
 
 /// Owns one edited checkpoint until the GUI adopts it or disposal is queued.
 struct TabPage::Unload {
-    /// Queues removal of files that never transferred to the tab.
+    /// Captures protection before this checkpoint can be scheduled.
+    explicit Unload(sessionend::RecoveryWrite write) : recoveryWrite(std::move(write)) {}
+
+    /// Disposes unadopted files on workers, retaining committed recovery during session end.
     ~Unload()
     {
-        // Files stay job-owned until GUI adoption. Disposal never reads a drive
-        // on the GUI thread, and runs only after the worker has closed its handles.
-        if (!adopted) {
+        // Final payload destruction has no remaining GUI or worker readers.
+        if (adopted)
+            return;
+        if (!recoveryCommitted) {
             appfiles::remove(manifest);
             appfiles::remove(copy);
+            return;
         }
+        // This destructor can run in GUI delivery. Only the cleanup worker waits
+        // for the OS outcome or deletes committed files after permission.
+        background::start([manifest = manifest, copy = copy, protection = recoveryWrite] {
+            const auto finish = qScopeGuard([&protection] { protection.finish(); });
+            if (!protection.beginDiscard())
+                return;
+            QFile::remove(manifest);
+            QFile::remove(copy);
+        });
     }
 
+    sessionend::RecoveryWrite recoveryWrite;
     QString original;
     QString directory;
     QString canonical;
@@ -1051,7 +1066,10 @@ bool TabPage::suspend(QString *error)
         return false;
     const auto state = viewer_->captureResumeState();
     if (hasUnsavedEdits() || !state.inProgress.empty()) {
-        auto unload = std::make_shared<Unload>();
+        auto protection = sessionend::RecoveryWrite::begin();
+        if (!protection)
+            return false;
+        auto unload = std::make_shared<Unload>(std::move(*protection));
         unload->viewer = state;
         startUnload(std::move(unload));
         return true;
@@ -1104,6 +1122,7 @@ void TabPage::startUnload(std::shared_ptr<Unload> unload)
     job->unload = unload;
     job_ = job;
     background::start([tab = QPointer<QObject>(this), job, unload] {
+        const auto finishRecovery = qScopeGuard([unload] { unload->recoveryWrite.finish(); });
         {
             const job::Scope scope(job->state);
             const auto run = [&] {
@@ -1146,9 +1165,12 @@ void TabPage::startUnload(std::shared_ptr<Unload> unload)
                         recoveryJson(unload->original, unload->canonical, unload->copy,
                                      unload->viewer, unload->source), &unload->error))
                     return;
-                std::lock_guard<std::mutex> lock(job->mutex);
-                unload->recoveryCommitted = true;
-                unload->success = true;
+                {
+                    std::lock_guard<std::mutex> lock(job->mutex);
+                    unload->recoveryCommitted = true;
+                    unload->success = true;
+                }
+                unload->recoveryWrite.finish();
             };
             run();
         }
@@ -1819,8 +1841,13 @@ void TabPage::startSave(SaveCallbacks callbacks)
                 save->admission.reset();
             // Before adoption these files belong only to the job. Remove late stopped
             // checkpoints unless the session outcome requires preserving committed edits.
+            bool recoveryCommitted = false;
+            {
+                std::lock_guard<std::mutex> lock(job->mutex);
+                recoveryCommitted = save->recoveryCommitted;
+            }
             if (save->loaded && !save->adopted
-                && (!save->recoveryCommitted || save->recoveryWrite->beginDiscard())) {
+                && (!recoveryCommitted || save->recoveryWrite->beginDiscard())) {
                 if (!save->manifest.isEmpty())
                     QFile::remove(save->manifest);
                 if (!save->copy.isEmpty())
