@@ -111,13 +111,15 @@ public:
     // unsaved edits. WindowManager::closeRemovedTabs has just found the file gone,
     // so this touches no disk. The tab is neither remembered for Ctrl+Shift+T nor
     // given a view state. A window in the tray keeps its tabs. False when a tab has
-    // to stay for now, because the window cannot change its tabs (canChangeTabs).
+    // to stay for now, because the window cannot change its tabs (canChangeTabs) or
+    // tab changes queued earlier still wait (whenTabsCanChange), which go first.
     bool closeRemovedTabs(const QString &canonicalPath);
 
     // True when nothing may hold a position in this window's tab bar across a
     // nested event loop. That means no modal dialog or popup in the application,
     // no document operation or unload in this window, no mouse button held and no
-    // tab drag.
+    // tab drag. It stays false once a quit or restart closes the window
+    // (closeForQuit), so changes still queued then go with the window.
     bool canChangeTabs() const;
     // Run `change` once this window can change its tabs, after every change queued
     // before it. It never runs inside this call, so a tab's own signal handler can

@@ -304,7 +304,7 @@ private:
     // The mount a document was opened from: the session's copy, else Recent's.
     QString recordedMount(const QString &canonicalPath) const;
     // Close the tabs of files a closeRemovedTabs scan has just found gone, each as
-    // soon as it is found. A window that cannot change its tabs yet
+    // soon as it is found. A window that has to keep a tab for now
     // (MainWindow::closeRemovedTabs) queues the whole check again
     // (MainWindow::whenTabsCanChange), so a late close follows a fresh answer.
     void closeFoundRemovedTabs(const QStringList &canonicalPaths);

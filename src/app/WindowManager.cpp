@@ -526,8 +526,9 @@ void WindowManager::closeFoundRemovedTabs(const QStringList &canonicalPaths)
         for (const QString &path : canonicalPaths) {
             if (w->closeRemovedTabs(path))
                 continue;
-            // The window cannot change its tabs now. Once it can, check again
-            // rather than act on this answer, as the file may be back by then.
+            // The window has to keep the tab for now. Check again once its
+            // earlier changes have run and it can change its tabs, rather than
+            // act on this answer, as the file may be back by then.
             w->whenTabsCanChange([self] {
                 if (self)
                     self->closeRemovedTabs();

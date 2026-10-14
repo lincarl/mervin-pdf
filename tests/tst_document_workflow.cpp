@@ -403,6 +403,86 @@ private slots:
         driver.stop();
     }
 
+    // A page's right-click menu closes when another document takes the view while
+    // it is open, as when another instance opens a file. Its rows would act on the
+    // document on screen, and Save Page As would save a page of that document.
+    void pageMenuClosesWhenAnotherDocumentTakesTheView()
+    {
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        const QString clicked = root.filePath(QStringLiteral("clicked.pdf"));
+        const QString other = root.filePath(QStringLiteral("other.pdf"));
+        for (const QString &path : {clicked, other})
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.resize(900, 700);
+        window.show(); // laid out, but never on screen
+        QVERIFY(window.openFile(clicked));
+        ViewerWidget *viewer = window.findChild<TabPage *>()->viewer();
+        QTRY_VERIFY(viewer->viewport()->height() > 200);
+        QPoint onPage(-1, -1);
+        const QSize area = viewer->viewport()->size();
+        for (int y = 0; y < area.height() && onPage.x() < 0; y += 4)
+            for (int x = 0; x < area.width() && onPage.x() < 0; x += 4)
+                if (viewer->pageUnder({x, y}) >= 0)
+                    onPage = {x, y};
+        QVERIFY(onPage.x() >= 0);
+
+        // Open the other file while the menu is up, then choose Save Page As if the
+        // menu is still there.
+        bool chooseFirst = false;
+        bool opened = false;
+        bool menuStayed = false;
+        QString extractFor;
+        const auto choose = [](QMenu *menu) {
+            for (QAction *a : menu->actions())
+                if (a->text() == QStringLiteral("Save Page As"))
+                    menu->setActiveAction(a);
+            QTest::keyClick(menu, Qt::Key_Return);
+        };
+        QTimer driver;
+        connect(&driver, &QTimer::timeout, this, [&] {
+            if (auto *dialog = qobject_cast<ExtractDialog *>(QApplication::activeModalWidget())) {
+                extractFor = QFileInfo(window.currentTabPath()).fileName();
+                dialog->reject();
+                return;
+            }
+            auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            if (!menu || opened)
+                return;
+            if (chooseFirst)
+                choose(menu);
+            opened = window.openFile(other);
+            menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            menuStayed = menu != nullptr;
+            if (menu)
+                choose(menu);
+        });
+        driver.start(10);
+        const auto rightClick = [&] {
+            QContextMenuEvent event(QContextMenuEvent::Mouse, onPage, viewer->viewport()->mapToGlobal(onPage));
+            QApplication::sendEvent(viewer->viewport(), &event);
+        };
+        rightClick();
+        QVERIFY(opened);
+        QVERIFY(!menuStayed);
+        QCOMPARE(extractFor, QString());
+        QCOMPARE(QFileInfo(window.currentTabPath()).fileName(), QStringLiteral("other.pdf"));
+
+        // The other document can also take the view after Save Page As is chosen,
+        // before the menu's event loop has ended.
+        QVERIFY(window.focusTabIfOpen(clicked));
+        chooseFirst = true;
+        opened = false;
+        rightClick();
+        driver.stop();
+        QVERIFY(opened);
+        QCOMPARE(extractFor, QString());
+        QCOMPARE(QFileInfo(window.currentTabPath()).fileName(), QStringLiteral("other.pdf"));
+    }
+
     // Extract and Delete copy pages from the file on disk. Their window says that
     // unsaved changes are left out, also for edits that a document kept while it
     // was unloaded, which the viewer no longer counts once it is reloaded.
@@ -789,7 +869,8 @@ private slots:
     }
 
     // Dragging a tab out of the bar moves the tab that was pressed, also when a
-    // session restore inserts a tab in front of it while the button is held.
+    // session restore inserts a tab in front of it while the button is held. Tab
+    // changes wait until the drag has ended, also once the button is up.
     void draggingATabOutMovesThePressedTab()
     {
         QTemporaryDir files;
@@ -804,7 +885,7 @@ private slots:
         QVERIFY(window->openFile(first));
         QVERIFY(window->openFile(dragged));
         QVERIFY(QTest::qWaitForWindowExposed(window));
-        auto *bar = window->findChild<QTabBar *>(QStringLiteral("docTabBar"));
+        auto *bar = window->findChild<DetachableTabBar *>(QStringLiteral("docTabBar"));
         QVERIFY(bar);
         QWindow *handle = window->windowHandle();
         const QPoint at = bar->mapTo(window, bar->tabRect(1).center());
@@ -818,11 +899,22 @@ private slots:
                 QTest::mouseRelease(handle, Qt::LeftButton, {}, below);
         });
         release.start(5);
+        // The drag still runs when the bar asks to detach the tab.
+        std::optional<bool> couldChangeTabs;
+        connect(bar, &DetachableTabBar::detachRequested, this, [&] {
+            if (QApplication::mouseButtons() != Qt::NoButton)
+                QTest::mouseRelease(handle, Qt::LeftButton, {}, below);
+            couldChangeTabs = window->canChangeTabs();
+        });
         QTest::mousePress(handle, Qt::LeftButton, {}, at);
         QVERIFY(window->openFile(arrived, false, 0, /*makeCurrent=*/false, {}, /*lazy=*/true));
         QTest::mouseMove(handle, below);
         release.stop();
-        QTest::mouseRelease(handle, Qt::LeftButton, {}, below);
+        if (QApplication::mouseButtons() != Qt::NoButton)
+            QTest::mouseRelease(handle, Qt::LeftButton, {}, below);
+        QVERIFY(couldChangeTabs.has_value());
+        QVERIFY(!*couldChangeTabs);
+        QVERIFY(window->canChangeTabs());
 
         QCOMPARE(tabFiles(*window),
                  (QStringList{QStringLiteral("arrived.pdf"), QStringLiteral("first.pdf")}));
@@ -1351,7 +1443,7 @@ private slots:
         dialog.show();
         QTRY_COMPARE(QApplication::activeModalWidget(), &dialog);
         manager.closeRemovedTabs();
-        QTest::qWait(1500); // the check, then at least one retry
+        QTest::qWait(1500); // the check, and an activity tick, which must keep the tab
         QCOMPARE(window->tabCount(), 3);
         QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), back));
         dialog.close();
@@ -1363,6 +1455,8 @@ private slots:
     // A tab change waits while a menu, a modal dialog or a held mouse button may
     // hold a tab position, then runs, in the order asked. It never runs inside
     // the call that asks for it, so a tab's own button can ask to close the tab.
+    // It runs on the next turn of the event loop once the dialog has closed or the
+    // button is up, without waiting for the activity tick.
     void tabChangesWaitWhileTabPositionsMayBeHeld()
     {
         WindowManager manager;
@@ -1386,7 +1480,8 @@ private slots:
         ask(QStringLiteral("first"));
         ask(QStringLiteral("second"));
         QVERIFY(ran.isEmpty());
-        QTRY_COMPARE(ran, (QStringList{QStringLiteral("first"), QStringLiteral("second")}));
+        QCoreApplication::processEvents();
+        QCOMPARE(ran, (QStringList{QStringLiteral("first"), QStringLiteral("second")}));
 
         ran.clear();
         bool waited = false;
@@ -1398,6 +1493,7 @@ private slots:
         });
         menu.exec(window->mapToGlobal(QPoint(20, 20)));
         QVERIFY(waited);
+        // Nothing but the activity tick follows a menu closed without a click.
         QTRY_COMPARE(ran, QStringList{QStringLiteral("menu")});
 
         ran.clear();
@@ -1409,7 +1505,8 @@ private slots:
         });
         dialog.exec();
         QVERIFY(waited);
-        QTRY_COMPARE(ran, QStringList{QStringLiteral("dialog")});
+        QCoreApplication::processEvents();
+        QCOMPARE(ran, QStringList{QStringLiteral("dialog")});
 
         // A press on a tab, as when the user starts to move it.
         ran.clear();
@@ -1419,7 +1516,72 @@ private slots:
         QTest::mousePress(window->windowHandle(), Qt::LeftButton, {}, at);
         QVERIFY(stillWaits(QStringLiteral("mouse")));
         QTest::mouseRelease(window->windowHandle(), Qt::LeftButton, {}, at);
-        QTRY_COMPARE(ran, QStringList{QStringLiteral("mouse")});
+        QCoreApplication::processEvents();
+        QCOMPARE(ran, QStringList{QStringLiteral("mouse")});
+    }
+
+    // A tab change asked for during a document operation runs once the operation
+    // ends. A window without a manager has no release, closed modal window or
+    // activity tick to run its queue, so only the end of the operation runs it.
+    void tabChangesRunWhenADocumentOperationEnds()
+    {
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        auto *tab = window.findChild<TabPage *>();
+        QVERIFY(tab);
+        QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {50, 50}, Qt::yellow, {}, "pending") >= 0);
+
+        // Ask during the unsaved-changes question, which runs inside the close's
+        // document operation, then keep the tab.
+        dialogs_.stop();
+        QStringList ran;
+        bool asked = false;
+        bool waited = false;
+        QTimer answer;
+        connect(&answer, &QTimer::timeout, this, [&] {
+            auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            if (!box || asked)
+                return;
+            asked = true;
+            window.whenTabsCanChange([&ran] { ran << QStringLiteral("operation"); });
+            QCoreApplication::processEvents();
+            window.runTabChanges();
+            waited = ran.isEmpty();
+            box->button(QMessageBox::Cancel)->click();
+        });
+        answer.start(5);
+        QVERIFY(QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0)));
+        answer.stop();
+        QVERIFY(asked);
+        QVERIFY(waited);
+        QCOMPARE(window.tabCount(), 1);
+        QCoreApplication::processEvents();
+        QCOMPARE(ran, QStringList{QStringLiteral("operation")});
+    }
+
+    // A removed file's tab closes only after the tab changes asked for before it,
+    // as a window changes its tabs in the order asked.
+    void removedFileTabClosesAfterEarlierTabChanges()
+    {
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        const QString gone = root.filePath(QStringLiteral("attachment.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), gone));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(window.openFile(gone, false, -1, /*makeCurrent=*/false, {}, /*lazy=*/true));
+        QVERIFY(QFile::remove(gone));
+
+        QStringList seen;
+        window.whenTabsCanChange([&] { seen = tabFiles(window); });
+        QVERIFY(window.canChangeTabs());
+        QVERIFY(!window.closeRemovedTabs(gone));
+        QCoreApplication::processEvents();
+        QCOMPARE(seen, (QStringList{QStringLiteral("properties.pdf"), QStringLiteral("attachment.pdf")}));
+        QVERIFY(window.closeRemovedTabs(gone));
+        QCOMPARE(tabFiles(window), QStringList{QStringLiteral("properties.pdf")});
     }
 
     // Duplicating a tab whose file is gone says why it failed and leaves no empty

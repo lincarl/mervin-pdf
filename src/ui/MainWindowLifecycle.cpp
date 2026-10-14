@@ -142,7 +142,7 @@ void MainWindow::runTabChanges()
         runningTabChanges_ = true;
         change();
         if (!self)
-            return; // the change closed this window
+            return; // the change deleted this window
         runningTabChanges_ = false;
     }
 }

@@ -1940,8 +1940,8 @@ bool MainWindow::closeRemovedTabs(const QString &canonicalPath)
     if (hiddenToTray_)
         return true;
     // Closing a tab shifts the positions that a nested dialog or menu, a document
-    // operation or a tab drag may still hold.
-    const bool busy = !canChangeTabs();
+    // operation or a tab drag may still hold. Tab changes queued earlier go first.
+    const bool busy = !canChangeTabs() || !tabChanges_.empty();
     for (int i = tabs_->count() - 1; i >= 0; --i) {
         auto *tab = qobject_cast<TabPage *>(tabs_->widget(i));
         // A tab that is loading stays. If its file is gone, the failed load
@@ -2624,9 +2624,20 @@ void MainWindow::wireCurrentViewer(ViewerWidget *v)
                                 // Rotate rows would be the only ones still
                                 // carrying a "Ctrl+Shift+…" column.
                                 hideShortcutHints(&menu);
+                                // The menu runs its own event loop, in which another
+                                // document can take the view. The menu then closes,
+                                // since its rows act on the document on screen and its
+                                // page belongs to the document clicked.
+                                const QPointer<TabPage> clicked(currentTab());
+                                connect(tabs_, &QTabWidget::currentChanged, &menu,
+                                        [this, &menu, clicked] {
+                                            if (currentTab() != clicked)
+                                                menu.close();
+                                        });
                                 QAction *chosen = menu.exec(globalPos);
                                 // Opened once the menu has closed, not from inside it.
-                                if (savePage && chosen == savePage)
+                                if (savePage && chosen == savePage && clicked
+                                    && currentTab() == clicked)
                                     pagesDialog(mervin::ExtractPlan::Mode::Extract, page);
                             });
     // Reflect this viewer's current measure state in the toolbar toggle.
