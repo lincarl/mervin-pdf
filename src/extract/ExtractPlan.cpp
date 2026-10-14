@@ -624,8 +624,8 @@ QString ExtractPlan::destinationError(const QString &destination, const Destinat
         }
         return tr("The extract cannot replace the document it comes from.");
     }
-    // The viewer keeps an open tab's file open, so the write would fail only
-    // after the dialog had closed and taken the rows with it.
+    // Each open tab retains the file's view and edits. Copy tools must not
+    // replace that file, even though loaded PDFs own their source bytes.
     if (openKeys_.contains(key))
         return tr("That file is open in a tab. Choose another name.");
     return {};
