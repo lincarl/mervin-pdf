@@ -125,7 +125,7 @@ Edited document retained at %2.
 %3</source>
         <extracomment>%1 describes the Save or reopening result, %2 is the retained copy, and %3 is a recovery error.</extracomment>
         <translation>%1
-Cáipéis curtha in eagar ag %2.
+Cáipéis curtha in eagar coinnithe ag %2.
 %3</translation>
     </message>
     <message>

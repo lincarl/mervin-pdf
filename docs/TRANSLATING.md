@@ -112,6 +112,9 @@ open password. A read failure means the app could not obtain all the file bytes.
 Damage is a format error the reader could not repair. Do not turn an unclassified
 reader message into a diagnosis. Follow each source's note for those distinctions.
 
+Preserve recovery states such as retained, kept, saved and open. A path alone does
+not say that the app kept the edits, and a retained copy need not already be open.
+
 When a translation service batches strings, verify each source-to-target pairing.
 Matching output counts or separator counts do not prove alignment. Redraft broken
 entries individually. Preserve product names, command-line switches, file-filter
