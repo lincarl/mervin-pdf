@@ -655,7 +655,7 @@ encryption.
 `QpdfService` inspects and changes encryption and permission settings. These services
 write new files and do not share live MuPDF document handles with the viewer.
 
-Rotate Pages and Split run as their tab's operation (`TabPage::startOperation`), so
+Rotate Pages, Split and accepted Merge plans run as their tab's operation (`TabPage::startOperation`), so
 only that tab waits for the file. Their prompts and file dialogs run first, as before.
 The tab then commits its form and comment editors, takes a still picture of its pages
 (`StillPicture`), pauses the viewer (`ViewerWidget::pauseForOperation`, which stops
@@ -740,12 +740,30 @@ and starts another tab job. This job resolves the current source identity and re
 an output that would replace it, including a source redirected after the dialog opened.
 It reserves the output, verifies the password and page count again, then writes through
 qpdf and the guarded atomic writer. The dialog and its Browse picker are window-modal.
-A changed
-count reopens the choices before writing. A failed write or password check also
+A changed count reopens the choices before writing. A failed write or password check also
 reopens the dialog with its rows, chosen filename, password and Open when done
 choice. Completion follows the tab to its current window. Stop suppresses reopening
 and output opening, while a rename already begun may finish. A hidden window shows
 failures through its tray notice.
+
+Merge's constructor and Add Files append pending rows immediately, each with a
+probe ticket. One `background::SerialQueue` per lexical `RecentStore::volumeKey`
+reads the PDF information under a separate job state. A blocked drive, share or
+Linux folder holds only its own queue. Reading rows keep Merge disabled and the
+error line empty. Duplicate pending rows share a ticket, and completion follows
+that ticket through row removal and reordering. Answers update existing widgets
+in place, preserving a range editor or drag grip. One warning reports the remaining
+failed rows after their Add Files batch finishes. Closing the dialog stops and
+discards its probe requests without waiting.
+
+After SaveCheck and replacement confirmation, Merge accepts its plan and output
+without writing. The launching tab's operation checks input and output identities,
+refuses open tabs and reserves the destination before calling `PageOps::merge`.
+Failure reopens the previously probed rows, ranges, passwords and output with the
+existing error summary and detail. A reopened plan assigns new probe tickets above
+its inherited ones. Completion follows the tab's current window, including when
+an older queued move destroys its original owner. A hidden owner sends the same
+translated failure summary to the tray. Stop suppresses all completion prompts.
 
 Neither plan touches the disk on the UI thread. Each dialog checks its Save as text
 with `SaveCheck` (`io/SaveCheck`) on a background thread. Extract checks whether the
@@ -760,9 +778,9 @@ behind it. Until a check answers, the error line keeps a reason about Save as, s
 typing does not make it flicker, and drops any other reason; after 300 ms it says
 the folder is being checked and disables the button. Pressing Extract or Merge
 checks Save as again and proceeds once that answers, if the rows and Save as are
-still what it was pressed for. Extract closes with its captured job for the worker;
-Merge still writes before closing. A default name that stepped past a file in use
-meanwhile still counts, as the user did not choose it.
+still what it was pressed for. Extract and Merge close with their captured requests
+for the tab's worker. A default name that stepped past a file in use meanwhile
+still counts, as the user did not choose it.
 
 Delete Pages is the same `ExtractDialog` and `ExtractStrip` over an `ExtractPlan` in
 `Mode::Delete`, not a separate dialog. The rows, Save as, the password row, job

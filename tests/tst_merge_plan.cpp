@@ -41,6 +41,8 @@ private slots:
     void defaultOutputPathAvoidsExistingAndInputFiles();
     void rowTextsMatchesThePerRowGetters();
     void dropGapsMapToTheRightRow();
+    void readingBlocksUnknownOutputPositions();
+    void probeResolutionFollowsPendingCopies();
 
 private:
     static MergePlan::Entry ok(const QString &path, int pages, const QString &spec = QString())
@@ -60,6 +62,50 @@ void TstMergePlan::initTestCase()
     // The English plural forms ("1 page", "13 pages") come from the English
     // catalog; without it Qt would show "13 page(s)".
     mervin::i18n::apply(QStringLiteral("en"));
+}
+
+void TstMergePlan::readingBlocksUnknownOutputPositions()
+{
+    MergePlan plan;
+    plan.append(ok(QStringLiteral("/a/first.pdf"), 2));
+    MergePlan::Entry pending;
+    pending.path = QStringLiteral("/b/reading.pdf");
+    pending.load = MergePlan::Load::Reading;
+    pending.probeTicket = 1;
+    plan.append(pending);
+    plan.append(ok(QStringLiteral("/a/later.pdf"), 3));
+    QVERIFY(plan.hasReading());
+    QVERIFY(!plan.isValid());
+    QVERIFY(plan.errorText().isEmpty());
+    QCOMPARE(plan.countText(1), QStringLiteral("Reading…"));
+    QCOMPARE(plan.outputText(0), QStringLiteral("1-2"));
+    QVERIFY(plan.outputText(1).isEmpty() && plan.outputText(2).isEmpty());
+    auto result = ok(pending.path, 4);
+    QVERIFY(plan.resolveProbe(1, result));
+    QVERIFY(plan.isValid() && !plan.hasReading());
+    QCOMPARE(plan.outputText(2), QStringLiteral("7-9"));
+}
+
+void TstMergePlan::probeResolutionFollowsPendingCopies()
+{
+    MergePlan plan;
+    MergePlan::Entry pending;
+    pending.path = QStringLiteral("/a/file.pdf");
+    pending.load = MergePlan::Load::Reading;
+    pending.probeTicket = 7;
+    pending.spec = QStringLiteral("3,1");
+    plan.append(pending);
+    plan.duplicate(0);
+    plan.setSpec(1, QStringLiteral("2"));
+    plan.append(ok(QStringLiteral("/b/ready.pdf"), 1));
+    QCOMPARE(plan.moveToGap(1, 3), 2);
+    const auto result = ok(pending.path, 3);
+    QVERIFY(!plan.resolveProbe(99, result));
+    QVERIFY(plan.resolveProbe(7, result));
+    QCOMPARE(plan.pagesFor(0), (QList<int>{2, 0}));
+    QCOMPARE(plan.pagesFor(2), (QList<int>{1}));
+    QVERIFY(!plan.resolveProbe(7, result));
+    QCOMPARE(plan.at(1).path, QStringLiteral("/b/ready.pdf"));
 }
 
 void TstMergePlan::appendAndCount()
@@ -160,7 +206,7 @@ void TstMergePlan::countTextDistinguishesAllFromASubset()
     // What the dialog sizes its Count column for.
     QCOMPARE(MergePlan::widestCountTexts(),
              QStringList({QStringLiteral("Locked"), QStringLiteral("Unreadable"),
-                          QStringLiteral("998 of 999")}));
+                          QStringLiteral("998 of 999"), QStringLiteral("Reading…")}));
 }
 
 void TstMergePlan::outputRangesAreARunningSum()

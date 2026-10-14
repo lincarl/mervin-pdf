@@ -2721,6 +2721,11 @@ Open de instellingen van uw systeem → Standaardtoepassingen (of klik met de re
         <translation>Voer pagina&apos;s in zoals 1-3, 5, 8-10.</translation>
     </message>
     <message>
+        <source>Reading…</source>
+        <extracomment>Count column of a Merge input while its background file probe runs. This means reading the PDF&apos;s information, not a page selection.</extracomment>
+        <translation>Lezen…</translation>
+    </message>
+    <message>
         <source>Locked</source>
         <extracomment>Count column of a merge row whose file is encrypted.</extracomment>
         <translation>Vergrendeld</translation>

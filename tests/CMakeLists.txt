@@ -288,6 +288,17 @@ set_tests_properties(tst_merge_dialog PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
+qt_add_executable(tst_merge_operations tst_merge_operations.cpp TestWaits.h)
+target_link_libraries(tst_merge_operations PRIVATE mervin_app Qt6::Test)
+set_target_properties(tst_merge_operations PROPERTIES WIN32_EXECUTABLE OFF)
+target_compile_definitions(tst_merge_operations PRIVATE
+    MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
+add_test(NAME tst_merge_operations COMMAND tst_merge_operations)
+set_tests_properties(tst_merge_operations PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    TIMEOUT 180
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+
 # Widget-level guard rails for the extract dialog, arranged like tst_merge_dialog
 # above: the dialog, its strip, the row list and minimum size helper it shares
 # with Merge and the theme source they paint with belong to the application target, so they are compiled

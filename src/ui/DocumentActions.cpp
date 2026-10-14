@@ -1133,23 +1133,124 @@ void MainWindow::splitDocument()
     runPageTool(t, tool, t->password(), false);
 }
 
+struct MainWindow::MergeRequest
+{
+    mervin::MergePlan plan;
+    QString output;
+};
+
+struct MainWindow::MergeResult
+{
+    PageOps::Status status = PageOps::Status::Failed;
+    QString error;
+    int failedIndex = -1;
+    mervin::MergeDialog::Conflict conflict = mervin::MergeDialog::Conflict::None;
+};
+
 void MainWindow::mergeDocuments()
 {
+    TabPage *tab = currentTab();
+    if (tab && tab->isUsable())
+        showMergeDialog(tab);
+}
+
+void MainWindow::showMergeDialog(TabPage *tab, const std::shared_ptr<MergeRequest> &request,
+                                 const std::shared_ptr<MergeResult> &result)
+{
     const OperationScope operation(this);
-    // The open document seeds the list as an ordinary first row. The viewer's
-    // page count goes along only as a fallback - the dialog probes the file with
-    // qpdf itself, because MuPDF opens documents qpdf will not (see MergeDialog).
-    // The tab's password goes too, so an encrypted open document is not Locked.
-    TabPage *t = currentTab();
-    ViewerWidget *v = currentViewer();
-    mervin::MergeDialog dlg(t ? t->path() : QString(), v ? v->pageCount() : 0,
-                            t ? t->password() : QString(), this);
-    dlg.setOpenFiles(wm_ ? wm_->openTabPaths() : tabPaths());
-    if (dlg.exec() != QDialog::Accepted)
+    const QPointer<MainWindow> owner(this);
+    const QPointer<TabPage> page(tab);
+    if (!tab->isUsable())
         return;
-    // The dialog has written the file: it writes before closing, so a failure
-    // (naming the input that stopped it) stays in the dialog with the plan.
-    offerToOpen(dlg.outputPath());
+    if (hiddenToTray_) {
+        if (result && wm_)
+            wm_->notifyInTray(mervin::MergeDialog::tr("Merge PDFs"), mervin::MergeDialog::failureSummary(
+                request->plan, request->output, result->failedIndex, result->conflict));
+        return;
+    }
+    const QPointer<mervin::MergeDialog> dialog(request
+        ? new mervin::MergeDialog(request->plan, request->output, result->error,
+                                  result->failedIndex, result->conflict, this)
+        : new mervin::MergeDialog(tab->path(), tab->viewer()->pageCount(), tab->password(), this));
+    dialog->setWindowModality(Qt::WindowModal);
+    dialog->setOpenFiles(wm_ ? wm_->openTabPaths() : tabPaths());
+    const bool accepted = dialog->exec() == QDialog::Accepted;
+    std::shared_ptr<MergeRequest> next;
+    if (dialog && accepted) {
+        next = std::make_shared<MergeRequest>();
+        next->plan = dialog->plan();
+        next->output = dialog->outputPath();
+    }
+    delete dialog.data();
+    if (next && owner && page && page->isUsable())
+        runMerge(page, next);
+}
+
+void MainWindow::runMerge(TabPage *tab, const std::shared_ptr<MergeRequest> &request)
+{
+    auto *owner = qobject_cast<MainWindow *>(tab->window());
+    if (!owner || !tab->isUsable())
+        return;
+    const auto open = openFileKeys(owner->wm_ ? owner->wm_->openTabPaths() : owner->tabPaths());
+    const auto result = std::make_shared<MergeResult>();
+    TabPage::Operation operation;
+    operation.destination = QFileInfo(request->output).absolutePath();
+    operation.work = [request, result, open] {
+        if (!mervin::job::writing(QFileInfo(request->output).absolutePath()))
+            return;
+        const QString destination = mervin::fileKey(QFileInfo(request->output));
+        for (const auto &entry : request->plan.entries()) {
+            if (!mervin::job::reading(entry.path))
+                return;
+            if (mervin::fileKey(QFileInfo(entry.path)) == destination) {
+                result->conflict = mervin::MergeDialog::Conflict::Input;
+                return;
+            }
+        }
+        if (open.contains(destination) || !mervin::job::reserveDestinations({destination})) {
+            result->conflict = mervin::MergeDialog::Conflict::OpenTab;
+            return;
+        }
+        result->status = PageOps::merge(request->plan.inputs(), request->output,
+                                        &result->error, &result->failedIndex);
+    };
+    operation.finished = [page = QPointer<TabPage>(tab), request, result] {
+        if (page)
+            deliverMergeDialog(page, request, result);
+    };
+    tab->startOperation(std::move(operation));
+}
+
+void MainWindow::deliverMergeDialog(TabPage *tab, const std::shared_ptr<MergeRequest> &request,
+                                    const std::shared_ptr<MergeResult> &result)
+{
+    const QPointer<TabPage> page(tab);
+    auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+    if (!window)
+        return;
+    // The old window drops its queue on destruction. A tab that moved away must
+    // still receive the result in its surviving owner.
+    const auto discarded = connect(window, &QObject::destroyed, tab, [page, request, result] {
+        if (page)
+            deliverMergeDialog(page, request, result);
+    });
+    window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window), request, result,
+                              discarded] {
+        disconnect(discarded);
+        auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!current)
+            return;
+        if (current != owner) {
+            deliverMergeDialog(page, request, result);
+            return;
+        }
+        if (result->status == PageOps::Status::Ok) {
+            if (!current->hiddenToTray_)
+                current->offerToOpen(request->output);
+        } else {
+            current->showMergeDialog(page, request, result);
+        }
+    });
 }
 
 // Retains captured print choices and any prepared document across owner moves.

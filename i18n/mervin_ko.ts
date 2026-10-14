@@ -2710,6 +2710,11 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>1-3, 5, 8-10과 같은 페이지를 입력하세요.</translation>
     </message>
     <message>
+        <source>Reading…</source>
+        <extracomment>Count column of a Merge input while its background file probe runs. This means reading the PDF&apos;s information, not a page selection.</extracomment>
+        <translation>읽는 중…</translation>
+    </message>
+    <message>
         <source>Locked</source>
         <extracomment>Count column of a merge row whose file is encrypted.</extracomment>
         <translation>잠김</translation>

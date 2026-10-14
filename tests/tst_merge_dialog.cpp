@@ -1,5 +1,8 @@
 #include "dialogs/MergeDialog.h"
 #include "io/SaveCheck.h"
+#include "io/JobContext.h"
+#include "io/Background.h"
+#include "Stalls.h"
 #include "security/QpdfService.h"
 
 #include <qpdf/QPDF.hh>
@@ -12,18 +15,25 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFileDialog>
+#include <QElapsedTimer>
 #include <QFocusEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QPointer>
 #include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
 
 #include <memory>
+
+#ifdef Q_OS_UNIX
+#  include <sys/stat.h>
+#endif
 
 using mervin::MergeDialog;
 using mervin::QpdfService;
@@ -69,6 +79,7 @@ class TstMergeDialog : public QObject
 
 private slots:
     void initTestCase();
+    void cleanup();
     void slowSaveAsCheckSaysSoAndMergeWaitsForIt();
     void pressedBeforeTheCheckKeepsAnOpenFile();
 
@@ -79,7 +90,17 @@ private slots:
     void outputFieldCanBeEmptied();
     void badRangeBlocksTheMerge();
     void outputOpenInATabIsRefused();
-    void failedWriteKeepsThePlan();
+    void failedPlanCanBeReopened();
+    void volumesProbeIndependently();
+    void pendingRowsKeepTheirProbeIdentity();
+    void batchWarningWaitsAndIgnoresRemovedRows_data();
+    void batchWarningWaitsAndIgnoresRemovedRows();
+    void ownerDeletionDuringQuestion_data();
+    void ownerDeletionDuringQuestion();
+#ifdef Q_OS_UNIX
+    void fifoRowsReturnWithoutWaiting_data();
+    void fifoRowsReturnWithoutWaiting();
+#endif
 
 private:
     QTemporaryDir dir_;
@@ -115,7 +136,10 @@ private:
     {
         const auto *check = dialog->findChild<mervin::SaveCheck *>();
         QVERIFY(check);
-        QVERIFY(QTest::qWaitFor([check] { return !check->pending(); }, 5000));
+        const auto *merge = qobject_cast<MergeDialog *>(dialog);
+        QVERIFY(QTest::qWaitFor([check, merge] {
+            return !check->pending() && (!merge || !merge->reading());
+        }, 10000));
     }
     static void replaceText(QLineEdit *field, const QString &text)
     {
@@ -124,7 +148,7 @@ private:
         QTest::keyClicks(field, text);
         settle(field->window());
     }
-    // Merge checks Save as again on a background thread, then writes.
+    // Merge checks Save as again on a background thread, then accepts the plan.
     static void press(MergeDialog &d)
     {
         mergeBtn(d)->click();
@@ -226,6 +250,7 @@ void TstMergeDialog::focusingARowEditorMakesThatRowCurrent()
     MergeDialog d(plain_, 6);
     prepare(d);
     d.addPaths({plain_, plain_});
+    settle(&d);
     QCOMPARE(list(d)->count(), 3);
 
     list(d)->setCurrentRow(0);
@@ -349,7 +374,9 @@ void TstMergeDialog::slowSaveAsCheckSaysSoAndMergeWaitsForIt()
     mervin::SaveCheck::holdForTesting(false);
     settle(&d);
     QCOMPARE(d.result(), int(QDialog::Accepted));
-    QVERIFY(QFileInfo::exists(target));
+    QVERIFY(!QFileInfo::exists(target));
+    QCOMPARE(d.outputPath(), target);
+    QCOMPARE(d.inputs().front().pages.size(), 6);
 }
 
 // Merge pressed before the check of a new name answers writes nothing when the
@@ -381,41 +408,262 @@ void TstMergeDialog::pressedBeforeTheCheckKeepsAnOpenFile()
     QCOMPARE(f.readAll(), before);
 }
 
-void TstMergeDialog::failedWriteKeepsThePlan()
+void TstMergeDialog::failedPlanCanBeReopened()
 {
-    // A write that fails (a read-only file here, standing in for one that another
-    // program holds open) is reported on the error line. The dialog stays open
-    // with its plan, Merge stays enabled, and once the cause is gone a second
-    // Merge succeeds without retyping anything.
-    const QString target = dir_.filePath(QStringLiteral("read-only.pdf"));
-    makePdf(target, 1);
-    QVERIFY(QFile::setPermissions(target, QFileDevice::ReadOwner | QFileDevice::ReadUser));
+    const QString target = dir_.filePath(QStringLiteral("retry.pdf"));
     MergeDialog d(plain_, 6);
     prepare(d);
     replaceText(specs(d).at(0), QStringLiteral("2-3"));
     replaceText(output(d), QDir::toNativeSeparators(target));
-    QVERIFY(mergeBtn(d)->isEnabled());
-
-    answerReplaceWithYes(); // the file exists, so Merge asks first
-    press(d);
-    QVERIFY(d.result() != QDialog::Accepted);                 // still open...
-    QCOMPARE(specs(d).at(0)->text(), QStringLiteral("2-3")); // ...with its plan
-    QVERIFY2(error(d).startsWith(QStringLiteral("Could not write \"read-only.pdf\".")),
-             qPrintable(error(d)));
-    QVERIFY(!d.findChild<QLabel *>(QStringLiteral("mergeError"))->toolTip().isEmpty());
-    QVERIFY(mergeBtn(d)->isEnabled());
-
-    QVERIFY(QFile::setPermissions(target, QFileDevice::ReadOwner | QFileDevice::WriteOwner
-                                              | QFileDevice::ReadUser | QFileDevice::WriteUser));
-    answerReplaceWithYes();
     press(d);
     QCOMPARE(d.result(), int(QDialog::Accepted));
-    QCOMPARE(QFileInfo(d.outputPath()), QFileInfo(target));
-    int count = 0;
-    QString err;
-    QCOMPARE(mervin::PageOps::probe(target, &count, QString(), &err), mervin::PageOps::Status::Ok);
-    QCOMPARE(count, 2);
+    QVERIFY(!QFileInfo::exists(target));
+    MergeDialog retry(d.plan(), target, QStringLiteral("Injected input failure"), 0);
+    prepare(retry);
+    QCOMPARE(specs(retry).at(0)->text(), QStringLiteral("2-3"));
+    QCOMPARE(output(retry)->text(), QDir::toNativeSeparators(target));
+    QVERIFY(error(retry).contains(QFileInfo(plain_).fileName()));
+    QCOMPARE(retry.findChild<QLabel *>(QStringLiteral("mergeError"))->toolTip(),
+             QStringLiteral("Injected input failure"));
+    QVERIFY(mergeBtn(retry)->isEnabled());
+    press(retry);
+    QCOMPARE(retry.result(), int(QDialog::Accepted));
+    QCOMPARE(retry.inputs().front().pages, (QList<int>{1, 2}));
+    QVERIFY(!QFileInfo::exists(target));
 }
+
+void TstMergeDialog::cleanup()
+{
+    mervin::job::testing::release();
+    mervin::SaveCheck::holdForTesting(false);
+    QVERIFY(mervin::background::settle(10000));
+}
+
+void TstMergeDialog::volumesProbeIndependently()
+{
+    QTemporaryDir files;
+    QVERIFY(QDir(files.path()).mkdir("held"));
+    QVERIFY(QDir(files.path()).mkdir("healthy"));
+    const QString held = files.filePath("held/a.pdf");
+    const QString same = files.filePath("held/b.pdf");
+    const QString healthy = files.filePath("healthy/c.pdf");
+    for (const QString &path : {held, same, healthy})
+        QVERIFY(QFile::copy(plain_, path));
+    mervin::job::testing::holdWhen([held](mervin::job::Step step, const QString &path) {
+        return step == mervin::job::Step::Reading && path == held;
+    });
+    const auto release = qScopeGuard([] { mervin::job::testing::release(); });
+    MergeDialog d(QString(), 0);
+    d.show();
+    const int guiSteps = mervin::job::testing::stepsOnMainThread();
+    QElapsedTimer elapsed;
+    elapsed.start();
+    d.addPaths({held, same, healthy});
+    QVERIFY(elapsed.elapsed() < 1000);
+    QTRY_COMPARE(mervin::job::testing::held(), 1);
+    const auto counts = d.findChildren<QLabel *>("rowListCount");
+    QCOMPARE(counts.size(), 3);
+    QTRY_COMPARE(counts.at(2)->text(), QStringLiteral("6"));
+    QCOMPARE(counts.at(0)->text(), QStringLiteral("Reading…"));
+    QCOMPARE(counts.at(1)->text(), QStringLiteral("Reading…"));
+    QVERIFY(!mergeBtn(d)->isEnabled());
+    QVERIFY(error(d).isEmpty());
+    QCOMPARE(mervin::job::testing::stepsOnMainThread(), guiSteps);
+    mervin::job::testing::release();
+    settle(&d);
+    QVERIFY(mergeBtn(d)->isEnabled());
+}
+
+void TstMergeDialog::pendingRowsKeepTheirProbeIdentity()
+{
+    mervin::job::testing::holdWhen([this](mervin::job::Step step, const QString &path) {
+        return step == mervin::job::Step::Reading && path == plain_;
+    });
+    const auto release = qScopeGuard([] { mervin::job::testing::release(); });
+    MergeDialog d(plain_, 6);
+    d.show();
+    QTRY_COMPARE(mervin::job::testing::held(), 1);
+    list(d)->setCurrentRow(0);
+    auto *duplicate = [&] {
+        for (auto *button : d.findChildren<QPushButton *>())
+            if (button->text() == QStringLiteral("Duplicate"))
+                return button;
+        return static_cast<QPushButton *>(nullptr);
+    }();
+    QVERIFY(duplicate);
+    duplicate->click();
+    QCOMPARE(list(d)->count(), 2);
+    const QPointer<QLineEdit> pending(specs(d).front());
+    mervin::job::testing::release();
+    settle(&d);
+    QVERIFY(pending); // completion updated rows without rebuilding their widgets
+    QCOMPARE(d.inputs().size(), 2);
+    QCOMPARE(d.inputs().at(0).pages.size(), 6);
+    QCOMPARE(d.inputs().at(1).pages.size(), 6);
+}
+
+void TstMergeDialog::batchWarningWaitsAndIgnoresRemovedRows_data()
+{
+    QTest::addColumn<bool>("remove");
+    QTest::addColumn<bool>("seeded");
+    QTest::newRow("one batch warning") << false << false;
+    QTest::newRow("removed failure") << true << false;
+    QTest::newRow("removed failure after reopening") << true << true;
+}
+
+void TstMergeDialog::batchWarningWaitsAndIgnoresRemovedRows()
+{
+    QFETCH(bool, remove);
+    QFETCH(bool, seeded);
+    QTemporaryDir files;
+    const QString held = files.filePath("held.pdf");
+    QVERIFY(QFile::copy(plain_, held));
+    const QString missing = dir_.filePath("missing-batch.pdf");
+    MergeDialog initial(plain_, 6);
+    prepare(initial);
+    const auto reopened = seeded ? std::make_unique<MergeDialog>(initial.plan(),
+        dir_.filePath("reopened.pdf"), QStringLiteral("Prior failure"), -1) : nullptr;
+    MergeDialog &d = reopened ? *reopened : initial;
+    if (reopened)
+        prepare(d);
+    mervin::job::testing::holdWhen([held](mervin::job::Step step, const QString &path) {
+        return step == mervin::job::Step::Reading && path == held;
+    });
+    const auto release = qScopeGuard([] { mervin::job::testing::release(); });
+    QStringList warnings;
+    QTimer messages;
+    connect(&messages, &QTimer::timeout, &d, [&] {
+        if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+            warnings.append(box->text());
+            box->accept();
+        }
+    });
+    messages.start(10);
+    d.addPaths({missing, held});
+    QTRY_COMPARE(mervin::job::testing::held(), 1);
+    QTRY_COMPARE(d.plan().at(1).load, mervin::MergePlan::Load::Unreadable);
+    QVERIFY(warnings.isEmpty());
+    QVERIFY(error(d).isEmpty());
+    if (remove) {
+        list(d)->setCurrentRow(1);
+        for (auto *button : d.findChildren<QPushButton *>())
+            if (button->text() == QStringLiteral("Remove"))
+                button->click();
+        QCOMPARE(list(d)->count(), 2);
+    }
+    mervin::job::testing::release();
+    settle(&d);
+    QVERIFY(mervin::background::settle(10000));
+    QCoreApplication::processEvents();
+    if (remove) {
+        QVERIFY(warnings.isEmpty());
+        QVERIFY(mergeBtn(d)->isEnabled());
+    } else {
+        QCOMPARE(warnings.size(), 1);
+        QVERIFY(warnings.front().contains(QStringLiteral("missing-batch.pdf")));
+        QVERIFY(!mergeBtn(d)->isEnabled());
+    }
+}
+
+void TstMergeDialog::ownerDeletionDuringQuestion_data()
+{
+    QTest::addColumn<QString>("action");
+    QTest::newRow("add picker") << QStringLiteral("Add Files…");
+    QTest::newRow("output picker") << QStringLiteral("Browse…");
+    QTest::newRow("overwrite question") << QStringLiteral("overwrite");
+    QTest::newRow("input conflict") << QStringLiteral("input");
+}
+
+void TstMergeDialog::ownerDeletionDuringQuestion()
+{
+    QFETCH(QString, action);
+    const QPointer<QWidget> owner(new QWidget);
+    const auto cleanup = qScopeGuard([owner] { delete owner.data(); });
+    const QPointer<MergeDialog> dialog(new MergeDialog(plain_, 6, {}, owner));
+    prepare(*dialog);
+    QString target;
+    if (action == QStringLiteral("overwrite")) {
+        target = dir_.filePath("owner-deletion.pdf");
+        QVERIFY(QFile::copy(plain_, target));
+        replaceText(output(*dialog), target);
+    } else if (action == QStringLiteral("input")) {
+        replaceText(output(*dialog), plain_);
+    }
+    QElapsedTimer elapsed;
+    elapsed.start();
+    bool reached = false;
+    bool windowModal = false;
+    QTimer deletion;
+    connect(&deletion, &QTimer::timeout, this, [&] {
+        auto *modal = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!modal)
+            return;
+        if (qobject_cast<QFileDialog *>(modal) || qobject_cast<QMessageBox *>(modal)) {
+            reached = true;
+            windowModal = modal->windowModality() == Qt::WindowModal;
+            delete owner.data();
+        } else if (elapsed.elapsed() > 3000) {
+            modal->reject();
+        }
+    });
+    deletion.start(10);
+    if (action == QStringLiteral("overwrite") || action == QStringLiteral("input")) {
+        mergeBtn(*dialog)->click();
+        QTRY_VERIFY_WITH_TIMEOUT(!dialog, 5000);
+    } else {
+        auto *button = [&] {
+            for (auto *candidate : dialog->findChildren<QPushButton *>())
+                if (candidate->text() == action)
+                    return candidate;
+            return static_cast<QPushButton *>(nullptr);
+        }();
+        QVERIFY(button);
+        button->click();
+    }
+    QVERIFY(reached);
+    QVERIFY(windowModal);
+    QVERIFY(!dialog);
+    QVERIFY(!owner);
+    if (!target.isEmpty())
+        QCOMPARE(QFileInfo(target).size(), QFileInfo(plain_).size());
+}
+
+#ifdef Q_OS_UNIX
+void TstMergeDialog::fifoRowsReturnWithoutWaiting_data()
+{
+    QTest::addColumn<bool>("seeded");
+    QTest::newRow("constructor") << true;
+    QTest::newRow("add files") << false;
+}
+
+void TstMergeDialog::fifoRowsReturnWithoutWaiting()
+{
+    QFETCH(bool, seeded);
+    QTemporaryDir files;
+    const QString path = files.filePath("slow.pdf");
+    QVERIFY(::mkfifo(QFile::encodeName(path).constData(), 0600) == 0);
+    mervin::testing::PipeWriter writer(path, 3000);
+    auto *warningTimer = new QTimer(this);
+    connect(warningTimer, &QTimer::timeout, this, [] {
+        if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+            box->accept();
+    });
+    warningTimer->start(10);
+    const auto stop = qScopeGuard([warningTimer] { delete warningTimer; });
+    QElapsedTimer elapsed;
+    elapsed.start();
+    MergeDialog d(seeded ? path : QString(), 0);
+    if (!seeded)
+        d.addPaths({path});
+    QVERIFY2(elapsed.elapsed() < 1000, qPrintable(QString("Probe took %1 ms").arg(elapsed.elapsed())));
+    QVERIFY(d.reading());
+    QVERIFY(!mergeBtn(d)->isEnabled());
+    QCOMPARE(d.findChild<QLabel *>("rowListCount")->text(), QStringLiteral("Reading…"));
+    d.reject();
+    writer.release();
+    QVERIFY(mervin::background::settle(10000));
+}
+#endif
 
 QTEST_MAIN(TstMergeDialog)
 #include "tst_merge_dialog.moc"

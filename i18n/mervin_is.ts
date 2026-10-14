@@ -2721,6 +2721,11 @@ Opnaðu stillingar kerfisins þíns → Sjálfgefin forrit (eða hægrismelltu �
         <translation>Sláðu inn síður eins og 1-3, 5, 8-10.</translation>
     </message>
     <message>
+        <source>Reading…</source>
+        <extracomment>Count column of a Merge input while its background file probe runs. This means reading the PDF&apos;s information, not a page selection.</extracomment>
+        <translation>Les…</translation>
+    </message>
+    <message>
         <source>Locked</source>
         <extracomment>Count column of a merge row whose file is encrypted.</extracomment>
         <translation>Læst</translation>

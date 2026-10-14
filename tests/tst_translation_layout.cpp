@@ -1034,8 +1034,17 @@ void TstTranslationLayout::manageLanguages()
 
 void TstTranslationLayout::merge()
 {
+    mervin::job::testing::holdWhen([this](mervin::job::Step step, const QString &path) {
+        return step == mervin::job::Step::Reading && path == plain_;
+    });
+    const auto release = qScopeGuard([] { mervin::job::testing::release(); });
     mervin::MergeDialog dialog(plain_, 12);
     dialog.addPaths({plain_});
+    QTRY_VERIFY(mervin::job::testing::held() > 0);
+    QVERIFY(dialog.reading());
+    inspect(dialog, QStringLiteral("Merge reading an input row"));
+    mervin::job::testing::release();
+    QTRY_VERIFY(!dialog.reading());
     inspect(dialog, QStringLiteral("Merge populated documents"));
     {
         // A Save as check that takes long, as on a share that stopped answering.
@@ -1058,6 +1067,7 @@ void TstTranslationLayout::merge()
     inspect(dialog, QStringLiteral("Merge invalid range"));
     inspectMessage(dialog, QStringLiteral("Merge unreadable-file warning"), [&] {
         dialog.addPaths({encrypted_, profile_.filePath(QStringLiteral("missing-source.pdf"))});
+        QVERIFY(QTest::qWaitFor([&dialog] { return !dialog.reading(); }, 5000));
     });
     inspect(dialog, QStringLiteral("Merge encrypted and missing documents"));
     mervin::MergeDialog empty(QString(), 0);

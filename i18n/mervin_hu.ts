@@ -2710,6 +2710,11 @@ Nyissa meg a rendszer Beállítások → Alapértelmezett alkalmazások menüpon
         <translation>Írja be az 1-3, 5, 8-10 oldalakat.</translation>
     </message>
     <message>
+        <source>Reading…</source>
+        <extracomment>Count column of a Merge input while its background file probe runs. This means reading the PDF&apos;s information, not a page selection.</extracomment>
+        <translation>Olvasás…</translation>
+    </message>
+    <message>
         <source>Locked</source>
         <extracomment>Count column of a merge row whose file is encrypted.</extracomment>
         <translation>Lezárva</translation>

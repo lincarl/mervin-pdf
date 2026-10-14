@@ -272,6 +272,14 @@ private:
     void showPrintDialog(mervin::TabPage *tab, const std::shared_ptr<PrintRequest> &request);
     // Queues printer failure in the current surviving window of the source tab.
     static void deliverPrintFailure(mervin::TabPage *tab, const QString &message);
+    struct MergeRequest;
+    struct MergeResult;
+    static void runMerge(mervin::TabPage *tab, const std::shared_ptr<MergeRequest> &request);
+    static void deliverMergeDialog(mervin::TabPage *tab,
+                                  const std::shared_ptr<MergeRequest> &request,
+                                  const std::shared_ptr<MergeResult> &result);
+    void showMergeDialog(mervin::TabPage *tab, const std::shared_ptr<MergeRequest> &request = {},
+                         const std::shared_ptr<MergeResult> &result = {});
     // Gather a viewer's committed measurements + per-page overrides for saving
     // (the Mervin blob), or paired with each page's PDF transform + value label
     // for export/print rendering.

@@ -2732,6 +2732,11 @@ Otvorite Postavke vašeg sustava → Zadane aplikacije (ili desnom tipkom miša 
         <translation>Unesite stranice poput 1-3, 5, 8-10.</translation>
     </message>
     <message>
+        <source>Reading…</source>
+        <extracomment>Count column of a Merge input while its background file probe runs. This means reading the PDF&apos;s information, not a page selection.</extracomment>
+        <translation>Čitanje…</translation>
+    </message>
+    <message>
         <source>Locked</source>
         <extracomment>Count column of a merge row whose file is encrypted.</extracomment>
         <translation>Zaključano</translation>

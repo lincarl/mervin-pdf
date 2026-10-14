@@ -8,6 +8,8 @@
 #include <QStringList>
 
 #include <optional>
+#include <memory>
+#include <map>
 
 class QLabel;
 class QLineEdit;
@@ -17,27 +19,42 @@ namespace mervin {
 
 class RowList;
 class SaveCheck;
+namespace background { class SerialQueue; }
+namespace job { class State; }
 
-// MergePlan-backed editor: each row contributes a file/page range in output order. Rebuild rows
-// after every mutation so captured row indices remain valid.
+// MergePlan-backed editor. Each row contributes a file/page range in output order.
+// Structural changes rebuild rows so captured indices remain valid. Probe answers
+// refresh existing widgets without interrupting a drag or an active range editor.
 class MergeDialog : public QDialog
 {
     Q_OBJECT
 
 public:
+    enum class Conflict { None, Input, OpenTab };
     // Add nonempty initialPath as a normal editable row, probed with qpdf and initialPassword.
-    // initialPageCount is only a fallback when qpdf opens but reports no pages.
+    // initialPageCount is retained for callers; the background probe determines
+    // the authoritative count.
     explicit MergeDialog(const QString &initialPath, int initialPageCount,
                          const QString &initialPassword = QString(),
                          QWidget *parent = nullptr);
+    // Reopens a failed merge from its previously probed plan without reading the
+    // inputs again. The output and row ranges remain editable.
+    MergeDialog(const MergePlan &plan, const QString &output, const QString &error,
+                int failedIndex, Conflict conflict = Conflict::None, QWidget *parent = nullptr);
+    ~MergeDialog() override;
+
+    // Shared failure summary for a reopened plan and its tray notification.
+    static QString failureSummary(const MergePlan &plan, const QString &output,
+                                  int failedIndex, Conflict conflict);
 
     // Files open in the app's tabs. The viewer holds each one open, so the merged
     // file may not replace one; the error line says so before Merge is pressed.
     void setOpenFiles(const QStringList &paths);
 
-    // Valid after exec() == Accepted, by which time the merged file is written:
-    // write() writes it and keeps the dialog open on a failure, so the plan survives it.
+    // Valid after Accepted. The caller writes this plan on its worker.
     QList<PageOps::MergeInput> inputs() const { return plan_.inputs(); }
+    MergePlan plan() const { return plan_; }
+    bool reading() const { return plan_.hasReading(); }
     QString outputPath() const { return outputPath_; }
 
     // Probe each path and append it as a row, in the order given. Rows that
@@ -51,8 +68,8 @@ private:
     // last answer, and write once that answers (write()) if the rows and Save as
     // are still what Merge was pressed for.
     void accept() override;
-    // Confirm an overwrite, then write the merged file. Closes only once the write
-    // succeeded; a failure goes on the error line instead.
+    void done(int result) override;
+    // Confirm an overwrite, then close with the validated plan.
     void write();
     // Checks the Save as text off the UI thread (see SaveCheck). While Save as is
     // not edited, the check also steps the default past names in use.
@@ -81,6 +98,13 @@ private:
     // encrypted file is tried with `password` when one is given; if it opens, the
     // row is Ok and keeps the password. Added files have none, so they stay Locked.
     static MergePlan::Entry probeEntry(const QString &path, const QString &password = QString());
+    struct ProbeBatch;
+    void queueProbe(const QString &path, const QString &password,
+                    const std::shared_ptr<ProbeBatch> &batch = {}, int index = 0);
+    void finishProbe(quint64 ticket, const MergePlan::Entry &entry,
+                     const std::shared_ptr<ProbeBatch> &batch, int index);
+    // Refreshes existing widgets so a late probe cannot delete an active drag grip.
+    void refreshRows();
 
     // Tear down and rebuild every row from plan_, then refresh the summary, the
     // error line and the enabled states. `selectRow` is reselected afterwards.
@@ -91,6 +115,10 @@ private:
     QString startDirectory() const;
 
     MergePlan plan_;
+    std::map<QString, std::unique_ptr<background::SerialQueue>> probes_;
+    std::map<quint64, std::shared_ptr<job::State>> probeStates_;
+    quint64 nextProbe_ = 0;
+    bool closed_ = false;
     QString outputPath_;
     bool outputEdited_ = false; // stop re-deriving the name once the user typed one
     QStringList openKeys_;      // normalizePathKey() of every file open in a tab
@@ -116,6 +144,8 @@ private:
     int specWidth_ = 0;          // the Pages column: its caption and fields
     RowList *list_ = nullptr;
     QList<QLabel *> nameLabels_; // one per row, rebuilt with the list
+    QList<QLabel *> badges_;
+    QList<QLineEdit *> specEditors_;
     QStringList nameTexts_;      // their untruncated text, for re-eliding
     QLabel *summary_ = nullptr;
     QLabel *error_ = nullptr;

@@ -20,7 +20,8 @@ public:
     enum class Load {
         Ok,        // opened; pageCount is meaningful
         Locked,    // encrypted and we have no password for it
-        Unreadable // missing, damaged, not a PDF
+        Unreadable, // missing, damaged, not a PDF
+        Reading,    // its background probe has not answered
     };
 
     struct Entry
@@ -31,6 +32,7 @@ public:
         Load load = Load::Ok;
         QString loadError;  // backend message, shown as the row's tooltip
         QString password;   // only ever non-empty once a caller unlocks the row
+        quint64 probeTicket = 0; // pending duplicates share their probe's identity
     };
 
     int count() const { return entries_.size(); }
@@ -55,6 +57,10 @@ public:
     int moveToGap(int from, int gap);
     void setSpec(int i, const QString &spec);
     void setPassword(int i, const QString &password);
+    // Applies load facts to every pending copy of this ticket without changing
+    // ranges or row order. False when every corresponding row was removed.
+    bool resolveProbe(quint64 ticket, const Entry &result);
+    bool hasReading() const;
 
     // Pages row `i` contributes, 0-based, in the order they were typed
     // (duplicates preserved). Empty when the row cannot contribute anything.
@@ -64,11 +70,12 @@ public:
     // is fine.
     QString rowError(int i) const;
 
-    // "12" for a whole file, "4 of 31" for a subset, "Locked" / "Unreadable" for
-    // a row that could not be read, "-" when the range does not parse.
+    // "12" for a whole file, "4 of 31" for a subset, "Reading…" while its probe
+    // runs, "Locked" / "Unreadable" for a row that could not be read, "-" when
+    // the range does not parse.
     QString countText(int i) const;
     // The widest texts countText() gives in the UI language ("Locked",
-    // "Unreadable", "998 of 999"), for sizing the Count column.
+    // "Unreadable", "Reading…", "998 of 999"), for sizing the Count column.
     static QStringList widestCountTexts();
 
     // Where row `i` lands in the finished document: "13-16", or "25" for a single

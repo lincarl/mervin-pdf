@@ -2721,6 +2721,11 @@ Abra as Definições → Aplicações predefinidas do seu sistema (ou clique com
         <translation>Introduza páginas como 1-3, 5, 8-10.</translation>
     </message>
     <message>
+        <source>Reading…</source>
+        <extracomment>Count column of a Merge input while its background file probe runs. This means reading the PDF&apos;s information, not a page selection.</extracomment>
+        <translation>A ler…</translation>
+    </message>
+    <message>
         <source>Locked</source>
         <extracomment>Count column of a merge row whose file is encrypted.</extracomment>
         <translation>Bloqueado</translation>

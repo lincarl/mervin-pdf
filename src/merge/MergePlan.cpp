@@ -6,6 +6,8 @@
 #include <QFileInfo>
 #include <QSet>
 
+#include <algorithm>
+
 namespace mervin {
 
 void MergePlan::append(const Entry &e)
@@ -49,6 +51,28 @@ void MergePlan::setPassword(int i, const QString &password)
         entries_[i].password = password;
 }
 
+bool MergePlan::resolveProbe(quint64 ticket, const Entry &result)
+{
+    bool found = false;
+    for (Entry &entry : entries_) {
+        if (ticket == 0 || entry.probeTicket != ticket || entry.load != Load::Reading)
+            continue;
+        entry.load = result.load;
+        entry.pageCount = result.pageCount;
+        entry.loadError = result.loadError;
+        entry.password = result.password;
+        found = true;
+    }
+    return found;
+}
+
+bool MergePlan::hasReading() const
+{
+    return std::any_of(entries_.cbegin(), entries_.cend(), [](const Entry &entry) {
+        return entry.load == Load::Reading;
+    });
+}
+
 QList<int> MergePlan::pagesFor(int i) const
 {
     if (i < 0 || i >= entries_.size())
@@ -72,6 +96,8 @@ QString MergePlan::rowError(int i) const
     // only paid on the branches that actually format a name.
     const Entry &e = entries_.at(i);
     switch (e.load) {
+    case Load::Reading:
+        return {};
     case Load::Locked:
         //: %1 is a file name.
         return tr("\"%1\" is encrypted and cannot be merged.").arg(displayName(i));
@@ -99,6 +125,10 @@ QString MergePlan::countText(int i) const
         return {};
     const Entry &e = entries_.at(i);
     switch (e.load) {
+    case Load::Reading:
+        //: Count column of a Merge input while its background file probe runs.
+        //: This means reading the PDF's information, not a page selection.
+        return tr("Reading…");
     case Load::Locked:
         //: Count column of a merge row whose file is encrypted.
         return tr("Locked");
@@ -131,7 +161,9 @@ QStringList MergePlan::widestCountTexts()
     e.pageCount = 999;
     e.spec = QStringLiteral("2-999");
     p.append(e);
-    return {p.countText(0), p.countText(1), p.countText(2)};
+    e.load = Load::Reading;
+    p.append(e);
+    return {p.countText(0), p.countText(1), p.countText(2), p.countText(3)};
 }
 
 QList<MergePlan::RowText> MergePlan::rowTexts() const
@@ -146,7 +178,7 @@ QList<MergePlan::RowText> MergePlan::rowTexts() const
     for (int i = 0; i < entries_.size(); ++i) {
         RowText t;
         t.count = countText(i);
-        const bool bad = !rowError(i).isEmpty();
+        const bool bad = entries_.at(i).load == Load::Reading || !rowError(i).isEmpty();
         const int n = bad ? 0 : pagesFor(i).size();
         if (!blocked && !bad && n > 0) {
             t.output = n == 1 ? QString::number(start)
@@ -197,7 +229,7 @@ bool MergePlan::isValid() const
     if (entries_.isEmpty())
         return false;
     for (int i = 0; i < entries_.size(); ++i)
-        if (!rowError(i).isEmpty())
+        if (entries_.at(i).load == Load::Reading || !rowError(i).isEmpty())
             return false;
     return true;
 }
