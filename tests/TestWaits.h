@@ -94,4 +94,37 @@ inline bool openAndWait(MainWindow &window, const QString &path, bool allowDupli
     return false;
 }
 
+// Schedules edited recovery and waits only in a test for its GUI adoption. Clean
+// unloads still answer immediately. Failure returns the asynchronous job's error.
+inline bool suspendAndWait(TabPage &tab, QString *error = nullptr)
+{
+    const QPointer<TabPage> page(&tab);
+    QSignalSpy finished(&tab, &TabPage::unloadFinished);
+    QString reason;
+    if (!tab.suspend(&reason)) {
+        if (error)
+            *error = reason;
+        return false;
+    }
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (page && page->isBusy() && elapsed.elapsed() < 10000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents);
+        if (page && page->isBusy())
+            QThread::msleep(1);
+    }
+    if (page && page->isSuspended())
+        return true;
+    if (!finished.isEmpty())
+        reason = finished.first().at(1).toString();
+    if (reason.isEmpty())
+        reason = !page ? QStringLiteral("the tab was removed")
+            : page->isBusy() ? QStringLiteral("the unload did not finish within 10 seconds")
+                            : QStringLiteral("the unload kept the document loaded");
+    if (error)
+        *error = reason;
+    qWarning("Could not unload the document. %s", qPrintable(reason));
+    return false;
+}
+
 } // namespace mervin::testing

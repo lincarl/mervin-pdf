@@ -1,3 +1,4 @@
+#include "TestWaits.h"
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
 #include "app/WindowManager.h"
@@ -560,7 +561,7 @@ private slots:
         TabPage tab(&engine);
         QVERIFY(tab.open(path));
         QVERIFY(edit(tab));
-        QVERIFY(tab.suspend());
+        QVERIFY(mervin::testing::suspendAndWait(tab));
         QFile changed(path);
         QVERIFY(changed.open(QIODevice::Append));
         QVERIFY(changed.write("\n% External change\n") > 0);
@@ -848,7 +849,7 @@ private slots:
         TabPage tab(&engine);
         QVERIFY(tab.open(path));
         QVERIFY(edit(tab));
-        QVERIFY(tab.suspend());
+        QVERIFY(mervin::testing::suspendAndWait(tab));
         const QString copy = tab.recoveryPath();
         job::testing::holdWhen([copy, path, stopFirst, first = true](job::Step step, const QString &file) mutable {
             const bool initialLoad = step == job::Step::Reading && file == copy && first;

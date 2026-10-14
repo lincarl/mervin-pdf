@@ -11,6 +11,10 @@ namespace ConfigPaths {
 // Directory holding the config file and tessdata/ (created if missing).
 QString configDir();
 
+// The same directory without creating or inspecting it. Capture this path on
+// the GUI thread before scheduling a worker that creates its recovery files.
+QString configDirPath();
+
 // Full path to config.toml.
 QString configFile();
 

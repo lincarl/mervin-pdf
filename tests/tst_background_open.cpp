@@ -323,7 +323,7 @@ private slots:
             QVERIFY(edited.open(alias));
             QVERIFY(edited.viewer()->annotModel()->addTextNote(
                 0, {40, 40}, Qt::yellow, {}, QFileInfo(alias).fileName()) >= 0);
-            QVERIFY(edited.suspend());
+            QVERIFY(mervin::testing::suspendAndWait(edited));
             recoveries.append({edited.recoveryPath(), bytes(edited.recoveryPath()),
                                bytes(edited.recoveryPath() + QStringLiteral(".json"))});
         }
@@ -487,7 +487,7 @@ private slots:
             edited.viewer()->setRotation(90);
             QVERIFY(edited.viewer()->annotModel()->addTextNote(
                 0, {40, 40}, Qt::yellow, {}, QStringLiteral("Recovered edit")) >= 0);
-            QVERIFY(edited.suspend());
+            QVERIFY(mervin::testing::suspendAndWait(edited));
             snapshot = edited.recoveryPath();
             savedBytes = bytes(snapshot);
             manifest = bytes(snapshot + QStringLiteral(".json"));

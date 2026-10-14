@@ -308,7 +308,7 @@ private slots:
             comment->setPlainText(QStringLiteral("Uncommitted comment value"));
 
             QVERIFY(tab.hasUnsavedEdits());
-            QVERIFY2(tab.suspend(&error), qPrintable(error));
+            QVERIFY2(mervin::testing::suspendAndWait(tab, &error), qPrintable(error));
             QVERIFY(tab.isSuspended());
             QVERIFY(tab.hasRecoverySnapshot());
             QVERIFY(tab.hasUnsavedEdits());
@@ -336,7 +336,7 @@ private slots:
             QCOMPARE(readFile(path), original);
 
             // A second unload must retain the dirty marker even without further edits.
-            QVERIFY2(tab.suspend(&error), qPrintable(error));
+            QVERIFY2(mervin::testing::suspendAndWait(tab, &error), qPrintable(error));
             QVERIFY(tab.hasUnsavedEdits());
             QVERIFY2(tab.resume(&error), qPrintable(error));
             QVERIFY(tab.hasUnsavedEdits());
@@ -864,7 +864,7 @@ private slots:
         QVERIFY(editor);
         editor->setText(QStringLiteral("Text still being typed"));
         QVERIFY(tab.viewer()->formModel()->pageFields(0).front().value.isEmpty());
-        QVERIFY(tab.suspend());
+        QVERIFY(mervin::testing::suspendAndWait(tab));
         QVERIFY(tab.hasRecoverySnapshot());
         QVERIFY(tab.hasUnsavedEdits());
         QVERIFY(tab.resume());
@@ -890,7 +890,7 @@ private slots:
         QTest::mouseClick(viewer->viewport(), Qt::LeftButton, Qt::NoModifier, first);
         const auto before = viewer->captureResumeState();
         QCOMPARE(before.inProgress.size(), 1u);
-        QVERIFY(tab.suspend());
+        QVERIFY(mervin::testing::suspendAndWait(tab));
         QVERIFY(tab.hasRecoverySnapshot());
         QVERIFY(tab.resume());
         QVERIFY(viewer->measureMode());
@@ -1157,14 +1157,14 @@ private slots:
         QVERIFY(writeFile(blocker, QByteArrayLiteral("Not a directory")));
         ConfigPaths::setOverrideDir(blocker);
         QString error;
-        QVERIFY(!tab.suspend(&error));
+        QVERIFY(!mervin::testing::suspendAndWait(tab, &error));
         QVERIFY(!error.isEmpty());
         QVERIFY(tab.isLoaded());
         QVERIFY(tab.hasUnsavedEdits());
         QCOMPARE(tab.viewer()->annotModel()->pageAnnots(0).front().contents,
                  QStringLiteral("Must remain editable"));
         ConfigPaths::setOverrideDir(profile_->path());
-        QVERIFY2(tab.suspend(&error), qPrintable(error));
+        QVERIFY2(mervin::testing::suspendAndWait(tab, &error), qPrintable(error));
         QVERIFY(tab.isSuspended());
         QVERIFY(tab.hasRecoverySnapshot());
     }
@@ -1188,11 +1188,14 @@ private slots:
         const QString blocker = profile_->filePath(QStringLiteral("regular-file"));
         QVERIFY(writeFile(blocker, QByteArrayLiteral("Not a directory")));
         ConfigPaths::setOverrideDir(blocker);
+        QSignalSpy unloaded(tab, &TabPage::unloadFinished);
         window.showMinimized();
         window.updateDocumentActivity(0, 30);
         window.updateDocumentActivity(31 * 60 * 1000, 30);
+        QTRY_COMPARE_WITH_TIMEOUT(unloaded.size(), 1, 10000);
+        QVERIFY(!unloaded.first().at(1).toString().isEmpty());
         ConfigPaths::setOverrideDir(profile_->path());
-        QVERIFY(tab->isLoaded());
+        QVERIFY(tab->isUsable());
         QVERIFY(tab->hasUnsavedEdits());
         QCOMPARE(rows->count(), pageCount);
         window.showNormal();
@@ -1212,10 +1215,10 @@ private slots:
         QVERIFY(!tab.sourceChangedOnDisk());
         QVERIFY(tab.viewer()->annotModel()->addTextNote(
                     0, {40, 40}, Qt::yellow, {}, QStringLiteral("Keep my edit")) >= 0);
-        QVERIFY(tab.suspend());
+        QVERIFY(mervin::testing::suspendAndWait(tab));
         QVERIFY(tab.resume());
         QVERIFY(!tab.sourceChangedOnDisk());
-        QVERIFY(tab.suspend());
+        QVERIFY(mervin::testing::suspendAndWait(tab));
 
         // A same-size external edit must conflict even while our live source is a checkpoint.
         QByteArray changed = original;
@@ -1269,7 +1272,7 @@ private slots:
             tab.viewer()->setLayoutMode({ViewLayout::Scroll::Single, true});
             QVERIFY(tab.viewer()->annotModel()->addTextNote(
                         0, {70, 70}, Qt::yellow, {}, QStringLiteral("Recovered edit")) >= 0);
-            QVERIFY(tab.suspend());
+            QVERIFY(mervin::testing::suspendAndWait(tab));
             checkpoint = tab.recoveryPath();
             checkpointBytes = readFile(checkpoint);
             manifestBytes = readFile(checkpoint + QStringLiteral(".json"));

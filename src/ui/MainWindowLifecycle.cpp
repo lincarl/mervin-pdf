@@ -15,10 +15,13 @@
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QPointer>
+#include <QScopeGuard>
 #include <QScopedValueRollback>
 #include <QStatusBar>
 #include <QTabWidget>
 #include <QTimer>
+
+#include <utility>
 
 using mervin::TabPage;
 
@@ -54,6 +57,19 @@ void MainWindow::wireTabLifecycle(TabPage *tab)
             } else if (wm_) {
                 wm_->closeRemovedTabs();
             }
+        }));
+    connections.append(connect(tab, &TabPage::unloadFinished, this,
+        [this, tab](bool unloaded, const QString &error) {
+            const QPointer<MainWindow> self(this);
+            const QPointer<TabPage> page(tab);
+            if (!page)
+                return;
+            if (!error.isEmpty()) {
+                if (auto *owner = qobject_cast<MainWindow *>(page->window()))
+                    owner->reportUnloadFailure(page, error);
+            }
+            if (self && unloaded && wm_)
+                wm_->checkDocumentActivity();
         }));
     connections.append(connect(tab, &QObject::destroyed, this, [this, tab] {
         inactiveSince_.remove(tab);
@@ -215,6 +231,13 @@ void MainWindow::unwireTabLifecycle(TabPage *tab)
 
 void MainWindow::scheduleCurrentResume()
 {
+    const QPointer<MainWindow> self(this);
+    if (!closeConfirmed_ && !hiddenToTray_ && !recentActive_ && isVisible() && !isMinimized()) {
+        if (auto *tab = currentTab(); tab && !tab->isClosing())
+            tab->selectForUse();
+        if (!self)
+            return;
+    }
     if (resumeScheduled_)
         return;
     resumeScheduled_ = true;
@@ -222,14 +245,17 @@ void MainWindow::scheduleCurrentResume()
         resumeScheduled_ = false;
         if (closeConfirmed_ || hiddenToTray_ || recentActive_ || !isVisible() || isMinimized())
             return;
-        TabPage *tab = currentTab();
+        const QPointer<MainWindow> self(this);
+        const QPointer<TabPage> tab(currentTab());
         if (!tab || tab->isClosing())
             return;
         inactiveSince_.remove(tab);
         suspensionFailed_.remove(tab);
+        if (!self || !tab || tab->window() != this)
+            return;
         if (tab->isSuspended())
             tab->resumeAsync();
-        if (wm_)
+        if (self && wm_)
             wm_->checkDocumentActivity();
     });
 }
@@ -316,29 +342,51 @@ bool MainWindow::suspendTab(TabPage *tab)
         return false;
     if (sidebarDoc_ == tab->viewer()->document())
         clearDocumentSidebars();
-    QScopedValueRollback<bool> transition(suspending_, true);
+    const QPointer<MainWindow> self(this);
+    const QPointer<TabPage> page(tab);
+    const bool previous = std::exchange(suspending_, true);
+    const auto transition = qScopeGuard([self, previous] {
+        if (self)
+            self->suspending_ = previous;
+    });
     QString error;
-    if (!tab->suspend(&error)) {
-        suspensionFailed_.insert(tab);
-        if (currentTab() == tab && tab->isLoaded()) {
-            updateSidebars();
-            refreshCommentsSidebar();
-        }
-        if (!error.isEmpty()) {
-            //: Shown when an inactive document could not be unloaded from memory.
-            //: %1 is the document name, %2 the reason.
-            const QString message = tr("%1 remains loaded. %2").arg(tab->tabTitle(), error);
-            statusBar()->showMessage(message);
-            if (wm_ && hiddenToTray_)
-                wm_->notifySuspensionFailure(message);
-        }
+    const bool accepted = tab->suspend(&error);
+    if (!self || !page)
+        return accepted;
+    if (!accepted) {
+        if (!error.isEmpty())
+            reportUnloadFailure(tab, error);
         return false;
     }
     return true;
 }
 
+void MainWindow::reportUnloadFailure(TabPage *tab, const QString &error)
+{
+    const QPointer<MainWindow> self(this);
+    const QPointer<TabPage> page(tab);
+    if (!page || page->window() != this || closeConfirmed_ || error.isEmpty())
+        return;
+    suspensionFailed_.insert(page);
+    if (currentTab() == page && page->isUsable()) {
+        updateSidebars();
+        if (!self || !page)
+            return;
+        refreshCommentsSidebar();
+    }
+    if (!self || !page)
+        return;
+    //: Shown when an inactive document could not be unloaded from memory.
+    //: %1 is the document name, %2 the reason.
+    const QString message = tr("%1 remains loaded. %2").arg(page->tabTitle(), error);
+    statusBar()->showMessage(message);
+    if (self && wm_ && hiddenToTray_)
+        wm_->notifySuspensionFailure(message);
+}
+
 bool MainWindow::updateDocumentActivity(qint64 nowMs, int timeoutMinutes)
 {
+    const QPointer<MainWindow> self(this);
     bool released = false;
     for (int i = 0; i < tabs_->count(); ++i) {
         auto *tab = qobject_cast<TabPage *>(tabs_->widget(i));
@@ -355,21 +403,28 @@ bool MainWindow::updateDocumentActivity(qint64 nowMs, int timeoutMinutes)
             inactiveSince_.insert(tab, nowMs);
         if (timeoutMinutes <= 0 || !canSuspendDocuments())
             continue;
-        if (hiddenToTray_ || nowMs - inactiveSince_.value(tab) >= qint64(timeoutMinutes) * 60000)
+        if (hiddenToTray_ || nowMs - inactiveSince_.value(tab) >= qint64(timeoutMinutes) * 60000) {
             released = suspendTab(tab) || released;
+            if (!self)
+                return released;
+        }
     }
     return released;
 }
 
 bool MainWindow::suspendHiddenDocuments()
 {
+    const QPointer<MainWindow> self(this);
     if (settings_.unloadInactiveMinutes == 0 || !canSuspendDocuments())
         return false;
     bool released = false;
     for (int i = 0; i < tabs_->count(); ++i) {
         auto *tab = qobject_cast<TabPage *>(tabs_->widget(i));
-        if (tab && (hiddenToTray_ || !isVisible() || isMinimized() || recentActive_ || tab != currentTab()))
+        if (tab && (hiddenToTray_ || !isVisible() || isMinimized() || recentActive_ || tab != currentTab())) {
             released = suspendTab(tab) || released;
+            if (!self)
+                return released;
+        }
     }
     return released;
 }

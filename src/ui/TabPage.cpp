@@ -67,12 +67,11 @@ SourceStamp sourceStamp(const QString &path)
 
 QString recoveryDirectory()
 {
-    return QDir(ConfigPaths::configDir()).filePath(QStringLiteral("recovery"));
+    return QDir(ConfigPaths::configDirPath()).filePath(QStringLiteral("recovery"));
 }
 
-QString createRecoveryFile(QString *error)
+QString createRecoveryFile(const QString &directory, QString *error)
 {
-    const QString directory = recoveryDirectory();
     if (!QDir().mkpath(directory)) {
         if (error)
             *error = TabPage::tr("Could not create the document recovery folder.");
@@ -297,6 +296,7 @@ struct TabPage::Save {
     QString copy;
     QString manifest;
     bool adopted = false;
+    bool recoveryCommitted = false; // guarded by the Job mutex
     bool adopting = false; // the GUI is clearing the viewer before the worker may close
     Checkpoint checkpoint = Checkpoint::None;
     std::optional<bool> answer;
@@ -307,6 +307,38 @@ struct TabPage::Save {
     std::unique_ptr<job::OpenPath> admission;
     SaveCompletion completion;
     std::vector<std::shared_ptr<Job>> priorLoads;
+};
+
+struct TabPage::Unload {
+    ~Unload()
+    {
+        // Files stay job-owned until GUI adoption. Disposal never reads a drive
+        // on the GUI thread, and runs only after the worker has closed its handles.
+        if (!adopted) {
+            appfiles::remove(manifest);
+            appfiles::remove(copy);
+        }
+    }
+
+    QString original;
+    QString directory;
+    QString canonical;
+    QString password;
+    SourceStamp source;
+    ViewerWidget::ResumeState viewer;
+    MeasureDoc measurements;
+    std::shared_ptr<DocumentLifetime> lifetime;
+    QString priorCopy;
+    QString priorManifest;
+    QString copy;
+    QString manifest;
+    QString error;
+    std::vector<std::shared_ptr<Job>> readers;
+    bool selected = false;       // guarded by the Job mutex
+    bool firstHolding = false;   // guarded by the Job mutex, stays true after release
+    bool recoveryCommitted = false; // guarded by the Job mutex
+    bool success = false;        // worker result, read after Stored publication
+    bool adopted = false;        // GUI ownership transfer
 };
 
 // The tab's background load, operation or in-place Save, shared by the tab and
@@ -354,6 +386,7 @@ struct TabPage::Job {
     Phase phase = Phase::Reading;       // guarded by mutex
     std::shared_ptr<OpenResult> result; // guarded by mutex: set while Stored
     std::shared_ptr<Save> save;          // present only for in-place Save
+    std::shared_ptr<Unload> unload;      // present only for edited housekeeping unload
     bool abandoned = false;             // guarded by mutex: the tab let go of the job
     QString removeAfter;                // guarded by mutex: a recovery copy, see ~TabPage
 };
@@ -872,17 +905,6 @@ bool TabPage::adoptRecovery()
     return false;
 }
 
-// Writes version-1 metadata for the tab's currently retained recovery copy.
-bool TabPage::writeRecoveryManifest(QString *error)
-{
-    if (!commitRecoveryManifest(recoveryManifest_,
-            recoveryJson(path_, canonicalPath_, recoveryPath_, saved_->viewer, saved_->source),
-            error))
-        return false;
-    claimedRecoveries.insert(recoveryManifest_);
-    return true;
-}
-
 void TabPage::initializeSuspended(const QString &path)
 {
     initializeSuspended(path, viewer_->captureResumeState().view);
@@ -947,6 +969,55 @@ bool TabPage::sourceChangedOnDisk() const
     return sourceStamp(path_) != saved_->source;
 }
 
+bool TabPage::isUnloading() const
+{
+    return job_ && bool(job_->unload);
+}
+
+bool TabPage::hasPendingRecoveryWrite() const
+{
+    if (!job_)
+        return false;
+    std::lock_guard<std::mutex> lock(job_->mutex);
+    if (job_->abandoned || job_->state.stopped() || job_->phase != Job::Phase::Reading)
+        return false;
+    if (job_->save)
+        return job_->save->loaded && !job_->save->recoveryCommitted;
+    return job_->unload && !job_->unload->recoveryCommitted;
+}
+
+void TabPage::selectForUse()
+{
+    if (!isUnloading())
+        return;
+    const auto job = job_;
+    bool cancel = false;
+    {
+        // Selection and the first document reservation use this same mutex.
+        std::lock_guard<std::mutex> lock(job->mutex);
+        job->unload->selected = true;
+        cancel = !job->unload->firstHolding;
+        if (cancel)
+            job->state.stop();
+    }
+    if (cancel)
+        finishStoppedOperation();
+}
+
+void TabPage::abandonUnloadForClose()
+{
+    if (!isUnloading())
+        return;
+    operationStopped_ = true;
+    const auto stopped = job_->state.stop();
+    if (stopped == job::State::Stop::Holding) {
+        showWaitBar(job_->state.snapshot());
+        emit stateChanged();
+    } else {
+        finishStoppedOperation();
+    }
+}
+
 bool TabPage::suspend(QString *error)
 {
     if (loading_) {
@@ -957,62 +1028,185 @@ bool TabPage::suspend(QString *error)
     if (!doc_)
         return true;
     if (busy_)
-        return false; // the window does not unload a busy tab, so this says nothing
+        return false;
+    const QPointer<TabPage> self(this);
     viewer_->commitActiveFormEditor();
+    if (!self)
+        return false;
     viewer_->commitActiveAnnotEditor();
-    saved_->viewer = viewer_->captureResumeState();
+    if (!self)
+        return false;
+    const auto state = viewer_->captureResumeState();
+    if (hasUnsavedEdits() || !state.inProgress.empty()) {
+        auto unload = std::make_shared<Unload>();
+        unload->viewer = state;
+        startUnload(std::move(unload));
+        return true;
+    }
+    saved_->viewer = state;
     saved_->restoreTools = true;
-    const bool dirty = hasUnsavedEdits() || !saved_->viewer.inProgress.empty();
-    QString previousSnapshot;
-    QString previousManifest;
-    if (dirty) {
-        const QString nextSnapshot = createRecoveryFile(error);
-        if (nextSnapshot.isEmpty())
-            return false;
-        if (!DocumentOutput::snapshot(*doc_, viewer_->measurementDocument(), nextSnapshot,
-                                      password_, error)) {
-            QFile::remove(nextSnapshot);
-            return false;
-        }
-        if (!QFile::setPermissions(nextSnapshot, QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {
-            QFile::remove(nextSnapshot);
-            if (error)
-                *error = tr("Could not protect the document recovery copy.");
-            return false;
-        }
-        const QString oldSnapshot = recoveryPath_;
-        const QString oldManifest = recoveryManifest_;
-        recoveryPath_ = nextSnapshot;
-        recoveryManifest_ = nextSnapshot + QStringLiteral(".json");
-        if (!writeRecoveryManifest(error)) {
-            QFile::remove(nextSnapshot);
-            QFile::remove(recoveryManifest_);
-            recoveryPath_ = oldSnapshot;
-            recoveryManifest_ = oldManifest;
-            return false;
-        }
-        previousSnapshot = oldSnapshot;
-        previousManifest = oldManifest;
-        retainedEdits_ = true;
+    // Transfer ownership before viewer signals can close the tab. Closing itself
+    // waits only on a worker, including when the signal deletes this TabPage.
+    auto document = std::move(doc_);
+    viewer_->setDocument(nullptr);
+    Document::closeInBackground(std::move(document));
+    if (self) {
+        showPlaceholder(tr("Document is unloaded."), PlaceholderButton::None);
+        emit stateChanged();
     }
-    // The document closes on a background thread, as a render stuck reading it from
-    // a share that stopped answering would otherwise hold up the window. It can have
-    // the previous checkpoint open until then, so that goes after it. Its manifest
-    // stays if the removal fails, so that file remains discoverable.
-    if (!previousManifest.isEmpty())
-        claimedRecoveries.remove(previousManifest);
-    if (previousSnapshot.isEmpty() && previousManifest.isEmpty()) {
-        Document::closeInBackground(releaseDocument());
-    } else {
-        Document::closeInBackground(releaseDocument(), [previousSnapshot, previousManifest] {
-            if ((previousSnapshot.isEmpty() || QFile::remove(previousSnapshot))
-                && !previousManifest.isEmpty())
-                QFile::remove(previousManifest);
-        });
-    }
-    showPlaceholder(tr("Document is unloaded."), PlaceholderButton::None);
-    emit stateChanged();
     return true;
+}
+
+void TabPage::startUnload(std::shared_ptr<Unload> unload)
+{
+    unload->original = path_;
+    unload->directory = recoveryDirectory();
+    unload->canonical = canonicalPath_;
+    unload->password = password_;
+    unload->source = saved_->source;
+    unload->measurements = viewer_->measurementDocument();
+    unload->lifetime = doc_->lifetime();
+    unload->priorCopy = recoveryPath_;
+    unload->priorManifest = recoveryManifest_;
+    unload->readers = recoveryReaders_;
+    if (previousSave_)
+        unload->readers.push_back(previousSave_);
+    // Housekeeping unload starts only for hidden tabs. Selection during its Hold
+    // shows this empty canvas and the existing wait bar without grabbing a document.
+    still_->setPicture({});
+    scrollColumn_ = std::max(0, viewer_->width() - viewer_->viewport()->width());
+    viewer_->pauseForOperation();
+    viewer_->hide();
+    placeholder_->hide();
+    still_->show();
+    busy_ = true;
+    operationStopped_ = false;
+    closeWaitStop_ = false;
+    destination_ = unload->directory;
+    barName_.clear();
+    barFolder_.clear();
+    barTrapped_ = false;
+    const auto job = std::make_shared<Job>(QString());
+    job->unload = unload;
+    job_ = job;
+    background::start([tab = QPointer<QObject>(this), job, unload] {
+        {
+            const job::Scope scope(job->state);
+            const auto run = [&] {
+                if (!job::writing(unload->directory))
+                    return;
+                unload->copy = createRecoveryFile(unload->directory, &unload->error);
+                if (unload->copy.isEmpty() || job::stopped())
+                    return;
+                unload->manifest = unload->copy + QStringLiteral(".json");
+                QTemporaryDir stage(QDir(unload->directory).filePath(QStringLiteral(".unload-XXXXXX")));
+                if (!stage.isValid()) {
+                    unload->error = stage.errorString();
+                    return;
+                }
+                const QString live = stage.filePath(QStringLiteral("live.pdf"));
+                {
+                    std::lock_guard<std::mutex> lock(job->mutex);
+                    if (job->abandoned || unload->selected || !job::beginHolding())
+                        return;
+                    unload->firstHolding = true;
+                }
+                bool snapshot = false;
+                {
+                    Document::Hold hold(unload->lifetime, [] { return job::stopped(); });
+                    if (Document *document = hold.document();
+                        document && job::writing(QFileInfo(live).absolutePath()))
+                        snapshot = document->savePdfTo(live, &unload->error);
+                }
+                job::endHolding();
+                if (!snapshot || job::stopped()
+                    || MeasureExport::embedMervin(live, unload->copy, unload->measurements,
+                            unload->password, &unload->error) != MeasureExport::Status::Ok)
+                    return;
+                if (!QFile::setPermissions(unload->copy,
+                        QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {
+                    unload->error = TabPage::tr("Could not protect the document recovery copy.");
+                    return;
+                }
+                if (!commitRecoveryManifest(unload->manifest,
+                        recoveryJson(unload->original, unload->canonical, unload->copy,
+                                     unload->viewer, unload->source), &unload->error))
+                    return;
+                std::lock_guard<std::mutex> lock(job->mutex);
+                unload->recoveryCommitted = true;
+                unload->success = true;
+            };
+            run();
+        }
+        std::unique_lock<std::mutex> lock(job->mutex);
+        if (job->abandoned) {
+            job->setPhase(Job::Phase::Ended);
+            return;
+        }
+        job->setPhase(Job::Phase::Stored);
+        lock.unlock();
+        background::post(tab, [tab, job] {
+            static_cast<TabPage *>(tab.data())->finishUnload(job);
+        });
+    });
+    startSlowClock();
+    emit stateChanged();
+}
+
+void TabPage::finishUnload(const std::shared_ptr<Job> &job)
+{
+    if (job != job_)
+        return;
+    const auto unload = job->unload;
+    bool adopt = false;
+    {
+        std::lock_guard<std::mutex> lock(job->mutex);
+        if (job->abandoned || job->phase != Job::Phase::Stored)
+            return;
+        adopt = unload->success && !unload->selected && !job->state.stopped();
+        unload->adopted = adopt;
+        job->setPhase(Job::Phase::Ended);
+    }
+    const QPointer<TabPage> self(this);
+    if (!adopt) {
+        job_.reset();
+        const QString error = job->state.stopped() || unload->selected ? QString() : unload->error;
+        endOperation();
+        if (self)
+            emit unloadFinished(false, error);
+        if (self)
+            emit operationFinished(false);
+        return;
+    }
+    saved_->viewer = unload->viewer;
+    saved_->restoreTools = true;
+    recoveryPath_ = unload->copy;
+    recoveryManifest_ = unload->manifest;
+    retainedEdits_ = true;
+    claimedRecoveries.insert(recoveryManifest_);
+    claimedRecoveries.remove(unload->priorManifest);
+    appfiles::remove(unload->priorManifest);
+    recoveryReaders_.clear();
+    previousSave_.reset();
+    // Adoption is visible before viewer signals can Stop or delete the tab. A
+    // scope guard closes the transferred Document even if those signals delete us.
+    OwnedDocument previous(doc_.release());
+    const auto closePrevious = qScopeGuard([&previous, copy = unload->priorCopy,
+                                           readers = unload->readers] {
+        Document::closeInBackground(std::unique_ptr<Document>(previous.release()),
+            [copy, readers] { removeAfterJobs(copy, readers); });
+    });
+    viewer_->setDocument(nullptr);
+    if (!self || job_ != job)
+        return;
+    job_.reset();
+    endOperation();
+    if (!self)
+        return;
+    showPlaceholder(tr("Document is unloaded."), PlaceholderButton::None);
+    emit unloadFinished(true, {});
+    if (self)
+        emit operationFinished(true);
 }
 
 bool TabPage::finishResume(const std::shared_ptr<OpenResult> &result)
@@ -1512,7 +1706,7 @@ void TabPage::startSave(SaveCallbacks callbacks)
                 if (save->loaded) {
                     if (!job::writing(recoveryDirectory()))
                         return;
-                    save->copy = createRecoveryFile(&save->completion.error);
+                    save->copy = createRecoveryFile(recoveryDirectory(), &save->completion.error);
                     if (save->copy.isEmpty() || job::stopped())
                         return;
                     save->manifest = save->copy + QStringLiteral(".json");
@@ -1543,8 +1737,13 @@ void TabPage::startSave(SaveCallbacks callbacks)
                     }
                     if (!commitRecoveryManifest(save->manifest,
                             recoveryJson(save->original, save->canonical, save->copy,
-                                         save->viewer, save->baseline), &save->completion.error)
-                        || !checkpoint(Save::Checkpoint::Adopt))
+                                         save->viewer, save->baseline), &save->completion.error))
+                        return;
+                    {
+                        std::lock_guard<std::mutex> lock(job->mutex);
+                        save->recoveryCommitted = true;
+                    }
+                    if (!checkpoint(Save::Checkpoint::Adopt))
                         return;
                     // The UI transferred this document only after its manifest
                     // committed. Close here before replacing the original on Windows.
@@ -1770,7 +1969,8 @@ void TabPage::finishStoppedOperation()
     if (!job_ || job_->state.snapshot().holding)
         return;
     const bool save = bool(job_->save);
-    const bool adopted = save && job_->save->adopted;
+    const bool adopted = save ? job_->save->adopted
+        : job_->unload && job_->unload->adopted;
     const quint64 generation = save ? job_->save->completion.generation : 0;
     const auto finished = save ? std::move(saveCallbacks_.finished) : nullptr;
     if (save)
@@ -1966,17 +2166,6 @@ bool TabPage::eventFilter(QObject *watched, QEvent *event)
     return QWidget::eventFilter(watched, event);
 }
 
-
-std::unique_ptr<Document> TabPage::releaseDocument()
-{
-    stopLoading();
-    if (doc_) {
-        saved_->viewer = viewer_->captureResumeState();
-        saved_->restoreTools = true;
-    }
-    viewer_->setDocument(nullptr); // clear the viewer's raw Document* first
-    return std::move(doc_);
-}
 
 QString TabPage::tabTitle() const
 {

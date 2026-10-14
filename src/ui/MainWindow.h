@@ -337,6 +337,7 @@ private:
     void queueFreshLoad(mervin::TabPage *tab, const QString &canonical, quint64 generation);
     void queueFreshRemoval(mervin::TabPage *tab, quint64 generation);
     void queueLoadPassword(mervin::TabPage *tab, quint64 generation);
+    void reportUnloadFailure(mervin::TabPage *tab, const QString &error);
     void unwireTabLifecycle(mervin::TabPage *tab);
     // Queues resume of the selected document after visibility and close-claim checks.
     void scheduleCurrentResume();

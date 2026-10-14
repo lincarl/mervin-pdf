@@ -83,8 +83,20 @@ public:
     bool isOperationStopped() const { return operationStopped_; }
     // The document is loaded and no operation runs, so the window may use it.
     bool isUsable() const { return doc_ && !busy_; }
-    // Unloads the document. False for a busy tab, which keeps it.
+    // A clean document releases immediately. Edited documents schedule recovery
+    // on a worker and remain resident until it finishes. True means released or
+    // accepted, and unloadFinished reports an edited unload's eventual result.
+    // False refuses scheduling.
     bool suspend(QString *error = nullptr);
+    bool isUnloading() const;
+    // Selection cancels an unload before its first document reservation. Once
+    // reserved, the job finishes but keeps the live document instead of unloading.
+    void selectForUse();
+    // Close stops housekeeping without emitting the user's Stop waiting signal.
+    void abandonUnloadForClose();
+    // Memory-only observation of this tab's active, nonstopped Save or unload,
+    // before its recovery manifest commits. Read on the GUI thread.
+    bool hasPendingRecoveryWrite() const;
     bool resume(QString *error = nullptr, bool *needsPassword = nullptr);
     // Loads the document on a background thread, as when the tab is selected. Does
     // nothing after the user stopped waiting for its last load, until Retry.
@@ -214,6 +226,7 @@ public:
 signals:
     void stateChanged();
     void resumeFinished(bool success, const QString &error, bool needsPassword);
+    void unloadFinished(bool unloaded, const QString &error);
     void freshLoadReady(const QString &canonical, quint64 generation);
     void freshOpenStopped(quint64 generation);
     // The operation ended and the tab is usable: `completed` when its job returned,
@@ -233,6 +246,7 @@ private:
     struct OpenResult;
     struct Job;
     struct Save;
+    struct Unload;
     static std::shared_ptr<OpenResult> readDocument(DocumentOpener &opener, const QString &path,
                                                   const QString &password);
     // Shows the document `result` read. A document shown before closes on a background
@@ -244,7 +258,6 @@ private:
     enum class PlaceholderButton { None, Retry, StopWaiting };
     void showPlaceholder(const QString &message, PlaceholderButton button);
     void clearRecovery();
-    bool writeRecoveryManifest(QString *error);
     bool adoptRecovery();
     // The tab's path and canonical path. `resolve` follows links on the disk;
     // without it `path` is taken as canonical.
@@ -271,6 +284,8 @@ private:
     void saveCheckpoint(const std::shared_ptr<Job> &job);
     void finishSave(const std::shared_ptr<Job> &job);
     void completeSave(const SaveCompletion &completion);
+    void startUnload(std::shared_ptr<Unload> unload);
+    void finishUnload(const std::shared_ptr<Job> &job);
     // The slow clock. While a load or an operation runs, a poll reads what its job
     // reports, and after the slow delay without progress the placeholder or the wait
     // bar names what it waits for.
@@ -282,8 +297,6 @@ private:
     void showWaitBar(const job::State::Snapshot &now);
     // Places the wait bar over the still picture, up to the scroll bar's column.
     void placeWaitBar();
-    // Takes the document away from the viewer and the tab, for its caller to close.
-    std::unique_ptr<Document> releaseDocument();
     void restoreViewer(); // restoreResumeState from saved_, without a search the card hides
 
     RenderEngine *engine_;

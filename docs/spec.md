@@ -87,6 +87,13 @@ answer a reload for 2 seconds, the tab names the file and its folder and offers 
 waiting. Stopping leaves the tab unloaded with its recovery state and Retry, and
 selecting the tab does not reload it until Retry.
 
+Clean documents unload immediately. Edited documents and unfinished measurements
+write their snapshot in the background while other tabs remain usable. Selecting
+the tab before its first document reservation cancels unloading immediately.
+Selecting it after that reservation keeps the live document when the snapshot
+finishes. Stop during a held snapshot keeps the document locked until the drive
+answers, then restores it with its edits.
+
 The exception is an unloaded tab without unsaved edits whose file was deleted, moved
 or renamed, such as the temporary copy of a mail attachment. It closes without a
 question, and Reopen Closed Tab does not offer it. Mervin judges the file as session

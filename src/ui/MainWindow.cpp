@@ -432,11 +432,14 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
     // tab that was active before - currentChanged won't fire in that case.
     connect(docTabBar_, &QTabBar::tabBarClicked, this, [this](int idx) {
         if (idx < 0) return;
-        scheduleCurrentResume();
-        if (!recentActive_) return;
+        if (!recentActive_) {
+            scheduleCurrentResume();
+            return;
+        }
         recentActive_ = false;
         QSignalBlocker b(tabs_);
         tabs_->setCurrentIndex(idx);
+        scheduleCurrentResume();
         updateForCurrentTab();
     });
     connect(docTabBar_, &QTabBar::tabCloseRequested, this, &MainWindow::closeTab);
@@ -1833,12 +1836,12 @@ void MainWindow::showShortcuts()
 
 void MainWindow::onCurrentTabChanged(int)
 {
-    scheduleCurrentResume();
     syncDocTabBar();
     // Clicking a tab exits the Recent view and returns to the document. Closing a
     // tab does not, even when another tab becomes current.
     if (tabCount() > 0 && !removingTab_)
         recentActive_ = false;
+    scheduleCurrentResume();
     updateForCurrentTab();
 }
 

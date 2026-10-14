@@ -486,7 +486,7 @@ private slots:
         QVERIFY(testing::openAndWait(*window, path));
         const QPointer<TabPage> tab = currentTab(window);
         QVERIFY(addNote(tab, "Recovered edit") >= 0);
-        QVERIFY(tab->suspend());
+        QVERIFY(mervin::testing::suspendAndWait(*tab));
         const QString recovery = tab->recoveryPath();
         QVERIFY(!recovery.isEmpty());
         job::testing::holdWhen([recovery, path, first = true](job::Step step, const QString &where) mutable {
@@ -541,7 +541,7 @@ private slots:
         QVERIFY(testing::openAndWait(*window, path));
         const QPointer<TabPage> tab = currentTab(window);
         QVERIFY(addNote(tab, "Kept") >= 0);
-        QVERIFY(tab->suspend());
+        QVERIFY(mervin::testing::suspendAndWait(*tab));
         const QString recovery = tab->recoveryPath();
         job::testing::holdWhen([recovery](job::Step step, const QString &where) {
             return step == job::Step::Reading && where == recovery;
@@ -575,7 +575,7 @@ private slots:
         QVERIFY(testing::openAndWait(*window, path));
         const QPointer<TabPage> tab = currentTab(window);
         QVERIFY(addNote(tab, "Retry edit") >= 0);
-        QVERIFY(tab->suspend());
+        QVERIFY(mervin::testing::suspendAndWait(*tab));
         const QString recovery = tab->recoveryPath();
         job::testing::holdWhen([recovery, path, first = true](job::Step step, const QString &where) mutable {
             const bool load = step == job::Step::Reading && where == recovery && first;
@@ -630,7 +630,7 @@ private slots:
         QVERIFY(testing::openAndWait(*window, path));
         const QPointer<TabPage> tab = currentTab(window);
         QVERIFY(addNote(tab, "Pipe recovery") >= 0);
-        QVERIFY(tab->suspend());
+        QVERIFY(mervin::testing::suspendAndWait(*tab));
         const QString recovery = tab->recoveryPath();
         QFile snapshot(recovery);
         QVERIFY(snapshot.open(QIODevice::ReadOnly));
@@ -1173,7 +1173,7 @@ private slots:
         const QPointer<TabPage> tab = currentTab(window);
         QVERIFY(addNote(tab, "Chosen Save") >= 0);
         if (recovery) {
-            QVERIFY(tab->suspend());
+            QVERIFY(mervin::testing::suspendAndWait(*tab));
             // Keep the suspended tab in the background, so its independent
             // automatic current-tab resume cannot start inside the question.
             QVERIFY(testing::openAndWait(*window, copy(files, "other.pdf")));

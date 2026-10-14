@@ -238,8 +238,7 @@ These still touch the disk on the UI thread and are planned work:
   memory buffer, so these calls do not read the original file. Moving every
   viewer query to background threads remains separate work. Directory-dependent
   non-PDF formats retain their path-based lookup of relative resources.
-- Print, Delete Pages, Extract Pages, merge,
-  security, and the recovery copy written when a tab unloads. The chosen design
+- Print, Delete Pages, Extract Pages, merge, and security. The chosen design
   shows such a wait in its tab, with a bar over its locked document, so other
   tabs and windows stay usable. New tabs and unloaded tabs already load in their
   placeholders, and Rotate Pages and Split run as tab jobs (see Page and security
@@ -430,9 +429,9 @@ unless the interval is Never. Selecting a suspended tab reloads it asynchronousl
 A tab busy with an operation (see Page and security operations) keeps its document.
 Closing a tab abandons its housekeeping load without waiting. Choosing Save in the
 close question retries that read asynchronously, keeping the recovery copy. Stop
-while waiting for that Save prerequisite cancels the close. Explicit Save and the
-other operations that read or replace the file on the UI thread still wait for a
-load in progress, or a stopped one that has not ended, first.
+while waiting for that Save prerequisite cancels the close. Explicit Save runs on
+a worker and can save an unloaded tab directly from its recovery copy. Operations
+that need a loaded document remain unavailable until its load finishes.
 
 An unloaded or loading tab shows a placeholder on the page canvas, with its own canvas
 tokens for text and buttons in both themes. A load shows "Loading" at once. The tab
@@ -453,12 +452,24 @@ waiting for the drive. A document that a load had already read when the user sto
 closes in the background. A read that Retry starts while the stopped load still closes
 what it read waits for that close.
 
-Before releasing a document with unsaved edits, the tab writes a local recovery
-snapshot with its forms, annotations, measurements, and manual scales. It retains
-the original logical path and dirty state, and the snapshot preserves PDF encryption.
-Passwords are held only in memory, never in the recovery metadata or settings.
-Snapshot failure leaves the live document available. Reload failure keeps the tab
-and saved recovery state for retry instead of discarding them.
+A clean document releases immediately. An edited document or unfinished measurement
+schedules a worker that writes a local recovery snapshot with its forms, annotations,
+measurements, and manual scales. The activity tick returns after scheduling, while
+the tab remains resident and busy. The worker captures the live PDF under a
+stop-aware `Document::Hold`, then releases document access before embedding
+measurements and committing the version-1 manifest. The UI adopts the completed
+recovery files and closes the original document in the background. The tab retains
+its logical path and dirty state, and the snapshot preserves PDF encryption.
+Passwords remain in memory, never in the recovery metadata or settings.
+
+Selection and the first document reservation share the job mutex. Selecting before
+that reservation cancels unload and restores the live tab immediately. Selecting
+afterward lets the worker finish, keeps the same live document, and discards the
+new recovery files. Stop during a reservation keeps the existing locked notice
+until the drive answers. Closing silently stops this housekeeping job and never
+waits on the UI thread. Snapshot failure leaves the live document available and
+reports through the tab's current window. Reload failure keeps the tab and its
+saved recovery state for retry.
 
 `WindowManager::closeRemovedTabs` closes unloaded tabs without unsaved edits whose
 file is gone, by the rule session restore uses to drop a saved document. The file
@@ -893,13 +904,13 @@ that lands later and counts as saved. The values in effect are the running
 process's, so an edit made to `config.toml` by anything else while Mervin runs is
 overwritten by its next save.
 
-In-place Save writes its private PDF and version-1 manifest on the Save worker.
-It sets owner-only permissions and commits the manifest through guarded
-`QSaveFile` before releasing the original document. This write must finish before
-Save proceeds, so it does not use the application's serial background write
-queue. The UI claims the manifest only after committing it. Stop before adoption
-removes the job's PDF and manifest after its handles close. After adoption, the
-tab owns them until Save succeeds or the user closes the tab. An abandoned loader
+In-place Save and edited unload write their private PDF and version-1 manifest on
+their worker. They set owner-only permissions and commit the manifest through
+guarded `QSaveFile` before releasing the original document. These writes must
+finish before adoption, so they do not use the application's serial background
+write queue. The UI claims the manifest only after committing it. Stop or selection
+before unload adoption removes the job's PDF and manifest after its handles close.
+After adoption, the tab owns them until Save succeeds or the user closes the tab. An abandoned loader
 or an earlier stopped writer can still read a recovery input, so removal waits
 for both readers and writers without blocking the UI.
 

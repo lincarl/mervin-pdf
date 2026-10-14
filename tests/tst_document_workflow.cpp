@@ -79,6 +79,12 @@ void unloadBackgroundTabs(MainWindow &window)
 {
     window.updateDocumentActivity(0, 30);
     window.updateDocumentActivity(31 * 60 * 1000, 30);
+    QVERIFY(QTest::qWaitFor([&] {
+        for (const auto *tab : window.findChildren<TabPage *>())
+            if (tab->isUnloading())
+                return false;
+        return true;
+    }, 10000));
 }
 
 // The documents WindowManager::restoreSession decides to reopen, once it calls back.
@@ -515,7 +521,7 @@ private slots:
 
         QVERIFY(tab->viewer()->annotModel()->addTextNote(
                     0, {40, 40}, Qt::yellow, {}, QStringLiteral("Kept edit")) >= 0);
-        QVERIFY(tab->suspend());
+        QVERIFY(mervin::testing::suspendAndWait(*tab));
         QString error;
         QVERIFY2(tab->resume(&error), qPrintable(error));
         QVERIFY(!tab->viewer()->hasUnsavedEdits());
@@ -553,7 +559,7 @@ private slots:
         QVERIFY(tab);
         QVERIFY(tab->viewer()->annotModel()->addTextNote(
                     0, {40, 40}, Qt::yellow, {}, QStringLiteral("Rescued edit")) >= 0);
-        QVERIFY(tab->suspend());
+        QVERIFY(mervin::testing::suspendAndWait(*tab));
         QVERIFY(QFile::remove(original));
         QString error;
         QVERIFY2(tab->resume(&error), qPrintable(error));
@@ -958,8 +964,8 @@ private slots:
                     0, {40, 40}, Qt::yellow, {}, QStringLiteral("Second pending edit")) >= 0);
         first->hide();
         second->hide();
-        QVERIFY(firstTab->suspend());
-        QVERIFY(secondTab->suspend());
+        QVERIFY(mervin::testing::suspendAndWait(*firstTab));
+        QVERIFY(mervin::testing::suspendAndWait(*secondTab));
 
         answers_ << QMessageBox::Discard << QMessageBox::Cancel;
         manager.closeAllForQuit();
@@ -1651,7 +1657,7 @@ private slots:
         QVERIFY(tab);
         QVERIFY(tab->viewer()->annotModel()->addTextNote(
                     0, {40, 40}, Qt::yellow, {}, QStringLiteral("Preserved edit")) >= 0);
-        QVERIFY(tab->suspend());
+        QVERIFY(mervin::testing::suspendAndWait(*tab));
         QFile changed(path);
         QVERIFY(changed.open(QIODevice::Append));
         QVERIFY(changed.write("\n% External change\n") > 0);
