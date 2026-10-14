@@ -23,6 +23,8 @@ class MeasurePanel;
 class AnnotPanel;
 class FindCard;
 class PanelStack;
+class StillPicture;
+class WaitBar;
 
 // One open document in a tab: owns the Document and contains its ViewerWidget.
 // Created with the window's shared RenderEngine (which must outlive the page).
@@ -54,22 +56,52 @@ public:
     void initializeSuspended(const QString &path, const ViewState &state);
     bool isLoaded() const { return doc_ != nullptr; }
     bool isLoading() const { return loading_; }
-    bool isSuspended() const { return !doc_ && !loading_; }
+    bool isSuspended() const { return !doc_ && !loading_ && !busy_; }
+    // An operation runs (startOperation). The document stays loaded, but nothing may
+    // use it until the operation ends.
+    bool isBusy() const { return busy_; }
+    // The document is loaded and no operation runs, so the window may use it.
+    bool isUsable() const { return doc_ && !busy_; }
+    // Unloads the document. False for a busy tab, which keeps it.
     bool suspend(QString *error = nullptr);
     bool resume(QString *error = nullptr, bool *needsPassword = nullptr);
     // Loads the document on a background thread, as when the tab is selected. Does
     // nothing after the user stopped waiting for its last load, until Retry.
     void resumeAsync();
-    // Stop waiting. Gives up the load in progress without waiting for it. The tab
-    // shows that its document is unloaded, with Retry, and keeps its recovery copy.
-    // The read itself goes on until the drive answers, so Retry can take it back.
+
+    // An operation on the document's file, such as Rotate Pages, that runs on a
+    // background thread while the tab waits for it.
+    struct Operation
+    {
+        // The folder the operation writes to. The wait bar names it, also while the
+        // job reads a file in it.
+        QString destination;
+        // The job, in a job::Scope on a background thread. It uses no widget and not
+        // the shown document, and keeps its result in what it captured.
+        std::function<void()> work;
+        // Runs on the screen thread once the job has returned and the tab is usable
+        // again. Not after the user stopped waiting, nor once the tab is gone.
+        std::function<void()> finished;
+    };
+    // Runs `operation` while the tab waits for it. Only for a usable tab, on the
+    // screen thread. The tab commits its editors, takes a still picture of its pages,
+    // pauses the viewer and shows the picture in its place, so nothing reads the
+    // document until the operation ends. After kSlowMs without progress a bar over
+    // the picture names the folder or file the job waits for and offers Stop waiting.
+    void startOperation(Operation operation);
+
+    // Stop waiting. Never waits for the job, whose file call goes on until the drive
+    // answers. An operation's tab is usable at once, and the operation begins no commit
+    // and changes the tab no more. For a load, the tab shows that its document is
+    // unloaded, with Retry, and keeps its recovery copy. The read goes on, so Retry can
+    // take it back.
     void stopWaiting();
     // Retry. Takes back a stopped load that still reads, or starts a new one, which
     // waits for a stopped load that still closes what it read.
     void retryLoad();
 
-    // How long a load waits without progress before its placeholder names the file
-    // and offers Stop waiting.
+    // How long a load or an operation waits without progress before the tab names
+    // the file or folder it waits for and offers Stop waiting.
     static constexpr int kSlowMs = 2000;
     // Sets the delay before that notice, for tests. kSlowMs restores it.
     static void setSlowDelayForTesting(int ms);
@@ -126,9 +158,13 @@ public:
 signals:
     void stateChanged();
     void resumeFinished(bool success, const QString &error, bool needsPassword);
+    // The operation ended and the tab is usable: `completed` when its job returned,
+    // false when the user stopped waiting.
+    void operationFinished(bool completed);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     struct SavedState;
@@ -160,12 +196,22 @@ private:
     // Drops the load in progress, or a stopped one that has not ended, waiting for it,
     // for the callers that read or replace the document's file on this thread next.
     void stopLoading();
-    // The slow clock. While a load runs, a poll reads what its job reports, and after
-    // the slow delay without progress the placeholder names the file it waits for.
+    // Takes the result of the operation `job`, if it is still the tab's, and shows the
+    // document again.
+    void finishOperation(const std::shared_ptr<Job> &job);
+    // Shows the viewer again in place of the still picture.
+    void endOperation();
+    // The slow clock. While a load or an operation runs, a poll reads what its job
+    // reports, and after the slow delay without progress the placeholder or the wait
+    // bar names what it waits for.
     void startSlowClock();
     void stopSlowClock();
     void pollJob();
     void updateSlowNotice();
+    // Shows the wait bar, naming the step `now` of the operation's job.
+    void showWaitBar(const job::State::Snapshot &now);
+    // Places the wait bar over the still picture, up to the scroll bar's column.
+    void placeWaitBar();
     // Takes the document away from the viewer and the tab, for its caller to close.
     std::unique_ptr<Document> releaseDocument();
     void restoreViewer(); // restoreResumeState from saved_, without a search the card hides
@@ -187,15 +233,26 @@ private:
     ::QLabel *placeholderLabel_ = nullptr;
     QWidget *retryButton_ = nullptr;
     QWidget *stopButton_ = nullptr;
+    StillPicture *still_ = nullptr; // in the viewer's place while an operation runs
+    WaitBar *waitBar_ = nullptr;    // over the still picture once the operation is slow
     bool loading_ = false;
+    bool busy_ = false;             // see isBusy()
+    QString destination_;           // the running operation's Operation::destination
+    std::function<void()> finished_; // the running operation's Operation::finished
+    int scrollColumn_ = 0;          // the width the viewer's vertical scroll bar took
+    // The file the wait bar names, empty while the job saves, and its folder.
+    QString barName_;
+    QString barFolder_;
     bool retainedEdits_ = false;
     // The user stopped waiting for the last load, so selecting the tab does not load it
     // again until Retry.
     bool loadStopped_ = false;
     // The tab's job slot, with the load in progress or one the user stopped, which may
-    // still read, for Retry to take back, or close what it read. The tab takes the
-    // job's result (finishLoad), lets go of it without waiting (abandon) or, for the
-    // synchronous callers, waits for it (stopLoading).
+    // still read, for Retry to take back, or close what it read, or with the operation
+    // in progress. The tab takes the job's result (finishLoad, finishOperation), lets
+    // go of it without waiting (abandon) or, for the synchronous callers, waits for a
+    // load (stopLoading). A tab loads only without a document and runs an operation
+    // only with one.
     std::shared_ptr<Job> job_;
     QTimer *slowPoll_ = nullptr;
     QElapsedTimer quiet_;        // since the job last made progress

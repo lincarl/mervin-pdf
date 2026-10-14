@@ -23,6 +23,7 @@
 #include <thread>
 
 using namespace mervin;
+using mervin::testing::SavingJob;
 using mervin::testing::Stall;
 
 namespace {
@@ -90,31 +91,6 @@ QString writeFormAndLinkPdf(const QTemporaryDir &dir)
         return {};
     return path;
 }
-
-// Takes a document the way a save job does, as a lockable for Stall. On the Stall's
-// thread it takes Document::Hold, then the access lock, which savePdfTo keeps while
-// it writes.
-struct SavingJob
-{
-    std::shared_ptr<DocumentLifetime> lifetime;
-    std::optional<Document::Hold> hold;
-    bool answered = false; // the job holds the document and its own call was answered
-
-    void lock()
-    {
-        hold.emplace(lifetime);
-        Document *document = hold->document();
-        answered = document && document->isPdf();
-        if (document)
-            document->accessMutex().lock();
-    }
-    void unlock()
-    {
-        if (Document *document = hold->document())
-            document->accessMutex().unlock();
-        hold.reset();
-    }
-};
 
 // Tells QTest to expect the warning that a refused screen-thread call logs.
 void expectRefusal(const char *method)

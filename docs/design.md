@@ -121,7 +121,9 @@ after a mouse button release, after a modal window closes, when a document opera
 ends (`MainWindow::OperationScope`) and on the one-second activity tick. A change
 finds its tab and window again when it runs. Once a quit or restart closes a window,
 it runs no more changes, and those still queued go with it. Adding a tab is not
-gated.
+gated. A tab's operation that has ended shows its questions and errors through this
+queue too, in the window that holds the tab by then (see Page and security
+operations).
 
 ### Disk access off the UI thread
 
@@ -222,12 +224,13 @@ These still touch the disk on the UI thread and are planned work:
   cost of memory equal to the file's size and a first page that waits for the whole
   file on a slow share. Moving every viewer call to background threads avoids both
   costs but is a much larger change to the viewer. Neither is done yet.
-- Opening a document in a new tab, saving, Save as copy, export, print, the page
-  tools, merge, split, extract, security, and the recovery copy written when a tab
+- Opening a document in a new tab, saving, Save as copy, export, print, Delete
+  Pages, Extract Pages, merge, security, and the recovery copy written when a tab
   unloads. The chosen design shows such a wait in its tab: a bar over the tab's
   document, which stays locked meanwhile, and a placeholder tab for a file being
   opened, so other tabs and windows stay usable. Reloading an unloaded tab already
-  works this way (see Inactive documents and memory).
+  works this way (see Inactive documents and memory), and so do Rotate Pages and
+  Split (see Page and security operations).
 - Reads at startup before the first window, and the system file dialogs, which
   run on the UI thread by design.
 - Opening a folder or a link with the system's handler (`QDesktopServices::openUrl`),
@@ -359,6 +362,7 @@ rendered pages, extracted text, geometry, and editing models. It cancels outstan
 render and search work so old results cannot repopulate a suspended viewer or replace
 the resumed document's state. Closing to the tray requests suspension immediately
 unless the interval is Never. Selecting a suspended tab reloads it asynchronously.
+A tab busy with an operation (see Page and security operations) keeps its document.
 Closing a tab while it loads does not wait for the load. Saving and the other
 operations that read or replace the document's file on the UI thread still wait for
 a load in progress, or a stopped one that has not ended, first.
@@ -572,6 +576,45 @@ encryption.
 `PageOps` uses qpdf for rotation, deletion, extraction, splitting, and merging.
 `QpdfService` inspects and changes encryption and permission settings. These services
 write new files and do not share live MuPDF document handles with the viewer.
+
+Rotate Pages and Split run as their tab's operation (`TabPage::startOperation`), so
+only that tab waits for the file. Their prompts and file dialogs run first, as before.
+The tab then commits its form and comment editors, takes a still picture of its pages
+(`StillPicture`), pauses the viewer (`ViewerWidget::pauseForOperation`, which stops
+its renders on their way, a find search, a zoom ease, auto scroll, its popups and form
+editors) and shows the picture in its place. The job runs on `background::start` in the tab's job slot,
+the same one a load uses, with values only: the paths, pages, password and the files
+open in tabs. It never touches the shown document, which a hidden, paused viewer does
+not read either. The window treats a busy tab as having no usable document
+(`TabPage::isUsable`): Save, Print, the Document menu, the tools and the view
+commands are off, the page number and zoom show where the viewer stopped, and the
+sidebars keep what they showed, with thumbnails paused. Switching to a busy tab
+clears them, as for an unloaded tab. Duplicate to new window is off for a busy tab,
+and unloading skips it. Other tabs and windows stay usable.
+
+The tab polls what the job reports every 250 ms, as for a load. After 2 s without
+progress (`TabPage::kSlowMs`) a bar (`WaitBar`) at the top of the tab, from the left
+edge to the scroll bar's column, says what the job waits for, with Stop waiting on the
+right, and a veil covers the picture below it. A write names its folder, "Saving to
+/nas/out. The drive is not answering.", as does a read of a file in that folder. A
+read elsewhere names the file, "Reading plan.pdf from /nas/docs. The drive is not
+answering." The text wraps and shortens like the slow load notice
+(`fitFileSentence`). Once shown, the bar stays until the operation ends and follows
+its latest step. Its colours are the `notice`, `borderNotice` and `veil` tokens. Stop
+waiting never waits. The tab is usable at once, the job begins no commit afterwards
+(see Disk access off the UI thread), and nothing it finds is shown. Split keeps the
+files it committed before the stop.
+
+Each job first refuses an output that is open in a tab, the source included, with
+"The destination is open in a tab." It compares `fileKey()` of the output, on its own
+thread, with the tabs' canonical paths. Split checks all its names before it writes
+the first. When the tab's password does not open the file, the window asks for one
+and runs the tool again with it, and the tab keeps a password that worked. Everything
+a finished operation raises, the password prompt, an error or "Open it now?", is
+window-modal in the window that holds the tab by then and waits in that window's tab
+change queue. A window in the tray shows an error as a tray message and asks nothing.
+Closing a busy tab, its window or the app stops the operation first and then goes on
+as before, with the unsaved-changes question.
 
 `MergePlan` and `ExtractPlan` are the GUI-free models behind the Merge PDFs and
 Extract Pages dialogs, tested in `tst_merge_plan` and `tst_extract_plan`; each dialog
@@ -813,7 +856,9 @@ is lightened in dark or darkened in light, keeping its hue, until it reaches the
 the fallback when the desktop reports no accent. The custom accent Reset value
 is `#62c9ff` in both UI themes. Turning off the system accent keeps the resolved
 system colour. Text on an accent fill is white or the theme's dark ink, whichever
-has more contrast.
+has more contrast. The wait bar over a busy tab is pale yellow in light. In dark it
+takes the popover surface with a yellow line along its bottom edge, so the page
+under its veil stays easy to read.
 `tst_theme` checks each theme's key text pairs against WCAG contrast targets.
 
 The interface icons are [Lucide](https://lucide.dev) SVGs, vendored unmodified in

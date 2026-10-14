@@ -50,7 +50,7 @@ QSet<QString> tokenCssValues(const QPalette &pal, const QColor &accent)
           t.border, t.borderStrong, t.borderBar, t.borderPush, t.borderDisabled, t.borderPopover,
           t.borderPopoverControl, t.hover, t.pressed, t.rowHover, t.separator, t.hairline,
           t.scrollThumb, t.scrollThumbHover, t.inkCanvas, t.canvasControl, t.borderCanvasControl,
-          t.accent, t.accentHover, t.onAccent, t.accentWash})
+          t.notice, t.borderNotice, t.veil, t.accent, t.accentHover, t.onAccent, t.accentWash})
         out.insert(theme::css(c));
     return out;
 }
@@ -485,7 +485,8 @@ void TstTheme::themesMeetContrast_data()
 // The text pairs each scheme was designed to: body text at 7:1, secondary and meta
 // text (page totals, the status bar, menu captions) at 4.5:1, the default button's
 // label at 4.5:1 in both states, and an accent that reads as a focus ring. The tab
-// placeholder's text reads at 7:1 on the canvas and at 4.5:1 on its button. Dark also
+// placeholder's text reads at 7:1 on the canvas and at 4.5:1 on its button, and the
+// wait bar's text at 7:1 and its button's label at 4.5:1 on the bar. Dark also
 // caps body text, since the point of that theme is comfort, not maximum contrast.
 // The previous dark theme failed four of these.
 void TstTheme::themesMeetContrast()
@@ -518,6 +519,9 @@ void TstTheme::themesMeetContrast()
         // The tab placeholder sits on the canvas, which is dark in both themes.
         {"placeholder text on canvas", t.inkCanvas, t.canvas, 7.0},
         {"placeholder button text", t.inkCanvas, t.canvasControl, 4.5},
+        // The wait bar's button is a standard push button, transparent in dark.
+        {"wait bar text", t.inkPrimary, t.notice, 7.0},
+        {"wait bar button text", t.ink, t.notice, 4.5},
     };
     for (const auto &p : pairs) {
         const double r = contrastRatio(p.fg, p.bg);

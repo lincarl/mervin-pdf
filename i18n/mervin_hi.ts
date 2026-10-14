@@ -3365,13 +3365,23 @@ Open it now?</source>
         <translation>%2 से %1 खोला जा रहा है। ड्राइव से कोई जवाब नहीं मिल रहा है।</translation>
     </message>
     <message>
+        <source>Saving to %1. The drive is not answering.</source>
+        <extracomment>Shown in a bar over the document when the drive has not answered for a few seconds while a tool such as Rotate Pages or Split writes its files, or reads a file in the folder it writes to. On its right is the Stop waiting button. %1 is the folder (/nas/docs, or a network share folder on Windows).</extracomment>
+        <translation>%1 में सहेजा जा रहा है। ड्राइव से कोई जवाब नहीं मिल रहा है।</translation>
+    </message>
+    <message>
+        <source>Reading %1 from %2. The drive is not answering.</source>
+        <extracomment>Shown in a bar over the document when the drive has not answered for a few seconds while a tool such as Rotate Pages reads a file. On its right is the Stop waiting button. %1 is the file name (plan.pdf), %2 the folder it is read from (/nas/docs, or a network share folder on Windows).</extracomment>
+        <translation>%2 से %1 पढ़ा जा रहा है। ड्राइव से कोई जवाब नहीं मिल रहा है।</translation>
+    </message>
+    <message>
         <source>Retry</source>
         <extracomment>Button that tries to load the document again.</extracomment>
         <translation>पुनः प्रयास करें</translation>
     </message>
     <message>
         <source>Stop waiting</source>
-        <extracomment>Button under the notice that the drive is not answering while the document loads. It gives up the load and leaves the document unloaded.</extracomment>
+        <extracomment>Button beside a notice that the drive is not answering. Under the notice of a document that loads, it gives up the load and leaves the document unloaded. In the bar over a document that a tool such as Rotate Pages works on, it gives up the tool&apos;s work, so the document can be used again.</extracomment>
         <translation>प्रतीक्षा बंद करें</translation>
     </message>
     <message>

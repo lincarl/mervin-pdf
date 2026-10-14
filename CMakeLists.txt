@@ -302,6 +302,10 @@ add_library(mervin_app STATIC
     src/ui/CommentsSidebar.h
     src/ui/TabPage.cpp
     src/ui/TabPage.h
+    src/ui/StillPicture.cpp
+    src/ui/StillPicture.h
+    src/ui/WaitBar.cpp
+    src/ui/WaitBar.h
     src/ui/MeasureTypes.h
     src/ui/PanelStack.cpp
     src/ui/PanelStack.h

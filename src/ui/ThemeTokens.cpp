@@ -68,6 +68,10 @@ theme::Chrome nordChrome()
     t.inkCanvas           = rgb(0xe5e9f0); // 7.6:1 on the canvas
     t.canvasControl       = rgb(0x4c566a); // its ink at 6.1:1
     t.borderCanvasControl = rgb(0x616e88);
+
+    t.notice       = rgb(0x3b4252);       // the popover surface, ink at 8.3:1
+    t.borderNotice = rgb(0xebcb8b, 0xb3); // Nord yellow at 70 %
+    t.veil         = rgb(0x242933, 0x66); // the well at 40 %
     return t;
 }
 
@@ -113,6 +117,10 @@ theme::Chrome slateChrome()
     t.inkCanvas           = rgb(0xf2f4f7); // 9.6:1 on the canvas
     t.canvasControl       = rgb(0x4a505a); // its ink at 7.4:1
     t.borderCanvasControl = rgb(0x6a717c);
+
+    t.notice       = rgb(0xfdf6dc);       // ink at 15.3:1
+    t.borderNotice = rgb(0xe3d79e);
+    t.veil         = rgb(0xffffff, 0x8c); // white at 55 %
     return t;
 }
 

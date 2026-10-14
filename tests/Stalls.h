@@ -3,12 +3,16 @@
 // Test helpers that hold up the app's own work the way a share that stopped
 // answering does, so a test can check that the screen thread does not wait for it.
 
+#include "render/Document.h"
+
 #include <QFile>
 #include <QString>
 
 #include <chrono>
 #include <condition_variable>
+#include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 #ifdef Q_OS_UNIX
@@ -60,6 +64,33 @@ private:
     bool locked_ = false;
     bool released_ = false;
     std::thread thread_; // last: it uses the members above
+};
+
+// Takes a document the way a save job does, as a lockable for Stall. On the Stall's
+// thread it takes Document::Hold, then the access lock, which savePdfTo keeps while
+// it writes. Meanwhile a query of the document on the screen thread is refused and
+// counted (Document::testing::refusals()), and a call that takes the access lock
+// waits.
+struct SavingJob
+{
+    std::shared_ptr<DocumentLifetime> lifetime;
+    std::optional<Document::Hold> hold;
+    bool answered = false; // the job holds the document and its own call was answered
+
+    void lock()
+    {
+        hold.emplace(lifetime);
+        Document *document = hold->document();
+        answered = document && document->isPdf();
+        if (document)
+            document->accessMutex().lock();
+    }
+    void unlock()
+    {
+        if (Document *document = hold->document())
+            document->accessMutex().unlock();
+        hold.reset();
+    }
 };
 
 #ifdef Q_OS_UNIX

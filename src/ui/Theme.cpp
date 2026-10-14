@@ -736,6 +736,14 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
     add(QStringLiteral("QWidget#documentPlaceholder QPushButton:pressed { background:%1; }")
             .arg(css(t.canvas)));
 
+    // ── Wait bar ────────────────────────────────────────────────────────────
+    // Says what a busy tab's operation waits for, over the still picture of its pages,
+    // with a line along its bottom edge. Its button keeps the standard push button
+    // rules. The veil under it is painted (StillPicture).
+    add(QStringLiteral("QWidget#waitBar { background:%1; border:none; border-bottom:1px solid %2; }")
+            .arg(css(t.notice), css(t.borderNotice)));
+    add(QStringLiteral("QLabel#waitBarText { color:%1; }").arg(css(t.inkPrimary)));
+
     // ── Find card ───────────────────────────────────────────────────────────
     // Find in document floats over the page in the panel stack; its surface and
     // rim come from the floating-panel rule above.

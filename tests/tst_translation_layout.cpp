@@ -246,6 +246,8 @@ private slots:
     void settings();
     void toolPanels_data() { addLanguageMatrix(); }
     void toolPanels();
+    void waitBar_data() { addLanguageMatrix(); }
+    void waitBar();
 
 private:
     // Shows `widget`, at its minimum size in the minimum-size rows, and checks the text
@@ -529,6 +531,60 @@ void TstTranslationLayout::loadPlaceholder()
     QVERIFY(stop);
     QTRY_VERIFY(stop->isVisible());
     inspect(window, QStringLiteral("Slow document load with an unbroken file name"), tab);
+}
+
+// The bar over a tab whose operation waits for a drive that stopped answering, saving
+// to a long folder and reading a file name that cannot wrap from it. The main window
+// sets the tab's size, down to the narrowest the window gets, as for the slow load.
+void TstTranslationLayout::waitBar()
+{
+    const QString folder = profile_.filePath(QStringLiteral(
+        "structural-engineering-department/project-archive-2026/revised-drawings-for-construction"));
+    const QString unbroken = QDir(folder).filePath(QStringLiteral("Revision").repeated(30)
+                                                   + QStringLiteral(".pdf"));
+    // The operations wait at their only step, as on a drive that stopped answering.
+    mervin::job::testing::holdWhen([folder](mervin::job::Step step, const QString &path) {
+        return (step == mervin::job::Step::Writing && path == folder)
+            || (step == mervin::job::Step::Reading && QFileInfo(path).path() == folder);
+    });
+    mervin::TabPage::setSlowDelayForTesting(0);
+    const auto restore = qScopeGuard([] {
+        mervin::job::testing::release();
+        mervin::TabPage::setSlowDelayForTesting(mervin::TabPage::kSlowMs);
+    });
+    mervin::RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    window.show();
+    settle();
+    window.setMinimumHeight(window.height());
+    QVERIFY(window.openFile(plain_));
+    auto *tab = window.findChild<mervin::TabPage *>();
+    QVERIFY(tab);
+    auto *stop = tab->findChild<QPushButton *>(QStringLiteral("waitBarStop"));
+    QVERIFY(stop);
+
+    mervin::TabPage::Operation saving;
+    saving.destination = folder;
+    saving.work = [folder] { mervin::job::writing(folder); };
+    tab->startOperation(saving);
+    QTRY_VERIFY(stop->isVisible());
+    inspect(window, QStringLiteral("Wait bar saving to a long folder"), tab);
+    // The scroll bar's column stays free, on the left from right to left.
+    const QRect bar = QStyle::visualRect(tab->layoutDirection(), tab->rect(),
+                                         stop->parentWidget()->geometry());
+    QCOMPARE(bar.left(), 0);
+    QCOMPARE(bar.right(), tab->width() - tab->viewer()->verticalScrollBar()->width() - 1);
+
+    tab->stopWaiting();
+    mervin::TabPage::Operation reading;
+    reading.destination = profile_.path();
+    reading.work = [unbroken] { mervin::job::reading(unbroken); };
+    tab->startOperation(reading);
+    QTRY_VERIFY(stop->isVisible());
+    QVERIFY(stop->parentWidget()->findChild<QLabel *>()->text().contains(QStringLiteral("Revision")));
+    inspect(window, QStringLiteral("Wait bar reading an unbroken file name"), tab);
+    tab->stopWaiting();
 }
 
 void TstTranslationLayout::inspect(QWidget &widget, const QString &state, QWidget *part)

@@ -209,8 +209,26 @@ private:
     QStringList askForPdfs();              // app picker: local multi-select or typed URL
     void openUrl(const QUrl &url, bool inNewWindow = false); // download, then open its cache file
     // Ask whether to open a written file. `password` is tried before any prompt,
-    // for outputs that keep the source tab's encryption.
+    // for outputs that keep the source tab's encryption. The question blocks only this
+    // window.
     void offerToOpen(const QString &path, const QString &password = QString());
+    // A page tool, Rotate Pages or Split, that runs as its tab's operation (see
+    // runPageTool). Defined in DocumentActions.cpp.
+    struct PageTool;
+    struct PageToolResult;
+    // Runs `tool` on the file of the usable `tab` with `password`, as the tab's
+    // operation, so only the tab waits. Once the tool ends, the window that holds the
+    // tab by then finishes it (finishPageTool) after the tab changes queued there
+    // before, as its boxes hold the tab across their event loops. `asked` when the
+    // user typed the password for this run.
+    static void runPageTool(mervin::TabPage *tab, const std::shared_ptr<const PageTool> &tool,
+                            const QString &password, bool asked);
+    // A file that needs a password asks for one, window-modal, and runs the tool
+    // again with it, remembered on the tab if it works. A failure says why, and
+    // success runs the tool's own question. A window in the tray shows failures as a
+    // tray message and asks nothing.
+    void finishPageTool(mervin::TabPage *tab, const std::shared_ptr<const PageTool> &tool,
+                        const QString &password, bool asked, const PageToolResult &result);
     // Gather a viewer's committed measurements + per-page overrides for saving
     // (the Mervin blob), or paired with each page's PDF transform + value label
     // for export/print rendering.

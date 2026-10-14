@@ -86,6 +86,17 @@ public:
     void setDocument(Document *doc);
     Document *document() const { return doc_; } // non-owning; for Print
 
+    // For an operation that runs while the tab waits for it (TabPage::startOperation).
+    // Cancels the renders on their way without dropping the pages rendered, stops a
+    // find search, a zoom ease and auto scroll, closes the comment and properties
+    // popups and removes the form editors, so nothing the viewer started reads the
+    // document afterwards. The tab hides the viewer until resumeAfterOperation(), so it
+    // gets no paint or input meanwhile. Commit the editors first.
+    void pauseForOperation();
+    // Searches again if the find card is open and the pause stopped its search. Shown
+    // again, the viewer renders what is visible and builds its form editors.
+    void resumeAfterOperation();
+
     int pageCount() const;
     int currentPage() const { return currentPage_; } // 0-based
     // The page under a viewport point (0-based), or -1 in the gaps around pages.

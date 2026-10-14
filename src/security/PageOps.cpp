@@ -272,7 +272,8 @@ PageOps::Status PageOps::merge(const QStringList &inPaths, const QString &outPat
 }
 
 PageOps::Status PageOps::split(const QString &inPath, const QString &outDir, const QString &baseName,
-                               const QString &password, QStringList *outFiles, QString *error)
+                               const QString &password, QStringList *outFiles, QString *error,
+                               const std::function<bool(const QStringList &)> &mayWrite)
 {
     QPDF q;
     const Status st = open(q, inPath, password, error);
@@ -282,6 +283,13 @@ PageOps::Status PageOps::split(const QString &inPath, const QString &outDir, con
         QPDFPageDocumentHelper dh(q);
         auto all = dh.getAllPages();
         const QDir dir(outDir);
+        QStringList paths;
+        for (int i = 0; i < static_cast<int>(all.size()); ++i)
+            paths << dir.filePath(QStringLiteral("%1-%2.pdf")
+                                      .arg(baseName)
+                                      .arg(i + 1, 3, 10, QLatin1Char('0')));
+        if (mayWrite && !mayWrite(paths))
+            return Status::Failed;
         const auto data = measurementPages::read(q);
         for (int i = 0; i < static_cast<int>(all.size()); ++i) {
             QPDF out;
@@ -290,10 +298,8 @@ PageOps::Status PageOps::split(const QString &inPath, const QString &outDir, con
             MeasureDoc selected;
             measurementPages::append(selected, data, {i}, 0);
             measurementPages::write(out, selected);
-            const QString name = QStringLiteral("%1-%2.pdf")
-                                     .arg(baseName)
-                                     .arg(i + 1, 3, 10, QLatin1Char('0'));
-            const QString path = dir.filePath(name);
+            const QString &path = paths.at(i);
+            // A stopped job throws here, before it takes the next file.
             AtomicPdfWriter output(out, path);
             output.write();
             if (outFiles)

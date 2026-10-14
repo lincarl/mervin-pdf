@@ -166,6 +166,15 @@ shows the result as thumbnails before anything is written. These dialogs write b
 saves over a file that is open in a tab or over the document it reads, and a write
 that fails leaves the dialog open with its plan.
 
+Rotate Pages and Split run in the document's tab once their questions are answered.
+The tab shows its pages as they were and cannot be edited until the tool ends, while
+other tabs and windows stay usable. When the drive has not answered for 2 seconds, a
+bar over the pages names the folder or file the tool waits for, such as "Saving to
+/nas/docs. The drive is not answering.", and offers Stop waiting. Stopping makes the
+tab usable at once and writes nothing more, and Split keeps the files it wrote before.
+Neither tool writes over a file that is open in a tab. Closing the tab, its window or
+the app while a tool runs stops it.
+
 Document > Extract Pages opens with one row that holds every page, first to last.
 Save Page As in a page's right-click menu opens it with that page as its one row.
 
