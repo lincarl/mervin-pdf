@@ -78,6 +78,7 @@ const std::vector<FormField> &FormModel::pageFields(int pageNo) const
         return *cache_[pageNo];
 
     std::vector<FormField> fields;
+    bool refused = false;
     doc_.withPdfDocument([&](fz_context *ctx, pdf_document *) {
         fz_page *fzpage = nullptr;
         fz_var(fzpage);
@@ -179,8 +180,13 @@ const std::vector<FormField> &FormModel::pageFields(int pageNo) const
         fz_catch(ctx) {
             fields.clear();
         }
-    });
+    }, &refused);
 
+    // withPdfDocument refuses on the screen thread while a job holds the document or
+    // waits for it. The page is then read on a later call. Every other answer is cached,
+    // the empty one of a document that is not a PDF included.
+    if (refused)
+        return kEmpty;
     cache_[pageNo] = std::move(fields);
     return *cache_[pageNo];
 }

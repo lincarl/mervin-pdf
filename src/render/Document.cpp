@@ -7,13 +7,16 @@
 
 #include <QByteArray>
 #include <QCoreApplication>
+#include <QThread>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstring>
+#include <thread>
 #include <unordered_map>
 
 namespace mervin {
@@ -96,7 +99,7 @@ Document::Document(fz_context *ctx, fz_document *doc, bool ownsContext,
 
 Document::~Document()
 {
-    std::lock_guard<std::mutex> guard(lifetime_->mutex);
+    std::lock_guard guard(lifetime_->mutex);
     lifetime_->document = nullptr;
     if (doc_)
         fz_drop_document(ctx_, doc_);
@@ -141,6 +144,93 @@ bool Document::waitForCloses(int ms)
     std::unique_lock<std::mutex> lock(followUpsMutex);
     return followUpsDone.wait_for(lock, std::chrono::milliseconds(ms),
                                   [] { return followUps == 0; });
+}
+
+namespace {
+std::atomic<int> screenRefusals{0};
+// The documents whose queries the screen thread is inside, innermost last. A query
+// nested in another one of the same document is let through (see ScreenQuery).
+thread_local std::vector<const DocumentLifetime *> screenQueriesInside;
+} // namespace
+
+// A screen-thread query counts itself in screenQueries before it reads holds, and a
+// hold counts itself in holds before it reads screenQueries. Both are sequentially
+// consistent, so at least one of them sees the other. Either the query refuses, or
+// the hold waits for the query to end. A query that found no hold therefore never
+// waits for the job behind the hold, however the two threads interleave. The hold
+// waits before it takes the gate, not after, because TextIndex queries take the gate
+// on the screen thread.
+Document::Hold::Hold(std::shared_ptr<DocumentLifetime> lifetime, const std::function<bool()> &stop)
+    : lifetime_(std::move(lifetime))
+{
+    // The screen thread never waits for a job, and inside one of its own queries a hold
+    // would wait forever.
+    Q_ASSERT(!QThread::isMainThread());
+    if (!lifetime_)
+        return;
+    lifetime_->holds.fetch_add(1);
+    std::unique_lock gate(lifetime_->mutex, std::defer_lock);
+    while (!(stop && stop())) {
+        if (lifetime_->screenQueries.load() > 0)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        else if (gate.try_lock_for(DocumentLifetime::kStep))
+            break;
+    }
+    if (gate.owns_lock() && lifetime_->document) {
+        document_ = lifetime_->document;
+        gate_ = std::move(gate);
+        return;
+    }
+    if (gate.owns_lock())
+        gate.unlock();
+    lifetime_->holds.fetch_sub(1);
+}
+
+Document::Hold::~Hold()
+{
+    if (!document_)
+        return;
+    gate_.unlock();
+    lifetime_->holds.fetch_sub(1);
+}
+
+Document::ScreenQuery::ScreenQuery(DocumentLifetime &lifetime, const char *method)
+{
+    if (!QThread::isMainThread())
+        return;
+    // Inside another query of this document, such as withPdfDocument inside
+    // savePdfTo, the outer query already counts, and a hold that came after it waits
+    // for it. Refusing here would fail a call that was let through.
+    if (std::find(screenQueriesInside.begin(), screenQueriesInside.end(), &lifetime)
+        != screenQueriesInside.end()) {
+        screenQueriesInside.push_back(&lifetime);
+        entered_ = true;
+        return;
+    }
+    lifetime.screenQueries.fetch_add(1);
+    if (lifetime.holds.load() == 0) {
+        counted_ = &lifetime;
+        screenQueriesInside.push_back(&lifetime);
+        entered_ = true;
+        return;
+    }
+    lifetime.screenQueries.fetch_sub(1);
+    refused_ = true;
+    ++screenRefusals;
+    qWarning("Mervin: %s refused on the screen thread while a job holds the document.", method);
+}
+
+Document::ScreenQuery::~ScreenQuery()
+{
+    if (entered_)
+        screenQueriesInside.pop_back();
+    if (counted_)
+        counted_->screenQueries.fetch_sub(1);
+}
+
+int Document::testing::refusals()
+{
+    return screenRefusals.load();
 }
 
 QSizeF Document::pageSize(int pageNo) const
@@ -320,6 +410,9 @@ bool rectContains(const fz_rect &r, float x, float y)
 
 std::vector<OutlineItem> Document::outline() const
 {
+    const ScreenQuery query(*lifetime_, "Document::outline");
+    if (query.refused())
+        return {};
     std::lock_guard<std::mutex> lk(access_);
     std::vector<OutlineItem> result;
     fz_outline *outline = nullptr;
@@ -341,6 +434,9 @@ std::vector<OutlineItem> Document::outline() const
 
 PageMeasurement Document::pageMeasurement(int pageNo) const
 {
+    const ScreenQuery query(*lifetime_, "Document::pageMeasurement");
+    if (query.refused())
+        return {};
     std::lock_guard<std::mutex> lk(access_);
     if (pageNo < 0 || pageNo >= static_cast<int>(measureCache_.size()))
         return {};
@@ -425,6 +521,9 @@ PageMeasurement Document::pageMeasurement(int pageNo) const
 
 std::array<double, 6> Document::pagePointToPdfMatrix(int pageNo) const
 {
+    const ScreenQuery query(*lifetime_, "Document::pagePointToPdfMatrix");
+    if (query.refused())
+        return {1.0, 0.0, 0.0, 1.0, 0.0, 0.0};
     std::lock_guard<std::mutex> lk(access_);
     std::array<double, 6> out{1.0, 0.0, 0.0, 1.0, 0.0, 0.0};
     fz_page *fzpage = nullptr;
@@ -458,6 +557,9 @@ std::array<double, 6> Document::pagePointToPdfMatrix(int pageNo) const
 
 std::optional<PdfLinkTarget> Document::linkTargetAt(int pageNo, QPointF pagePoint) const
 {
+    const ScreenQuery query(*lifetime_, "Document::linkTargetAt");
+    if (query.refused())
+        return std::nullopt;
     std::lock_guard<std::mutex> lk(access_);
     if (pageNo < 0 || pageNo >= static_cast<int>(pageSizes_.size()))
         return std::nullopt;
@@ -508,12 +610,18 @@ std::optional<PdfLinkTarget> Document::linkTargetAt(int pageNo, QPointF pagePoin
 
 QString Document::linkAt(int pageNo, QPointF pagePoint) const
 {
+    const ScreenQuery query(*lifetime_, "Document::linkAt");
+    if (query.refused())
+        return {};
     const std::optional<PdfLinkTarget> target = linkTargetAt(pageNo, pagePoint);
     return target ? target->uri : QString();
 }
 
 std::optional<PdfItemProperties> Document::itemPropertiesAt(int pageNo, QPointF pagePoint) const
 {
+    const ScreenQuery query(*lifetime_, "Document::itemPropertiesAt");
+    if (query.refused())
+        return std::nullopt;
     std::lock_guard<std::mutex> lk(access_);
     if (pageNo < 0 || pageNo >= static_cast<int>(pageSizes_.size()))
         return std::nullopt;
@@ -735,6 +843,9 @@ void devClipStrokePath(fz_context *ctx, fz_device *dev, const fz_path *path, con
 
 PageGeometry Document::pageGeometry(int pageNo) const
 {
+    const ScreenQuery query(*lifetime_, "Document::pageGeometry");
+    if (query.refused())
+        return {};
     std::lock_guard<std::mutex> lk(access_);
     if (pageNo < 0 || pageNo >= static_cast<int>(geomCache_.size()))
         return {};
@@ -788,6 +899,9 @@ PageGeometry Document::pageGeometry(int pageNo) const
 
 bool Document::hasForm() const
 {
+    const ScreenQuery query(*lifetime_, "Document::hasForm");
+    if (query.refused())
+        return false;
     std::lock_guard<std::mutex> lk(access_);
     if (formCache_)
         return *formCache_;
@@ -810,6 +924,9 @@ bool Document::hasForm() const
 
 bool Document::hasMervinMeasurements() const
 {
+    const ScreenQuery query(*lifetime_, "Document::hasMervinMeasurements");
+    if (query.refused())
+        return false;
     std::lock_guard<std::mutex> lk(access_);
     if (mervinBlobCache_)
         return *mervinBlobCache_;
@@ -831,6 +948,9 @@ bool Document::hasMervinMeasurements() const
 
 bool Document::isPdf() const
 {
+    const ScreenQuery query(*lifetime_, "Document::isPdf");
+    if (query.refused())
+        return false;
     std::lock_guard<std::mutex> lk(access_);
     bool pdf = false;
     fz_try(ctx_)
@@ -840,8 +960,14 @@ bool Document::isPdf() const
     return pdf;
 }
 
-bool Document::withPdfDocument(const std::function<void(fz_context *, pdf_document *)> &fn) const
+bool Document::withPdfDocument(const std::function<void(fz_context *, pdf_document *)> &fn,
+                               bool *refused) const
 {
+    const ScreenQuery query(*lifetime_, "Document::withPdfDocument");
+    if (refused)
+        *refused = query.refused();
+    if (query.refused())
+        return false;
     std::lock_guard<std::mutex> lk(access_);
     pdf_document *pdoc = pdf_specifics(ctx_, doc_);
     if (!pdoc)
@@ -858,11 +984,12 @@ bool Document::withPdfDocument(const std::function<void(fz_context *, pdf_docume
 
 bool Document::savePdfTo(const QString &tmpPath, QString *error) const
 {
+    const ScreenQuery query(*lifetime_, "Document::savePdfTo");
     // MuPDF treats filenames as UTF-8 and converts to wide chars internally on
     // Windows, so pass UTF-8 bytes (not the local 8-bit encoding).
     const QByteArray utf8 = tmpPath.toUtf8();
     bool wrote = false;
-    const bool ran = withPdfDocument([&](fz_context *ctx, pdf_document *pdoc) {
+    const bool ran = !query.refused() && withPdfDocument([&](fz_context *ctx, pdf_document *pdoc) {
         pdf_write_options opts = {}; // value-init: every field 0
         // Full rewrite, not incremental: MuPDF's repaired (slightly-non-conformant)
         // documents cannot be saved incrementally, and a full rewrite is what the

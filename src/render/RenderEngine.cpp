@@ -580,6 +580,9 @@ QImage RenderEngine::renderPageImage(Document *doc, int pageNo, double scale, in
     fz_context *base = base_.get();
     if (!doc)
         return {};
+    const Document::ScreenQuery query(*doc->lifetime(), "RenderEngine::renderPageImage");
+    if (query.refused())
+        return {};
 
     // Serialize against the worker pool / TextIndex: a single fz_document's
     // object cache is not thread-safe (see Document). We render on the base
@@ -705,8 +708,14 @@ void RenderEngine::workerLoop(const std::shared_ptr<Shared> &shared, fz_context 
         // document's object cache / lazy loading, which is not thread-safe, so
         // it runs under the document's access lock (see Document class note).
         {
-            std::lock_guard<std::mutex> lifetimeLock(job->lifetime->mutex);
-            Document *document = job->lifetime->document;
+            // A job's Document::Hold can keep the gate for as long as a save takes.
+            // Waiting in steps lets a canceled request, such as one from the tab
+            // whose job holds the document, free this worker for other tabs.
+            std::unique_lock gate(job->lifetime->mutex, std::defer_lock);
+            while (!gate.try_lock_for(DocumentLifetime::kStep))
+                if (job->canceled.load())
+                    break;
+            Document *document = gate.owns_lock() ? job->lifetime->document : nullptr;
             if (!document || job->canceled.load())
                 continue;
             std::lock_guard<std::mutex> docLk(document->accessMutex());

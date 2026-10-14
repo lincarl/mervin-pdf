@@ -56,8 +56,9 @@ public:
     // Synchronous, on-the-calling-thread render of a single page (used by Print,
     // which needs page pixmaps at the printer's resolution). Renders on the base
     // context under the document's access lock, so it is safe alongside the
-    // worker pool. Returns a null QImage on failure. scale maps points->pixels
-    // (e.g. dpi/72); rotation is 0/90/180/270.
+    // worker pool. Returns a null QImage on failure, and on the screen thread while a
+    // job holds the document or waits for it (see Document::ScreenQuery). scale maps
+    // points->pixels (e.g. dpi/72); rotation is 0/90/180/270.
     QImage renderPageImage(Document *doc, int pageNo, double scale, int rotation);
 
     // The base MuPDF context. Exposed so render/ helpers (e.g. TextIndex) can
