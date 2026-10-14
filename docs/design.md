@@ -222,8 +222,7 @@ the open, without a file-backed fallback that would restore lazy disk reads. Oth
 self-contained formats use the same buffer. Formats that need their containing
 directory or a named file keep their existing path opener for compatibility.
 Document save uses a full rewrite, so it does not need the original source stream.
-Fresh opens remain synchronous until their separate background-open change; resumed
-tabs already preload on their worker.
+Fresh opens and resumed tabs both preload on their worker.
 
 Each `TabPage` groups one tab with its viewer, document when loaded, and retained
 state when unloaded. Tab detachment and merging reparent this tab object rather
@@ -238,13 +237,12 @@ These still touch the disk on the UI thread and are planned work:
   memory buffer, so these calls do not read the original file. Moving every
   viewer query to background threads remains separate work. Directory-dependent
   non-PDF formats retain their path-based lookup of relative resources.
-- Opening a document in a new tab, saving, Save as copy, export, print, Delete
-  Pages, Extract Pages, merge, security, and the recovery copy written when a tab
-  unloads. The chosen design shows such a wait in its tab: a bar over the tab's
-  document, which stays locked meanwhile, and a placeholder tab for a file being
-  opened, so other tabs and windows stay usable. Reloading an unloaded tab already
-  works this way (see Inactive documents and memory), and so do Rotate Pages and
-  Split (see Page and security operations).
+- Saving, Save as copy, export, print, Delete Pages, Extract Pages, merge,
+  security, and the recovery copy written when a tab unloads. The chosen design
+  shows such a wait in its tab, with a bar over its locked document, so other
+  tabs and windows stay usable. New tabs and unloaded tabs already load in their
+  placeholders, and Rotate Pages and Split run as tab jobs (see Page and security
+  operations).
 - Reads at startup before the first window, and the system file dialogs, which
   run on the UI thread by design.
 - Opening a folder or a link with the system's handler (`QDesktopServices::openUrl`),
@@ -252,6 +250,47 @@ These still touch the disk on the UI thread and are planned work:
 - Two small updater steps: telling how this copy was installed when the updater
   starts (a registry read on Windows, a check that `$APPIMAGE` is a file on Linux),
   and starting the Windows installer, whose working folder is the updates folder.
+
+### Opening a new tab
+
+Every normal open creates or focuses a tab before returning. The initial key is the
+absolute clean path, normalized for Windows case and separators without disk access.
+The tab shows Loading and starts its worker even if it is not selected. The worker
+resolves links, reads the source stamp and complete document bytes, loads embedded
+measurements and caches whether it has form fields. A failed open stays in its tab
+with a plain reason and Retry. The reader's own message remains the fallback for an
+unclassified failure. Fresh failures are exempt from removed-file cleanup.
+The shell claims its initial path in memory before reading, and its resolved path
+before installation. An output reserved by a page tool keeps a reason and Retry
+until that writer finishes or releases its reservation. A denied private result
+closes in the background, and Duplicate follows its failure policy below.
+
+The result waits in the tab's job slot until its current window's tab-change queue
+can accept it. A load-generation check rejects old attempts, and a moved tab joins
+its new owner's queue. Before installation, the owner compares the resolved canonical
+key against other tabs. It removes an ordinary duplicate newcomer without recording
+history and focuses the existing tab only if the newcomer was still being shown.
+The first accepted identity wins when aliases complete together. Independent
+recovery copies keep their edited tabs even when their canonical source matches,
+and use the original identity cached in their manifests. Successful opens
+refresh the title and tooltip and record Recent with the page count. The session
+contains placeholders too. Focusing a pending or failed placeholder does not record
+an open in Recent.
+
+Stop waiting closes an ordinary fresh tab through the queue, without recording a
+view state or adding it to Reopen Closed Tab. A result already stored closes in the
+background, and a late result never installs. An initial open that adopted unsaved
+recovery edits instead keeps its original path, snapshot and Retry, using the same
+Stop behavior as a resume. Its recovery view and tools take precedence over fresh
+viewer defaults and older stored view state.
+
+All open/resume password prompts use Enter the password for the document, run
+window-modal through the current owner's queue, and appear only for its visible,
+selected tab. Cancel leaves an ordinary fresh failure with Retry. Duplicate to new
+window carries its source view into the pending tab, including an unloaded source's
+saved view. A failed Duplicate, including a canceled password prompt, removes only
+that duplicate tab and closes its owning window if it is empty. Other tabs that
+arrived meanwhile remain open.
 
 ## Startup and single-instance behavior
 
@@ -265,7 +304,11 @@ and can fall back to a standalone window. Session restoration creates the tab li
 but opens only the selected document. Other restored tabs load when selected.
 
 The first window is shown before any document is checked, and command-line files
-open at once. `WindowManager::restoreSession` has `FileProbe` check each saved path
+create their placeholders at once. Staged batches finish when their shells are queued,
+so a command-line read that stopped answering cannot delay session restore. The
+development-only `--quit-after-startup` option separately waits for requested loads
+after both shell batches are queued, so startup timing still measures usable documents.
+`WindowManager::restoreSession` has `FileProbe` check each saved path
 (`SessionStore::filesToCheck`) and waits, with the window live, until every check has
 answered or `kRestoreWaitMs` (1.5 s) has passed. `SessionStore::prepareRestore` then
 decides from the answers, without touching the disk. A file that is there is

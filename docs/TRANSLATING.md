@@ -101,6 +101,11 @@ Distinguish access-key ampersands from literal conjunctions. The plain menu
 heading "Select & Annotate" means "Select and Annotate". A translation that spells
 out the conjunction must not gain an access-key marker.
 
+For document failures, keep a failed read separate from a damaged format or a rejected
+open password. A read failure means the app could not obtain all the file bytes.
+Damage is a format error the reader could not repair. Do not turn an unclassified
+reader message into a diagnosis. Follow each source's note for those distinctions.
+
 When a translation service batches strings, verify each source-to-target pairing.
 Matching output counts or separator counts do not prove alignment. Redraft broken
 entries individually. Preserve product names, command-line switches, file-filter

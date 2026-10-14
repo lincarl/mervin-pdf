@@ -313,12 +313,23 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
         return QString();
     };
 
-    // --quit-after-startup waits for all tab shells and the selected document load.
+    // --quit-after-startup waits for queued tab shells and their requested loads.
     // tst_perf_startup times this process as plain runtime, and
     // quitting at the first turn would silently stop measuring the documents.
     std::function<void()> onDone;
     if (cli.quitAfterStartup)
-        onDone = [] { QCoreApplication::quit(); };
+        onDone = [&wm] {
+            auto *ready = new QTimer(&wm);
+            ready->setInterval(10);
+            QObject::connect(ready, &QTimer::timeout, &wm, [&wm, ready] {
+                if (wm.hasLoadingDocuments())
+                    return;
+                ready->stop();
+                ready->deleteLater();
+                QCoreApplication::quit();
+            });
+            ready->start();
+        };
 
     // Command-line files open at once. The session's documents follow once their
     // checks have answered (WindowManager::restoreSession), so a share that stopped

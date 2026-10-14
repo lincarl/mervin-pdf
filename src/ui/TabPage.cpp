@@ -224,6 +224,7 @@ struct TabPage::OpenResult {
     OwnedDocument document;
     std::optional<MeasureDoc> measurements;
     SourceStamp source;
+    QString canonical;
     QString error;
     bool needsPassword = false;
 };
@@ -567,6 +568,7 @@ std::shared_ptr<TabPage::OpenResult> TabPage::readDocument(DocumentOpener &opene
         opener.open(path, password, &result->error, &result->needsPassword).release());
     if (!result->document)
         return result;
+    result->document->hasForm(); // cache the answer before the viewer installs it
     if (result->document->hasMervinMeasurements()) {
         if (auto blob = MeasureExport::readMervinBlob(path, password)) {
             MeasureDoc measurements;
@@ -783,6 +785,11 @@ bool TabPage::adoptRecovery()
         foundManifests.removeAt(i);
         recoveryManifest_ = path;
         recoveryPath_ = directory.filePath(manifest.value("snapshot").toString());
+        // The cached manifest knows the original identity even if its drive is
+        // away. Keep this key separate from the private snapshot that gets read.
+        const QString canonical = manifest.value("canonical").toString();
+        if (!canonical.isEmpty())
+            canonicalPath_ = QDir::cleanPath(canonical);
         saved_->viewer = readResumeJson(manifest.value("view").toObject());
         saved_->restoreTools = true;
         const auto stamp = manifest.value("source").toObject();
@@ -826,16 +833,26 @@ void TabPage::initializeSuspended(const QString &path)
     initializeSuspended(path, viewer_->captureResumeState().view);
 }
 
-void TabPage::initializeSuspended(const QString &path, const ViewState &state)
+void TabPage::initializeSuspended(const QString &path, const ViewState &state, bool recover)
 {
     if (doc_ || loading_)
         return;
     setPath(path, /*resolve=*/false);
     saved_->viewer = viewer_->captureResumeState();
     saved_->viewer.view = state;
-    adoptRecovery();
+    if (recover)
+        adoptRecovery();
     showPlaceholder(tr("Document is unloaded."), PlaceholderButton::None);
     emit stateChanged();
+}
+
+void TabPage::initializeFresh(const QString &path, const FreshOpen &options)
+{
+    if (doc_ || loading_)
+        return;
+    freshOpen_ = options;
+    initializeSuspended(path, options.view.value_or(viewer_->captureResumeState().view),
+                        /*recover=*/!options.allowDuplicate);
 }
 
 void TabPage::showPlaceholder(const QString &message, PlaceholderButton button)
@@ -994,19 +1011,31 @@ void TabPage::resumeAsync()
 {
     if (doc_ || loading_ || loadStopped_)
         return;
+    if (!claimPath(canonicalPath_)) {
+        const auto failure = std::make_shared<OpenResult>();
+        failure->error = pathBeingWrittenError();
+        const QPointer<TabPage> self(this);
+        finishResume(failure);
+        if (self)
+            emit resumeFinished(false, failure->error, false);
+        return;
+    }
     startLoad();
 }
 
 void TabPage::startLoad(std::shared_ptr<Job> after)
 {
     const auto job = std::make_shared<Job>(recoveryPath_.isEmpty() ? path_ : recoveryPath_);
+    ++loadGeneration_;
     job_ = job;
     loading_ = true;
     //: Shown in place of the page while the document loads.
     showPlaceholder(tr("Loading"), PlaceholderButton::None);
     startSlowClock();
     background::start([tab = QPointer<QObject>(this), job, after = std::move(after),
-                       opener = engine_->opener(), password = password_] {
+                       opener = engine_->opener(), password = password_,
+                       resolve = freshOpen_.has_value() && recoveryPath_.isEmpty(),
+                       knownCanonical = canonicalPath_] {
         // A stopped load still closing what it read ends first, so a recovery copy left
         // for this job to remove never goes while that load has it open.
         if (after)
@@ -1016,7 +1045,20 @@ void TabPage::startLoad(std::shared_ptr<Job> after)
             const job::Scope scope(job->state);
             // First, so a drive that does not answer the first file call is named.
             if (job::reading(job->source)) {
-                result = readDocument(*opener, job->source, password);
+                // Resolve links only on this thread. Keep the public key unchanged
+                // until the owner accepts the canonical identity through its queue.
+                QString canonical = knownCanonical;
+                if (resolve) {
+                    const QFileInfo file(job->source);
+                    canonical = file.canonicalFilePath();
+                    if (canonical.isEmpty())
+                        canonical = QDir::cleanPath(file.absoluteFilePath());
+                }
+                if (!job::stopped())
+                    result = readDocument(*opener, job->source, password);
+                else
+                    result = std::make_shared<OpenResult>();
+                result->canonical = canonical;
             } else {
                 result = std::make_shared<OpenResult>();
                 result->error = job::notRunError();
@@ -1044,18 +1086,64 @@ void TabPage::startLoad(std::shared_ptr<Job> after)
 void TabPage::finishLoad(const std::shared_ptr<Job> &job)
 {
     if (job != job_)
-        return; // stopLoading() took its result, or a newer load replaced it
+        return;
+    if (freshOpen_) {
+        QString canonical;
+        {
+            std::lock_guard<std::mutex> lock(job->mutex);
+            if (job->phase != Job::Phase::Stored || job->abandoned || !job->result)
+                return;
+            canonical = job->result->canonical;
+        }
+        emit freshLoadReady(canonical, loadGeneration_);
+        return;
+    }
+    installLoad(job);
+}
+
+bool TabPage::acceptFreshLoad(quint64 generation)
+{
+    if (!freshOpen_ || generation != loadGeneration_ || !job_ || !loading_)
+        return false;
+    return installLoad(job_);
+}
+
+void TabPage::rejectFreshLoad(quint64 generation)
+{
+    if (!freshOpen_ || generation != loadGeneration_ || !job_ || !loading_)
+        return;
+    abandon(job_, {});
+    job_.reset();
+    const auto failure = std::make_shared<OpenResult>();
+    failure->error = pathBeingWrittenError();
+    const QPointer<TabPage> self(this);
+    finishResume(failure);
+    if (self)
+        emit resumeFinished(false, failure->error, false);
+}
+
+bool TabPage::installLoad(const std::shared_ptr<Job> &job)
+{
+    if (job != job_)
+        return false;
     std::shared_ptr<OpenResult> result;
     {
         std::lock_guard<std::mutex> lock(job->mutex);
         if (job->phase != Job::Phase::Stored || job->abandoned)
-            return; // the user stopped waiting, and abandon() took the result
+            return false;
         result = std::move(job->result);
         job->setPhase(Job::Phase::Ended);
     }
     job_.reset();
+    if (freshOpen_ && result->document) {
+        setPath(result->canonical, /*resolve=*/false);
+        freshOpen_.reset();
+    }
+    const QPointer<TabPage> self(this);
     const bool success = finishResume(result);
-    emit resumeFinished(success, result->error, result->needsPassword);
+    if (self)
+        emit resumeFinished(success, result->error, result->needsPassword);
+    return success;
 }
 
 void TabPage::stopWaiting()
@@ -1078,6 +1166,14 @@ void TabPage::stopWaiting()
     loading_ = false;
     loadStopped_ = true;
     stopSlowClock();
+    if (freshOpen_ && recoveryPath_.isEmpty()) {
+        job_->state.stop();
+        abandon(job_, {});
+        job_.reset();
+        stopButton_->hide();
+        emit freshOpenStopped(loadGeneration_);
+        return;
+    }
     // The job stays in the slot, so Retry can take back its read while it runs. A
     // result it already stored closes in the background. The recovery copy stays.
     abandon(job_, {});

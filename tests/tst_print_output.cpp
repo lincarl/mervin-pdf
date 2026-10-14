@@ -1,3 +1,4 @@
+#include "TestWaits.h"
 #include "config/ConfigPaths.h"
 #include "io/AppFiles.h"
 #include "dialogs/PrintDialog.h"
@@ -95,7 +96,7 @@ void TstPrintOutput::applicationPrintPlacement()
     const QString output = files_.filePath(QString::fromLatin1(QTest::currentDataTag()) + ".pdf");
     RenderEngine engine;
     MainWindow window(&engine, nullptr);
-    QVERIFY(window.openFile(sourcePath_));
+    QVERIFY(mervin::testing::openAndWait(window, sourcePath_));
 
     // Rebuild the printer the way the app does. It creates this same printer
     // before showing its dialog, and the dialog keeps that printer's margins

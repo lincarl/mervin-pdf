@@ -100,7 +100,7 @@ Otvoriti sada?</translation>
         <source>Enter the password for %1.</source>
         <extracomment>%1 is the file name.
 ----------
-%1 is the name of the document.</extracomment>
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Unesite lozinku za %1.</translation>
     </message>
     <message>
@@ -524,20 +524,6 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     <message>
         <source>Password Required</source>
         <translation>Potrebna lozinka</translation>
-    </message>
-    <message>
-        <source>&quot;%1&quot; is password-protected. Enter the password:</source>
-        <extracomment>%1 is the file name.</extracomment>
-        <translation>&quot;%1&quot; je zaštićen lozinkom. Unesite lozinku:</translation>
-    </message>
-    <message>
-        <source>Could not open &quot;%1&quot;.
-
-%2</source>
-        <extracomment>%1 is the file path, %2 the reason the file could not be opened.</extracomment>
-        <translation>Nije moguće otvoriti &quot;%1&quot;.
-
-%2</translation>
     </message>
     <message>
         <source>Open from URL</source>
@@ -3172,8 +3158,23 @@ Ova datoteka više nije na disku.</translation>
         <translation>Dokument nije moguće pročitati.</translation>
     </message>
     <message>
+        <source>The file was not found.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. The reader could not find the source file or one of the folders leading to it.</extracomment>
+        <translation>Datoteka nije pronađena.</translation>
+    </message>
+    <message>
+        <source>The file is damaged.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. Its data has an unrecoverable format error, rather than a drive or password error.</extracomment>
+        <translation>Datoteka je oštećena.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Ovaj dokument je zaštićen lozinkom.</translation>
+    </message>
+    <message>
+        <source>The password was not accepted.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder after its supplied open password was rejected. Retry can ask for another password.</extracomment>
+        <translation>Lozinka nije prihvaćena.</translation>
     </message>
 </context>
 <context>

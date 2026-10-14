@@ -100,7 +100,7 @@ Open it now?</source>
         <source>Enter the password for %1.</source>
         <extracomment>%1 is the file name.
 ----------
-%1 is the name of the document.</extracomment>
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Εισαγάγετε τον κωδικό πρόσβασης για το %1.</translation>
     </message>
     <message>
@@ -522,20 +522,6 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     <message>
         <source>Password Required</source>
         <translation>Απαιτείται κωδικός πρόσβασης</translation>
-    </message>
-    <message>
-        <source>&quot;%1&quot; is password-protected. Enter the password:</source>
-        <extracomment>%1 is the file name.</extracomment>
-        <translation>Το &quot;%1&quot; προστατεύεται με κωδικό πρόσβασης. Εισαγάγετε τον κωδικό πρόσβασης:</translation>
-    </message>
-    <message>
-        <source>Could not open &quot;%1&quot;.
-
-%2</source>
-        <extracomment>%1 is the file path, %2 the reason the file could not be opened.</extracomment>
-        <translation>Δεν ήταν δυνατό το άνοιγμα του &quot;%1&quot;.
-
-%2</translation>
     </message>
     <message>
         <source>Open from URL</source>
@@ -3152,8 +3138,23 @@ This file is no longer on disk.</source>
         <translation>Δεν ήταν δυνατή η ανάγνωση του εγγράφου.</translation>
     </message>
     <message>
+        <source>The file was not found.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. The reader could not find the source file or one of the folders leading to it.</extracomment>
+        <translation>Το αρχείο δεν βρέθηκε.</translation>
+    </message>
+    <message>
+        <source>The file is damaged.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder. Its data has an unrecoverable format error, rather than a drive or password error.</extracomment>
+        <translation>Το αρχείο είναι κατεστραμμένο.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Αυτό το έγγραφο προστατεύεται με κωδικό πρόσβασης.</translation>
+    </message>
+    <message>
+        <source>The password was not accepted.</source>
+        <extracomment>Reason in a failed document&apos;s placeholder after its supplied open password was rejected. Retry can ask for another password.</extracomment>
+        <translation>Ο κωδικός πρόσβασης δεν έγινε δεκτός.</translation>
     </message>
 </context>
 <context>

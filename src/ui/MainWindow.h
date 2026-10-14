@@ -58,10 +58,12 @@ public:
 
     // Open or focus an existing tab across this process. allowDuplicate creates an independent
     // view whose state the caller seeds. atIndex=-1 appends; makeCurrent=false preserves focus
-    // during staged restore. Try knownPassword before prompting.
+    // during staged restore. Returns whether a tab was accepted or focused, before
+    // the background reader finishes. Try knownPassword before prompting.
     bool openFile(const QString &path, bool allowDuplicate = false, int atIndex = -1,
                   bool makeCurrent = true, const QString &knownPassword = QString(),
-                  bool lazy = false);
+                  bool lazy = false, const std::optional<mervin::ViewState> &initialView = {},
+                  bool closeOnFailure = false);
 
     // If the given canonical path is open in THIS window, select its tab and
     // return true. (Cross-window focusing is orchestrated by WindowManager.)
@@ -293,9 +295,12 @@ private:
 
     mervin::TabPage *currentTab() const;
     mervin::ViewerWidget *currentViewer() const;
-    int indexOfPath(const QString &canonicalPath) const;
+    int indexOfPath(const QString &canonicalPath, const mervin::TabPage *except = nullptr) const;
 
     void wireTabLifecycle(mervin::TabPage *tab);
+    void queueFreshLoad(mervin::TabPage *tab, const QString &canonical, quint64 generation);
+    void queueFreshRemoval(mervin::TabPage *tab, quint64 generation);
+    void queueLoadPassword(mervin::TabPage *tab, quint64 generation);
     void unwireTabLifecycle(mervin::TabPage *tab);
     void scheduleCurrentResume();
     bool suspendTab(mervin::TabPage *tab);

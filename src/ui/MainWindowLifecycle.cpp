@@ -9,6 +9,7 @@
 #include "ui/ThumbnailSidebar.h"
 
 #include <QApplication>
+#include <QDir>
 #include <QGuiApplication>
 #include <QHideEvent>
 #include <QInputDialog>
@@ -30,34 +31,28 @@ void MainWindow::wireTabLifecycle(TabPage *tab)
         if (currentTab() == tab && !suspending_)
             updateForCurrentTab();
     }));
+    connections.append(connect(tab, &TabPage::freshLoadReady, this,
+        [this, tab](const QString &canonical, quint64 generation) {
+            queueFreshLoad(tab, canonical, generation);
+        }));
+    connections.append(connect(tab, &TabPage::freshOpenStopped, this,
+        [this, tab](quint64 generation) { queueFreshRemoval(tab, generation); }));
     connections.append(connect(tab, &TabPage::resumeFinished, this,
         [this, tab](bool success, const QString &, bool needsPassword) {
+            if (closeConfirmed_ || (wm_ && wm_->isClosing()))
+                return;
             if (success) {
                 if (currentTab() == tab)
                     updateForCurrentTab();
                 if (hiddenToTray_)
                     QTimer::singleShot(0, this, [this] { suspendHiddenDocuments(); });
-                return;
-            }
-            // A file that is gone takes its tab with it. The check runs on a worker
-            // and closes the tab later, never inside this signal from the tab.
-            if (!needsPassword) {
-                if (wm_)
-                    wm_->closeRemovedTabs();
-                return;
-            }
-            if (currentTab() != tab || !isVisible() || isMinimized())
-                return;
-            bool accepted = false;
-            //: %1 is the name of the document.
-            const QString prompt = tr("Enter the password for %1.").arg(tab->tabTitle());
-            // The prompt runs its own event loop, in which the tab can go away.
-            const QPointer<TabPage> page(tab);
-            const QString password = QInputDialog::getText(
-                this, tr("Password required"), prompt, QLineEdit::Password, {}, &accepted);
-            if (accepted && page) {
-                page->setPassword(password);
-                page->resumeAsync();
+            } else if (needsPassword) {
+                queueLoadPassword(tab, tab->loadGeneration());
+            } else if (tab->freshOpen()) {
+                if (tab->freshOpen()->closeOnFailure && !tab->hasRecoverySnapshot())
+                    queueFreshRemoval(tab, tab->loadGeneration());
+            } else if (wm_) {
+                wm_->closeRemovedTabs();
             }
         }));
     connections.append(connect(tab, &QObject::destroyed, this, [this, tab] {
@@ -65,6 +60,128 @@ void MainWindow::wireTabLifecycle(TabPage *tab)
         suspensionFailed_.remove(tab);
         tabConnections_.remove(tab);
     }));
+}
+
+// Late load actions always join the current owner's queue. A tab can move while
+// the original queue waits, so a changed owner queues the same guarded action again.
+void MainWindow::queueFreshLoad(TabPage *tab, const QString &canonical, quint64 generation)
+{
+    const QPointer<MainWindow> self(this);
+    const QPointer<TabPage> page(tab);
+    whenTabsCanChange([self, page, canonical, generation] {
+        auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!self || !owner || owner->closeConfirmed_ || (owner->wm_ && owner->wm_->isClosing()))
+            return;
+        if (owner != self) {
+            owner->queueFreshLoad(page, canonical, generation);
+            return;
+        }
+        if (page->loadGeneration() != generation || !page->freshOpen() || !page->isLoading())
+            return;
+        const TabPage::FreshOpen options = *page->freshOpen();
+        if (!canonical.isEmpty() && !page->claimPath(canonical)) {
+            page->rejectFreshLoad(generation);
+            return;
+        }
+        if (!canonical.isEmpty() && !options.allowDuplicate && !page->hasRecoverySnapshot()
+            && (owner->wm_ ? owner->wm_->isOpenAnywhere(canonical, page)
+                           : owner->indexOfPath(canonical, page) >= 0)) {
+            const bool focus = owner->currentTab() == page && !owner->recentActive_;
+            owner->removeTabAt(owner->tabs_->indexOf(page));
+            if (!self || !focus)
+                return;
+            if (owner->wm_)
+                owner->wm_->focusExistingTab(canonical);
+            else
+                owner->focusTabIfOpen(canonical);
+            return;
+        }
+        if (!page->acceptFreshLoad(generation) || !self || !page)
+            return;
+        const int index = owner->tabs_->indexOf(page);
+        if (index < 0)
+            return;
+        owner->tabs_->setTabText(index, page->tabTitle());
+        owner->tabs_->setTabToolTip(index, QDir::toNativeSeparators(page->path()));
+        owner->syncDocTabBar();
+        if (!page->hasRecoverySnapshot())
+            owner->applySettingsToViewer(page->viewer());
+        if (!self || !page)
+            return;
+        if (options.view && !page->hasRecoverySnapshot())
+            page->setSavedViewState(*options.view);
+        if (!self || !page)
+            return;
+        if (owner->wm_) {
+            owner->wm_->recordOpen(page->canonicalPath(), /*restoreViewState=*/!options.allowDuplicate && !page->hasRecoverySnapshot(),
+                                   page->viewer()->pageCount());
+            if (self)
+                owner->wm_->updateSession();
+        }
+    });
+}
+
+void MainWindow::queueFreshRemoval(TabPage *tab, quint64 generation)
+{
+    const QPointer<MainWindow> self(this);
+    const QPointer<TabPage> page(tab);
+    whenTabsCanChange([self, page, generation] {
+        auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!self || !owner || owner->closeConfirmed_ || (owner->wm_ && owner->wm_->isClosing()))
+            return;
+        if (owner != self) {
+            owner->queueFreshRemoval(page, generation);
+            return;
+        }
+        if (!page->freshOpen() || page->loadGeneration() != generation || page->hasRecoverySnapshot())
+            return;
+        const bool closeEmpty = page->freshOpen()->closeOnFailure;
+        const int index = owner->tabs_->indexOf(page);
+        if (index < 0)
+            return;
+        owner->removeTabAt(index);
+        if (self && closeEmpty && owner->tabCount() == 0)
+            owner->closeForQuit();
+    });
+}
+
+void MainWindow::queueLoadPassword(TabPage *tab, quint64 generation)
+{
+    const QPointer<MainWindow> self(this);
+    const QPointer<TabPage> page(tab);
+    whenTabsCanChange([self, page, generation] {
+        auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!self || !owner || owner->closeConfirmed_ || (owner->wm_ && owner->wm_->isClosing()))
+            return;
+        if (owner != self) {
+            owner->queueLoadPassword(page, generation);
+            return;
+        }
+        if (page->loadGeneration() != generation || page->isLoading() || page->isLoaded()
+            || owner->currentTab() != page || owner->recentActive_ || owner->hiddenToTray_
+            || !owner->isVisible() || owner->isMinimized())
+            return;
+        // Quit from another window can destroy this owner during the nested loop.
+        const QPointer<QInputDialog> prompt = new QInputDialog(owner);
+        prompt->setObjectName(QStringLiteral("documentPassword"));
+        prompt->setWindowModality(Qt::WindowModal);
+        prompt->setWindowTitle(tr("Password required"));
+        //: %1 is the name of the document being opened or resumed. This asks for
+        //: the password needed to open its contents, not its owner password.
+        prompt->setLabelText(tr("Enter the password for %1.").arg(page->tabTitle()));
+        prompt->setTextEchoMode(QLineEdit::Password);
+        const bool accepted = prompt->exec() == QDialog::Accepted;
+        const QString password = accepted && prompt ? prompt->textValue() : QString();
+        delete prompt.data();
+        if (!self || !page || page->loadGeneration() != generation)
+            return;
+        if (accepted) {
+            page->setPassword(password);
+            page->resumeAsync();
+        } else if (page->freshOpen() && page->freshOpen()->closeOnFailure) {
+            owner->queueFreshRemoval(page, generation);
+        }
+    });
 }
 
 void MainWindow::unwireTabLifecycle(TabPage *tab)

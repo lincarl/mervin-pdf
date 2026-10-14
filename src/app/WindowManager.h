@@ -39,6 +39,7 @@ class SingleInstanceServer;
 } // namespace ipc
 
 class RenderEngine;
+class TabPage;
 
 // Owns the shared RenderEngine, windows, recent history and view state. The primary process
 // routes IPC opens and owns the tray. Shutdown workers before freeing final
@@ -79,7 +80,9 @@ public:
     // True when `canonicalPath` is open in any window of this process. Unlike
     // focusExistingTab this only answers the question - it does not select the tab
     // or raise the window, which a background open must not do.
-    bool isOpenAnywhere(const QString &canonicalPath) const;
+    bool isOpenAnywhere(const QString &canonicalPath, const TabPage *except = nullptr) const;
+    bool isClosing() const { return shuttingDown_ || sessionFinal_; }
+    bool hasLoadingDocuments() const;
 
     // Every file open in a tab, in any window of this process (canonical paths).
     // Extract Pages and Merge PDFs refuse to write over one: the viewer holds it

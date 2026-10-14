@@ -11,8 +11,9 @@ This document describes the application's current user-facing behavior. See
 
 ## Reading and navigation
 
-- Open local PDF files or explicit web links. Password-protected files prompt for
-  the password when needed.
+- Open local PDF files or explicit web links. A new tab loads in the background
+  while other documents stay usable. A failed open keeps its reason and Retry.
+  Password-protected files prompt for the password when their tab is visible.
 - Work with multiple documents in tabs and multiple windows. Tabs can be reordered,
   detached into a new window, moved between windows, duplicated, and reopened after
   being closed.
@@ -54,6 +55,13 @@ The Recent screen provides:
   file last opened by an older version on a volume mounted by hand outside the
   system's mount configuration, and a file whose folder now holds another volume; and
 - file and folder actions such as copying paths or opening the containing folder.
+
+A new tab shows Loading immediately. If its drive does not answer for 2 seconds,
+it names the file and folder and offers Stop waiting. Stop closes an ordinary new
+tab without changing Recent or Reopen Closed Tab. If the tab recovered unsaved
+edits, Stop keeps its recovery copy and Retry instead. Failed Duplicate windows close
+unless another tab has arrived there. An unloaded source's Duplicate preserves its
+saved page, zoom, rotation and scroll position.
 
 The application can restore the previous session. It opens the selected document and
 leaves the other restored tabs unloaded until selected. It remembers each file's

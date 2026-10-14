@@ -1,3 +1,4 @@
+#include "TestWaits.h"
 // Rotate Pages and Split run as their tab's operation. Only the tab waits, a bar names
 // what it waits for after a few seconds, Stop waiting gives up at once, and nothing
 // the screen thread does meanwhile reads the tab's document.
@@ -237,7 +238,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(path));
+        QVERIFY(mervin::testing::openAndWait(window, path));
         TabPage *tab = currentTab(window);
         QVERIFY(tab);
         // The open document keeps its file. The name now leads to a pipe.
@@ -278,7 +279,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(path));
+        QVERIFY(mervin::testing::openAndWait(window, path));
         TabPage *tab = currentTab(window);
         QVERIFY(tab);
         holdAt(job::Step::Writing, folder);
@@ -321,7 +322,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(path));
+        QVERIFY(mervin::testing::openAndWait(window, path));
         TabPage *tab = currentTab(window);
         QVERIFY(tab);
         const Bar bar(*tab);
@@ -387,7 +388,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         TabPage *tab = currentTab(window);
         QVERIFY(tab);
         const Bar bar(*tab);
@@ -460,7 +461,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(path));
+        QVERIFY(mervin::testing::openAndWait(window, path));
         TabPage *tab = currentTab(window);
         QVERIFY(tab);
         const Bar bar(*tab);
@@ -499,8 +500,8 @@ private slots:
         MainWindow *window = manager.createWindow();
         window->resize(1000, 800);
         QVERIFY(QTest::qWaitForWindowExposed(window));
-        QVERIFY(window->openFile(otherPath));
-        QVERIFY(window->openFile(busyPath));
+        QVERIFY(mervin::testing::openAndWait(*window, otherPath));
+        QVERIFY(mervin::testing::openAndWait(*window, busyPath));
         TabPage *busy = currentTab(*window);
         QVERIFY(busy);
         QCOMPARE(busy->path(), busyPath);
@@ -556,7 +557,7 @@ private slots:
         // Another window opens and shows a document.
         MainWindow *second = manager.createWindow();
         QVERIFY(QTest::qWaitForWindowExposed(second));
-        QVERIFY(second->openFile(thirdPath));
+        QVERIFY(mervin::testing::openAndWait(*second, thirdPath));
         TabPage *third = currentTab(*second);
         QVERIFY(third && third->isUsable());
         QTRY_VERIFY(third->viewer()->isVisible());
@@ -584,7 +585,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(path));
+        QVERIFY(mervin::testing::openAndWait(window, path));
         TabPage *tab = currentTab(window);
         QVERIFY(tab);
         const Bar bar(*tab);
@@ -640,7 +641,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(path, false, -1, true, QStringLiteral("secret")));
+        QVERIFY(mervin::testing::openAndWait(window, path, false, -1, true, QStringLiteral("secret")));
         TabPage *tab = currentTab(window);
         QVERIFY(tab);
         tab->setPassword({});
@@ -681,8 +682,8 @@ private slots:
         MainWindow *window = manager.createWindow();
         window->resize(1000, 800);
         QVERIFY(QTest::qWaitForWindowExposed(window));
-        QVERIFY(window->openFile(otherPath));
-        QVERIFY(window->openFile(busyPath));
+        QVERIFY(mervin::testing::openAndWait(*window, otherPath));
+        QVERIFY(mervin::testing::openAndWait(*window, busyPath));
         TabPage *busy = currentTab(*window);
         QVERIFY(busy);
         const Bar bar(*busy);
@@ -747,7 +748,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(path));
+        QVERIFY(mervin::testing::openAndWait(window, path));
         TabPage *tab = currentTab(window);
         QVERIFY(tab);
         holdAt(job::Step::Commit, QDir(folder).filePath(QStringLiteral("plan-002.pdf")));
@@ -789,8 +790,8 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(open));
-        QVERIFY(window.openFile(path));
+        QVERIFY(mervin::testing::openAndWait(window, open));
+        QVERIFY(mervin::testing::openAndWait(window, path));
         TabPage *tab = currentTab(window);
         QVERIFY(tab);
         QCOMPARE(tab->path(), path);
@@ -840,9 +841,9 @@ private slots:
         const QPointer<MainWindow> other(manager.createWindow());
         showForLayout(*host);
         showForLayout(*other);
-        QVERIFY(host->openFile(source, false, -1, true,
-                               prompt == QStringLiteral("password") ? QStringLiteral("secret")
-                                                                    : QString()));
+        QVERIFY(testing::openAndWait(*host, source, false, -1, true,
+                                     prompt == QStringLiteral("password") ? QStringLiteral("secret")
+                                                                          : QString()));
         TabPage *tab = currentTab(*host);
         QVERIFY(tab);
         if (prompt == QStringLiteral("password"))
@@ -894,7 +895,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(source));
+        QVERIFY(testing::openAndWait(window, source));
         TabPage *tab = currentTab(window);
         QVERIFY(tab);
         job::testing::holdWhen([folder, splitPages, writes = 0](
@@ -911,12 +912,16 @@ private slots:
             rotate(window, output);
         }
         QTRY_COMPARE(job::testing::held(), 1);
-        answers_ << QMessageBox::Ok;
-        QVERIFY(!window.openFile(output));
-        QCOMPARE(window.tabCount(), 1);
-        QVERIFY(told_.last().contains(TabPage::pathBeingWrittenError()));
+        QVERIFY(window.openFile(output));
+        auto *pending = currentTab(window);
+        QVERIFY(pending && pending != tab);
+        QTRY_VERIFY(!pending->isLoading());
+        QCOMPARE(window.tabCount(), 2);
+        QCOMPARE(pending->findChild<QLabel *>(QStringLiteral("documentLoadStatus"))->text(),
+                 TabPage::pathBeingWrittenError());
         tab->stopWaiting();
-        QVERIFY(window.openFile(output)); // canceled writer releases admission at once
+        QTest::mouseClick(pending->findChild<QPushButton *>(QStringLiteral("retryDocumentLoad")), Qt::LeftButton);
+        QTRY_VERIFY(pending->isLoaded()); // canceled writer releases admission at once
         QCOMPARE(window.tabCount(), 2);
         job::testing::release();
         QTRY_COMPARE(job::testing::held(), 0);
@@ -937,7 +942,7 @@ private slots:
         WindowManager manager;
         MainWindow *host = manager.createWindow();
         showForLayout(*host);
-        QVERIFY(host->openFile(source));
+        QVERIFY(testing::openAndWait(*host, source));
         TabPage *busy = currentTab(*host);
         QSignalSpy finished(busy, &TabPage::operationFinished);
         holdAt(job::Step::Reading, source);
@@ -945,7 +950,7 @@ private slots:
         QTRY_COMPARE(job::testing::held(), 1);
         MainWindow *editor = manager.createWindow();
         showForLayout(*editor);
-        QVERIFY(editor->openFile(output));
+        QVERIFY(testing::openAndWait(*editor, output));
         QVERIFY(currentTab(*editor)->viewer()->annotModel()->addTextNote(
                     0, {50, 50}, Qt::yellow, {}, QStringLiteral("Saved during Split")) >= 0);
         QVERIFY(QMetaObject::invokeMethod(editor, "saveMeasurements"));
@@ -976,8 +981,8 @@ private slots:
         WindowManager manager;
         MainWindow *first = manager.createWindow();
         QVERIFY(QTest::qWaitForWindowExposed(first));
-        QVERIFY(first->openFile(otherPath));
-        QVERIFY(first->openFile(busyPath));
+        QVERIFY(mervin::testing::openAndWait(*first, otherPath));
+        QVERIFY(mervin::testing::openAndWait(*first, busyPath));
         TabPage *busy = currentTab(*first);
         QVERIFY(busy);
         holdAt(job::Step::Writing, folder);
@@ -1007,7 +1012,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(path));
+        QVERIFY(mervin::testing::openAndWait(window, path));
         const QPointer<TabPage> tab(currentTab(window));
         QVERIFY(tab);
         connect(tab, &TabPage::operationFinished, &window, [&window](bool completed) {
@@ -1036,7 +1041,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         const QPointer<TabPage> tab(currentTab(window));
         QVERIFY(tab);
         connect(tab, &TabPage::stateChanged, &window, [&window, tab] {
@@ -1066,7 +1071,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         const QPointer<TabPage> tab(currentTab(window));
         QVERIFY(tab);
         connect(tab, &TabPage::stateChanged, &window, [&window, tab] {
@@ -1100,7 +1105,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(path));
+        QVERIFY(mervin::testing::openAndWait(window, path));
         TabPage *tab = currentTab(window);
         QVERIFY(tab);
         holdAt(job::Step::Writing, folder);
@@ -1145,7 +1150,7 @@ private slots:
         WindowManager manager;
         MainWindow *host = manager.createWindow();
         showForLayout(*host);
-        QVERIFY(host->openFile(path));
+        QVERIFY(mervin::testing::openAndWait(*host, path));
         const QPointer<TabPage> tab(currentTab(*host));
         QVERIFY(tab);
         if (intent != QStringLiteral("quit"))
@@ -1161,7 +1166,7 @@ private slots:
             QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), laterPath));
             MainWindow *later = manager.createWindow();
             showForLayout(*later);
-            QVERIFY(later->openFile(laterPath));
+            QVERIFY(mervin::testing::openAndWait(*later, laterPath));
             QVERIFY(currentTab(*later)->viewer()->annotModel()->addTextNote(
                         0, {50, 50}, Qt::yellow, {}, QStringLiteral("Kept")) >= 0);
         }
@@ -1198,7 +1203,7 @@ private slots:
         RenderEngine engine;
         auto host = std::make_unique<MainWindow>(&engine, nullptr);
         showForLayout(*host);
-        QVERIFY(host->openFile(path));
+        QVERIFY(mervin::testing::openAndWait(*host, path));
         TabPage *tab = currentTab(*host);
         QVERIFY(tab);
         QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {50, 50}, Qt::yellow, {},

@@ -1,3 +1,4 @@
+#include "TestWaits.h"
 #include "app/WindowManager.h"
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
@@ -202,7 +203,7 @@ private slots:
     {
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         ViewerWidget *viewer = window.findChild<TabPage *>()->viewer();
         viewer->setScale(1.75);
         QCOMPARE(viewer->zoomMode(), ViewerWidget::ZoomMode::Custom);
@@ -281,7 +282,7 @@ private slots:
         QVERIFY(!pageButton->isEnabled());
         QVERIFY(!widthButton->isEnabled());
 
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
         auto *viewer = tab->viewer();
@@ -333,7 +334,7 @@ private slots:
         window.setAttribute(Qt::WA_DontShowOnScreen);
         window.resize(900, 700);
         window.show(); // laid out, but never on screen
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF))); // 4 pages
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF))); // 4 pages
         ViewerWidget *viewer = window.findChild<TabPage *>()->viewer();
         QTRY_VERIFY(viewer->viewport()->height() > 200);
         viewer->setScale(0.3); // several pages on screen at once
@@ -419,7 +420,7 @@ private slots:
         window.setAttribute(Qt::WA_DontShowOnScreen);
         window.resize(900, 700);
         window.show(); // laid out, but never on screen
-        QVERIFY(window.openFile(clicked));
+        QVERIFY(mervin::testing::openAndWait(window, clicked));
         ViewerWidget *viewer = window.findChild<TabPage *>()->viewer();
         QTRY_VERIFY(viewer->viewport()->height() > 200);
         QPoint onPage(-1, -1);
@@ -493,7 +494,7 @@ private slots:
         QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
-        QVERIFY(window.openFile(path));
+        QVERIFY(mervin::testing::openAndWait(window, path));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
 
@@ -546,7 +547,7 @@ private slots:
         QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), resolved));
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
-        QVERIFY(window.openFile(original));
+        QVERIFY(mervin::testing::openAndWait(window, original));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
         QVERIFY(tab->viewer()->annotModel()->addTextNote(
@@ -600,7 +601,7 @@ private slots:
         MainWindow window(&engine, nullptr);
         window.setAttribute(Qt::WA_DontShowOnScreen);
         window.show();
-        QVERIFY(window.openFile(path));
+        QVERIFY(mervin::testing::openAndWait(window, path));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
         const auto action = [&](QKeySequence::StandardKey key) -> QAction * {
@@ -664,7 +665,7 @@ private slots:
         MainWindow window(&engine, nullptr);
         window.setAttribute(Qt::WA_DontShowOnScreen);
         window.show();
-        QVERIFY(window.openFile(path));
+        QVERIFY(mervin::testing::openAndWait(window, path));
         std::atomic<bool> held{true};
         mervin::TessdataManager::runInFolder([&held] {
             for (int i = 0; held.load() && i < 2000; ++i)
@@ -684,7 +685,7 @@ private slots:
     {
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
         auto *model = tab->viewer()->annotModel();
@@ -713,7 +714,7 @@ private slots:
             QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
-        QVERIFY(window.openFile(edited));
+        QVERIFY(mervin::testing::openAndWait(window, edited));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
         QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {50, 50}, Qt::yellow, {}, "pending") >= 0);
@@ -751,12 +752,12 @@ private slots:
             QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
-        QVERIFY(window.openFile(edited));
+        QVERIFY(mervin::testing::openAndWait(window, edited));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
         QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {50, 50}, Qt::yellow, {}, "pending") >= 0);
-        QVERIFY(window.openFile(second));
-        QVERIFY(window.openFile(third));
+        QVERIFY(mervin::testing::openAndWait(window, second));
+        QVERIFY(mervin::testing::openAndWait(window, third));
 
         // A staged restore opens its tabs lazily, in their saved place.
         dialogs_.stop();
@@ -793,11 +794,11 @@ private slots:
             QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
-        QVERIFY(window.openFile(edited));
+        QVERIFY(mervin::testing::openAndWait(window, edited));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
         QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {50, 50}, Qt::yellow, {}, "pending") >= 0);
-        QVERIFY(window.openFile(other));
+        QVERIFY(mervin::testing::openAndWait(window, other));
 
         dialogs_.stop();
         QStringList asked;
@@ -833,8 +834,8 @@ private slots:
             QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
         WindowManager manager;
         MainWindow *window = manager.createWindow();
-        QVERIFY(window->openFile(first));
-        QVERIFY(window->openFile(clicked));
+        QVERIFY(mervin::testing::openAndWait(*window, first));
+        QVERIFY(mervin::testing::openAndWait(*window, clicked));
         auto *bar = window->findChild<QTabBar *>(QStringLiteral("docTabBar"));
         QVERIFY(bar);
         QCOMPARE(bar->tabText(1), QStringLiteral("clicked.pdf"));
@@ -882,8 +883,8 @@ private slots:
             QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
         WindowManager manager;
         MainWindow *window = manager.createWindow();
-        QVERIFY(window->openFile(first));
-        QVERIFY(window->openFile(dragged));
+        QVERIFY(mervin::testing::openAndWait(*window, first));
+        QVERIFY(mervin::testing::openAndWait(*window, dragged));
         QVERIFY(QTest::qWaitForWindowExposed(window));
         auto *bar = window->findChild<DetachableTabBar *>(QStringLiteral("docTabBar"));
         QVERIFY(bar);
@@ -936,8 +937,8 @@ private slots:
         WindowManager manager;
         MainWindow *first = manager.createWindow();
         MainWindow *second = manager.createWindow();
-        QVERIFY(first->openFile(firstPath));
-        QVERIFY(second->openFile(secondPath));
+        QVERIFY(mervin::testing::openAndWait(*first, firstPath));
+        QVERIFY(mervin::testing::openAndWait(*second, secondPath));
         auto *firstTab = first->findChild<TabPage *>();
         auto *secondTab = second->findChild<TabPage *>();
         QVERIFY(firstTab);
@@ -983,7 +984,7 @@ private slots:
         WindowManager manager;
         MainWindow *documents = manager.createWindow();
         MainWindow *later = manager.createWindow();
-        QVERIFY(documents->openFile(path));
+        QVERIFY(mervin::testing::openAndWait(*documents, path));
         QVERIFY(QTest::qWaitForWindowExposed(documents));
         QVERIFY(QTest::qWaitForWindowExposed(later));
 
@@ -1024,7 +1025,7 @@ private slots:
         WindowManager manager;
         MainWindow *window = manager.createWindow();
         QCOMPARE(restoredSession(manager), QStringList{open});
-        QVERIFY(window->openFile(open));
+        QVERIFY(mervin::testing::openAndWait(*window, open));
         SessionStore onDisk;
         QVERIFY(loadSaved(onDisk));
         QCOMPARE(onDisk.paths(), QStringList{open});
@@ -1034,7 +1035,7 @@ private slots:
         QCOMPARE(onDisk.unavailable().first().since, QDate::currentDate());
 
         // Every later save keeps it: opening and closing other documents.
-        QVERIFY(window->openFile(other));
+        QVERIFY(mervin::testing::openAndWait(*window, other));
         QVERIFY(QMetaObject::invokeMethod(window, "closeTab", Q_ARG(int, 1)));
         QVERIFY(loadSaved(onDisk));
         QCOMPARE(onDisk.paths(), QStringList{open});
@@ -1076,7 +1077,7 @@ private slots:
         WindowManager manager;
         MainWindow *window = manager.createWindow();
         QCOMPARE(restoredSession(manager), QStringList{open});
-        QVERIFY(window->openFile(open));
+        QVERIFY(mervin::testing::openAndWait(*window, open));
         // The file system the document is on is recorded once its check answers.
         const auto recentMount = [&manager](const QString &file) {
             for (const RecentEntry &e : manager.recentEntries())
@@ -1162,12 +1163,12 @@ private slots:
 
         WindowManager manager;
         MainWindow *window = manager.createWindow();
-        QVERIFY(window->openFile(gone));
-        QVERIFY(window->openFile(gone, /*allowDuplicate=*/true)); // a second view
-        QVERIFY(window->openFile(kept));
-        QVERIFY(window->openFile(inFolder));
+        QVERIFY(mervin::testing::openAndWait(*window, gone));
+        QVERIFY(mervin::testing::openAndWait(*window, gone, /*allowDuplicate=*/true)); // a second view
+        QVERIFY(mervin::testing::openAndWait(*window, kept));
+        QVERIFY(mervin::testing::openAndWait(*window, inFolder));
         QVERIFY(window->openFile(away, false, -1, /*makeCurrent=*/false, {}, /*lazy=*/true));
-        QVERIFY(window->openFile(shown));
+        QVERIFY(mervin::testing::openAndWait(*window, shown));
         unloadBackgroundTabs(*window);
         const QStringList before{QStringLiteral("attachment.pdf"), QStringLiteral("attachment.pdf"),
                                  QStringLiteral("kept.pdf"), QStringLiteral("inside.pdf"),
@@ -1225,8 +1226,8 @@ private slots:
         WindowManager manager;
         MainWindow *window = manager.createWindow();
         QVERIFY(window->openFile(away, false, -1, true, {}, /*lazy=*/true));
-        QVERIFY(window->openFile(gone));
-        QVERIFY(window->openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(*window, gone));
+        QVERIFY(mervin::testing::openAndWait(*window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         unloadBackgroundTabs(*window);
         QVERIFY(QFile::remove(gone));
         manager.closeRemovedTabs();
@@ -1248,7 +1249,7 @@ private slots:
         WindowManager manager;
         MainWindow *window = manager.createWindow();
         manager.holdSession(true);
-        QVERIFY(window->openFile(path));
+        QVERIFY(mervin::testing::openAndWait(*window, path));
         SessionStore onDisk;
         QVERIFY(loadSaved(onDisk));
         QVERIFY(onDisk.paths().isEmpty());
@@ -1268,7 +1269,7 @@ private slots:
         QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
         WindowManager manager;
         QPointer<MainWindow> window = manager.createWindow();
-        QVERIFY(window->openFile(path));
+        QVERIFY(mervin::testing::openAndWait(*window, path));
         // The file's mount is recorded once its check answers, which saves the session.
         QVERIFY(manager.fileProbe()->isChecking({path, {}}));
         delete window.data();
@@ -1291,8 +1292,8 @@ private slots:
             QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
         WindowManager manager;
         MainWindow *window = manager.createWindow();
-        QVERIFY(window->openFile(moved));
-        QVERIFY(window->openFile(other));
+        QVERIFY(mervin::testing::openAndWait(*window, moved));
+        QVERIFY(mervin::testing::openAndWait(*window, other));
         SessionStore onDisk;
 #ifndef Q_OS_WIN
         // Windows records no mounts. Elsewhere the session saves the mount once the
@@ -1330,8 +1331,8 @@ private slots:
 
         WindowManager manager;
         MainWindow *documents = manager.createWindow();
-        QVERIFY(documents->openFile(gone));
-        QVERIFY(documents->openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(*documents, gone));
+        QVERIFY(mervin::testing::openAndWait(*documents, QStringLiteral(MERVIN_FIXTURE_PDF)));
         unloadBackgroundTabs(*documents);
         MainWindow *other = manager.createWindow();
         other->activateWindow();
@@ -1356,8 +1357,8 @@ private slots:
 
         WindowManager manager;
         MainWindow *window = manager.createWindow();
-        QVERIFY(window->openFile(gone));
-        QVERIFY(window->openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(*window, gone));
+        QVERIFY(mervin::testing::openAndWait(*window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         unloadBackgroundTabs(*window);
         auto *tabs = window->findChild<QTabWidget *>();
         QVERIFY(tabs);
@@ -1389,13 +1390,13 @@ private slots:
 
         WindowManager manager;
         MainWindow *window = manager.createWindow();
-        QVERIFY(window->openFile(edited));
+        QVERIFY(mervin::testing::openAndWait(*window, edited));
         auto *editedTab = window->findChild<TabPage *>();
         QVERIFY(editedTab);
         QVERIFY(editedTab->viewer()->annotModel()->addTextNote(
                     0, {40, 40}, Qt::yellow, {}, QStringLiteral("Kept edit")) >= 0);
-        QVERIFY(window->openFile(clean));
-        QVERIFY(window->openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(*window, clean));
+        QVERIFY(mervin::testing::openAndWait(*window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         unloadBackgroundTabs(*window);
         QVERIFY(editedTab->isSuspended());
         QVERIFY(editedTab->hasUnsavedEdits());
@@ -1431,9 +1432,9 @@ private slots:
 
         WindowManager manager;
         MainWindow *window = manager.createWindow();
-        QVERIFY(window->openFile(gone));
-        QVERIFY(window->openFile(back));
-        QVERIFY(window->openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(*window, gone));
+        QVERIFY(mervin::testing::openAndWait(*window, back));
+        QVERIFY(mervin::testing::openAndWait(*window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         unloadBackgroundTabs(*window);
         QVERIFY(QFile::remove(gone));
         QVERIFY(QFile::remove(back));
@@ -1461,7 +1462,7 @@ private slots:
     {
         WindowManager manager;
         MainWindow *window = manager.createWindow();
-        QVERIFY(window->openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(*window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         QVERIFY(QTest::qWaitForWindowExposed(window));
         QStringList ran;
         const auto ask = [&](const QString &name) {
@@ -1527,7 +1528,7 @@ private slots:
     {
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
         QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {50, 50}, Qt::yellow, {}, "pending") >= 0);
@@ -1570,7 +1571,7 @@ private slots:
         QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), gone));
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         QVERIFY(window.openFile(gone, false, -1, /*makeCurrent=*/false, {}, /*lazy=*/true));
         QVERIFY(QFile::remove(gone));
 
@@ -1584,8 +1585,7 @@ private slots:
         QCOMPARE(tabFiles(window), QStringList{QStringLiteral("properties.pdf")});
     }
 
-    // Duplicating a tab whose file is gone says why it failed and leaves no empty
-    // window behind.
+    // A failed Duplicate closes its empty window without a modal warning.
     void failedDuplicateLeavesNoEmptyWindow()
     {
         QTemporaryDir files;
@@ -1599,16 +1599,23 @@ private slots:
         };
         WindowManager manager;
         MainWindow *window = manager.createWindow();
-        QVERIFY(window->openFile(path));
+        QVERIFY(mervin::testing::openAndWait(*window, path));
         manager.duplicateToNewWindow(path, {}, {}, {});
-        QCOMPARE(windows(), 2);
+        QTRY_COMPARE(windows(), 2);
+        QPointer<TabPage> duplicate;
+        for (QWidget *widget : QApplication::topLevelWidgets())
+            if (auto *other = qobject_cast<MainWindow *>(widget); other && other != window)
+                duplicate = other->findChild<TabPage *>();
+        QVERIFY(duplicate);
+        QTRY_VERIFY_WITH_TIMEOUT(duplicate && duplicate->isLoaded(), 10000);
 
         // A path with no file, as for an unloaded tab whose file was deleted. The
         // open tabs keep their file open, so Windows would not let the test delete it.
-        answers_.append(QMessageBox::Ok); // "Could not open"
         manager.duplicateToNewWindow(files.filePath(QStringLiteral("gone.pdf")), {}, {}, {});
-        QCOMPARE(clicked_.size(), 1);
         QTRY_COMPARE(windows(), 2);
+        QVERIFY(duplicate && duplicate->isLoaded());
+        QVERIFY(clicked_.isEmpty());
+        QVERIFY(unexpectedDialogs_.isEmpty());
     }
 
     void savingSuspendedEditsRequiresConfirmingExternalChanges()
@@ -1618,7 +1625,7 @@ private slots:
         QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
-        QVERIFY(window.openFile(path));
+        QVERIFY(mervin::testing::openAndWait(window, path));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
         QVERIFY(tab->viewer()->annotModel()->addTextNote(
@@ -1659,7 +1666,7 @@ private slots:
                  MeasureExport::Status::Ok);
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
-        QVERIFY(window.openFile(path));
+        QVERIFY(mervin::testing::openAndWait(window, path));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
         auto *viewer = tab->viewer();
@@ -1684,7 +1691,7 @@ private slots:
         QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
-        QVERIFY(window.openFile(path));
+        QVERIFY(mervin::testing::openAndWait(window, path));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
         QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {}, "retained") >= 0);
