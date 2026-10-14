@@ -1661,6 +1661,7 @@ private slots:
 
         answers_.append(QMessageBox::Cancel);
         QVERIFY(QMetaObject::invokeMethod(&window, "saveMeasurements"));
+        QTRY_VERIFY(!tab->isBusy());
         QVERIFY(tab->hasUnsavedEdits());
         QVERIFY(changed.open(QIODevice::ReadOnly));
         QCOMPARE(changed.readAll(), externalVersion);
@@ -1668,7 +1669,7 @@ private slots:
 
         answers_.append(QMessageBox::Yes);
         QVERIFY(QMetaObject::invokeMethod(&window, "saveMeasurements"));
-        QVERIFY(!tab->hasUnsavedEdits());
+        QTRY_VERIFY(!tab->hasUnsavedEdits());
         auto saved = engine.openDocument(path);
         QVERIFY(saved);
         const auto notes = AnnotModel(*saved).pageAnnots(0);
@@ -1694,7 +1695,7 @@ private slots:
         viewer->clearMeasurements();
         QVERIFY(viewer->hasMeasurementEdits());
         QVERIFY(QMetaObject::invokeMethod(&window, "saveMeasurements"));
-        QVERIFY(!viewer->hasUnsavedEdits());
+        QTRY_VERIFY(!tab->isBusy() && !viewer->hasUnsavedEdits());
         auto blob = MeasureExport::readMervinBlob(path);
         QVERIFY(blob);
         MeasureDoc saved;
@@ -1723,7 +1724,7 @@ private slots:
             answers_.append(QMessageBox::Yes);
         answers_.append(QMessageBox::Ok);
         QVERIFY(QMetaObject::invokeMethod(&window, "saveMeasurements"));
-        QVERIFY(tab->hasRecoverySnapshot());
+        QTRY_VERIFY(tab->hasRecoverySnapshot() && tab->isUsable());
         QCOMPARE(tab->path(), path);
         QVERIFY(tab->viewer()->document());
         QCOMPARE(tab->viewer()->annotModel()->pageAnnots(0).size(), 1u);
@@ -1731,7 +1732,7 @@ private slots:
         if (tab->sourceChangedOnDisk())
             answers_.append(QMessageBox::Yes);
         QVERIFY(QMetaObject::invokeMethod(&window, "saveMeasurements"));
-        QVERIFY(!tab->hasRecoverySnapshot());
+        QTRY_VERIFY(!tab->hasRecoverySnapshot());
         auto saved = engine.openDocument(path);
         QVERIFY(saved);
         QCOMPARE(AnnotModel(*saved).pageAnnots(0)[0].contents, QStringLiteral("retained"));

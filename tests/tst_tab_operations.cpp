@@ -1452,7 +1452,7 @@ private slots:
         QVERIFY(currentTab(*editor)->viewer()->annotModel()->addTextNote(
                     0, {50, 50}, Qt::yellow, {}, QStringLiteral("Saved during Split")) >= 0);
         QVERIFY(QMetaObject::invokeMethod(editor, "saveMeasurements"));
-        QVERIFY(!currentTab(*editor)->hasUnsavedEdits());
+        QTRY_VERIFY_WITH_TIMEOUT(!currentTab(*editor)->hasUnsavedEdits(), 10000);
         answers_ << QMessageBox::Ok;
         job::testing::release();
         QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 10000);
@@ -1796,7 +1796,12 @@ private slots:
                 >= 0);
         // Held before the tool opens the file, which an in-place save on Windows could
         // not replace while it is open.
-        holdAt(job::Step::Reading, path);
+        job::testing::holdWhen([path, first = true](job::Step step, const QString &file) mutable {
+            const bool hold = first && step == job::Step::Reading && file == path;
+            if (hold)
+                first = false;
+            return hold;
+        });
         QVERIFY(appfiles::flush(10000));
         const int tasks = background::running();
         rotate(*host, out);

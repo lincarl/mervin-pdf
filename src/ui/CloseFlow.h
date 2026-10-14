@@ -3,6 +3,7 @@
 #include <QList>
 #include <QObject>
 #include <QPointer>
+#include "ui/TabPage.h"
 
 #include <optional>
 
@@ -43,8 +44,9 @@ private:
         QPointer<TabPage> tab;
         std::optional<quint64> accepted;
         bool save = false;
+        bool saving = false;
     };
-    enum class WaitReason { None, Operation, ResumeForSave, DocumentReleaseForSave };
+    enum class WaitReason { None, Operation, DocumentReleaseForSave, Save };
 
     // Captures the initial close scope before acquiring any tab claims.
     CloseFlow(WindowManager *manager, MainWindow *window, Intent intent,
@@ -72,6 +74,7 @@ private:
     void wait(Entry &entry, WaitReason reason);
     // Disconnects the current prerequisite and removes its close-specific Stop offer.
     void clearWait();
+    void finishSave(TabPage *tab, TabPage::SaveResult result);
     // Selects the waiting tab and restores its current window from the tray or minimized state.
     void attention(TabPage *tab);
     // Applies approved closes and requests exit or relaunch only after final approval.

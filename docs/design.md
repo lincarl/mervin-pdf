@@ -762,11 +762,35 @@ and manual scales. An empty measurement set is written too, so deleting the fina
 measurement persists. Measurement dirty state compares serialized data against its
 saved baseline.
 
-In-place Save closes the source handle and replaces it through `QSaveFile`, with
-direct-write fallback disabled. A failed replacement opens the staged edited snapshot
-under the original logical path; it remains dirty and can be saved again. If recovery
-also fails, the snapshot is retained on disk and its location is reported. Saving a
-file open in another view requires closing that view or choosing Save as Copy.
+In-place Save captures active editors, the full viewer state and measurements on
+the UI thread, then freezes the tab behind its still picture. A worker checks the
+original's source stamp and queues the existing changed-file question in the tab's
+current window when needed. Save reserves the destination using the tab's stable
+admission identity, so another admitted view or a new open cannot acquire edits
+that this replacement would overwrite. Closing and reopening another tab with the
+same path cannot impersonate the captured admission.
+
+For a loaded document, the worker creates a private edited PDF and commits its
+recovery manifest before the UI transfers the old document. The worker closes that
+document before replacing the original through `QSaveFile`, with direct-write
+fallback disabled, then reopens the result. Success restores the full viewer state
+and clears the recovery files. Failure or Stop loads the private copy under the
+original logical path and keeps it unsaved. A failed recovery load keeps its
+manifest and Retry placeholder. Save from an unloaded edited tab copies its
+existing recovery PDF directly, without opening a PDF document.
+
+Stop during a live snapshot keeps the trapped notice until the document Hold is
+released. A stopped replacement that already began its rename can still finish.
+A new Save waits on the earlier worker before replacing its recovery input, then
+checks the original's source stamp again. The changed-file question also applies
+if that earlier rename changed the original. Close and quit accept only explicit
+Save success. Failure, Stop or a canceled question preserves the tab's edits.
+Queued questions and Save reports follow a moved tab even when its previous
+window closes and discards its queue. Stopped or superseded attempts cannot show
+a late question, warning or Saved status. If replacing the original succeeded but
+reopening failed, the warning reports that the file was saved even while the
+recovery copy is still loading. It gives that retained copy's path without
+claiming that the copy is already open.
 
 Save as Copy and measured export capture the measurement data, password, document
 lifetime and path identities before starting one background tab operation. The worker
@@ -840,7 +864,7 @@ The files are:
 | `recent.json` | recent paths, timestamps, page counts, and favourites |
 | `viewstate.json` | page, zoom, rotation, and scroll state per path |
 | `session.json` | currently open files, active document, and files kept while their drive is unavailable |
-| `recovery/` | edited document snapshots and metadata for unloaded tabs |
+| `recovery/` | edited document snapshots and metadata for unloaded tabs and in-place Save |
 | `tessdata/` | writable OCR language models |
 | `downloads/` | PDF downloads when no normal download directory is available or a profile is active |
 
@@ -867,6 +891,16 @@ the first-run window keep their question open when a save fails, so they wait up
 that lands later and counts as saved. The values in effect are the running
 process's, so an edit made to `config.toml` by anything else while Mervin runs is
 overwritten by its next save.
+
+In-place Save writes its private PDF and version-1 manifest on the Save worker.
+It sets owner-only permissions and commits the manifest through guarded
+`QSaveFile` before releasing the original document. This write must finish before
+Save proceeds, so it does not use the application's serial background write
+queue. The UI claims the manifest only after committing it. Stop before adoption
+removes the job's PDF and manifest after its handles close. After adoption, the
+tab owns them until Save succeeds or the user closes the tab. An abandoned loader
+or an earlier stopped writer can still read a recovery input, so removal waits
+for both readers and writers without blocking the UI.
 
 Settings saves merge only fields changed since that window's last load/save, preventing
 stale windows from overwriting newer preferences, and commit through `QSaveFile`.

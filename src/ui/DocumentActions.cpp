@@ -41,7 +41,6 @@
 #include <QScopeGuard>
 #include <QStatusBar>
 #include <QTemporaryDir>
-#include <QTemporaryFile>
 #include <QTimer>
 #include <QToolButton>
 #include <QWidgetAction>
@@ -505,115 +504,140 @@ std::vector<mervin::RenderMeasurement> MainWindow::collectRenderMeasurements(Vie
 
 void MainWindow::saveMeasurements()
 {
-    saveTab(currentTab());
+    saveTab(currentTab(), {});
 }
 
-bool MainWindow::saveTab(TabPage *t)
+void MainWindow::saveTab(TabPage *tab, std::function<void(TabPage::SaveResult)> completion)
 {
-    const OperationScope operation(this);
-    // A busy tab's file may be read or replaced by its operation.
-    if (!t || t->isBusy())
-        return false;
-    // An unloaded tab keeps its edits in a recovery copy. Without one there is
-    // nothing to save, so do not load the document, which can stall on a network
-    // path or fail for a file that is gone.
-    if (!t->isLoaded() && !t->hasUnsavedEdits())
-        return true;
-    QString openError;
-    bool needsPassword = false;
-    if (!t->isLoaded() && !t->resume(&openError, &needsPassword)) {
-        while (needsPassword) {
-            bool accepted = false;
-            const QString password = QInputDialog::getText(
-                this, tr("Password required"),
-                //: %1 is the file name.
-                tr("Enter the password for %1.").arg(t->tabTitle()),
-                QLineEdit::Password, {}, &accepted);
-            if (!accepted)
-                return false;
-            t->setPassword(password);
-            if (t->resume(&openError, &needsPassword))
-                break;
-        }
-        if (!t->isLoaded()) {
-            //: Title of messages about saving the document.
-            QMessageBox::warning(this, tr("Save"), openError);
-            return false;
-        }
+    if (!tab || tab->isBusy()) {
+        if (completion)
+            completion(TabPage::SaveResult::Failed);
+        return;
     }
-    ViewerWidget *v = t->viewer();
-    v->commitActiveFormEditor();
-    v->commitActiveAnnotEditor();
-    if (!t->hasUnsavedEdits())
-        return true;
-    if (wm_ && wm_->openTabPaths().count(t->canonicalPath()) > 1) {
-        QMessageBox::warning(this, tr("Save"),
-                             tr("Close the other view of this file before saving, or save a copy."));
-        return false;
-    }
+    const QPointer<TabPage> page(tab);
+    TabPage::SaveCallbacks callbacks;
+    callbacks.changed = [page](auto valid, auto answer) {
+        askSaveReplacement(page, std::move(valid), std::move(answer));
+    };
+    callbacks.finished = [page, completion = std::move(completion)](const auto &result) {
+        if (completion)
+            completion(result.result);
+        if (page)
+            deliverSave(page, result);
+    };
+    tab->startSave(std::move(callbacks));
+}
 
-    if (t->sourceChangedOnDisk()
-        && QMessageBox::question(this, tr("File changed"),
+void MainWindow::askSaveReplacement(QPointer<TabPage> page, std::function<bool()> valid,
+                                     std::function<void(bool)> answer)
+{
+    auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+    if (!window || !valid()) {
+        answer(false);
+        return;
+    }
+    // A moved tab survives its old window, whose pending queue is discarded.
+    const auto discarded = connect(window, &QObject::destroyed, page, [page, valid, answer] {
+        QTimer::singleShot(0, page, [page, valid, answer] {
+            if (page && valid())
+                askSaveReplacement(page, valid, answer);
+        });
+    });
+    window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window),
+                               valid = std::move(valid), answer = std::move(answer), discarded] {
+        disconnect(discarded);
+        auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!current || !valid()) {
+            answer(false);
+            return;
+        }
+        if (current != owner) {
+            askSaveReplacement(page, valid, answer);
+            return;
+        }
+        if (current->hiddenToTray_) {
+            answer(false);
+            return;
+        }
+        const OperationScope operation(current);
+        const QPointer<QMessageBox> prompt(new QMessageBox(
+            QMessageBox::Question, tr("File changed"),
             //: %1 is the file name.
             tr("%1 changed on disk since it was opened. Replace it with your edited copy?")
-                .arg(t->tabTitle()),
-            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
-        return false;
-
-    QString snapshot;
-    {
-        QTemporaryFile stage(QFileInfo(t->path()).absolutePath()
-                             + QStringLiteral("/.mervin-save-XXXXXX.pdf"));
-        if (!stage.open()) {
-            QMessageBox::warning(this, tr("Save"), stage.errorString());
-            return false;
-        }
-        snapshot = stage.fileName();
-        stage.setAutoRemove(false);
-        // Destroy the handle before qpdf opens it; close() keeps it open internally.
-    }
-    bool retainSnapshot = false;
-    const auto cleanup = qScopeGuard([&] {
-        if (!retainSnapshot)
-            QFile::remove(snapshot);
+                .arg(page->tabTitle()),
+            QMessageBox::Yes | QMessageBox::Cancel, current));
+        prompt->setWindowModality(Qt::WindowModal);
+        prompt->setDefaultButton(QMessageBox::Cancel);
+        const bool replace = prompt->exec() == QMessageBox::Yes;
+        delete prompt.data();
+        answer(replace && valid() && page && page->window() == owner);
     });
-    QString error;
-    if (!mervin::DocumentOutput::snapshot(*v->document(), collectMeasureDoc(v),
-                                          snapshot, t->password(), &error)) {
-        QMessageBox::warning(this, tr("Save"), tr("Could not save:\n%1").arg(error));
-        return false;
-    }
-
-    const auto state = captureViewState(v);
-    const bool formMode = v->formMode();
-    const QString path = t->path();
-    clearDocumentSidebars();
-    t->detachDocument();
-    const bool saved = mervin::DocumentOutput::replace(snapshot, path, &error);
-    openError.clear();
-    if (!saved || !t->open(path, t->password(), &openError)) {
-        // Keep all edits editable and retain the staged file if recovery also fails.
-        retainSnapshot = true;
-        if (!t->recoverSnapshot(snapshot, &openError)) {
-            //: %1 is why saving failed (may be empty), %2 the path of the kept
-            //: copy, %3 why that copy could not be opened.
-            error = tr("%1\nEdited document retained at %2.\n%3").arg(error, snapshot, openError);
-        } else if (saved) {
-            error = tr("The file was saved, but could not be reopened. The edited copy remains open.");
-        }
-        applyViewStateToViewer(v, state);
-        updateForCurrentTab();
-        QMessageBox::warning(this, tr("Save"), error);
-        return false;
-    }
-    applyViewStateToViewer(v, state);
-    if (formMode && v->hasFormFields())
-        v->setFormMode(true);
-    updateForCurrentTab();
-    //: Status bar text. %1 is the saved file's path.
-    statusInfo_->setText(tr("Saved %1").arg(QDir::toNativeSeparators(path)));
-    return true;
 }
+
+void MainWindow::deliverSave(QPointer<TabPage> page, const TabPage::SaveCompletion &result)
+{
+    if (!page || page->saveGeneration() != result.generation)
+        return;
+    if (result.result == TabPage::SaveResult::Stopped
+        || result.result == TabPage::SaveResult::Canceled)
+        return;
+    auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+    if (!window)
+        return;
+    const auto discarded = connect(window, &QObject::destroyed, page, [page, result] {
+        QTimer::singleShot(0, page, [page, result] {
+            if (page)
+                deliverSave(page, result);
+        });
+    });
+    window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window), result, discarded] {
+        disconnect(discarded);
+        if (!page || page->saveGeneration() != result.generation)
+            return;
+        auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!current)
+            return;
+        if (current != owner) {
+            deliverSave(page, result);
+            return;
+        }
+        if (result.result == TabPage::SaveResult::Saved) {
+            if (!current->hiddenToTray_ && current->currentTab() == page) {
+                current->updateForCurrentTab();
+                //: Status bar text. %1 is the saved file's path.
+                if (owner && page && owner->currentTab() == page)
+                    owner->statusInfo_->setText(tr("Saved %1").arg(QDir::toNativeSeparators(page->path())));
+            }
+            return;
+        }
+        if (result.error.isEmpty())
+            return;
+        QString error;
+        if (result.originalSaved) {
+            //: The original file was replaced successfully, but reading it again
+            //: failed. The retained edited copy may still be loading for recovery.
+            error = tr("The file was saved, but could not be reopened.");
+        } else {
+            error = tr("Could not save:\n%1").arg(result.error);
+        }
+        if (result.originalSaved && page->isLoaded()) {
+            error = tr("The file was saved, but could not be reopened. The edited copy remains open.");
+        } else if (page->hasRecoverySnapshot()) {
+            //: %1 describes the Save or reopening result, %2 is the retained copy,
+            //: and %3 is a recovery error.
+            error = tr("%1\nEdited document retained at %2.\n%3")
+                .arg(error, QDir::toNativeSeparators(page->recoveryPath()), QString());
+        }
+        const OperationScope operation(current);
+        if (current->hiddenToTray_) {
+            if (current->wm_)
+                current->wm_->notifyInTray(tr("Save"), error);
+        } else {
+            tellInWindow(current, QMessageBox::Warning, tr("Save"), error);
+        }
+    });
+}
+
 
 int MainWindow::askClose(TabPage *tab)
 {

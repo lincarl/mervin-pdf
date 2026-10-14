@@ -30,6 +30,7 @@ namespace mervin {
 static_assert(FZ_LOCK_MAX <= 4, "the lock array is too small for MuPDF's FZ_LOCK_MAX");
 
 namespace {
+std::atomic<int> attemptedOpens{0};
 
 // Sized to MuPDF's FZ_LOCK_MAX (currently 3); 4 is a safe upper bound.
 using LockArray = std::array<std::mutex, 4>;
@@ -517,6 +518,11 @@ DocumentOpener::~DocumentOpener()
         fz_drop_context(ctx_);
 }
 
+int RenderEngine::testing::opens()
+{
+    return attemptedOpens.load();
+}
+
 std::unique_ptr<Document> DocumentOpener::open(const QString &path, const QString &password,
                                                QString *error, bool *needsPassword)
 {
@@ -528,6 +534,7 @@ std::unique_ptr<Document> RenderEngine::open(fz_context *ctx, std::shared_ptr<fz
                                              const QString &path, const QString &password,
                                              QString *error, bool *needsPassword)
 {
+    ++attemptedOpens;
     if (needsPassword)
         *needsPassword = false;
 

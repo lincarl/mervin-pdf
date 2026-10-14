@@ -1,10 +1,16 @@
 #include "render/ContentSearch.h"
+#include "io/JobContext.h"
+#include "recent/PathKey.h"
 
+#include <QFile>
 #include <QFileInfo>
 #include <QSignalSpy>
 #include <QString>
 #include <QStringList>
 #include <QTest>
+#include <QTemporaryDir>
+
+#include <memory>
 
 using mervin::ContentSearch;
 
@@ -27,6 +33,8 @@ private slots:
     void findsTermInRealPdf();
     void missesAbsentTerm();
     void replacedQueryRejectsQueuedResults();
+    void skipsTakenDestinations_data();
+    void skipsTakenDestinations();
 };
 
 namespace {
@@ -119,6 +127,69 @@ void TstContentSearch::replacedQueryRejectsQueuedResults()
     QCOMPARE(done[0][1].toInt(), 0);
     search.start({QStringLiteral(MERVIN_FIXTURE_PDF)}, "STANDARD");
     QTRY_COMPARE(hits.size(), 1);
+}
+
+void TstContentSearch::skipsTakenDestinations_data()
+{
+    QTest::addColumn<bool>("reserved");
+    QTest::addColumn<bool>("alias");
+    QTest::newRow("destination lock") << false << false;
+    QTest::newRow("output reservation") << true << false;
+#ifdef Q_OS_UNIX
+    QTest::newRow("aliased destination lock") << false << true;
+    QTest::newRow("aliased output reservation") << true << true;
+#endif
+}
+
+void TstContentSearch::skipsTakenDestinations()
+{
+    QFETCH(bool, reserved);
+    QFETCH(bool, alias);
+    QTemporaryDir files;
+    const QString source = files.filePath(QStringLiteral("matching.pdf"));
+    const QString alternate = files.filePath(QStringLiteral("alias.pdf"));
+    QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+    if (alias)
+        QVERIFY(QFile::link(source, alternate));
+    const QString path = alias ? alternate : source;
+    mervin::job::State writer;
+    const mervin::job::Scope scope(writer);
+    std::unique_ptr<mervin::job::DestinationLock> lock;
+    if (reserved) {
+        QVERIFY(mervin::job::reserveDestinations({mervin::fileKey(QFileInfo(source))}));
+    } else {
+        lock = std::make_unique<mervin::job::DestinationLock>(source);
+        QVERIFY(lock->owns());
+    }
+    ContentSearch search;
+    QSignalSpy hits(&search, &ContentSearch::hit);
+    QSignalSpy progress(&search, &ContentSearch::progress);
+    QSignalSpy done(&search, &ContentSearch::finished);
+    search.start({path}, QStringLiteral("STANDARD"));
+    QTRY_COMPARE(done.size(), 1);
+    QCOMPARE(hits.size(), 0);
+    QCOMPARE(progress.size(), 1);
+    QCOMPARE(progress[0][0].toInt(), 1);
+    QCOMPARE(progress[0][1].toInt(), 1);
+    QVERIFY(!done[0][0].toBool());
+    QCOMPARE(done[0][1].toInt(), 0);
+    QVERIFY(!search.isRunning());
+
+    lock.reset();
+    writer.stop();
+    done.clear();
+    progress.clear();
+    search.start({path}, QStringLiteral("STANDARD"));
+    QTRY_COMPARE(done.size(), 1);
+    QCOMPARE(hits.size(), 1);
+    QCOMPARE(hits[0][0].toString(), path);
+    QVERIFY(hits[0][1].toInt() >= 1);
+    QVERIFY(hits[0][2].toString().contains(QStringLiteral("STANDARD"), Qt::CaseInsensitive));
+    QCOMPARE(progress.size(), 1);
+    QCOMPARE(progress[0][0].toInt(), 1);
+    QCOMPARE(progress[0][1].toInt(), 1);
+    QVERIFY(!done[0][0].toBool());
+    QCOMPARE(done[0][1].toInt(), 1);
 }
 
 QTEST_GUILESS_MAIN(TstContentSearch)

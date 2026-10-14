@@ -105,6 +105,7 @@ CloseFlow *CloseFlow::start(WindowManager *manager, MainWindow *window, Intent i
                     if (Entry *next = flow->entry(item.tab)) {
                         next->accepted = item.accepted;
                         next->save = item.save;
+                        next->saving = item.saving;
                     }
             existing->cancel();
         }
@@ -283,7 +284,7 @@ void CloseFlow::wait(Entry &item, WaitReason reason)
         if (waiting_ == WaitReason::Operation) {
             clearWait();
             post();
-        } else if (waiting_ == WaitReason::ResumeForSave
+        } else if (waiting_ == WaitReason::Save
                    || waiting_ == WaitReason::DocumentReleaseForSave) {
             cancel();
         }
@@ -293,6 +294,27 @@ void CloseFlow::wait(Entry &item, WaitReason reason)
     attention(tab);
     if (self && !ended_ && tab)
         tab->showWaitImmediately(reason == WaitReason::DocumentReleaseForSave);
+}
+
+void CloseFlow::finishSave(TabPage *tab, TabPage::SaveResult result)
+{
+    if (ended_ || !tab || !includes(tab))
+        return;
+    Entry *item = entry(tab);
+    if (!item || !item->saving)
+        return;
+    if (result != TabPage::SaveResult::Saved) {
+        cancel();
+        return;
+    }
+    item->save = false;
+    item->saving = false;
+    // A direct unfreeze observer can introduce another edit before completion.
+    // Ask again rather than accepting changes this Save did not write.
+    item->accepted = tab->hasUnsavedEdits() ? std::nullopt
+        : std::optional<quint64>(tab->editGeneration());
+    clearWait();
+    post(tab);
 }
 
 void CloseFlow::clearWait()
@@ -342,14 +364,9 @@ void CloseFlow::advance(MainWindow *readyWindow)
             if ((waiting_ == WaitReason::Operation || waiting_ == WaitReason::DocumentReleaseForSave)
                 && tab->isBusy())
                 return;
-            if (waiting_ == WaitReason::ResumeForSave) {
-                if (tab->isLoading())
+            if (waiting_ == WaitReason::Save)
+                if (const Entry *item = entry(tab); item && item->saving)
                     return;
-                if (!tab->isLoaded()) {
-                    cancel();
-                    return;
-                }
-            }
         }
         clearWait();
     }
@@ -446,38 +463,27 @@ void CloseFlow::advance(MainWindow *readyWindow)
             return;
         }
         if (item.save) {
+            if (item.saving) {
+                wait(item, WaitReason::Save);
+                return;
+            }
             if (tab->isBusy()) {
                 wait(item, WaitReason::DocumentReleaseForSave);
                 return;
             }
-            if (!tab->isLoaded()) {
-                const QPointer<CloseFlow> self(this);
-                tab->retryLoad();
-                if (!self || ended_)
-                    return;
-                if (!tab) {
-                    post();
-                    return;
-                }
-                if (Entry *current = entry(tab))
-                    wait(*current, WaitReason::ResumeForSave);
-                return;
-            }
             const QPointer<CloseFlow> self(this);
-            const bool saved = window->saveTab(tab);
-            if (!self || ended_)
+            item.saving = true;
+            wait(item, WaitReason::Save);
+            if (!self || ended_ || !tab)
                 return;
-            if (!saved) {
-                cancel();
-                return;
-            }
-            if (!tab) {
-                post();
-                return;
-            }
-            item.save = false;
-            item.accepted = tab->editGeneration();
-            post(tab);
+            // A broader request can take ownership while Save runs. Its explicit
+            // result follows the tab's current close owner, rather than this flow.
+            window->saveTab(tab, [tab](TabPage::SaveResult result) {
+                if (tab && tab->closeOwner_)
+                    tab->closeOwner_->finishSave(tab, result);
+            });
+            if (self && !ended_ && tab && tab->isBusy())
+                tab->showWaitImmediately();
             return;
         }
         item.accepted = tab->editGeneration();

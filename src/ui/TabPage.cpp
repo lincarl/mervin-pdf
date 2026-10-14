@@ -35,6 +35,7 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QTemporaryFile>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -114,6 +115,49 @@ QJsonObject resumeJson(const ViewerWidget::ResumeState &state)
             {"unit", static_cast<int>(state.measureUnit)},
             {"precision", state.measurePrecision}, {"line_width", state.measureLineWidth},
             {"points", points}, {"drawing_page", state.inProgressPage}};
+}
+
+QJsonObject recoveryJson(const QString &original, const QString &canonical,
+                         const QString &snapshot, const ViewerWidget::ResumeState &viewer,
+                         const SourceStamp &stamp)
+{
+    return {{"version", 1}, {"original", original}, {"canonical", canonical},
+            {"snapshot", QFileInfo(snapshot).fileName()}, {"view", resumeJson(viewer)},
+            {"source", QJsonObject{{"exists", stamp.exists}, {"size", QString::number(stamp.size)},
+                                   {"modified", QString::number(stamp.modified)},
+                                   {"changed", QString::number(stamp.changed)}}}};
+}
+
+// The PDF is complete before this durability write starts. Adoption and the
+// process's claimed-manifest set belong to the GUI, after this guarded commit.
+bool commitRecoveryManifest(const QString &path, const QJsonObject &json, QString *error)
+{
+    job::DestinationLock lock(path);
+    if (!lock.owns() || !job::writing(QFileInfo(path).absolutePath())) {
+        if (error)
+            *error = job::notRunError();
+        return false;
+    }
+    QSaveFile file(path);
+    file.setDirectWriteFallback(false);
+    const QByteArray data = QJsonDocument(json).toJson(QJsonDocument::Compact);
+    if (!file.open(QIODevice::WriteOnly)
+        || !file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
+        || file.write(data) != data.size() || !file.flush()) {
+        if (error)
+            *error = file.errorString();
+        return false;
+    }
+    if (!job::beginCommit(path)) {
+        if (error)
+            *error = job::notRunError();
+        return false;
+    }
+    const bool committed = file.commit();
+    job::endCommit();
+    if (!committed && error)
+        *error = file.errorString();
+    return committed;
 }
 
 ViewerWidget::ResumeState readResumeJson(const QJsonObject &json)
@@ -230,6 +274,39 @@ struct TabPage::OpenResult {
     bool needsPassword = false;
 };
 
+// Request values are captured before the worker starts. Checkpoints and owned
+// results are exchanged under Job::mutex, without GUI waits.
+struct TabPage::Save {
+    enum class Checkpoint { None, Changed, Adopt };
+    QString original;
+    QString canonical;
+    QString ownerKey;
+    job::ClaimId owner = 0;
+    QString password;
+    SourceStamp baseline;
+    ViewerWidget::ResumeState viewer;
+    MeasureDoc measurements;
+    bool formMode = false;
+    bool loaded = false;
+    std::shared_ptr<DocumentLifetime> lifetime;
+    std::shared_ptr<DocumentOpener> opener;
+    QString priorCopy;
+    QString priorManifest;
+    QString copy;
+    QString manifest;
+    bool adopted = false;
+    bool adopting = false; // the GUI is clearing the viewer before the worker may close
+    Checkpoint checkpoint = Checkpoint::None;
+    std::optional<bool> answer;
+    OwnedDocument oldDocument;
+    std::shared_ptr<OpenResult> reopened;
+    SourceStamp source;
+    QString reopenedCanonical;
+    std::unique_ptr<job::OpenPath> admission;
+    SaveCompletion completion;
+    std::vector<std::shared_ptr<Job>> priorLoads;
+};
+
 // The tab's background job, the load that resumeAsync() starts or an operation
 // (startOperation), shared by the tab and the job's thread. The tab never destroys a
 // running job. It takes the result, waits for a load (stopLoading) or lets go of the
@@ -274,6 +351,7 @@ struct TabPage::Job {
     std::condition_variable changed;    // notified when `phase` changes
     Phase phase = Phase::Reading;       // guarded by mutex
     std::shared_ptr<OpenResult> result; // guarded by mutex: set while Stored
+    std::shared_ptr<Save> save;          // present only for in-place Save
     bool abandoned = false;             // guarded by mutex: the tab let go of the job
     QString removeAfter;                // guarded by mutex: a recovery copy, see ~TabPage
 };
@@ -495,11 +573,18 @@ TabPage::~TabPage()
     // itself goes once no document has it open, as Windows cannot remove an open file.
     const QString snapshot = std::exchange(recoveryPath_, QString());
     clearRecovery();
+    auto readers = recoveryReaders_;
+    if (previousSave_)
+        readers.push_back(previousSave_);
     if (job_ && !doc_) {
         // A load still reading gives up at its next step. The copy goes once what the
         // load read is closed.
         job_->state.stop();
-        abandon(job_, snapshot);
+        abandon(job_, readers.empty() ? snapshot : QString());
+        if (!readers.empty()) {
+            readers.push_back(job_);
+            removeAfterJobs(snapshot, std::move(readers));
+        }
         return;
     }
     if (job_) {
@@ -508,12 +593,17 @@ TabPage::~TabPage()
         job_->state.stop();
         abandon(job_, {});
     }
-    if (!doc_)
-        appfiles::remove(snapshot);
+    if (!doc_) {
+        removeAfterJobs(snapshot, std::move(readers));
+    }
     else if (snapshot.isEmpty())
         Document::closeInBackground(std::move(doc_));
     else
-        Document::closeInBackground(std::move(doc_), [snapshot] { appfiles::remove(snapshot); });
+        Document::closeInBackground(std::move(doc_), [snapshot, readers = std::move(readers)] {
+            for (const auto &reader : readers)
+                reader->waitUntilEnded();
+            appfiles::remove(snapshot);
+        });
 }
 
 void TabPage::abandon(const std::shared_ptr<Job> &job, const QString &removeAfter)
@@ -523,9 +613,14 @@ void TabPage::abandon(const std::shared_ptr<Job> &job, const QString &removeAfte
     {
         std::lock_guard<std::mutex> lock(job->mutex);
         job->abandoned = true;
+        job->changed.notify_all();
         if (job->phase == Job::Phase::Stored) {
             if (const auto result = std::exchange(job->result, nullptr))
                 document.reset(result->document.release());
+            if (job->save && job->save->reopened)
+                document.reset(job->save->reopened->document.release());
+            if (job->save)
+                job->save->admission.reset();
             job->setPhase(document ? Job::Phase::Closing : Job::Phase::Ended);
         }
         ended = job->phase == Job::Phase::Ended;
@@ -538,6 +633,21 @@ void TabPage::abandon(const std::shared_ptr<Job> &job, const QString &removeAfte
         Document::closeInBackground(std::move(document), [job] { job->endClosed(); });
     if (ended)
         appfiles::remove(removeAfter);
+}
+
+void TabPage::removeAfterJobs(const QString &copy, std::vector<std::shared_ptr<Job>> jobs)
+{
+    if (copy.isEmpty())
+        return;
+    if (jobs.empty()) {
+        appfiles::remove(copy);
+        return;
+    }
+    background::start([copy, jobs = std::move(jobs)] {
+        for (const auto &reader : jobs)
+            reader->waitUntilEnded();
+        appfiles::remove(copy);
+    });
 }
 
 void TabPage::stopLoading()
@@ -650,8 +760,8 @@ bool TabPage::open(const QString &path, const QString &password, QString *error,
             *error = result->error;
         return false;
     }
-    // Save writes the file and then opens it again in this tab. An open find card
-    // keeps its search across that, without moving the view.
+    // Opening another document in this tab keeps an open find card
+    // searching for the same query, without moving the view.
     const ViewerWidget::ResumeState before = saved_->viewer;
     installDocument(result);
     if (findCard_->isOpen() && !before.query.isEmpty())
@@ -680,56 +790,6 @@ void TabPage::restoreViewer()
         viewer_->clearFind();
 }
 
-bool TabPage::recoverSnapshot(const QString &snapshot, QString *error)
-{
-    stopLoading();
-    const QString privateCopy = createRecoveryFile(error);
-    if (privateCopy.isEmpty())
-        return false;
-    if (!DocumentOutput::replace(snapshot, privateCopy, error)) {
-        QFile::remove(privateCopy);
-        return false;
-    }
-    auto result = readDocument(*engine_->opener(), privateCopy, password_);
-    if (!result->document) {
-        if (error)
-            *error = result->error;
-        QFile::remove(privateCopy);
-        return false;
-    }
-    if (doc_)
-        saved_->viewer = viewer_->captureResumeState();
-    saved_->restoreTools = true;
-    const QString previousSnapshot = recoveryPath_;
-    const QString previousManifest = recoveryManifest_;
-    recoveryPath_ = privateCopy;
-    recoveryManifest_ = privateCopy + QStringLiteral(".json");
-    if (!writeRecoveryManifest(error)) {
-        // Close the private copy here, before its removal, as Windows cannot remove an
-        // open file.
-        delete result->document.release();
-        QFile::remove(privateCopy);
-        recoveryPath_ = previousSnapshot;
-        recoveryManifest_ = previousManifest;
-        return false;
-    }
-    // The document shown before can have the previous copy open, so that goes once it
-    // closed. The manifest stays if the removal fails, so the copy remains
-    // discoverable.
-    if (!previousManifest.isEmpty())
-        claimedRecoveries.remove(previousManifest);
-    installDocument(result, [previousSnapshot, previousManifest] {
-        if ((previousSnapshot.isEmpty() || QFile::remove(previousSnapshot))
-            && !previousManifest.isEmpty())
-            QFile::remove(previousManifest);
-    });
-    restoreViewer();
-    retainedEdits_ = true;
-    if (snapshot != previousSnapshot)
-        QFile::remove(snapshot);
-    emit stateChanged();
-    return true;
-}
 
 void TabPage::clearRecovery()
 {
@@ -811,24 +871,10 @@ bool TabPage::adoptRecovery()
 
 bool TabPage::writeRecoveryManifest(QString *error)
 {
-    const SourceStamp &stamp = saved_->source;
-    const QJsonObject json{
-        {"version", 1}, {"original", path_}, {"canonical", canonicalPath_},
-        {"snapshot", QFileInfo(recoveryPath_).fileName()},
-        {"view", resumeJson(saved_->viewer)},
-        {"source", QJsonObject{{"exists", stamp.exists}, {"size", QString::number(stamp.size)},
-                               {"modified", QString::number(stamp.modified)},
-                               {"changed", QString::number(stamp.changed)}}}};
-    QSaveFile file(recoveryManifest_);
-    file.setDirectWriteFallback(false);
-    const QByteArray data = QJsonDocument(json).toJson(QJsonDocument::Compact);
-    if (!file.open(QIODevice::WriteOnly)
-        || !file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
-        || file.write(data) != data.size() || !file.commit()) {
-        if (error)
-            *error = file.errorString();
+    if (!commitRecoveryManifest(recoveryManifest_,
+            recoveryJson(path_, canonicalPath_, recoveryPath_, saved_->viewer, saved_->source),
+            error))
         return false;
-    }
     claimedRecoveries.insert(recoveryManifest_);
     return true;
 }
@@ -1174,11 +1220,17 @@ void TabPage::stopWaiting()
         // The job gives up at its next step, and a commit it already began completes.
         // Either way the tab treats the operation as not done.
         const job::State::Stop stopped = job_->state.stop();
+        {
+            std::lock_guard<std::mutex> lock(job_->mutex);
+            job_->changed.notify_all();
+        }
         finished_ = nullptr;
         const QPointer<TabPage> self(this);
         if (stopped == job::State::Stop::Holding) {
             showWaitBar(job_->state.snapshot());
             emit stateChanged();
+            if (self && job_ && job_->save)
+                completeSave({SaveResult::Stopped, {}, false});
         } else {
             finishStoppedOperation();
         }
@@ -1312,6 +1364,371 @@ void TabPage::startOperation(Operation operation)
     emit stateChanged();
 }
 
+void TabPage::startSave(SaveCallbacks callbacks)
+{
+    if (busy_) {
+        if (callbacks.finished)
+            callbacks.finished({SaveResult::Failed, {}, false});
+        return;
+    }
+    const quint64 generation = ++saveGeneration_;
+    const QPointer<TabPage> self(this);
+    if (doc_) {
+        viewer_->commitActiveFormEditor();
+        if (!self)
+            return;
+        viewer_->commitActiveAnnotEditor();
+        if (!self)
+            return;
+    }
+    if (!hasUnsavedEdits()) {
+        if (callbacks.finished)
+            callbacks.finished({SaveResult::Saved, {}, false, generation});
+        return;
+    }
+    if (!claimPath(canonicalPath_)) {
+        if (callbacks.finished)
+            callbacks.finished({SaveResult::Failed, pathBeingWrittenError(), false, generation});
+        return;
+    }
+    auto save = std::make_shared<Save>();
+    save->completion.generation = generation;
+    save->original = path_;
+    save->canonical = canonicalPath_;
+    save->ownerKey = openPath_->key();
+    save->owner = openPath_->identity();
+    save->password = password_;
+    save->baseline = saved_->source;
+    save->loaded = bool(doc_);
+    save->viewer = doc_ ? viewer_->captureResumeState() : saved_->viewer;
+    save->formMode = viewer_->formMode();
+    save->priorCopy = recoveryPath_;
+    save->priorManifest = recoveryManifest_;
+    if (doc_) {
+        save->measurements = viewer_->measurementDocument();
+        save->lifetime = doc_->lifetime();
+        save->opener = engine_->opener();
+    } else {
+        save->copy = recoveryPath_;
+        save->manifest = recoveryManifest_;
+        if (job_) {
+            recoveryReaders_.push_back(job_);
+            abandon(job_, {});
+            job_.reset();
+        }
+        loading_ = false;
+    }
+    for (const auto &reader : recoveryReaders_)
+        if (reader->source == save->priorCopy)
+            save->priorLoads.push_back(reader);
+    // Capture the picture while the document is idle, before the worker can take
+    // its gate. An unloaded Save keeps the recovery placeholder underneath.
+    still_->setPicture(doc_ && isVisible() ? viewer_->grab() : QPixmap());
+    scrollColumn_ = std::max(0, viewer_->width() - viewer_->viewport()->width());
+    viewer_->pauseForOperation();
+    viewer_->hide();
+    placeholder_->hide();
+    still_->show();
+    busy_ = true;
+    operationStopped_ = false;
+    closeWaitStop_ = false;
+    destination_ = QFileInfo(path_).absolutePath();
+    barName_.clear();
+    barFolder_.clear();
+    barTrapped_ = false;
+    saveCallbacks_ = std::move(callbacks);
+    const auto job = std::make_shared<Job>(QString());
+    job->save = save;
+    job_ = job;
+    background::start([tab = QPointer<QObject>(this), job, save, previous = previousSave_] {
+        {
+            const job::Scope scope(job->state);
+            // One scope retains the output reservation across both GUI checkpoints.
+            const auto checkpoint = [&](Save::Checkpoint phase) {
+                std::unique_lock<std::mutex> lock(job->mutex);
+                if (job->abandoned || job->state.stopped())
+                    return false;
+                save->checkpoint = phase;
+                save->answer.reset();
+                lock.unlock();
+                background::post(tab, [tab, job] {
+                    static_cast<TabPage *>(tab.data())->saveCheckpoint(job);
+                });
+                lock.lock();
+                job->changed.wait(lock, [&] {
+                    return !save->adopting
+                        && (save->answer.has_value() || job->abandoned || job->state.stopped());
+                });
+                return !job->abandoned && !job->state.stopped() && save->answer.value_or(false);
+            };
+            bool previousRemoved = false;
+            const auto closePrevious = [&] {
+                delete save->oldDocument.release();
+                if (save->adopted && !previousRemoved) {
+                    previousRemoved = true;
+                    removeAfterJobs(save->priorCopy, save->priorLoads);
+                }
+            };
+            const auto run = [&] {
+                if (!job::reserveOwnedDestination(save->ownerKey, save->owner)) {
+                    save->completion.error = QCoreApplication::translate("MainWindow",
+                        "Close the other view of this file before saving, or save a copy.");
+                    return;
+                }
+                // A stopped earlier Save may still read the previous recovery copy.
+                // Only workers wait for it, so retry cannot remove its input early.
+                job->state.report(job::Step::Writing, QFileInfo(save->original).absolutePath());
+                if (previous) {
+                    const auto waiting = previous->state.snapshot();
+                    if (waiting.step != job::Step::None)
+                        job->state.report(waiting.step, waiting.path);
+                    previous->waitUntilEnded();
+                }
+                if (!job::reading(save->original))
+                    return;
+                const QString actualKey = fileKey(QFileInfo(save->original));
+                if (job::stopped())
+                    return;
+                if (actualKey != save->ownerKey && !job::reserveDestinations({actualKey})) {
+                    save->completion.error = QCoreApplication::translate("MainWindow",
+                        "Close the other view of this file before saving, or save a copy.");
+                    return;
+                }
+                if (sourceStamp(save->original) != save->baseline
+                    && !checkpoint(Save::Checkpoint::Changed)) {
+                    save->completion.result = SaveResult::Canceled;
+                    return;
+                }
+                if (job::stopped())
+                    return;
+                if (save->loaded) {
+                    if (!job::writing(recoveryDirectory()))
+                        return;
+                    save->copy = createRecoveryFile(&save->completion.error);
+                    if (save->copy.isEmpty() || job::stopped())
+                        return;
+                    save->manifest = save->copy + QStringLiteral(".json");
+                    QTemporaryDir stage(QDir(recoveryDirectory()).filePath(QStringLiteral(".save-XXXXXX")));
+                    if (!stage.isValid()) {
+                        save->completion.error = stage.errorString();
+                        return;
+                    }
+                    const QString live = stage.filePath(QStringLiteral("live.pdf"));
+                    if (!job::beginHolding())
+                        return;
+                    bool snapshot = false;
+                    {
+                        Document::Hold hold(save->lifetime, [] { return job::stopped(); });
+                        if (Document *document = hold.document();
+                            document && job::writing(QFileInfo(live).absolutePath()))
+                            snapshot = document->savePdfTo(live, &save->completion.error);
+                    }
+                    job::endHolding();
+                    if (!snapshot || job::stopped()
+                        || MeasureExport::embedMervin(live, save->copy, save->measurements,
+                                save->password, &save->completion.error) != MeasureExport::Status::Ok)
+                        return;
+                    if (!QFile::setPermissions(save->copy,
+                            QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {
+                        save->completion.error = TabPage::tr("Could not protect the document recovery copy.");
+                        return;
+                    }
+                    if (!commitRecoveryManifest(save->manifest,
+                            recoveryJson(save->original, save->canonical, save->copy,
+                                         save->viewer, save->baseline), &save->completion.error)
+                        || !checkpoint(Save::Checkpoint::Adopt))
+                        return;
+                    // The UI transferred this document only after its manifest
+                    // committed. Close here before replacing the original on Windows.
+                    closePrevious();
+                }
+                if (!DocumentOutput::replace(save->copy, save->original, &save->completion.error))
+                    return;
+                save->completion.originalSaved = true;
+                if (!job::reading(save->original))
+                    return;
+                save->source = sourceStamp(save->original);
+                save->reopenedCanonical = QFileInfo(save->original).canonicalFilePath();
+                if (save->reopenedCanonical.isEmpty())
+                    save->reopenedCanonical = save->original;
+                if (save->loaded) {
+                    save->reopened = readDocument(*save->opener, save->original, save->password);
+                    if (!save->reopened->document) {
+                        save->completion.error = save->reopened->error;
+                        return;
+                    }
+                }
+                const QString reopenedKey = normalizePathKey(save->reopenedCanonical);
+                if (reopenedKey != save->ownerKey) {
+                    if (job::reserveDestinations({reopenedKey}))
+                        save->admission = job->state.admitReservedDestination(
+                            reopenedKey, save->ownerKey, save->owner);
+                    if (!save->admission) {
+                        save->completion.error = TabPage::pathBeingWrittenError();
+                        return;
+                    }
+                }
+                save->completion.result = SaveResult::Saved;
+            };
+            run();
+            closePrevious();
+            if (job::stopped())
+                save->completion.result = SaveResult::Stopped;
+            if (save->completion.result != SaveResult::Saved)
+                save->admission.reset();
+            // Before adoption these files belong only to the job. A late manifest
+            // commit from a stopped job must not leave a false recovery checkpoint.
+            if (save->loaded && !save->adopted) {
+                if (!save->manifest.isEmpty())
+                    QFile::remove(save->manifest);
+                if (!save->copy.isEmpty())
+                    QFile::remove(save->copy);
+            }
+        }
+        std::unique_lock<std::mutex> lock(job->mutex);
+        if (job->abandoned) {
+            job->setPhase(Job::Phase::Closing);
+            lock.unlock();
+            if (save->reopened)
+                delete save->reopened->document.release();
+            save->admission.reset();
+            job->endClosed();
+            return;
+        }
+        job->setPhase(Job::Phase::Stored);
+        lock.unlock();
+        background::post(tab, [tab, job] {
+            static_cast<TabPage *>(tab.data())->finishSave(job);
+        });
+    });
+    startSlowClock();
+    emit stateChanged();
+}
+
+void TabPage::saveCheckpoint(const std::shared_ptr<Job> &job)
+{
+    if (job != job_ || job->state.stopped())
+        return;
+    const auto save = job->save;
+    Save::Checkpoint phase;
+    {
+        std::lock_guard<std::mutex> lock(job->mutex);
+        phase = save->checkpoint;
+    }
+    if (phase == Save::Checkpoint::Changed) {
+        const QPointer<TabPage> self(this);
+        const auto valid = [self, job] {
+            return self && self->job_ == job && self->busy_ && !job->state.stopped();
+        };
+        const auto answer = [self, job, valid](bool replace) {
+            if (!valid())
+                return;
+            std::lock_guard<std::mutex> lock(job->mutex);
+            job->save->answer = replace;
+            job->changed.notify_all();
+        };
+        const auto changed = saveCallbacks_.changed;
+        if (changed)
+            changed(valid, answer);
+        else
+            answer(false);
+        return;
+    }
+    if (phase != Save::Checkpoint::Adopt)
+        return;
+    // No document or disk lock is held. This transfer never waits for a worker.
+    saved_->viewer = save->viewer;
+    saved_->restoreTools = true;
+    recoveryPath_ = save->copy;
+    recoveryManifest_ = save->manifest;
+    recoveryReaders_.clear();
+    retainedEdits_ = true;
+    claimedRecoveries.insert(recoveryManifest_);
+    claimedRecoveries.remove(save->priorManifest);
+    appfiles::remove(save->priorManifest);
+    const QPointer<TabPage> self(this);
+    {
+        std::lock_guard<std::mutex> lock(job->mutex);
+        save->oldDocument.reset(doc_.release());
+        save->adopted = true;
+        save->adopting = true;
+    }
+    viewer_->setDocument(nullptr);
+    const bool accepted = self && job == job_ && !job->state.stopped();
+    {
+        std::lock_guard<std::mutex> lock(job->mutex);
+        save->adopting = false;
+        save->answer = accepted;
+        job->changed.notify_all();
+    }
+    if (accepted)
+        emit stateChanged();
+}
+
+void TabPage::completeSave(const SaveCompletion &completion)
+{
+    const auto finished = std::move(saveCallbacks_.finished);
+    saveCallbacks_ = {};
+    if (finished) {
+        auto report = completion;
+        report.generation = saveGeneration_;
+        finished(report);
+    }
+}
+
+void TabPage::finishSave(const std::shared_ptr<Job> &job)
+{
+    if (job != job_)
+        return;
+    const auto save = job->save;
+    {
+        std::lock_guard<std::mutex> lock(job->mutex);
+        if (job->abandoned || job->phase != Job::Phase::Stored)
+            return;
+        job->setPhase(Job::Phase::Ended);
+    }
+    job_.reset();
+    previousSave_.reset();
+    const auto finished = std::move(saveCallbacks_.finished);
+    saveCallbacks_ = {};
+    const bool success = save->completion.result == SaveResult::Saved;
+    const QPointer<TabPage> self(this);
+    if (success) {
+        saved_->source = save->source;
+        canonicalPath_ = save->reopenedCanonical;
+        if (save->admission)
+            openPath_ = std::move(save->admission);
+        if (save->loaded) {
+            installDocument(save->reopened);
+            if (!self)
+                return;
+            restoreViewer();
+            if (!self)
+                return;
+            if (save->formMode && viewer_->hasFormFields())
+                viewer_->setFormMode(true);
+        } else if (!save->priorLoads.empty()) {
+            // A load abandoned before this direct-copy Save may still read R.
+            const QString copy = std::exchange(recoveryPath_, QString());
+            removeAfterJobs(copy, save->priorLoads);
+        }
+        retainedEdits_ = false;
+        clearRecovery();
+        recoveryReaders_.clear();
+    }
+    endOperation();
+    if (!self)
+        return;
+    if (!success && save->adopted)
+        startLoad();
+    if (!self)
+        return;
+    if (finished)
+        finished(save->completion);
+    if (self)
+        emit operationFinished(success);
+}
+
 // Adopts the exact completed operation and delivers its result after restoring use.
 void TabPage::finishOperation(const std::shared_ptr<Job> &job)
 {
@@ -1341,11 +1758,23 @@ void TabPage::finishStoppedOperation()
 {
     if (!job_ || job_->state.snapshot().holding)
         return;
+    const bool save = bool(job_->save);
+    const bool adopted = save && job_->save->adopted;
+    const quint64 generation = save ? job_->save->completion.generation : 0;
+    const auto finished = save ? std::move(saveCallbacks_.finished) : nullptr;
+    if (save)
+        saveCallbacks_ = {};
+    if (save)
+        previousSave_ = job_;
     abandon(job_, {});
     job_.reset();
     finished_ = nullptr;
     const QPointer<TabPage> self(this);
     endOperation();
+    if (self && adopted)
+        startLoad();
+    if (self && finished)
+        finished({SaveResult::Stopped, {}, false, generation});
     if (self)
         emit operationFinished(false);
 }
@@ -1357,8 +1786,12 @@ void TabPage::endOperation()
     waitBar_->hide();
     still_->hide();
     still_->setPicture({});
-    viewer_->show();
-    viewer_->resumeAfterOperation();
+    if (doc_) {
+        viewer_->show();
+        viewer_->resumeAfterOperation();
+    } else {
+        showPlaceholder(tr("Document is unloaded."), PlaceholderButton::Retry);
+    }
     emit stateChanged();
 }
 
@@ -1455,7 +1888,9 @@ void TabPage::showWaitBar(const job::State::Snapshot &now)
     switch (now.step) {
     case job::Step::Reading:
         if (normalizePathKey(QFileInfo(now.path).absolutePath()) != normalizePathKey(destination_)) {
-            name = QFileInfo(now.path).fileName();
+            name = job_ && job_->save
+                && (now.path == recoveryPath_ || now.path == job_->save->priorCopy)
+                ? tabTitle() : QFileInfo(now.path).fileName();
             folder = QFileInfo(now.path).absolutePath();
         }
         break;
@@ -1519,10 +1954,6 @@ bool TabPage::eventFilter(QObject *watched, QEvent *event)
     return QWidget::eventFilter(watched, event);
 }
 
-void TabPage::detachDocument()
-{
-    releaseDocument(); // closes the file handle here
-}
 
 std::unique_ptr<Document> TabPage::releaseDocument()
 {

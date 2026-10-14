@@ -222,6 +222,81 @@ class TstJobContext : public QObject
 {
     Q_OBJECT
 private slots:
+    void inPlaceSaveRequiresItsCapturedOwner()
+    {
+        const QString key = QStringLiteral("/out/owned.pdf");
+        auto owner = std::make_unique<job::OpenPath>(key);
+        QVERIFY(owner->admitted());
+        const auto identity = owner->identity();
+        QVERIFY(identity != 0);
+        job::State state;
+        const job::Scope scope(state);
+        {
+            const job::OpenPath independent(key);
+            QVERIFY(independent.admitted());
+            QVERIFY(!job::reserveOwnedDestination(key, identity));
+        }
+        QVERIFY(!job::destinationInUse(key));
+        QVERIFY(!job::reserveOwnedDestination(key, identity + 1));
+        QVERIFY(job::reserveOwnedDestination(key, identity));
+        QVERIFY(job::destinationInUse(key));
+        const job::OpenPath whileSaving(key);
+        QVERIFY(!whileSaving.admitted());
+        state.stop();
+        QVERIFY(!job::destinationInUse(key));
+        owner.reset();
+        const job::OpenPath replacement(key);
+        QVERIFY(replacement.admitted());
+        QVERIFY(replacement.identity() != identity);
+        job::State later;
+        const job::Scope laterScope(later);
+        QVERIFY(!job::reserveOwnedDestination(key, identity));
+        QVERIFY(job::reserveOwnedDestination(key, replacement.identity()));
+    }
+
+    void canonicalAdmissionProtectsTheGapAfterWorkerScope()
+    {
+        const QString original = QStringLiteral("/out/original.pdf");
+        const QString canonical = QStringLiteral("/out/retargeted.pdf");
+        const job::OpenPath owner(original);
+        QVERIFY(owner.admitted());
+        job::State save;
+        std::unique_ptr<job::OpenPath> result;
+        {
+            const job::Scope scope(save);
+            QVERIFY(job::reserveOwnedDestination(original, owner.identity()));
+            QVERIFY(job::reserveDestinations({canonical}));
+            QVERIFY(!save.admitReservedDestination(canonical, original, owner.identity() + 1));
+            result = save.admitReservedDestination(canonical, original, owner.identity());
+            QVERIFY(result && result->admitted());
+        }
+        // The worker has returned but GUI installation has not run. A new output
+        // job must still be refused, even though the reservation itself ended.
+        QVERIFY(!job::destinationInUse(canonical));
+        job::State later;
+        const job::Scope laterScope(later);
+        QVERIFY(!job::reserveDestinations({canonical}));
+        result.reset();
+        QVERIFY(job::reserveDestinations({canonical}));
+    }
+
+    void canonicalAdmissionRefusesAnotherWriter()
+    {
+        const QString original = QStringLiteral("/out/owner.pdf");
+        const QString canonical = QStringLiteral("/out/contended.pdf");
+        const job::OpenPath owner(original);
+        job::State other;
+        const job::Scope otherScope(other);
+        QVERIFY(job::reserveDestinations({canonical}));
+        job::State save;
+        const job::Scope saveScope(save);
+        QVERIFY(job::reserveOwnedDestination(original, owner.identity()));
+        QVERIFY(job::reserveDestinations({canonical}));
+        QVERIFY(!save.admitReservedDestination(canonical, original, owner.identity()));
+        other.stop();
+        QVERIFY(save.admitReservedDestination(canonical, original, owner.identity()));
+    }
+
     void tabAdmissionAndOutputReservations()
     {
         const QSet<QString> keys{QStringLiteral("/out/one.pdf"), QStringLiteral("/out/two.pdf")};

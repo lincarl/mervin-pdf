@@ -24,22 +24,30 @@ thread_local QString lastPath;
 // stopped.
 constexpr std::chrono::milliseconds kLockStep{20};
 
-std::mutex locksMutex;
-std::condition_variable locksFreed; // notified when a destination lock is released
-QSet<QString> taken;                // guarded by locksMutex: keys of the held locks
+// The mutex covers memory only. State always takes its own mutex first. Main's
+// exit path settles workers, or uses _Exit before static destruction if blocked.
+struct PathRegistry {
+    std::mutex mutex;
+    std::condition_variable freed;
+    QSet<QString> taken;
+    QHash<QString, QSet<ClaimId>> open;
+    QHash<QString, int> reserved;
+    ClaimId nextIdentity = 1;
+};
 
-// These locks cover memory only. A tab never waits for an output writer or performs
-// filesystem work while holding them. State always takes its own mutex first.
-std::mutex pathsMutex;
-QHash<QString, int> openPaths;
-QHash<QString, int> reservedPaths;
+PathRegistry &paths()
+{
+    static PathRegistry registry;
+    return registry;
+}
 
 void releaseDestinations(QSet<QString> &keys)
 {
-    std::lock_guard<std::mutex> lock(pathsMutex);
+    auto &registry = paths();
+    std::lock_guard<std::mutex> lock(registry.mutex);
     for (const QString &key : keys)
-        if (--reservedPaths[key] == 0)
-            reservedPaths.remove(key);
+        if (--registry.reserved[key] == 0)
+            registry.reserved.remove(key);
     keys.clear();
 }
 
@@ -143,17 +151,55 @@ bool State::reserveDestinations(const QSet<QString> &keys)
     std::lock_guard<std::mutex> stateLock(mutex_);
     if (stopped_)
         return false;
-    std::lock_guard<std::mutex> pathLock(pathsMutex);
+    auto &registry = paths();
+    std::lock_guard<std::mutex> pathLock(registry.mutex);
     for (const QString &key : keys)
-        if (openPaths.contains(key))
+        if (registry.open.contains(key))
             return false;
     for (const QString &key : keys) {
         if (!destinations_.contains(key)) {
             destinations_.insert(key);
-            ++reservedPaths[key];
+            ++registry.reserved[key];
         }
     }
     return true;
+}
+
+bool State::reserveOwnedDestination(const QString &key, ClaimId owner)
+{
+    std::lock_guard<std::mutex> stateLock(mutex_);
+    if (stopped_ || owner == 0)
+        return false;
+    auto &registry = paths();
+    std::lock_guard<std::mutex> pathLock(registry.mutex);
+    const auto admitted = registry.open.constFind(key);
+    if (admitted == registry.open.cend() || admitted->size() != 1
+        || !admitted->contains(owner))
+        return false;
+    if (!destinations_.contains(key)) {
+        destinations_.insert(key);
+        ++registry.reserved[key];
+    }
+    return true;
+}
+
+std::unique_ptr<OpenPath> State::admitReservedDestination(const QString &key,
+                                                        const QString &ownerKey, ClaimId owner)
+{
+    std::lock_guard<std::mutex> stateLock(mutex_);
+    if (stopped_ || !destinations_.contains(key))
+        return {};
+    auto &registry = paths();
+    std::lock_guard<std::mutex> pathLock(registry.mutex);
+    const auto admitted = registry.open.constFind(ownerKey);
+    if (admitted == registry.open.cend() || admitted->size() != 1
+        || !admitted->contains(owner) || registry.open.contains(key)
+        || registry.reserved.value(key) != 1)
+        return {};
+    const ClaimId identity = registry.nextIdentity++;
+    auto claim = std::unique_ptr<OpenPath>(new OpenPath(key, identity));
+    registry.open[key].insert(identity);
+    return claim;
 }
 
 void State::report(Step step, const QString &path)
@@ -212,25 +258,47 @@ bool stopped()
 
 OpenPath::OpenPath(const QString &key) : key_(key)
 {
-    std::lock_guard<std::mutex> lock(pathsMutex);
-    if (!reservedPaths.contains(key_)) {
-        ++openPaths[key_];
+    auto &registry = paths();
+    std::lock_guard<std::mutex> lock(registry.mutex);
+    if (!registry.reserved.contains(key_)) {
+        identity_ = registry.nextIdentity++;
+        registry.open[key_].insert(identity_);
         admitted_ = true;
     }
+}
+
+OpenPath::OpenPath(const QString &key, ClaimId identity)
+    : key_(key), admitted_(true), identity_(identity)
+{
 }
 
 OpenPath::~OpenPath()
 {
     if (!admitted_)
         return;
-    std::lock_guard<std::mutex> lock(pathsMutex);
-    if (--openPaths[key_] == 0)
-        openPaths.remove(key_);
+    auto &registry = paths();
+    std::lock_guard<std::mutex> lock(registry.mutex);
+    auto admission = registry.open.find(key_);
+    admission->remove(identity_);
+    if (admission->isEmpty())
+        registry.open.erase(admission);
 }
 
 bool reserveDestinations(const QSet<QString> &keys)
 {
     return current && current->reserveDestinations(keys);
+}
+
+bool reserveOwnedDestination(const QString &key, ClaimId owner)
+{
+    return current && current->reserveOwnedDestination(key, owner);
+}
+
+bool destinationInUse(const QString &key)
+{
+    auto &registry = paths();
+    std::lock_guard<std::mutex> lock(registry.mutex);
+    return registry.taken.contains(key) || registry.reserved.contains(key);
 }
 
 bool beginHolding()
@@ -300,15 +368,16 @@ DestinationLock::DestinationLock(const QString &path)
     if (stopped())
         return;
     key_ = fileKey(QFileInfo(path));
-    std::unique_lock<std::mutex> lock(locksMutex);
+    auto &registry = paths();
+    std::unique_lock<std::mutex> lock(registry.mutex);
     for (;;) {
         if (stopped())
             return;
-        if (!taken.contains(key_))
+        if (!registry.taken.contains(key_))
             break;
-        locksFreed.wait_for(lock, kLockStep);
+        registry.freed.wait_for(lock, kLockStep);
     }
-    taken.insert(key_);
+    registry.taken.insert(key_);
     owns_ = true;
 }
 
@@ -316,11 +385,12 @@ DestinationLock::~DestinationLock()
 {
     if (!owns_)
         return;
+    auto &registry = paths();
     {
-        std::lock_guard<std::mutex> lock(locksMutex);
-        taken.remove(key_);
+        std::lock_guard<std::mutex> lock(registry.mutex);
+        registry.taken.remove(key_);
     }
-    locksFreed.notify_all();
+    registry.freed.notify_all();
 }
 
 namespace testing {

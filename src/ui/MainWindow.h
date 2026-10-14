@@ -6,6 +6,7 @@
 #include "recent/ViewState.h"
 #include "render/MeasureContent.h"
 #include "ui/ViewerWidget.h"
+#include "ui/TabPage.h"
 
 #include <QMainWindow>
 #include <QHash>
@@ -135,6 +136,13 @@ public:
     // calls it after a mouse button release, after a modal window closes and on
     // its activity tick. The window also calls it when a document operation ends.
     void runTabChanges();
+
+    struct testing {
+        static bool hasQueuedTabChanges(const MainWindow &window)
+        {
+            return !window.tabChanges_.empty();
+        }
+    };
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override; // tab-bar middle-click
@@ -305,7 +313,13 @@ private:
     // Returns the unsaved-edit decision after committing active editors, without applying it.
     // The window-modal question guards tab and window lifetimes across its event loop.
     int askClose(mervin::TabPage *tab);
-    bool saveTab(mervin::TabPage *tab);
+    void saveTab(mervin::TabPage *tab,
+                 std::function<void(mervin::TabPage::SaveResult)> completion);
+    static void askSaveReplacement(QPointer<mervin::TabPage> page,
+                                   std::function<bool()> valid,
+                                   std::function<void(bool)> answer);
+    static void deliverSave(QPointer<mervin::TabPage> page,
+                            const mervin::TabPage::SaveCompletion &result);
     // Push one tab onto the reopen history. `index` is the slot to restore it to,
     // which mid-bulk-close is NOT its live index - see rememberOpenTabs().
     void rememberClosedTab(mervin::TabPage *tab, int index);

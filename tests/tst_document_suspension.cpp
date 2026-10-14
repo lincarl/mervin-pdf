@@ -1323,7 +1323,6 @@ private slots:
         const QString source = files.filePath(QStringLiteral("source.pdf"));
         QVERIFY(writeFile(source, formPdf()));
         const QByteArray original = readFile(source);
-        const QString staged = files.filePath(QStringLiteral(".mervin-save-edited.pdf"));
         RenderEngine engine;
         TabPage tab(&engine);
         QVERIFY(tab.open(source));
@@ -1331,20 +1330,83 @@ private slots:
         tab.viewer()->setScale(1.5);
         QVERIFY(tab.viewer()->annotModel()->addTextNote(
                     0, {80, 80}, Qt::yellow, {}, QStringLiteral("Save failed, keep this")) >= 0);
-        QString error;
-        QVERIFY2(DocumentOutput::snapshot(*tab.viewer()->document(), tab.viewer()->measurementDocument(),
-                                          staged, {}, &error), qPrintable(error));
-        tab.detachDocument();
-        QVERIFY2(tab.recoverSnapshot(staged, &error), qPrintable(error));
+        job::testing::failWhen([source](job::Step step, const QString &path) {
+            return step == job::Step::Commit && path == source;
+        });
+        const auto resetFailure = qScopeGuard([] { job::testing::failWhen({}); });
+        std::optional<TabPage::SaveCompletion> completion;
+        TabPage::SaveCallbacks callbacks;
+        callbacks.finished = [&](const auto &result) { completion = result; };
+        tab.startSave(std::move(callbacks));
+        QTRY_VERIFY(completion.has_value());
+        QCOMPARE(completion->result, TabPage::SaveResult::Failed);
+        QTRY_VERIFY(tab.isUsable());
         QVERIFY(tab.isLoaded());
         QVERIFY(tab.hasUnsavedEdits());
-        QVERIFY(tab.recoveryPath() != staged);
+        QVERIFY(QFileInfo(tab.recoveryPath()).absolutePath() != files.path());
         QVERIFY(QFileInfo::exists(tab.recoveryPath() + QStringLiteral(".json")));
         QCOMPARE(TabPage::recoverablePaths().count(source), 1);
         QCOMPARE(readFile(source), original);
         QVERIFY(!tab.viewer()->formMode());
         QCOMPARE(tab.viewer()->scale(), 1.5);
-        QVERIFY(!QFileInfo::exists(staged));
+    }
+
+    void saveCommitsTheActiveFormEditor()
+    {
+        const QString path = profile_->filePath(QStringLiteral("form.pdf"));
+        QVERIFY(writeFile(path, formPdf()));
+        RenderEngine engine;
+        TabPage tab(&engine);
+        showForLayout(tab);
+        QVERIFY(tab.open(path));
+        tab.viewer()->setFormMode(true);
+        QTRY_VERIFY(!tab.viewer()->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly).isEmpty());
+        auto *editor = tab.viewer()->viewport()->findChild<QLineEdit *>(Qt::FindDirectChildrenOnly);
+        QVERIFY(editor);
+        editor->setText(QStringLiteral("Text still being typed"));
+        QVERIFY(tab.viewer()->formModel()->pageFields(0).front().value.isEmpty());
+        std::optional<TabPage::SaveCompletion> completion;
+        TabPage::SaveCallbacks callbacks;
+        callbacks.finished = [&](const auto &result) { completion = result; };
+        tab.startSave(std::move(callbacks));
+        QTRY_VERIFY(completion.has_value());
+        QCOMPARE(completion->result, TabPage::SaveResult::Saved);
+        QVERIFY(tab.isUsable());
+        QVERIFY(!tab.hasUnsavedEdits());
+        QVERIFY(tab.viewer()->formMode());
+        QCOMPARE(tab.viewer()->formModel()->pageFields(0).front().value,
+                 QStringLiteral("Text still being typed"));
+        auto saved = engine.openDocument(path);
+        QVERIFY(saved);
+        QCOMPARE(FormModel(*saved).pageFields(0).front().value,
+                 QStringLiteral("Text still being typed"));
+    }
+
+    void saveStopsWhenCommittingTheEditorDeletesItsTab()
+    {
+        const QString path = profile_->filePath(QStringLiteral("form.pdf"));
+        QVERIFY(writeFile(path, formPdf()));
+        const QByteArray original = readFile(path);
+        RenderEngine engine;
+        auto *tab = new TabPage(&engine);
+        const QPointer<TabPage> page(tab);
+        showForLayout(*tab);
+        QVERIFY(tab->open(path));
+        tab->viewer()->setFormMode(true);
+        QTRY_VERIFY(!tab->viewer()->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly).isEmpty());
+        auto *editor = tab->viewer()->viewport()->findChild<QLineEdit *>(Qt::FindDirectChildrenOnly);
+        QVERIFY(editor);
+        editor->setText(QStringLiteral("Text still being typed"));
+        connect(tab->viewer(), &ViewerWidget::formEditsChanged, &engine, [page] {
+            delete page.data();
+        });
+        bool completed = false;
+        TabPage::SaveCallbacks callbacks;
+        callbacks.finished = [&](const auto &) { completed = true; };
+        tab->startSave(std::move(callbacks));
+        QVERIFY(!page);
+        QVERIFY(!completed);
+        QCOMPARE(readFile(path), original);
     }
 
     void unloadCancelsRunningSearchAndRender()
