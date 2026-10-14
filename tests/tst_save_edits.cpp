@@ -587,6 +587,87 @@ private slots:
         QCOMPARE(AnnotModel(*saved).pageAnnots(0).front().contents, QStringLiteral("preserved"));
     }
 
+    // Selects automatic resume and Retry during running or queued Save completion.
+    void unloadedSaveKeepsItsJobWhenLoadIsRequested_data()
+    {
+        QTest::addColumn<bool>("retry");
+        QTest::addColumn<bool>("stored");
+        QTest::newRow("resume during Save") << false << false;
+        QTest::newRow("Retry during Save") << true << false;
+        QTest::newRow("resume before Save delivery") << false << true;
+        QTest::newRow("Retry before Save delivery") << true << true;
+    }
+
+    // Checks load requests preserve an unloaded Save and work after its delivery.
+    void unloadedSaveKeepsItsJobWhenLoadIsRequested()
+    {
+        QFETCH(bool, retry);
+        QFETCH(bool, stored);
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("edited.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        const QByteArray original = bytes(path);
+        RenderEngine engine;
+        TabPage tab(&engine);
+        QVERIFY(tab.open(path));
+        QVERIFY(edit(tab));
+        QVERIFY(tab.suspend());
+        // Stop standing render workers so settle can wait for Save without GUI delivery.
+        engine.shutdown();
+        QVERIFY(background::settle(10000));
+        const QString copy = tab.recoveryPath();
+        QVERIFY(!copy.isEmpty());
+        const int opens = RenderEngine::testing::opens();
+        QSignalSpy resumed(&tab, &TabPage::resumeFinished);
+        QSignalSpy finished(&tab, &TabPage::operationFinished);
+        job::testing::holdWhen([path](job::Step step, const QString &file) {
+            return step == job::Step::Commit && file == path;
+        });
+        const auto release = qScopeGuard([] { job::testing::release(); });
+        Outcome outcome;
+        tab.startSave(outcome.callbacks());
+        QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+        if (stored) {
+            job::testing::release();
+            QVERIFY(background::settle(10000));
+        }
+        QVERIFY(tab.isBusy());
+        QVERIFY(!outcome.completion.has_value());
+        const auto generation = tab.saveGeneration();
+        if (retry)
+            tab.retryLoad();
+        else
+            tab.resumeAsync();
+        QVERIFY(!tab.isLoading());
+        QVERIFY(tab.isBusy());
+        QCOMPARE(tab.saveGeneration(), generation);
+        QCOMPARE(tab.recoveryPath(), copy);
+        QCOMPARE(resumed.size(), 0);
+        QCOMPARE(RenderEngine::testing::opens(), opens);
+        job::testing::release();
+        QTRY_VERIFY_WITH_TIMEOUT(outcome.completion.has_value(), 10000);
+        QCOMPARE(outcome.completion->result, TabPage::SaveResult::Saved);
+        QCOMPARE(finished.size(), 1);
+        QCOMPARE(resumed.size(), 0);
+        QVERIFY(!tab.isBusy());
+        QVERIFY(!tab.isLoading());
+        QVERIFY(!tab.isLoaded());
+        QVERIFY(!tab.hasUnsavedEdits());
+        QVERIFY(bytes(path) != original);
+        QVERIFY(appfiles::flush(10000));
+        QVERIFY(recoveryEntries().isEmpty());
+        if (retry)
+            tab.retryLoad();
+        else
+            tab.resumeAsync();
+        QTRY_COMPARE_WITH_TIMEOUT(resumed.size(), 1, 10000);
+        QVERIFY(resumed.front().front().toBool());
+        QVERIFY(tab.isUsable());
+        const auto notes = tab.viewer()->annotModel()->pageAnnots(0);
+        QCOMPARE(notes.size(), size_t(1));
+        QCOMPARE(notes.front().contents, QStringLiteral("preserved"));
+    }
+
     // Selects manifest commit, original replacement and reopen failures.
     void failedSaveKeepsEdits_data()
     {

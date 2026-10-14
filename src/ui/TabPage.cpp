@@ -1065,9 +1065,10 @@ bool TabPage::resume(QString *error, bool *needsPassword)
     return finishResume(result);
 }
 
+// Starts an automatic load only while no document, load or operation owns the tab.
 void TabPage::resumeAsync()
 {
-    if (doc_ || loading_ || loadStopped_)
+    if (busy_ || doc_ || loading_ || loadStopped_)
         return;
     startLoad();
 }
@@ -1298,8 +1299,11 @@ void TabPage::clearCloseWait()
     QTimer::singleShot(0, this, &TabPage::pollJob);
 }
 
+// Takes back a stopped load or starts another without replacing an active operation.
 void TabPage::retryLoad()
 {
+    if (busy_)
+        return;
     loadStopped_ = false;
     if (doc_ || loading_)
         return;
