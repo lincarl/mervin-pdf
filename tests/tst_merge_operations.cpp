@@ -14,6 +14,7 @@
 #include "security/PageOps.h"
 #include "ui/MainWindow.h"
 #include "ui/TabPage.h"
+#include "ui/ViewerWidget.h"
 #include "TestWaits.h"
 
 #include <QApplication>
@@ -26,6 +27,7 @@
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QTemporaryDir>
+#include <QTabWidget>
 #include <QTimer>
 #include <QtTest>
 
@@ -66,11 +68,16 @@ public:
                 return;
             }
             if (auto *box = qobject_cast<QMessageBox *>(modal)) {
+                if (beforeMessage_)
+                    beforeMessage_(box);
                 if (box->text().contains(QStringLiteral("Replace it?")))
                     box->button(QMessageBox::Yes)->click();
                 else if (box->windowTitle() == QStringLiteral("Done")) {
                     successes_++;
                     box->button(QMessageBox::No)->click();
+                } else if (box->windowTitle() == QStringLiteral("Unsaved changes")) {
+                    quitAnswered_ = true;
+                    box->button(QMessageBox::Cancel)->click();
                 } else {
                     unexpected_.append(box->text());
                     box->reject();
@@ -104,6 +111,8 @@ public:
                 reopenedSpec_ = fields.front()->text();
                 reopenedOutput_ = output->text();
                 reopenedError_ = dialog->findChild<QLabel *>("mergeError")->text();
+                if (beforeReopen_)
+                    beforeReopen_(dialog);
                 if (repair_)
                     repair_();
                 else {
@@ -141,11 +150,14 @@ private slots:
         current_.clear();
         dialogsSeen_ = successes_ = 0;
         submitted_ = false;
+        quitAnswered_ = false;
         reopenedSpec_.clear();
         reopenedOutput_.clear();
         reopenedError_.clear();
         unexpected_.clear();
         repair_ = beforeMerge_ = {};
+        beforeReopen_ = {};
+        beforeMessage_ = {};
         elapsed_.start();
         dialogs_.start(10);
     }
@@ -224,6 +236,107 @@ private slots:
         QTest::newRow("destination writing") << true;
     }
 
+    void failedMergeSelectsItsLaunchingTab()
+    {
+        beforeMerge_ = [this] {
+            job::testing::holdWhen([source = source_, reads = 0]
+                                  (job::Step step, const QString &path) mutable {
+                return step == job::Step::Reading && path == source && ++reads == 2;
+            });
+        };
+        const auto release = qScopeGuard([] { job::testing::release(); });
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        QVERIFY(testing::openAndWait(*window, source_));
+        const QPointer<TabPage> tab(window->findChild<TabPage *>());
+        auto *tabs = window->findChild<QTabWidget *>();
+        QVERIFY(QMetaObject::invokeMethod(window, "mergeDocuments"));
+        QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+        const QString kept = files_->filePath(QStringLiteral("kept.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), kept));
+        QVERIFY(testing::openAndWait(*window, kept));
+        QVERIFY(tabs->currentWidget() != tab);
+        beforeReopen_ = [window, tabs, tab](MergeDialog *dialog) {
+            QCOMPARE(dialog->parentWidget(), window);
+            QCOMPARE(tabs->currentWidget(), tab.data());
+        };
+        QVERIFY(QFile::remove(source_));
+        job::testing::release();
+        QTRY_COMPARE_WITH_TIMEOUT(dialogsSeen_, 2, 10000);
+        QCOMPARE(reopenedSpec_, spec_);
+        QCOMPARE(reopenedOutput_, QDir::toNativeSeparators(output_));
+        QVERIFY(reopenedError_.contains(QStringLiteral("source.pdf")));
+        QVERIFY(!QFileInfo::exists(output_));
+    }
+
+    void queuedMergeResultsRespectQuit_data()
+    {
+        QTest::addColumn<bool>("failure");
+        QTest::addColumn<bool>("cancel");
+        QTest::newRow("success after canceled quit") << false << true;
+        QTest::newRow("failure after canceled quit") << true << true;
+        QTest::newRow("success during confirmed quit") << false << false;
+        QTest::newRow("failure during confirmed quit") << true << false;
+    }
+
+    void queuedMergeResultsRespectQuit()
+    {
+        QFETCH(bool, failure);
+        QFETCH(bool, cancel);
+        beforeMerge_ = [this] {
+            job::testing::holdWhen([source = source_, reads = 0]
+                                  (job::Step step, const QString &path) mutable {
+                return step == job::Step::Reading && path == source && ++reads == 2;
+            });
+        };
+        const auto release = qScopeGuard([] { job::testing::release(); });
+        WindowManager manager;
+        const QPointer<MainWindow> first(manager.createWindow());
+        const QPointer<MainWindow> second(manager.createWindow());
+        QVERIFY(testing::openAndWait(*first, source_));
+        const QPointer<TabPage> tab(first->findChild<TabPage *>());
+        const QString kept = files_->filePath(QStringLiteral("kept.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), kept));
+        QVERIFY(testing::openAndWait(*second, kept));
+        if (cancel) {
+            auto *keptTab = second->findChild<TabPage *>();
+            keptTab->viewer()->loadMeasurements({{0, MeasureKind::Distance, {{15, 80}, {85, 80}}}},
+                                                {}, MeasureUnit::Millimeter, 2, 2);
+            keptTab->viewer()->setMeasurePrecision(3);
+            QVERIFY(keptTab->hasUnsavedEdits());
+        }
+        bool deliveredAfterShutdown = false;
+        beforeMessage_ = [&](QMessageBox *) {
+            deliveredAfterShutdown = deliveredAfterShutdown || manager.isClosing();
+        };
+        beforeReopen_ = [&](MergeDialog *) {
+            deliveredAfterShutdown = deliveredAfterShutdown || manager.isClosing();
+        };
+        QVERIFY(QMetaObject::invokeMethod(first, "mergeDocuments"));
+        QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+        QDialog guard;
+        guard.setWindowModality(Qt::ApplicationModal);
+        guard.show();
+        if (failure)
+            QVERIFY(QFile::remove(source_));
+        job::testing::release();
+        QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable(), 10000);
+        manager.quitAll();
+        guard.close();
+        if (cancel) {
+            QTRY_VERIFY(quitAnswered_);
+            QVERIFY(!manager.isClosing());
+            QTRY_COMPARE(dialogsSeen_, failure ? 2 : 1);
+            QTRY_COMPARE(successes_, failure ? 0 : 1);
+            QVERIFY(first && second && tab);
+        } else {
+            QTRY_VERIFY(manager.isClosing());
+            QTRY_VERIFY(!first && !second && !tab);
+            QTest::qWait(50);
+        }
+        QVERIFY(!deliveredAfterShutdown);
+    }
+
     void queuedFailureSurvivesOldOwnerDestruction()
     {
         beforeMerge_ = [this] {
@@ -244,15 +357,18 @@ private slots:
         QDialog modal;
         modal.setWindowModality(Qt::ApplicationModal);
         modal.show();
+        // An earlier queued move closes the old owner before its result runs.
+        source->whenTabsCanChange([&manager, source, target] {
+            if (source)
+                manager.mergeTab(source, 0, target, -1);
+        });
         job::testing::release();
         QTRY_VERIFY_WITH_TIMEOUT(tab && !tab->isBusy(), 10000);
         QCoreApplication::processEvents();
         QCoreApplication::processEvents();
         QVERIFY(!source->canChangeTabs());
-        // Force the queue's owner to vanish while the tab survives elsewhere.
-        target->adoptTab(source->releaseTab(0));
-        delete source.data();
         modal.hide();
+        QTRY_VERIFY(!source);
         QTRY_COMPARE_WITH_TIMEOUT(dialogsSeen_, 2, 10000);
         QCOMPARE(reopenedSpec_, spec_);
         QCOMPARE(reopenedOutput_, QDir::toNativeSeparators(output_));
@@ -308,9 +424,12 @@ private:
     QStringList unexpected_;
     QPointer<MergeDialog> current_;
     bool submitted_ = false;
+    bool quitAnswered_ = false;
     int dialogsSeen_ = 0;
     int successes_ = 0;
     std::function<void()> repair_, beforeMerge_;
+    std::function<void(MergeDialog *)> beforeReopen_;
+    std::function<void(QMessageBox *)> beforeMessage_;
     QTimer dialogs_;
     QElapsedTimer elapsed_;
 };

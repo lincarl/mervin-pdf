@@ -1160,7 +1160,7 @@ void MainWindow::showMergeDialog(TabPage *tab, const std::shared_ptr<MergeReques
     const OperationScope operation(this);
     const QPointer<MainWindow> owner(this);
     const QPointer<TabPage> page(tab);
-    if (!tab->isUsable())
+    if (!tab->isUsable() || closeConfirmed_ || (wm_ && wm_->isClosing()))
         return;
     if (hiddenToTray_) {
         if (result && wm_)
@@ -1168,6 +1168,17 @@ void MainWindow::showMergeDialog(TabPage *tab, const std::shared_ptr<MergeReques
                 request->plan, request->output, result->failedIndex, result->conflict));
         return;
     }
+    // Reopening the failed plan belongs to its launching tab, even if the user
+    // selected another one while the write waited.
+    recentActive_ = false;
+    tabs_->setCurrentWidget(tab);
+    if (!owner || !page || !page->isUsable() || page->window() != owner
+        || closeConfirmed_ || (wm_ && wm_->isClosing()))
+        return;
+    updateForCurrentTab();
+    if (!owner || !page || !page->isUsable() || page->window() != owner
+        || closeConfirmed_ || (wm_ && wm_->isClosing()))
+        return;
     const QPointer<mervin::MergeDialog> dialog(request
         ? new mervin::MergeDialog(request->plan, request->output, result->error,
                                   result->failedIndex, result->conflict, this)
@@ -1189,7 +1200,8 @@ void MainWindow::showMergeDialog(TabPage *tab, const std::shared_ptr<MergeReques
 void MainWindow::runMerge(TabPage *tab, const std::shared_ptr<MergeRequest> &request)
 {
     auto *owner = qobject_cast<MainWindow *>(tab->window());
-    if (!owner || !tab->isUsable())
+    if (!owner || !tab->isUsable() || owner->closeConfirmed_
+        || (owner->wm_ && owner->wm_->isClosing()))
         return;
     const auto open = openFileKeys(owner->wm_ ? owner->wm_->openTabPaths() : owner->tabPaths());
     const auto result = std::make_shared<MergeResult>();
@@ -1226,19 +1238,21 @@ void MainWindow::deliverMergeDialog(TabPage *tab, const std::shared_ptr<MergeReq
 {
     const QPointer<TabPage> page(tab);
     auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
-    if (!window)
+    if (!window || window->closeConfirmed_ || (window->wm_ && window->wm_->isClosing()))
         return;
     // The old window drops its queue on destruction. A tab that moved away must
     // still receive the result in its surviving owner.
     const auto discarded = connect(window, &QObject::destroyed, tab, [page, request, result] {
-        if (page)
-            deliverMergeDialog(page, request, result);
+        QTimer::singleShot(0, page, [page, request, result] {
+            if (page)
+                deliverMergeDialog(page, request, result);
+        });
     });
     window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window), request, result,
                               discarded] {
         disconnect(discarded);
         auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
-        if (!current)
+        if (!current || current->closeConfirmed_ || (current->wm_ && current->wm_->isClosing()))
             return;
         if (current != owner) {
             deliverMergeDialog(page, request, result);

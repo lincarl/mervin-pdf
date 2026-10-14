@@ -238,7 +238,7 @@ These still touch the disk on the UI thread and are planned work:
   memory buffer, so these calls do not read the original file. Moving every
   viewer query to background threads remains separate work. Directory-dependent
   non-PDF formats retain their path-based lookup of relative resources.
-- Merge and security. The chosen design
+- Security. The chosen design
   shows such a wait in its tab, with a bar over its locked document, so other
   tabs and windows stay usable. New tabs and unloaded tabs already load in their
   placeholders. Rotate Pages, Split, Extract and Delete run as tab jobs (see Page
@@ -762,8 +762,9 @@ refuses open tabs and reserves the destination before calling `PageOps::merge`.
 Failure reopens the previously probed rows, ranges, passwords and output with the
 existing error summary and detail. A reopened plan assigns new probe tickets above
 its inherited ones. Completion follows the tab's current window, including when
-an older queued move destroys its original owner. A hidden owner sends the same
-translated failure summary to the tray. Stop suppresses all completion prompts.
+an older queued move destroys its original owner. Reopening a failed plan selects
+its launching tab. A hidden owner sends the same translated failure summary to
+the tray. Stop and confirmed shutdown suppress all completion prompts.
 
 Neither plan touches the disk on the UI thread. Each dialog checks its Save as text
 with `SaveCheck` (`io/SaveCheck`) on a background thread. Extract checks whether the
