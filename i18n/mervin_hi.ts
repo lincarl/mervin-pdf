@@ -3147,6 +3147,11 @@ This file is no longer on disk.</source>
         <translation>दस्तावेज़ संदर्भ आवंटित नहीं किया जा सका।</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>दस्तावेज़ पढ़ा नहीं जा सका।</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>यह दस्तावेज़ पासवर्ड से सुरक्षित है।</translation>
     </message>

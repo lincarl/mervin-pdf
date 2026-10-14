@@ -3167,6 +3167,11 @@ Tego pliku nie ma już na dysku.</translation>
         <translation>Nie można przydzielić kontekstu dokumentu.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Nie udało się odczytać dokumentu.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Ten dokument jest chroniony hasłem.</translation>
     </message>

@@ -3147,6 +3147,11 @@ Tämä tiedosto ei ole enää levyllä.</translation>
         <translation>Asiakirjan kontekstia ei voitu varata.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Asiakirjaa ei voitu lukea.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Tämä asiakirja on suojattu salasanalla.</translation>
     </message>

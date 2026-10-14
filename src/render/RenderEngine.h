@@ -30,6 +30,10 @@ public:
     // prompt and retry. Other failures return nullptr with *error set. The document
     // can outlive the engine. The open reports job::reading() first, so the job it
     // runs in shows the file, and a stopped job opens nothing.
+    // Standalone formats, including PDFs, keep the complete file in an owning memory
+    // buffer. Viewer reads then use those bytes even if the original drive stops
+    // answering. Reading ticks job progress and checks cancellation between chunks.
+    // Directory-dependent formats retain their path-based resource lookup.
     std::unique_ptr<Document> openDocument(const QString &path, const QString &password = QString(),
                                            QString *error = nullptr, bool *needsPassword = nullptr);
 

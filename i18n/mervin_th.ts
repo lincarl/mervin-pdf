@@ -3127,6 +3127,11 @@ This file is no longer on disk.</source>
         <translation>ไม่สามารถจัดสรรบริบทของเอกสารได้</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>ไม่สามารถอ่านเอกสารได้</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>เอกสารนี้มีการป้องกันด้วยรหัสผ่าน</translation>
     </message>

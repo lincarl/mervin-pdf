@@ -3147,6 +3147,11 @@ Questo file non è più sul disco.</translation>
         <translation>Impossibile allocare un contesto di documento.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Impossibile leggere il documento.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Questo documento è protetto da password.</translation>
     </message>

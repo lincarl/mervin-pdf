@@ -3127,6 +3127,11 @@ Tệp này không còn trên đĩa.</translation>
         <translation>Không thể phân bổ ngữ cảnh tài liệu.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Không thể đọc tài liệu.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Tài liệu này được bảo vệ bằng mật khẩu.</translation>
     </message>

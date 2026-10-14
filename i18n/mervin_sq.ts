@@ -3147,6 +3147,11 @@ Ky skedar nuk është më në disk.</translation>
         <translation>Nuk mund të ndahej një kontekst dokumenti.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Dokumenti nuk mund të lexohej.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Ky dokument është i mbrojtur me fjalëkalim.</translation>
     </message>

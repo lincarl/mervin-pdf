@@ -3127,6 +3127,11 @@ Bu dosya artık diskte değil.</translation>
         <translation>Belge bağlamı için bellek ayrılamadı.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Belge okunamadı.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Bu belge şifre korumalıdır.</translation>
     </message>

@@ -3147,6 +3147,11 @@ Den här filen finns inte längre på disken.</translation>
         <translation>Det gick inte att allokera en dokumentkontext.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Det gick inte att läsa dokumentet.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Det här dokumentet är lösenordsskyddat.</translation>
     </message>

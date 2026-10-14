@@ -3147,6 +3147,11 @@ Diese Datei befindet sich nicht mehr auf der Festplatte.</translation>
         <translation>Es konnte kein Dokumentkontext zugeordnet werden.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Das Dokument konnte nicht gelesen werden.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Dieses Dokument ist passwortgeschützt.</translation>
     </message>

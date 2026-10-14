@@ -3147,6 +3147,11 @@ Bu fayl artıq diskdə deyil.</translation>
         <translation>Sənəd kontekstini ayırmaq mümkün olmadı.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Sənədi oxumaq mümkün olmadı.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Bu sənəd parolla qorunur.</translation>
     </message>

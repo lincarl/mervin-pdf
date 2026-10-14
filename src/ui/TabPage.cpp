@@ -497,8 +497,8 @@ TabPage::~TabPage()
         return;
     }
     if (job_) {
-        // An operation commits nothing after this. It does not use the document, which
-        // closes as below.
+        // The operation starts no further commit. It does not use the document,
+        // which closes as below. A commit already started can finish.
         job_->state.stop();
         abandon(job_, {});
     }
@@ -1048,8 +1048,10 @@ void TabPage::stopWaiting()
         abandon(job_, {});
         job_.reset();
         finished_ = nullptr;
+        const QPointer<TabPage> self(this);
         endOperation();
-        emit operationFinished(false);
+        if (self)
+            emit operationFinished(false);
         return;
     }
     if (!loading_)
@@ -1145,9 +1147,12 @@ void TabPage::finishOperation(const std::shared_ptr<Job> &job)
     job_.reset();
     // Copied first, as what the signals start may close the tab.
     const std::function<void()> finished = std::exchange(finished_, nullptr);
+    const QPointer<TabPage> self(this);
     endOperation();
+    if (!self)
+        return;
     emit operationFinished(true);
-    if (finished)
+    if (self && finished)
         finished();
 }
 

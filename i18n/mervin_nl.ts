@@ -3147,6 +3147,11 @@ Dit bestand staat niet meer op schijf.</translation>
         <translation>Kan geen documentcontext toewijzen.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Het document kon niet worden gelezen.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Dit document is beveiligd met een wachtwoord.</translation>
     </message>

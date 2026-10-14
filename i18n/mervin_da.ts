@@ -3147,6 +3147,11 @@ Denne fil er ikke længere på disken.</translation>
         <translation>Kunne ikke tildele en dokumentkontekst.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Dokumentet kunne ikke læses.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Dette dokument er kodeordsbeskyttet.</translation>
     </message>

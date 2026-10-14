@@ -3127,6 +3127,11 @@ This file is no longer on disk.</source>
         <translation>문서 컨텍스트를 할당할 수 없습니다.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>문서를 읽을 수 없습니다.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>이 문서는 비밀번호로 보호되어 있습니다.</translation>
     </message>

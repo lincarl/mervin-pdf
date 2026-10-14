@@ -3167,6 +3167,11 @@ This file is no longer on disk.</source>
         <translation>Не атрымалася вылучыць кантэкст дакумента.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Не ўдалося прачытаць дакумент.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Гэты дакумент абаронены паролем.</translation>
     </message>

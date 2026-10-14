@@ -3127,6 +3127,11 @@ Ez a fájl már nincs a lemezen.</translation>
         <translation>Nem sikerült hozzárendelni a dokumentumkörnyezetet.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Nem sikerült beolvasni a dokumentumot.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Ez a dokumentum jelszóval védett.</translation>
     </message>

@@ -3187,6 +3187,11 @@ Dan il-fajl m&apos;għadux fuq disk.</translation>
         <translation>Ma setgħetx talloka kuntest ta&apos; dokument.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Ma setax jinqara d-dokument.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Dan id-dokument huwa protett minn password.</translation>
     </message>

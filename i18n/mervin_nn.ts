@@ -3147,6 +3147,11 @@ Denne fila finst ikkje lenger på disken.</translation>
         <translation>Klarte ikkje å tildele ein dokumentkontekst.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Kunne ikkje lese dokumentet.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Dette dokumentet er passordverna.</translation>
     </message>

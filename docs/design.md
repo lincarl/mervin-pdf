@@ -207,6 +207,24 @@ and checks that a decision waits for, such as session restore's, go ahead of tho
 already waiting on their volume. `WindowManager` owns one probe for every window, so
 each file is checked once whichever list shows it.
 
+Before installing a PDF, `RenderEngine::open` reads the complete source in 64 KiB
+chunks into a MuPDF buffer. It checks cancellation before and after each read and
+ticks progress for each chunk. A stream error fails the open rather than accepting
+partial bytes. `fz_open_document_with_buffer` gives the document its own reference
+to those bytes, and the opener closes the source stream. Later page renders, forms,
+outline, measurements, text selection and pointer lookups use the loaded bytes,
+including after Stop waiting while the original drive still does not answer. The
+existing document lifetime owns the buffer, and unloading releases it.
+
+Each loaded document therefore keeps roughly its file size in additional memory,
+and its first page waits until the complete read finishes. Allocation failure fails
+the open, without a file-backed fallback that would restore lazy disk reads. Other
+self-contained formats use the same buffer. Formats that need their containing
+directory or a named file keep their existing path opener for compatibility.
+Document save uses a full rewrite, so it does not need the original source stream.
+Fresh opens remain synchronous until their separate background-open change; resumed
+tabs already preload on their worker.
+
 Each `TabPage` groups one tab with its viewer, document when loaded, and retained
 state when unloaded. Tab detachment and merging reparent this tab object rather
 than reopening the file.
@@ -215,15 +233,11 @@ than reopening the file.
 
 These still touch the disk on the UI thread and are planned work:
 
-- Reading a document while it is shown. MuPDF reads a document lazily, so the
-  thumbnails, the outline, the comments list, form fields, measurements, text
-  selection and the link and item lookups under the pointer read the file on the UI
-  thread. They also wait for a render worker that holds the document's lock while it
-  reads. Two fixes were considered. Reading the whole file into memory when it opens
-  (`fz_open_document_with_buffer`) makes every later read come from memory, at the
-  cost of memory equal to the file's size and a first page that waits for the whole
-  file on a slow share. Moving every viewer call to background threads avoids both
-  costs but is a much larger change to the viewer. Neither is done yet.
+- Viewer queries still parse and inspect document data on the UI thread and can
+  wait for another thread's document access lock. Loaded PDFs now use an owning
+  memory buffer, so these calls do not read the original file. Moving every
+  viewer query to background threads remains separate work. Directory-dependent
+  non-PDF formats retain their path-based lookup of relative resources.
 - Opening a document in a new tab, saving, Save as copy, export, print, Delete
   Pages, Extract Pages, merge, security, and the recovery copy written when a tab
   unloads. The chosen design shows such a wait in its tab: a bar over the tab's

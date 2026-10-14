@@ -3167,6 +3167,11 @@ This file is no longer on disk.</source>
         <translation>Nepavyko priskirti dokumento konteksto.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Nepavyko perskaityti dokumento.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Šis dokumentas yra apsaugotas slaptažodžiu.</translation>
     </message>

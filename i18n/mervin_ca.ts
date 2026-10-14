@@ -3147,6 +3147,11 @@ Aquest fitxer ja no és al disc.</translation>
         <translation>No s&apos;ha pogut assignar un context de document.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>No s&apos;ha pogut llegir el document.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Aquest document està protegit amb contrasenya.</translation>
     </message>

@@ -3167,6 +3167,11 @@ Ova datoteka više nije na disku.</translation>
         <translation>Memorija za kontekst dokumenta nije mogla da se dodijeli.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Nije moguće pročitati dokument.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Ovaj dokument je zaštićen lozinkom.</translation>
     </message>

@@ -3167,6 +3167,11 @@ Tento súbor už nie je na disku.</translation>
         <translation>Nepodarilo sa prideliť kontext dokumentu.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Dokument sa nepodarilo prečítať.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Tento dokument je chránený heslom.</translation>
     </message>

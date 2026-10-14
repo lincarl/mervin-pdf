@@ -117,7 +117,7 @@ void MainWindow::runPageTool(TabPage *tab, const std::shared_ptr<const PageTool>
     operation.work = [tool, password, result] { *result = tool->work(password); };
     // The tab can have moved to another window meanwhile.
     operation.finished = [page = QPointer<TabPage>(tab), tool, password, asked, result] {
-        auto *window = qobject_cast<MainWindow *>(page->window());
+        auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
         if (!window)
             return;
         window->whenTabsCanChange([page, tool, password, asked, result] {
@@ -459,8 +459,8 @@ bool MainWindow::confirmClose(TabPage *tab)
     const OperationScope operation(this);
     if (tab->isBusy()) {
         // Closing a tab, its window or the app does not wait for an operation yet. It
-        // stops it, so nothing the operation writes lands afterwards. Its editors were
-        // committed when it started.
+        // stops it, so no further commit starts. A commit already started can finish.
+        // Its editors were committed when it started.
         tab->stopWaiting();
     } else {
         auto *viewer = tab->viewer();
@@ -667,7 +667,12 @@ void MainWindow::splitDocument()
                      const QString &password) {
         PageToolResult result;
         // The viewer holds an open file, which a replace would fail on or corrupt.
-        const auto mayWrite = [&result, &open](const QStringList &outputs) {
+        const auto mayWrite = [&result, &open, &dir](const QStringList &outputs) {
+            // Resolving an output's canonical path can wait on its drive too.
+            if (!mervin::job::writing(dir)) {
+                result.error = mervin::job::notRunError();
+                return false;
+            }
             for (const QString &output : outputs)
                 result.destinationOpen = result.destinationOpen
                                          || open.contains(mervin::fileKey(QFileInfo(output)));

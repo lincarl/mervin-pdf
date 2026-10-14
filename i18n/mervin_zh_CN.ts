@@ -3127,6 +3127,11 @@ This file is no longer on disk.</source>
         <translation>无法分配文档上下文。</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>无法读取文档。</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>此文档受密码保护。</translation>
     </message>

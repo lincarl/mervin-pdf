@@ -33,10 +33,12 @@
 #include <QScrollBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QTimer>
 #include <QToolButton>
 #include <QtTest>
 
+#include <atomic>
 #include <memory>
 
 #ifdef Q_OS_UNIX
@@ -180,7 +182,8 @@ public:
                     return;
                 }
                 name->setText(QDir::toNativeSeparators(files_.takeFirst()));
-                QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection);
+                // An overwrite question needs this timer again after acceptance.
+                QMetaObject::invokeMethod(dialog, "accept", Qt::QueuedConnection);
             }
         });
     }
@@ -241,6 +244,7 @@ private slots:
         QVERIFY(QFile::remove(path));
         QCOMPARE(::mkfifo(QFile::encodeName(path).constData(), 0600), 0);
         mervin::testing::PipeWriter writer(path, 5000);
+        QVERIFY(appfiles::flush(10000));
         const int tasks = background::running();
 
         QElapsedTimer timer;
@@ -370,6 +374,73 @@ private slots:
         QTest::newRow("write") << true << true;
         QTest::newRow("read") << false << true;
         QTest::newRow("read in the destination") << false << false;
+    }
+
+    // Progress delays the bar. Once shown, the bar stays and follows the job's step.
+    void waitBarFollowsProgressAndStepChanges()
+    {
+        QTemporaryDir files;
+        const QString firstFolder = files.filePath(QStringLiteral("first"));
+        const QString nextFolder = files.filePath(QStringLiteral("next"));
+        const QString source = files.filePath(QStringLiteral("source/plan.pdf"));
+        TabPage::setSlowDelayForTesting(500);
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        TabPage *tab = currentTab(window);
+        QVERIFY(tab);
+        const Bar bar(*tab);
+        QVERIFY(bar.valid());
+
+        auto stage = std::make_shared<std::atomic<int>>(0);
+        TabPage::Operation operation;
+        operation.destination = firstFolder;
+        operation.work = [stage, firstFolder, nextFolder, source] {
+            int previous = -1;
+            while (!job::stopped()) {
+                const int current = stage->load();
+                if (current == 4)
+                    return;
+                if (current != previous) {
+                    if (current == 2)
+                        job::reading(source);
+                    else if (current == 3)
+                        job::writing(nextFolder);
+                    else if (current == 0)
+                        job::writing(firstFolder);
+                    previous = current;
+                }
+                if (current != 1)
+                    job::progressed();
+                QThread::msleep(25);
+            }
+        };
+        tab->startOperation(std::move(operation));
+        const auto stop = qScopeGuard([tab] { tab->stopWaiting(); });
+
+        QElapsedTimer active;
+        active.start();
+        while (active.elapsed() < 1250) {
+            QTest::qWait(50);
+            QVERIFY(!bar.bar->isVisible());
+        }
+        stage->store(1);
+        QTRY_VERIFY_WITH_TIMEOUT(bar.bar->isVisible(), 2000);
+        QCOMPARE(withoutBreakMarks(bar.text->text()), savingTo(firstFolder));
+
+        stage->store(2);
+        QTRY_COMPARE(withoutBreakMarks(bar.text->text()),
+                     reading(QStringLiteral("plan.pdf"), QFileInfo(source).absolutePath()));
+        QTest::qWait(750);
+        QVERIFY(bar.bar->isVisible());
+        stage->store(3);
+        QTRY_COMPARE(withoutBreakMarks(bar.text->text()), savingTo(nextFolder));
+        QVERIFY(bar.bar->isVisible());
+
+        stage->store(4);
+        QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable(), 10000);
+        QVERIFY(!bar.bar->isVisible());
     }
 
     // A write names its folder, a read the file and its folder, and a read in the
@@ -519,6 +590,7 @@ private slots:
         const Bar bar(*tab);
         QVERIFY(bar.valid());
         holdAt(job::Step::Commit, out);
+        QVERIFY(appfiles::flush(10000));
         const int tasks = background::running();
         rotate(window, out);
         // The job wrote its temporary file and waits to replace the destination.
@@ -679,6 +751,7 @@ private slots:
         TabPage *tab = currentTab(window);
         QVERIFY(tab);
         holdAt(job::Step::Commit, QDir(folder).filePath(QStringLiteral("plan-002.pdf")));
+        QVERIFY(appfiles::flush(10000));
         const int tasks = background::running();
         split(window, folder);
         QVERIFY(tab->isBusy());
@@ -691,9 +764,17 @@ private slots:
         QCOMPARE(filesIn(folder), QStringList{QStringLiteral("plan-001.pdf")});
     }
 
-    // Split writes nothing when a file it would replace is open in a tab, and says why.
-    void splitRefusesADestinationOpenInATab()
+    void pageToolRefusesADestinationOpenInATab_data()
     {
+        QTest::addColumn<bool>("splitPages");
+        QTest::newRow("split") << true;
+        QTest::newRow("rotate") << false;
+    }
+
+    // Neither tool writes when its destination is open in a tab, and it says why.
+    void pageToolRefusesADestinationOpenInATab()
+    {
+        QFETCH(bool, splitPages);
         QTemporaryDir files;
         QVERIFY(QDir(files.path()).mkpath(QStringLiteral("out")));
         const QString path = files.filePath(QStringLiteral("plan.pdf"));
@@ -714,11 +795,18 @@ private slots:
         QVERIFY(tab);
         QCOMPARE(tab->path(), path);
         QSignalSpy finished(tab, &TabPage::operationFinished);
+        if (!splitPages)
+            answers_ << QMessageBox::Yes; // the file picker's overwrite question
         answers_ << QMessageBox::Ok;
-        split(window, folder);
+        if (splitPages)
+            split(window, folder);
+        else
+            rotate(window, open);
         QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 10000);
         QTRY_VERIFY(answers_.isEmpty());
-        QCOMPARE(told_.last(), QStringLiteral("Split Pages: The destination is open in a tab."));
+        QCOMPARE(told_.last(), splitPages
+                                  ? QStringLiteral("Split Pages: The destination is open in a tab.")
+                                  : QStringLiteral("Rotate Pages: The destination is open in a tab."));
         QCOMPARE(filesIn(folder), QStringList{QStringLiteral("plan-002.pdf")});
         QFile file(open);
         QVERIFY(file.open(QIODevice::ReadOnly));
@@ -757,6 +845,97 @@ private slots:
         QTRY_VERIFY(answers_.isEmpty());
         QCOMPARE(toldIn_.size(), 1);
         QCOMPARE(toldIn_.first().data(), static_cast<QWidget *>(second));
+    }
+
+    // A completion signal can close its tab before the tool delivers its result.
+    void completionSlotMayCloseItsTab()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("plan.pdf"));
+        const QString out = files.filePath(QStringLiteral("plan-rotated.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(window.openFile(path));
+        const QPointer<TabPage> tab(currentTab(window));
+        QVERIFY(tab);
+        connect(tab, &TabPage::operationFinished, &window, [&window](bool completed) {
+            if (completed)
+                QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0));
+        });
+
+        rotate(window, out);
+        QTRY_VERIFY_WITH_TIMEOUT(tab.isNull(), 10000);
+        QCOMPARE(window.tabCount(), 0);
+        QVERIFY(QFileInfo::exists(out));
+        QVERIFY(told_.isEmpty());
+    }
+
+    void stateChangeMayCloseAnEndingOperation_data()
+    {
+        QTest::addColumn<bool>("stop");
+        QTest::newRow("completion") << false;
+        QTest::newRow("stop") << true;
+    }
+
+    // State observers can close the tab as soon as its document becomes usable.
+    void stateChangeMayCloseAnEndingOperation()
+    {
+        QFETCH(bool, stop);
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        const QPointer<TabPage> tab(currentTab(window));
+        QVERIFY(tab);
+        connect(tab, &TabPage::stateChanged, &window, [&window, tab] {
+            if (tab && tab->isUsable())
+                QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0));
+        });
+        const QString path = tab->path();
+        holdAt(job::Step::Reading, path);
+        bool delivered = false;
+        TabPage::Operation operation;
+        operation.work = [path] { job::reading(path); };
+        operation.finished = [&delivered] { delivered = true; };
+        tab->startOperation(std::move(operation));
+        QTRY_COMPARE(job::testing::held(), 1);
+        if (stop)
+            tab->stopWaiting();
+        job::testing::release();
+
+        QTRY_VERIFY_WITH_TIMEOUT(tab.isNull(), 10000);
+        QCOMPARE(window.tabCount(), 0);
+        QVERIFY(!delivered);
+    }
+
+    // Starting an operation also allows a state observer to close the tab safely.
+    void stateChangeMayCloseAStartingOperation()
+    {
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        const QPointer<TabPage> tab(currentTab(window));
+        QVERIFY(tab);
+        connect(tab, &TabPage::stateChanged, &window, [&window, tab] {
+            if (tab && tab->isBusy())
+                QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0));
+        });
+        const QString path = tab->path();
+        holdAt(job::Step::Reading, path);
+        bool delivered = false;
+        TabPage::Operation operation;
+        operation.work = [path] { job::reading(path); };
+        operation.finished = [&delivered] { delivered = true; };
+        tab->startOperation(std::move(operation));
+
+        QVERIFY(tab.isNull());
+        QCOMPARE(window.tabCount(), 0);
+        QTRY_COMPARE(job::testing::held(), 1);
+        job::testing::release();
+        QVERIFY(!delivered);
     }
 
     // A window hidden in the tray shows nothing once its tab's tool is done.
@@ -819,6 +998,7 @@ private slots:
         // Held before the tool opens the file, which an in-place save on Windows could
         // not replace while it is open.
         holdAt(job::Step::Reading, path);
+        QVERIFY(appfiles::flush(10000));
         const int tasks = background::running();
         rotate(*host, out);
         QTRY_COMPARE(job::testing::held(), 1);

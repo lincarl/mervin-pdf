@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
@@ -542,10 +543,54 @@ std::unique_ptr<Document> RenderEngine::open(fz_context *ctx, std::shared_ptr<fz
         return nullptr;
     }
     const QByteArray utf8 = path.toUtf8();
+    //: Shown when the complete source file cannot be read. A partially read file
+    //: is not opened, even if the PDF reader could repair it.
+    const QByteArray readError = tr("Could not read the document.").toUtf8();
+    const QByteArray stoppedError = job::notRunError().toUtf8();
     fz_document *doc = nullptr;
+    fz_stream *file = nullptr;
+    fz_buffer *buffer = nullptr;
     fz_var(doc);
+    fz_var(file);
+    fz_var(buffer);
     fz_try(ctx) {
-        doc = fz_open_document(ctx, utf8.constData());
+        const fz_document_handler *handler = fz_recognize_document_content(ctx, utf8.constData());
+        if (job::stopped())
+            fz_throw(ctx, FZ_ERROR_ABORT, "%s", stoppedError.constData());
+        if (handler && (handler->wants_dir || handler->wants_file)) {
+            // Directory-dependent formats keep their relative resource lookup.
+            doc = fz_open_document(ctx, utf8.constData());
+        } else {
+            file = fz_open_file(ctx, utf8.constData());
+            buffer = fz_new_buffer(ctx, 64 * 1024);
+            unsigned char chunk[64 * 1024];
+            for (;;) {
+                if (job::stopped())
+                    fz_throw(ctx, FZ_ERROR_ABORT, "%s", stoppedError.constData());
+                const size_t count = fz_read(ctx, file, chunk, sizeof(chunk));
+                if (job::stopped())
+                    fz_throw(ctx, FZ_ERROR_ABORT, "%s", stoppedError.constData());
+                // MuPDF can turn a stream read error into EOF. Do not accept it
+                // as a complete, repairable document.
+                if (file->error) {
+                    // fz_throw records errno for a system exception.
+                    errno = EIO;
+                    fz_throw(ctx, FZ_ERROR_SYSTEM, "%s", readError.constData());
+                }
+                if (!count)
+                    break;
+                fz_append_data(ctx, buffer, chunk, count);
+                job::progressed();
+            }
+            fz_trim_buffer(ctx, buffer);
+            // The document keeps the buffer's bytes through its own stream reference.
+            // Later viewer queries can no longer read the original file.
+            doc = fz_open_document_with_buffer(ctx, utf8.constData(), buffer);
+        }
+    }
+    fz_always(ctx) {
+        fz_drop_stream(ctx, file);
+        fz_drop_buffer(ctx, buffer);
     }
     fz_catch(ctx) {
         if (error)
@@ -555,6 +600,13 @@ std::unique_ptr<Document> RenderEngine::open(fz_context *ctx, std::shared_ptr<fz
     }
     if (!doc) {
         fz_drop_context(ctx);
+        return nullptr;
+    }
+    if (job::stopped()) {
+        fz_drop_document(ctx, doc);
+        fz_drop_context(ctx);
+        if (error)
+            *error = job::notRunError();
         return nullptr;
     }
 

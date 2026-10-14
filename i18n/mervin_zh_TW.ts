@@ -3127,6 +3127,11 @@ This file is no longer on disk.</source>
         <translation>無法配置文件處理環境。</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>無法讀取文件。</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>此文件受密碼保護。</translation>
     </message>

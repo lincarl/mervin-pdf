@@ -3147,6 +3147,11 @@ Questa datoteca n&apos;è betg pli sin il disc.</translation>
         <translation>Impussibel d&apos;allogar in context da document.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Impussibel da leger il document.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Quest document è protegì cun in pled-clav.</translation>
     </message>

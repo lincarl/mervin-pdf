@@ -3147,6 +3147,11 @@ This file is no longer on disk.</source>
         <translation>Չհաջողվեց հատկացնել փաստաթղթի համատեքստ:</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Չհաջողվեց կարդալ փաստաթուղթը։</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Այս փաստաթուղթը պաշտպանված է գաղտնաբառով:</translation>
     </message>

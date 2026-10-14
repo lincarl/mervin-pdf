@@ -3227,6 +3227,11 @@ This file is no longer on disk.</source>
         <translation>لا يمكن تخصيص سياق الوثيقة.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>تعذر قراءة المستند.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>هذا المستند محمي بكلمة مرور.</translation>
     </message>

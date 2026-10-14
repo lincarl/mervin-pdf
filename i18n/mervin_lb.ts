@@ -3147,6 +3147,11 @@ Dëse Fichier ass net méi op der Disk.</translation>
         <translation>Konnt en Dokumentkontext net allocéieren.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>D&apos;Dokument konnt net gelies ginn.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Dëst Dokument ass Passwuert geschützt.</translation>
     </message>
