@@ -9,7 +9,7 @@
 namespace mervin {
 
 AtomicPdfWriter::AtomicPdfWriter(QPDF &pdf, const QString &path)
-    : destination_(path), file_(path), sink_(file_), writer_(pdf)
+    : destination_(path), file_(path), sink_(file_, QFileInfo(path).absolutePath()), writer_(pdf)
 {
     // A test can hold the write step here, while this writer owns its destination.
     if (!destination_.owns() || !job::writing(QFileInfo(path).absolutePath()))
@@ -23,6 +23,8 @@ AtomicPdfWriter::AtomicPdfWriter(QPDF &pdf, const QString &path)
 
 void AtomicPdfWriter::Sink::write(const unsigned char *data, size_t length)
 {
+    // qpdf reads its source between the pieces it writes.
+    job::switchTo(job::Step::Writing, folder_);
     if (job::stopped())
         throw std::runtime_error(job::notRunError().toStdString());
     while (length) {
@@ -40,7 +42,8 @@ void AtomicPdfWriter::Sink::write(const unsigned char *data, size_t length)
 void AtomicPdfWriter::write()
 {
     writer_.write();
-    // Writes out the buffer while a stop can still keep the destination as it was.
+    // Writes out Qt's buffer while a stop can still keep the destination as it was.
+    // The commit then syncs the temporary file to disk and renames it.
     if (!file_.flush())
         throw std::runtime_error(file_.errorString().toStdString());
     if (!job::beginCommit(file_.fileName())) {

@@ -19,19 +19,25 @@ public:
     // Throws when the job stopped first.
     AtomicPdfWriter(QPDF &pdf, const QString &path);
     QPDFWriter &options() { return writer_; }
-    // Replaces the destination only after job::beginCommit() agreed.
+    // Replaces the destination only after job::beginCommit() agreed. The commit syncs
+    // the temporary file to disk and renames it.
     void write();
 
 private:
     class Sink final : public Pipeline
     {
     public:
-        explicit Sink(QSaveFile &file) : Pipeline("atomic PDF output", nullptr), file_(file) {}
-        // Ticks job::progressed() once per call.
+        Sink(QSaveFile &file, const QString &folder)
+            : Pipeline("atomic PDF output", nullptr), file_(file), folder_(folder)
+        {
+        }
+        // Reports writing to the folder again after a read of the source, gives up
+        // once the job stopped, and ticks job::progressed() once per call.
         void write(const unsigned char *data, size_t length) override;
         void finish() override {}
     private:
         QSaveFile &file_;
+        const QString folder_;
     };
 
     job::DestinationLock destination_; // first, so it outlives the temporary file

@@ -58,7 +58,8 @@ bool DocumentOutput::replace(const QString &source, const QString &destination, 
             return fail(output.errorString());
         job::progressed();
     }
-    // Writes out the buffer while a stop can still keep the destination as it was.
+    // Writes out Qt's buffer while a stop can still keep the destination as it was.
+    // The commit then syncs the temporary file to disk and renames it.
     if (!output.flush())
         return fail(output.errorString());
     if (!job::beginCommit(destination)) {

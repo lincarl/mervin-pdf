@@ -1,6 +1,7 @@
 #include "security/MeasureExport.h"
 #include "io/JobContext.h"
 #include "security/AtomicPdfWriter.h"
+#include "security/QpdfSource.h"
 
 #include <qpdf/Buffer.hh>
 #include <qpdf/Constants.h>
@@ -42,7 +43,7 @@ Status openQpdf(QPDF &q, const QString &path, const QString &password, QString *
     }
     try {
         const std::string pw = u8(password);
-        q.processFile(u8(path).c_str(), password.isEmpty() ? nullptr : pw.c_str());
+        processReportedFile(q, path, password.isEmpty() ? nullptr : pw.c_str());
         return Status::Ok;
     } catch (const QPDFExc &e) {
         if (e.getErrorCode() == qpdf_e_password) {

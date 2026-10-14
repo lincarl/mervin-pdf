@@ -14,10 +14,10 @@
 // until the disk answers.
 //
 // A job opens a Scope for its State on its own thread. The code that reads and writes
-// document files (AtomicPdfWriter, DocumentOutput::replace, the qpdf opens and
+// document files (AtomicPdfWriter, DocumentOutput::replace, the qpdf sources and
 // RenderEngine::open) reports through the free functions below, which act on the
-// state of the calling thread's scope. Outside a scope they change nothing. Every
-// step goes ahead and nothing is reported.
+// state of the calling thread's scope. Outside a scope nothing is reported to a job
+// and every step goes ahead, unless a test hook holds it or makes it fail.
 namespace mervin::job {
 
 // What a job is doing, for the wording of its tab.
@@ -57,7 +57,7 @@ public:
     void endCommit();
 
     void report(Step step, const QString &path);
-    // A chunk written, a page printed, a file split.
+    // A piece written or a page printed.
     void progressed() { ticks_.fetch_add(1, std::memory_order_relaxed); }
     // The job took or released the shown document (Document::Hold).
     void setHolding(bool on);
@@ -113,9 +113,18 @@ bool reading(const QString &file);
 bool writing(const QString &folder);
 bool printing(const QString &printer);
 
-// Asked right before `destination` is replaced. False once the job stopped, or when a
-// test made the commit fail, and then nothing may be replaced. Otherwise the replace
-// goes ahead and endCommit() follows once it returned. True outside a scope.
+// Reports a step that goes on after the thread reported another one, as when qpdf
+// reads its source between the pieces it writes. Does nothing while `step` and `path`
+// are still the last report on this thread, so a loop may call it for every piece.
+// The test hooks apply as to the reports above. It cannot fail, so the caller checks
+// stopped() itself.
+void switchTo(Step step, const QString &path);
+
+// Asked right before the commit that replaces `destination`. The commit syncs the new
+// file to disk and then renames it, so a stop during the sync answers Committing too.
+// False once the job stopped, or when a test made the commit fail, and then nothing
+// may be replaced. Otherwise the commit goes ahead and endCommit() follows once it
+// returned.
 bool beginCommit(const QString &destination);
 void endCommit();
 
@@ -135,10 +144,11 @@ class DestinationLock
 {
 public:
     // Reports writing to the folder of `path`, then takes the lock for that file. The
-    // key is fileKey(), the canonical folder or file normalised for comparison, which
+    // key is fileKey(), the canonical folder or file normalized for comparison, which
     // reads the disk on the calling thread. While another writer holds the file, this
     // waits in short steps and gives up once the current job stops. A stopped job
-    // never takes a lock. Outside a scope it waits until the lock is free.
+    // never takes a lock. Outside a scope, as on the GUI thread, it waits until the
+    // lock is free, so the GUI thread must not write a file that a job may still hold.
     explicit DestinationLock(const QString &path);
     // Releases the lock.
     ~DestinationLock();
@@ -153,11 +163,14 @@ private:
     bool owns_ = false;
 };
 
-// For tests only. A hold blocks any thread but the GUI thread, which it would freeze.
-// The functions given here run under the hooks' own lock and must not call them.
+// For tests only. The hooks act inside and outside a scope. A hold blocks any thread
+// but the GUI thread, which it would freeze. The functions given here run under the
+// hooks' own lock and must not call them.
 namespace testing {
 // Blocks each step whose report `match` accepts until release(), as on a disk that
 // stopped answering. A commit is held before it begins, so a stop meanwhile refuses it.
+// DestinationLock's own report of the folder skips the hooks, so a writer held at its
+// Writing step already owns its destination.
 void holdWhen(std::function<bool(Step, const QString &)> match);
 // Blocks each commit whose destination `match` accepts once it has begun, as in a
 // rename on a disk that stopped answering, so a stop meanwhile answers Committing.

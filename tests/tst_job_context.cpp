@@ -6,9 +6,11 @@
 #include "security/PageOps.h"
 #include "security/QpdfService.h"
 
+#include <QDeadlineTimer>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QtTest>
 
@@ -17,6 +19,14 @@
 #include <functional>
 #include <future>
 #include <thread>
+
+#ifdef Q_OS_UNIX
+#include <cerrno>
+#include <csignal>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 using namespace mervin;
 
@@ -144,6 +154,39 @@ private:
     std::thread thread_;
 };
 
+#ifdef Q_OS_UNIX
+// Opens the write end of the FIFO at `path` once `job` opened its read end, as a
+// blocking descriptor. -1 if the job ended first or did not open it in time.
+int openWriteEnd(const QString &path, JobThread &job)
+{
+    const QByteArray name = QFile::encodeName(path);
+    const QDeadlineTimer deadline(kWaitMs);
+    while (!deadline.hasExpired() && !job.endsWithin(10)) {
+        const int fd = ::open(name.constData(), O_WRONLY | O_NONBLOCK);
+        if (fd >= 0) {
+            ::fcntl(fd, F_SETFL, ::fcntl(fd, F_GETFL) & ~O_NONBLOCK);
+            return fd;
+        }
+    }
+    return -1;
+}
+
+// Writes all of `bytes` to `fd`. False on an error, such as a pipe whose reader left.
+bool writeAll(int fd, const QByteArray &bytes)
+{
+    qsizetype done = 0;
+    while (done < bytes.size()) {
+        const ssize_t count = ::write(fd, bytes.constData() + done, size_t(bytes.size() - done));
+        if (count < 0 && errno == EINTR)
+            continue;
+        if (count <= 0)
+            return false;
+        done += count;
+    }
+    return true;
+}
+#endif
+
 // Opens `path` with `opener`. Whether it opened.
 bool openWith(Opener opener, const QString &path)
 {
@@ -185,6 +228,8 @@ private slots:
     }
 
     void stopAnswersWhatTheJobIsDoing();
+    void scopesNest();
+    void switchToReportsOnlyAChange();
     void stoppedAtTheCommitStepLeavesTheDestination_data() { writers(); }
     void stoppedAtTheCommitStepLeavesTheDestination();
     void outsideAScopeWritesCommit_data() { writers(); }
@@ -193,6 +238,8 @@ private slots:
     void stopWhileCommittingLetsTheCommitFinish();
     void laterWriterWaitsForTheStoppedOne_data() { writers(); }
     void laterWriterWaitsForTheStoppedOne();
+    void laterWriterWaitsForACommitThatBegan_data() { writers(); }
+    void laterWriterWaitsForACommitThatBegan();
     void differentFilesDoNotWait_data() { writers(); }
     void differentFilesDoNotWait();
 #ifdef Q_OS_WIN
@@ -203,6 +250,10 @@ private slots:
     void splitStoppedAfterTwoPagesLeavesTwoFiles();
     void ticksAdvanceWhileWriting_data() { writers(); }
     void ticksAdvanceWhileWriting();
+    void stopWhileTheWriteReadsItsSource();
+#ifdef Q_OS_UNIX
+    void stoppedCopyGivesUpAtItsNextChunk();
+#endif
     void readsAreReported_data();
     void readsAreReported();
     void stepsOnTheGuiThreadAreCounted();
@@ -239,6 +290,48 @@ void TstJobContext::stopAnswersWhatTheJobIsDoing()
     }
     QCOMPARE(done.stop(), job::State::Stop::Done);
     QVERIFY(done.snapshot().stopped);
+}
+
+void TstJobContext::scopesNest()
+{
+    job::State outer, inner;
+    {
+        job::Scope outerScope(outer);
+        {
+            job::Scope innerScope(inner);
+            inner.stop();
+            QVERIFY(job::stopped());
+        }
+        // The outer state is current again.
+        QVERIFY(!job::stopped());
+        QCOMPARE(outer.stop(), job::State::Stop::Stopped);
+        QVERIFY(job::stopped());
+    }
+    QVERIFY(!job::stopped());
+    QCOMPARE(outer.stop(), job::State::Stop::Done);
+}
+
+void TstJobContext::switchToReportsOnlyAChange()
+{
+    const QString file = QStringLiteral("source.pdf");
+    const QString folder = QStringLiteral("out");
+    job::State outer, inner;
+    job::Scope outerScope(outer);
+    const int before = job::testing::stepsOnMainThread();
+    job::switchTo(job::Step::Writing, folder);
+    job::switchTo(job::Step::Writing, folder);
+    QCOMPARE(job::testing::stepsOnMainThread(), before + 1);
+    {
+        // A new scope hears the step that the thread reported last.
+        job::Scope innerScope(inner);
+        job::switchTo(job::Step::Writing, folder);
+        QCOMPARE(inner.snapshot().step, job::Step::Writing);
+        job::switchTo(job::Step::Reading, file);
+    }
+    // So does the outer one once the inner one ended.
+    job::switchTo(job::Step::Reading, file);
+    QCOMPARE(outer.snapshot().step, job::Step::Reading);
+    QCOMPARE(outer.snapshot().path, file);
 }
 
 void TstJobContext::stoppedAtTheCommitStepLeavesTheDestination()
@@ -320,6 +413,35 @@ void TstJobContext::laterWriterWaitsForTheStoppedOne()
 
     job::testing::release();
     QVERIFY(!one.result());
+    QVERIFY(two.result());
+    QCOMPARE(versionAt(writer, path), 2);
+    QCOMPARE(entries(dir), QStringList{QStringLiteral("result.pdf")});
+}
+
+void TstJobContext::laterWriterWaitsForACommitThatBegan()
+{
+    QFETCH(Writer, writer);
+    QTemporaryDir sources, dir;
+    const QString path = dir.filePath(QStringLiteral("result.pdf"));
+    QVERIFY(writeFile(path, kOriginal));
+    job::testing::holdCommitWhen([path, first = true](const QString &file) mutable {
+        if (file != path || !first)
+            return false;
+        first = false;
+        return true;
+    });
+    job::State first, second;
+    JobThread one(first, [&] { return writeVersion(writer, sources, path, 1); });
+    QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, kWaitMs);
+    QCOMPARE(first.stop(), job::State::Stop::Committing);
+
+    // The first commit still replaces the file, so a retry must not finish before it.
+    JobThread two(second, [&] { return writeVersion(writer, sources, path, 2); });
+    QVERIFY(!two.endsWithin(300));
+    QTRY_COMPARE_WITH_TIMEOUT(second.snapshot().step, job::Step::Writing, kWaitMs);
+
+    job::testing::release();
+    QVERIFY(one.result());
     QVERIFY(two.result());
     QCOMPARE(versionAt(writer, path), 2);
     QCOMPARE(entries(dir), QStringList{QStringLiteral("result.pdf")});
@@ -449,6 +571,76 @@ void TstJobContext::ticksAdvanceWhileWriting()
     QVERIFY(job.result());
 }
 
+void TstJobContext::stopWhileTheWriteReadsItsSource()
+{
+    // qpdf reads most of its source while it writes, as here the pages' content.
+    QTemporaryDir sources, dir;
+    const QString source = sources.filePath(QStringLiteral("source.pdf"));
+    QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+    const QString path = dir.filePath(QStringLiteral("result.pdf"));
+    const QString folder = QFileInfo(path).absolutePath();
+    // Holds the first read of the source after the writer reported its folder.
+    job::testing::holdWhen([source, folder, writing = false](job::Step step, const QString &file) mutable {
+        writing = writing || (step == job::Step::Writing && file == folder);
+        return writing && step == job::Step::Reading && file == source;
+    });
+    job::State state;
+    JobThread job(state, [&] {
+        return PageOps::rotatePages(source, path, {0}, 90, true, {}, nullptr) == PageOps::Status::Ok;
+    });
+    QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, kWaitMs);
+    const job::State::Snapshot during = state.snapshot();
+    QCOMPARE(during.step, job::Step::Reading);
+    QCOMPARE(during.path, source);
+
+    // Stopped there, the writer reports its folder again at its next write and gives
+    // up before it writes anything more.
+    QCOMPARE(state.stop(), job::State::Stop::Stopped);
+    job::testing::release();
+    QVERIFY(!job.result());
+    const job::State::Snapshot after = state.snapshot();
+    QCOMPARE(after.step, job::Step::Writing);
+    QCOMPARE(after.path, folder);
+    QCOMPARE(after.ticks, during.ticks);
+    QVERIFY(entries(dir).isEmpty());
+}
+
+#ifdef Q_OS_UNIX
+void TstJobContext::stoppedCopyGivesUpAtItsNextChunk()
+{
+    // A write to a pipe whose reader left must fail instead of ending the test.
+    const auto previous = std::signal(SIGPIPE, SIG_IGN);
+    const auto restore = qScopeGuard([previous] { std::signal(SIGPIPE, previous); });
+    QTemporaryDir sources, dir;
+    const QString source = sources.filePath(QStringLiteral("slow.pdf"));
+    QCOMPARE(::mkfifo(QFile::encodeName(source).constData(), 0600), 0);
+    const QString path = dir.filePath(QStringLiteral("result.pdf"));
+    QVERIFY(writeFile(path, kOriginal));
+    job::State state;
+    JobThread job(state, [&] { return DocumentOutput::replace(source, path, nullptr); });
+    const int pipe = openWriteEnd(source, job);
+    // Closed before the job is joined, so a copy that waits for more ends then.
+    const auto closePipe = qScopeGuard([pipe] {
+        if (pipe >= 0)
+            ::close(pipe);
+    });
+    QVERIFY(pipe >= 0);
+
+    // The source answers one chunk, and the job is stopped while it waits for more.
+    const QByteArray chunk(1024 * 1024, 'x');
+    QVERIFY(writeAll(pipe, chunk));
+    QTRY_COMPARE_WITH_TIMEOUT(state.snapshot().ticks, quint64(1), kWaitMs);
+    QCOMPARE(state.stop(), job::State::Stop::Stopped);
+    // One more chunk, with the source still open. Writing it fails if the copy saw the
+    // stop before it read again. Either way the copy must end without the rest.
+    writeAll(pipe, chunk);
+    QVERIFY(job.endsWithin(kWaitMs));
+    QVERIFY(!job.result());
+    QCOMPARE(readFile(path), kOriginal);
+    QCOMPARE(entries(dir), QStringList{QStringLiteral("result.pdf")});
+}
+#endif
+
 void TstJobContext::readsAreReported_data()
 {
     QTest::addColumn<Opener>("opener");
@@ -481,6 +673,7 @@ void TstJobContext::stepsOnTheGuiThreadAreCounted()
     const QString file = QStringLiteral(MERVIN_FIXTURE_PDF);
     const int before = job::testing::stepsOnMainThread();
     QCOMPARE(PageOps::pageCount(file), 4);
+    // One step for the open. The reads it makes continue that step.
     QCOMPARE(job::testing::stepsOnMainThread(), before + 1);
     int pages = 0;
     std::thread([&] { pages = PageOps::pageCount(file); }).join();

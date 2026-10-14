@@ -15,6 +15,9 @@ namespace mervin::job {
 namespace {
 
 thread_local State *current = nullptr;
+// The last step reported on this thread in the current scope, for switchTo().
+thread_local Step lastStep = Step::None;
+thread_local QString lastPath;
 
 // How long a writer waits for a destination before it looks again whether its job
 // stopped.
@@ -43,27 +46,42 @@ void holdIf(const Match &match, const Args &...args)
     std::unique_lock<std::mutex> lock(hooksMutex);
     if (!match || !match(args...))
         return;
-    const quint64 release = releases;
+    const quint64 seen = releases;
     ++heldNow;
-    hooksReleased.wait(lock, [release] { return releases != release; });
+    hooksReleased.wait(lock, [seen] { return releases != seen; });
     --heldNow;
 }
 
-bool failing(Step step, const QString &path)
+bool failing(Step kind, const QString &path)
 {
     std::lock_guard<std::mutex> lock(hooksMutex);
-    return failMatch && failMatch(step, path);
+    return failMatch && failMatch(kind, path);
 }
 
-// Reports `step` to the current job and applies the test hooks. Whether to go on.
-bool step(Step step, const QString &path)
+// Makes a step the last one on this thread and reports it to the current job.
+void record(Step kind, const QString &path)
+{
+    lastStep = kind;
+    lastPath = path;
+    if (current)
+        current->report(kind, path);
+}
+
+// Records a step and applies the test hooks. Whether to go on.
+bool reportStep(Step kind, const QString &path)
 {
     if (QThread::isMainThread())
         ++mainThreadSteps;
-    if (current)
-        current->report(step, path);
-    holdIf(holdMatch, step, path);
-    return !failing(step, path) && !stopped();
+    record(kind, path);
+    holdIf(holdMatch, kind, path);
+    return !failing(kind, path) && !stopped();
+}
+
+// A new scope starts with no step, so its first report always reaches its state.
+void forgetLastStep()
+{
+    lastStep = Step::None;
+    lastPath.clear();
 }
 
 } // namespace
@@ -119,6 +137,7 @@ Scope::Scope(State &state)
     : state_(state)
     , previous_(std::exchange(current, &state))
 {
+    forgetLastStep();
     std::lock_guard<std::mutex> lock(state_.mutex_);
     ++state_.scopes_;
     state_.ended_ = false;
@@ -127,6 +146,7 @@ Scope::Scope(State &state)
 Scope::~Scope()
 {
     current = previous_;
+    forgetLastStep();
     std::lock_guard<std::mutex> lock(state_.mutex_);
     if (--state_.scopes_ == 0)
         state_.ended_ = true;
@@ -139,22 +159,28 @@ bool stopped()
 
 bool reading(const QString &file)
 {
-    return step(Step::Reading, file);
+    return reportStep(Step::Reading, file);
 }
 
 bool writing(const QString &folder)
 {
-    return step(Step::Writing, folder);
+    return reportStep(Step::Writing, folder);
 }
 
 bool printing(const QString &printer)
 {
-    return step(Step::Printing, printer);
+    return reportStep(Step::Printing, printer);
+}
+
+void switchTo(Step step, const QString &path)
+{
+    if (step != lastStep || path != lastPath)
+        reportStep(step, path);
 }
 
 bool beginCommit(const QString &destination)
 {
-    if (!step(Step::Commit, destination))
+    if (!reportStep(Step::Commit, destination))
         return false;
     if (current && !current->beginCommit())
         return false;
@@ -181,8 +207,9 @@ QString notRunError()
 
 DestinationLock::DestinationLock(const QString &path)
 {
-    if (current)
-        current->report(Step::Writing, QFileInfo(path).absolutePath());
+    // Without the test hooks, so a test that holds the writer's own Writing report
+    // holds it once the writer owns the destination.
+    record(Step::Writing, QFileInfo(path).absolutePath());
     if (stopped())
         return;
     key_ = fileKey(QFileInfo(path));

@@ -193,6 +193,8 @@ add_library(mervin_core STATIC
     src/security/MeasurementPages.h
     src/security/PageOps.cpp
     src/security/PageOps.h
+    src/security/QpdfSource.cpp
+    src/security/QpdfSource.h
     src/security/MeasureExport.cpp
     src/security/MeasureExport.h
     src/platform/PlatformIntegration.h

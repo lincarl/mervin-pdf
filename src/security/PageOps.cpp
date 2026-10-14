@@ -2,6 +2,7 @@
 #include "io/JobContext.h"
 #include "security/AtomicPdfWriter.h"
 #include "security/MeasurementPages.h"
+#include "security/QpdfSource.h"
 #include <algorithm>
 #include <stdexcept>
 
@@ -39,7 +40,7 @@ PageOps::Status open(QPDF &q, const QString &path, const QString &password, QStr
     }
     try {
         const std::string pw = u8(password);
-        q.processFile(u8(path).c_str(), password.isEmpty() ? nullptr : pw.c_str());
+        processReportedFile(q, path, password.isEmpty() ? nullptr : pw.c_str());
         return PageOps::Status::Ok;
     } catch (const QPDFExc &e) {
         if (e.getErrorCode() == qpdf_e_password) {
