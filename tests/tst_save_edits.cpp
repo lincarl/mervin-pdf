@@ -614,7 +614,7 @@ private slots:
         TabPage tab(&engine);
         QVERIFY(tab.open(path));
         QVERIFY(edit(tab));
-        QVERIFY(tab.suspend());
+        QVERIFY(mervin::testing::suspendAndWait(tab));
         // Stop standing render workers so settle can wait for Save without GUI delivery.
         engine.shutdown();
         QVERIFY(background::settle(10000));
