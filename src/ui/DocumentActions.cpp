@@ -31,10 +31,10 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
-#include <QScopedValueRollback>
 #include <QPageLayout>
 #include <QPageSize>
 #include <QPainter>
+#include <QPointer>
 #include <QPrintDialog>
 #include <QPrinter>
 #include <QSet>
@@ -179,7 +179,7 @@ void MainWindow::createDocumentMenu()
 
 void MainWindow::openSecurity()
 {
-    QScopedValueRollback<int> operation(documentOperationDepth_, documentOperationDepth_ + 1);
+    const OperationScope operation(this);
     TabPage *t = currentTab();
     if (!t)
         return;
@@ -191,7 +191,7 @@ void MainWindow::openSecurity()
 
 void MainWindow::saveAsCopy()
 {
-    QScopedValueRollback<int> operation(documentOperationDepth_, documentOperationDepth_ + 1);
+    const OperationScope operation(this);
     TabPage *t = currentTab();
     ViewerWidget *v = currentViewer();
     if (!t || !v)
@@ -278,7 +278,7 @@ void MainWindow::saveMeasurements()
 
 bool MainWindow::saveTab(TabPage *t)
 {
-    QScopedValueRollback<int> operation(documentOperationDepth_, documentOperationDepth_ + 1);
+    const OperationScope operation(this);
     if (!t)
         return false;
     // An unloaded tab keeps its edits in a recovery copy. Without one there is
@@ -384,7 +384,7 @@ bool MainWindow::saveTab(TabPage *t)
 
 bool MainWindow::confirmClose(TabPage *tab)
 {
-    QScopedValueRollback<int> operation(documentOperationDepth_, documentOperationDepth_ + 1);
+    const OperationScope operation(this);
     auto *viewer = tab->viewer();
     viewer->commitActiveFormEditor();
     viewer->commitActiveAnnotEditor();
@@ -400,14 +400,19 @@ bool MainWindow::confirmClose(TabPage *tab)
     //: Button in the unsaved-changes question. Closes the document and loses the
     //: changes made since it was last saved. The file on disk stays as it is.
     box.button(QMessageBox::Discard)->setText(tr("Don't save"));
+    // The question runs its own event loop, in which the tab can go away. A tab
+    // that went has nothing left to save.
+    const QPointer<TabPage> page(tab);
     const int answer = box.exec();
+    if (!page)
+        return answer != QMessageBox::Cancel;
     return answer == QMessageBox::Discard
-        || (answer == QMessageBox::Save && saveTab(tab));
+        || (answer == QMessageBox::Save && saveTab(page));
 }
 
 void MainWindow::exportMeasuredCopy()
 {
-    QScopedValueRollback<int> operation(documentOperationDepth_, documentOperationDepth_ + 1);
+    const OperationScope operation(this);
     TabPage *t = currentTab();
     ViewerWidget *v = currentViewer();
     if (!t || !v)
@@ -454,7 +459,7 @@ void MainWindow::exportMeasuredCopy()
 
 void MainWindow::rotatePagesOp()
 {
-    QScopedValueRollback<int> operation(documentOperationDepth_, documentOperationDepth_ + 1);
+    const OperationScope operation(this);
     TabPage *t = currentTab();
     ViewerWidget *v = currentViewer();
     if (!t || !v)
@@ -500,7 +505,7 @@ void MainWindow::extractPagesOp()
 
 void MainWindow::pagesDialog(mervin::ExtractPlan::Mode mode, std::optional<int> seedPage)
 {
-    QScopedValueRollback<int> operation(documentOperationDepth_, documentOperationDepth_ + 1);
+    const OperationScope operation(this);
     TabPage *t = currentTab();
     ViewerWidget *v = currentViewer();
     if (!t || !v)
@@ -549,7 +554,7 @@ void MainWindow::pagesDialog(mervin::ExtractPlan::Mode mode, std::optional<int> 
 
 void MainWindow::splitDocument()
 {
-    QScopedValueRollback<int> operation(documentOperationDepth_, documentOperationDepth_ + 1);
+    const OperationScope operation(this);
     TabPage *t = currentTab();
     if (!t)
         return;
@@ -573,7 +578,7 @@ void MainWindow::splitDocument()
 
 void MainWindow::mergeDocuments()
 {
-    QScopedValueRollback<int> operation(documentOperationDepth_, documentOperationDepth_ + 1);
+    const OperationScope operation(this);
     // The open document seeds the list as an ordinary first row. The viewer's
     // page count goes along only as a fallback - the dialog probes the file with
     // qpdf itself, because MuPDF opens documents qpdf will not (see MergeDialog).
@@ -592,7 +597,7 @@ void MainWindow::mergeDocuments()
 
 void MainWindow::printDocument()
 {
-    QScopedValueRollback<int> operation(documentOperationDepth_, documentOperationDepth_ + 1);
+    const OperationScope operation(this);
     TabPage *t = currentTab();
     ViewerWidget *v = currentViewer();
     if (!t || !v || !v->document())

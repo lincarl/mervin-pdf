@@ -3,11 +3,13 @@
 #include "app/WindowManager.h"
 #include "render/ContentSearch.h"
 #include "ui/CommentsSidebar.h"
+#include "ui/DetachableTabBar.h"
 #include "ui/OutlineSidebar.h"
 #include "ui/TabPage.h"
 #include "ui/ThumbnailSidebar.h"
 
 #include <QApplication>
+#include <QGuiApplication>
 #include <QHideEvent>
 #include <QInputDialog>
 #include <QLineEdit>
@@ -49,11 +51,13 @@ void MainWindow::wireTabLifecycle(TabPage *tab)
             bool accepted = false;
             //: %1 is the name of the document.
             const QString prompt = tr("Enter the password for %1.").arg(tab->tabTitle());
+            // The prompt runs its own event loop, in which the tab can go away.
+            const QPointer<TabPage> page(tab);
             const QString password = QInputDialog::getText(
                 this, tr("Password required"), prompt, QLineEdit::Password, {}, &accepted);
-            if (accepted) {
-                tab->setPassword(password);
-                tab->resumeAsync();
+            if (accepted && page) {
+                page->setPassword(password);
+                page->resumeAsync();
             }
         }));
     connections.append(connect(tab, &QObject::destroyed, this, [this, tab] {
@@ -98,6 +102,62 @@ bool MainWindow::canSuspendDocuments() const
     // their event loops return, including native print and save dialogs.
     return !closeConfirmed_ && !suspending_ && documentOperationDepth_ == 0
         && !QApplication::activeModalWidget() && !QApplication::activePopupWidget();
+}
+
+bool MainWindow::canChangeTabs() const
+{
+    // A held button can be an in-bar tab move, and a tab drag can end on the bar
+    // of any window, so a drag from any window counts.
+    return canSuspendDocuments() && QGuiApplication::mouseButtons() == Qt::NoButton
+        && !mervin::DetachableTabBar::dragInProgress();
+}
+
+void MainWindow::whenTabsCanChange(std::function<void()> change)
+{
+    tabChanges_.push_back(std::move(change));
+    postTabChanges();
+}
+
+void MainWindow::postTabChanges()
+{
+    if (tabChangesPosted_ || tabChanges_.empty())
+        return;
+    tabChangesPosted_ = true;
+    QTimer::singleShot(0, this, [this] {
+        tabChangesPosted_ = false;
+        runTabChanges();
+    });
+}
+
+void MainWindow::runTabChanges()
+{
+    // A change can show a box, whose event loop can call this again. The outer
+    // call goes on once that change returns, so the order holds.
+    if (runningTabChanges_)
+        return;
+    const QPointer<MainWindow> self(this);
+    while (!tabChanges_.empty() && canChangeTabs()) {
+        const std::function<void()> change = std::move(tabChanges_.front());
+        tabChanges_.pop_front();
+        runningTabChanges_ = true;
+        change();
+        if (!self)
+            return; // the change closed this window
+        runningTabChanges_ = false;
+    }
+}
+
+MainWindow::OperationScope::OperationScope(MainWindow *window)
+    : window_(window)
+{
+    ++window->documentOperationDepth_;
+}
+
+MainWindow::OperationScope::~OperationScope()
+{
+    // Posted, so the code that ran the operation finishes before a tab moves.
+    if (window_ && --window_->documentOperationDepth_ == 0)
+        window_->postTabChanges();
 }
 
 void MainWindow::clearDocumentSidebars()
@@ -267,11 +327,22 @@ void MainWindow::hideEvent(QHideEvent *event)
 
 bool MainWindow::prepareToClose()
 {
-    QScopedValueRollback<int> operation(documentOperationDepth_, documentOperationDepth_ + 1);
-    for (int i = 0; i < tabs_->count(); ++i)
-        if (!confirmClose(qobject_cast<TabPage *>(tabs_->widget(i))))
+    const OperationScope operation(this);
+    // Ask about each tab once, in tab order, and find the next one again after each
+    // question. A tab can arrive during a question, from a session restore or another
+    // instance, and move the others along. It is asked about too.
+    QList<QPointer<TabPage>> asked;
+    for (;;) {
+        TabPage *next = nullptr;
+        for (int i = 0; i < tabs_->count() && !next; ++i)
+            if (auto *tab = qobject_cast<TabPage *>(tabs_->widget(i)); tab && !asked.contains(tab))
+                next = tab;
+        if (!next)
+            return true;
+        asked.append(next);
+        if (!confirmClose(next))
             return false;
-    return true;
+    }
 }
 
 void MainWindow::closeForQuit()

@@ -448,6 +448,9 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
         const mervin::ViewState dupState =
             t->viewer() ? captureViewState(t->viewer()) : mervin::ViewState{};
         const QColor ink = mervin::Theme::iconInk(palette());
+        // The menu runs its own event loop, in which tabs can arrive or go, so a
+        // command finds the clicked tab again rather than trusting idx.
+        const QPointer<TabPage> clicked(t);
         mervin::showFileContextMenu(
             this, t->path(), docTabBar_->mapToGlobal(pos),
             {{tr("Duplicate to new window"),
@@ -459,7 +462,10 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
               true,
               mervin::icons::glyph(mervin::icons::Glyph::ShowAllWindows, ink)},
              {tr("Move to new window"),
-              [this, idx] { onTabDetachRequested(idx, this->pos() + QPoint(40, 40)); },
+              [this, clicked] {
+                  if (const int i = clicked ? tabs_->indexOf(clicked) : -1; i >= 0)
+                      onTabDetachRequested(i, this->pos() + QPoint(40, 40));
+              },
               tabs_->count() > 1,
               mervin::icons::glyph(mervin::icons::Glyph::OpenInNewWindow, ink)},
              {tr("Close all tabs"),
@@ -1563,11 +1569,13 @@ void MainWindow::syncDocTabBar()
         docTabBar_->removeTab(docTabBar_->count() - 1);
     while (docTabBar_->count() < tabs_->count())
         docTabBar_->addTab(QString());
-    // Sync titles and tooltips; the per-tab glyphs are (re)tinted in
-    // updateTabGlyphs() so the active document's tab can carry the accent colour.
+    // Sync titles, tooltips and the page each tab shows, which a tab drag follows
+    // (DetachableTabBar). The per-tab glyphs are (re)tinted in updateTabGlyphs()
+    // so the active document's tab can carry the accent colour.
     for (int i = 0; i < tabs_->count(); ++i) {
         docTabBar_->setTabText(i, tabs_->tabText(i));
         docTabBar_->setTabToolTip(i, tabs_->tabToolTip(i));
+        docTabBar_->setTabData(i, QVariant::fromValue<QObject *>(tabs_->widget(i)));
     }
     if (tabs_->currentIndex() >= 0)
         docTabBar_->setCurrentIndex(tabs_->currentIndex());
@@ -1891,24 +1899,25 @@ void MainWindow::closeTab(int index)
     closeTabAt(index, /*remember=*/true);
 }
 
-void MainWindow::closeTabAt(int index, bool remember)
+bool MainWindow::closeTabAt(int index, bool remember)
 {
     const QPointer<QWidget> w = tabs_->widget(index);
     if (!w)
-        return;
+        return true;
     if (auto *t = qobject_cast<TabPage *>(w.data())) {
         if (!confirmClose(t))
-            return;
+            return false;
         // The question runs its own event loop, in which a session restore can
         // insert tabs before this one, so find it again.
         index = w ? tabs_->indexOf(w) : -1;
         if (index < 0)
-            return;
+            return true;
         saveTabViewState(t); // remember where the user left off
         if (remember)
             rememberClosedTab(t, index);
     }
     removeTabAt(index);
+    return true;
 }
 
 void MainWindow::removeTabAt(int index)
@@ -1930,9 +1939,9 @@ bool MainWindow::closeRemovedTabs(const QString &canonicalPath)
 {
     if (hiddenToTray_)
         return true;
-    // Closing a tab shifts the indexes that a nested dialog or menu, a document
+    // Closing a tab shifts the positions that a nested dialog or menu, a document
     // operation or a tab drag may still hold.
-    const bool busy = !canSuspendDocuments() || QGuiApplication::mouseButtons() != Qt::NoButton;
+    const bool busy = !canChangeTabs();
     for (int i = tabs_->count() - 1; i >= 0; --i) {
         auto *tab = qobject_cast<TabPage *>(tabs_->widget(i));
         // A tab that is loading stays. If its file is gone, the failed load
@@ -1969,15 +1978,19 @@ void MainWindow::rememberOpenTabs()
 void MainWindow::closeAllTabs()
 {
     // Record the whole bar first (see rememberOpenTabs), then close without
-    // re-recording. Closing the first tab repeatedly is otherwise the same path
-    // as the per-tab close button, so each tab's view state is saved and the
-    // empty window falls back to Recent.
+    // re-recording. Each close is otherwise the same path as the per-tab close
+    // button, so each tab's view state is saved and the empty window falls back
+    // to Recent. The questions run their own event loops, in which tabs can
+    // arrive, so close the recorded tabs by identity. A tab that arrived stays,
+    // as it was not recorded.
     rememberOpenTabs();
-    while (tabs_->count() > 0) {
-        const int before = tabs_->count();
-        closeTabAt(0, /*remember=*/false);
-        if (tabs_->count() == before)
-            break;
+    QList<QPointer<QWidget>> recorded;
+    for (int i = 0; i < tabs_->count(); ++i)
+        recorded << tabs_->widget(i);
+    for (const QPointer<QWidget> &page : std::as_const(recorded)) {
+        const int index = page ? tabs_->indexOf(page) : -1;
+        if (index >= 0 && !closeTabAt(index, /*remember=*/false))
+            break; // the user kept this tab, so keep the rest too
     }
 }
 
@@ -2762,7 +2775,7 @@ void MainWindow::listThenRecognize(int pageNo, const QRectF &pageRect, bool offe
 void MainWindow::recognizeRegion(int pageNo, const QRectF &pageRect, const QStringList &installed,
                                  bool offered)
 {
-    QScopedValueRollback<int> operation(documentOperationDepth_, documentOperationDepth_ + 1);
+    const OperationScope operation(this);
     ViewerWidget *v = currentViewer();
     if (!v || !v->document())
         return;
