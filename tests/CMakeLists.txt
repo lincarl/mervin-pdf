@@ -401,7 +401,9 @@ qt_add_executable(tst_document_workflow tst_document_workflow.cpp)
 target_link_libraries(tst_document_workflow PRIVATE mervin_app Qt6::Test)
 target_compile_definitions(tst_document_workflow PRIVATE MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
 add_test(NAME tst_document_workflow COMMAND tst_document_workflow)
-set_tests_properties(tst_document_workflow PROPERTIES ENVIRONMENT_MODIFICATION "${_mervin_test_env}")
+set_tests_properties(tst_document_workflow PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
 # Print dialog checks exercise worker-rendered previews and the actual PDF output path.
 foreach(_t tst_print_dialog tst_print_output)
@@ -409,7 +411,9 @@ foreach(_t tst_print_dialog tst_print_output)
     target_link_libraries(${_t} PRIVATE mervin_app Qt6::Test)
     set_target_properties(${_t} PROPERTIES WIN32_EXECUTABLE OFF)
     add_test(NAME ${_t} COMMAND ${_t})
-    set_tests_properties(${_t} PROPERTIES ENVIRONMENT_MODIFICATION "${_mervin_test_env}")
+    set_tests_properties(${_t} PROPERTIES
+        ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+        SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 endforeach()
 
 target_link_libraries(tst_print_output PRIVATE qpdf::libqpdf)
@@ -458,12 +462,14 @@ foreach(lang IN ITEMS ${QT_I18N_SOURCE_LANGUAGE} ${QT_I18N_TRANSLATED_LANGUAGES}
         SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 endforeach()
 
-qt_add_executable(tst_document_suspension tst_document_suspension.cpp)
+qt_add_executable(tst_document_suspension tst_document_suspension.cpp Stalls.h)
 target_link_libraries(tst_document_suspension PRIVATE mervin_app Qt6::Test)
 set_target_properties(tst_document_suspension PROPERTIES WIN32_EXECUTABLE OFF)
 target_compile_definitions(tst_document_suspension PRIVATE MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
 add_test(NAME tst_document_suspension COMMAND tst_document_suspension)
-set_tests_properties(tst_document_suspension PROPERTIES ENVIRONMENT_MODIFICATION "${_mervin_test_env}")
+set_tests_properties(tst_document_suspension PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 set_tests_properties(tst_ink_rects PROPERTIES LABELS "optional-corpus")
 
 target_compile_definitions(tst_document_output PRIVATE MERVIN_SCAN_PDF="${MERVIN_FIXTURES_DIR}/scan.pdf")

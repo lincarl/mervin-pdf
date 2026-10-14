@@ -985,13 +985,11 @@ private slots:
         QCOMPARE(onDisk.paths(), QStringList{path});
     }
 
+#ifndef Q_OS_WIN // Windows records no mounts, so the answer saves nothing there
     // A check answers after the last window has closed, as one on a slow share can.
     // The session the window left behind stays: there is nothing left to record.
     void lateAnswerKeepsTheSessionOfTheLastWindow()
     {
-#ifdef Q_OS_WIN
-        QSKIP("Windows records no mounts, so the answer saves nothing there");
-#endif
         QTemporaryDir files;
         const QDir root(QFileInfo(files.path()).canonicalFilePath());
         const QString path = root.filePath(QStringLiteral("plan.pdf"));
@@ -1007,6 +1005,7 @@ private slots:
         QVERIFY(loadSaved(onDisk));
         QCOMPARE(onDisk.paths(), QStringList{path});
     }
+#endif
 
     // Moving a tab to another window keeps the mount the session recorded for its
     // file, which tells a share that is away from a deleted file.

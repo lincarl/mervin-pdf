@@ -13,6 +13,7 @@
 #include "ui/TabPage.h"
 #include "ui/ThumbnailSidebar.h"
 #include "ui/ViewerWidget.h"
+#include "Stalls.h"
 
 #include <QAction>
 #include <QFile>
@@ -34,17 +35,17 @@
 #include <QToolButton>
 #include <QtTest>
 
-#include <condition_variable>
 #include <mutex>
-#include <thread>
 
 #ifdef Q_OS_UNIX
-#  include <fcntl.h>
 #  include <sys/stat.h>
-#  include <unistd.h>
 #endif
 
 using namespace mervin;
+using mervin::testing::Stall;
+#ifdef Q_OS_UNIX
+using mervin::testing::PipeWriter;
+#endif
 
 namespace {
 // A self-contained AcroForm exercises pending editor text as well as saved PDF objects.
@@ -94,96 +95,12 @@ void showForLayout(QWidget &widget)
     QCoreApplication::processEvents();
 }
 
-// Holds a document's lifetime lock on another thread, as a render stuck reading the
-// document from a share that stopped answering does, until released or for at most
-// `ms` milliseconds.
-class Stall
-{
-public:
-    explicit Stall(std::mutex &held, int ms = 3000)
-        : thread_([this, &held, ms] {
-            std::lock_guard<std::mutex> holding(held);
-            std::unique_lock<std::mutex> lock(mutex_);
-            locked_ = true;
-            changed_.notify_all();
-            changed_.wait_for(lock, std::chrono::milliseconds(ms), [this] { return released_; });
-        })
-    {
-        std::unique_lock<std::mutex> lock(mutex_);
-        changed_.wait(lock, [this] { return locked_; });
-    }
-    ~Stall()
-    {
-        release();
-        thread_.join();
-    }
-    void release()
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        released_ = true;
-        changed_.notify_all();
-    }
-
-private:
-    std::mutex mutex_;
-    std::condition_variable changed_;
-    bool locked_ = false;
-    bool released_ = false;
-    std::thread thread_; // last: it uses the members above
-};
-
 bool closed(const std::shared_ptr<DocumentLifetime> &lifetime)
 {
     std::lock_guard<std::mutex> lock(lifetime->mutex);
     return !lifetime->document;
 }
 
-#ifdef Q_OS_UNIX
-// Opening a named pipe waits for a writer, as a read from a share that stopped
-// answering waits for the share. This lets every such open through, by opening and
-// closing the writing end, once released or after `ms` milliseconds.
-class PipeWriter
-{
-public:
-    explicit PipeWriter(const QString &path, int ms = 30000)
-        : thread_([this, path = QFile::encodeName(path), ms] {
-            std::unique_lock<std::mutex> lock(mutex_);
-            changed_.wait_for(lock, std::chrono::milliseconds(ms), [this] { return released_; });
-            while (!stopped_) {
-                lock.unlock();
-                const int fd = ::open(path.constData(), O_WRONLY | O_NONBLOCK);
-                if (fd >= 0)
-                    ::close(fd);
-                lock.lock();
-                changed_.wait_for(lock, std::chrono::milliseconds(10), [this] { return stopped_; });
-            }
-        })
-    {
-    }
-    ~PipeWriter()
-    {
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            released_ = stopped_ = true;
-            changed_.notify_all();
-        }
-        thread_.join();
-    }
-    void release()
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        released_ = true;
-        changed_.notify_all();
-    }
-
-private:
-    std::mutex mutex_;
-    std::condition_variable changed_;
-    bool released_ = false;
-    bool stopped_ = false;
-    std::thread thread_; // last: it uses the members above
-};
-#endif
 } // namespace
 
 class TstDocumentSuspension : public QObject
