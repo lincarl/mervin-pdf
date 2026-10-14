@@ -710,11 +710,10 @@ application records it in Recent after Retry succeeds.
 The relaunch flag is set only after restart approval, before its windows close.
 
 The updater keeps a separate synchronous `tryCloseAllForUpdate` adapter. A running
-user operation or another pending close makes it return false immediately. Chosen
-saves run after the callback returns false and never trigger a later shutdown. It
-returns true only when approved windows close in that call. Loaded-document Save
-still writes synchronously in this intermediate step, outside the updater callback.
-The background Save work remains a separate change.
+user operation or another pending close makes it return false immediately. A chosen
+Save starts as the tab's background job after the callback returns false, for loaded
+and unloaded tabs alike, and never triggers a later shutdown. The adapter returns
+true only when approved windows close in that call.
 
 `MergePlan` and `ExtractPlan` are the GUI-free models behind the Merge PDFs and
 Extract Pages dialogs, tested in `tst_merge_plan` and `tst_extract_plan`; each dialog
