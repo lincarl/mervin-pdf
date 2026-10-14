@@ -266,7 +266,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(source));
+        QVERIFY(mervin::testing::openAndWait(window, source));
         TabPage *tab = currentTab(window);
         QVERIFY(tab);
         prepareCopy(*tab);
@@ -313,7 +313,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         TabPage *tab = currentTab(window);
         QVERIFY(tab);
         prepareCopy(*tab);
@@ -384,7 +384,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         TabPage *tab = currentTab(window);
         QVERIFY(tab);
         prepareCopy(*tab);
@@ -432,6 +432,54 @@ private slots:
         QVERIFY(told_.isEmpty());
     }
 
+    void stoppingSaveReleaseWaitCancelsTheClose_data() { copyModes(); }
+
+    // A chosen Save waits for a stopped copy's live document. Stop at that
+    // prerequisite cancels closing and restores the ordinary trapped notice.
+    void stoppingSaveReleaseWaitCancelsTheClose()
+    {
+        QFETCH(bool, flatten);
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("plan.pdf"));
+        const QString output = files.filePath(QStringLiteral("copy.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(testing::openAndWait(window, source));
+        TabPage *tab = currentTab(window);
+        prepareCopy(*tab);
+        const QString tempRoot = QDir::tempPath();
+        job::testing::holdWhen([tempRoot, destination = files.path()](job::Step step, const QString &path) {
+            return step == job::Step::Writing && path != tempRoot && path != destination
+                && path.startsWith(tempRoot + QLatin1Char('/'));
+        });
+        const auto release = qScopeGuard([] { job::testing::release(); });
+        copy(window, output, flatten);
+        QTRY_COMPARE(job::testing::held(), 1);
+        tab->stopWaiting();
+        QVERIFY(tab->isBusy() && tab->isOperationStopped());
+        QVERIFY(Bar(*tab).stop->isHidden());
+        answers_ << QMessageBox::Save;
+        QVERIFY(QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0)));
+        QTRY_VERIFY(answers_.isEmpty());
+        QTRY_VERIFY(tab->isClosing());
+        QTRY_VERIFY(!Bar(*tab).stop->isHidden());
+        Bar(*tab).stop->click();
+        QTRY_VERIFY(!tab->isClosing());
+        QTRY_VERIFY(Bar(*tab).stop->isHidden());
+        QCOMPARE(window.tabCount(), 1);
+        QVERIFY(tab->isBusy());
+        job::testing::release();
+        QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable(), 10000);
+        QVERIFY(tab->hasUnsavedEdits());
+        QCOMPARE(window.tabCount(), 1);
+        QVERIFY(!QFile::exists(output));
+        auto original = engine.openDocument(source);
+        QVERIFY(original);
+        QVERIFY(AnnotModel(*original).pageAnnots(0).empty());
+    }
+
     void stoppedCopyNeverBeginsItsHold_data() { copyModes(); }
 
     // Stop wins before the atomic document-use reservation, so a released
@@ -443,7 +491,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         TabPage *tab = currentTab(window);
         prepareCopy(*tab);
         const auto lifetime = tab->viewer()->document()->lifetime();
@@ -479,7 +527,7 @@ private slots:
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
-        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         TabPage *tab = currentTab(window);
         prepareCopy(*tab);
         holdAt(job::Step::Commit, output);
@@ -1131,7 +1179,7 @@ private slots:
         const QPointer<MainWindow> other(manager.createWindow());
         showForLayout(*host);
         showForLayout(*other);
-        QVERIFY(host->openFile(source));
+        QVERIFY(mervin::testing::openAndWait(*host, source));
         TabPage *tab = currentTab(*host);
         QVERIFY(tab);
         tab->viewer()->loadMeasurements({{0, MeasureKind::Distance, {{50, 100}, {150, 100}}}},
