@@ -582,6 +582,62 @@ private slots:
         }
     }
 
+    void movedOwnerAttentionCanDestroyWaitingObjects_data()
+    {
+        QTest::addColumn<bool>("deleteTab");
+        QTest::newRow("currentChanged deletes waiting tab") << true;
+        QTest::newRow("currentChanged deletes standalone flow owner") << false;
+    }
+
+    void movedOwnerAttentionCanDestroyWaitingObjects()
+    {
+        QFETCH(bool, deleteTab);
+        QTemporaryDir files;
+        const QString first = copy(files, "held.pdf");
+        const QString second = copy(files, "other.pdf");
+        RenderEngine engine;
+        const QPointer<MainWindow> source = new MainWindow(&engine, nullptr);
+        const QPointer<MainWindow> target = new MainWindow(&engine, nullptr);
+        const auto cleanup = qScopeGuard([source, target] {
+            delete source.data();
+            delete target.data();
+        });
+        source->show();
+        target->show();
+        QVERIFY(testing::openAndWait(*source, first));
+        const QPointer<TabPage> heldTab = currentTab(source);
+        QVERIFY(testing::openAndWait(*target, second));
+        const QPointer<TabPage> otherTab = currentTab(target);
+        holdOperation(heldTab, first);
+        QTRY_COMPARE(job::testing::held(), 1);
+        closeTab(source);
+        QTRY_VERIFY(barShown(heldTab));
+        source->whenTabsCanChange([this, source, target, heldTab, otherTab, deleteTab] {
+            target->adoptTab(source->releaseTab(0));
+            auto *tabs = target->findChild<QTabWidget *>();
+            tabs->setCurrentWidget(otherTab);
+            connect(tabs, &QTabWidget::currentChanged, this,
+                    [source, target, heldTab, deleteTab](int) {
+                if (heldTab && currentTab(target) == heldTab) {
+                    if (deleteTab)
+                        delete heldTab.data();
+                    else
+                        delete source.data();
+                }
+            });
+        });
+        if (deleteTab) {
+            QTRY_VERIFY(!heldTab);
+            QCOMPARE(target->tabCount(), 1);
+        } else {
+            QTRY_VERIFY(!source);
+            QVERIFY(heldTab && heldTab->isBusy() && !heldTab->isClosing());
+            QCOMPARE(target->tabCount(), 2);
+        }
+        QVERIFY(otherTab && otherTab->isLoaded());
+        QCOMPARE(job::testing::held(), 1);
+    }
+
     void broaderCloseSupersedesAndRepeatedCloseCoalesces()
     {
         QTemporaryDir files;

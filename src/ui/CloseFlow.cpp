@@ -330,6 +330,12 @@ void CloseFlow::advance(MainWindow *readyWindow)
             if (owner(tab) != waitingWindow_) {
                 waitingWindow_ = owner(tab);
                 attention(tab);
+                if (!self || ended_)
+                    return;
+                if (!tab) {
+                    post();
+                    return;
+                }
             }
             if ((waiting_ == WaitReason::Operation || waiting_ == WaitReason::DocumentReleaseForSave)
                 && tab->isBusy())
