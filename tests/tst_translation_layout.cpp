@@ -519,8 +519,12 @@ void TstTranslationLayout::loadPlaceholder()
     inspect(window, QStringLiteral("Slow document load"), tab);
 
     QVERIFY(window.openFile(unbroken, false, -1, true, {}, true));
+    auto *first = tab;
     tab = qobject_cast<mervin::TabPage *>(window.findChild<QTabWidget *>()->currentWidget());
     QVERIFY(tab);
+    // The new tab, so the first tab's button cannot pass the checks below.
+    QVERIFY(tab != first);
+    QCOMPARE(tab->tabTitle(), QFileInfo(unbroken).fileName());
     stop = tab->findChild<QPushButton *>(QStringLiteral("stopDocumentLoad"));
     QVERIFY(stop);
     QTRY_VERIFY(stop->isVisible());
