@@ -88,6 +88,41 @@ engine (see Rendering and document access).
 The explicit Duplicate to new window command bypasses normal path deduplication and
 creates a second independent view.
 
+### Tab order across nested event loops
+
+A tab's position changes whenever a tab in front of it arrives or goes, and tabs
+arrive at any time. Session restore, late restore, Ctrl+Shift+T and other instances
+open them from timers and answers. Code that keeps a tab across a nested event loop,
+such as a question, a menu, a password prompt or a tab drag, therefore keeps the tab
+itself, not its position, and finds its position again afterwards. The close
+questions, the tab menu and the resume password prompt hold a `QPointer<TabPage>`,
+and a drag out of the bar follows the page that `MainWindow` stores in each tab's
+data of the visible bar (`DetachableTabBar`). A page's right-click menu closes when
+another document takes the view, since its rows act on the document on screen and
+its Save Page As on a page of the document clicked. Closing a window asks about each
+of its tabs once, tabs that arrived during a question included. Close all tabs closes
+the tabs it recorded and leaves a tab that arrived meanwhile. Quitting skips a window
+that went away during a question.
+
+Two places still follow a position, and only the tab order can come out wrong. A
+move within the bar is `QTabBar`'s own and follows the pressed position, so a tab
+that arrives while the button is held makes it move the tab now at that position.
+`MainWindow::openFile` inserts at the position its caller worked out before the
+password prompt of an encrypted file, so a tab that arrives during the prompt can
+shift the new tab by one.
+
+Removing a tab later, from a background answer, waits until the window can change
+its tabs (`MainWindow::canChangeTabs`). That means no modal dialog or popup in the
+application, no document operation or unload in the window, no mouse button held and
+no tab drag. A modal dialog in one window therefore holds back changes in the others
+too. `MainWindow::whenTabsCanChange` queues such a change and never runs it inside
+the call. The window runs its queue in order on the next turn of the event loop,
+after a mouse button release, after a modal window closes, when a document operation
+ends (`MainWindow::OperationScope`) and on the one-second activity tick. A change
+finds its tab and window again when it runs. Once a quit or restart closes a window,
+it runs no more changes, and those still queued go with it. Adding a tab is not
+gated.
+
 ### Disk access off the UI thread
 
 A file call on a drive or network share that stopped answering blocks its thread
@@ -336,11 +371,10 @@ letter, so it keeps the tab, as it keeps a session document. Tabs with unsaved e
 reload from their recovery snapshot and stay. The check runs on window activation and
 after a failed asynchronous reload, on its own worker thread, since network paths can
 stall. Each file found gone is reported at once, not after the other files. The window then removes the tab on the UI thread without a prompt, a
-view-state write or a reopen history entry, and without touching the disk. While a
-modal dialog, popup, document operation, mouse press or tab drag may hold tab
-indexes, the window keeps the tab, and the one-second activity timer runs the whole
-check again. A close therefore always follows a fresh check, which also spares a tab
-whose file came back meanwhile. Windows in the tray keep their tabs until shown. Loaded tabs stay open,
+view-state write or a reopen history entry, and without touching the disk. While the
+window cannot change its tabs (see Tab order across nested event loops), or older tab
+changes still wait in its queue, it keeps the tab and queues the whole check again
+behind them. A close therefore always follows a fresh check, which also spares a tab whose file came back meanwhile. Windows in the tray keep their tabs until shown. Loaded tabs stay open,
 because they still show their document. Removing a tab never leaves the Recent
 screen, and moving a tab between windows saves the session once, after the move, so
 the document keeps its recorded mount.

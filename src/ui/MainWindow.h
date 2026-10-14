@@ -9,8 +9,11 @@
 
 #include <QMainWindow>
 #include <QHash>
+#include <QPointer>
 #include <QSet>
 
+#include <deque>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -108,9 +111,26 @@ public:
     // unsaved edits. WindowManager::closeRemovedTabs has just found the file gone,
     // so this touches no disk. The tab is neither remembered for Ctrl+Shift+T nor
     // given a view state. A window in the tray keeps its tabs. False when a tab has
-    // to stay for now, because a dialog, menu, drag or document operation may
-    // depend on the tab bar.
+    // to stay for now, because the window cannot change its tabs (canChangeTabs) or
+    // tab changes queued earlier still wait (whenTabsCanChange), which go first.
     bool closeRemovedTabs(const QString &canonicalPath);
+
+    // True when nothing may hold a position in this window's tab bar across a
+    // nested event loop. That means no modal dialog or popup in the application,
+    // no document operation or unload in this window, no mouse button held and no
+    // tab drag. It stays false once a quit or restart closes the window
+    // (closeForQuit), so changes still queued then go with the window.
+    bool canChangeTabs() const;
+    // Run `change` once this window can change its tabs, after every change queued
+    // before it. It never runs inside this call, so a tab's own signal handler can
+    // ask to remove that tab. A change finds its tab and window again when it runs,
+    // through a QPointer, never by a position taken earlier. Changes still queued
+    // when the window goes away are dropped.
+    void whenTabsCanChange(std::function<void()> change);
+    // Run the queued changes while the window can change its tabs. WindowManager
+    // calls it after a mouse button release, after a modal window closes and on
+    // its activity tick. The window also calls it when a document operation ends.
+    void runTabChanges();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override; // tab-bar middle-click
@@ -237,8 +257,10 @@ private:
 
     // Close the tab at `index`. `remember` pushes it onto the process-wide reopen
     // history (Ctrl+Shift+T); it is false for a bulk close, whose caller has
-    // already recorded the whole bar through rememberOpenTabs().
-    void closeTabAt(int index, bool remember);
+    // already recorded the whole bar through rememberOpenTabs(). False when the
+    // user kept the tab, by Cancel in the unsaved-changes question or through a
+    // failed save.
+    bool closeTabAt(int index, bool remember);
     // Remove and delete the tab at `index`, then record the session. The caller has
     // already asked about unsaved edits.
     void removeTabAt(int index);
@@ -262,6 +284,22 @@ private:
     void clearDocumentSidebars();
     bool canSuspendDocuments() const;
     void persistWindowState();
+    // Run the queued tab changes on the next turn of the event loop.
+    void postTabChanges();
+
+    // Marks a document operation of `window` for its lifetime. Unloading and tab
+    // changes wait while one runs, since it may hold a tab or a document across
+    // its dialogs. The queued tab changes run once the last one ends.
+    class OperationScope
+    {
+    public:
+        explicit OperationScope(MainWindow *window);
+        ~OperationScope();
+        Q_DISABLE_COPY_MOVE(OperationScope)
+
+    private:
+        QPointer<MainWindow> window_;
+    };
 
     QHash<mervin::TabPage *, qint64> inactiveSince_;
     QHash<mervin::TabPage *, QList<QMetaObject::Connection>> tabConnections_;
@@ -272,7 +310,10 @@ private:
     bool suspending_ = false;
     bool resumeScheduled_ = false;
     bool removingTab_ = false; // a tab is leaving this window (removeTabAt, releaseTab)
-    int documentOperationDepth_ = 0;
+    int documentOperationDepth_ = 0; // OperationScope objects alive
+    std::deque<std::function<void()>> tabChanges_; // whenTabsCanChange, oldest first
+    bool tabChangesPosted_ = false;  // postTabChanges has a run on its way
+    bool runningTabChanges_ = false; // runTabChanges is in a change
     // The newest OCR selection, which alone goes on once the installed languages
     // have been read, if that took less than kOcrLanguagesWaitMs.
     quint64 ocrRequest_ = 0;

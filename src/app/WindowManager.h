@@ -304,10 +304,14 @@ private:
     // The mount a document was opened from: the session's copy, else Recent's.
     QString recordedMount(const QString &canonicalPath) const;
     // Close the tabs of files a closeRemovedTabs scan has just found gone, each as
-    // soon as it is found. A window that cannot close a tab yet
-    // (MainWindow::closeRemovedTabs) makes the activity timer run the whole check
-    // again.
+    // soon as it is found. A window that has to keep a tab for now
+    // (MainWindow::closeRemovedTabs) queues the whole check again
+    // (MainWindow::whenTabsCanChange), so a late close follows a fresh answer.
     void closeFoundRemovedTabs(const QStringList &canonicalPaths);
+    // Run every window's queued tab changes (MainWindow::runTabChanges) now, or
+    // on the next turn of the event loop.
+    void runTabChanges();
+    void postTabChanges();
 
     // Rebuild the app-wide Theme stylesheet on the next event-loop turn. Deferred
     // (and coalesced) because the colour-scheme signals that drive it fire BEFORE
@@ -353,7 +357,7 @@ private:
     bool movingTab_ = false;           // detachTab or mergeTab is moving a tab
     bool tabScanRunning_ = false;      // a closeRemovedTabs scan is on its worker
     bool tabScanPending_ = false;      // ...and another was asked for meanwhile
-    bool removedTabsWaiting_ = false;  // a busy window kept a tab whose file is gone
+    bool tabChangesPosted_ = false;    // postTabChanges has a run on its way
     // Set on shutdown so a closeRemovedTabs scan stops between paths. Nothing waits
     // for the scan, so one stuck on an unreachable share is left behind.
     std::shared_ptr<std::atomic<bool>> scanCancel_ = std::make_shared<std::atomic<bool>>(false);

@@ -130,12 +130,10 @@ WindowManager::WindowManager()
     activityTimer_->setInterval(1000);
     connect(activityTimer_, &QTimer::timeout, this, [this] {
         checkDocumentActivity();
-        // A busy window kept a tab the last check found gone. Check again rather
-        // than act on that old answer: the file may be back, or its share away.
-        // Only this tick retries. The other callers of checkDocumentActivity run
+        // Tab changes that nothing else let go, such as after a menu closed with
+        // Esc, run here, not in checkDocumentActivity, whose other callers run
         // inside MainWindow handlers.
-        if (std::exchange(removedTabsWaiting_, false))
-            closeRemovedTabs();
+        runTabChanges();
     });
     activityTimer_->start();
 }
@@ -210,7 +208,32 @@ bool WindowManager::eventFilter(QObject *watched, QEvent *event)
                                 && watched == qApp && !Theme::applying();
     if (event->type() == QEvent::ThemeChange || foreignPalette)
         scheduleThemeRefresh();
+    // A released button or a closed modal window can let a window change its tabs.
+    // The windows are not asked here, as one can be in its destructor.
+    if (event->type() == QEvent::MouseButtonRelease || event->type() == QEvent::WindowUnblocked)
+        postTabChanges();
     return QObject::eventFilter(watched, event);
+}
+
+void WindowManager::postTabChanges()
+{
+    // Posted, as the release or the closing window has not reached its widget yet.
+    if (tabChangesPosted_)
+        return;
+    tabChangesPosted_ = true;
+    QTimer::singleShot(0, this, [this] {
+        tabChangesPosted_ = false;
+        runTabChanges();
+    });
+}
+
+void WindowManager::runTabChanges()
+{
+    // A change can close a window.
+    const QList<QPointer<MainWindow>> windows(windows_.cbegin(), windows_.cend());
+    for (const QPointer<MainWindow> &w : windows)
+        if (w)
+            w->runTabChanges();
 }
 
 void WindowManager::scheduleThemeRefresh()
@@ -498,10 +521,21 @@ void WindowManager::closeFoundRemovedTabs(const QStringList &canonicalPaths)
 {
     if (shuttingDown_ || quitting_)
         return;
-    for (const QString &path : canonicalPaths)
-        for (MainWindow *w : std::as_const(windows_)) // closing a tab keeps its window
-            if (!w->closeRemovedTabs(path))
-                removedTabsWaiting_ = true;
+    const QPointer<WindowManager> self(this);
+    for (MainWindow *w : std::as_const(windows_)) { // closing a tab keeps its window
+        for (const QString &path : canonicalPaths) {
+            if (w->closeRemovedTabs(path))
+                continue;
+            // The window has to keep the tab for now. Check again once its
+            // earlier changes have run and it can change its tabs, rather than
+            // act on this answer, as the file may be back by then.
+            w->whenTabsCanChange([self] {
+                if (self)
+                    self->closeRemovedTabs();
+            });
+            break;
+        }
+    }
 }
 
 void WindowManager::restoreSession(std::function<void(const QStringList &)> done)
@@ -1058,15 +1092,21 @@ bool WindowManager::closeAllForQuit()
     if (quitting_)
         return false;
     QScopedValueRollback<bool> quitGuard(quitting_, true);
-    const QList<MainWindow *> copy = windows_;
-    for (MainWindow *window : copy)
-        if (!window->prepareToClose())
+    // The questions run their own event loops, in which a window can go away.
+    const QList<QPointer<MainWindow>> copy(windows_.cbegin(), windows_.cend());
+    for (const QPointer<MainWindow> &window : copy)
+        if (window && !window->prepareToClose())
             return false;
     updateSession();
     sessionFinal_ = true;
-    for (MainWindow *window : copy)
-        window->closeForQuit();
-    if (copy.isEmpty())
+    bool closing = false;
+    for (const QPointer<MainWindow> &window : copy) {
+        if (window) {
+            window->closeForQuit();
+            closing = true;
+        }
+    }
+    if (!closing)
         QCoreApplication::quit();
     return true;
 }

@@ -12,7 +12,7 @@
 namespace mervin {
 
 namespace {
-// Marker MIME type; the actual payload (source bar + index) is passed in-process
+// Marker MIME type; the actual payload (source bar + page) is passed in-process
 // via the static members, since this is never a cross-process drag.
 const char *kMime = "application/x-mervin-tab";
 // How far the pointer must leave the bar before a drag becomes a detach.
@@ -20,7 +20,7 @@ constexpr int kDetachMargin = 28;
 } // namespace
 
 DetachableTabBar *DetachableTabBar::s_source = nullptr;
-int DetachableTabBar::s_sourceIndex = -1;
+QPointer<QObject> DetachableTabBar::s_sourcePage;
 
 DetachableTabWidget::DetachableTabWidget(QWidget *parent)
     : QTabWidget(parent)
@@ -39,27 +39,30 @@ DetachableTabBar::DetachableTabBar(QWidget *parent)
     setAcceptDrops(true);
     setMovable(true); // in-bar reordering while the pointer stays inside
     setElideMode(Qt::ElideRight);
+}
 
-    // The built-in movable reorder can shuffle tabs while the pointer is still
-    // inside the bar, BEFORE a detach/merge drag begins. pressIndex_ is captured
-    // at mouse-press, so follow the pressed tab through those moves - otherwise
-    // a reorder-then-drag-out would detach/merge the wrong tab.
-    connect(this, &QTabBar::tabMoved, this, [this](int from, int to) {
-        if (pressIndex_ < 0)
-            return;
-        if (from == pressIndex_)
-            pressIndex_ = to;
-        else if (from < pressIndex_ && to >= pressIndex_)
-            --pressIndex_;
-        else if (from > pressIndex_ && to <= pressIndex_)
-            ++pressIndex_;
-    });
+QObject *DetachableTabBar::pageAt(int index) const
+{
+    return tabData(index).value<QObject *>();
+}
+
+int DetachableTabBar::indexOfPage(const QObject *page) const
+{
+    if (!page)
+        return -1;
+    for (int i = 0; i < count(); ++i)
+        if (pageAt(i) == page)
+            return i;
+    return -1;
 }
 
 void DetachableTabBar::mousePressEvent(QMouseEvent *event)
 {
+    // Keep the page, not its position. The built-in movable reorder can shuffle
+    // tabs while the pointer is still inside the bar, before a drag out begins,
+    // and a tab can arrive meanwhile.
     if (event->button() == Qt::LeftButton) {
-        pressIndex_ = tabAt(event->pos());
+        pressPage_ = pageAt(tabAt(event->pos()));
         pressPos_ = event->pos();
         dragging_ = false;
     }
@@ -68,7 +71,7 @@ void DetachableTabBar::mousePressEvent(QMouseEvent *event)
 
 void DetachableTabBar::mouseMoveEvent(QMouseEvent *event)
 {
-    if (!(event->buttons() & Qt::LeftButton) || pressIndex_ < 0 || dragging_) {
+    if (!(event->buttons() & Qt::LeftButton) || !pressPage_ || dragging_) {
         QTabBar::mouseMoveEvent(event);
         return;
     }
@@ -89,11 +92,12 @@ void DetachableTabBar::mouseMoveEvent(QMouseEvent *event)
 
 void DetachableTabBar::startDetachDrag()
 {
-    if (pressIndex_ < 0 || pressIndex_ >= count())
+    const int index = indexOfPage(pressPage_);
+    if (index < 0)
         return;
     dragging_ = true;
     s_source = this;
-    s_sourceIndex = pressIndex_;
+    s_sourcePage = pressPage_;
 
     auto *drag = new QDrag(this);
     auto *mime = new QMimeData;
@@ -101,7 +105,7 @@ void DetachableTabBar::startDetachDrag()
     drag->setMimeData(mime);
 
     // A small drag pixmap from the dragged tab for visual feedback.
-    const QRect tr = tabRect(pressIndex_);
+    const QRect tr = tabRect(index);
     if (tr.isValid()) {
         QPixmap pm(tr.size());
         pm.fill(Qt::transparent);
@@ -116,14 +120,16 @@ void DetachableTabBar::startDetachDrag()
 
     const Qt::DropAction result = drag->exec(Qt::MoveAction);
 
-    // If nothing accepted the drop, detach into a new window at the cursor.
-    if (result == Qt::IgnoreAction && s_source == this)
-        emit detachRequested(s_sourceIndex, QCursor::pos());
+    // If nothing accepted the drop, detach into a new window at the cursor. The
+    // drag ran its own event loop, so find the dragged tab again.
+    const int at = result == Qt::IgnoreAction && s_source == this ? indexOfPage(s_sourcePage) : -1;
+    if (at >= 0)
+        emit detachRequested(at, QCursor::pos());
 
     s_source = nullptr;
-    s_sourceIndex = -1;
+    s_sourcePage = nullptr;
     dragging_ = false;
-    pressIndex_ = -1;
+    pressPage_ = nullptr;
     dropIndicator_ = -1;
     update();
 }
@@ -172,12 +178,13 @@ void DetachableTabBar::dropEvent(QDropEvent *event)
     if (event->mimeData()->hasFormat(QString::fromLatin1(kMime)) && s_source) {
         const int target = insertionIndexAt(event->position().toPoint().x());
         DetachableTabBar *source = s_source;
-        const int sourceIndex = s_sourceIndex;
+        const int sourceIndex = source->indexOfPage(s_sourcePage);
         dropIndicator_ = -1;
         update();
         event->setDropAction(Qt::MoveAction);
         event->accept();
-        emit mergeRequested(source, sourceIndex, target);
+        if (sourceIndex >= 0) // the dragged tab can have gone during the drag
+            emit mergeRequested(source, sourceIndex, target);
     } else {
         QTabBar::dropEvent(event);
     }
