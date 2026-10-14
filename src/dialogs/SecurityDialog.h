@@ -22,6 +22,7 @@ class SecurityDialog : public QDialog
 
 public:
     enum class Action { Encrypt, Decrypt, StripRestrictions };
+    /// Captures the chosen action, destination, passwords and permission settings.
     struct Request
     {
         Action action = Action::Encrypt;
@@ -37,13 +38,19 @@ public:
     SecurityDialog(const QString &documentPath, const QpdfService::Info &info,
                    const QString &error = {}, std::optional<Request> choices = std::nullopt,
                    QWidget *parent = nullptr);
+    /// Returns the captured write request for use after the dialog is accepted.
     const std::optional<Request> &request() const { return request_; }
 
 private:
+    /// Displays the supplied security facts or escaped information read error.
     void showInfo(const QpdfService::Info &info, const QString &error);
+    /// Chooses an output and accepts an encryption request without writing a file.
     void doEncrypt();
+    /// Confirms restriction removal when needed and accepts a decrypted-copy request.
     void doDecrypt(bool stripRestrictions); // false = remove password, true = strip
+    /// Uses a save picker with owner checks and the destination retained for this action.
     QString chooseOutput(Action action, const QString &suffix);
+    /// Captures the current passwords, encryption algorithm and permissions.
     Request choices() const;
 
     QString path_;

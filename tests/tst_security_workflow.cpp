@@ -44,12 +44,14 @@ using namespace mervin;
 
 namespace {
 
+/// Reads exact file contents for source and destination preservation assertions.
 QByteArray bytes(const QString &path)
 {
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
 
+/// Realizes an isolated test window without showing it on the desktop.
 void showWindow(MainWindow &window)
 {
     window.setAttribute(Qt::WA_DontShowOnScreen);
@@ -58,6 +60,7 @@ void showWindow(MainWindow &window)
     QCoreApplication::processEvents();
 }
 
+/// Finds the selected tab through the actual window tab widget.
 TabPage *currentTab(MainWindow &window)
 {
     return qobject_cast<TabPage *>(window.findChild<QTabWidget *>()->currentWidget());
@@ -68,6 +71,7 @@ TabPage *currentTab(MainWindow &window)
 class Interaction
 {
 public:
+    /// Starts modal-control polling with one answer per dialog and guarded nested actions.
     Interaction()
     {
         timer.setInterval(5);
@@ -164,6 +168,7 @@ private:
     QPointer<QWidget> answered;
 };
 
+/// Selects distinct passwords, AES-128 and restricted permissions for retry assertions.
 void setEncryptionChoices(SecurityDialog &dialog)
 {
     dialog.findChild<QLineEdit *>(QStringLiteral("securityUserPassword"))->setText(QStringLiteral("new password"));
@@ -176,17 +181,20 @@ void setEncryptionChoices(SecurityDialog &dialog)
 
 } // namespace
 
+/// Checks worker I/O, retained choices and Security result delivery through real controls.
 class TstSecurityWorkflow : public QObject
 {
     Q_OBJECT
 
 public:
+    /// Uses Qt file pickers so tests can drive and inspect their controls.
     TstSecurityWorkflow()
     {
         QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     }
 
 private slots:
+    /// Creates an isolated profile and disables background application policies for each case.
     void init()
     {
         profile_ = std::make_unique<QTemporaryDir>();
@@ -199,6 +207,7 @@ private slots:
         QVERIFY(settings.save());
     }
 
+    /// Releases job hooks and settles background writes before removing the test profile.
     void cleanup()
     {
         job::testing::release();
@@ -210,6 +219,7 @@ private slots:
         profile_.reset();
     }
 
+    /// Checks that metadata reads return promptly and keep another tab editable.
     void securityInformationRunsOnAWorker()
     {
         QTemporaryDir files;
@@ -245,6 +255,7 @@ private slots:
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 
+    /// Covers correct and incorrect answers to the security information password prompt.
     void informationPasswordRetry_data()
     {
         QTest::addColumn<bool>("correct");
@@ -252,6 +263,7 @@ private slots:
         QTest::newRow("wrong") << false;
     }
 
+    /// Checks the single password retry and its final information result.
     void informationPasswordRetry()
     {
         QFETCH(bool, correct);
@@ -294,6 +306,7 @@ private slots:
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 
+    /// Checks that the result opens using its new password and retains chosen restrictions.
     void encryptedResultOpensWithItsNewPassword()
     {
         QTemporaryDir files;
@@ -330,6 +343,7 @@ private slots:
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 
+    /// Covers password removal and owner-restriction removal.
     void decryptAndStripWriteAnUnrestrictedCopy_data()
     {
         QTest::addColumn<bool>("strip");
@@ -337,6 +351,7 @@ private slots:
         QTest::newRow("strip restrictions") << true;
     }
 
+    /// Checks that accepted requests write usable, unencrypted and unrestricted copies.
     void decryptAndStripWriteAnUnrestrictedCopy()
     {
         QFETCH(bool, strip);
@@ -375,6 +390,7 @@ private slots:
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 
+    /// Checks that failed writes retain choices and destination before a successful retry.
     void failedWriteReopensTheChoicesAndCanRetry()
     {
         QTemporaryDir files;
@@ -418,6 +434,7 @@ private slots:
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 
+    /// Checks that reopening after write failure preserves the earlier information read error.
     void failedInformationStaysVisibleAfterAFailedWrite()
     {
         QTemporaryDir files;
@@ -456,6 +473,7 @@ private slots:
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 
+    /// Covers Stop at metadata reads, source reads and destination writes.
     void stopSuppressesTheProbeOrWrite_data()
     {
         QTest::addColumn<QString>("phase");
@@ -464,6 +482,7 @@ private slots:
         QTest::newRow("write destination") << QStringLiteral("destination");
     }
 
+    /// Checks usable edited source state, unchanged source bytes and no output or late UI after Stop.
     void stopSuppressesTheProbeOrWrite()
     {
         QFETCH(QString, phase);
@@ -518,6 +537,7 @@ private slots:
         QCOMPARE(page->viewer()->measurePrecision(), 3);
     }
 
+    /// Covers source paths, open documents and their aliases as protected destinations.
     void sourceAndOpenDestinationsAreRefused_data()
     {
         QTest::addColumn<QString>("destination");
@@ -528,6 +548,7 @@ private slots:
 #endif
     }
 
+    /// Checks that protected destinations retain their exact original bytes.
     void sourceAndOpenDestinationsAreRefused()
     {
         QFETCH(QString, destination);
@@ -564,6 +585,7 @@ private slots:
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 
+    /// Covers information and failed writes after tab moves or owner deletion.
     void queuedResultsFollowOrDieWithTheirTab_data()
     {
         QTest::addColumn<bool>("failure");
@@ -574,6 +596,7 @@ private slots:
         QTest::newRow("failed write dies with tab") << true << false;
     }
 
+    /// Checks current-owner delivery for moved tabs and suppression when the tab is destroyed.
     void queuedResultsFollowOrDieWithTheirTab()
     {
         QFETCH(bool, failure);
@@ -651,6 +674,7 @@ private slots:
         QVERIFY(!QFileInfo::exists(output));
     }
 
+    /// Covers information and failed writes around canceled and confirmed Quit.
     void queuedResultsRespectQuit_data()
     {
         QTest::addColumn<bool>("failure");
@@ -661,6 +685,7 @@ private slots:
         QTest::newRow("failure during confirmed quit") << true << false;
     }
 
+    /// Checks resumed delivery after canceled Quit and no UI after confirmed shutdown.
     void queuedResultsRespectQuit()
     {
         QFETCH(bool, failure);
@@ -744,6 +769,7 @@ private slots:
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 
+    /// Covers owner deletion during Security, password, output and restriction questions.
     void modalOwnerCanBeDestroyed_data()
     {
         QTest::addColumn<QString>("phase");
@@ -753,6 +779,7 @@ private slots:
         QTest::newRow("strip question") << QStringLiteral("strip");
     }
 
+    /// Checks that all nested Security dialogs tolerate deletion of their owner.
     void modalOwnerCanBeDestroyed()
     {
         QFETCH(QString, phase);
@@ -796,6 +823,7 @@ private slots:
     }
 
 #ifdef Q_OS_UNIX
+    /// Checks that a newly redirected source cannot cause its target to be overwritten.
     void changedSourceAliasCannotOverwriteItsTarget()
     {
         QTemporaryDir files;
@@ -833,6 +861,7 @@ private slots:
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 
+    /// Checks that a blocked named-pipe metadata read leaves the GUI responsive.
     void securityProbeReturnsWhileItsSourceDoesNotAnswer()
     {
         QTemporaryDir files;

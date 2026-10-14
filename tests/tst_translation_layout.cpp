@@ -1156,6 +1156,7 @@ void TstTranslationLayout::print()
     inspect(dialog, QStringLiteral("Print invalid page selection"));
 }
 
+/// Checks translated Security layouts for plain, encrypted and failed-read retained-choice states.
 void TstTranslationLayout::security()
 {
     mervin::SecurityDialog clear(plain_, mervin::QpdfService::Info{});

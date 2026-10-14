@@ -388,6 +388,7 @@ void MainWindow::createDocumentMenu()
     documentButton_->setMenu(documentMenu_);
 }
 
+/// Retains source credentials, information and optional write choices across retries.
 struct MainWindow::SecurityRequest
 {
     QString source;
@@ -397,6 +398,7 @@ struct MainWindow::SecurityRequest
     std::optional<SecurityDialog::Request> action;
 };
 
+/// Returns metadata read by the worker or the write outcome and destination conflict.
 struct MainWindow::SecurityResult
 {
     QpdfService::Status status = QpdfService::Status::Failed;
@@ -405,6 +407,7 @@ struct MainWindow::SecurityResult
     bool destinationOpen = false;
 };
 
+/// Starts a background security-information read for the current usable tab.
 void MainWindow::openSecurity()
 {
     const OperationScope operation(this);
@@ -468,6 +471,7 @@ void MainWindow::runSecurity(TabPage *tab, const std::shared_ptr<SecurityRequest
     tab->startOperation(std::move(operation));
 }
 
+/// Queues the worker result for its tab owner unless shutdown was confirmed.
 void MainWindow::deliverSecurity(TabPage *tab, const std::shared_ptr<SecurityRequest> &request,
                                   const std::shared_ptr<SecurityResult> &result, bool asked)
 {
@@ -495,6 +499,7 @@ void MainWindow::deliverSecurity(TabPage *tab, const std::shared_ptr<SecurityReq
     });
 }
 
+/// Selects the launching tab for questions and handles password retry or output opening.
 void MainWindow::finishSecurity(TabPage *tab, const std::shared_ptr<SecurityRequest> &request,
                                  const std::shared_ptr<SecurityResult> &result, bool asked)
 {
@@ -579,6 +584,7 @@ void MainWindow::finishSecurity(TabPage *tab, const std::shared_ptr<SecurityRequ
         queueSecurityDialog(page, request);
 }
 
+/// Queues a retained information dialog or failed request in the surviving tab's window.
 void MainWindow::queueSecurityDialog(TabPage *tab, const std::shared_ptr<SecurityRequest> &request)
 {
     const QPointer<TabPage> page(tab);
@@ -605,6 +611,7 @@ void MainWindow::queueSecurityDialog(TabPage *tab, const std::shared_ptr<Securit
     });
 }
 
+/// Edits retained choices in the current owner and starts the accepted worker write.
 void MainWindow::showSecurityDialog(TabPage *tab, const std::shared_ptr<SecurityRequest> &request)
 {
     auto *owner = qobject_cast<MainWindow *>(tab->window());
