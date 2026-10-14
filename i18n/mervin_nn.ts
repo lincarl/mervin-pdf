@@ -3372,7 +3372,7 @@ Vil du opne fila no?</translation>
     <message>
         <source>Stop waiting</source>
         <extracomment>Button under the notice that the drive is not answering while the document loads. It gives up the load and leaves the document unloaded.</extracomment>
-        <translation>Slutt å venta</translation>
+        <translation>Slutt å vente</translation>
     </message>
     <message>
         <source>Document is unloaded.</source>

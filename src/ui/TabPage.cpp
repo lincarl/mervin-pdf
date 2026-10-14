@@ -162,10 +162,13 @@ QJsonObject readManifest(const QString &path)
 constexpr int kPollMs = 250;
 int slowDelayMs = TabPage::kSlowMs;
 
-// The slow notice for document `name` read from `folder`. The sentence wraps at spaces
-// and after separators, but a name or folder can have a part too wide for one line.
-// Then the wider of them is shortened in the middle to a line or less, and the other
-// too if need be, until no line is wider than `width`.
+// The slow notice for document `name` read from `folder`, for a label `width` wide.
+// The sentence wraps where Qt allows, as at spaces, and the folder also after each
+// separator that ends a folder name, which Qt does not allow after a backslash. No line
+// ends inside or right after the separators a path starts with, such as the "\\" of a
+// network share, right before another separator or after the ellipsis of a shortened
+// part. A name or folder with a piece still too wide for a line is shortened in the
+// middle, each only as far as its own pieces need.
 QString slowNotice(const QString &name, const QString &folder, const QFontMetrics &metrics,
                    int width)
 {
@@ -174,34 +177,62 @@ QString slowNotice(const QString &name, const QString &folder, const QFontMetric
     //: name (plan.pdf), %2 the folder it is read from (/nas/docs, or a network share
     //: folder on Windows).
     const QString sentence = TabPage::tr("Opening %1 from %2. The drive is not answering.");
-    // The sentence with the name and the folder each at most `cap` pixels wide. Each is
-    // a bidirectional isolate, so a path keeps its order in a right-to-left sentence.
-    const auto part = [&metrics](const QString &text, int cap) {
+    // `text` at most `cap` pixels wide, with the breaks above, as a bidirectional
+    // isolate, so a path keeps its order in a right-to-left sentence.
+    const auto part = [&metrics](const QString &text, int cap, bool path) {
         // elidedText() measures without rounding, so it can shorten a text that
         // horizontalAdvance() says is `cap` wide.
         const QString shown = metrics.horizontalAdvance(text) <= cap
                                   ? text
                                   : metrics.elidedText(text, Qt::ElideMiddle, cap);
-        return QChar(0x2068) + shown + QChar(0x2069); // first strong isolate ... pop
+        const auto separator = [path](QChar c) { return path && (c == u'/' || c == u'\\'); };
+        QString out = QChar(0x2068); // first strong isolate
+        bool leading = true;         // in the separators the text starts with
+        for (qsizetype i = 0; i < shown.size(); ++i) {
+            const QChar c = shown.at(i);
+            out += c;
+            leading = leading && separator(c);
+            if (i + 1 == shown.size())
+                break;
+            if (leading || c == QChar(0x2026) || separator(shown.at(i + 1)))
+                out += QChar(0x2060); // word joiner, no break here
+            else if (separator(c))
+                out += QChar(0x200B); // zero width space, a break here
+        }
+        return out + QChar(0x2069); // pop directional isolate
     };
-    const auto compose = [&](int cap) {
-        return sentence.arg(part(name, cap), part(folder, cap));
+    const auto compose = [&](int nameCap, int folderCap) {
+        return sentence.arg(part(name, nameCap, false), part(folder, folderCap, true));
     };
     const auto fits = [&](const QString &text) {
         return metrics.boundingRect(QRect(0, 0, width, 1 << 20), Qt::TextWordWrap, text).width()
             <= width;
     };
-    const int widest = std::max(metrics.horizontalAdvance(name), metrics.horizontalAdvance(folder));
-    if (width <= 0 || fits(compose(widest)))
-        return compose(widest);
-    // At most a line each, or a shortened part would wrap after its ellipsis.
-    int fitting = 0;
-    int tooWide = std::min(widest, width) + 1;
-    while (tooWide - fitting > 1) {
-        const int cap = (fitting + tooWide) / 2;
-        (fits(compose(cap)) ? fitting : tooWide) = cap;
-    }
-    return compose(fitting);
+    const int nameWidth = metrics.horizontalAdvance(name);
+    const int folderWidth = metrics.horizontalAdvance(folder);
+    if (width <= 0 || fits(compose(nameWidth, folderWidth)))
+        return compose(nameWidth, folderWidth);
+    // The widest cap up to `widest` at which `fitsAt` holds, or 0.
+    const auto widestFitting = [](int widest, const auto &fitsAt) {
+        if (fitsAt(widest))
+            return widest;
+        int fitting = 0;
+        int tooWide = widest;
+        while (tooWide - fitting > 1) {
+            const int cap = (fitting + tooWide) / 2;
+            (fitsAt(cap) ? fitting : tooWide) = cap;
+        }
+        return fitting;
+    };
+    // Each part beside the other shortened to nothing, so only its own pieces count.
+    const int nameCap = widestFitting(nameWidth, [&](int cap) { return fits(compose(cap, 0)); });
+    const int folderCap =
+        widestFitting(folderWidth, [&](int cap) { return fits(compose(0, cap)); });
+    // A translation can put pieces of both on one line. Then both are shortened alike.
+    const int cap = widestFitting(std::max(nameCap, folderCap), [&](int cap) {
+        return fits(compose(std::min(nameCap, cap), std::min(folderCap, cap)));
+    });
+    return compose(std::min(nameCap, cap), std::min(folderCap, cap));
 }
 
 MeasureKind kindFromString(const QString &s)
@@ -237,12 +268,35 @@ struct TabPage::OpenResult {
 struct TabPage::Job {
     enum class Phase {
         Reading, // the job reads the document
-        Closing, // the tab let go before the read ended, and the job closes what it read
+        Closing, // the tab let go of the job, and what it read is being closed
         Stored,  // `result` waits for the tab
-        Ended,   // nothing is left, as the tab took the result or the job closed it
+        Ended,   // nothing is left open, as the tab took the result or it was closed
     };
 
     explicit Job(const QString &source) : source(source) {}
+
+    // With `mutex` held.
+    void setPhase(Phase next)
+    {
+        phase = next;
+        changed.notify_all();
+    }
+    // Ends the job once what it read is closed, on the thread that closed it, then
+    // removes the recovery copy a closed tab left for it.
+    void endClosed()
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        const QString file = std::exchange(removeAfter, QString());
+        setPhase(Phase::Ended);
+        lock.unlock();
+        appfiles::remove(file);
+    }
+    // Blocks until the job has ended. Only for another job's thread.
+    void waitUntilEnded()
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        changed.wait(lock, [this] { return phase == Phase::Ended; });
+    }
 
     const QString source;               // the file the load reads
     job::State state;                   // what the job reports, and its stop
@@ -458,8 +512,8 @@ TabPage::~TabPage()
     clearRecovery();
     Q_ASSERT(!doc_ || !job_); // a tab loads only while it has no document
     if (job_) {
-        // A load still reading gives up at its next step, closes what it opened and
-        // then removes the copy.
+        // A load still reading gives up at its next step. The copy goes once what the
+        // load read is closed.
         job_->state.stop();
         abandon(job_, snapshot);
         return;
@@ -474,33 +528,25 @@ TabPage::~TabPage()
 
 void TabPage::abandon(const std::shared_ptr<Job> &job, const QString &removeAfter)
 {
-    std::shared_ptr<OpenResult> result;
+    std::unique_ptr<Document> document;
+    bool ended = false;
     {
         std::lock_guard<std::mutex> lock(job->mutex);
         job->abandoned = true;
-        switch (job->phase) {
-        case Job::Phase::Reading:
-        case Job::Phase::Closing:
-            if (!removeAfter.isEmpty())
-                job->removeAfter = removeAfter;
-            return;
-        case Job::Phase::Stored:
-            result = std::move(job->result);
-            job->phase = Job::Phase::Ended;
-            job->changed.notify_all();
-            break;
-        case Job::Phase::Ended:
-            break;
+        if (job->phase == Job::Phase::Stored) {
+            document.reset(std::exchange(job->result, nullptr)->document.release());
+            job->setPhase(document ? Job::Phase::Closing : Job::Phase::Ended);
         }
+        ended = job->phase == Job::Phase::Ended;
+        if (!ended && !removeAfter.isEmpty())
+            job->removeAfter = removeAfter;
     }
-    std::unique_ptr<Document> document(result ? result->document.release() : nullptr);
-    if (!document)
+    // A stored document closes in the background and the job ends after it, as one the
+    // job closes itself, so a file left for removal goes only once nothing has it open.
+    if (document)
+        Document::closeInBackground(std::move(document), [job] { job->endClosed(); });
+    if (ended)
         appfiles::remove(removeAfter);
-    else if (removeAfter.isEmpty())
-        Document::closeInBackground(std::move(document));
-    else
-        Document::closeInBackground(std::move(document),
-                                    [removeAfter] { appfiles::remove(removeAfter); });
 }
 
 void TabPage::stopLoading()
@@ -518,10 +564,10 @@ void TabPage::stopLoading()
             return job->phase == Job::Phase::Stored || job->phase == Job::Phase::Ended;
         });
         result = std::move(job->result);
-        job->phase = Job::Phase::Ended;
+        job->setPhase(Job::Phase::Ended);
     }
     // Closes here, before the caller removes or replaces a file it may have open. A load
-    // the user stopped closed what it read itself before it ended.
+    // the user stopped ends only once what it read is closed.
     if (result)
         delete result->document.release();
 }
@@ -944,7 +990,7 @@ void TabPage::resumeAsync()
     startLoad();
 }
 
-void TabPage::startLoad()
+void TabPage::startLoad(std::shared_ptr<Job> after)
 {
     const auto job = std::make_shared<Job>(recoveryPath_.isEmpty() ? path_ : recoveryPath_);
     job_ = job;
@@ -952,8 +998,12 @@ void TabPage::startLoad()
     //: Shown in place of the page while the document loads.
     showPlaceholder(tr("Loading"), PlaceholderButton::None);
     startSlowClock();
-    background::start([tab = QPointer<QObject>(this), job, opener = engine_->opener(),
-                       password = password_] {
+    background::start([tab = QPointer<QObject>(this), job, after = std::move(after),
+                       opener = engine_->opener(), password = password_] {
+        // A stopped load still closing what it read ends first, so a recovery copy left
+        // for this job to remove never goes while that load has it open.
+        if (after)
+            after->waitUntilEnded();
         std::shared_ptr<OpenResult> result;
         {
             const job::Scope scope(job->state);
@@ -967,23 +1017,17 @@ void TabPage::startLoad()
         }
         std::unique_lock<std::mutex> lock(job->mutex);
         if (job->abandoned) {
-            job->phase = Job::Phase::Closing;
+            job->setPhase(Job::Phase::Closing);
             lock.unlock();
-            // Closes here, before the removal below, as Windows cannot remove an
-            // open file.
+            // Closes here, before endClosed() removes the recovery copy, as Windows
+            // cannot remove an open file.
             delete result->document.release();
             result.reset();
-            lock.lock();
-            const QString removeAfter = std::exchange(job->removeAfter, QString());
-            job->phase = Job::Phase::Ended;
-            job->changed.notify_all();
-            lock.unlock();
-            appfiles::remove(removeAfter);
+            job->endClosed();
             return;
         }
         job->result = std::move(result);
-        job->phase = Job::Phase::Stored;
-        job->changed.notify_all();
+        job->setPhase(Job::Phase::Stored);
         lock.unlock();
         background::post(tab, [tab, job] { static_cast<TabPage *>(tab.data())->finishLoad(job); });
     });
@@ -1000,7 +1044,7 @@ void TabPage::finishLoad(const std::shared_ptr<Job> &job)
         if (job->phase != Job::Phase::Stored || job->abandoned)
             return; // the user stopped waiting, and abandon() took the result
         result = std::move(job->result);
-        job->phase = Job::Phase::Ended;
+        job->setPhase(Job::Phase::Ended);
     }
     job_.reset();
     const bool success = finishResume(result);
@@ -1026,16 +1070,19 @@ void TabPage::retryLoad()
     loadStopped_ = false;
     if (doc_ || loading_)
         return;
+    std::shared_ptr<Job> closing; // a stopped load that still closes what it read
     if (job_) {
         std::lock_guard<std::mutex> lock(job_->mutex);
         if (job_->phase == Job::Phase::Reading) {
             // The stopped read still runs. Wait for it again rather than read twice.
             job_->abandoned = false;
             loading_ = true;
+        } else if (job_->phase == Job::Phase::Closing) {
+            closing = job_;
         }
     }
     if (!loading_) {
-        startLoad();
+        startLoad(std::move(closing));
         return;
     }
     showPlaceholder(tr("Loading"), PlaceholderButton::None);
@@ -1055,6 +1102,12 @@ std::shared_ptr<DocumentLifetime> TabPage::testing::storedDocument(const TabPage
     std::lock_guard<std::mutex> lock(tab.job_->mutex);
     const auto &result = tab.job_->result;
     return result && result->document ? result->document->lifetime() : nullptr;
+}
+
+QString TabPage::testing::slowNotice(const QString &name, const QString &folder,
+                                     const QFontMetrics &metrics, int width)
+{
+    return mervin::slowNotice(name, folder, metrics, width);
 }
 
 void TabPage::startSlowClock()

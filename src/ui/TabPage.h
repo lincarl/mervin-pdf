@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 
+class QFontMetrics;
 class QLabel;
 class QTimer;
 
@@ -63,7 +64,8 @@ public:
     // shows that its document is unloaded, with Retry, and keeps its recovery copy.
     // The read itself goes on until the drive answers, so Retry can take it back.
     void stopWaiting();
-    // Retry. Takes back a stopped load that still reads, or starts a new one.
+    // Retry. Takes back a stopped load that still reads, or starts a new one, which
+    // waits for a stopped load that still closes what it read.
     void retryLoad();
 
     // How long a load waits without progress before its placeholder names the file
@@ -77,6 +79,9 @@ public:
         // The document a finished load left for the tab, before the tab took it, or
         // null.
         static std::shared_ptr<DocumentLifetime> storedDocument(const TabPage &tab);
+        // The notice a slow load shows for `name` in `folder`, in a label `width` wide.
+        static QString slowNotice(const QString &name, const QString &folder,
+                                  const QFontMetrics &metrics, int width);
     };
     bool hasUnsavedEdits() const;
     ViewState capturedViewState() const;
@@ -145,14 +150,15 @@ private:
     // The tab's path and canonical path. `resolve` follows links on the disk;
     // without it `path` is taken as canonical.
     void setPath(const QString &path, bool resolve = true);
-    void startLoad();
+    // Starts a load in a new job, which first waits for the job `after` to end.
+    void startLoad(std::shared_ptr<Job> after = {});
     void finishLoad(const std::shared_ptr<Job> &job);
-    // Lets go of `job` without waiting for it. A result the job stored closes on a
-    // background thread and `removeAfter` goes after it. A job still reading closes what
-    // it opened on its own thread, then removes `removeAfter`.
+    // Lets go of `job` without waiting for it. The job ends once what it read is closed,
+    // on its own thread or, for a result it already stored, on a background thread, and
+    // `removeAfter` goes after that.
     static void abandon(const std::shared_ptr<Job> &job, const QString &removeAfter);
-    // Drops the load in progress, waiting for it, for the callers that read or
-    // replace the document's file on this thread next.
+    // Drops the load in progress, or a stopped one that has not ended, waiting for it,
+    // for the callers that read or replace the document's file on this thread next.
     void stopLoading();
     // The slow clock. While a load runs, a poll reads what its job reports, and after
     // the slow delay without progress the placeholder names the file it waits for.
@@ -186,10 +192,10 @@ private:
     // The user stopped waiting for the last load, so selecting the tab does not load it
     // again until Retry.
     bool loadStopped_ = false;
-    // The tab's job slot, with the load in progress or one the user stopped that may
-    // still read, for Retry to take back. The tab takes the job's result (finishLoad),
-    // lets go of it without waiting (abandon) or, for the synchronous callers, waits
-    // for it (stopLoading).
+    // The tab's job slot, with the load in progress or one the user stopped, which may
+    // still read, for Retry to take back, or close what it read. The tab takes the
+    // job's result (finishLoad), lets go of it without waiting (abandon) or, for the
+    // synchronous callers, waits for it (stopLoading).
     std::shared_ptr<Job> job_;
     QTimer *slowPoll_ = nullptr;
     QElapsedTimer quiet_;        // since the job last made progress

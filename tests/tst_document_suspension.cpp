@@ -18,6 +18,7 @@
 #include "Stalls.h"
 
 #include <QAction>
+#include <QApplication>
 #include <QFile>
 #include <QFileInfo>
 #include <QDateTime>
@@ -35,15 +36,18 @@
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
+#include <QTextLayout>
 #include <QToolButton>
 #include <QScopeGuard>
 #include <QThread>
 #include <QtTest>
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <thread>
 
 #ifdef Q_OS_UNIX
 #  include <sys/stat.h>
@@ -57,11 +61,15 @@ using mervin::testing::PipeWriter;
 
 namespace {
 // A self-contained AcroForm exercises pending editor text as well as saved PDF objects.
-QByteArray formPdf()
+// A `measured` one says in its catalog that it carries Mervin measurements, so a load
+// reads the file a second time, for them, after it opened it.
+QByteArray formPdf(bool measured = false)
 {
     const QList<QByteArray> objects{
-        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] /DR << /Font << "
-        "/Helv 5 0 R >> >> /DA (/Helv 12 Tf 0 g) >> >>",
+        QByteArray("<< /Type /Catalog /Pages 2 0 R ")
+            + (measured ? "/Mervin_Measurements () " : "")
+            + "/AcroForm << /Fields [4 0 R] /DR << /Font << /Helv 5 0 R >> >> "
+              "/DA (/Helv 12 Tf 0 g) >> >>",
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Annots [4 0 R] "
         "/Resources << /Font << /Helv 5 0 R >> >> >>",
@@ -146,6 +154,13 @@ QString slowNotice(const QString &name, const QString &folder)
     const auto isolated = [](const QString &text) { return QChar(0x2068) + text + QChar(0x2069); };
     return QStringLiteral("Opening %1 from %2. The drive is not answering.")
         .arg(isolated(name), isolated(QDir::toNativeSeparators(folder)));
+}
+
+// `text` without the marks that only steer where its lines break, the word joiner and
+// the zero width space.
+QString withoutBreakMarks(QString text)
+{
+    return text.remove(QChar(0x2060)).remove(QChar(0x200B));
 }
 
 } // namespace
@@ -395,6 +410,33 @@ private slots:
     }
 #endif
 
+    // Closing a tab whose load waits for the drive stops that load, so once the drive
+    // answers it reads nothing more, here the measurements it would read next.
+    void closingALoadingTabStopsItsRead()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("measured.pdf"));
+        QVERIFY(writeFile(path, formPdf(true)));
+        std::atomic<int> reads{0};
+        job::testing::failWhen([path, &reads](job::Step step, const QString &file) {
+            if (step == job::Step::Reading && file == path)
+                ++reads;
+            return false; // counts, fails nothing
+        });
+        const auto stopCounting = qScopeGuard([] { job::testing::failWhen({}); });
+        holdReadsOf(path);
+        RenderEngine engine;
+        auto tab = std::make_unique<TabPage>(&engine);
+        tab->initializeSuspended(path);
+        const int tasks = mervin::background::running();
+        tab->resumeAsync();
+        QTRY_COMPARE(job::testing::held(), 1);
+        tab.reset();
+        job::testing::release();
+        QTRY_COMPARE_WITH_TIMEOUT(mervin::background::running(), tasks, 10000); // it ended
+        QCOMPARE(reads.load(), 1);
+    }
+
     // A load says "Loading" at once. After two seconds without progress it names the
     // file and the folder it waits for and offers Stop waiting, and not before.
     void slowLoadNamesItsFolderAfterTwoSeconds()
@@ -435,7 +477,8 @@ private slots:
         // The poll runs every 250 ms. The rest is room for a busy machine.
         QVERIFY2(timer.elapsed() >= TabPage::kSlowMs && timer.elapsed() < TabPage::kSlowMs + 1000,
                  qPrintable(QStringLiteral("shown after %1 ms").arg(timer.elapsed())));
-        QCOMPARE(placeholder.status->text(), slowNotice(QStringLiteral("plan.pdf"), files.path()));
+        QCOMPARE(withoutBreakMarks(placeholder.status->text()),
+                 slowNotice(QStringLiteral("plan.pdf"), files.path()));
         QVERIFY(!placeholder.retry->isVisible());
         QVERIFY(tab.isLoading());
 
@@ -445,8 +488,68 @@ private slots:
         QVERIFY(!placeholder.status->isVisible());
     }
 
+    void slowNoticeWrapsFoldersAtSeparators_data()
+    {
+        QTest::addColumn<QString>("name");
+        QTest::addColumn<QString>("folder");
+        QTest::addColumn<QString>("line"); // the notice is as wide as this text
+        const QString deep = QStringLiteral("/nas/projects/structural/revised/drawings");
+        QTest::newRow("network share")
+            << QStringLiteral("plan.pdf")
+            << QStringLiteral("\\\\fileserver\\projects\\structural\\revised\\drawings")
+            << QStringLiteral("Opening plan.pdf from \\\\");
+        QTest::newRow("drive") << QStringLiteral("plan.pdf")
+                               << QStringLiteral("C:\\projects\\structural\\revised\\drawings")
+                               << QStringLiteral("Opening plan.pdf from C:");
+        QTest::newRow("posix") << QStringLiteral("plan.pdf") << deep
+                               << QStringLiteral("Opening plan.pdf from /");
+        // A name with nowhere to wrap is shortened. The folder wraps and stays whole.
+        QTest::newRow("unbroken name")
+            << QStringLiteral("Revision").repeated(30) + QStringLiteral(".pdf") << deep
+            << QStringLiteral("Opening plan.pdf from");
+    }
+
+    // The notice wraps a folder after a separator that ends a folder name, on Windows
+    // too. No line ends in the separators a path starts with, in "C:" or in the
+    // ellipsis of a shortened name, and only a part too wide for a line is shortened.
+    // The names here have no spaces or hyphens, so a line can end only at a space of
+    // the sentence or after such a separator.
+    void slowNoticeWrapsFoldersAtSeparators()
+    {
+        QFETCH(QString, name);
+        QFETCH(QString, folder);
+        QFETCH(QString, line);
+        const QFont font = QApplication::font();
+        const QFontMetrics metrics(font);
+        const int width = metrics.horizontalAdvance(line) + 1;
+        const QString notice = TabPage::testing::slowNotice(name, folder, metrics, width);
+        QTextLayout layout(notice, font);
+        QTextOption option;
+        option.setWrapMode(QTextOption::WordWrap);
+        layout.setTextOption(option);
+        QStringList lines;
+        layout.beginLayout();
+        for (QTextLine next = layout.createLine(); next.isValid(); next = layout.createLine()) {
+            next.setLineWidth(width);
+            lines << withoutBreakMarks(notice.mid(next.textStart(), next.textLength()))
+                         .remove(QChar(0x2068))
+                         .remove(QChar(0x2069));
+            QVERIFY2(next.naturalTextWidth() <= width, qPrintable(lines.join(u'|')));
+        }
+        layout.endLayout();
+        const auto separator = [](QChar c) { return c == u'/' || c == u'\\'; };
+        for (qsizetype i = 0; i + 1 < lines.size(); ++i) {
+            const QString &text = lines.at(i);
+            const bool atSpace = text.endsWith(u' ');
+            const bool afterName = text.size() > 1 && separator(text.back())
+                                   && text.at(text.size() - 2).isLetterOrNumber();
+            QVERIFY2(atSpace || afterName, qPrintable(lines.join(u'|')));
+        }
+        QVERIFY2(lines.join(QString()).contains(folder), qPrintable(lines.join(u'|')));
+    }
+
     // Stop waiting leaves the tab unloaded with Retry, and selecting it again reads
-    // nothing until Retry. Before, every selection loaded it again.
+    // nothing until Retry. Without that rule, every selection would load it again.
     void stoppedLoadWaitsForRetry()
     {
         QTemporaryDir files;
@@ -472,7 +575,8 @@ private slots:
         tabs->setCurrentIndex(1);
         QTRY_COMPARE(job::testing::held(), 1);
         QTRY_VERIFY(placeholder.stop->isVisible());
-        QCOMPARE(placeholder.status->text(), slowNotice(QStringLiteral("plan.pdf"), files.path()));
+        QCOMPARE(withoutBreakMarks(placeholder.status->text()),
+                 slowNotice(QStringLiteral("plan.pdf"), files.path()));
         QElapsedTimer timer;
         timer.start();
         QTest::mouseClick(placeholder.stop, Qt::LeftButton);
@@ -584,16 +688,107 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(closed(lifetime), 1000);
     }
 
+    void stoppedLoadEndsOnlyAfterItsDocumentClosed_data()
+    {
+        QTest::addColumn<QString>("then");
+        QTest::newRow("close the tab") << QStringLiteral("close");
+        QTest::newRow("retry") << QStringLiteral("retry");
+        QTest::newRow("retry and close the tab") << QStringLiteral("retry and close");
+        QTest::newRow("resume") << QStringLiteral("resume");
+    }
+
+    // A load stored the recovery copy's document just before Stop waiting, and the
+    // background close of that document is stuck. The load ends only after it, so a
+    // closed tab keeps the copy until then, Retry reads the copy again only then, and a
+    // synchronous resume waits for it.
+    void stoppedLoadEndsOnlyAfterItsDocumentClosed()
+    {
+        QFETCH(QString, then);
+        const QDir recovery(QDir(ConfigPaths::configDir()).filePath(QStringLiteral("recovery")));
+        QVERIFY(recovery.mkpath(QStringLiteral(".")));
+        const QString snapshot = recovery.filePath(QStringLiteral("document-copy.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), snapshot));
+        const QString original = profile_->filePath(QStringLiteral("docs/plan.pdf"));
+        QVERIFY(writeFile(snapshot + QStringLiteral(".json"),
+                          QJsonDocument(QJsonObject{{"version", 1},
+                                                    {"original", original},
+                                                    {"canonical", original},
+                                                    {"snapshot", "document-copy.pdf"}})
+                              .toJson()));
+        QCOMPARE(TabPage::recoverablePaths(), QStringList{original});
+        RenderEngine engine;
+        auto tab = std::make_unique<TabPage>(&engine);
+        showForLayout(*tab);
+        tab->initializeSuspended(original);
+        QCOMPARE(tab->recoveryPath(), snapshot);
+        tab->resumeAsync();
+        // Without processing events, so the delivery is still queued.
+        std::shared_ptr<DocumentLifetime> lifetime;
+        for (QDeadlineTimer deadline(10000); !lifetime && !deadline.hasExpired();
+             QThread::msleep(5))
+            lifetime = TabPage::testing::storedDocument(*tab);
+        QVERIFY(lifetime);
+        Stall<std::timed_mutex> stall(lifetime->mutex, 30000);
+        tab->stopWaiting();
+        QCoreApplication::processEvents(); // the load's delivery finds the tab stopped
+        QVERIFY(tab->isSuspended());
+
+        if (then == QLatin1String("resume")) {
+            std::atomic<bool> released{false};
+            std::thread releaser([&stall, &released] {
+                std::this_thread::sleep_for(std::chrono::milliseconds(300));
+                released = true;
+                stall.release();
+            });
+            QString error;
+            const bool resumed = tab->resume(&error);
+            const bool waited = released.load();
+            releaser.join();
+            QVERIFY2(resumed, qPrintable(error));
+            QVERIFY2(waited, "resume did not wait for the stopped load's document to close");
+            QVERIFY(closed(lifetime));
+            return;
+        }
+
+        std::atomic<int> reads{0};
+        holdReadsOf(snapshot, &reads);
+        if (then != QLatin1String("close")) {
+            const Placeholder placeholder(*tab);
+            QVERIFY(placeholder.valid());
+            QTest::mouseClick(placeholder.retry, Qt::LeftButton);
+            QVERIFY(tab->isLoading());
+            QTest::qWait(300); // a read that does not wait for the close starts at once
+            QCOMPARE(reads.load(), 0);
+        }
+        if (then == QLatin1String("retry")) {
+            stall.release();
+            QTRY_COMPARE_WITH_TIMEOUT(reads.load(), 1, 10000);
+            job::testing::release();
+            QTRY_VERIFY_WITH_TIMEOUT(tab->isLoaded(), 10000);
+            QVERIFY(closed(lifetime));
+            return;
+        }
+        tab.reset();
+        QVERIFY(mervin::appfiles::flush(10000));
+        QVERIFY(TabPage::recoverablePaths().isEmpty());
+        QVERIFY2(QFileInfo::exists(snapshot), "the copy went while a document had it open");
+        stall.release();
+        QTRY_VERIFY_WITH_TIMEOUT(closed(lifetime), 10000);
+        job::testing::release(); // a read Retry started gives up, as its tab closed
+        QTRY_VERIFY_WITH_TIMEOUT(!QFileInfo::exists(snapshot), 10000);
+    }
+
 #ifdef Q_OS_UNIX
-    // A recovery copy that never answers: Stop waiting returns at once and keeps the
-    // copy for later.
+    // A recovery copy that never answers. Stop waiting returns at once and keeps the
+    // copy for later. The notice names the recovery folder, where the load waits, not
+    // the document's own folder.
     void stoppingALoadOfAStuckRecoveryCopyDoesNotWait()
     {
         const QDir recovery(QDir(ConfigPaths::configDir()).filePath(QStringLiteral("recovery")));
         QVERIFY(recovery.mkpath(QStringLiteral(".")));
         const QString snapshot = recovery.filePath(QStringLiteral("document-stalled.pdf"));
         QCOMPARE(::mkfifo(QFile::encodeName(snapshot).constData(), 0600), 0);
-        const QString original = recovery.filePath(QStringLiteral("plan.pdf"));
+        const QString original = profile_->filePath(QStringLiteral("docs/plan.pdf"));
         QVERIFY(writeFile(snapshot + QStringLiteral(".json"),
                           QJsonDocument(QJsonObject{{"version", 1},
                                                     {"original", original},
@@ -613,7 +808,8 @@ private slots:
         tab->resumeAsync();
         // The load waits in the open of the recovery copy.
         QTRY_VERIFY(placeholder.stop->isVisible());
-        QCOMPARE(placeholder.status->text(), slowNotice(QStringLiteral("plan.pdf"), recovery.path()));
+        QCOMPARE(withoutBreakMarks(placeholder.status->text()),
+                 slowNotice(QStringLiteral("plan.pdf"), recovery.path()));
 
         QElapsedTimer timer;
         timer.start();
