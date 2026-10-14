@@ -131,6 +131,7 @@ public:
     // Captures editors and restore state here. All file work and document closing
     // runs on workers. Unloaded edits save directly from their recovery copy.
     void startSave(SaveCallbacks callbacks);
+    // Identifies the latest Save attempt for completion ownership checks.
     quint64 saveGeneration() const { return saveGeneration_; }
 
     // Stop waiting without joining the worker. Its file call continues until the

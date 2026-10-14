@@ -137,7 +137,9 @@ public:
     // its activity tick. The window also calls it when a document operation ends.
     void runTabChanges();
 
+    // Exposes queued tab-change state for completion-delivery tests.
     struct testing {
+        // Reports pending tab changes without running the queue.
         static bool hasQueuedTabChanges(const MainWindow &window)
         {
             return !window.tabChanges_.empty();
