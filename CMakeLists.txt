@@ -162,6 +162,8 @@ add_library(mervin_core STATIC
     src/io/FileFacts.h
     src/io/FileProbe.cpp
     src/io/FileProbe.h
+    src/io/JobContext.cpp
+    src/io/JobContext.h
     src/io/MemoryFiles.cpp
     src/io/MemoryFiles.h
     src/io/SaveCheck.cpp
@@ -191,6 +193,8 @@ add_library(mervin_core STATIC
     src/security/MeasurementPages.h
     src/security/PageOps.cpp
     src/security/PageOps.h
+    src/security/QpdfSource.cpp
+    src/security/QpdfSource.h
     src/security/MeasureExport.cpp
     src/security/MeasureExport.h
     src/platform/PlatformIntegration.h

@@ -53,6 +53,7 @@ set(_mervin_tests
     tst_file_probe
     tst_app_files
     tst_background
+    tst_job_context
     tst_startup_plan
     tst_closed_tab_stack
     tst_document
@@ -381,7 +382,8 @@ target_compile_definitions(tst_perf_startup PRIVATE
     MERVIN_EXAMPLES_DIR="${MERVIN_FIXTURES_DIR}")
 add_dependencies(tst_perf_startup MervinPDF)
 
-foreach(_t tst_document_output tst_render_lifetime tst_content_search tst_atomic_pdf_writer)
+foreach(_t tst_document_output tst_render_lifetime tst_content_search tst_atomic_pdf_writer
+        tst_job_context)
     target_compile_definitions(${_t} PRIVATE MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
 endforeach()
 target_compile_definitions(tst_document_output PRIVATE MERVIN_DRAWING_PDF="${MERVIN_FIXTURES_DIR}/drawing.pdf")

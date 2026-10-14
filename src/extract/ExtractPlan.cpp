@@ -41,8 +41,9 @@ QStringList runTexts(const QList<int> &pages)
 }
 
 // A comparison key for "is this the same file": symlinks resolved when the file
-// exists, case and separators normalised (PathKey) either way.
-QString fileKey(const QString &path)
+// exists, case and separators normalised (PathKey) either way. Unlike fileKey() in
+// PathKey.h, the folder of a missing file is not resolved.
+QString pathKey(const QString &path)
 {
     const QFileInfo fi(path);
     const QString canonical = fi.canonicalFilePath();
@@ -575,7 +576,7 @@ QString ExtractPlan::defaultOutputPath() const
     for (int n = 1;; ++n) {
         const QString path = QDir::cleanPath(
             dir.filePath(n == 1 ? name : QStringLiteral("%1-%2.pdf").arg(stem, QString::number(n))));
-        if (!QFileInfo::exists(path) && fileKey(path) != sourceKey_)
+        if (!QFileInfo::exists(path) && pathKey(path) != sourceKey_)
             return path;
     }
 }
@@ -591,7 +592,7 @@ ExtractPlan::Destination ExtractPlan::examine(const QString &destination) const
     const QFileInfo info(file);
     facts.folderExists = info.absoluteDir().exists();
     facts.exists = info.exists();
-    facts.key = fileKey(file);
+    facts.key = pathKey(file);
     return facts;
 }
 

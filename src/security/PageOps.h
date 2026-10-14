@@ -13,7 +13,11 @@ namespace mervin {
 // out-of-range indices fail the operation. Operations never modify the source in
 // place - they write a new file (or, for split, a set of files). All qpdf usage
 // is confined to the .cpp. Reuses QpdfService::Status (NeedsPassword when the
-// source is user-password encrypted and no password is supplied).
+// source is user-password encrypted and no password is supplied). Each source
+// reports job::reading() when it opens and again when qpdf reads it while writing
+// (processReportedFile), and each output goes through AtomicPdfWriter, so inside a
+// job::Scope a stopped operation opens and replaces nothing more. A split stopped
+// part way keeps the files it wrote before.
 class PageOps
 {
     Q_DECLARE_TR_FUNCTIONS(mervin::PageOps)
