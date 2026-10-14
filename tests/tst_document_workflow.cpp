@@ -506,9 +506,13 @@ private slots:
         QVERIFY(tab);
 
         QStringList summaries;
+        QPointer<ExtractDialog> answered;
         QTimer driver;
         connect(&driver, &QTimer::timeout, this, [&] {
             if (auto *dialog = qobject_cast<ExtractDialog *>(QApplication::activeModalWidget())) {
+                if (answered == dialog)
+                    return;
+                answered = dialog;
                 summaries << dialog->findChild<QLabel *>(QStringLiteral("extractSummary"))->text();
                 dialog->reject();
             }
@@ -516,7 +520,7 @@ private slots:
         driver.start(10);
         const QString note = QStringLiteral("Unsaved changes are not included.");
         QVERIFY(QMetaObject::invokeMethod(&window, "extractPagesOp"));
-        QCOMPARE(summaries.size(), 1);
+        QTRY_COMPARE(summaries.size(), 1);
         QVERIFY(!summaries.last().contains(note));
 
         QVERIFY(tab->viewer()->annotModel()->addTextNote(
@@ -527,7 +531,9 @@ private slots:
         QVERIFY(!tab->viewer()->hasUnsavedEdits());
         QVERIFY(tab->hasUnsavedEdits());
         for (const char *op : {"extractPagesOp", "deletePagesOp"}) {
+            const qsizetype before = summaries.size();
             QVERIFY(QMetaObject::invokeMethod(&window, op));
+            QTRY_COMPARE(summaries.size(), before + 1);
             QVERIFY2(summaries.last().contains(note), qPrintable(summaries.last()));
         }
         QCOMPARE(summaries.size(), 3);

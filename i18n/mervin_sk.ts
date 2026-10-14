@@ -2045,6 +2045,11 @@ Exportovaný súbor je možné zobraziť v ľubovoľnom prehliadači PDF.</trans
         <translation>PDF dokumenty (*.pdf)</translation>
     </message>
     <message>
+        <source>The page count changed. Check the ranges and try again.</source>
+        <extracomment>The source file changed its number of pages after the dialog&apos;s initial probe. The user&apos;s ranges remain and need another review.</extracomment>
+        <translation>Počet strán sa zmenil. Skontrolujte rozsahy a skúste to znova.</translation>
+    </message>
+    <message>
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
         <translation>„%1“ už existuje. Nahradiť ho?</translation>

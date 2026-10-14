@@ -2045,6 +2045,11 @@ Wyeksportowany plik można wyświetlić w dowolnej przeglądarce plików PDF.</t
         <translation>Dokumenty PDF (*.pdf)</translation>
     </message>
     <message>
+        <source>The page count changed. Check the ranges and try again.</source>
+        <extracomment>The source file changed its number of pages after the dialog&apos;s initial probe. The user&apos;s ranges remain and need another review.</extracomment>
+        <translation>Liczba stron się zmieniła. Sprawdź zakresy i spróbuj ponownie.</translation>
+    </message>
+    <message>
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
         <translation>„%1” już istnieje. Wymienić?</translation>

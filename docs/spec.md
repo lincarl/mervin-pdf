@@ -177,9 +177,11 @@ PDFs takes a list per file (`1-3, 5, 8-10`); Extract Pages builds one file from 
 of one page or range each, reordered like the files in Merge PDFs (typing a comma
 starts the next row). Extract and Merge take pages in the order given and keep
 duplicates. A range that does not resolve is reported, never skipped, and Extract
-shows the result as thumbnails before anything is written. These dialogs write before they close: none
-saves over a file that is open in a tab or over the document it reads, and a write
-that fails leaves the dialog open with its plan.
+shows the result as thumbnails before anything is written. None saves over a file
+that is open in a tab or over the document it reads. Extract and Delete close when
+accepted and write in the tab, with the same wait bar and Stop waiting as the other
+page tools. A failed write reopens their choices with the reason. Merge still writes
+before closing and keeps its plan open after failure.
 
 Rotate Pages and Split run in the document's tab once their questions are answered.
 The tab shows its pages as they were and cannot be edited until the tool ends, while
@@ -203,6 +205,11 @@ is refused before anything is written, with the reason on the error line. The wi
 writes a copy, by default `<name>-edited.pdf` beside the document, which keeps the
 document's structure and encryption; the original file is never changed. Extract and
 Delete share one remembered Open when done choice.
+
+Extract and Delete check the source in the background before opening their dialog.
+Their write checks the chosen password and page count again. A changed count keeps
+the ranges and asks the user to check them before another attempt. Stopping the
+probe opens no dialog, and stopping a write suppresses its later result.
 
 Extract and Delete copy pages from the saved file, so unsaved comments, form entries
 and measurements are not included; their window says so when the open document has

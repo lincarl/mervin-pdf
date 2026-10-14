@@ -2045,6 +2045,11 @@ Is féidir an comhad easpórtáilte a fheiceáil in aon amharcóir PDF.</transla
         <translation>Doiciméid PDF (*.pdf)</translation>
     </message>
     <message>
+        <source>The page count changed. Check the ranges and try again.</source>
+        <extracomment>The source file changed its number of pages after the dialog&apos;s initial probe. The user&apos;s ranges remain and need another review.</extracomment>
+        <translation>Tá líon na leathanach athraithe. Seiceáil na raonta agus bain triail eile as.</translation>
+    </message>
+    <message>
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
         <translation>Tá &quot;%1&quot; ann cheana. Ionadaigh é?</translation>

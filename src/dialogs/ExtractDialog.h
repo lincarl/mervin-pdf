@@ -1,6 +1,7 @@
 #pragma once
 
 #include "extract/ExtractPlan.h"
+#include "security/PageOps.h"
 
 #include <QDialog>
 #include <QList>
@@ -34,6 +35,33 @@ class ExtractDialog : public QDialog
     Q_OBJECT
 
 public:
+    struct Probe
+    {
+        PageOps::Status status = PageOps::Status::Failed;
+        int pageCount = 0;
+        QString password;
+        QString error;
+    };
+
+    // Runs on a worker before the dialog opens. A known password is tried only
+    // when an unauthenticated probe says the source needs one.
+    static Probe probeSource(const QString &path, const QString &knownPassword);
+
+    struct Choices
+    {
+        enum class Failure { None, Password, Read, Write, ChangedCount, Source, Destination };
+        QStringList specs;
+        QString output;
+        QString password;
+        bool outputEdited = false;
+        bool openWhenDone = true;
+        Failure failure = Failure::None;
+        QString error;
+    };
+
+    // The existing inline reasons, also used when a hidden owner needs a tray notice.
+    static QString failureText(const Choices &choices, ExtractPlan::Mode mode);
+
     struct Source
     {
         ExtractPlan::Mode mode = ExtractPlan::Mode::Extract;
@@ -41,6 +69,7 @@ public:
         QString canonicalPath;   // its tab's, which Save as may not name either
         QString password;        // the tab's, tried before the password row is shown
         int viewerPageCount = 0; // used only when qpdf cannot count (locked)
+        Probe probe;            // the worker's answer, never computed by this dialog
         // 0-based: the one row holds this page (Save Page As, and in Delete mode the
         // page in view). Without it the row holds every page, first to last
         // (Document > Extract Pages); in Delete mode it starts empty.
@@ -52,26 +81,26 @@ public:
         RenderEngine *engine = nullptr;
     };
 
-    // Probes `source.path` with qpdf before anything is shown: the page count, the
-    // password row and a read failure all shape the dialog. An encrypted file that
-    // `source.password` unlocks is treated like an unencrypted one: no row appears.
-    explicit ExtractDialog(const Source &source, QWidget *parent = nullptr);
+    // Consumes a completed probe and optional failed-attempt choices. Construction
+    // reads no source file. SaveCheck checks its destination on a worker.
+    explicit ExtractDialog(const Source &source, QWidget *parent = nullptr,
+                           const std::optional<Choices> &choices = {});
 
-    // Valid after exec() == Accepted, by which time the file has been written:
-    // write() writes it and keeps the dialog open on a failure, so the rows survive it.
+    // Valid after acceptance. The caller writes this job in the tab's worker and
+    // can reopen the dialog with choices() after a failure.
     ExtractPlan::Job job() const { return job_; }
-    // Verified: the Source's password when it worked, else the one typed in the
-    // row. Empty when the file is not encrypted.
+    Choices choices() const;
+    // The probe's verified password, or the row's chosen password that the worker
+    // must verify before writing. Empty when the source is not encrypted.
     QString password() const { return password_; }
     bool openWhenDone() const;
 
 private:
-    // Checks Save as again, as the disk can have changed since the last answer, and
-    // writes once that answers (write()) if what Extract was pressed for is still
-    // what the window shows.
+    // Checks Save as again, as the disk can have changed since the last answer,
+    // then captures the job if the pressed plan still matches the window.
     void accept() override;
-    // Verify the password, confirm an overwrite, then write the file. Closes only
-    // once the write succeeded; a failure goes on the error line instead.
+    // Confirms an overwrite from the latest SaveCheck answer and returns the job.
+    // Password verification and all writes belong to the caller's worker.
     void write();
     // Checks the Save as text off the UI thread (see SaveCheck). While Save as is
     // not edited, the check also steps the default past names in use. refresh()

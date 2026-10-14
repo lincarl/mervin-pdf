@@ -2041,6 +2041,11 @@ Az exportált fájl bármely PDF-megtekintőben megtekinthető.</translation>
         <translation>PDF dokumentumok (*.pdf)</translation>
     </message>
     <message>
+        <source>The page count changed. Check the ranges and try again.</source>
+        <extracomment>The source file changed its number of pages after the dialog&apos;s initial probe. The user&apos;s ranges remain and need another review.</extracomment>
+        <translation>Megváltozott az oldalak száma. Ellenőrizze az oldaltartományokat, majd próbálja újra.</translation>
+    </message>
+    <message>
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
         <translation>&quot;%1&quot; már létezik. Cserélje ki?</translation>

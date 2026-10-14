@@ -828,6 +828,7 @@ void TstTranslationLayout::extract()
     source.viewerPageCount = 12;
     source.seedPage = 6;
     source.hasUnsavedEdits = true;
+    source.probe = mervin::ExtractDialog::probeSource(source.path, source.password);
     mervin::ExtractDialog dialog(source);
     inspect(dialog, QStringLiteral("Extract with unsaved changes"));
     auto *range = dialog.findChild<QLineEdit *>(QStringLiteral("extractRowSpec"));
@@ -862,18 +863,24 @@ void TstTranslationLayout::extract()
              "Extract row allocation must include all column controls");
 
     source.path = encrypted_;
+    source.probe = mervin::ExtractDialog::probeSource(source.path, source.password);
     mervin::ExtractDialog locked(source);
     auto *password = locked.findChild<QLineEdit *>(QStringLiteral("extractPassword"));
     auto *accept = locked.findChild<QPushButton *>(QStringLiteral("extractAccept"));
     QVERIFY(password && accept);
     inspect(locked, QStringLiteral("Extract encrypted document"));
-    QTest::keyClicks(password, QStringLiteral("incorrect-password"));
-    accept->click();
-    QTRY_VERIFY(!locked.findChild<mervin::SaveCheck *>()->pending()); // Save as is checked first
-    QCOMPARE(locked.result(), int(QDialog::Rejected));
-    inspect(locked, QStringLiteral("Extract rejected password"));
+    auto choices = locked.choices();
+    choices.password = QStringLiteral("incorrect-password");
+    choices.failure = mervin::ExtractDialog::Choices::Failure::Password;
+    mervin::ExtractDialog rejected(source, nullptr, choices);
+    inspect(rejected, QStringLiteral("Extract rejected password"));
+    choices.failure = mervin::ExtractDialog::Choices::Failure::ChangedCount;
+    source.probe = {mervin::PageOps::Status::Ok, 12, {}, {}};
+    mervin::ExtractDialog changed(source, nullptr, choices);
+    inspect(changed, QStringLiteral("Extract changed page count"));
 
     source.path = profile_.filePath(QStringLiteral("missing-source.pdf"));
+    source.probe = mervin::ExtractDialog::probeSource(source.path, source.password);
     mervin::ExtractDialog missing(source);
     inspect(missing, QStringLiteral("Extract unreadable document"));
 }
@@ -888,6 +895,7 @@ void TstTranslationLayout::deletePages()
     source.viewerPageCount = 12;
     source.seedPage = 6;
     source.hasUnsavedEdits = true;
+    source.probe = mervin::ExtractDialog::probeSource(source.path, source.password);
     mervin::ExtractDialog dialog(source);
     inspect(dialog, QStringLiteral("Delete pages with unsaved changes"));
     auto *rows = dialog.findChild<QListWidget *>(QStringLiteral("extractList"));
@@ -929,18 +937,24 @@ void TstTranslationLayout::deletePages()
     inspect(dialog, QStringLiteral("Delete pages no rows"));
 
     source.path = encrypted_;
+    source.probe = mervin::ExtractDialog::probeSource(source.path, source.password);
     mervin::ExtractDialog locked(source);
     auto *password = locked.findChild<QLineEdit *>(QStringLiteral("extractPassword"));
     auto *accept = locked.findChild<QPushButton *>(QStringLiteral("extractAccept"));
     QVERIFY(password && accept);
     inspect(locked, QStringLiteral("Delete pages encrypted document"));
-    QTest::keyClicks(password, QStringLiteral("incorrect-password"));
-    accept->click();
-    QTRY_VERIFY(!locked.findChild<mervin::SaveCheck *>()->pending()); // Save as is checked first
-    QCOMPARE(locked.result(), int(QDialog::Rejected));
-    inspect(locked, QStringLiteral("Delete pages rejected password"));
+    auto choices = locked.choices();
+    choices.password = QStringLiteral("incorrect-password");
+    choices.failure = mervin::ExtractDialog::Choices::Failure::Password;
+    mervin::ExtractDialog rejected(source, nullptr, choices);
+    inspect(rejected, QStringLiteral("Delete pages rejected password"));
+    choices.failure = mervin::ExtractDialog::Choices::Failure::ChangedCount;
+    source.probe = {mervin::PageOps::Status::Ok, 12, {}, {}};
+    mervin::ExtractDialog changed(source, nullptr, choices);
+    inspect(changed, QStringLiteral("Delete pages changed page count"));
 
     source.path = profile_.filePath(QStringLiteral("missing-source.pdf"));
+    source.probe = mervin::ExtractDialog::probeSource(source.path, source.password);
     mervin::ExtractDialog missing(source);
     inspect(missing, QStringLiteral("Delete pages unreadable document"));
 }

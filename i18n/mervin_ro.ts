@@ -2045,6 +2045,11 @@ Fișierul exportat poate fi vizualizat în orice vizualizator PDF.</translation>
         <translation>Documente PDF (*.pdf)</translation>
     </message>
     <message>
+        <source>The page count changed. Check the ranges and try again.</source>
+        <extracomment>The source file changed its number of pages after the dialog&apos;s initial probe. The user&apos;s ranges remain and need another review.</extracomment>
+        <translation>Numărul de pagini s-a schimbat. Verificați intervalele și încercați din nou.</translation>
+    </message>
+    <message>
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
         <translation>„%1” există deja. Înlocuiește-l?</translation>

@@ -2043,6 +2043,11 @@ Il file esportato è visualizzabile in qualsiasi visualizzatore PDF.</translatio
         <translation>Documenti PDF (*.pdf)</translation>
     </message>
     <message>
+        <source>The page count changed. Check the ranges and try again.</source>
+        <extracomment>The source file changed its number of pages after the dialog&apos;s initial probe. The user&apos;s ranges remain and need another review.</extracomment>
+        <translation>Il numero di pagine è cambiato. Controlla gli intervalli e riprova.</translation>
+    </message>
+    <message>
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
         <translation>&quot;%1&quot; esiste già. Sostituirlo?</translation>

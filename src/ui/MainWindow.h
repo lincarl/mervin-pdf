@@ -209,6 +209,11 @@ private:
     // holds `seedPage` (0-based) when given: the clicked page from the page's Save
     // Page As, or for Delete the page in view. Extract without it holds every page.
     void pagesDialog(mervin::ExtractPlan::Mode mode, std::optional<int> seedPage);
+    struct PagesJob;
+    static void runPagesJob(mervin::TabPage *tab, const std::shared_ptr<PagesJob> &job,
+                            bool write);
+    static void queuePagesResult(mervin::TabPage *tab, const std::shared_ptr<PagesJob> &job);
+    void finishPagesJob(mervin::TabPage *tab, const std::shared_ptr<PagesJob> &job);
     void createActions();
     void createToolBar();
     void createMenus();

@@ -238,11 +238,11 @@ These still touch the disk on the UI thread and are planned work:
   memory buffer, so these calls do not read the original file. Moving every
   viewer query to background threads remains separate work. Directory-dependent
   non-PDF formats retain their path-based lookup of relative resources.
-- Delete Pages, Extract Pages, merge, and security. The chosen design
+- Merge and security. The chosen design
   shows such a wait in its tab, with a bar over its locked document, so other
   tabs and windows stay usable. New tabs and unloaded tabs already load in their
-  placeholders, and Rotate Pages and Split run as tab jobs (see Page and security
-  operations).
+  placeholders. Rotate Pages, Split, Extract and Delete run as tab jobs (see Page
+  and security operations).
 - Reads at startup before the first window, and the system file dialogs, which
   run on the UI thread by design.
 - Opening a folder or a link with the system's handler (`QDesktopServices::openUrl`),
@@ -733,6 +733,20 @@ the same reorderable `RowList`. Extract writes through `PageOps::merge`, which f
 on an out-of-range page instead of skipping it, so a stale page count cannot silently
 shorten the output.
 
+Extract and Delete first probe the source in a tab job, then open their dialog with
+the returned page count and password state. Their constructors do no source I/O.
+Acceptance captures parsed page indices, output and password, closes the dialog,
+and starts another tab job. This job resolves the current source identity and refuses
+an output that would replace it, including a source redirected after the dialog opened.
+It reserves the output, verifies the password and page count again, then writes through
+qpdf and the guarded atomic writer. The dialog and its Browse picker are window-modal.
+A changed
+count reopens the choices before writing. A failed write or password check also
+reopens the dialog with its rows, chosen filename, password and Open when done
+choice. Completion follows the tab to its current window. Stop suppresses reopening
+and output opening, while a rename already begun may finish. A hidden window shows
+failures through its tray notice.
+
 Neither plan touches the disk on the UI thread. Each dialog checks its Save as text
 with `SaveCheck` (`io/SaveCheck`) on a background thread. Extract checks whether the
 folder exists, whether the name is a folder and whether the file exists. Both find
@@ -745,18 +759,19 @@ stopped answering holds one thread per dialog, and later checks in that dialog w
 behind it. Until a check answers, the error line keeps a reason about Save as, so
 typing does not make it flicker, and drops any other reason; after 300 ms it says
 the folder is being checked and disables the button. Pressing Extract or Merge
-checks Save as again and writes once that answers, if the rows and Save as are still
-what it was pressed for. A default name that stepped past a file in use meanwhile
-still counts, as the user did not choose it.
+checks Save as again and proceeds once that answers, if the rows and Save as are
+still what it was pressed for. Extract closes with its captured job for the worker;
+Merge still writes before closing. A default name that stepped past a file in use
+meanwhile still counts, as the user did not choose it.
 
 Delete Pages is the same `ExtractDialog` and `ExtractStrip` over an `ExtractPlan` in
-`Mode::Delete`, not a separate dialog. The rows, Save as, the password row, writing
-before closing and the keyboard handling are shared, and the mode changes only what
+`Mode::Delete`, not a separate dialog. The rows, Save as, the password row, job
+acceptance and keyboard handling are shared, and the mode changes only what
 differs. Its rows are a set of pages to leave out, so `RowList` drops the grips and
 the Output column and there are no moves. Nor is there a Remove button beside the
 rows, since each row's ✕ removes it. `ExtractPlan::cells()` returns every
 source page, unfolded, flagged `deleted`, and `deletePage()`/`keepPage()` turn a
-click on the strip into row edits, widening, joining or splitting ranges. The dialog writes through
+click on the strip into row edits, widening, joining or splitting ranges. The worker writes through
 `PageOps::deletePages`, which copies the whole document minus those pages, so the
 copy keeps the source's structure and encryption, and refuses to delete every page.
 

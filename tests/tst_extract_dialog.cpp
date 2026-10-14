@@ -16,6 +16,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFileDialog>
+#include <QPointer>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -42,8 +44,8 @@ using mervin::QpdfService;
 // widget layer: that typing and pasting separators makes rows, that moves and
 // strip edits reach the plan and the job, that the strip keeps the current row
 // in view without undoing the user's scrolling, that a disabled Extract always
-// shows its reason, and that an encrypted file is unlocked by the tab's password
-// or, failing that, inline before close. The Delete mode cases check the same
+// shows its reason, and that an encrypted file uses the probe's verified password
+// or captures an inline password for worker verification. The Delete mode cases check the same
 // window as Document > Delete Pages: its seed row, the strip's clicks, the refusal
 // to delete every page, and the copy PageOps::deletePages writes.
 //
@@ -111,9 +113,11 @@ private slots:
     void stripShowsTheCurrentRowAndKeepsItsScroll();
     void foldOpensAloneUntilResized();
     void saveAsFollowsThePlanUntilEdited();
+    void browseKeepsWindowModalityAndOwnerLifetime_data();
+    void browseKeepsWindowModalityAndOwnerLifetime();
     void destinationCannotBeTheSource();
     void outputOpenInATabIsRefused();
-    void failedWriteKeepsTheRows();
+    void failedAttemptRestoresTheChoices();
     void slowSaveAsCheckSaysSoAndExtractWaitsForIt();
     void editAfterExtractNeedsAnotherPress();
     void encryptedSourceAsksOnceInline();
@@ -137,6 +141,7 @@ private:
         s.path = path;
         s.viewerPageCount = 31;
         s.seedPage = 6;
+        s.probe = ExtractDialog::probeSource(s.path, s.password);
         return s;
     }
     // Document > Delete Pages with page 7 in view.
@@ -245,7 +250,7 @@ private:
         timer->start(10);
     }
     // What the dialog would write: Extract, then its job's pages.
-    // Extract checks Save as again on a background thread, then writes.
+    // Extract checks Save as again, then returns a value-owned job.
     static void press(ExtractDialog &d)
     {
         extract(d)->click();
@@ -607,6 +612,60 @@ void TstExtractDialog::saveAsFollowsThePlanUntilEdited()
     QVERIFY(!extract(d)->isEnabled());
 }
 
+void TstExtractDialog::browseKeepsWindowModalityAndOwnerLifetime_data()
+{
+    QTest::addColumn<int>("answer");
+    QTest::newRow("cancel") << 0;
+    QTest::newRow("accept") << 1;
+    QTest::newRow("owner closes") << 2;
+}
+
+void TstExtractDialog::browseKeepsWindowModalityAndOwnerLifetime()
+{
+    QFETCH(int, answer);
+    QPointer<QWidget> owner = new QWidget;
+    const auto cleanup = qScopeGuard([&] { delete owner.data(); });
+    QPointer<ExtractDialog> dialog = new ExtractDialog(source(plain_), owner);
+    dialog->setWindowModality(Qt::WindowModal);
+    prepare(*dialog);
+    const QString before = child<QLineEdit>(*dialog, "extractOutput")->text();
+    const QString chosen = dir_.filePath(QStringLiteral("browsed-copy.pdf"));
+    int shown = 0;
+    Qt::WindowModality observedModality = Qt::NonModal;
+    QTimer respond;
+    respond.setInterval(5);
+    connect(&respond, &QTimer::timeout, this, [&] {
+        auto *picker = qobject_cast<QFileDialog *>(QApplication::activeModalWidget());
+        if (!picker || picker->property("testSubmitted").toBool())
+            return;
+        picker->setProperty("testSubmitted", true);
+        ++shown;
+        observedModality = picker->windowModality();
+        QCOMPARE(picker->acceptMode(), QFileDialog::AcceptSave);
+        if (answer == 2) {
+            delete owner.data();
+        } else if (answer == 1) {
+            picker->selectFile(chosen);
+            if (auto *name = picker->findChild<QLineEdit *>(QStringLiteral("fileNameEdit")))
+                name->setText(chosen);
+            QMetaObject::invokeMethod(picker, "accept", Qt::DirectConnection);
+        } else {
+            picker->reject();
+        }
+    });
+    respond.start();
+    child<QPushButton>(*dialog, "extractBrowse")->click();
+    QCOMPARE(shown, 1);
+    QCOMPARE(observedModality, Qt::WindowModal);
+    if (answer == 2) {
+        QVERIFY(!dialog && !owner);
+    } else {
+        QVERIFY(dialog);
+        QCOMPARE(child<QLineEdit>(*dialog, "extractOutput")->text(),
+                 answer == 1 ? QDir::toNativeSeparators(chosen) : before);
+    }
+}
+
 void TstExtractDialog::destinationCannotBeTheSource()
 {
     ExtractDialog d(source(plain_));
@@ -642,44 +701,34 @@ void TstExtractDialog::outputOpenInATabIsRefused()
     QVERIFY(extract(d)->isEnabled());
 }
 
-void TstExtractDialog::failedWriteKeepsTheRows()
+void TstExtractDialog::failedAttemptRestoresTheChoices()
 {
-    // A write that fails (a read-only file here, standing in for one that another
-    // program holds open) is reported on the error line. The dialog stays open
-    // with its rows, Extract stays enabled, and once the cause is gone a second
-    // Extract succeeds without retyping anything.
-    const QString target = dir_.filePath(QStringLiteral("read-only.pdf"));
-    makePdf(target, 1);
-    QVERIFY(QFile::setPermissions(target, QFileDevice::ReadOwner | QFileDevice::ReadUser));
-    ExtractDialog d(source(plain_));
+    const QString target = dir_.filePath(QStringLiteral("failed-output.pdf"));
+    ExtractDialog::Choices choices;
+    choices.specs = {QStringLiteral("5-7"), QStringLiteral("12")};
+    choices.output = QDir::toNativeSeparators(target);
+    choices.outputEdited = true;
+    choices.openWhenDone = false;
+    choices.failure = ExtractDialog::Choices::Failure::Write;
+    choices.error = QStringLiteral("The test writer could not finish.");
+    ExtractDialog d(source(plain_), nullptr, choices);
     prepare(d);
-    QTest::keyClicks(rows(d).at(0), QStringLiteral("5-7")); // replaces the selected "7"
-    type(output(d), QDir::toNativeSeparators(target));
-    QVERIFY(extract(d)->isEnabled());
-
-    answerReplaceWithYes(); // the file exists, so Extract asks first
-    press(d);
-    QVERIFY(d.result() != QDialog::Accepted);                 // still open...
-    QCOMPARE(texts(d), QStringList({QStringLiteral("5-7")})); // ...with its rows
-    QVERIFY2(error(d).startsWith(QStringLiteral("Could not write \"read-only.pdf\".")),
+    QCOMPARE(texts(d), choices.specs);
+    QCOMPARE(output(d)->text(), choices.output);
+    QVERIFY(!d.openWhenDone());
+    QVERIFY2(error(d).startsWith(QStringLiteral("Could not write \"failed-output.pdf\".")),
              qPrintable(error(d)));
-    QVERIFY(!child<QLabel>(d, "extractError")->toolTip().isEmpty()); // qpdf's reason
+    QCOMPARE(child<QLabel>(d, "extractError")->toolTip(), choices.error);
     QVERIFY(extract(d)->isEnabled());
-
-    QVERIFY(QFile::setPermissions(target, QFileDevice::ReadOwner | QFileDevice::WriteOwner
-                                              | QFileDevice::ReadUser | QFileDevice::WriteUser));
-    answerReplaceWithYes();
     press(d);
     QCOMPARE(d.result(), int(QDialog::Accepted));
-    int count = 0;
-    QString err;
-    QCOMPARE(PageOps::probe(target, &count, QString(), &err), PageOps::Status::Ok);
-    QCOMPARE(count, 3);
+    QCOMPARE(d.job().pages, QList<int>({4, 5, 6, 11}));
+    QVERIFY(!QFileInfo::exists(target)); // acceptance leaves writing to the tab job
 }
 
 // Save as is checked on a background thread, as its folder can be on a share that
 // stopped answering. A quick check changes nothing on screen; a slow one says so,
-// and Extract pressed meanwhile writes once it answers.
+// and Extract pressed meanwhile returns its job once it answers.
 void TstExtractDialog::slowSaveAsCheckSaysSoAndExtractWaitsForIt()
 {
     const QString target = dir_.filePath(QStringLiteral("checked-slowly.pdf"));
@@ -717,7 +766,8 @@ void TstExtractDialog::slowSaveAsCheckSaysSoAndExtractWaitsForIt()
     SaveCheck::holdForTesting(false);
     settle(&d);
     QCOMPARE(d.result(), int(QDialog::Accepted));
-    QVERIFY(QFileInfo::exists(target));
+    QCOMPARE(d.job().path, target);
+    QVERIFY(!QFileInfo::exists(target));
 }
 
 // Extract writes what it was pressed for. Typing another name while the check runs
@@ -742,31 +792,37 @@ void TstExtractDialog::editAfterExtractNeedsAnotherPress()
     QVERIFY(extract(d)->isEnabled());
     press(d);
     QCOMPARE(d.result(), int(QDialog::Accepted));
-    QVERIFY(QFileInfo::exists(second));
+    QCOMPARE(d.job().path, second);
+    QVERIFY(!QFileInfo::exists(second));
 }
 
 void TstExtractDialog::encryptedSourceAsksOnceInline()
 {
-    ExtractDialog d(source(encrypted_));
+    const auto src = source(encrypted_);
+    ExtractDialog d(src);
     prepare(d);
     QLineEdit *password = child<QLineEdit>(d, "extractPassword");
     QVERIFY(password);
     QCOMPARE(error(d), QStringLiteral("Enter the password for this PDF."));
     QVERIFY(!extract(d)->isEnabled());
-
     QTest::keyClicks(password, QStringLiteral("nope"));
-    QVERIFY(extract(d)->isEnabled());
-    press(d);
-    QVERIFY(d.result() != QDialog::Accepted); // stays open
-    QCOMPARE(error(d), QStringLiteral("That password is not correct."));
-    QCOMPARE(password->selectedText(), QStringLiteral("nope")); // ready to retype
-
-    QTest::keyClicks(password, QStringLiteral("secret"));
-    QVERIFY(error(d).isEmpty()); // editing clears the verdict
     press(d);
     QCOMPARE(d.result(), int(QDialog::Accepted));
-    QCOMPARE(d.password(), QStringLiteral("secret"));
-    QCOMPARE(d.job().pages, QList<int>({6}));
+    QCOMPARE(d.choices().password, QStringLiteral("nope"));
+    auto choices = d.choices();
+    choices.failure = ExtractDialog::Choices::Failure::Password;
+    ExtractDialog retry(src, nullptr, choices);
+    prepare(retry);
+    password = child<QLineEdit>(retry, "extractPassword");
+    QVERIFY(password);
+    QCOMPARE(error(retry), QStringLiteral("That password is not correct."));
+    password->selectAll();
+    QTest::keyClicks(password, QStringLiteral("secret"));
+    QVERIFY(error(retry).isEmpty());
+    press(retry);
+    QCOMPARE(retry.result(), int(QDialog::Accepted));
+    QCOMPARE(retry.password(), QStringLiteral("secret"));
+    QCOMPARE(retry.job().pages, QList<int>({6}));
 }
 
 void TstExtractDialog::encryptedSourceUsesTheTabPassword()
@@ -774,6 +830,7 @@ void TstExtractDialog::encryptedSourceUsesTheTabPassword()
     // The password that opened the tab unlocks the file: the dialog is the plain one.
     ExtractDialog::Source s = source(encrypted_);
     s.password = QStringLiteral("secret");
+    s.probe = ExtractDialog::probeSource(s.path, s.password);
     ExtractDialog d(s);
     prepare(d);
     QVERIFY(!child<QLineEdit>(d, "extractPassword"));
@@ -784,11 +841,8 @@ void TstExtractDialog::encryptedSourceUsesTheTabPassword()
     QCOMPARE(d.result(), int(QDialog::Accepted));
     QCOMPARE(d.password(), QStringLiteral("secret"));
 
-    // The dialog wrote the file with it before closing, unencrypted.
-    QString err;
-    int count = 0;
-    QCOMPARE(PageOps::probe(d.job().path, &count, QString(), &err), PageOps::Status::Ok);
-    QCOMPARE(count, 1);
+    QCOMPARE(d.job().pages, QList<int>{6});
+    QVERIFY(!QFileInfo::exists(d.job().path));
 }
 
 void TstExtractDialog::staleTabPasswordFallsBackToTheRow()
@@ -797,6 +851,7 @@ void TstExtractDialog::staleTabPasswordFallsBackToTheRow()
     // must not pass for a verified one: the row appears as if none were known.
     ExtractDialog::Source s = source(encrypted_);
     s.password = QStringLiteral("stale");
+    s.probe = ExtractDialog::probeSource(s.path, s.password);
     ExtractDialog d(s);
     prepare(d);
     QVERIFY(child<QLineEdit>(d, "extractPassword"));
@@ -961,6 +1016,8 @@ void TstExtractDialog::deleteWritesTheRemainingPages()
     for (int page = 0; page < 31; ++page)
         if (page != 1 && page != 4 && page != 5)
             kept << page;
+    QVERIFY(!QFileInfo::exists(target));
+    QCOMPARE(PageOps::deletePages(plain_, target, d.job().pages, d.password()), PageOps::Status::Ok);
     QCOMPARE(sourcePages(target), kept);
     QCOMPARE(sourcePages(plain_).size(), 31); // the original keeps every page
 
@@ -968,6 +1025,7 @@ void TstExtractDialog::deleteWritesTheRemainingPages()
     const QString locked = dir_.filePath(QStringLiteral("deleted-locked.pdf"));
     ExtractDialog::Source s = deleting(encrypted_);
     s.password = QStringLiteral("secret");
+    s.probe = ExtractDialog::probeSource(s.path, s.password);
     ExtractDialog e(s);
     prepare(e);
     QVERIFY(!child<QLineEdit>(e, "extractPassword"));
@@ -975,6 +1033,8 @@ void TstExtractDialog::deleteWritesTheRemainingPages()
     press(e);
     QCOMPARE(e.result(), int(QDialog::Accepted));
     QCOMPARE(e.password(), QStringLiteral("secret"));
+    QVERIFY(!QFileInfo::exists(locked));
+    QCOMPARE(PageOps::deletePages(encrypted_, locked, e.job().pages, e.password()), PageOps::Status::Ok);
     int count = 0;
     QString err;
     QCOMPARE(PageOps::probe(locked, &count, QString(), &err), PageOps::Status::NeedsPassword);
