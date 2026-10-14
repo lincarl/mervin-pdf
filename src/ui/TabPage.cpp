@@ -2108,7 +2108,7 @@ void TabPage::updateSlowNotice()
         placeholderLabel_->setText(text);
 }
 
-// Fits the active job notice and close-flow Stop choice without querying the document.
+// Fits file or printer notices and keeps trapped Stop visibility consistent with close waits.
 void TabPage::showWaitBar(const job::State::Snapshot &now)
 {
     // A write names its folder, and a commit the file it replaces. A read of a file in

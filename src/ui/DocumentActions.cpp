@@ -89,6 +89,7 @@ struct PreparedPrintDocument
     std::unique_ptr<QTemporaryDir> stage;
     mervin::OwnedDocument document;
 
+    // Defers private-folder removal until the prepared document and its readers close.
     ~PreparedPrintDocument()
     {
         if (stage) {
@@ -99,6 +100,7 @@ struct PreparedPrintDocument
     }
 };
 
+// Carries printer start, page and final submission failures to GUI reporting.
 struct PrintResult
 {
     enum class Failure { None, DestinationOpen, TemporaryFile, Start, NextPage, Render, End, Write };
@@ -997,6 +999,7 @@ void MainWindow::mergeDocuments()
     offerToOpen(dlg.outputPath());
 }
 
+// Retains captured print choices and any prepared document across owner moves.
 struct MainWindow::PrintRequest
 {
     std::shared_ptr<mervin::DocumentLifetime> liveLifetime;
@@ -1010,6 +1013,7 @@ struct MainWindow::PrintRequest
     QString error;
 };
 
+// Captures source choices and prepares measured print input before showing a dialog.
 void MainWindow::printDocument()
 {
     const OperationScope operation(this);
@@ -1088,6 +1092,7 @@ void MainWindow::printDocument()
     tab->startOperation(std::move(prepare));
 }
 
+// Queues the prepared print dialog in the surviving owner of its source tab.
 void MainWindow::deliverPrintDialog(TabPage *tab, const std::shared_ptr<PrintRequest> &request)
 {
     const QPointer<TabPage> page(tab);
@@ -1115,6 +1120,7 @@ void MainWindow::deliverPrintDialog(TabPage *tab, const std::shared_ptr<PrintReq
     });
 }
 
+// Collects printer choices on the GUI, then transfers all output calls to a tab worker.
 void MainWindow::showPrintDialog(TabPage *tab, const std::shared_ptr<PrintRequest> &request)
 {
     const OperationScope operation(this);
@@ -1183,6 +1189,7 @@ void MainWindow::showPrintDialog(TabPage *tab, const std::shared_ptr<PrintReques
     }
     if (pages.isEmpty())
         return;
+    // Transfers the configured printer to the worker that owns output and teardown.
     struct Work {
         std::unique_ptr<QPrinter> printer;
     };
@@ -1265,6 +1272,7 @@ void MainWindow::showPrintDialog(TabPage *tab, const std::shared_ptr<PrintReques
     page->startOperation(std::move(print));
 }
 
+// Reports terminal printer failure through the current owner after queued tab changes.
 void MainWindow::deliverPrintFailure(TabPage *tab, const QString &message)
 {
     const QPointer<TabPage> page(tab);

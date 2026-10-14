@@ -396,6 +396,7 @@ private:
     }
 };
 
+// Checks printer completion keeps its reported step and rejects commits after Stop.
 void TstJobContext::printerCommitKeepsItsStep()
 {
     job::State state;

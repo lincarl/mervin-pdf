@@ -54,6 +54,7 @@ namespace {
 class PrintInteraction
 {
 public:
+    // Polls real print controls until acceptance or a bounded interaction timeout.
     PrintInteraction(MainWindow &window, QString output,
                      std::function<void(PrintDialog &)> preview = {})
     {
@@ -128,12 +129,14 @@ private:
     bool saveQueued_ = false;
 };
 
+// Reads fixture bytes to prove stopped output leaves an existing destination intact.
 QByteArray bytes(const QString &path)
 {
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
 
+// Counts visible flattened marks independently from the synthetic page background.
 int darkInkOnRedPage(const QImage &image)
 {
     QRect red;
@@ -154,6 +157,7 @@ int darkInkOnRedPage(const QImage &image)
 
 } // namespace
 
+// Checks rendered print placement, worker cancellation and prepared-input ownership.
 class TstPrintOutput : public QObject
 {
     Q_OBJECT
@@ -204,6 +208,7 @@ void TstPrintOutput::cleanupTestCase()
     ConfigPaths::setOverrideDir({});
 }
 
+// Releases print stalls and settles background closes between output cases.
 void TstPrintOutput::cleanup()
 {
     job::testing::release();
@@ -232,6 +237,7 @@ void TstPrintOutput::applicationPrintPlacement_data()
     QTest::newRow("black and white") << 0 << 1 << 100 << 2;
 }
 
+// Checks asynchronous PDF output preserves placement and requested colour conversion.
 void TstPrintOutput::applicationPrintPlacement()
 {
     QFETCH(int, alignment);
@@ -444,6 +450,7 @@ void TstPrintOutput::applicationPrintPlacement()
     }
 }
 
+// Checks the accepted print command returns while live document access is stalled.
 void TstPrintOutput::printDoesNotWaitForPageAccess()
 {
     RenderEngine engine;
@@ -479,6 +486,7 @@ void TstPrintOutput::printDoesNotWaitForPageAccess()
     QVERIFY(dialogs.messages.isEmpty());
 }
 
+// Selects the source, its alias and another tab as protected print destinations.
 void TstPrintOutput::printDestinationConflict_data()
 {
     QTest::addColumn<int>("kind");
@@ -489,6 +497,7 @@ void TstPrintOutput::printDestinationConflict_data()
 #endif
 }
 
+// Checks protected destination refusal preserves original PDF bytes.
 void TstPrintOutput::printDestinationConflict()
 {
     QFETCH(int, kind);
@@ -514,6 +523,7 @@ void TstPrintOutput::printDestinationConflict()
     QCOMPARE(bytes(sourcePath_), before);
 }
 
+// Selects Stop during writing and before final print-to-file commit.
 void TstPrintOutput::stoppedFileOutputKeepsDestination_data()
 {
     QTest::addColumn<bool>("commit");
@@ -521,6 +531,7 @@ void TstPrintOutput::stoppedFileOutputKeepsDestination_data()
     QTest::newRow("before rename") << true;
 }
 
+// Checks Stop preserves earlier destination bytes and removes only private print output.
 void TstPrintOutput::stoppedFileOutputKeepsDestination()
 {
     QFETCH(bool, commit);
@@ -555,6 +566,7 @@ void TstPrintOutput::stoppedFileOutputKeepsDestination()
     QVERIFY(dialogs.messages.isEmpty());
 }
 
+// Checks final printer submission failure is reported after the tab restores use.
 void TstPrintOutput::printEndFailureIsReported()
 {
     RenderEngine engine;
@@ -570,6 +582,7 @@ void TstPrintOutput::printEndFailureIsReported()
     QVERIFY(!QFileInfo::exists(output));
 }
 
+// Checks measured preparation returns while held and produces a real flattened preview.
 void TstPrintOutput::measuredPreparationRunsInBackground()
 {
     RenderEngine engine;
@@ -613,6 +626,7 @@ void TstPrintOutput::measuredPreparationRunsInBackground()
     QVERIFY(tab->viewer()->hasMeasurements());
 }
 
+// Checks editor-driven owner deletion prevents Print from using a stale tab.
 void TstPrintOutput::editorCommitCanDeletePrintOwner()
 {
     RenderEngine engine;
@@ -637,6 +651,7 @@ void TstPrintOutput::editorCommitCanDeletePrintOwner()
     QVERIFY(!qobject_cast<PrintDialog *>(QApplication::activeModalWidget()));
 }
 
+// Checks canceled measured preparation removes private documents and folders.
 void TstPrintOutput::stoppedMeasuredPreparationRemovesItsFiles()
 {
     RenderEngine engine;
@@ -667,6 +682,7 @@ void TstPrintOutput::stoppedMeasuredPreparationRemovesItsFiles()
     QVERIFY(!qobject_cast<PrintDialog *>(QApplication::activeModalWidget()));
 }
 
+// Selects prepared dialog and error delivery after an earlier queued owner move.
 void TstPrintOutput::queuedDeliverySurvivesOldOwnerDestruction_data()
 {
     QTest::addColumn<bool>("preparation");
@@ -677,6 +693,7 @@ void TstPrintOutput::queuedDeliverySurvivesOldOwnerDestruction_data()
     QTest::newRow("failure after immediate deletion") << false << false;
 }
 
+// Checks queued print delivery follows the moved tab after its previous window closes.
 void TstPrintOutput::queuedDeliverySurvivesOldOwnerDestruction()
 {
     QFETCH(bool, preparation);
