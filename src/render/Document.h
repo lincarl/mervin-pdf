@@ -229,8 +229,11 @@ public:
 
     // Mutate the live PDF only through fn under accessMutex(). Neither the supplied context nor
     // document may escape. Return false for non-PDFs or MuPDF exceptions, true otherwise. Const
-    // refers to the wrapper, not PDF contents.
-    bool withPdfDocument(const std::function<void(fz_context *, pdf_document *)> &fn) const;
+    // refers to the wrapper, not PDF contents. On the screen thread it also returns false
+    // without running fn while a job holds the document; `refused`, when given, tells that
+    // case apart.
+    bool withPdfDocument(const std::function<void(fz_context *, pdf_document *)> &fn,
+                         bool *refused = nullptr) const;
 
     // Full MuPDF rewrite of live form/annotation edits to tmpPath, preserving encryption.
     // Caller atomically replaces the destination. Returns false with *error for non-PDFs or

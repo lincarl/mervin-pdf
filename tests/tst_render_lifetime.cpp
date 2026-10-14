@@ -6,6 +6,7 @@
 #include "Stalls.h"
 
 #include <QElapsedTimer>
+#include <QImage>
 #include <QFile>
 #include <QSet>
 #include <QSignalSpy>
@@ -454,6 +455,32 @@ private slots:
         const std::vector<FormField> &fields = form.pageFields(0);
         QCOMPARE(fields.size(), size_t(1));
         QCOMPARE(fields.front().name, QStringLiteral("field1"));
+    }
+
+    // A document that is not a PDF has no form fields. That answer is cached like
+    // any other, so a later call does not ask the document again, even while a job
+    // holds it.
+    void formFieldsOfANonPdfAreCached()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("picture.png"));
+        QImage image(64, 64, QImage::Format_RGB32);
+        image.fill(Qt::white);
+        QVERIFY(image.save(path));
+        RenderEngine engine;
+        auto doc = engine.openDocument(path);
+        QVERIFY(doc);
+        QVERIFY(!doc->isPdf());
+        FormModel form(*doc);
+        QVERIFY(form.pageFields(0).empty());
+        const int before = Document::testing::refusals();
+        {
+            SavingJob job{doc->lifetime()};
+            Stall stall(job);
+            QVERIFY(form.pageFields(0).empty());
+        }
+        QCOMPARE(Document::testing::refusals() - before, 0);
     }
 
     // A job that is stopped while another thread holds the gate stops waiting for

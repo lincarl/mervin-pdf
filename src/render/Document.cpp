@@ -943,9 +943,12 @@ bool Document::isPdf() const
     return pdf;
 }
 
-bool Document::withPdfDocument(const std::function<void(fz_context *, pdf_document *)> &fn) const
+bool Document::withPdfDocument(const std::function<void(fz_context *, pdf_document *)> &fn,
+                               bool *refused) const
 {
     const ScreenQuery query(*lifetime_, "Document::withPdfDocument");
+    if (refused)
+        *refused = query.refused();
     if (query.refused())
         return false;
     std::lock_guard<std::mutex> lk(access_);
