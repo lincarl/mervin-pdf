@@ -1094,7 +1094,16 @@ void MainWindow::deliverPrintDialog(TabPage *tab, const std::shared_ptr<PrintReq
     auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
     if (!window)
         return;
-    window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window), request] {
+    // The old owner discards its queue when its last tab moves away. Retain the
+    // prepared document and deliver through the surviving tab after destruction.
+    const auto discarded = connect(window, &QObject::destroyed, tab, [page, request] {
+        QTimer::singleShot(0, page, [page, request] {
+            if (page)
+                deliverPrintDialog(page, request);
+        });
+    });
+    window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window), request, discarded] {
+        disconnect(discarded);
         auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
         if (!current)
             return;
@@ -1262,7 +1271,14 @@ void MainWindow::deliverPrintFailure(TabPage *tab, const QString &message)
     auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
     if (!window)
         return;
-    window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window), message] {
+    const auto discarded = connect(window, &QObject::destroyed, tab, [page, message] {
+        QTimer::singleShot(0, page, [page, message] {
+            if (page)
+                deliverPrintFailure(page, message);
+        });
+    });
+    window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window), message, discarded] {
+        disconnect(discarded);
         auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
         if (!current)
             return;

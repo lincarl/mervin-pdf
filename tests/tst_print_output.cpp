@@ -1,5 +1,7 @@
 #include "TestWaits.h"
+#include "app/WindowManager.h"
 #include "config/ConfigPaths.h"
+#include "config/Settings.h"
 #include "io/AppFiles.h"
 #include "io/Background.h"
 #include "io/JobContext.h"
@@ -67,6 +69,7 @@ public:
                 return;
             }
             if (auto *box = qobject_cast<QMessageBox *>(modal)) {
+                messageOwner = box->parentWidget();
                 messages.append(box->text());
                 box->accept();
             } else if (auto *dialog = qobject_cast<PrintDialog *>(modal)) {
@@ -114,6 +117,7 @@ public:
     }
 
     QStringList messages;
+    QPointer<QWidget> messageOwner;
     bool saved = false;
 
 private:
@@ -169,6 +173,8 @@ private slots:
     void measuredPreparationRunsInBackground();
     void stoppedMeasuredPreparationRemovesItsFiles();
     void editorCommitCanDeletePrintOwner();
+    void queuedDeliverySurvivesOldOwnerDestruction_data();
+    void queuedDeliverySurvivesOldOwnerDestruction();
 
 private:
     QTemporaryDir files_;
@@ -442,7 +448,7 @@ void TstPrintOutput::printDoesNotWaitForPageAccess()
 {
     RenderEngine engine;
     MainWindow window(&engine, nullptr);
-    QVERIFY(window.openFile(sourcePath_));
+    QVERIFY(mervin::testing::openAndWait(window, sourcePath_));
     auto *tab = window.findChild<TabPage *>();
     QVERIFY(tab);
     const auto lifetime = tab->viewer()->document()->lifetime();
@@ -493,12 +499,12 @@ void TstPrintOutput::printDestinationConflict()
     if (kind == 1) {
         output = files.filePath("other.pdf");
         QVERIFY(QFile::copy(sourcePath_, output));
-        QVERIFY(window.openFile(output));
+        QVERIFY(mervin::testing::openAndWait(window, output));
     } else if (kind == 2) {
         output = files.filePath("alias.pdf");
         QVERIFY(QFile::link(sourcePath_, output));
     }
-    QVERIFY(window.openFile(sourcePath_));
+    QVERIFY(mervin::testing::openAndWait(window, sourcePath_));
     const QByteArray before = bytes(output);
     QVERIFY(!before.isEmpty());
     PrintInteraction dialogs(window, output);
@@ -527,7 +533,7 @@ void TstPrintOutput::stoppedFileOutputKeepsDestination()
     destination.close();
     RenderEngine engine;
     MainWindow window(&engine, nullptr);
-    QVERIFY(window.openFile(sourcePath_));
+    QVERIFY(mervin::testing::openAndWait(window, sourcePath_));
     auto *tab = window.findChild<TabPage *>();
     QVERIFY(tab);
     const int tasks = background::running();
@@ -553,7 +559,7 @@ void TstPrintOutput::printEndFailureIsReported()
 {
     RenderEngine engine;
     MainWindow window(&engine, nullptr);
-    QVERIFY(window.openFile(sourcePath_));
+    QVERIFY(mervin::testing::openAndWait(window, sourcePath_));
     const QString output = files_.filePath("failed-end.pdf");
     job::testing::failWhen([prints = 0](job::Step step, const QString &) mutable {
         return step == job::Step::Printing && ++prints == 3;
@@ -568,7 +574,7 @@ void TstPrintOutput::measuredPreparationRunsInBackground()
 {
     RenderEngine engine;
     MainWindow window(&engine, nullptr);
-    QVERIFY(window.openFile(sourcePath_));
+    QVERIFY(mervin::testing::openAndWait(window, sourcePath_));
     auto *tab = window.findChild<TabPage *>();
     QVERIFY(tab);
     tab->viewer()->loadMeasurements(
@@ -611,7 +617,7 @@ void TstPrintOutput::editorCommitCanDeletePrintOwner()
 {
     RenderEngine engine;
     const QPointer<MainWindow> window(new MainWindow(&engine, nullptr));
-    QVERIFY(window->openFile(sourcePath_));
+    QVERIFY(mervin::testing::openAndWait(*window, sourcePath_));
     const QPointer<TabPage> tab(window->findChild<TabPage *>());
     QVERIFY(tab);
     auto *viewer = tab->viewer();
@@ -635,7 +641,7 @@ void TstPrintOutput::stoppedMeasuredPreparationRemovesItsFiles()
 {
     RenderEngine engine;
     MainWindow window(&engine, nullptr);
-    QVERIFY(window.openFile(sourcePath_));
+    QVERIFY(mervin::testing::openAndWait(window, sourcePath_));
     auto *tab = window.findChild<TabPage *>();
     QVERIFY(tab);
     tab->viewer()->loadMeasurements(
@@ -659,6 +665,96 @@ void TstPrintOutput::stoppedMeasuredPreparationRemovesItsFiles()
     QVERIFY(!QFileInfo::exists(stage));
     QVERIFY(tab->viewer()->hasMeasurements());
     QVERIFY(!qobject_cast<PrintDialog *>(QApplication::activeModalWidget()));
+}
+
+void TstPrintOutput::queuedDeliverySurvivesOldOwnerDestruction_data()
+{
+    QTest::addColumn<bool>("preparation");
+    QTest::addColumn<bool>("normalMove");
+    QTest::newRow("prepared dialog after last-tab merge") << true << true;
+    QTest::newRow("prepared dialog after immediate deletion") << true << false;
+    QTest::newRow("failure after last-tab merge") << false << true;
+    QTest::newRow("failure after immediate deletion") << false << false;
+}
+
+void TstPrintOutput::queuedDeliverySurvivesOldOwnerDestruction()
+{
+    QFETCH(bool, preparation);
+    QFETCH(bool, normalMove);
+    Settings settings;
+    settings.autoUpdate = false;
+    settings.closeToTray = false;
+    QVERIFY(settings.save());
+    WindowManager manager;
+    const QPointer<MainWindow> source(manager.createWindow());
+    MainWindow *target = manager.createWindow();
+    QVERIFY(source->openFile(sourcePath_));
+    const QPointer<TabPage> tab(source->findChild<TabPage *>());
+    QTRY_VERIFY_WITH_TIMEOUT(tab && tab->isUsable(), 10000);
+    if (preparation) {
+        tab->viewer()->loadMeasurements(
+            {{0, MeasureKind::Distance, {{15, 80}, {85, 80}}}}, {}, MeasureUnit::Millimeter, 2, 2);
+        job::testing::holdWhen([](job::Step step, const QString &path) {
+            return step == job::Step::Writing && path != QDir::tempPath();
+        });
+    } else {
+        job::testing::holdWhen([](job::Step step, const QString &) {
+            return step == job::Step::Printing;
+        });
+        job::testing::failWhen([prints = 0](job::Step step, const QString &) mutable {
+            return step == job::Step::Printing && ++prints == 3;
+        });
+    }
+    const auto release = qScopeGuard([] { job::testing::release(); });
+    QTemporaryDir files;
+    const QString output = files.filePath("printed.pdf");
+    bool previewReady = false;
+    bool correctOwner = false;
+    PrintInteraction dialogs(*target, output, preparation ? std::function<void(PrintDialog &)>(
+        [&](PrintDialog &dialog) {
+            previewReady = true;
+            correctOwner = dialog.parentWidget() == target;
+        }) : std::function<void(PrintDialog &)>());
+    QVERIFY(QMetaObject::invokeMethod(source, "printDocument"));
+    QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+    QVERIFY(tab->isBusy());
+    QDialog modal;
+    modal.setWindowModality(Qt::ApplicationModal);
+    modal.show();
+    if (normalMove)
+        source->whenTabsCanChange([&manager, source, target] {
+            manager.mergeTab(source, 0, target, 0);
+        });
+    job::testing::release();
+    QTRY_VERIFY_WITH_TIMEOUT(tab && !tab->isBusy(), 10000);
+    QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
+    QVERIFY(source && !source->canChangeTabs());
+    if (!normalMove) {
+        target->adoptTab(source->releaseTab(0));
+        delete source.data();
+    }
+    modal.hide();
+    if (normalMove)
+        source->runTabChanges();
+    QTRY_VERIFY_WITH_TIMEOUT(!source, 10000);
+    QVERIFY(tab && tab->window() == target);
+    if (preparation) {
+        QTRY_VERIFY_WITH_TIMEOUT(previewReady, 10000);
+        QVERIFY(correctOwner);
+        QTRY_VERIFY_WITH_TIMEOUT(!tab->isBusy() && QFileInfo::exists(output), 10000);
+        QVERIFY(dialogs.messages.isEmpty());
+        auto document = manager.engine()->openDocument(output);
+        QVERIFY(document);
+        QCOMPARE(document->pageCount(), 1);
+        QVERIFY(!document->hasMervinMeasurements());
+        QVERIFY(darkInkOnRedPage(document->renderPage(0, 1, 0)) > 100);
+    } else {
+        QTRY_COMPARE_WITH_TIMEOUT(dialogs.messages,
+                                 QStringList{"Could not finish the print job."}, 10000);
+        QCOMPARE(dialogs.messageOwner.data(), static_cast<QWidget *>(target));
+        QVERIFY(!QFileInfo::exists(output));
+    }
 }
 
 QTEST_MAIN(TstPrintOutput)

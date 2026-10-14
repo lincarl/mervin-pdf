@@ -833,6 +833,11 @@ Measured documents first prepare a complete flattened copy on a worker under a
 document hold. Its preview and output use that same owned copy. Cancel closes the
 copy in the background before removing its temporary folder.
 
+Prepared Print dialogs and failure messages follow the tab's current window queue.
+If an earlier tab move closes that queue's owner, its destruction reposts delivery
+through the surviving tab. The prepared document remains owned until delivery, and
+the dialog still checks that its live document identity matches before opening.
+
 After the dialog, the worker owns the QPrinter, begins and ends its QPainter, and
 renders each page with Document::renderPage on the document's own context. A short
 document hold covers rendering and page geometry, then releases before painting or
