@@ -48,8 +48,8 @@ public:
     static QString failureSummary(const MergePlan &plan, const QString &output,
                                   int failedIndex, Conflict conflict);
 
-    // Files open in the app's tabs. The viewer holds each one open, so the merged
-    // file may not replace one; the error line says so before Merge is pressed.
+    // Files open in the app's tabs. Merge cannot replace these destinations;
+    // the error line explains the conflict before Merge is pressed.
     void setOpenFiles(const QStringList &paths);
 
     // Valid after Accepted. The caller writes this plan on its worker.
