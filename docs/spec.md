@@ -222,6 +222,13 @@ Saving supports these workflows:
 - Print supports page ranges, scaling, orientation, paper selection, duplex options,
   forms, annotations, and measurements.
 
+Save as copy and Export run in the tab's background job. Their wait bar offers Stop
+waiting after two seconds without progress, and other tabs and windows stay usable.
+Stopping during a blocked snapshot keeps the document covered until the drive
+answers, then restores its edits. Both commands preserve the source's dirty state.
+They refuse a destination open in another tab and reserve it against later opens
+until writing ends. A commit already started when Stop is pressed may still finish.
+
 Closing edited tabs or quitting offers Save, Discard, or Cancel. Hiding a window in
 the tray keeps its edits without prompting. Deleting the final saved
 measurement or calibration is an edit. If saving cannot replace the destination, the

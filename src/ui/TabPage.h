@@ -97,8 +97,9 @@ public:
         // The folder the operation writes to. The wait bar names it, also while the
         // job reads a file in it.
         QString destination;
-        // The job, in a job::Scope on a background thread. It uses no widget and not
-        // the shown document, and keeps its result in what it captured.
+        // The job, in a job::Scope on a background thread. It uses no widget. Live
+        // document reads reserve job::beginHolding() and take Document::Hold using
+        // a captured lifetime, then release both before independent file work.
         std::function<void()> work;
         // Runs on the screen thread once the job has returned and the tab is usable
         // again. Not after the user stopped waiting, nor once the tab is gone.
@@ -245,6 +246,8 @@ private:
     void finishOperation(const std::shared_ptr<Job> &job);
     // Shows the viewer again in place of the still picture.
     void endOperation();
+    // Detaches a stopped operation only once its document reservation is released.
+    void finishStoppedOperation();
     // The slow clock. While a load or an operation runs, a poll reads what its job
     // reports, and after the slow delay without progress the placeholder or the wait
     // bar names what it waits for.
@@ -289,6 +292,7 @@ private:
     // The file the wait bar names, empty while the job saves, and its folder.
     QString barName_;
     QString barFolder_;
+    bool barTrapped_ = false;
     bool retainedEdits_ = false;
     quint64 editGeneration_ = 0;
     QPointer<CloseFlow> closeOwner_;

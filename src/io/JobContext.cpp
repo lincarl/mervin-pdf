@@ -169,6 +169,15 @@ void State::setHolding(bool on)
     holding_ = on;
 }
 
+bool State::beginHolding()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (stopped_)
+        return false;
+    holding_ = true;
+    return true;
+}
+
 State::Snapshot State::snapshot() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -222,6 +231,17 @@ OpenPath::~OpenPath()
 bool reserveDestinations(const QSet<QString> &keys)
 {
     return current && current->reserveDestinations(keys);
+}
+
+bool beginHolding()
+{
+    return !current || current->beginHolding();
+}
+
+void endHolding()
+{
+    if (current)
+        current->setHolding(false);
 }
 
 bool reading(const QString &file)

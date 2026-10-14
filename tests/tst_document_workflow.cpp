@@ -574,6 +574,7 @@ private slots:
         chosen = copy;
         answers_.append(QMessageBox::No); // "Open it now?"
         QVERIFY(QMetaObject::invokeMethod(&window, "saveAsCopy"));
+        QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable() && answers_.isEmpty(), 10000);
         auto saved = engine.openDocument(copy);
         QVERIFY(saved);
         const auto notes = AnnotModel(*saved).pageAnnots(0);
@@ -584,6 +585,7 @@ private slots:
             chosen = name;
             answers_.append(QMessageBox::Ok); // "Choose a different file name"
             QVERIFY(QMetaObject::invokeMethod(&window, "saveAsCopy"));
+            QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable() && answers_.isEmpty(), 10000);
             QVERIFY2(!QFileInfo::exists(resolved), qPrintable(name));
         }
         picker.stop();

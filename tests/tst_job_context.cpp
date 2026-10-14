@@ -319,12 +319,13 @@ private:
 void TstJobContext::stopAnswersWhatTheJobIsDoing()
 {
     job::State holding;
-    holding.setHolding(true);
+    QVERIFY(holding.beginHolding());
     QCOMPARE(holding.stop(), job::State::Stop::Holding);
     holding.setHolding(false);
     QCOMPARE(holding.stop(), job::State::Stop::Stopped);
     QVERIFY(holding.stopped());
     QVERIFY(!holding.beginCommit());
+    QVERIFY(!holding.beginHolding());
 
     job::State committing;
     QVERIFY(committing.beginCommit());

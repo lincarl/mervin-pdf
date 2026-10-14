@@ -97,6 +97,12 @@ means pairs of pages shown together. In font dialogs, preserve the distinction
 between writing systems, such as Malayalam and Malay. Review reused Qt text
 against these meanings as well.
 
+Distinguish stopping a wait from finishing a file operation. A drive call can
+continue after Stop waiting. A document that remains locked during that call is
+temporarily unavailable for use, rather than password-protected. Preserve the
+condition that it becomes usable when the drive responds. Follow the source note
+for each notice instead of implying that Stop immediately releases the document.
+
 Distinguish access-key ampersands from literal conjunctions. The plain menu
 heading "Select & Annotate" means "Select and Annotate". A translation that spells
 out the conjunction must not gain an access-key marker.

@@ -6,6 +6,7 @@
 #include "app/WindowManager.h"
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
+#include "dialogs/ExportMeasureDialog.h"
 #include "io/AppFiles.h"
 #include "io/Background.h"
 #include "io/JobContext.h"
@@ -13,6 +14,7 @@
 #include "render/Document.h"
 #include "render/RenderEngine.h"
 #include "security/QpdfService.h"
+#include "security/MeasureExport.h"
 #include "ui/MainWindow.h"
 #include "ui/TabPage.h"
 #include "ui/ViewerWidget.h"
@@ -166,6 +168,8 @@ public:
                     return;
                 }
                 button->click();
+            } else if (auto *exportDialog = qobject_cast<ExportMeasureDialog *>(modal)) {
+                exportDialog->accept();
             } else if (auto *input = qobject_cast<QInputDialog *>(modal)) {
                 if (answeredModal_ == input)
                     return;
@@ -246,6 +250,250 @@ private slots:
         QVERIFY2(unexpected_.isEmpty(), qPrintable(unexpected_.join(u'\n')));
         QVERIFY2(answers_.isEmpty() && inputs_.isEmpty() && files_.isEmpty(),
                  "a dialog the test expected did not show");
+    }
+
+    void copyAndExportRunOffTheScreenThread_data() { copyModes(); }
+
+    // A copy captures the live edits and measurements. Export burns the marks into
+    // content. Neither command marks the source saved or performs job I/O on the GUI.
+    void copyAndExportRunOffTheScreenThread()
+    {
+        QFETCH(bool, flatten);
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("plan.pdf"));
+        const QString output = files.filePath(QStringLiteral("copy.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(window.openFile(source));
+        TabPage *tab = currentTab(window);
+        QVERIFY(tab);
+        prepareCopy(*tab);
+        const int guiSteps = job::testing::stepsOnMainThread();
+        holdAt(job::Step::Writing, files.path());
+        copy(window, output, flatten);
+        QVERIFY(tab->isBusy());
+        QTRY_COMPARE(job::testing::held(), 1);
+        QCOMPARE(job::testing::stepsOnMainThread(), guiSteps);
+        QVERIFY(tab->hasUnsavedEdits());
+        QVERIFY(!QFile::exists(output));
+        answers_ << QMessageBox::No;
+        job::testing::release();
+        QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable(), 10000);
+        QTRY_VERIFY(answers_.isEmpty());
+        QVERIFY(tab->hasUnsavedEdits());
+        auto saved = engine.openDocument(output);
+        QVERIFY(saved);
+        const auto notes = AnnotModel(*saved).pageAnnots(0);
+        QCOMPARE(notes.size(), 1u);
+        QCOMPARE(notes.front().contents, QStringLiteral("Kept edit"));
+        const auto blob = MeasureExport::readMervinBlob(output);
+        if (flatten) {
+            QVERIFY(!blob);
+            const QImage before = engine.renderPageImage(tab->viewer()->document(), 0, 1, 0);
+            const QImage after = engine.renderPageImage(saved.get(), 0, 1, 0);
+            QVERIFY(!after.isNull() && before != after);
+        } else {
+            QVERIFY(blob);
+            MeasureDoc measurements;
+            QVERIFY(parseMeasurements(*blob, &measurements));
+            QCOMPARE(measurements.measurements.size(), 1u);
+        }
+    }
+
+    void copyAndExportDoNotWaitForDocumentAccess_data() { copyModes(); }
+
+    // The still picture exists before another reader stalls access. Both commands
+    // return promptly, then their worker waits without making the GUI read the document.
+    void copyAndExportDoNotWaitForDocumentAccess()
+    {
+        QFETCH(bool, flatten);
+        QTemporaryDir files;
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        TabPage *tab = currentTab(window);
+        QVERIFY(tab);
+        prepareCopy(*tab);
+        const auto lifetime = tab->viewer()->document()->lifetime();
+        const QString output = files.filePath(QStringLiteral("copy.pdf"));
+        std::unique_ptr<Stall<std::mutex>> access;
+        const auto busy = connect(tab, &TabPage::stateChanged, this, [&] {
+            if (tab->isBusy() && !access)
+                access = std::make_unique<Stall<std::mutex>>(
+                    tab->viewer()->document()->accessMutex(), 5000);
+        });
+        const auto restore = qScopeGuard([&] {
+            disconnect(busy);
+            job::testing::release();
+            if (access)
+                access->release();
+        });
+        holdAt(job::Step::Writing, QDir::tempPath());
+        QVERIFY(appfiles::flush(10000));
+        const int tasks = background::running();
+        const int guiSteps = job::testing::stepsOnMainThread();
+        const int refusals = Document::testing::refusals();
+        QElapsedTimer command;
+        command.start();
+        copy(window, output, flatten);
+        QVERIFY2(command.elapsed() < 1000, qPrintable(took("Copy or Export", command)));
+        QVERIFY(access);
+        QTRY_COMPARE(job::testing::held(), 1);
+        QCOMPARE(lifetime->holds.load(), 0);
+        job::testing::release();
+        QTRY_VERIFY(lifetime->holds.load() > 0);
+
+        QElapsedTimer screen;
+        screen.start();
+        window.resize(900, 700);
+        bool ran = false;
+        QTimer::singleShot(0, &window, [&ran] { ran = true; });
+        while (!ran && screen.elapsed() < 1000)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QVERIFY2(ran && screen.elapsed() < 1000, qPrintable(took("the event loop", screen)));
+        QCOMPARE(Document::testing::refusals(), refusals);
+        QCOMPARE(job::testing::stepsOnMainThread(), guiSteps);
+        QElapsedTimer stop;
+        stop.start();
+        tab->stopWaiting();
+        QVERIFY2(stop.elapsed() < 1000, qPrintable(took("Stop", stop)));
+        QVERIFY(tab->isBusy() && !tab->isUsable() && tab->isOperationStopped());
+        const Bar bar(*tab);
+        QVERIFY(bar.valid() && bar.bar->isVisible() && bar.stop->isHidden());
+        access->release();
+        QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable(), 10000);
+        QCOMPARE(lifetime->holds.load(), 0);
+        QVERIFY(jobsEnded(tasks));
+        QVERIFY(tab->viewer()->isVisible());
+        QVERIFY(tab->hasUnsavedEdits());
+        QVERIFY(filesIn(files.path()).isEmpty());
+        QVERIFY(told_.isEmpty());
+    }
+
+    void stoppedCopyWaitsForDocumentRelease_data() { copyModes(); }
+
+    // The document remains behind the still picture until the trapped write
+    // releases it. Worker cleanup and a late result cannot publish an output.
+    void stoppedCopyWaitsForDocumentRelease()
+    {
+        QFETCH(bool, flatten);
+        QTemporaryDir files;
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        TabPage *tab = currentTab(window);
+        QVERIFY(tab);
+        prepareCopy(*tab);
+        const QString output = files.filePath(QStringLiteral("copy.pdf"));
+        const QString tempRoot = QDir::tempPath();
+        const auto lifetime = tab->viewer()->document()->lifetime();
+        QString stage;
+        job::testing::holdWhen([&stage, tempRoot, destinationFolder = files.path()](job::Step step, const QString &path) {
+            if (step != job::Step::Writing || path == tempRoot || path == destinationFolder
+                || !path.startsWith(tempRoot + QLatin1Char('/')))
+                return false;
+            stage = path;
+            return true;
+        });
+        // Clear the callback before its captured stage and window are destroyed.
+        const auto release = qScopeGuard([] { job::testing::release(); });
+        QSignalSpy finished(tab, &TabPage::operationFinished);
+        const int refusals = Document::testing::refusals();
+        copy(window, output, flatten);
+        QTRY_COMPARE(job::testing::held(), 1);
+        QVERIFY(lifetime->holds.load() > 0);
+        QElapsedTimer timer;
+        timer.start();
+        tab->stopWaiting();
+        QVERIFY2(timer.elapsed() < 1000, qPrintable(took("Stop", timer)));
+        QVERIFY(tab->isBusy() && !tab->isUsable() && tab->isOperationStopped());
+        QVERIFY(lifetime->holds.load() > 0);
+        const Bar bar(*tab);
+        QVERIFY(bar.valid() && !bar.bar->isHidden() && bar.stop->isHidden());
+        QCOMPARE(bar.text->text(), QStringLiteral(
+            "Stopped waiting. The document stays locked until the drive answers."));
+        QCOMPARE(finished.size(), 0);
+        window.resize(1050, 760);
+        QCoreApplication::processEvents();
+        QCOMPARE(Document::testing::refusals(), refusals);
+        job::testing::release();
+        QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable(), 10000);
+        QCOMPARE(lifetime->holds.load(), 0);
+        QVERIFY(tab->viewer()->isVisible());
+        QCOMPARE(finished.size(), 1);
+        QVERIFY(!finished.first().first().toBool());
+        QVERIFY(tab->hasUnsavedEdits());
+        QTRY_VERIFY(!QFile::exists(stage));
+        QVERIFY(!QFile::exists(output));
+        QVERIFY(told_.isEmpty());
+    }
+
+    void stoppedCopyNeverBeginsItsHold_data() { copyModes(); }
+
+    // Stop wins before the atomic document-use reservation, so a released
+    // destination probe cannot take the now-usable document.
+    void stoppedCopyNeverBeginsItsHold()
+    {
+        QFETCH(bool, flatten);
+        QTemporaryDir files;
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        TabPage *tab = currentTab(window);
+        prepareCopy(*tab);
+        const auto lifetime = tab->viewer()->document()->lifetime();
+        const QString output = files.filePath(QStringLiteral("copy.pdf"));
+        holdAt(job::Step::Writing, files.path());
+        QVERIFY(appfiles::flush(10000));
+        const int tasks = background::running();
+        copy(window, output, flatten);
+        QTRY_COMPARE(job::testing::held(), 1);
+        QCOMPARE(lifetime->holds.load(), 0);
+        tab->stopWaiting();
+        QVERIFY(tab->isUsable());
+        job::testing::release();
+        QTRY_COMPARE(job::testing::held(), 0);
+        QVERIFY(jobsEnded(tasks));
+        QCOMPARE(lifetime->holds.load(), 0);
+        QVERIFY(!QFile::exists(output));
+        QVERIFY(told_.isEmpty());
+    }
+
+    void stoppedCopyPreservesExistingDestination_data() { copyModes(); }
+
+    void stoppedCopyPreservesExistingDestination()
+    {
+        QFETCH(bool, flatten);
+        QTemporaryDir files;
+        const QString output = files.filePath(QStringLiteral("copy.pdf"));
+        const QByteArray original("The existing destination must survive.");
+        QFile existing(output);
+        QVERIFY(existing.open(QIODevice::WriteOnly));
+        QCOMPARE(existing.write(original), qint64(original.size()));
+        existing.close();
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(window.openFile(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        TabPage *tab = currentTab(window);
+        prepareCopy(*tab);
+        holdAt(job::Step::Commit, output);
+        answers_ << QMessageBox::Yes; // file picker's overwrite question
+        copy(window, output, flatten);
+        QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+        tab->stopWaiting();
+        QVERIFY(tab->isUsable());
+        job::testing::release();
+        QTRY_COMPARE(job::testing::held(), 0);
+        QTRY_COMPARE(filesIn(files.path()), QStringList{QStringLiteral("copy.pdf")});
+        QVERIFY(existing.open(QIODevice::ReadOnly));
+        QCOMPARE(existing.readAll(), original);
+        QVERIFY(told_.size() == 1); // only the overwrite question
     }
 
 #ifdef Q_OS_UNIX
@@ -872,6 +1120,40 @@ private slots:
         QCOMPARE(file.readAll(), before);
     }
 
+    // The dialog must survive owner destruction during its nested event loop.
+    void destroyingWindowWhileExportExplanationIsOpen()
+    {
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("plan.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        WindowManager manager;
+        const QPointer<MainWindow> host(manager.createWindow());
+        const QPointer<MainWindow> other(manager.createWindow());
+        showForLayout(*host);
+        showForLayout(*other);
+        QVERIFY(host->openFile(source));
+        TabPage *tab = currentTab(*host);
+        QVERIFY(tab);
+        tab->viewer()->loadMeasurements({{0, MeasureKind::Distance, {{50, 100}, {150, 100}}}},
+                                       {}, MeasureUnit::Millimeter, 2, 2.0);
+        QVERIFY(!tab->hasUnsavedEdits());
+        dialogs_.stop();
+        bool requested = false;
+        QTimer quit;
+        connect(&quit, &QTimer::timeout, this, [&] {
+            if (!qobject_cast<ExportMeasureDialog *>(QApplication::activeModalWidget()))
+                return;
+            quit.stop();
+            requested = true;
+            delete host.data();
+        });
+        quit.start(10);
+        QVERIFY(QMetaObject::invokeMethod(host, "exportMeasuredCopy"));
+        QVERIFY(requested);
+        QTRY_VERIFY(host.isNull());
+        QVERIFY(other);
+    }
+
     // Supplies tool prompt types and queued Quit or direct owner destruction.
     void quittingWhileAToolPromptIsOpen_data()
     {
@@ -1406,6 +1688,28 @@ private slots:
     }
 
 private:
+    static void copyModes()
+    {
+        QTest::addColumn<bool>("flatten");
+        QTest::newRow("copy") << false;
+        QTest::newRow("export") << true;
+    }
+
+    static void prepareCopy(TabPage &tab)
+    {
+        tab.viewer()->loadMeasurements({{0, MeasureKind::Distance, {{50, 100}, {150, 100}}}},
+                                       {}, MeasureUnit::Millimeter, 2, 2.0);
+        QVERIFY(tab.viewer()->annotModel()->addTextNote(
+                    0, {50, 50}, Qt::yellow, {}, QStringLiteral("Kept edit")) >= 0);
+    }
+
+    void copy(MainWindow &window, const QString &output, bool flatten)
+    {
+        files_ << output;
+        QVERIFY(QMetaObject::invokeMethod(&window, flatten ? "exportMeasuredCopy" : "saveAsCopy"));
+        QVERIFY(files_.isEmpty());
+    }
+
     // Runs Rotate Pages on the tab `window` shows, for every page, a quarter turn
     // clockwise, into `out`.
     void rotate(MainWindow &window, const QString &out)

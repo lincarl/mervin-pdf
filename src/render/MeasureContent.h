@@ -59,8 +59,9 @@ bool parseMeasurements(const QByteArray &json, MeasureDoc *out);
 
 // A measurement paired with everything the PDF emitter needs: its page-point
 // geometry, the page transform that lands it in PDF user space, and the
-// pre-formatted value label. Built by the UI layer (which has the live Document)
-// and handed to MeasureExport (which must not touch MuPDF).
+// pre-formatted value label. Built from captured measurement values and document
+// queries, then given to MeasureExport. Background callers protect those queries
+// with Document::Hold. Print still builds these values on the UI thread.
 struct RenderMeasurement
 {
     int page = -1;

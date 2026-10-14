@@ -238,7 +238,7 @@ These still touch the disk on the UI thread and are planned work:
   memory buffer, so these calls do not read the original file. Moving every
   viewer query to background threads remains separate work. Directory-dependent
   non-PDF formats retain their path-based lookup of relative resources.
-- Saving, Save as copy, export, print, Delete Pages, Extract Pages, merge,
+- Saving, print, Delete Pages, Extract Pages, merge,
   security, and the recovery copy written when a tab unloads. The chosen design
   shows such a wait in its tab, with a bar over its locked document, so other
   tabs and windows stay usable. New tabs and unloaded tabs already load in their
@@ -768,8 +768,31 @@ under the original logical path; it remains dirty and can be saved again. If rec
 also fails, the snapshot is retained on disk and its location is reported. Saving a
 file open in another view requires closing that view or choosing Save as Copy.
 
-Save as Copy and measured export prepare output before atomically replacing the
-destination. Printing a document with measurements uses a complete flattened snapshot
+Save as Copy and measured export capture the measurement data, password, document
+lifetime and path identities before starting one background tab operation. The worker
+checks and reserves the destination, creates its private temporary folder, and takes
+`Document::Hold` while it writes the live PDF. Export also builds its page transforms
+and measurement labels under that hold. The hold ends before qpdf embeds or flattens
+measurements and before the final atomic replacement. Both commands preserve the
+source's edits and dirty state. A frozen or deleted original remains copyable because
+the loaded document owns its bytes.
+
+Entering document use and Stop share the job state's mutex. Stop before that use
+restores the tab immediately. Stop during a blocked live-snapshot write keeps the
+still picture and says "Stopped waiting. The document stays locked until the drive
+answers." Its Stop button disappears. The viewer resumes only after the worker
+releases the document. Other tabs and windows remain usable. Stop suppresses result
+messages and prevents a later commit, while a commit already started may finish.
+The worker owns and removes only its private temporary files. It never removes the
+user's final destination as cancellation cleanup.
+
+Completion follows the tab through its current owner's tab-change queue. Success
+offers to open the output with its captured password. A window in the tray receives
+failure through its existing tray notice and receives no success question. The
+Export explanation and completion prompts use guarded heap ownership because a
+Quit in another window can destroy their owner during the nested dialog loop.
+
+Printing a document with measurements uses a complete flattened snapshot
 and reports preparation or rendering failures. Closing tabs or windows commits active
 editors and offers Save, Discard, or Cancel for unsaved changes.
 
