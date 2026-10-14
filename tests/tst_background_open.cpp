@@ -79,6 +79,7 @@ bool write(const QString &path, const QByteArray &data)
 }
 } // namespace
 
+// Checks placeholder opens, queued load results and their ownership across windows.
 class TstBackgroundOpen : public QObject
 {
     Q_OBJECT
@@ -779,8 +780,19 @@ private slots:
             QCOMPARE(reasons.last(), QStringLiteral("The password was not accepted."));
     }
 
-    void quitFromAnotherWindowDestroysTheActivePasswordPromptSafely()
+    // Supplies password acceptance, cancellation and direct owner destruction during Quit.
+    void quittingWithAnActivePasswordPrompt_data()
     {
+        QTest::addColumn<int>("disposition");
+        QTest::newRow("answer password before queued Quit") << 0;
+        QTest::newRow("cancel password before queued Quit") << 1;
+        QTest::newRow("direct owner destruction") << 2;
+    }
+
+    // Checks that Quit waits for a password prompt and direct destruction safely releases it.
+    void quittingWithAnActivePasswordPrompt()
+    {
+        QFETCH(int, disposition);
         QTemporaryDir files;
         const QString path = files.filePath(QStringLiteral("encrypted.pdf"));
         QpdfService service;
@@ -791,7 +803,7 @@ private slots:
         QPointer<MainWindow> owner = manager.createWindow();
         QPointer<MainWindow> other = manager.createWindow();
         bool quitRequested = false;
-        bool accepted = false;
+        bool closingBeforeApproval = false;
         QPointer<QInputDialog> activePrompt;
         QTimer quit;
         quit.setInterval(5);
@@ -802,13 +814,28 @@ private slots:
             activePrompt = prompt;
             quit.stop();
             quitRequested = true;
-            accepted = manager.closeAllForQuit();
+            if (disposition == 2) {
+                delete owner.data();
+                delete other.data();
+            } else {
+                manager.closeAllForQuit();
+                QVERIFY(owner && other && activePrompt);
+                // A pending Quit includes new loads and windows. Only final
+                // approval marks the manager as closing.
+                closingBeforeApproval = manager.isClosing();
+                if (disposition == 0) {
+                    prompt->setTextValue(QStringLiteral("correct"));
+                    prompt->accept();
+                } else {
+                    prompt->reject();
+                }
+            }
             QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         });
         quit.start();
         QVERIFY(owner->openFile(path));
         QTRY_VERIFY(quitRequested);
-        QVERIFY(accepted);
+        QVERIFY(!closingBeforeApproval);
         QTRY_VERIFY(!owner && !other && !activePrompt);
         QVERIFY(!QApplication::activeModalWidget());
     }
@@ -899,6 +926,7 @@ private slots:
         QTest::newRow("unmoved stopped fresh open") << 3 << true;
     }
 
+    // Checks that a moved fresh tab retains queued load actions after its former owner is destroyed.
     void lastTabMoveKeepsQueuedLoadActions()
     {
         QFETCH(int, action);
@@ -972,6 +1000,9 @@ private slots:
         }
         const quint64 generation = page->loadGeneration();
         manager.mergeTab(first, 0, second, -1);
+        // CloseFlow waits for this modal guard. Destroy the former owner directly
+        // to keep the queue-discard boundary covered after that integration.
+        delete first.data();
         QTRY_VERIFY(!first);
         QVERIFY(page && page->window() == second);
         QCOMPARE(page->loadGeneration(), generation);

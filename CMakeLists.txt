@@ -276,6 +276,8 @@ add_library(mervin_app STATIC
     src/ui/LanguageCombo.cpp
     src/ui/LanguageCombo.h
     src/ui/DocumentActions.cpp
+    src/ui/CloseFlow.cpp
+    src/ui/CloseFlow.h
     src/ui/MainWindow.cpp
     src/ui/MainWindowLifecycle.cpp
     src/ui/MainWindow.h

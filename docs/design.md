@@ -99,10 +99,11 @@ questions, the tab menu and the resume password prompt hold a `QPointer<TabPage>
 and a drag out of the bar follows the page that `MainWindow` stores in each tab's
 data of the visible bar (`DetachableTabBar`). A page's right-click menu closes when
 another document takes the view, since its rows act on the document on screen and
-its Save Page As on a page of the document clicked. Closing a window asks about each
-of its tabs once, tabs that arrived during a question included. Close all tabs closes
-the tabs it recorded and leaves a tab that arrived meanwhile. Quitting skips a window
-that went away during a question.
+its Save Page As on a page of the document clicked. Closing a window includes tabs
+that arrived while its close waits. Close all tabs closes the tabs it recorded and
+leaves newcomers. A single-tab close follows its tab across moves, while a window
+close and Close all tabs skip tabs moved out. Quit includes newly opened windows.
+Close rechecks edits before approval, so changing a tab after Don't save asks again.
 
 Two places still follow a position, and only the tab order can come out wrong. A
 move within the bar is `QTabBar`'s own and follows the pressed position, so a tab
@@ -427,9 +428,11 @@ render and search work so old results cannot repopulate a suspended viewer or re
 the resumed document's state. Closing to the tray requests suspension immediately
 unless the interval is Never. Selecting a suspended tab reloads it asynchronously.
 A tab busy with an operation (see Page and security operations) keeps its document.
-Closing a tab while it loads does not wait for the load. Saving and the other
-operations that read or replace the document's file on the UI thread still wait for
-a load in progress, or a stopped one that has not ended, first.
+Closing a tab abandons its housekeeping load without waiting. Choosing Save in the
+close question retries that read asynchronously, keeping the recovery copy. Stop
+while waiting for that Save prerequisite cancels the close. Explicit Save and the
+other operations that read or replace the file on the UI thread still wait for a
+load in progress, or a stopped one that has not ended, first.
 
 An unloaded or loading tab shows a placeholder on the page canvas, with its own canvas
 tokens for text and buttons in both themes. A load shows "Loading" at once. The tab
@@ -683,10 +686,33 @@ and runs the tool again with it, and the tab keeps a password that worked. Every
 a finished operation raises, the password prompt, an error or "Open it now?", is
 window-modal in the window that holds the tab by then and waits in that window's tab
 change queue. A window in the tray shows an error as a tray message and asks nothing.
-Closing a busy tab, its window or the app still asks about unsaved changes. Cancel
-keeps the operations running, including those in earlier windows during a quit.
-Choosing Save stops that tab's operation before saving in place. A confirmed close
-without saving stops the operation when it removes the tab.
+`CloseFlow` continues tab, window, Quit and language restart requests through the
+event loop. A close waits for a running user operation, selects its tab and shows
+the existing wait notice immediately. It restores a waiting tray window. Stop on
+that operation continues with the unsaved-changes question. Don't save can close
+a stopped tab while its document closes in the background. Save waits for document
+release, and Stop during that prerequisite cancels the close.
+
+The close question is window-modal in the tab's current window. Permanent edit
+generations and a final commit of active editors catch edits made after an earlier
+Don't save answer. Tab removals and final window closes use the current owner's
+ordered tab-change queue. A close claim suppresses automatic resume and suspension,
+but never blocks that queue. Close all tabs removes each resolved original tab
+promptly. Window close, Quit and restart preserve their windows and tabs until all
+decisions pass. Cancel ends the remaining close request, preserving completed saves.
+It releases the close claims and schedules the normal current-tab resume in each
+affected window. A suspended tab selected for its close question therefore resumes
+from its retained recovery copy without another click.
+Cancel after a window close or Quit keeps an abandoned fresh tab with Retry. The
+application records it in Recent after Retry succeeds.
+The relaunch flag is set only after restart approval, before its windows close.
+
+The updater keeps a separate synchronous `tryCloseAllForUpdate` adapter. A running
+user operation or another pending close makes it return false immediately. Chosen
+saves run after the callback returns false and never trigger a later shutdown. It
+returns true only when approved windows close in that call. Loaded-document Save
+still writes synchronously in this intermediate step, outside the updater callback.
+The background Save work remains a separate change.
 
 `MergePlan` and `ExtractPlan` are the GUI-free models behind the Merge PDFs and
 Extract Pages dialogs, tested in `tst_merge_plan` and `tst_extract_plan`; each dialog

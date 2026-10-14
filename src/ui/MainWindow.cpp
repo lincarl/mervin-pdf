@@ -43,6 +43,7 @@
 #include "ui/SidebarLayout.h"
 #include "ui/RecentFilesPanel.h"
 #include "ui/TabPage.h"
+#include "ui/CloseFlow.h"
 #include "ui/ThumbnailSidebar.h"
 
 #include <QActionGroup>
@@ -566,8 +567,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
         hideToTray();
         return;
     }
-    if (!closeConfirmed_ && !prepareToClose()) {
+    if (!closeConfirmed_) {
         event->ignore();
+        mervin::CloseFlow::request(this, mervin::CloseFlow::Intent::Window);
         return;
     }
     saveAllViewStates(); // resume works after a clean window close, not just per-tab
@@ -1845,25 +1847,10 @@ void MainWindow::closeTab(int index)
     closeTabAt(index, /*remember=*/true);
 }
 
-bool MainWindow::closeTabAt(int index, bool remember)
+void MainWindow::closeTabAt(int index, bool remember)
 {
-    const QPointer<QWidget> w = tabs_->widget(index);
-    if (!w)
-        return true;
-    if (auto *t = qobject_cast<TabPage *>(w.data())) {
-        if (!confirmClose(t))
-            return false;
-        // The question runs its own event loop, in which a session restore can
-        // insert tabs before this one, so find it again.
-        index = w ? tabs_->indexOf(w) : -1;
-        if (index < 0)
-            return true;
-        saveTabViewState(t); // remember where the user left off
-        if (remember)
-            rememberClosedTab(t, index);
-    }
-    removeTabAt(index);
-    return true;
+    if (auto *tab = qobject_cast<TabPage *>(tabs_->widget(index)))
+        mervin::CloseFlow::request(this, mervin::CloseFlow::Intent::Tab, tab, remember);
 }
 
 void MainWindow::removeTabAt(int index)
@@ -1925,21 +1912,7 @@ void MainWindow::rememberOpenTabs()
 
 void MainWindow::closeAllTabs()
 {
-    // Record the whole bar first (see rememberOpenTabs), then close without
-    // re-recording. Each close is otherwise the same path as the per-tab close
-    // button, so each tab's view state is saved and the empty window falls back
-    // to Recent. The questions run their own event loops, in which tabs can
-    // arrive, so close the recorded tabs by identity. A tab that arrived stays,
-    // as it was not recorded.
-    rememberOpenTabs();
-    QList<QPointer<QWidget>> recorded;
-    for (int i = 0; i < tabs_->count(); ++i)
-        recorded << tabs_->widget(i);
-    for (const QPointer<QWidget> &page : std::as_const(recorded)) {
-        const int index = page ? tabs_->indexOf(page) : -1;
-        if (index >= 0 && !closeTabAt(index, /*remember=*/false))
-            break; // the user kept this tab, so keep the rest too
-    }
+    mervin::CloseFlow::request(this, mervin::CloseFlow::Intent::AllTabs);
 }
 
 void MainWindow::reopenClosedTab()

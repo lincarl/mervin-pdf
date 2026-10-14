@@ -10,6 +10,7 @@
 #include "render/Document.h"
 #include "render/RenderEngine.h"
 #include "ui/MainWindow.h"
+#include "ui/CloseFlow.h"
 #include "ui/TabPage.h"
 #include "ui/Icons.h"
 #include "ui/Theme.h"
@@ -1086,36 +1087,19 @@ void WindowManager::quitAll()
     closeAllForQuit();
 }
 
-bool WindowManager::closeAllForQuit()
+void WindowManager::closeAllForQuit()
 {
-    if (quitting_)
-        return false;
-    QScopedValueRollback<bool> quitGuard(quitting_, true);
-    // The questions run their own event loops, in which a window can go away.
-    const QList<QPointer<MainWindow>> copy(windows_.cbegin(), windows_.cend());
-    for (const QPointer<MainWindow> &window : copy)
-        if (window && !window->prepareToClose())
-            return false;
-    updateSession();
-    sessionFinal_ = true;
-    bool closing = false;
-    for (const QPointer<MainWindow> &window : copy) {
-        if (window) {
-            window->closeForQuit();
-            closing = true;
-        }
-    }
-    if (!closing)
-        QCoreApplication::quit();
-    return true;
+    CloseFlow::requestQuit(this);
 }
 
-bool WindowManager::restart()
+void WindowManager::restart()
 {
-    if (!closeAllForQuit())
-        return false;
-    relaunch::request();
-    return true;
+    CloseFlow::requestQuit(this, true);
+}
+
+bool WindowManager::tryCloseAllForUpdate()
+{
+    return CloseFlow::tryCloseForUpdate(this);
 }
 
 bool WindowManager::canCloseToTray(const MainWindow *window) const

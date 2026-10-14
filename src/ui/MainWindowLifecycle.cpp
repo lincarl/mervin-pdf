@@ -223,7 +223,7 @@ void MainWindow::scheduleCurrentResume()
         if (closeConfirmed_ || hiddenToTray_ || recentActive_ || !isVisible() || isMinimized())
             return;
         TabPage *tab = currentTab();
-        if (!tab)
+        if (!tab || tab->isClosing())
             return;
         inactiveSince_.remove(tab);
         suspensionFailed_.remove(tab);
@@ -312,7 +312,7 @@ void MainWindow::clearDocumentSidebars()
 bool MainWindow::suspendTab(TabPage *tab)
 {
     // A busy tab keeps its document until its operation ends.
-    if (!tab->isUsable() || suspensionFailed_.contains(tab))
+    if (tab->isClosing() || !tab->isUsable() || suspensionFailed_.contains(tab))
         return false;
     if (sidebarDoc_ == tab->viewer()->document())
         clearDocumentSidebars();
@@ -462,26 +462,6 @@ void MainWindow::hideEvent(QHideEvent *event)
     QMainWindow::hideEvent(event);
     if (wm_)
         QTimer::singleShot(0, this, [this] { wm_->checkDocumentActivity(); });
-}
-
-bool MainWindow::prepareToClose()
-{
-    const OperationScope operation(this);
-    // Ask about each tab once, in tab order, and find the next one again after each
-    // question. A tab can arrive during a question, from a session restore or another
-    // instance, and move the others along. It is asked about too.
-    QList<QPointer<TabPage>> asked;
-    for (;;) {
-        TabPage *next = nullptr;
-        for (int i = 0; i < tabs_->count() && !next; ++i)
-            if (auto *tab = qobject_cast<TabPage *>(tabs_->widget(i)); tab && !asked.contains(tab))
-                next = tab;
-        if (!next)
-            return true;
-        asked.append(next);
-        if (!confirmClose(next))
-            return false;
-    }
 }
 
 void MainWindow::closeForQuit()

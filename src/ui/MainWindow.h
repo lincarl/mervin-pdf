@@ -29,6 +29,7 @@ class RenderEngine;
 class TabPage;
 class ThumbnailSidebar;
 class WindowManager;
+class CloseFlow;
 } // namespace mervin
 
 class QLineEdit;
@@ -44,6 +45,7 @@ class QToolBar;
 class QToolButton;
 class QUrl;
 
+// Owns one window's document tabs, commands and ordered tab-change queue.
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -99,8 +101,8 @@ public:
     // Rises with every hideToTray() across all windows, so the window hidden last has
     // the highest value. WindowManager restores tray windows in this order.
     quint64 trayOrder() const { return trayOrder_; }
-    bool prepareToClose();
-    void closeForQuit(); // call only after prepareToClose succeeds
+    // Bypasses questions and close-to-tray after approval, or for an empty window.
+    void closeForQuit();
     void applyMemorySettings(int minutes, bool closeToTray);
     // nowMs is monotonic process time; explicit input also makes deadline tests deterministic.
     bool updateDocumentActivity(qint64 nowMs, int timeoutMinutes);
@@ -136,7 +138,8 @@ public:
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override; // tab-bar middle-click
-    void closeEvent(QCloseEvent *event) override;               // persist geometry/settings
+    // Handles tray hiding and close approval before persisting window state.
+    void closeEvent(QCloseEvent *event) override;
     void changeEvent(QEvent *event) override;                   // report activation to WindowManager
     void hideEvent(QHideEvent *event) override;
     void showEvent(QShowEvent *event) override;                 // apply the caption colour once native
@@ -152,7 +155,8 @@ private slots:
     void onZoomComboActivated();
     void onCurrentTabChanged(int index);
     void closeTab(int index);
-    void closeAllTabs();      // tab right-click menu
+    // Requests close for the recorded tab bar, preserving tabs that arrive later.
+    void closeAllTabs();
     void reopenClosedTab();   // Ctrl+Shift+T: bring back the last tab closed
     void onTabDetachRequested(int index, const QPoint &globalPos);
     void onTabMergeRequested(mervin::DetachableTabBar *source, int sourceIndex, int targetIndex);
@@ -190,6 +194,7 @@ private slots:
     void mergeDocuments();
 
 private:
+    friend class mervin::CloseFlow;
     // Extract Pages or Delete Pages (`mode`) for the current document. The one row
     // holds `seedPage` (0-based) when given: the clicked page from the page's Save
     // Page As, or for Delete the page in view. Extract without it holds every page.
@@ -225,6 +230,11 @@ private:
     // user typed the password for this run.
     static void runPageTool(mervin::TabPage *tab, const std::shared_ptr<const PageTool> &tool,
                             const QString &password, bool asked);
+    // Queues the result in the tab's current owner, including after its previous
+    // owner is destroyed while the result waits in that window's queue.
+    static void deliverPageTool(mervin::TabPage *tab, const std::shared_ptr<const PageTool> &tool,
+                                const QString &password, bool asked,
+                                const std::shared_ptr<PageToolResult> &result);
     // A file that needs a password asks for one, window-modal, and runs the tool
     // again with it, remembered on the tab if it works. A failure says why, and
     // success runs the tool's own question. A window in the tray shows failures as a
@@ -277,14 +287,15 @@ private:
 
     // Close the tab at `index`. `remember` pushes it onto the process-wide reopen
     // history (Ctrl+Shift+T); it is false for a bulk close, whose caller has
-    // already recorded the whole bar through rememberOpenTabs(). False when the
-    // user kept the tab, by Cancel in the unsaved-changes question or through a
-    // failed save.
-    bool closeTabAt(int index, bool remember);
+    // already recorded the whole bar through rememberOpenTabs(). The request
+    // continues through the event loop and can be canceled.
+    void closeTabAt(int index, bool remember);
     // Remove and delete the tab at `index`, then record the session. The caller has
     // already asked about unsaved edits.
     void removeTabAt(int index);
-    bool confirmClose(mervin::TabPage *tab);
+    // Returns the unsaved-edit decision after committing active editors, without applying it.
+    // The window-modal question guards tab and window lifetimes across its event loop.
+    int askClose(mervin::TabPage *tab);
     bool saveTab(mervin::TabPage *tab);
     // Push one tab onto the reopen history. `index` is the slot to restore it to,
     // which mid-bulk-close is NOT its live index - see rememberOpenTabs().
@@ -302,13 +313,16 @@ private:
     void queueFreshRemoval(mervin::TabPage *tab, quint64 generation);
     void queueLoadPassword(mervin::TabPage *tab, quint64 generation);
     void unwireTabLifecycle(mervin::TabPage *tab);
+    // Queues resume of the selected document after visibility and close-claim checks.
     void scheduleCurrentResume();
+    // Unloads a usable tab unless a close claim or earlier suspension failure keeps it resident.
     bool suspendTab(mervin::TabPage *tab);
     void clearDocumentSidebars();
     bool canSuspendDocuments() const;
     void persistWindowState();
     // Run the queued tab changes on the next turn of the event loop.
     void postTabChanges();
+    QList<QPointer<mervin::CloseFlow>> closeFlows_; // standalone windows only
 
     // Marks a document operation of `window` for its lifetime. Unloading and tab
     // changes wait while one runs, since it may hold a tab or a document across

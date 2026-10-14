@@ -299,6 +299,10 @@ TabPage::TabPage(RenderEngine *engine, QWidget *parent)
     layout->setSpacing(0);
 
     viewer_ = new ViewerWidget(engine_, this);
+    const auto edited = [this] { ++editGeneration_; };
+    connect(viewer_, &ViewerWidget::formEditsChanged, this, edited);
+    connect(viewer_, &ViewerWidget::annotEditsChanged, this, edited);
+    connect(viewer_, &ViewerWidget::measurementsChanged, this, edited);
     layout->addWidget(viewer_, 1);
     // Stands in for the pages, on their canvas, while the document is unloaded, loads
     // or could not be loaded.
@@ -1166,6 +1170,7 @@ bool TabPage::installLoad(const std::shared_ptr<Job> &job)
 void TabPage::stopWaiting()
 {
     if (busy_) {
+        operationStopped_ = true;
         // The job gives up at its next step, and a commit it already began completes.
         // Either way the tab treats the operation as not done.
         job_->state.stop();
@@ -1176,26 +1181,66 @@ void TabPage::stopWaiting()
         endOperation();
         if (self)
             emit operationFinished(false);
+        if (self)
+            emit waitingStopped();
         return;
     }
     if (!loading_)
         return;
-    loading_ = false;
-    loadStopped_ = true;
-    stopSlowClock();
+    const QPointer<TabPage> self(this);
     if (freshOpen_ && recoveryPath_.isEmpty()) {
+        loading_ = false;
+        loadStopped_ = true;
+        stopSlowClock();
         job_->state.stop();
         abandon(job_, {});
         job_.reset();
         stopButton_->hide();
         emit freshOpenStopped(loadGeneration_);
-        return;
+    } else {
+        abandonLoadForClose();
     }
+    if (self)
+        emit waitingStopped();
+}
+
+void TabPage::abandonLoadForClose()
+{
+    if (!loading_)
+        return;
+    loading_ = false;
+    loadStopped_ = true;
+    stopSlowClock();
     // The job stays in the slot, so Retry can take back its read while it runs. A
     // result it already stored closes in the background. The recovery copy stays.
     abandon(job_, {});
     showPlaceholder(tr("Document is unloaded."), PlaceholderButton::Retry);
     emit stateChanged();
+}
+
+void TabPage::showWaitImmediately(bool offerStoppedStop)
+{
+    closeWaitStop_ = offerStoppedStop;
+    if (!job_)
+        return;
+    const auto now = job_->state.snapshot();
+    if (busy_) {
+        if (offerStoppedStop)
+            waitBar_->stopButton()->show();
+        showWaitBar(now);
+    } else if (loading_) {
+        slowFile_ = now.path.isEmpty() ? job_->source : now.path;
+        showPlaceholder({}, PlaceholderButton::StopWaiting);
+        updateSlowNotice();
+    }
+}
+
+void TabPage::clearCloseWait()
+{
+    closeWaitStop_ = false;
+    // Repaint a still-held job on the next turn. Polling can emit completion
+    // signals, so it must not reenter a close flow while that flow releases tabs.
+    QTimer::singleShot(0, this, &TabPage::pollJob);
 }
 
 void TabPage::retryLoad()
@@ -1240,6 +1285,7 @@ void TabPage::startOperation(Operation operation)
     viewer_->hide();
     still_->show();
     busy_ = true;
+    operationStopped_ = false;
     destination_ = operation.destination;
     finished_ = std::move(operation.finished);
     barName_.clear();
