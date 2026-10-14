@@ -480,6 +480,46 @@ private slots:
         QVERIFY(AnnotModel(*original).pageAnnots(0).empty());
     }
 
+    void queuedCopyResultSurvivesItsPreviousOwner_data() { copyModes(); }
+
+    void queuedCopyResultSurvivesItsPreviousOwner()
+    {
+        QFETCH(bool, flatten);
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("plan.pdf"));
+        const QString output = files.filePath(QStringLiteral("copy.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        WindowManager manager;
+        const QPointer<MainWindow> first(manager.createWindow());
+        MainWindow *second = manager.createWindow();
+        showForLayout(*first);
+        showForLayout(*second);
+        QVERIFY(testing::openAndWait(*first, source));
+        TabPage *tab = currentTab(*first);
+        prepareCopy(*tab);
+        holdAt(job::Step::Commit, output);
+        QSignalSpy finished(tab, &TabPage::operationFinished);
+        copy(*first, output, flatten);
+        QTRY_COMPARE(job::testing::held(), 1);
+        QDialog blocker;
+        blocker.setWindowModality(Qt::ApplicationModal);
+        blocker.show();
+        job::testing::release();
+        QTRY_COMPARE(finished.size(), 1);
+        QVERIFY(tab->isUsable());
+        QVERIFY(told_.isEmpty());
+        manager.mergeTab(first, 0, second, 0);
+        QTRY_VERIFY(first.isNull());
+        QCOMPARE(currentTab(*second), tab);
+        answers_ << QMessageBox::No;
+        blocker.reject();
+        QTRY_VERIFY(answers_.isEmpty());
+        QCOMPARE(toldIn_.size(), 1);
+        QCOMPARE(toldIn_.first().data(), second);
+        QVERIFY(QFile::exists(output));
+        QVERIFY(tab->hasUnsavedEdits());
+    }
+
     void stoppedCopyNeverBeginsItsHold_data() { copyModes(); }
 
     // Stop wins before the atomic document-use reservation, so a released

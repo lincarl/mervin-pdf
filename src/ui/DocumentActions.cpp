@@ -407,10 +407,19 @@ void MainWindow::deliverCopy(TabPage *tab, const QString &destination, const QSt
     auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
     if (!window)
         return;
+    const auto discarded = connect(window, &QObject::destroyed, page,
+        [page, destination, password, flatten, result] {
+            if (page)
+                QTimer::singleShot(0, page, [page, destination, password, flatten, result] {
+                    if (page)
+                        deliverCopy(page, destination, password, flatten, result);
+                });
+        });
     window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window), destination, password,
-                               flatten, result] {
+                               flatten, result, discarded] {
+        disconnect(discarded);
         auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
-        if (!current)
+        if (!current || current->closeConfirmed_ || (current->wm_ && current->wm_->isClosing()))
             return;
         if (current != owner) {
             deliverCopy(page, destination, password, flatten, result);
