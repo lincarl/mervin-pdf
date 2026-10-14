@@ -271,7 +271,9 @@ checks the known path before starting another read. The result waits in the tab'
 job slot until its current window's tab-change queue can accept it. Reading has
 finished at that point, so the placeholder returns to Loading and the slow-drive
 clock stops. A load-generation check rejects old attempts, and a moved tab joins
-its new owner's queue. Before installation, the owner compares the resolved canonical
+its new owner's queue. If its previous owner is destroyed with a queued load,
+password prompt or removal, the surviving tab queues that action in its new owner.
+Before installation, the owner compares the resolved canonical
 key against other tabs. It removes an ordinary duplicate newcomer without recording
 history and focuses the existing tab only if the newcomer was still being shown.
 The first accepted identity wins when aliases complete together. Independent
@@ -279,7 +281,8 @@ recovery copies keep their edited tabs even when their canonical source matches,
 and use the original identity cached in their manifests. Successful opens
 refresh the title and tooltip and record Recent with the page count. The session
 contains placeholders too. Focusing a pending or failed placeholder does not record
-an open in Recent.
+an open in Recent. A failed fresh open keeps its reason and generation when selected
+or moved, until Retry or an accepted password starts another attempt.
 
 Stop waiting closes an ordinary fresh tab through the queue, without recording a
 view state or adding it to Reopen Closed Tab. A result already stored closes in the

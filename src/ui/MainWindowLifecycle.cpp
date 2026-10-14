@@ -62,13 +62,18 @@ void MainWindow::wireTabLifecycle(TabPage *tab)
     }));
 }
 
-// Late load actions always join the current owner's queue. A tab can move while
-// the original queue waits, so a changed owner queues the same guarded action again.
+// Late load actions follow the tab even when its previous owner is destroyed
+// with an undelivered queue. The tab owns the destruction connection's lifetime.
 void MainWindow::queueFreshLoad(TabPage *tab, const QString &canonical, quint64 generation)
 {
     const QPointer<MainWindow> self(this);
     const QPointer<TabPage> page(tab);
-    whenTabsCanChange([self, page, canonical, generation] {
+    const auto discarded = connect(this, &QObject::destroyed, tab, [page, canonical, generation] {
+        if (auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr)
+            owner->queueFreshLoad(page, canonical, generation);
+    });
+    whenTabsCanChange([self, page, canonical, generation, discarded] {
+        disconnect(discarded);
         auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
         if (!self || !owner || owner->closeConfirmed_ || (owner->wm_ && owner->wm_->isClosing()))
             return;
@@ -125,7 +130,12 @@ void MainWindow::queueFreshRemoval(TabPage *tab, quint64 generation)
 {
     const QPointer<MainWindow> self(this);
     const QPointer<TabPage> page(tab);
-    whenTabsCanChange([self, page, generation] {
+    const auto discarded = connect(this, &QObject::destroyed, tab, [page, generation] {
+        if (auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr)
+            owner->queueFreshRemoval(page, generation);
+    });
+    whenTabsCanChange([self, page, generation, discarded] {
+        disconnect(discarded);
         auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
         if (!self || !owner || owner->closeConfirmed_ || (owner->wm_ && owner->wm_->isClosing()))
             return;
@@ -149,7 +159,12 @@ void MainWindow::queueLoadPassword(TabPage *tab, quint64 generation)
 {
     const QPointer<MainWindow> self(this);
     const QPointer<TabPage> page(tab);
-    whenTabsCanChange([self, page, generation] {
+    const auto discarded = connect(this, &QObject::destroyed, tab, [page, generation] {
+        if (auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr)
+            owner->queueLoadPassword(page, generation);
+    });
+    whenTabsCanChange([self, page, generation, discarded] {
+        disconnect(discarded);
         auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
         if (!self || !owner || owner->closeConfirmed_ || (owner->wm_ && owner->wm_->isClosing()))
             return;
@@ -177,7 +192,7 @@ void MainWindow::queueLoadPassword(TabPage *tab, quint64 generation)
             return;
         if (accepted) {
             page->setPassword(password);
-            page->resumeAsync();
+            page->retryLoad();
         } else if (page->freshOpen() && page->freshOpen()->closeOnFailure) {
             owner->queueFreshRemoval(page, generation);
         }

@@ -268,8 +268,8 @@ private:
     QString barName_;
     QString barFolder_;
     bool retainedEdits_ = false;
-    // The user stopped waiting for the last load, so selecting the tab does not load it
-    // again until Retry.
+    // A stopped load or fresh failure waits for an explicit Retry or password.
+    // Selecting the tab does not start another read.
     bool loadStopped_ = false;
     std::optional<FreshOpen> freshOpen_;
     quint64 loadGeneration_ = 0;

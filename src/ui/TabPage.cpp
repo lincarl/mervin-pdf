@@ -967,6 +967,9 @@ bool TabPage::finishResume(const std::shared_ptr<OpenResult> &result)
     loadStopped_ = false;
     stopSlowClock();
     if (!result->document) {
+        // A fresh failure keeps its reason until Retry or an accepted password.
+        // Selecting or adopting it must not replace a queued failure's generation.
+        loadStopped_ = freshOpen_.has_value();
         showPlaceholder(result->error.isEmpty() ? tr("Could not load this document.") : result->error,
                         PlaceholderButton::Retry);
         emit stateChanged();

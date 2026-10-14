@@ -548,6 +548,10 @@ private slots:
         QVERIFY(window->closeRemovedTabs(path));
         QCoreApplication::processEvents();
         QCOMPARE(window->tabCount(), 1);
+        const quint64 failedGeneration = tab->loadGeneration();
+        tab->resumeAsync(); // automatic selection and adoption use this route
+        QVERIFY(!tab->isLoading());
+        QCOMPARE(tab->loadGeneration(), failedGeneration);
         QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
         QTest::mouseClick(tab->findChild<QPushButton *>(QStringLiteral("retryDocumentLoad")), Qt::LeftButton);
         QTRY_VERIFY(tab->isLoaded());
@@ -879,6 +883,104 @@ private slots:
         QCOMPARE(first->tabPaths(), QStringList{other});
     }
 
+    void lastTabMoveKeepsQueuedLoadActions_data()
+    {
+        QTest::addColumn<int>("action");
+        QTest::newRow("ready") << 0;
+        QTest::newRow("password") << 1;
+        QTest::newRow("failed duplicate") << 2;
+        QTest::newRow("stopped fresh open") << 3;
+    }
+
+    void lastTabMoveKeepsQueuedLoadActions()
+    {
+        QFETCH(int, action);
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("plan.pdf"));
+        const QString kept = files.filePath(QStringLiteral("kept.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), kept));
+        if (action == 1) {
+            QpdfService service;
+            QCOMPARE(service.encrypt(QStringLiteral(MERVIN_FIXTURE_PDF), path, {},
+                                     QStringLiteral("correct"), QStringLiteral("owner"),
+                                     QpdfService::Algorithm::AES256, {}), QpdfService::Status::Ok);
+        } else if (action != 2) {
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        }
+        WindowManager manager;
+        QPointer<MainWindow> first = manager.createWindow();
+        MainWindow *second = manager.createWindow();
+        showWindow(*first);
+        showWindow(*second);
+        QVERIFY(testing::openAndWait(*second, kept));
+        // Adoption must not start another read before the queued action transfers.
+        // Restore the target before delivering a password prompt.
+        second->setWindowState(Qt::WindowMinimized);
+        // Keep each result in the original owner's queue until its last tab moves.
+        // A parentless guard survives the source window's normal destruction.
+        QDialog guard;
+        guard.setWindowModality(Qt::ApplicationModal);
+        if (action == 0 || action == 3)
+            guard.show();
+        if (action == 3)
+            holdRead(path);
+        const auto release = qScopeGuard([] { job::testing::release(); });
+        QVERIFY(first->openFile(path, action == 2, -1, true, {}, false,
+                                std::nullopt, action == 2));
+        QPointer<TabPage> page = current(*first);
+        QVERIFY(page);
+        QSignalSpy ready(page, &TabPage::freshLoadReady);
+        QSignalSpy finished(page, &TabPage::resumeFinished);
+        if (action == 1 || action == 2)
+            connect(page, &TabPage::resumeFinished, &guard, [&] { guard.show(); },
+                    Qt::SingleShotConnection);
+        if (action == 0) {
+            QTRY_COMPARE(ready.size(), 1);
+            QVERIFY(TabPage::testing::storedDocument(*page));
+        } else if (action == 3) {
+            QTRY_COMPARE(job::testing::held(), 1);
+            page->stopWaiting();
+        } else {
+            QTRY_COMPARE(finished.size(), 1);
+        }
+        QCOMPARE(first->tabCount(), 1);
+        const quint64 generation = page->loadGeneration();
+        manager.mergeTab(first, 0, second, -1);
+        QTRY_VERIFY(!first);
+        QVERIFY(page && page->window() == second);
+        QCOMPARE(page->loadGeneration(), generation);
+        second->setWindowState(Qt::WindowNoState);
+        int prompts = 0;
+        QPointer<QInputDialog> answered;
+        QTimer answer;
+        answer.setInterval(5);
+        connect(&answer, &QTimer::timeout, this, [&] {
+            auto *prompt = qobject_cast<QInputDialog *>(QApplication::activeModalWidget());
+            if (!prompt || answered == prompt)
+                return;
+            answered = prompt;
+            ++prompts;
+            QCOMPARE(prompt->parentWidget(), second);
+            QCOMPARE(prompt->windowModality(), Qt::WindowModal);
+            prompt->setTextValue(QStringLiteral("correct"));
+            prompt->accept();
+        });
+        answer.start();
+        guard.close();
+        if (action <= 1) {
+            QTRY_VERIFY_WITH_TIMEOUT(page && page->isLoaded(), 1000);
+            QCOMPARE(second->tabCount(), 2);
+            QCOMPARE(prompts, action == 1 ? 1 : 0);
+            if (action == 1)
+                QCOMPARE(page->password(), QStringLiteral("correct"));
+        } else {
+            QTRY_VERIFY_WITH_TIMEOUT(!page, 1000);
+            QCOMPARE(second->tabPaths(), QStringList{kept});
+        }
+        answer.stop();
+        job::testing::release();
+    }
+
     void failedDuplicatePreservesAnArrivingTab()
     {
         QTemporaryDir files;
@@ -967,7 +1069,7 @@ private slots:
         QVERIFY(!QApplication::activeModalWidget());
         QCOMPARE(tab->findChild<QLabel *>(QStringLiteral("documentLoadStatus"))->text(), QStringLiteral("This document is password-protected."));
         tab->setPassword(QStringLiteral("correct"));
-        tab->resumeAsync();
+        tab->retryLoad();
         QTRY_VERIFY(tab->isLoaded());
         QCOMPARE(tab->password(), QStringLiteral("correct"));
     }
