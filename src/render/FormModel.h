@@ -21,8 +21,10 @@ public:
 
     // The fillable widgets on a page, in stable MuPDF widget order (the index
     // space the mutation methods below use). Lazily enumerated and cached in app
-    // page-point space. Returns a reference valid until the next mutation of that
-    // page (which invalidates its cache) or reset().
+    // page-point space. A page the document refused to read (on the screen thread
+    // while a job holds the document or waits for it) reads as empty and is not cached.
+    // Returns a reference valid until the next mutation of that page (which
+    // invalidates its cache) or reset().
     const std::vector<FormField> &pageFields(int pageNo) const;
 
     // Whether any field has been edited since open / the last clearDirty().

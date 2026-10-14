@@ -41,7 +41,8 @@ struct TextLink
 // word search. Coordinates are unscaled, unrotated page points at 72 dpi.
 // Owns a cloned MuPDF context, which may outlive the RenderEngine. Serialize calls; viewer and
 // background search use separate indexes. On the screen thread a page reads as empty while a
-// job holds the document, and is extracted on a later call (see Document::ScreenQuery).
+// job holds the document or waits for it, and is extracted on a later call (see
+// Document::ScreenQuery).
 class TextIndex
 {
 public:

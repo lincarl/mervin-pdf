@@ -77,8 +77,8 @@ struct DocumentLifetime
     // Document::Hold objects that hold the gate or wait for it. While there is one,
     // the document's queries refuse on the screen thread (see Document::ScreenQuery).
     std::atomic<int> holds{0};
-    // Document::ScreenQuery objects alive on the screen thread. A Hold waits for
-    // them before it takes the gate.
+    // Document::ScreenQuery objects on the screen thread that were not refused. A
+    // Hold waits for them before it takes the gate.
     std::atomic<int> screenQueries{0};
 };
 
@@ -88,14 +88,16 @@ struct DocumentLifetime
 // independent display list may run outside the document lock.
 //
 // On the screen thread, the queries below return their empty value while a job holds
-// the document (see Hold and ScreenQuery), instead of waiting for the job.
+// the document or waits for it (see Hold and ScreenQuery), instead of waiting for the job.
 class Document
 {
 public:
     // Lets a job thread use a document that a tab shows, for as long as it lives. It
     // locks only the lifetime gate. The job calls Document's methods as usual, and
     // each takes the access lock itself. Not for the screen thread, which never waits
-    // for a job, and never taken while holding accessMutex().
+    // for a job, and never taken while holding accessMutex(). The gate is not
+    // recursive, so the holding thread releases the hold before it reads the document
+    // through a TextIndex or OCR, destroys the document or waits for it to close.
     class Hold
     {
     public:

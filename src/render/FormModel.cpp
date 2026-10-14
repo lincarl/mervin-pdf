@@ -78,7 +78,7 @@ const std::vector<FormField> &FormModel::pageFields(int pageNo) const
         return *cache_[pageNo];
 
     std::vector<FormField> fields;
-    doc_.withPdfDocument([&](fz_context *ctx, pdf_document *) {
+    const bool ran = doc_.withPdfDocument([&](fz_context *ctx, pdf_document *) {
         fz_page *fzpage = nullptr;
         fz_var(fzpage);
         fz_try(ctx) {
@@ -181,6 +181,11 @@ const std::vector<FormField> &FormModel::pageFields(int pageNo) const
         }
     });
 
+    // Cache only when the page was read. withPdfDocument refuses on the screen thread
+    // while a job holds the document or waits for it, and the page is then read on a
+    // later call, as in AnnotModel::pageAnnots.
+    if (!ran)
+        return kEmpty;
     cache_[pageNo] = std::move(fields);
     return *cache_[pageNo];
 }

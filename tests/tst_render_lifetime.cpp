@@ -1,14 +1,18 @@
 #include "render/Document.h"
 #include "render/DocumentSearch.h"
+#include "render/FormModel.h"
 #include "render/RenderEngine.h"
 #include "render/TextIndex.h"
 #include "Stalls.h"
 
 #include <QElapsedTimer>
+#include <QFile>
 #include <QSet>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QtTest>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <mutex>
@@ -47,6 +51,41 @@ void submitAllPages(RenderEngine &engine, Document &document, quint64 requester)
         request.pageNo = page;
         engine.submit(request);
     }
+}
+
+// Writes a one-page PDF to `dir` with the web address text "Visit www.inet.se now."
+// and one fillable text field, "field1", and returns its path.
+QString writeFormAndLinkPdf(const QTemporaryDir &dir)
+{
+    const QByteArray content = "BT /F1 18 Tf 50 150 Td (Visit www.inet.se now.) Tj ET";
+    const QList<QByteArray> objects{
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] "
+        "/DR << /Font << /Helv 5 0 R >> >> /DA (/Helv 0 Tf 0 g) >> >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [4 0 R] "
+        "/Resources << /Font << /F1 5 0 R /Helv 5 0 R >> >> /Contents 6 0 R >>",
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (field1) /Rect [20 250 280 270] "
+        "/F 4 /DA (/Helv 12 Tf 0 g) /V () /P 3 0 R >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content
+            + "\nendstream",
+    };
+    QByteArray pdf = "%PDF-1.7\n";
+    QByteArray xref = "0000000000 65535 f \n";
+    for (qsizetype i = 0; i < objects.size(); ++i) {
+        xref += QByteArray::number(pdf.size()).rightJustified(10, '0') + " 00000 n \n";
+        pdf += QByteArray::number(i + 1) + " 0 obj\n" + objects[i] + "\nendobj\n";
+    }
+    const QByteArray start = QByteArray::number(pdf.size());
+    const QByteArray size = QByteArray::number(objects.size() + 1);
+    pdf += "xref\n0 " + size + "\n" + xref + "trailer\n<< /Size " + size
+           + " /Root 1 0 R >>\nstartxref\n" + start + "\n%%EOF\n";
+
+    const QString path = dir.filePath(QStringLiteral("form-and-link.pdf"));
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(pdf) != pdf.size())
+        return {};
+    return path;
 }
 
 // Takes a document the way a save job does, as a lockable for Stall. On the Stall's
@@ -247,7 +286,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(renderedPages(results, 3).contains(0), 1000);
     }
 
-    // The opposite case: requests that were not canceled wait for the document and
+    // The opposite case. Requests that were not canceled wait for the document and
     // render once the job lets go of it.
     void uncanceledJobsRenderAfterTheHold()
     {
@@ -294,13 +333,49 @@ private slots:
             QVERIFY(!doc->linkTargetAt(0, QPointF(40, 40)));
             QVERIFY2(timer.elapsed() < 50, qPrintable(took("linkTargetAt", timer)));
             QCOMPARE(Document::testing::refusals() - before, 3);
+
+            // Each of the other guarded calls is refused once too, with the warning that
+            // names it. Without its guard a call waits for the job and is not counted.
+            const auto refused = [](const char *method, const auto &call) {
+                expectRefusal(method);
+                const int earlier = Document::testing::refusals();
+                const bool empty = call();
+                return empty && Document::testing::refusals() - earlier == 1;
+            };
+            QVERIFY(refused("Document::pageGeometry",
+                            [&] { return doc->pageGeometry(0).empty(); }));
+            QVERIFY(refused("Document::pagePointToPdfMatrix", [&] {
+                return doc->pagePointToPdfMatrix(0)
+                       == std::array<double, 6>{1.0, 0.0, 0.0, 1.0, 0.0, 0.0};
+            }));
+            QVERIFY(refused("Document::linkAt",
+                            [&] { return doc->linkAt(0, QPointF(40, 40)).isEmpty(); }));
+            QVERIFY(refused("Document::itemPropertiesAt",
+                            [&] { return !doc->itemPropertiesAt(0, QPointF(40, 40)); }));
+            QVERIFY(refused("Document::hasForm", [&] { return !doc->hasForm(); }));
+            QVERIFY(refused("Document::hasMervinMeasurements",
+                            [&] { return !doc->hasMervinMeasurements(); }));
+            QVERIFY(refused("Document::isPdf", [&] { return !doc->isPdf(); }));
+            QVERIFY(refused("Document::withPdfDocument", [&] {
+                bool called = false;
+                return !doc->withPdfDocument([&](fz_context *, pdf_document *) { called = true; })
+                       && !called;
+            }));
+            QTemporaryDir dir;
+            QVERIFY(dir.isValid());
+            const QString copy = dir.filePath(QStringLiteral("copy.pdf"));
+            QVERIFY(refused("Document::savePdfTo",
+                            [&] { return !doc->savePdfTo(copy) && !QFile::exists(copy); }));
+            QVERIFY(refused("RenderEngine::renderPageImage",
+                            [&] { return engine.renderPageImage(doc.get(), 0, 1.0, 0).isNull(); }));
+            QCOMPARE(Document::testing::refusals() - before, 13);
         }
         // Once the job lets go, the same thread is answered again.
         QVERIFY(doc->isPdf());
-        QCOMPARE(Document::testing::refusals() - before, 3);
+        QCOMPARE(Document::testing::refusals() - before, 13);
     }
 
-    // A refused page is not cached as empty: the text index reads it once the job
+    // A refused page is not cached as empty. The text index reads it once the job
     // lets go of the document.
     void textIndexReadsAPageRefusedDuringAHold()
     {
@@ -321,8 +396,69 @@ private slots:
                  qPrintable(index.pageText(0)));
     }
 
+    // The text index does not keep the links of a page it was refused, so the web
+    // address under a point is found once the job lets go of the document.
+    void textIndexFindsLinksOnAPageRefusedDuringAHold()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        RenderEngine engine;
+        auto doc = engine.openDocument(writeFormAndLinkPdf(dir));
+        QVERIFY(doc);
+        QPointF point;
+        {
+            TextIndex probe(engine.baseContext(), doc.get());
+            const QString text = probe.pageText(0);
+            const QString address = QStringLiteral("www.inet.se");
+            const int start = text.indexOf(address);
+            QVERIFY2(start >= 0, qPrintable(text));
+            const std::vector<QRectF> rects = probe.rangeRects(0, start, address.size());
+            QVERIFY(!rects.empty());
+            point = rects.front().center();
+        }
+        TextIndex index(engine.baseContext(), doc.get());
+        const int before = Document::testing::refusals();
+        {
+            SavingJob job{doc->lifetime()};
+            Stall stall(job);
+            QVERIFY(job.answered);
+            expectRefusal("TextIndex::ensure");
+            QVERIFY(!index.linkAt(0, point));
+            QCOMPARE(Document::testing::refusals() - before, 1);
+        }
+        const std::optional<TextLink> link = index.linkAt(0, point);
+        QVERIFY(link);
+        QCOMPARE(link->url, QStringLiteral("https://www.inet.se"));
+    }
+
+    // FormModel does not cache the empty field list of a page it was refused, so the
+    // page's fields appear once the job lets go of the document.
+    void formFieldsAppearAfterAHold()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        RenderEngine engine;
+        auto doc = engine.openDocument(writeFormAndLinkPdf(dir));
+        QVERIFY(doc);
+        QVERIFY(doc->hasForm());
+        FormModel form(*doc);
+        const int before = Document::testing::refusals();
+        {
+            SavingJob job{doc->lifetime()};
+            Stall stall(job);
+            QVERIFY(job.answered);
+            expectRefusal("Document::withPdfDocument");
+            QVERIFY(form.pageFields(0).empty());
+            QCOMPARE(Document::testing::refusals() - before, 1);
+        }
+        const std::vector<FormField> &fields = form.pageFields(0);
+        QCOMPARE(fields.size(), size_t(1));
+        QCOMPARE(fields.front().name, QStringLiteral("field1"));
+    }
+
     // A job that is stopped while another thread holds the gate stops waiting for
-    // it within a step, and the screen thread is answered again at once.
+    // it within a step. The screen thread is refused while the hold waits, and
+    // answered again as soon as it gives up.
     void holdGivesUpWhenStopped()
     {
         RenderEngine engine;
@@ -335,11 +471,13 @@ private slots:
             std::atomic<bool> stop{false};
             std::atomic<int> asked{0};
             std::atomic<bool> got{true};
+            std::chrono::steady_clock::time_point gaveUp;
             std::thread job([&] {
                 const Document::Hold hold(lifetime, [&] {
                     ++asked;
                     return stop.load();
                 });
+                gaveUp = std::chrono::steady_clock::now();
                 got = hold.document() != nullptr;
             });
             const auto joinJob = qScopeGuard([&] {
@@ -348,15 +486,24 @@ private slots:
                     job.join();
             });
             QTRY_VERIFY_WITH_TIMEOUT(asked.load() >= 2, 10000); // it waits in steps
-            QElapsedTimer timer;
-            timer.start();
+
+            // A query is refused while the hold still waits for the gate, so it cannot
+            // end up waiting for the job once the hold takes the gate.
+            expectRefusal("Document::isPdf");
+            QVERIFY(!doc->isPdf());
+            QCOMPARE(Document::testing::refusals() - before, 1);
+
+            const auto stopped = std::chrono::steady_clock::now();
             stop = true;
             job.join();
-            QVERIFY2(timer.elapsed() < 100, qPrintable(QStringLiteral("giving up took %1 ms")
-                                                           .arg(timer.elapsed())));
+            // Timed on the job thread, which leaves out waking this thread from join().
+            const auto gaveUpMs =
+                std::chrono::duration_cast<std::chrono::milliseconds>(gaveUp - stopped).count();
+            QVERIFY2(gaveUpMs < 100,
+                     qPrintable(QStringLiteral("giving up took %1 ms").arg(gaveUpMs)));
             QVERIFY(!got.load());
             QVERIFY(doc->isPdf()); // not refused, though the gate is still taken
-            QCOMPARE(Document::testing::refusals(), before);
+            QCOMPARE(Document::testing::refusals() - before, 1);
         }
 
         // A document that has closed is not held either.

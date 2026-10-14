@@ -159,6 +159,9 @@ std::atomic<int> screenRefusals{0};
 Document::Hold::Hold(std::shared_ptr<DocumentLifetime> lifetime, const std::function<bool()> &stop)
     : lifetime_(std::move(lifetime))
 {
+    // The screen thread never waits for a job, and inside one of its own queries a hold
+    // would wait forever.
+    Q_ASSERT(!QThread::isMainThread());
     if (!lifetime_)
         return;
     lifetime_->holds.fetch_add(1);
@@ -961,9 +964,9 @@ bool Document::withPdfDocument(const std::function<void(fz_context *, pdf_docume
 
 bool Document::savePdfTo(const QString &tmpPath, QString *error) const
 {
+    const ScreenQuery query(*lifetime_, "Document::savePdfTo");
     // MuPDF treats filenames as UTF-8 and converts to wide chars internally on
     // Windows, so pass UTF-8 bytes (not the local 8-bit encoding).
-    const ScreenQuery query(*lifetime_, "Document::savePdfTo");
     const QByteArray utf8 = tmpPath.toUtf8();
     bool wrote = false;
     const bool ran = !query.refused() && withPdfDocument([&](fz_context *ctx, pdf_document *pdoc) {
