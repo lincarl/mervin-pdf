@@ -94,6 +94,13 @@ Selecting it after that reservation keeps the live document when the snapshot
 finishes. Stop during a held snapshot keeps the document locked until the drive
 answers, then restores it with its edits.
 
+On Windows, logoff waits at most four seconds for a Save or unload snapshot already
+in progress to become recoverable. Mervin then allows logoff, including when the
+snapshot has not finished. Edits that still exist only in memory can be lost. This
+does not save other unsaved tabs or wait for replacing and reopening the original
+after a recovery manifest commits. If the OS cancels logoff, Save and unloading
+become available again.
+
 The exception is an unloaded tab without unsaved edits whose file was deleted, moved
 or renamed, such as the temporary copy of a mail attachment. It closes without a
 question, and Reopen Closed Tab does not offer it. Mervin judges the file as session

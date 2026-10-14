@@ -131,6 +131,8 @@ add_library(mervin_core STATIC
     src/ocr/OcrProvisioner.h
     src/session/SessionStore.cpp
     src/session/SessionStore.h
+    src/session/SessionEnd.cpp
+    src/session/SessionEnd.h
     src/session/StartupPlan.cpp
     src/session/StartupPlan.h
     src/session/ClosedTabStack.cpp

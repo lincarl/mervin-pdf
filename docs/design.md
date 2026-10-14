@@ -342,6 +342,44 @@ or having no available system tray preserves normal window closing. The process
 exits when its final window is actually closed. A file-open handoff can bring a
 hidden window back without creating a second copy of its document.
 
+On Windows, `commitDataRequest` uses a direct connection to
+`WindowManager::prepareSessionEnd`. `sessionend::RecoveryWrite` counts scheduled
+loaded Save and edited unload snapshots independently of their tab or GUI job slot.
+Admission and the initial count share one mutex, so a worker created before its
+first document Hold is included. The worker releases protection when its recovery
+manifest commits, or when failed or canceled work ends. Ordinary unsaved tabs,
+copies, exports, printing, original replacement and reopening do not start a grace
+period by themselves.
+
+The callback closes snapshot admission and polls memory state without processing
+GUI events, showing dialogs or accessing files. It uses a 3900 ms monotonic budget,
+leaving 100 ms within the four-second limit for returning. It allows session end
+when snapshots settle or the deadline expires. Edits without a committed recovery
+manifest can be lost. Repeated queries reuse the answer. A native WM_ENDSESSION
+filter resets admission after cancellation and retains it after successful end.
+Queued tab changes and dialogs wait for that outcome too. Cancellation posts their
+resumption for the next GUI turn, after Qt has restored Windows input handling.
+The successful session path skips the normal five-second close/write budget,
+restart and background-settlement delay.
+
+Qt 6.12 normally flushes every buffered C output stream after its logoff callback.
+A writer holding a stream lock can extend that wait beyond our deadline. The native
+filter forwards logoff queries for existing Qt windows back through Qt with only
+`ENDSESSION_LOGOFF` removed. It returns Qt's exact result and preserves the other
+flags, input suspension, process-wide callback and normal `WM_ENDSESSION` handling.
+This avoids the global flush without replacing Qt's session manager. Native
+helper windows and non-logoff queries retain their normal handling.
+
+Before a worker deletes a committed pre-adoption recovery, it atomically rearms
+its protection. If a session request already started, the worker keeps the copy
+and waits for the OS outcome. Cancellation permits deletion. Successful end keeps
+the discoverable copy for startup. `appfiles::removeRecovery` gates adopted
+recovery removals on its writer thread against an already active OS request,
+without adding snapshot protection. Cleanup admitted before the query remains
+ordinary cleanup, so obsolete copies do not add grace after a newer recovery or
+the original is durable. File calls occur outside the registry mutex. Ordinary
+appfiles jobs keep their existing behavior.
+
 The development-only `--profile <directory>` option redirects application files and
 Qt settings, and gives the process a separate single-instance identity. Tests and
 manual checks use it to avoid touching normal user state.
@@ -1012,7 +1050,7 @@ first window, which needs them; `ConfigPaths` creates the folders then, once. La
 `QSaveFile`, in the order asked. A newer write of a file drops a write of it that
 has not started and that nobody waits for. Closing a tab removes its recovery files
 the same way, the copy only once its document has closed on a background thread, and
-tabs restored lazily adopt the recovery manifests startup found. Quitting waits up
+tabs restored lazily adopt the recovery manifests startup found. Ordinary quitting waits up
 to 5 s in all for those closes and then the writes before `WindowManager` lets go of
 the single-instance pipe, so the next copy reads them. With a profile folder that
 stopped answering, the last writes land when it answers again or never, the process

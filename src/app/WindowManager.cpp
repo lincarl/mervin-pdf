@@ -7,6 +7,7 @@
 #include "ipc/Message.h"
 #include "ipc/SingleInstanceServer.h"
 #include "recent/PathKey.h"
+#include "session/SessionEnd.h"
 #include "render/Document.h"
 #include "render/RenderEngine.h"
 #include "ui/MainWindow.h"
@@ -30,6 +31,7 @@
 #include <QSet>
 #include <QStyleHints>
 #include <QTimer>
+#include <QWindow>
 
 #include <algorithm>
 #include <optional>
@@ -74,6 +76,13 @@ WindowManager::WindowManager()
     , viewStateFile_(ViewStateStore::defaultFile())
     , sessionFile_(SessionStore::defaultFile())
 {
+#ifdef Q_OS_WIN
+    qApp->installNativeEventFilter(this);
+#if QT_CONFIG(sessionmanager)
+    connect(qApp, &QGuiApplication::commitDataRequest, this,
+            [this](QSessionManager &) { prepareSessionEnd(); }, Qt::DirectConnection);
+#endif
+#endif
     Settings s = Settings::load();
     unloadInactiveMinutes_ = s.unloadInactiveMinutes;
     closeToTray_ = s.closeToTray;
@@ -130,6 +139,57 @@ WindowManager::WindowManager()
         runTabChanges();
     });
     activityTimer_->start();
+}
+
+sessionend::Result WindowManager::prepareSessionEnd(int graceMs)
+{
+    return sessionend::waitForRecovery(graceMs);
+}
+
+void WindowManager::finishSessionEnd(bool ended)
+{
+    sessionend::finishRequest(ended);
+    // The native filter runs before Qt restores input after cancellation. Resume
+    // queued dialogs next turn, once the platform processed that outcome.
+    if (!ended)
+        postTabChanges();
+}
+
+bool WindowManager::nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result)
+{
+    Q_UNUSED(result);
+#ifdef Q_OS_WIN
+    if (eventType == QByteArrayLiteral("windows_generic_MSG")
+        || eventType == QByteArrayLiteral("windows_dispatcher_MSG")) {
+        const auto *event = static_cast<const MSG *>(message);
+#if QT_CONFIG(sessionmanager)
+        constexpr LPARAM logoffFlag = static_cast<LPARAM>(ENDSESSION_LOGOFF);
+        if (event->message == WM_QUERYENDSESSION && (event->lParam & logoffFlag)
+            && !forwardingSessionQuery_) {
+            const auto windows = QGuiApplication::allWindows();
+            const bool owned = std::any_of(windows.cbegin(), windows.cend(), [event](QWindow *window) {
+                return window->handle() && reinterpret_cast<HWND>(window->winId()) == event->hwnd;
+            });
+            if (owned) {
+                // Qt 6.12 blocks input and emits commitDataRequest, then flushes
+                // every C stream for logoff. A locked writer can exceed our grace.
+                // Forward through Qt with only that flush flag removed, preserving
+                // its session state, callback and exact cancellation result.
+                const QScopedValueRollback guard(forwardingSessionQuery_, true);
+                *result = SendMessage(event->hwnd, event->message, event->wParam,
+                                      event->lParam & ~logoffFlag);
+                return true;
+            }
+        }
+#endif
+        if (event->message == WM_ENDSESSION)
+            finishSessionEnd(event->wParam != 0);
+    }
+#else
+    Q_UNUSED(eventType);
+    Q_UNUSED(message);
+#endif
+    return false; // Qt still handles the OS outcome and its normal quit signal.
 }
 
 void WindowManager::applyColorSchemeToQt(const QString &scheme)
@@ -865,6 +925,10 @@ QStringList WindowManager::openTabPaths() const
 
 WindowManager::~WindowManager()
 {
+#ifdef Q_OS_WIN
+    if (qApp)
+        qApp->removeNativeEventFilter(this);
+#endif
     shuttingDown_ = true;
     if (activityTimer_)
         activityTimer_->stop();
@@ -886,6 +950,10 @@ WindowManager::~WindowManager()
     // tab's recovery copy is removed once its document has closed on a background
     // thread, so those closes come first, and the updater's state, as a pending
     // update it put back, comes last, all within the same time.
+    // Windows already received its bounded answer. A stalled close, profile or
+    // updater must not add the ordinary five-second exit budget to logoff.
+    if (sessionend::active())
+        return;
     QElapsedTimer exitWait;
     exitWait.start();
     const auto left = [&exitWait] {
@@ -1164,7 +1232,7 @@ void WindowManager::applyMemorySettings(int minutes, bool closeToTray)
 
 void WindowManager::checkDocumentActivity()
 {
-    if (shuttingDown_ || quitting_ || checkingActivity_)
+    if (shuttingDown_ || quitting_ || checkingActivity_ || sessionend::active())
         return;
     QScopedValueRollback<bool> guard(checkingActivity_, true);
     updateTrayAvailability();

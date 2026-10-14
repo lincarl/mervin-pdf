@@ -3,6 +3,7 @@
 // the disk for them.
 #include "io/AppFiles.h"
 #include "io/MemoryFiles.h"
+#include "session/SessionEnd.h"
 
 #include <QDir>
 #include <QFile>
@@ -36,6 +37,8 @@ private slots:
     void writeCreatesItsFolder();
     void aWaitedWriteReportsItsResult();
     void publishedFilesReadFromMemory();
+    void recoveryRemovalResumesAfterCanceledSession();
+    void recoveryRemovalPreservesFilesAfterCompletedSession();
 };
 
 void TstAppFiles::writesLandInTheOrderAsked()
@@ -157,6 +160,50 @@ void TstAppFiles::publishedFilesReadFromMemory()
     QVERIFY(second != first);
     QCOMPARE(read(second + QStringLiteral("/arrow.png")), QByteArray("three"));
     QVERIFY(!QFile::exists(first + QStringLiteral("/arrow.png")));
+}
+
+void TstAppFiles::recoveryRemovalResumesAfterCanceledSession()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString recovery = dir.filePath(QStringLiteral("edited.pdf.json"));
+    const QString ordinary = dir.filePath(QStringLiteral("ordinary.json"));
+    const QString following = dir.filePath(QStringLiteral("following.json"));
+    appfiles::write(recovery, "committed edits");
+    appfiles::write(ordinary, "ordinary");
+    QVERIFY(appfiles::flush(10000));
+    const auto reset = qScopeGuard([] { mervin::sessionend::finishRequest(false); });
+    QCOMPARE(mervin::sessionend::waitForRecovery(0), mervin::sessionend::Result::Settled);
+    appfiles::remove(ordinary);
+    appfiles::removeRecovery(recovery);
+    appfiles::write(following, "after removal");
+    QVERIFY(!appfiles::flush(30));
+    QVERIFY(!QFile::exists(ordinary));
+    QCOMPARE(read(recovery), QByteArray("committed edits"));
+    QVERIFY(!QFile::exists(following));
+    mervin::sessionend::finishRequest(false);
+    QVERIFY(appfiles::flush(10000));
+    QVERIFY(!QFile::exists(recovery));
+    QCOMPARE(read(following), QByteArray("after removal"));
+}
+
+void TstAppFiles::recoveryRemovalPreservesFilesAfterCompletedSession()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString recovery = dir.filePath(QStringLiteral("edited.pdf.json"));
+    const QString ordinary = dir.filePath(QStringLiteral("ordinary.json"));
+    appfiles::write(recovery, "committed edits");
+    appfiles::write(ordinary, "ordinary");
+    QVERIFY(appfiles::flush(10000));
+    const auto reset = qScopeGuard([] { mervin::sessionend::finishRequest(false); });
+    QCOMPARE(mervin::sessionend::waitForRecovery(0), mervin::sessionend::Result::Settled);
+    appfiles::removeRecovery(recovery);
+    appfiles::remove(ordinary);
+    mervin::sessionend::finishRequest(true);
+    QVERIFY(appfiles::flush(10000));
+    QCOMPARE(read(recovery), QByteArray("committed edits"));
+    QVERIFY(!QFile::exists(ordinary));
 }
 
 QTEST_GUILESS_MAIN(TstAppFiles)

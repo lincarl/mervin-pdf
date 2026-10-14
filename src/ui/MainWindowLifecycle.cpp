@@ -267,6 +267,7 @@ bool MainWindow::canSuspendDocuments() const
     // Nested dialogs and document operations may hold raw document pointers. Defer until
     // their event loops return, including native print and save dialogs.
     return !closeConfirmed_ && !suspending_ && documentOperationDepth_ == 0
+        && !mervin::sessionend::active()
         && !QApplication::activeModalWidget() && !QApplication::activePopupWidget();
 }
 

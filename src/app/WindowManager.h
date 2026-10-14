@@ -8,9 +8,11 @@
 #include "recent/ViewStateStore.h"
 #include "session/ClosedTabStack.h"
 #include "session/SessionStore.h"
+#include "session/SessionEnd.h"
 #include "session/StartupPlan.h"
 
 #include <QList>
+#include <QAbstractNativeEventFilter>
 #include <QElapsedTimer>
 #include <QObject>
 #include <QPoint>
@@ -45,7 +47,7 @@ class CloseFlow;
 // Owns the shared RenderEngine, windows, recent history and view state. The primary process
 // routes IPC opens and owns the tray. Shutdown workers before freeing final
 // documents, and keep the MuPDF base context alive until every document is destroyed.
-class WindowManager : public QObject
+class WindowManager : public QObject, public QAbstractNativeEventFilter
 {
     Q_OBJECT
 
@@ -82,8 +84,14 @@ public:
     // focusExistingTab this only answers the question - it does not select the tab
     // or raise the window, which a background open must not do.
     bool isOpenAnywhere(const QString &canonicalPath, const TabPage *except = nullptr) const;
-    bool isClosing() const { return shuttingDown_ || sessionFinal_; }
+    bool isClosing() const { return shuttingDown_ || sessionFinal_ || sessionend::active(); }
     bool hasLoadingDocuments() const;
+
+    // Direct Windows session callback, on the GUI thread. Existing recovery
+    // snapshots get a bounded grace period, then logoff proceeds in all cases.
+    sessionend::Result prepareSessionEnd(int graceMs = sessionend::kGraceMs);
+    // Receives WM_ENDSESSION. Cancellation reopens snapshot admission.
+    void finishSessionEnd(bool ended);
 
     // Every file open in a tab, in any window of this process (canonical paths).
     // Extract Pages and Merge PDFs refuse to write over one: the viewer holds it
@@ -283,6 +291,7 @@ signals:
 protected:
     // Reapplies the theme on an OS theme or palette change (see the constructor).
     bool eventFilter(QObject *watched, QEvent *event) override;
+    bool nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result) override;
 
 private slots:
     // An open delivered by a later launch over the single-instance pipe.
@@ -351,6 +360,9 @@ private:
     MainWindow *stagedWindow_ = nullptr; // the window the batch opens into
     std::function<void()> stagedDone_;   // runs when stagedQueue_ empties
     MainWindow *active_ = nullptr;
+#ifdef Q_OS_WIN
+    bool forwardingSessionQuery_ = false; // GUI-thread native forwarding recursion guard
+#endif
     bool shuttingDown_ = false;
     bool quitting_ = false;
     bool checkingActivity_ = false;
