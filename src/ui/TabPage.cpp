@@ -345,11 +345,10 @@ struct TabPage::Unload {
     bool adopted = false;        // GUI ownership transfer
 };
 
-// The tab's background load, operation or in-place Save, shared by the tab and
-// the job's thread. The tab never destroys a running job. It takes the result,
-// waits for a load (stopLoading) or lets go of the
-// job (abandon), and the job ends on its own. An operation keeps its result in what
-// its work captured, so its job has no `result`, and it opens no document.
+// Shares a tab's load, operation, Save or Unload with its worker.
+// The tab adopts completion, waits for a load only through stopLoading, or
+// abandons the running job so its worker can finish and clean up.
+// Operation results stay in captured work; Save and Unload keep dedicated payloads.
 struct TabPage::Job {
     enum class Phase {
         Reading, // the job reads the document, or the operation runs

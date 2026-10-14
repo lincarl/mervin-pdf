@@ -342,7 +342,7 @@ private:
     bool loadStopped_ = false;
     std::optional<FreshOpen> freshOpen_;
     quint64 loadGeneration_ = 0;
-    // Owns the current load, operation or Save, including a stopped load retained for Retry.
+    // Owns the current load, operation, Save or Unload, including a stopped load retained for Retry.
     // The tab adopts results only from its matching job. Abandon releases GUI ownership
     // without waiting; synchronous file callers use stopLoading only for loads.
     std::shared_ptr<Job> job_;
