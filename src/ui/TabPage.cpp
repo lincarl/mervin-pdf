@@ -65,11 +65,13 @@ SourceStamp sourceStamp(const QString &path)
     return stamp;
 }
 
+/// Calculates the recovery folder without creating or inspecting it.
 QString recoveryDirectory()
 {
     return QDir(ConfigPaths::configDirPath()).filePath(QStringLiteral("recovery"));
 }
 
+/// Creates a private checkpoint file in the worker's captured recovery folder.
 QString createRecoveryFile(const QString &directory, QString *error)
 {
     if (!QDir().mkpath(directory)) {
@@ -309,7 +311,9 @@ struct TabPage::Save {
     std::vector<std::shared_ptr<Job>> priorLoads;
 };
 
+/// Owns one edited checkpoint until the GUI adopts it or disposal is queued.
 struct TabPage::Unload {
+    /// Queues removal of files that never transferred to the tab.
     ~Unload()
     {
         // Files stay job-owned until GUI adoption. Disposal never reads a drive
@@ -870,6 +874,7 @@ QStringList TabPage::recoverablePaths()
     return paths;
 }
 
+/// Adopts an unclaimed startup checkpoint using its cached manifest values.
 bool TabPage::adoptRecovery()
 {
     const QDir directory(recoveryDirectory());
@@ -969,11 +974,13 @@ bool TabPage::sourceChangedOnDisk() const
     return sourceStamp(path_) != saved_->source;
 }
 
+/// Identifies housekeeping checkpoint work in the current job slot.
 bool TabPage::isUnloading() const
 {
     return job_ && bool(job_->unload);
 }
 
+/// Reports a live tab's uncommitted checkpoint, excluding detached or stopped jobs.
 bool TabPage::hasPendingRecoveryWrite() const
 {
     if (!job_)
@@ -986,6 +993,7 @@ bool TabPage::hasPendingRecoveryWrite() const
     return job_->unload && !job_->unload->recoveryCommitted;
 }
 
+/// Cancels an unreserved unload or retains its document after an admitted snapshot.
 void TabPage::selectForUse()
 {
     if (!isUnloading())
@@ -1004,6 +1012,7 @@ void TabPage::selectForUse()
         finishStoppedOperation();
 }
 
+/// Stops housekeeping while preserving the close flow's separate user intent.
 void TabPage::abandonUnloadForClose()
 {
     if (!isUnloading())
@@ -1018,6 +1027,7 @@ void TabPage::abandonUnloadForClose()
     }
 }
 
+/// Releases clean documents immediately and schedules recovery for edited documents.
 bool TabPage::suspend(QString *error)
 {
     if (loading_) {
@@ -1057,6 +1067,7 @@ bool TabPage::suspend(QString *error)
     return true;
 }
 
+/// Freezes a hidden tab and writes its value-owned checkpoint on a worker.
 void TabPage::startUnload(std::shared_ptr<Unload> unload)
 {
     unload->original = path_;
@@ -1153,6 +1164,7 @@ void TabPage::startUnload(std::shared_ptr<Unload> unload)
     emit stateChanged();
 }
 
+/// Adopts a durable hidden checkpoint or keeps a selected tab's live document.
 void TabPage::finishUnload(const std::shared_ptr<Job> &job)
 {
     if (job != job_)

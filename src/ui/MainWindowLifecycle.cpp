@@ -25,6 +25,7 @@
 
 using mervin::TabPage;
 
+/// Routes a tab's load, operation and unload events through its owning window.
 void MainWindow::wireTabLifecycle(TabPage *tab)
 {
     if (tabConnections_.contains(tab))
@@ -229,6 +230,7 @@ void MainWindow::unwireTabLifecycle(TabPage *tab)
     suspensionFailed_.remove(tab);
 }
 
+/// Protects the selected document now and posts its resume outside current handlers.
 void MainWindow::scheduleCurrentResume()
 {
     const QPointer<MainWindow> self(this);
@@ -335,6 +337,7 @@ void MainWindow::clearDocumentSidebars()
         commentsSidebar_->setAnnotations({});
 }
 
+/// Requests a tab's unload without retaining a raw owner across viewer signals.
 bool MainWindow::suspendTab(TabPage *tab)
 {
     // A busy tab keeps its document until its operation ends.
@@ -361,6 +364,7 @@ bool MainWindow::suspendTab(TabPage *tab)
     return true;
 }
 
+/// Restores document context and reports a failed unload in its current owner.
 void MainWindow::reportUnloadFailure(TabPage *tab, const QString &error)
 {
     const QPointer<MainWindow> self(this);
@@ -384,6 +388,7 @@ void MainWindow::reportUnloadFailure(TabPage *tab, const QString &error)
         wm_->notifySuspensionFailure(message);
 }
 
+/// Schedules eligible inactive checkpoints while leaving visible documents resident.
 bool MainWindow::updateDocumentActivity(qint64 nowMs, int timeoutMinutes)
 {
     const QPointer<MainWindow> self(this);
@@ -412,6 +417,7 @@ bool MainWindow::updateDocumentActivity(qint64 nowMs, int timeoutMinutes)
     return released;
 }
 
+/// Applies the memory policy to tabs outside the visible document view.
 bool MainWindow::suspendHiddenDocuments()
 {
     const QPointer<MainWindow> self(this);

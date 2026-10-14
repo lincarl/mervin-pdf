@@ -265,6 +265,7 @@ private slots:
         QTest::newRow("encrypted") << true;
     }
 
+    /// Restores edited content after asynchronous checkpoint adoption.
     void editedDocumentRoundTrip()
     {
         QFETCH(bool, encrypted);
@@ -850,6 +851,7 @@ private slots:
     }
 #endif
 
+    /// Includes unfinished form text in the checkpoint before releasing the document.
     void unloadCommitsTheActiveFormEditor()
     {
         const QString path = profile_->filePath(QStringLiteral("form.pdf"));
@@ -872,6 +874,7 @@ private slots:
                  QStringLiteral("Text still being typed"));
     }
 
+    /// Keeps in-progress measurement points editable across recovery resume.
     void unfinishedMeasurementRemainsEditableAfterReload()
     {
         RenderEngine engine;
@@ -1146,6 +1149,7 @@ private slots:
         QVERIFY(!closeTab->isEnabled());
     }
 
+    /// Retains live edits when the recovery folder cannot accept a checkpoint.
     void failedCheckpointKeepsTheEditedDocumentLoaded()
     {
         RenderEngine engine;
@@ -1169,6 +1173,7 @@ private slots:
         QVERIFY(tab.hasRecoverySnapshot());
     }
 
+    /// Restores visible document context after checkpoint failure.
     void failedCheckpointKeepsCurrentDocumentThumbnails()
     {
         RenderEngine engine;
@@ -1203,6 +1208,7 @@ private slots:
         QCOMPARE(rows->count(), pageCount);
     }
 
+    /// Preserves the original source stamp for external-change confirmation after resume.
     void modifiedOriginalStillConflictsAfterCheckpointReload()
     {
         QTemporaryDir files;
@@ -1245,6 +1251,7 @@ private slots:
         QTest::newRow("encrypted") << true;
     }
 
+    /// Discovers durable recovery and restores edits even when the original is gone.
     void recoveryManifestRestoresEditedDocumentWithoutOriginal()
     {
         QFETCH(bool, encrypted);

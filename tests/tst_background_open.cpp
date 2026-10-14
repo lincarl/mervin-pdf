@@ -302,6 +302,7 @@ private slots:
         QVERIFY(bool(first) != bool(second));
     }
 
+    /// Retains distinct edited checkpoints when fresh opens share the original identity.
     void independentRecoveriesAreNotDiscardedByCanonicalDeduplication()
     {
         QTemporaryDir files;
@@ -470,6 +471,7 @@ private slots:
         QTest::newRow("already-stored") << true;
     }
 
+    /// Preserves recovery ownership when a fresh recovered open is stopped and retried.
     void recoveredFreshStopKeepsItsOriginalAndRetry()
     {
         QFETCH(bool, stored);

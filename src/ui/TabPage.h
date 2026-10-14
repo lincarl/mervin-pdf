@@ -88,6 +88,7 @@ public:
     // accepted, and unloadFinished reports an edited unload's eventual result.
     // False refuses scheduling.
     bool suspend(QString *error = nullptr);
+    /// Identifies a housekeeping checkpoint owned by the current job slot.
     bool isUnloading() const;
     // Selection cancels an unload before its first document reservation. Once
     // reserved, the job finishes but keeps the live document instead of unloading.
@@ -226,6 +227,7 @@ public:
 signals:
     void stateChanged();
     void resumeFinished(bool success, const QString &error, bool needsPassword);
+    /// Reports whether recovery adoption released the document or left it resident.
     void unloadFinished(bool unloaded, const QString &error);
     void freshLoadReady(const QString &canonical, quint64 generation);
     void freshOpenStopped(quint64 generation);
@@ -284,7 +286,9 @@ private:
     void saveCheckpoint(const std::shared_ptr<Job> &job);
     void finishSave(const std::shared_ptr<Job> &job);
     void completeSave(const SaveCompletion &completion);
+    /// Starts worker-owned recovery for a hidden edited tab.
     void startUnload(std::shared_ptr<Unload> unload);
+    /// Publishes durable recovery only when the tab remains eligible to unload.
     void finishUnload(const std::shared_ptr<Job> &job);
     // The slow clock. While a load or an operation runs, a poll reads what its job
     // reports, and after the slow delay without progress the placeholder or the wait

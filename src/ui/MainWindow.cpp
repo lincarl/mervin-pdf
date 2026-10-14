@@ -1834,6 +1834,7 @@ void MainWindow::showShortcuts()
     openSettings(SettingsDialog::Page::Shortcuts);
 }
 
+/// Refreshes selection and protects the document before its posted resume runs.
 void MainWindow::onCurrentTabChanged(int)
 {
     syncDocTabBar();

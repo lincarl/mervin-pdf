@@ -30,23 +30,27 @@
 using namespace mervin;
 
 namespace {
+/// Creates an isolated source fixture for checkpoint and replacement checks.
 QString copy(QTemporaryDir &files, const QString &name)
 {
     const QString path = files.filePath(name);
     return QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path) ? path : QString();
 }
 
+/// Reads fixture bytes for original and destination preservation checks.
 QByteArray bytes(const QString &path)
 {
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
 
+/// Adds a retained annotation through the real viewer model.
 bool edit(TabPage &tab, const QString &text = QStringLiteral("Retained edit"))
 {
     return tab.viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {}, text) >= 0;
 }
 
+/// Lists checkpoint files to detect abandoned recovery work.
 QStringList recoveryEntries()
 {
     return QDir(QDir(ConfigPaths::configDirPath()).filePath(QStringLiteral("recovery")))
@@ -54,12 +58,14 @@ QStringList recoveryEntries()
 }
 }
 
+/// Exercises checkpoint ownership through selection, Stop, close and adoption.
 class TstBackgroundUnload : public QObject
 {
     Q_OBJECT
     std::unique_ptr<QTemporaryDir> profile_;
 
 private slots:
+    /// Creates an isolated profile with deterministic activity and wait-bar settings.
     void init()
     {
         profile_ = std::make_unique<QTemporaryDir>();
@@ -72,6 +78,7 @@ private slots:
         TabPage::setSlowDelayForTesting(0);
     }
 
+    /// Releases stalls and drains document cleanup before removing the profile.
     void cleanup()
     {
         job::testing::release();
@@ -85,6 +92,7 @@ private slots:
         profile_.reset();
     }
 
+    /// Keeps path capture free of directory creation while preserving normal config setup.
     void profilePathDoesNotCreateItsDirectory()
     {
         const QString path = profile_->filePath(QStringLiteral("not-created/profile"));
@@ -95,6 +103,7 @@ private slots:
         QVERIFY(QFileInfo(path).isDir());
     }
 
+    /// Keeps the activity timer responsive while document access is held elsewhere.
     void activityTickReturnsDuringAnActualDocumentStall()
     {
         QTemporaryDir files;
@@ -137,6 +146,7 @@ private slots:
                  QStringLiteral("Another tab stays editable"));
     }
 
+    /// Preserves the live document when selection wins the first-Hold race.
     void selectionBeforeReservationCancelsWithoutRecoveryFiles()
     {
         RenderEngine engine;
@@ -164,6 +174,7 @@ private slots:
         QVERIFY(recoveryEntries().isEmpty());
     }
 
+    /// Applies selection protection before the later resume callback can run.
     void selectingTheActualTabCancelsBeforeTheQueuedResume()
     {
         QTemporaryDir files;
@@ -200,6 +211,7 @@ private slots:
         QVERIFY(recoveryEntries().isEmpty());
     }
 
+    /// Covers selection during Hold and after its first reservation has released.
     void selectionAfterReservation_data()
     {
         QTest::addColumn<bool>("afterRelease");
@@ -207,6 +219,7 @@ private slots:
         QTest::newRow("after Hold before manifest") << true;
     }
 
+    /// Retains the live document and removes a checkpoint completed after selection.
     void selectionAfterReservation()
     {
         QFETCH(bool, afterRelease);
@@ -245,6 +258,7 @@ private slots:
         QVERIFY(recoveryEntries().isEmpty());
     }
 
+    /// Keeps stopped snapshots locked until the worker releases document access.
     void stopDuringHoldKeepsTheTrappedNotice()
     {
         RenderEngine engine;
@@ -276,6 +290,7 @@ private slots:
         QVERIFY(recoveryEntries().isEmpty());
     }
 
+    /// Covers durability observations for loaded Save and edited unload.
     void workerManifestCommitEndsTheLocalDurabilityWindow_data()
     {
         QTest::addColumn<bool>("save");
@@ -283,6 +298,7 @@ private slots:
         QTest::newRow("edited unload") << false;
     }
 
+    /// Publishes durable recovery before queued GUI adoption.
     void workerManifestCommitEndsTheLocalDurabilityWindow()
     {
         QFETCH(bool, save);
@@ -323,6 +339,7 @@ private slots:
         QVERIFY(recoveryEntries().isEmpty());
     }
 
+    /// Covers owner deletion during snapshot access and an admitted manifest commit.
     void deletingTheTabDoesNotWaitOrKeepNewRecoveryFiles_data()
     {
         QTest::addColumn<bool>("committing");
@@ -330,6 +347,7 @@ private slots:
         QTest::newRow("manifest commit already began") << true;
     }
 
+    /// Lets deleted owners leave worker cleanup without waiting or keeping orphan files.
     void deletingTheTabDoesNotWaitOrKeepNewRecoveryFiles()
     {
         QFETCH(bool, committing);
@@ -362,6 +380,7 @@ private slots:
         QVERIFY(recoveryEntries().isEmpty());
     }
 
+    /// Preserves adopted edits when viewer signals synchronously request Stop.
     void stopDuringViewerDetachmentKeepsTheCommittedRecovery()
     {
         RenderEngine engine;
@@ -386,6 +405,7 @@ private slots:
         QVERIFY(QFileInfo::exists(tab.recoveryPath() + QStringLiteral(".json")));
     }
 
+    /// Transfers cleanup ownership before adoption signals can delete the tab.
     void deletingDuringAdoptionClosesTheDocumentAndRecovery()
     {
         RenderEngine engine;
@@ -411,6 +431,7 @@ private slots:
         QVERIFY(recoveryEntries().isEmpty());
     }
 
+    /// Covers Save and discard decisions after closing a held housekeeping snapshot.
     void closeStopsHousekeepingSilently_data()
     {
         QTest::addColumn<bool>("save");
@@ -418,6 +439,7 @@ private slots:
         QTest::newRow("Save after document release") << true;
     }
 
+    /// Separates internal unload abandonment from the user pressing Stop waiting.
     void closeStopsHousekeepingSilently()
     {
         QFETCH(bool, save);
@@ -473,6 +495,7 @@ private slots:
         }
     }
 
+    /// Delivers a failed checkpoint through the surviving owner after a tab move.
     void movedTabReportsProfileFailureInItsCurrentOwner()
     {
         QTemporaryDir files;
