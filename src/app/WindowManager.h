@@ -40,6 +40,7 @@ class SingleInstanceServer;
 
 class RenderEngine;
 class TabPage;
+class CloseFlow;
 
 // Owns the shared RenderEngine, windows, recent history and view state. The primary process
 // routes IPC opens and owns the tray. Shutdown workers before freeing final
@@ -98,11 +99,14 @@ public:
 
     // Explicit Quit/update shutdown bypasses closing to the tray. Prompt before destroying
     // any window, so cancelling preserves every open tab.
-    bool closeAllForQuit();
+    void closeAllForQuit();
     // Quit as above, then start Mervin again (see Relaunch.h); used after a change that
-    // only takes effect at startup. False when a save prompt was cancelled: nothing
-    // closes, and the change waits for the next start.
-    bool restart();
+    // only takes effect at startup. Cancel keeps the windows open, and the change
+    // waits for the next start.
+    void restart();
+    // The updater closes windows only if no wait or Save is required. A false
+    // answer may queue chosen saves, but never schedules a later shutdown.
+    bool tryCloseAllForUpdate();
     // Whether closing `window` hides it in the tray instead of closing it. A window
     // without documents closes for real while another window remains.
     bool canCloseToTray(const MainWindow *window) const;
@@ -285,6 +289,7 @@ private slots:
     void onInstanceMessage(QLocalSocket *socket, const mervin::ipc::Message &msg);
 
 private:
+    friend class CloseFlow;
     void onWindowDestroyed(MainWindow *window);
     void stagedStep(); // opens one document of stagedQueue_, then re-arms itself
 
@@ -340,6 +345,7 @@ private:
     QString viewStateFile_;     // persisted path for viewState_
     QString sessionFile_;       // persisted path for session_
     QList<MainWindow *> windows_;
+    QList<QPointer<CloseFlow>> closeFlows_;
     QList<StagedOpen> stagedQueue_;      // documents still to open, front first
     QStringList stagedOrder_;            // the session's saved order, for tab placement
     MainWindow *stagedWindow_ = nullptr; // the window the batch opens into

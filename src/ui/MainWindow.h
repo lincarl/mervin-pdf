@@ -29,6 +29,7 @@ class RenderEngine;
 class TabPage;
 class ThumbnailSidebar;
 class WindowManager;
+class CloseFlow;
 } // namespace mervin
 
 class QLineEdit;
@@ -99,8 +100,8 @@ public:
     // Rises with every hideToTray() across all windows, so the window hidden last has
     // the highest value. WindowManager restores tray windows in this order.
     quint64 trayOrder() const { return trayOrder_; }
-    bool prepareToClose();
-    void closeForQuit(); // call only after prepareToClose succeeds
+    // Bypasses questions and close-to-tray after approval, or for an empty window.
+    void closeForQuit();
     void applyMemorySettings(int minutes, bool closeToTray);
     // nowMs is monotonic process time; explicit input also makes deadline tests deterministic.
     bool updateDocumentActivity(qint64 nowMs, int timeoutMinutes);
@@ -190,6 +191,7 @@ private slots:
     void mergeDocuments();
 
 private:
+    friend class mervin::CloseFlow;
     // Extract Pages or Delete Pages (`mode`) for the current document. The one row
     // holds `seedPage` (0-based) when given: the clicked page from the page's Save
     // Page As, or for Delete the page in view. Extract without it holds every page.
@@ -277,14 +279,13 @@ private:
 
     // Close the tab at `index`. `remember` pushes it onto the process-wide reopen
     // history (Ctrl+Shift+T); it is false for a bulk close, whose caller has
-    // already recorded the whole bar through rememberOpenTabs(). False when the
-    // user kept the tab, by Cancel in the unsaved-changes question or through a
-    // failed save.
-    bool closeTabAt(int index, bool remember);
+    // already recorded the whole bar through rememberOpenTabs(). The request
+    // continues through the event loop and can be canceled.
+    void closeTabAt(int index, bool remember);
     // Remove and delete the tab at `index`, then record the session. The caller has
     // already asked about unsaved edits.
     void removeTabAt(int index);
-    bool confirmClose(mervin::TabPage *tab);
+    int askClose(mervin::TabPage *tab);
     bool saveTab(mervin::TabPage *tab);
     // Push one tab onto the reopen history. `index` is the slot to restore it to,
     // which mid-bulk-close is NOT its live index - see rememberOpenTabs().
@@ -309,6 +310,7 @@ private:
     void persistWindowState();
     // Run the queued tab changes on the next turn of the event loop.
     void postTabChanges();
+    QList<QPointer<mervin::CloseFlow>> closeFlows_; // standalone windows only
 
     // Marks a document operation of `window` for its lifetime. Unloading and tab
     // changes wait while one runs, since it may hold a tab or a document across

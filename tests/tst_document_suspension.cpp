@@ -1133,7 +1133,7 @@ private slots:
         QVERIFY(closeTab);
         QVERIFY(closeTab->isEnabled());
         closeTab->trigger();
-        QCOMPARE(window.tabCount(), 0);
+        QTRY_COMPARE(window.tabCount(), 0);
         QVERIFY(!closeTab->isEnabled());
     }
 

@@ -688,6 +688,40 @@ private slots:
         }
     }
 
+    // A close continuation must let the tool's password completion run first,
+    // then wait for the retried operation rather than deleting its tab early.
+    void closeWaitIncludesPasswordRetry()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("locked.pdf"));
+        const QString out = files.filePath(QStringLiteral("locked-rotated.pdf"));
+        QCOMPARE(QpdfService().encrypt(QStringLiteral(MERVIN_FIXTURE_PDF), path, {},
+                                       QStringLiteral("secret"), {},
+                                       QpdfService::Algorithm::AES256, {}, nullptr),
+                 QpdfService::Status::Ok);
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(mervin::testing::openAndWait(window, path, false, -1, true, QStringLiteral("secret")));
+        const QPointer<TabPage> tab(currentTab(window));
+        QVERIFY(tab);
+        tab->setPassword({});
+        QSignalSpy finished(tab, &TabPage::operationFinished);
+        holdAt(job::Step::Reading, path);
+        rotate(window, out);
+        QTRY_COMPARE(job::testing::held(), 1);
+        inputs_ << QStringLiteral("secret");
+        answers_ << QMessageBox::No;
+        QVERIFY(QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0)));
+        QTRY_VERIFY(!Bar(*tab).bar->isHidden());
+        job::testing::release();
+        QTRY_VERIFY_WITH_TIMEOUT(!tab, 10000);
+        QCOMPARE(finished.size(), 2);
+        QVERIFY(inputs_.isEmpty() && answers_.isEmpty());
+        QCOMPARE(window.tabCount(), 0);
+        QVERIFY(QFileInfo::exists(out));
+    }
+
     // While a test thread holds the busy tab's document, as a save job would, the
     // window answers switching tabs, the pointer over the tab, a resize, a theme change
     // and the form highlight setting at once, and asks the document nothing.
@@ -840,16 +874,21 @@ private slots:
     void quittingWhileAToolPromptIsOpen_data()
     {
         QTest::addColumn<QString>("prompt");
-        QTest::newRow("password") << QStringLiteral("password");
-        QTest::newRow("success") << QStringLiteral("success");
-        QTest::newRow("failure") << QStringLiteral("failure");
+        QTest::addColumn<bool>("destroyParent");
+        QTest::newRow("password Quit") << QStringLiteral("password") << false;
+        QTest::newRow("success Quit") << QStringLiteral("success") << false;
+        QTest::newRow("failure Quit") << QStringLiteral("failure") << false;
+        QTest::newRow("password parent destruction") << QStringLiteral("password") << true;
+        QTest::newRow("success parent destruction") << QStringLiteral("success") << true;
+        QTest::newRow("failure parent destruction") << QStringLiteral("failure") << true;
     }
 
-    // Window-modal prompts leave other windows usable. Quit there may destroy the
-    // prompt's owner while exec() still runs, so the prompt must have guarded ownership.
+    // Quit waits until the prompt is answered. Direct owner destruction also
+    // keeps the inherited prompt-lifetime regression coverage.
     void quittingWhileAToolPromptIsOpen()
     {
         QFETCH(QString, prompt);
+        QFETCH(bool, destroyParent);
         QTemporaryDir files;
         const QString source = files.filePath(QStringLiteral("plan.pdf"));
         const QString output = files.filePath(QStringLiteral("rotated.pdf"));
@@ -877,7 +916,7 @@ private slots:
             });
         const auto restore = qScopeGuard([] { job::testing::failWhen({}); });
         rotate(*host, output);
-        dialogs_.stop(); // this test quits instead of answering the completion prompt
+        dialogs_.stop();
         bool requested = false;
         QTimer quit;
         connect(&quit, &QTimer::timeout, this, [&] {
@@ -889,7 +928,14 @@ private slots:
                 return;
             quit.stop();
             requested = true;
-            manager.closeAllForQuit();
+            if (destroyParent) {
+                delete host.data();
+                delete other.data();
+            } else {
+                manager.closeAllForQuit();
+                QVERIFY(host && other);
+                modal->close();
+            }
         });
         quit.start(10);
         QTRY_VERIFY_WITH_TIMEOUT(requested, 10000);
@@ -1025,7 +1071,8 @@ private slots:
         QCOMPARE(toldIn_.first().data(), static_cast<QWidget *>(second));
     }
 
-    // A completion signal can close its tab before the tool delivers its result.
+    // A completion observer can destroy its sender before the tool delivers its
+    // result. Use direct destruction because an ordinary close is now queued.
     void completionSlotMayCloseItsTab()
     {
         QTemporaryDir files;
@@ -1038,9 +1085,9 @@ private slots:
         QVERIFY(mervin::testing::openAndWait(window, path));
         const QPointer<TabPage> tab(currentTab(window));
         QVERIFY(tab);
-        connect(tab, &TabPage::operationFinished, &window, [&window](bool completed) {
+        connect(tab, &TabPage::operationFinished, &window, [tab](bool completed) {
             if (completed)
-                QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0));
+                delete tab.data();
         });
 
         rotate(window, out);
@@ -1067,9 +1114,9 @@ private slots:
         QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         const QPointer<TabPage> tab(currentTab(window));
         QVERIFY(tab);
-        connect(tab, &TabPage::stateChanged, &window, [&window, tab] {
+        connect(tab, &TabPage::stateChanged, &window, [tab] {
             if (tab && tab->isUsable())
-                QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0));
+                delete tab.data();
         });
         const QString path = tab->path();
         holdAt(job::Step::Reading, path);
@@ -1097,9 +1144,9 @@ private slots:
         QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         const QPointer<TabPage> tab(currentTab(window));
         QVERIFY(tab);
-        connect(tab, &TabPage::stateChanged, &window, [&window, tab] {
+        connect(tab, &TabPage::stateChanged, &window, [tab] {
             if (tab && tab->isBusy())
-                QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0));
+                delete tab.data();
         });
         const QString path = tab->path();
         holdAt(job::Step::Reading, path);
@@ -1146,7 +1193,7 @@ private slots:
         window.restoreFromTray();
     }
 
-    void closingABusyTabStopsItsOperation_data()
+    void stoppingCloseWaitContinuesWithSave_data()
     {
         QTest::addColumn<bool>("window"); // close the window, or else the tab
         QTest::newRow("tab") << false;
@@ -1193,18 +1240,18 @@ private slots:
             QVERIFY(currentTab(*later)->viewer()->annotModel()->addTextNote(
                         0, {50, 50}, Qt::yellow, {}, QStringLiteral("Kept")) >= 0);
         }
-        answers_ << QMessageBox::Cancel;
+        answers_ << QMessageBox::No << QMessageBox::Cancel;
         if (intent == QStringLiteral("tab"))
             QVERIFY(QMetaObject::invokeMethod(host, "closeTab", Q_ARG(int, 0)));
         else if (intent == QStringLiteral("window"))
             QVERIFY(!host->close());
         else
-            QVERIFY(!manager.closeAllForQuit());
-        QVERIFY(answers_.isEmpty());
+            manager.closeAllForQuit();
+        QTRY_VERIFY(!Bar(*tab).bar->isHidden());
+        QCOMPARE(answers_.size(), 2);
         QVERIFY(tab && tab->isBusy());
         QCOMPARE(finished.size(), 0);
 
-        answers_ << QMessageBox::No; // the tool's "Open it now?" question
         job::testing::release();
         QTRY_VERIFY_WITH_TIMEOUT(tab && tab->isUsable(), 10000);
         QTRY_VERIFY(answers_.isEmpty());
@@ -1213,9 +1260,9 @@ private slots:
         QVERIFY(QFileInfo::exists(out));
     }
 
-    // Closing does not wait for the operation yet. A confirmed Save stops it and
-    // writes the edits in place. The copy the tool was making never appears.
-    void closingABusyTabStopsItsOperation()
+    // Close waits for the operation. Stop continues with the dirty question,
+    // and the chosen Save writes the edits. The stopped tool creates no copy.
+    void stoppingCloseWaitContinuesWithSave()
     {
         QFETCH(bool, window);
         QTemporaryDir files;
@@ -1245,12 +1292,18 @@ private slots:
         QElapsedTimer timer;
         timer.start();
         if (window)
-            QVERIFY(host->close());
+            QVERIFY(!host->close());
         else
             QVERIFY(QMetaObject::invokeMethod(host.get(), "closeTab", Q_ARG(int, 0)));
         QVERIFY2(timer.elapsed() < 1000, qPrintable(took("closing", timer)));
-        QVERIFY(answers_.isEmpty());
-        QCOMPARE(host->tabCount(), window ? 1 : 0);
+        QTRY_VERIFY(!Bar(*tab).bar->isHidden());
+        QCOMPARE(answers_.size(), 1);
+        tab->stopWaiting();
+        QTRY_VERIFY(answers_.isEmpty());
+        if (window)
+            QTRY_VERIFY(!host->isVisible());
+        else
+            QTRY_COMPARE(host->tabCount(), 0);
         host.reset();
 
         job::testing::release();

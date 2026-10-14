@@ -461,42 +461,37 @@ bool MainWindow::saveTab(TabPage *t)
     return true;
 }
 
-bool MainWindow::confirmClose(TabPage *tab)
+int MainWindow::askClose(TabPage *tab)
 {
     const OperationScope operation(this);
-    // A busy tab's editors were committed when its operation started. Cancel keeps
-    // that operation running. Removing the tab stops it in the tab's destructor.
-    if (!tab->isBusy()) {
+    const QPointer<TabPage> page(tab);
+    const QPointer<MainWindow> window(this);
+    // Active editors can contain text that has not emitted an edit signal yet.
+    if (tab->isUsable()) {
         auto *viewer = tab->viewer();
         viewer->commitActiveFormEditor();
+        if (!page || !window)
+            return QMessageBox::Discard;
         viewer->commitActiveAnnotEditor();
+        if (!page || !window)
+            return QMessageBox::Discard;
     }
     if (!tab->hasUnsavedEdits())
-        return true;
-    QMessageBox box(QMessageBox::Question, tr("Unsaved changes"),
+        return QMessageBox::Discard;
+    const QPointer<QMessageBox> box(new QMessageBox(QMessageBox::Question, tr("Unsaved changes"),
                     //: %1 is the file name.
                     tr("Save changes to %1?").arg(tab->tabTitle()),
-                    QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, this);
-    box.setDefaultButton(QMessageBox::Save);
+                    QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, this));
+    box->setDefaultButton(QMessageBox::Save);
+    box->setWindowModality(Qt::WindowModal);
     // Qt names this button after the platform ("Discard", or "Close without
     // Saving" on GNOME). Say what it does, in the app's own catalogs.
     //: Button in the unsaved-changes question. Closes the document and loses the
     //: changes made since it was last saved. The file on disk stays as it is.
-    box.button(QMessageBox::Discard)->setText(tr("Don't save"));
-    // The question runs its own event loop, in which the tab can go away. A tab
-    // that went has nothing left to save.
-    const QPointer<TabPage> page(tab);
-    const int answer = box.exec();
-    if (!page)
-        return answer != QMessageBox::Cancel;
-    // In-place Save requires a usable tab. Stop only after the user chooses Save.
-    if (answer == QMessageBox::Save && page->isBusy()) {
-        page->stopWaiting();
-        if (!page)
-            return true;
-    }
-    return answer == QMessageBox::Discard
-        || (answer == QMessageBox::Save && saveTab(page));
+    box->button(QMessageBox::Discard)->setText(tr("Don't save"));
+    const int answer = box->exec();
+    delete box.data();
+    return answer;
 }
 
 void MainWindow::exportMeasuredCopy()

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QElapsedTimer>
+#include <QPointer>
 #include <QWidget>
 #include "io/JobContext.h"
 #include "recent/ViewState.h"
@@ -25,6 +26,7 @@ class FindCard;
 class PanelStack;
 class StillPicture;
 class WaitBar;
+class CloseFlow;
 
 // One open document in a tab: owns the Document and contains its ViewerWidget.
 // Created with the window's shared RenderEngine (which must outlive the page).
@@ -76,6 +78,8 @@ public:
     // An operation runs (startOperation). The document stays loaded, but nothing may
     // use it until the operation ends.
     bool isBusy() const { return busy_; }
+    // Stop was chosen for the last operation. A new operation resets this flag.
+    bool isOperationStopped() const { return operationStopped_; }
     // The document is loaded and no operation runs, so the window may use it.
     bool isUsable() const { return doc_ && !busy_; }
     // Unloads the document. False for a busy tab, which keeps it.
@@ -115,6 +119,14 @@ public:
     // Retry. Takes back a stopped load that still reads, or starts a new one, which
     // waits for a stopped load that still closes what it read.
     void retryLoad();
+    // Close abandons a housekeeping load without blocking or treating that
+    // internal abandonment as the user pressing Stop waiting.
+    void abandonLoadForClose();
+    // Close may offer Stop again while a chosen Save waits for a held document.
+    void showWaitImmediately(bool offerStoppedStop = false);
+    void clearCloseWait();
+    quint64 editGeneration() const { return editGeneration_; }
+    bool isClosing() const { return !closeOwner_.isNull(); }
 
     // How long a load or an operation waits without progress before the tab names
     // the file or folder it waits for and offers Stop waiting.
@@ -183,12 +195,16 @@ signals:
     // The operation ended and the tab is usable: `completed` when its job returned,
     // false when the user stopped waiting.
     void operationFinished(bool completed);
+    // The user stopped the current wait. Close distinguishes stopping an
+    // existing operation from stopping a prerequisite of the chosen Save.
+    void waitingStopped();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
 
 private:
+    friend class CloseFlow;
     struct SavedState;
     struct OpenResult;
     struct Job;
@@ -261,6 +277,7 @@ private:
     WaitBar *waitBar_ = nullptr;    // over the still picture once the operation is slow
     bool loading_ = false;
     bool busy_ = false;             // see isBusy()
+    bool operationStopped_ = false;
     QString destination_;           // the running operation's Operation::destination
     std::function<void()> finished_; // the running operation's Operation::finished
     int scrollColumn_ = 0;          // the width the viewer's vertical scroll bar took
@@ -268,6 +285,9 @@ private:
     QString barName_;
     QString barFolder_;
     bool retainedEdits_ = false;
+    quint64 editGeneration_ = 0;
+    QPointer<CloseFlow> closeOwner_;
+    bool closeWaitStop_ = false;
     // A stopped load or fresh failure waits for an explicit Retry or password.
     // Selecting the tab does not start another read.
     bool loadStopped_ = false;

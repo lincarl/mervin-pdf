@@ -779,8 +779,17 @@ private slots:
             QCOMPARE(reasons.last(), QStringLiteral("The password was not accepted."));
     }
 
-    void quitFromAnotherWindowDestroysTheActivePasswordPromptSafely()
+    void quittingWithAnActivePasswordPrompt_data()
     {
+        QTest::addColumn<int>("disposition");
+        QTest::newRow("answer password before queued Quit") << 0;
+        QTest::newRow("cancel password before queued Quit") << 1;
+        QTest::newRow("direct owner destruction") << 2;
+    }
+
+    void quittingWithAnActivePasswordPrompt()
+    {
+        QFETCH(int, disposition);
         QTemporaryDir files;
         const QString path = files.filePath(QStringLiteral("encrypted.pdf"));
         QpdfService service;
@@ -791,7 +800,7 @@ private slots:
         QPointer<MainWindow> owner = manager.createWindow();
         QPointer<MainWindow> other = manager.createWindow();
         bool quitRequested = false;
-        bool accepted = false;
+        bool closingBeforeApproval = false;
         QPointer<QInputDialog> activePrompt;
         QTimer quit;
         quit.setInterval(5);
@@ -802,13 +811,28 @@ private slots:
             activePrompt = prompt;
             quit.stop();
             quitRequested = true;
-            accepted = manager.closeAllForQuit();
+            if (disposition == 2) {
+                delete owner.data();
+                delete other.data();
+            } else {
+                manager.closeAllForQuit();
+                QVERIFY(owner && other && activePrompt);
+                // A pending Quit includes new loads and windows. Only final
+                // approval marks the manager as closing.
+                closingBeforeApproval = manager.isClosing();
+                if (disposition == 0) {
+                    prompt->setTextValue(QStringLiteral("correct"));
+                    prompt->accept();
+                } else {
+                    prompt->reject();
+                }
+            }
             QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         });
         quit.start();
         QVERIFY(owner->openFile(path));
         QTRY_VERIFY(quitRequested);
-        QVERIFY(accepted);
+        QVERIFY(!closingBeforeApproval);
         QTRY_VERIFY(!owner && !other && !activePrompt);
         QVERIFY(!QApplication::activeModalWidget());
     }

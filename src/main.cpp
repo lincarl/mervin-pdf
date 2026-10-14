@@ -412,7 +412,7 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
     // Start asynchronous update handling after first paint in the primary process; skip startup
     // timing runs. Settings changes cancel background work through WindowManager.
     mervin::Updater updater;
-    updater.setCloseWindowsHandler([&wm] { return wm.closeAllForQuit(); });
+    updater.setCloseWindowsHandler([&wm] { return wm.tryCloseAllForUpdate(); });
     QObject::connect(&wm, &mervin::WindowManager::autoUpdateChanged, &updater,
                      &mervin::Updater::onAutoUpdateChanged);
     if (!cli.quitAfterStartup)

@@ -498,6 +498,22 @@ set_tests_properties(tst_background_open PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     TIMEOUT 180
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+qt_add_executable(tst_close_flow tst_close_flow.cpp)
+target_link_libraries(tst_close_flow PRIVATE mervin_app Qt6::Test)
+set_target_properties(tst_close_flow PROPERTIES WIN32_EXECUTABLE OFF)
+target_compile_definitions(tst_close_flow PRIVATE MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
+add_test(NAME tst_close_flow COMMAND tst_close_flow)
+set_tests_properties(tst_close_flow PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+qt_add_executable(tst_close_restart tst_close_restart.cpp)
+target_link_libraries(tst_close_restart PRIVATE mervin_app Qt6::Test)
+set_target_properties(tst_close_restart PROPERTIES WIN32_EXECUTABLE OFF)
+target_compile_definitions(tst_close_restart PRIVATE MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
+add_test(NAME tst_close_restart COMMAND tst_close_restart)
+set_tests_properties(tst_close_restart PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 set_tests_properties(tst_ink_rects PROPERTIES LABELS "optional-corpus")
 
 target_compile_definitions(tst_document_output PRIVATE MERVIN_SCAN_PDF="${MERVIN_FIXTURES_DIR}/scan.pdf")

@@ -692,11 +692,12 @@ private slots:
         QVERIFY(model->addTextNote(0, {50, 50}, Qt::yellow, {}, "pending") >= 0);
         answers_.append(QMessageBox::Cancel);
         QVERIFY(QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0)));
+        QTRY_VERIFY(answers_.isEmpty());
         QCOMPARE(window.tabCount(), 1);
         QVERIFY(tab->viewer()->hasUnsavedEdits());
         answers_.append(QMessageBox::Discard);
         QVERIFY(QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0)));
-        QCOMPARE(window.tabCount(), 0);
+        QTRY_COMPARE(window.tabCount(), 0);
         // The app's own text, not the platform's "Discard", so every catalog has it.
         QCOMPARE(clicked_.last(), QStringLiteral("Don't save"));
     }
@@ -732,6 +733,7 @@ private slots:
         });
         answer.start(5);
         QVERIFY(QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0)));
+        QTRY_COMPARE(tabFiles(window), QStringList{QStringLiteral("other.pdf")});
         answer.stop();
         QVERIFY(inserted);
         QCOMPARE(tabFiles(window), QStringList{QStringLiteral("other.pdf")});
@@ -774,6 +776,7 @@ private slots:
         });
         answer.start(5);
         QVERIFY(QMetaObject::invokeMethod(&window, "closeAllTabs"));
+        QTRY_COMPARE(tabFiles(window), QStringList{QStringLiteral("arrived.pdf")});
         answer.stop();
         QVERIFY(inserted);
         QCOMPARE(questions, 1);
@@ -814,7 +817,8 @@ private slots:
             box->button(QMessageBox::Discard)->click();
         });
         answer.start(5);
-        QVERIFY(window.close());
+        QVERIFY(!window.close());
+        QTRY_VERIFY(inserted && !tab->isClosing());
         answer.stop();
         QVERIFY(inserted);
         QCOMPARE(asked, QStringList{QStringLiteral("Save changes to edited.pdf?")});
@@ -953,7 +957,9 @@ private slots:
         QVERIFY(secondTab->suspend());
 
         answers_ << QMessageBox::Discard << QMessageBox::Cancel;
-        QVERIFY(!manager.closeAllForQuit());
+        manager.closeAllForQuit();
+        QTRY_VERIFY(answers_.isEmpty());
+        QTRY_VERIFY(!firstTab->isClosing() && !secondTab->isClosing());
         QCOMPARE(manager.openTabPaths().size(), 2);
         QVERIFY(firstTab->isSuspended());
         QVERIFY(secondTab->isSuspended());
@@ -961,7 +967,9 @@ private slots:
         QVERIFY(secondTab->hasUnsavedEdits());
 
         answers_ << QMessageBox::Save << QMessageBox::Cancel;
-        QVERIFY(!manager.closeAllForQuit());
+        manager.closeAllForQuit();
+        QTRY_VERIFY(answers_.isEmpty());
+        QTRY_VERIFY(!firstTab->isClosing() && !secondTab->isClosing());
         QCOMPARE(manager.openTabPaths().size(), 2);
         QVERIFY(!firstTab->hasUnsavedEdits());
         QVERIFY(secondTab->isSuspended());
@@ -1037,6 +1045,7 @@ private slots:
         // Every later save keeps it: opening and closing other documents.
         QVERIFY(mervin::testing::openAndWait(*window, other));
         QVERIFY(QMetaObject::invokeMethod(window, "closeTab", Q_ARG(int, 1)));
+        QTRY_COMPARE(window->tabCount(), 1);
         QVERIFY(loadSaved(onDisk));
         QCOMPARE(onDisk.paths(), QStringList{open});
         QCOMPARE(onDisk.unavailable().size(), 1);
@@ -1415,7 +1424,7 @@ private slots:
         // Closing it still asks about the edits.
         answers_.append(QMessageBox::Discard);
         QVERIFY(QMetaObject::invokeMethod(window, "closeTab", Q_ARG(int, 0)));
-        QCOMPARE(window->tabCount(), 1);
+        QTRY_COMPARE(window->tabCount(), 1);
     }
 
     // While a dialog is open the window keeps the tab, since the dialog may depend
@@ -1553,6 +1562,7 @@ private slots:
         });
         answer.start(5);
         QVERIFY(QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, 0)));
+        QTRY_VERIFY(asked);
         answer.stop();
         QVERIFY(asked);
         QVERIFY(waited);
