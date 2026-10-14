@@ -97,8 +97,9 @@ public:
         // The folder the operation writes to. The wait bar names it, also while the
         // job reads a file in it.
         QString destination;
-        // The job, in a job::Scope on a background thread. It uses no widget and not
-        // the shown document, and keeps its result in what it captured.
+        // The job, in a job::Scope on a background thread. It uses no widget. Live
+        // document reads reserve job::beginHolding() and take Document::Hold using
+        // a captured lifetime, then release both before independent file work.
         std::function<void()> work;
         // Runs on the screen thread once the job has returned and the tab is usable
         // again. Not after the user stopped waiting, nor once the tab is gone.
@@ -111,11 +112,12 @@ public:
     // the picture names the folder or file the job waits for and offers Stop waiting.
     void startOperation(Operation operation);
 
-    // Stop waiting. Never waits for the job, whose file call goes on until the drive
-    // answers. An operation's tab is usable at once, and the operation begins no commit
-    // and changes the tab no more. For a load, the tab shows that its document is
-    // unloaded, with Retry, and keeps its recovery copy. The read goes on, so Retry can
-    // take it back.
+    // Stop waiting without joining the worker. Its file call continues until the
+    // drive answers. A held snapshot keeps the tab locked until document release;
+    // otherwise the operation restores use immediately. Stop suppresses completion
+    // delivery and new commits, but an already-started rename may finish. A fresh
+    // open closes its tab. A recovery load keeps its unloaded tab and copy with
+    // Retry, which can take back the blocked read.
     void stopWaiting();
     // Retry. Takes back a stopped load that still reads, or starts a new one, which
     // waits for a stopped load that still closes what it read.
@@ -245,6 +247,8 @@ private:
     void finishOperation(const std::shared_ptr<Job> &job);
     // Shows the viewer again in place of the still picture.
     void endOperation();
+    // Detaches a stopped operation only once its document reservation is released.
+    void finishStoppedOperation();
     // The slow clock. While a load or an operation runs, a poll reads what its job
     // reports, and after the slow delay without progress the placeholder or the wait
     // bar names what it waits for.
@@ -289,6 +293,7 @@ private:
     // The file the wait bar names, empty while the job saves, and its folder.
     QString barName_;
     QString barFolder_;
+    bool barTrapped_ = false;
     bool retainedEdits_ = false;
     quint64 editGeneration_ = 0;
     QPointer<CloseFlow> closeOwner_;

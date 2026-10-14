@@ -325,8 +325,8 @@ TabPage::TabPage(RenderEngine *engine, QWidget *parent)
     retryButton_ = retry;
     //: Button beside a notice that the drive is not answering. Under the notice of a
     //: document that loads, it gives up the load and leaves the document unloaded. In
-    //: the bar over a document that a tool such as Rotate Pages works on, it gives up
-    //: the tool's work, so the document can be used again.
+    //: the bar over a document that a tool works on, it gives up the tool's work.
+    //: A stopped job that still uses the document keeps it unavailable until it releases it.
     const QString stopText = tr("Stop waiting");
     auto *stop = new QPushButton(stopText, placeholder_);
     stop->setObjectName(QStringLiteral("stopDocumentLoad"));
@@ -1173,14 +1173,15 @@ void TabPage::stopWaiting()
         operationStopped_ = true;
         // The job gives up at its next step, and a commit it already began completes.
         // Either way the tab treats the operation as not done.
-        job_->state.stop();
-        abandon(job_, {});
-        job_.reset();
+        const job::State::Stop stopped = job_->state.stop();
         finished_ = nullptr;
         const QPointer<TabPage> self(this);
-        endOperation();
-        if (self)
-            emit operationFinished(false);
+        if (stopped == job::State::Stop::Holding) {
+            showWaitBar(job_->state.snapshot());
+            emit stateChanged();
+        } else {
+            finishStoppedOperation();
+        }
         if (self)
             emit waitingStopped();
         return;
@@ -1225,8 +1226,6 @@ void TabPage::showWaitImmediately(bool offerStoppedStop)
         return;
     const auto now = job_->state.snapshot();
     if (busy_) {
-        if (offerStoppedStop)
-            waitBar_->stopButton()->show();
         showWaitBar(now);
     } else if (loading_) {
         slowFile_ = now.path.isEmpty() ? job_->source : now.path;
@@ -1290,6 +1289,7 @@ void TabPage::startOperation(Operation operation)
     finished_ = std::move(operation.finished);
     barName_.clear();
     barFolder_.clear();
+    barTrapped_ = false;
     const auto job = std::make_shared<Job>(QString());
     job_ = job;
     background::start([tab = QPointer<QObject>(this), job, work = std::move(operation.work)] {
@@ -1312,6 +1312,7 @@ void TabPage::startOperation(Operation operation)
     emit stateChanged();
 }
 
+// Adopts the exact completed operation and delivers its result after restoring use.
 void TabPage::finishOperation(const std::shared_ptr<Job> &job)
 {
     if (job != job_)
@@ -1324,14 +1325,29 @@ void TabPage::finishOperation(const std::shared_ptr<Job> &job)
     }
     job_.reset();
     // Copied first, as what the signals start may close the tab.
+    const bool stopped = job->state.stopped();
     const std::function<void()> finished = std::exchange(finished_, nullptr);
     const QPointer<TabPage> self(this);
     endOperation();
     if (!self)
         return;
-    emit operationFinished(true);
-    if (self && finished)
+    emit operationFinished(!stopped);
+    if (self && !stopped && finished)
         finished();
+}
+
+// Restores use after a stopped operation releases its live document reservation.
+void TabPage::finishStoppedOperation()
+{
+    if (!job_ || job_->state.snapshot().holding)
+        return;
+    abandon(job_, {});
+    job_.reset();
+    finished_ = nullptr;
+    const QPointer<TabPage> self(this);
+    endOperation();
+    if (self)
+        emit operationFinished(false);
 }
 
 void TabPage::endOperation()
@@ -1380,6 +1396,7 @@ void TabPage::stopSlowClock()
     slowFile_.clear();
 }
 
+// Updates the wait notice and releases stopped tabs when their reservation ends.
 void TabPage::pollJob()
 {
     if (!(loading_ || busy_) || !job_) {
@@ -1394,6 +1411,10 @@ void TabPage::pollJob()
         quiet_.restart();
     seen_ = now;
     if (busy_) {
+        if (now.stopped && !now.holding) {
+            finishStoppedOperation();
+            return;
+        }
         // Once shown, the bar stays until the operation ends, and names the latest step.
         if (!waitBar_->isHidden() || quiet_.elapsed() >= slowDelayMs)
             showWaitBar(now);
@@ -1423,6 +1444,7 @@ void TabPage::updateSlowNotice()
         placeholderLabel_->setText(text);
 }
 
+// Shows the current file step or the trapped Stop notice without reading the document.
 void TabPage::showWaitBar(const job::State::Snapshot &now)
 {
     // A write names its folder, and a commit the file it replaces. A read of a file in
@@ -1447,11 +1469,24 @@ void TabPage::showWaitBar(const job::State::Snapshot &now)
     case job::Step::Printing:
         break;
     }
-    if (!waitBar_->isHidden() && name == barName_ && folder == barFolder_)
+    const bool trapped = now.stopped && now.holding;
+    const bool offerStop = !trapped || closeWaitStop_;
+    if (!waitBar_->isHidden() && name == barName_ && folder == barFolder_
+        && trapped == barTrapped_ && waitBar_->stopButton()->isHidden() == !offerStop)
         return;
     barName_ = name;
     barFolder_ = folder;
-    waitBar_->setNotice(waitSentence(name), name, QDir::toNativeSeparators(folder));
+    barTrapped_ = trapped;
+    waitBar_->stopButton()->setVisible(offerStop);
+    if (trapped) {
+        //: A stopped job still holds the shown document while a file call finishes.
+        //: Locked means unavailable for viewing or editing, not password protection
+        //: or file permissions. The tab becomes usable when the job releases it.
+        const QString notice = tr("Stopped waiting. The document stays locked until the drive answers.");
+        waitBar_->setNotice([notice](const QString &, const QString &) { return notice; }, {}, {});
+    } else {
+        waitBar_->setNotice(waitSentence(name), name, QDir::toNativeSeparators(folder));
+    }
     if (waitBar_->isHidden()) {
         waitBar_->show();
         waitBar_->raise();

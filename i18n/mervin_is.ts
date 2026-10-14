@@ -3387,7 +3387,7 @@ Opna það núna?</translation>
     </message>
     <message>
         <source>Stop waiting</source>
-        <extracomment>Button beside a notice that the drive is not answering. Under the notice of a document that loads, it gives up the load and leaves the document unloaded. In the bar over a document that a tool such as Rotate Pages works on, it gives up the tool&apos;s work, so the document can be used again.</extracomment>
+        <extracomment>Button beside a notice that the drive is not answering. Under the notice of a document that loads, it gives up the load and leaves the document unloaded. In the bar over a document that a tool works on, it gives up the tool&apos;s work. A stopped job that still uses the document keeps it unavailable until it releases it.</extracomment>
         <translation>Hætta að bíða</translation>
     </message>
     <message>
@@ -3415,6 +3415,11 @@ Opna það núna?</translation>
         <source>Loading</source>
         <extracomment>Shown in place of the page while the document loads.</extracomment>
         <translation>Hleðsla</translation>
+    </message>
+    <message>
+        <source>Stopped waiting. The document stays locked until the drive answers.</source>
+        <extracomment>A stopped job still holds the shown document while a file call finishes. Locked means unavailable for viewing or editing, not password protection or file permissions. The tab becomes usable when the job releases it.</extracomment>
+        <translation>Biðinni var hætt. Skjalið er áfram læst þar til drifið svarar.</translation>
     </message>
 </context>
 <context>

@@ -31,6 +31,7 @@
 #include "ui/TabPage.h"
 #include "ui/Theme.h"
 #include "ui/ThemeTokens.h"
+#include "ui/ViewerWidget.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -580,12 +581,13 @@ void TstTranslationLayout::waitBar()
             || (step == mervin::job::Step::Reading && QFileInfo(path).path() == folder);
     });
     mervin::TabPage::setSlowDelayForTesting(0);
+    mervin::RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    // Release a held document before window/engine teardown, including a failed check.
     const auto restore = qScopeGuard([] {
         mervin::job::testing::release();
         mervin::TabPage::setSlowDelayForTesting(mervin::TabPage::kSlowMs);
     });
-    mervin::RenderEngine engine;
-    MainWindow window(&engine, nullptr);
     window.setAttribute(Qt::WA_DontShowOnScreen);
     window.show();
     settle();
@@ -616,6 +618,51 @@ void TstTranslationLayout::waitBar()
     QTRY_VERIFY(stop->isVisible());
     QVERIFY(stop->parentWidget()->findChild<QLabel *>()->text().contains(QStringLiteral("Revision")));
     inspect(window, QStringLiteral("Wait bar reading an unbroken file name"), tab);
+    tab->stopWaiting();
+    mervin::job::testing::release();
+    QTRY_COMPARE(mervin::job::testing::held(), 0);
+
+    // Stop hides its button while an actual document Hold waits for the drive.
+    // The longer notice gets the full bar width at every language/font/window size.
+    mervin::job::testing::holdWhen([folder](mervin::job::Step step, const QString &path) {
+        return step == mervin::job::Step::Writing && path == folder;
+    });
+    const auto lifetime = tab->viewer()->document()->lifetime();
+    mervin::TabPage::Operation trapped;
+    trapped.destination = folder;
+    trapped.work = [lifetime, folder] {
+        if (!mervin::job::beginHolding())
+            return;
+        const auto release = qScopeGuard([] { mervin::job::endHolding(); });
+        const mervin::Document::Hold hold(lifetime, mervin::job::stopped);
+        if (hold.document())
+            mervin::job::writing(folder);
+    };
+    tab->startOperation(std::move(trapped));
+    QTRY_VERIFY(stop->isVisible());
+    QTRY_COMPARE(mervin::job::testing::held(), 1);
+    tab->stopWaiting();
+    QVERIFY(tab->isBusy());
+    QVERIFY(tab->isOperationStopped());
+    QVERIFY(stop->isHidden());
+    QVERIFY(stop->parentWidget()->isVisible());
+    auto *notice = stop->parentWidget()->findChild<QLabel *>(QStringLiteral("waitBarText"));
+    QVERIFY(notice);
+    QCOMPARE(notice->text(), mervin::TabPage::tr(
+        "Stopped waiting. The document stays locked until the drive answers."));
+    inspect(window, QStringLiteral("Stopped wait bar while the document remains locked"), tab);
+    mervin::job::testing::release();
+    QTRY_VERIFY(tab->isUsable());
+    QVERIFY(stop->parentWidget()->isHidden());
+
+    // A subsequent ordinary operation must restore the Stop button and normal text.
+    mervin::job::testing::holdWhen([folder](mervin::job::Step step, const QString &path) {
+        return step == mervin::job::Step::Writing && path == folder;
+    });
+    tab->startOperation(saving);
+    QTRY_VERIFY(stop->isVisible());
+    QVERIFY(notice->text() != mervin::TabPage::tr(
+        "Stopped waiting. The document stays locked until the drive answers."));
     tab->stopWaiting();
 }
 

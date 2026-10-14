@@ -62,14 +62,6 @@ namespace {
 
 using mervin::PageOps;
 
-// Whether two paths name the same file. QFileInfo equality also holds for two
-// paths that do not exist, so with a tab's original deleted every new name looked
-// like the original.
-bool sameFile(const QString &a, const QString &b)
-{
-    return mervin::fileKey(QFileInfo(a)) == mervin::fileKey(QFileInfo(b));
-}
-
 // Shows a message that blocks only `window`, so the other windows stay usable.
 void tellInWindow(QWidget *window, QMessageBox::Icon icon, const QString &title,
                   const QString &text)
@@ -293,87 +285,223 @@ void MainWindow::openSecurity()
     dlg.exec();
 }
 
-void MainWindow::saveAsCopy()
-{
-    const OperationScope operation(this);
-    TabPage *t = currentTab();
-    ViewerWidget *v = currentViewer();
-    if (!t || !v)
-        return;
-    const QFileInfo fi(t->path());
-    const QString suggested = fi.absolutePath() + QLatin1Char('/') + fi.completeBaseName()
-                              + QStringLiteral("-copy.pdf");
-    const QString out = QFileDialog::getSaveFileName(this, tr("Save as Copy"), suggested,
-                                                     //: File type filter. Keep the pattern
-                                                     //: in parentheses.
-                                                     tr("PDF documents (*.pdf)"));
-    if (out.isEmpty())
-        return;
-    if (sameFile(out, t->path())) {
-        QMessageBox::warning(this, tr("Save as Copy"),
-                             //: "Save edits" is a command in the Save menu. Use its
-                             //: translation here.
-                             tr("Choose a different file name - use Save edits to write back to "
-                                "the original."));
-        return;
-    }
-
-    if (wm_ && wm_->isOpenAnywhere(QFileInfo(out).canonicalFilePath())) {
-        QMessageBox::warning(this, tr("Save as Copy"), tr("The destination is open in a tab."));
-        return;
-    }
-    v->commitActiveFormEditor();
-    v->commitActiveAnnotEditor();
-    QTemporaryDir stage;
-    QString error;
-    const QString snapshot = stage.filePath(QStringLiteral("snapshot.pdf"));
-    if (!stage.isValid() || !v->document()
-        || !mervin::DocumentOutput::snapshot(*v->document(), collectMeasureDoc(v),
-                                             snapshot, t->password(), &error)
-        || !mervin::DocumentOutput::replace(snapshot, out, &error)) {
-        QMessageBox::warning(this, tr("Save as Copy"), tr("Could not save:\n%1").arg(error));
-        return;
-    }
-    offerToOpen(out, t->password()); // the copy keeps the source's encryption
-}
-
-mervin::MeasureDoc MainWindow::collectMeasureDoc(ViewerWidget *v) const
-{
-    return v ? v->measurementDocument() : mervin::MeasureDoc{};
-}
-
-std::vector<mervin::RenderMeasurement> MainWindow::collectRenderMeasurements(ViewerWidget *v) const
+// Builds PDF output values while its caller protects the live document. Measurement
+// preferences were captured beforehand, and no widget belongs to this work.
+static std::vector<mervin::RenderMeasurement> renderMeasurements(
+    const Document &document, const mervin::MeasureDoc &measurements)
 {
     std::vector<mervin::RenderMeasurement> out;
-    if (!v || !v->document())
-        return out;
-    Document *doc = v->document();
-    const MeasureModel &ov = v->measureOverrides();
-    std::unordered_map<int, std::array<double, 6>> mats;
-    for (const Measurement &m : v->committedMeasurements()) {
-        if (m.pts.size() < 2)
+    const MeasureModel overrides = measurements.overridesModel();
+    std::unordered_map<int, std::array<double, 6>> matrices;
+    for (const Measurement &mark : measurements.measurements) {
+        if (mervin::job::stopped())
+            break;
+        if (mark.pts.size() < 2)
             continue;
-        auto it = mats.find(m.page);
-        if (it == mats.end())
-            it = mats.emplace(m.page, doc->pagePointToPdfMatrix(m.page)).first;
-        const mervin::PageMeasurement pm = doc->pageMeasurement(m.page);
-        const MeasureScale sc = mervin::measure::resolveScale(pm, m.pts.front(), ov.override(m.page));
-
-        mervin::RenderMeasurement rm;
-        rm.page = m.page;
-        rm.kind = m.kind;
-        rm.pts = m.pts;
-        rm.hasLabelPos = m.hasLabelPos;
-        rm.labelPos = m.labelPos;
-        rm.label = mervin::formatMeasurementValue(m.kind, m.pts, sc, v->measureUnit(),
-                                                  v->measurePrecision());
-        rm.lineWidth = v->measureLineWidth();
-        const std::array<double, 6> &a = it->second;
-        rm.toPdf = mervin::Mat6{a[0], a[1], a[2], a[3], a[4], a[5]};
-        out.push_back(std::move(rm));
+        auto matrix = matrices.find(mark.page);
+        if (matrix == matrices.end())
+            matrix = matrices.emplace(mark.page, document.pagePointToPdfMatrix(mark.page)).first;
+        const auto page = document.pageMeasurement(mark.page);
+        const MeasureScale scale = mervin::measure::resolveScale(
+            page, mark.pts.front(), overrides.override(mark.page));
+        mervin::RenderMeasurement rendered;
+        rendered.page = mark.page;
+        rendered.kind = mark.kind;
+        rendered.pts = mark.pts;
+        rendered.hasLabelPos = mark.hasLabelPos;
+        rendered.labelPos = mark.labelPos;
+        rendered.label = mervin::formatMeasurementValue(
+            mark.kind, mark.pts, scale, measurements.unit, measurements.precision);
+        rendered.lineWidth = measurements.lineWidth;
+        const auto &a = matrix->second;
+        rendered.toPdf = mervin::Mat6{a[0], a[1], a[2], a[3], a[4], a[5]};
+        out.push_back(std::move(rendered));
     }
     return out;
 }
+
+// Carries a copy worker outcome and destination conflicts to the owning window.
+struct MainWindow::CopyResult
+{
+    enum class Conflict { None, Original, OpenTab };
+    Conflict conflict = Conflict::None;
+    bool success = false;
+    QString error;
+};
+
+// Copies the tab's edits on a worker, optionally flattening its measurements.
+void MainWindow::startCopy(TabPage *tab, const QString &destination, bool flatten)
+{
+    if (!tab || !tab->isUsable())
+        return;
+    ViewerWidget *viewer = tab->viewer();
+    viewer->commitActiveFormEditor();
+    viewer->commitActiveAnnotEditor();
+    const mervin::MeasureDoc measurements = collectMeasureDoc(viewer);
+    const auto lifetime = viewer->document()->lifetime();
+    const QString password = tab->password();
+    const QString sourceKey = mervin::normalizePathKey(tab->canonicalPath());
+    QSet<QString> open = openFileKeys(wm_ ? wm_->openTabPaths() : tabPaths());
+    open.insert(sourceKey);
+    const auto result = std::make_shared<CopyResult>();
+    TabPage::Operation operation;
+    operation.destination = QFileInfo(destination).absolutePath();
+    operation.work = [lifetime, measurements, password, sourceKey, open, destination,
+                      flatten, result] {
+        const QString folder = QFileInfo(destination).absolutePath();
+        if (!mervin::job::writing(folder)) {
+            result->error = mervin::job::notRunError();
+            return;
+        }
+        const QString outputKey = mervin::fileKey(QFileInfo(destination));
+        if (!flatten && outputKey == sourceKey) {
+            result->conflict = CopyResult::Conflict::Original;
+            return;
+        }
+        if (open.contains(outputKey) || !mervin::job::reserveDestinations({outputKey})) {
+            result->conflict = CopyResult::Conflict::OpenTab;
+            return;
+        }
+        if (!mervin::job::writing(QDir::tempPath())) {
+            result->error = mervin::job::notRunError();
+            return;
+        }
+        QTemporaryDir stage;
+        if (!stage.isValid()) {
+            result->error = QCoreApplication::translate(
+                "mervin::DocumentOutput", "Could not create a temporary document.");
+            return;
+        }
+        const QString live = stage.filePath(QStringLiteral("live.pdf"));
+        const QString output = stage.filePath(QStringLiteral("output.pdf"));
+        std::vector<mervin::RenderMeasurement> marks;
+        {
+            if (!mervin::job::beginHolding())
+                return;
+            // This guard runs after Hold releases its gate, including on failure.
+            const auto release = qScopeGuard([] { mervin::job::endHolding(); });
+            const Document::Hold hold(lifetime, mervin::job::stopped);
+            Document *document = hold.document();
+            if (!document) {
+                result->error = mervin::job::notRunError();
+                return;
+            }
+            if (flatten)
+                marks = renderMeasurements(*document, measurements);
+            if (!mervin::job::writing(stage.path())) {
+                result->error = mervin::job::notRunError();
+                return;
+            }
+            if (!document->savePdfTo(live, &result->error))
+                return;
+            mervin::job::progressed();
+        }
+        if (mervin::job::stopped())
+            return;
+        const auto written = flatten
+            ? MeasureExport::flatten(live, output, marks, password, &result->error)
+            : MeasureExport::embedMervin(live, output, measurements, password, &result->error);
+        if (written == MeasureExport::Status::Ok && !mervin::job::stopped())
+            result->success = mervin::DocumentOutput::replace(output, destination, &result->error);
+    };
+    operation.finished = [page = QPointer<TabPage>(tab), destination, password, flatten, result] {
+        if (page)
+            deliverCopy(page, destination, password, flatten, result);
+    };
+    tab->startOperation(std::move(operation));
+}
+
+// Queues copy completion in the surviving owner of its source tab.
+void MainWindow::deliverCopy(TabPage *tab, const QString &destination, const QString &password,
+                              bool flatten, const std::shared_ptr<CopyResult> &result)
+{
+    const QPointer<TabPage> page(tab);
+    auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+    if (!window)
+        return;
+    const auto discarded = connect(window, &QObject::destroyed, page,
+        [page, destination, password, flatten, result] {
+            if (page)
+                QTimer::singleShot(0, page, [page, destination, password, flatten, result] {
+                    if (page)
+                        deliverCopy(page, destination, password, flatten, result);
+                });
+        });
+    window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window), destination, password,
+                               flatten, result, discarded] {
+        disconnect(discarded);
+        auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!current || current->closeConfirmed_ || (current->wm_ && current->wm_->isClosing()))
+            return;
+        if (current != owner) {
+            deliverCopy(page, destination, password, flatten, result);
+            return;
+        }
+        current->finishCopy(destination, password, flatten, *result);
+    });
+}
+
+// Reports copy failure or offers the completed file from the current window.
+void MainWindow::finishCopy(const QString &destination, const QString &password, bool flatten,
+                            const CopyResult &result)
+{
+    const OperationScope operation(this);
+    //: Title of messages about exporting with measurements.
+    const QString title = flatten ? tr("Export") : tr("Save as Copy");
+    QString error;
+    if (result.conflict == CopyResult::Conflict::Original) {
+        //: "Save edits" is a command in the Save menu. Use its translation here.
+        error = tr("Choose a different file name - use Save edits to write back to "
+                   "the original.");
+    } else if (result.conflict == CopyResult::Conflict::OpenTab) {
+        error = tr("The destination is open in a tab.");
+    } else if (!result.success) {
+        error = flatten ? tr("Could not export:\n%1").arg(result.error)
+                        : tr("Could not save:\n%1").arg(result.error);
+    }
+    if (!error.isEmpty()) {
+        if (hiddenToTray_) {
+            if (wm_)
+                wm_->notifyInTray(title, error);
+        } else {
+            tellInWindow(this, QMessageBox::Warning, title, error);
+        }
+    } else if (!hiddenToTray_) {
+        offerToOpen(destination, password);
+    }
+}
+
+// Captures the source tab across the destination picker and starts its copy job.
+void MainWindow::saveAsCopy()
+{
+    const OperationScope operation(this);
+    const QPointer<MainWindow> self(this);
+    const QPointer<TabPage> tab(currentTab());
+    if (!tab || !tab->isUsable())
+        return;
+    const QFileInfo source(tab->path());
+    const QString suggested = source.absolutePath() + QLatin1Char('/') + source.completeBaseName()
+                              + QStringLiteral("-copy.pdf");
+    const QString destination = QFileDialog::getSaveFileName(
+        this, tr("Save as Copy"), suggested,
+        //: File type filter. Keep the pattern in parentheses.
+        tr("PDF documents (*.pdf)"));
+    if (!destination.isEmpty() && self && tab && tab->isUsable())
+        startCopy(tab, destination, false);
+}
+
+mervin::MeasureDoc MainWindow::collectMeasureDoc(ViewerWidget *viewer) const
+{
+    return viewer ? viewer->measurementDocument() : mervin::MeasureDoc{};
+}
+
+std::vector<mervin::RenderMeasurement> MainWindow::collectRenderMeasurements(ViewerWidget *viewer) const
+{
+    return viewer && viewer->document()
+        ? renderMeasurements(*viewer->document(), collectMeasureDoc(viewer))
+        : std::vector<mervin::RenderMeasurement>{};
+}
+
 
 void MainWindow::saveMeasurements()
 {
@@ -520,53 +648,34 @@ int MainWindow::askClose(TabPage *tab)
     return answer;
 }
 
+// Explains flattened output, then starts export for the guarded source tab.
 void MainWindow::exportMeasuredCopy()
 {
     const OperationScope operation(this);
-    TabPage *t = currentTab();
-    ViewerWidget *v = currentViewer();
-    if (!t || !v)
+    const QPointer<MainWindow> self(this);
+    const QPointer<TabPage> tab(currentTab());
+    if (!tab || !tab->isUsable())
         return;
-    if (!v->hasMeasurements()) {
+    if (!tab->viewer()->hasMeasurements()) {
         QMessageBox::information(this, tr("Export with Measurements"),
                                  tr("There are no measurements to export. Add measurements first."));
         return;
     }
-    ExportMeasureDialog dlg(this);
-    if (dlg.exec() != QDialog::Accepted)
+    const QPointer<ExportMeasureDialog> dialog = new ExportMeasureDialog(this);
+    const bool accepted = dialog->exec() == QDialog::Accepted;
+    delete dialog.data();
+    if (!accepted || !self || !tab || !tab->isUsable())
         return;
-
-    const QFileInfo fi(t->path());
-    const QString suggested = fi.absolutePath() + QLatin1Char('/') + fi.completeBaseName()
+    const QFileInfo source(tab->path());
+    const QString suggested = source.absolutePath() + QLatin1Char('/') + source.completeBaseName()
                               + QStringLiteral("-measured.pdf");
-    const QString out = QFileDialog::getSaveFileName(this, tr("Export with Measurements"), suggested,
-                                                     tr("PDF documents (*.pdf)"));
-    if (out.isEmpty())
-        return;
-
-    if (wm_ && wm_->isOpenAnywhere(QFileInfo(out).canonicalFilePath())) {
-        //: Title of messages about exporting with measurements.
-        QMessageBox::warning(this, tr("Export"), tr("The destination is open in a tab."));
-        return;
-    }
-    v->commitActiveFormEditor();
-    v->commitActiveAnnotEditor();
-    QTemporaryDir stage;
-    const QString live = stage.filePath(QStringLiteral("live.pdf"));
-    const QString flat = stage.filePath(QStringLiteral("flat.pdf"));
-    QString error;
-    if (!stage.isValid()
-        || !mervin::DocumentOutput::snapshot(*v->document(), collectMeasureDoc(v),
-                                             live, t->password(), &error)
-        || MeasureExport::flatten(live, flat, collectRenderMeasurements(v), t->password(), &error)
-               != MeasureExport::Status::Ok
-        || !mervin::DocumentOutput::replace(flat, out, &error)) {
-        QMessageBox::warning(this, tr("Export"), tr("Could not export:\n%1").arg(error));
-        return;
-    }
-    offerToOpen(out, t->password());
+    const QString destination = QFileDialog::getSaveFileName(
+        this, tr("Export with Measurements"), suggested, tr("PDF documents (*.pdf)"));
+    if (!destination.isEmpty() && self && tab && tab->isUsable())
+        startCopy(tab, destination, true);
 }
 
+// Captures the selected page tool choices and starts a protected tab operation.
 void MainWindow::rotatePagesOp()
 {
     const OperationScope operation(this);
@@ -603,7 +712,7 @@ void MainWindow::rotatePagesOp()
                   open = openFileKeys(wm_ ? wm_->openTabPaths() : tabPaths())](
                      const QString &password) {
         PageToolResult result;
-        // The viewer holds an open file, which a replace would fail on or corrupt.
+        // Copy tools must not replace a file open in a tab.
         const QString key = mervin::fileKey(QFileInfo(out));
         if (open.contains(key) || !mervin::job::reserveDestinations({key}))
             result.destinationOpen = true;
@@ -679,6 +788,7 @@ void MainWindow::pagesDialog(mervin::ExtractPlan::Mode mode, std::optional<int> 
                  job.mode == mervin::ExtractPlan::Mode::Delete ? dlg.password() : QString());
 }
 
+// Captures split choices and reserves every output before writing any file.
 void MainWindow::splitDocument()
 {
     const OperationScope operation(this);
@@ -698,7 +808,7 @@ void MainWindow::splitDocument()
                   open = openFileKeys(wm_ ? wm_->openTabPaths() : tabPaths())](
                      const QString &password) {
         PageToolResult result;
-        // The viewer holds an open file, which a replace would fail on or corrupt.
+        // Copy tools must not replace a file open in a tab.
         const auto mayWrite = [&result, &open, &dir](const QStringList &outputs) {
             // Resolving an output's canonical path can wait on its drive too.
             if (!mervin::job::writing(dir)) {

@@ -241,10 +241,19 @@ private:
     // tray message and asks nothing.
     void finishPageTool(mervin::TabPage *tab, const std::shared_ptr<const PageTool> &tool,
                         const QString &password, bool asked, const PageToolResult &result);
+    struct CopyResult;
+    // Copy and export borrow the live document only under a stop-aware Hold.
+    void startCopy(mervin::TabPage *tab, const QString &destination, bool flatten);
+    static void deliverCopy(mervin::TabPage *tab, const QString &destination,
+                            const QString &password, bool flatten,
+                            const std::shared_ptr<CopyResult> &result);
+    void finishCopy(const QString &destination, const QString &password, bool flatten,
+                    const CopyResult &result);
     // Gather a viewer's committed measurements + per-page overrides for saving
     // (the Mervin blob), or paired with each page's PDF transform + value label
     // for export/print rendering.
     mervin::MeasureDoc collectMeasureDoc(mervin::ViewerWidget *viewer) const;
+    // Builds flattened-output values from the viewer while its document is protected.
     std::vector<mervin::RenderMeasurement> collectRenderMeasurements(
         mervin::ViewerWidget *viewer) const;
     void applyControlStyle(); // re-tint palette-driven chrome: toolbar dividers, Recent pill, icons

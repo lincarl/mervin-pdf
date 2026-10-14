@@ -63,6 +63,9 @@ public:
     void progressed() { ticks_.fetch_add(1, std::memory_order_relaxed); }
     // The job took or released the shown document (Document::Hold).
     void setHolding(bool on);
+    // Reserve document use before taking Document::Hold. Stop and this reservation
+    // share the mutex, so a stopped job cannot begin using the restored viewer.
+    bool beginHolding();
 
     struct Snapshot
     {
@@ -133,6 +136,11 @@ private:
 // stopped or when a tab already owns one of these keys. Reservations last through
 // commit, and otherwise release on Stop or when the last Scope closes.
 bool reserveDestinations(const QSet<QString> &keys);
+
+// Reserve live document use for the current job. False once stopped. Release the
+// Document::Hold before endHolding(), so Stop keeps the still picture until then.
+bool beginHolding();
+void endHolding();
 
 // Report a step of the current job, before it starts. Each returns whether to go on,
 // which is false once the job stopped or when a test made the step fail

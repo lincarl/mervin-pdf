@@ -217,6 +217,7 @@ bool openWith(Opener opener, const QString &path)
 Q_DECLARE_METATYPE(Writer)
 Q_DECLARE_METATYPE(Opener)
 
+// Checks job cancellation, document reservations and destination ordering.
 class TstJobContext : public QObject
 {
     Q_OBJECT
@@ -316,15 +317,17 @@ private:
     }
 };
 
+// Checks Stop outcomes and rejects document reservations after cancellation.
 void TstJobContext::stopAnswersWhatTheJobIsDoing()
 {
     job::State holding;
-    holding.setHolding(true);
+    QVERIFY(holding.beginHolding());
     QCOMPARE(holding.stop(), job::State::Stop::Holding);
     holding.setHolding(false);
     QCOMPARE(holding.stop(), job::State::Stop::Stopped);
     QVERIFY(holding.stopped());
     QVERIFY(!holding.beginCommit());
+    QVERIFY(!holding.beginHolding());
 
     job::State committing;
     QVERIFY(committing.beginCommit());
