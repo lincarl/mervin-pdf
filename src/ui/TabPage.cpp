@@ -1312,6 +1312,7 @@ void TabPage::startOperation(Operation operation)
     emit stateChanged();
 }
 
+// Adopts the exact completed operation and delivers its result after restoring use.
 void TabPage::finishOperation(const std::shared_ptr<Job> &job)
 {
     if (job != job_)
@@ -1335,6 +1336,7 @@ void TabPage::finishOperation(const std::shared_ptr<Job> &job)
         finished();
 }
 
+// Restores use after a stopped operation releases its live document reservation.
 void TabPage::finishStoppedOperation()
 {
     if (!job_ || job_->state.snapshot().holding)
@@ -1394,6 +1396,7 @@ void TabPage::stopSlowClock()
     slowFile_.clear();
 }
 
+// Updates the wait notice and releases stopped tabs when their reservation ends.
 void TabPage::pollJob()
 {
     if (!(loading_ || busy_) || !job_) {
@@ -1441,6 +1444,7 @@ void TabPage::updateSlowNotice()
         placeholderLabel_->setText(text);
 }
 
+// Shows the current file step or the trapped Stop notice without reading the document.
 void TabPage::showWaitBar(const job::State::Snapshot &now)
 {
     // A write names its folder, and a commit the file it replaces. A read of a file in

@@ -320,6 +320,7 @@ static std::vector<mervin::RenderMeasurement> renderMeasurements(
     return out;
 }
 
+// Carries a copy worker outcome and destination conflicts to the owning window.
 struct MainWindow::CopyResult
 {
     enum class Conflict { None, Original, OpenTab };
@@ -400,6 +401,7 @@ void MainWindow::startCopy(TabPage *tab, const QString &destination, bool flatte
     tab->startOperation(std::move(operation));
 }
 
+// Queues copy completion in the surviving owner of its source tab.
 void MainWindow::deliverCopy(TabPage *tab, const QString &destination, const QString &password,
                               bool flatten, const std::shared_ptr<CopyResult> &result)
 {
@@ -429,6 +431,7 @@ void MainWindow::deliverCopy(TabPage *tab, const QString &destination, const QSt
     });
 }
 
+// Reports copy failure or offers the completed file from the current window.
 void MainWindow::finishCopy(const QString &destination, const QString &password, bool flatten,
                             const CopyResult &result)
 {
@@ -458,6 +461,7 @@ void MainWindow::finishCopy(const QString &destination, const QString &password,
     }
 }
 
+// Captures the source tab across the destination picker and starts its copy job.
 void MainWindow::saveAsCopy()
 {
     const OperationScope operation(this);
@@ -634,6 +638,7 @@ int MainWindow::askClose(TabPage *tab)
     return answer;
 }
 
+// Explains flattened output, then starts export for the guarded source tab.
 void MainWindow::exportMeasuredCopy()
 {
     const OperationScope operation(this);
@@ -660,6 +665,7 @@ void MainWindow::exportMeasuredCopy()
         startCopy(tab, destination, true);
 }
 
+// Captures the selected page tool choices and starts a protected tab operation.
 void MainWindow::rotatePagesOp()
 {
     const OperationScope operation(this);
@@ -772,6 +778,7 @@ void MainWindow::pagesDialog(mervin::ExtractPlan::Mode mode, std::optional<int> 
                  job.mode == mervin::ExtractPlan::Mode::Delete ? dlg.password() : QString());
 }
 
+// Captures split choices and reserves every output before writing any file.
 void MainWindow::splitDocument()
 {
     const OperationScope operation(this);

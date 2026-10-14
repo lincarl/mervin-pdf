@@ -112,11 +112,12 @@ public:
     // the picture names the folder or file the job waits for and offers Stop waiting.
     void startOperation(Operation operation);
 
-    // Stop waiting. Never waits for the job, whose file call goes on until the drive
-    // answers. An operation's tab is usable at once, and the operation begins no commit
-    // and changes the tab no more. For a load, the tab shows that its document is
-    // unloaded, with Retry, and keeps its recovery copy. The read goes on, so Retry can
-    // take it back.
+    // Stop waiting without joining the worker. Its file call continues until the
+    // drive answers. A held snapshot keeps the tab locked until document release;
+    // otherwise the operation restores use immediately. Stop suppresses completion
+    // delivery and new commits, but an already-started rename may finish. A fresh
+    // open closes its tab. A recovery load keeps its unloaded tab and copy with
+    // Retry, which can take back the blocked read.
     void stopWaiting();
     // Retry. Takes back a stopped load that still reads, or starts a new one, which
     // waits for a stopped load that still closes what it read.

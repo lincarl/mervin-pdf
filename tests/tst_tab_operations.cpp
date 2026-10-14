@@ -72,6 +72,7 @@ TabPage *currentTab(MainWindow &window)
 // The wait bar's parts.
 struct Bar
 {
+    // Finds the actual tab widgets used to inspect busy and trapped states.
     explicit Bar(const QWidget &tab)
         : bar(tab.findChild<QWidget *>(QStringLiteral("waitBar")))
         , text(tab.findChild<QLabel *>(QStringLiteral("waitBarText")))
@@ -79,6 +80,7 @@ struct Bar
         , still(tab.findChild<QWidget *>(QStringLiteral("operationStill")))
     {
     }
+    // Reports whether all required wait and snapshot widgets were found.
     bool valid() const { return bar && text && stop && still; }
 
     QWidget *bar;
@@ -252,6 +254,7 @@ private slots:
                  "a dialog the test expected did not show");
     }
 
+    // Runs the same drive-stall checks for copy and measured export.
     void copyAndExportRunOffTheScreenThread_data() { copyModes(); }
 
     // A copy captures the live edits and measurements. Export burns the marks into
@@ -302,6 +305,7 @@ private slots:
         }
     }
 
+    // Selects copy modes for the actual document access stall.
     void copyAndExportDoNotWaitForDocumentAccess_data() { copyModes(); }
 
     // The still picture exists before another reader stalls access. Both commands
@@ -373,6 +377,7 @@ private slots:
         QVERIFY(told_.isEmpty());
     }
 
+    // Selects copy modes for trapped Stop and close handling.
     void stoppedCopyWaitsForDocumentRelease_data() { copyModes(); }
 
     // The document remains behind the still picture until the trapped write
@@ -432,6 +437,7 @@ private slots:
         QVERIFY(told_.isEmpty());
     }
 
+    // Selects copy modes for a canceled Save prerequisite.
     void stoppingSaveReleaseWaitCancelsTheClose_data() { copyModes(); }
 
     // A chosen Save waits for a stopped copy's live document. Stop at that
@@ -480,8 +486,10 @@ private slots:
         QVERIFY(AnnotModel(*original).pageAnnots(0).empty());
     }
 
+    // Selects successful and failed copy reports across an owner move.
     void queuedCopyResultSurvivesItsPreviousOwner_data() { copyModes(); }
 
+    // Checks delivery after an earlier queued move destroys the old window.
     void queuedCopyResultSurvivesItsPreviousOwner()
     {
         QFETCH(bool, flatten);
@@ -520,6 +528,7 @@ private slots:
         QVERIFY(tab->hasUnsavedEdits());
     }
 
+    // Selects copy modes for Stop before the first document reservation.
     void stoppedCopyNeverBeginsItsHold_data() { copyModes(); }
 
     // Stop wins before the atomic document-use reservation, so a released
@@ -552,8 +561,10 @@ private slots:
         QVERIFY(told_.isEmpty());
     }
 
+    // Selects copy modes for preserving a pre-existing output.
     void stoppedCopyPreservesExistingDestination_data() { copyModes(); }
 
+    // Checks that Stop discards private output and retains destination bytes.
     void stoppedCopyPreservesExistingDestination()
     {
         QFETCH(bool, flatten);
@@ -1776,6 +1787,7 @@ private slots:
     }
 
 private:
+    // Defines copy and measured-export rows shared by their cancellation checks.
     static void copyModes()
     {
         QTest::addColumn<bool>("flatten");
@@ -1783,6 +1795,7 @@ private:
         QTest::newRow("export") << true;
     }
 
+    // Loads representative measurement data so both copy modes preserve real edits.
     static void prepareCopy(TabPage &tab)
     {
         tab.viewer()->loadMeasurements({{0, MeasureKind::Distance, {{50, 100}, {150, 100}}}},
@@ -1791,6 +1804,7 @@ private:
                     0, {50, 50}, Qt::yellow, {}, QStringLiteral("Kept edit")) >= 0);
     }
 
+    // Accepts the actual copy or export dialog with the requested output path.
     void copy(MainWindow &window, const QString &output, bool flatten)
     {
         files_ << output;

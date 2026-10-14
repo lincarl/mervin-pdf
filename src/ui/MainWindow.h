@@ -253,6 +253,7 @@ private:
     // (the Mervin blob), or paired with each page's PDF transform + value label
     // for export/print rendering.
     mervin::MeasureDoc collectMeasureDoc(mervin::ViewerWidget *viewer) const;
+    // Builds flattened-output values from the viewer while its document is protected.
     std::vector<mervin::RenderMeasurement> collectRenderMeasurements(
         mervin::ViewerWidget *viewer) const;
     void applyControlStyle(); // re-tint palette-driven chrome: toolbar dividers, Recent pill, icons
