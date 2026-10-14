@@ -73,9 +73,10 @@ bool sameFile(const QString &a, const QString &b)
 void tellInWindow(QWidget *window, QMessageBox::Icon icon, const QString &title,
                   const QString &text)
 {
-    QMessageBox box(icon, title, text, QMessageBox::Ok, window);
-    box.setWindowModality(Qt::WindowModal);
-    box.exec();
+    const QPointer<QMessageBox> box(new QMessageBox(icon, title, text, QMessageBox::Ok, window));
+    box->setWindowModality(Qt::WindowModal);
+    box->exec();
+    delete box.data(); // a Quit in another window may already have deleted its parent
 }
 
 // Comparison keys of the files open in tabs, which hold canonical paths already, so
@@ -136,13 +137,16 @@ void MainWindow::finishPageTool(TabPage *tab, const std::shared_ptr<const PageTo
     // The boxes below run their own event loops, in which the tab can go.
     const QPointer<TabPage> page(tab);
     if (result.status == PageOps::Status::NeedsPassword && !asked && !hiddenToTray_) {
-        QInputDialog prompt(this);
-        prompt.setWindowModality(Qt::WindowModal);
-        prompt.setWindowTitle(tr("Password Required"));
-        prompt.setLabelText(tr("Enter the document password:"));
-        prompt.setTextEchoMode(QLineEdit::Password);
-        if (prompt.exec() == QDialog::Accepted && page && page->isUsable())
-            runPageTool(page, tool, prompt.textValue(), true);
+        const QPointer<QInputDialog> prompt(new QInputDialog(this));
+        prompt->setWindowModality(Qt::WindowModal);
+        prompt->setWindowTitle(tr("Password Required"));
+        prompt->setLabelText(tr("Enter the document password:"));
+        prompt->setTextEchoMode(QLineEdit::Password);
+        const bool accepted = prompt->exec() == QDialog::Accepted;
+        const QString supplied = prompt ? prompt->textValue() : QString();
+        delete prompt.data();
+        if (accepted && page && page->isUsable())
+            runPageTool(page, tool, supplied, true);
         return;
     }
     QString title = tr("Operation failed");
@@ -195,14 +199,17 @@ QList<int> MainWindow::askPageRange(const QString &title, int pageCount)
 
 void MainWindow::offerToOpen(const QString &path, const QString &password)
 {
-    QMessageBox box(QMessageBox::Information,
+    const QPointer<MainWindow> self(this);
+    const QPointer<QMessageBox> box(new QMessageBox(QMessageBox::Information,
                     //: Title of the message after a new file was written.
                     tr("Done"),
                     tr("Saved to:\n%1\n\nOpen it now?").arg(QDir::toNativeSeparators(path)),
-                    QMessageBox::Yes | QMessageBox::No, this);
-    box.setDefaultButton(QMessageBox::Yes);
-    box.setWindowModality(Qt::WindowModal);
-    if (box.exec() == QMessageBox::Yes)
+                    QMessageBox::Yes | QMessageBox::No, this));
+    box->setDefaultButton(QMessageBox::Yes);
+    box->setWindowModality(Qt::WindowModal);
+    const int answer = box->exec();
+    delete box.data();
+    if (self && answer == QMessageBox::Yes)
         openFile(path, false, -1, true, password);
 }
 

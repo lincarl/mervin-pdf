@@ -813,6 +813,65 @@ private slots:
         QCOMPARE(file.readAll(), before);
     }
 
+    void quittingWhileAToolPromptIsOpen_data()
+    {
+        QTest::addColumn<QString>("prompt");
+        QTest::newRow("password") << QStringLiteral("password");
+        QTest::newRow("success") << QStringLiteral("success");
+        QTest::newRow("failure") << QStringLiteral("failure");
+    }
+
+    // Window-modal prompts leave other windows usable. Quit there may destroy the
+    // prompt's owner while exec() still runs, so the prompt must have guarded ownership.
+    void quittingWhileAToolPromptIsOpen()
+    {
+        QFETCH(QString, prompt);
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("plan.pdf"));
+        const QString output = files.filePath(QStringLiteral("rotated.pdf"));
+        if (prompt == QStringLiteral("password"))
+            QCOMPARE(QpdfService().encrypt(QStringLiteral(MERVIN_FIXTURE_PDF), source, {},
+                         QStringLiteral("secret"), {}, QpdfService::Algorithm::AES256, {}),
+                     QpdfService::Status::Ok);
+        else
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        WindowManager manager;
+        const QPointer<MainWindow> host(manager.createWindow());
+        const QPointer<MainWindow> other(manager.createWindow());
+        showForLayout(*host);
+        showForLayout(*other);
+        QVERIFY(host->openFile(source, false, -1, true,
+                               prompt == QStringLiteral("password") ? QStringLiteral("secret")
+                                                                    : QString()));
+        TabPage *tab = currentTab(*host);
+        QVERIFY(tab);
+        if (prompt == QStringLiteral("password"))
+            tab->setPassword({}); // the page tool must ask again
+        if (prompt == QStringLiteral("failure"))
+            job::testing::failWhen([folder = files.path()](job::Step step, const QString &path) {
+                return step == job::Step::Writing && path == folder;
+            });
+        const auto restore = qScopeGuard([] { job::testing::failWhen({}); });
+        rotate(*host, output);
+        dialogs_.stop(); // this test quits instead of answering the completion prompt
+        bool requested = false;
+        QTimer quit;
+        connect(&quit, &QTimer::timeout, this, [&] {
+            QWidget *modal = QApplication::activeModalWidget();
+            const bool expected = prompt == QStringLiteral("password")
+                ? qobject_cast<QInputDialog *>(modal) != nullptr
+                : qobject_cast<QMessageBox *>(modal) != nullptr;
+            if (!expected)
+                return;
+            quit.stop();
+            requested = true;
+            manager.closeAllForQuit();
+        });
+        quit.start(10);
+        QTRY_VERIFY_WITH_TIMEOUT(requested, 10000);
+        QTRY_VERIFY(host.isNull() && other.isNull());
+    }
+
     void runningToolsReserveEveryOutput_data()
     {
         QTest::addColumn<bool>("splitPages");
