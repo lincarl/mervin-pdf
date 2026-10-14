@@ -14,6 +14,7 @@
 #include "dialogs/SecurityDialog.h"
 #include "dialogs/SettingsDialog.h"
 #include "i18n/UiLanguage.h"
+#include "io/JobContext.h"
 #include "io/SaveCheck.h"
 #include "ocr/TessdataManager.h"
 #include "print/PrintPreviewWidget.h"
@@ -23,7 +24,9 @@
 #include "ui/AnnotPanel.h"
 #include "ui/AnnotPopup.h"
 #include "ui/LanguageCombo.h"
+#include "ui/MainWindow.h"
 #include "ui/MeasurePanel.h"
+#include "ui/TabPage.h"
 #include "ui/Theme.h"
 #include "ui/ThemeTokens.h"
 
@@ -59,6 +62,7 @@
 #include <QScrollBar>
 #include <QSpinBox>
 #include <QStyleHints>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextDocument>
@@ -226,6 +230,8 @@ private slots:
     void firstRun();
     void languagePicker_data() { addLanguageMatrix(); }
     void languagePicker();
+    void loadPlaceholder_data() { addLanguageMatrix(); }
+    void loadPlaceholder();
     void manageLanguages_data() { addLanguageMatrix(); }
     void manageLanguages();
     void merge_data() { addLanguageMatrix(); }
@@ -242,7 +248,9 @@ private slots:
     void toolPanels();
 
 private:
-    void inspect(QWidget &widget, const QString &state);
+    // Shows `widget`, at its minimum size in the minimum-size rows, and checks the text
+    // in `part` of it, or in all of it.
+    void inspect(QWidget &widget, const QString &state, QWidget *part = nullptr);
     void inspectMessage(QWidget &parent, const QString &state, const std::function<void()> &action);
     QString modelPath(const char *code) const;
     QTemporaryDir profile_;
@@ -474,7 +482,52 @@ void TstTranslationLayout::languagePicker()
     combo.hidePopup();
 }
 
-void TstTranslationLayout::inspect(QWidget &widget, const QString &state)
+// The notice a tab shows in place of its pages when the drive stops answering while
+// the document loads, with a long file name in a long folder. The main window sets the
+// tab's size, down to the narrowest the window gets. Its own minimum height leaves
+// almost no room for pages, so it keeps the height it opens with. Only the tab is
+// checked, as the rest of the window is not part of this scenario.
+void TstTranslationLayout::loadPlaceholder()
+{
+    const QString folder = profile_.filePath(QStringLiteral(
+        "structural-engineering-department/project-archive-2026/revised-drawings-for-construction"));
+    const QString path = QDir(folder).filePath(QFileInfo(plain_).fileName());
+    // A name with nowhere to wrap, which the notice shortens in the middle.
+    const QString unbroken = QDir(folder).filePath(QStringLiteral("Revision").repeated(30)
+                                                   + QStringLiteral(".pdf"));
+    // The loads wait at their first step, as on a drive that stopped answering.
+    mervin::job::testing::holdWhen([folder](mervin::job::Step step, const QString &file) {
+        return step == mervin::job::Step::Reading && QFileInfo(file).path() == folder;
+    });
+    mervin::TabPage::setSlowDelayForTesting(0);
+    const auto restore = qScopeGuard([] {
+        mervin::job::testing::release();
+        mervin::TabPage::setSlowDelayForTesting(mervin::TabPage::kSlowMs);
+    });
+    mervin::RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    window.show();
+    settle();
+    window.setMinimumHeight(window.height());
+    QVERIFY(window.openFile(path, false, -1, true, {}, true));
+    auto *tab = window.findChild<mervin::TabPage *>();
+    QVERIFY(tab);
+    auto *stop = tab->findChild<QPushButton *>(QStringLiteral("stopDocumentLoad"));
+    QVERIFY(stop);
+    QTRY_VERIFY(stop->isVisible());
+    inspect(window, QStringLiteral("Slow document load"), tab);
+
+    QVERIFY(window.openFile(unbroken, false, -1, true, {}, true));
+    tab = qobject_cast<mervin::TabPage *>(window.findChild<QTabWidget *>()->currentWidget());
+    QVERIFY(tab);
+    stop = tab->findChild<QPushButton *>(QStringLiteral("stopDocumentLoad"));
+    QVERIFY(stop);
+    QTRY_VERIFY(stop->isVisible());
+    inspect(window, QStringLiteral("Slow document load with an unbroken file name"), tab);
+}
+
+void TstTranslationLayout::inspect(QWidget &widget, const QString &state, QWidget *part)
 {
     widget.setAttribute(Qt::WA_DontShowOnScreen);
     widget.ensurePolished();
@@ -500,7 +553,7 @@ void TstTranslationLayout::inspect(QWidget &widget, const QString &state)
         QVERIFY2(widget.size() == minimum(),
                  qPrintable(state + QStringLiteral(" did not settle at its minimum size")));
     }
-    const QStringList problems = textfit::check(widget);
+    const QStringList problems = textfit::check(part ? *part : widget);
     const QString details = state + QLatin1Char('\n') + problems.join(QLatin1Char('\n'));
     const QPixmap capture = widget.grab();
     QVERIFY2(!capture.isNull(), qPrintable(state));

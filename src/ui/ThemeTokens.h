@@ -69,6 +69,13 @@ struct Chrome
     QColor scrollThumb;
     QColor scrollThumbHover;
 
+    // A tab's placeholder, which stands in for its pages while the document loads,
+    // is unloaded or could not be loaded. It sits on `canvas`, which is dark in both
+    // themes, so its text and buttons have their own colours.
+    QColor inkCanvas;           // its text and button labels
+    QColor canvasControl;       // its button
+    QColor borderCanvasControl; // the button's edge
+
     // Accent: one colour carries selection, focus and the primary button.
     QColor accent;
     QColor accentHover;

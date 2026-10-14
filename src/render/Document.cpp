@@ -116,6 +116,8 @@ int followUps = 0; // guarded by followUpsMutex: closes with a `then` not finish
 
 void Document::closeInBackground(std::unique_ptr<Document> document, std::function<void()> then)
 {
+    if (!document && !then)
+        return;
     ++closesInFlight;
     if (then) {
         std::lock_guard<std::mutex> lock(followUpsMutex);
@@ -132,6 +134,11 @@ void Document::closeInBackground(std::unique_ptr<Document> document, std::functi
         if (--followUps == 0)
             followUpsDone.notify_all();
     });
+}
+
+void Document::CloseInBackground::operator()(Document *document) const
+{
+    closeInBackground(std::unique_ptr<Document>(document));
 }
 
 int Document::closing()

@@ -3360,9 +3360,19 @@ Obre-lo ara?</translation>
         <translation>No s&apos;ha pogut crear la carpeta de recuperació de documents.</translation>
     </message>
     <message>
+        <source>Opening %1 from %2. The drive is not answering.</source>
+        <extracomment>Shown in place of the page when the drive has not answered for a few seconds while the document loads. Below it is the Stop waiting button. %1 is the file name (plan.pdf), %2 the folder it is read from (/nas/docs, or a network share folder on Windows).</extracomment>
+        <translation>S&apos;està obrint %1 des de %2. La unitat no respon.</translation>
+    </message>
+    <message>
         <source>Retry</source>
         <extracomment>Button that tries to load the document again.</extracomment>
         <translation>Torna-ho a provar</translation>
+    </message>
+    <message>
+        <source>Stop waiting</source>
+        <extracomment>Button under the notice that the drive is not answering while the document loads. It gives up the load and leaves the document unloaded.</extracomment>
+        <translation>Deixa d&apos;esperar</translation>
     </message>
     <message>
         <source>Document is unloaded.</source>
