@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QSet>
 #include <QtGlobal>
 
 #include <atomic>
@@ -36,6 +37,7 @@ enum class Step
 class State
 {
 public:
+    ~State();
     // What the job was doing when stop() was called.
     enum class Stop
     {
@@ -72,6 +74,9 @@ public:
     };
     // For the tab's poll.
     Snapshot snapshot() const;
+    // Atomically reserves output keys against tabs admitted in this process. Keys
+    // were resolved on the worker. Stop releases them unless a commit already began.
+    bool reserveDestinations(const QSet<QString> &keys);
 
 private:
     friend class Scope;
@@ -83,6 +88,7 @@ private:
     bool holding_ = false;            // guarded by mutex_
     int scopes_ = 0;                  // guarded by mutex_: scopes open on this state
     bool ended_ = false;              // guarded by mutex_: the last of them closed
+    QSet<QString> destinations_;      // guarded by mutex_: owned output reservations
     std::atomic<bool> stopped_{false}; // set under mutex_, read without it
     std::atomic<quint64> ticks_{0};
 };
@@ -105,6 +111,28 @@ private:
 
 // The current job was stopped. False outside a scope.
 bool stopped();
+
+// A tab's admission, keyed by its known path without filesystem work. Admission
+// and output reservations use the same short memory-only critical section.
+class OpenPath
+{
+public:
+    explicit OpenPath(const QString &key);
+    ~OpenPath();
+    OpenPath(const OpenPath &) = delete;
+    OpenPath &operator=(const OpenPath &) = delete;
+    bool admitted() const { return admitted_; }
+    const QString &key() const { return key_; }
+
+private:
+    QString key_;
+    bool admitted_ = false;
+};
+
+// Reserves every output before the current job can write any of them. False when
+// stopped or when a tab already owns one of these keys. Reservations last through
+// commit, and otherwise release on Stop or when the last Scope closes.
+bool reserveDestinations(const QSet<QString> &keys);
 
 // Report a step of the current job, before it starts. Each returns whether to go on,
 // which is false once the job stopped or when a test made the step fail

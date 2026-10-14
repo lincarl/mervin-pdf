@@ -23,6 +23,7 @@
 #include <thread>
 
 using namespace mervin;
+using mervin::testing::SavingJob;
 using mervin::testing::Stall;
 
 namespace {
@@ -56,6 +57,28 @@ void submitAllPages(RenderEngine &engine, Document &document, quint64 requester)
     }
 }
 
+// Writes object bodies with a complete cross-reference table.
+QString writePdf(const QTemporaryDir &dir, const QString &name,
+                 const QList<QByteArray> &objects)
+{
+    QByteArray pdf = "%PDF-1.7\n";
+    QByteArray xref = "0000000000 65535 f \n";
+    for (qsizetype i = 0; i < objects.size(); ++i) {
+        xref += QByteArray::number(pdf.size()).rightJustified(10, '0') + " 00000 n \n";
+        pdf += QByteArray::number(i + 1) + " 0 obj\n" + objects[i] + "\nendobj\n";
+    }
+    const QByteArray start = QByteArray::number(pdf.size());
+    const QByteArray size = QByteArray::number(objects.size() + 1);
+    pdf += "xref\n0 " + size + "\n" + xref + "trailer\n<< /Size " + size
+           + " /Root 1 0 R >>\nstartxref\n" + start + "\n%%EOF\n";
+
+    const QString path = dir.filePath(name);
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(pdf) != pdf.size())
+        return {};
+    return path;
+}
+
 // Writes a one-page PDF to `dir` with the web address text "Visit www.inet.se now."
 // and one fillable text field, "field1", and returns its path.
 QString writeFormAndLinkPdf(const QTemporaryDir &dir)
@@ -73,48 +96,41 @@ QString writeFormAndLinkPdf(const QTemporaryDir &dir)
         "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content
             + "\nendstream",
     };
-    QByteArray pdf = "%PDF-1.7\n";
-    QByteArray xref = "0000000000 65535 f \n";
-    for (qsizetype i = 0; i < objects.size(); ++i) {
-        xref += QByteArray::number(pdf.size()).rightJustified(10, '0') + " 00000 n \n";
-        pdf += QByteArray::number(i + 1) + " 0 obj\n" + objects[i] + "\nendobj\n";
-    }
-    const QByteArray start = QByteArray::number(pdf.size());
-    const QByteArray size = QByteArray::number(objects.size() + 1);
-    pdf += "xref\n0 " + size + "\n" + xref + "trailer\n<< /Size " + size
-           + " /Root 1 0 R >>\nstartxref\n" + start + "\n%%EOF\n";
-
-    const QString path = dir.filePath(QStringLiteral("form-and-link.pdf"));
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly) || file.write(pdf) != pdf.size())
-        return {};
-    return path;
+    return writePdf(dir, QStringLiteral("form-and-link.pdf"), objects);
 }
 
-// Takes a document the way a save job does, as a lockable for Stall. On the Stall's
-// thread it takes Document::Hold, then the access lock, which savePdfTo keeps while
-// it writes.
-struct SavingJob
+// Late page contents, a form field and the outline are more than 512 KiB from both
+// file ends. Opening cannot keep them all in MuPDF's file-stream read cache.
+QString writeLateObjectsPdf(const QTemporaryDir &dir)
 {
-    std::shared_ptr<DocumentLifetime> lifetime;
-    std::optional<Document::Hold> hold;
-    bool answered = false; // the job holds the document and its own call was answered
-
-    void lock()
-    {
-        hold.emplace(lifetime);
-        Document *document = hold->document();
-        answered = document && document->isPdf();
-        if (document)
-            document->accessMutex().lock();
-    }
-    void unlock()
-    {
-        if (Document *document = hold->document())
-            document->accessMutex().unlock();
-        hold.reset();
-    }
-};
+    const auto stream = [](const QByteArray &contents) {
+        return "<< /Length " + QByteArray::number(contents.size()) + " >>\nstream\n"
+               + contents + "\nendstream";
+    };
+    const QByteArray padding(512 * 1024, 'x');
+    const QList<QByteArray> objects{
+        "<< /Type /Catalog /Pages 2 0 R /Outlines 10 0 R "
+        "/AcroForm << /Fields [9 0 R] /DR << /Font << /Helv 5 0 R >> >> "
+        "/DA (/Helv 12 Tf 0 g) >> >>",
+        "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] "
+        "/Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [9 0 R] "
+        "/Resources << /Font << /F1 5 0 R /Helv 5 0 R >> >> /Contents 8 0 R >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        stream("BT /F1 18 Tf 40 150 Td (First page) Tj ET"),
+        stream(padding),
+        stream("1 0 0 rg 40 40 100 80 re f "
+               "0 0 0 rg BT /F1 18 Tf 40 150 Td (Later page text) Tj ET"),
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (laterField) "
+        "/Rect [20 250 280 270] /F 4 /DA (/Helv 12 Tf 0 g) "
+        "/V (Original value) /P 4 0 R >>",
+        "<< /Type /Outlines /First 11 0 R /Last 11 0 R /Count 1 >>",
+        "<< /Title (Later section) /Parent 10 0 R /Dest [4 0 R /Fit] >>",
+        stream(padding),
+    };
+    return writePdf(dir, QStringLiteral("late-objects.pdf"), objects);
+}
 
 // Tells QTest to expect the warning that a refused screen-thread call logs.
 void expectRefusal(const char *method)
@@ -135,6 +151,81 @@ class TstRenderLifetime : public QObject
 {
     Q_OBJECT
 private slots:
+    void loadedDocumentKeepsItsSourceBytes_data()
+    {
+        QTest::addColumn<QString>("query");
+        QTest::addColumn<bool>("truncate");
+        for (const QString &query : {QStringLiteral("render"), QStringLiteral("forms"),
+                                     QStringLiteral("outline"), QStringLiteral("selection")}) {
+            QTest::newRow(qPrintable(query + QStringLiteral("-overwritten"))) << query << false;
+            QTest::newRow(qPrintable(query + QStringLiteral("-truncated"))) << query << true;
+        }
+    }
+
+    // The source may stop answering after open. Every later query must use the bytes
+    // already loaded, including an unvisited page and lazy form/outline/text objects.
+    void loadedDocumentKeepsItsSourceBytes()
+    {
+        QFETCH(QString, query);
+        QFETCH(bool, truncate);
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = writeLateObjectsPdf(dir);
+        QVERIFY(!path.isEmpty());
+        const qint64 bytes = QFileInfo(path).size();
+        QVERIFY(bytes > 1024 * 1024);
+        RenderEngine engine;
+        auto doc = engine.openDocument(path);
+        QVERIFY(doc);
+        QCOMPARE(doc->pageCount(), 2);
+
+        // Change the same file while its Document lives, so an open file handle or
+        // a buffered fragment cannot hide continued reads from the source.
+        QFile source(path);
+        QVERIFY(source.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        if (!truncate) {
+            const QByteArray replacement(bytes, '#');
+            QCOMPARE(source.write(replacement), bytes);
+        }
+        source.close();
+        QCOMPARE(QFileInfo(path).size(), truncate ? qint64(0) : bytes);
+
+        if (query == QStringLiteral("render")) {
+            QSignalSpy results(&engine, &RenderEngine::resultReady);
+            RenderRequest request;
+            request.document = doc.get();
+            request.pageNo = 1;
+            request.requester = 1;
+            engine.submit(request);
+            QTRY_COMPARE_WITH_TIMEOUT(results.size(), 1, 5000);
+            const RenderResult result = results.first().first().value<RenderResult>();
+            QVERIFY2(result.ok, qPrintable(result.error));
+            QVERIFY(!result.image.isNull());
+            QCOMPARE(result.image.pixelColor(80, 220), QColor(Qt::red));
+        } else if (query == QStringLiteral("forms")) {
+            FormModel form(*doc);
+            const auto &fields = form.pageFields(1);
+            QCOMPARE(fields.size(), size_t(1));
+            QCOMPARE(fields.front().name, QStringLiteral("laterField"));
+            QCOMPARE(fields.front().value, QStringLiteral("Original value"));
+            QVERIFY(form.setTextValue(1, 0, QStringLiteral("Edited value")));
+            QCOMPARE(form.pageFields(1).front().value, QStringLiteral("Edited value"));
+        } else if (query == QStringLiteral("outline")) {
+            const auto outline = doc->outline();
+            QCOMPARE(outline.size(), size_t(1));
+            QCOMPARE(outline.front().title, QStringLiteral("Later section"));
+            QCOMPARE(outline.front().page, 1);
+        } else {
+            TextIndex index(engine.baseContext(), doc.get());
+            const QString expected = QStringLiteral("Later page text");
+            const QString text = index.pageText(1);
+            const int start = text.indexOf(expected);
+            QVERIFY2(start >= 0, qPrintable(text));
+            QCOMPARE(index.textRange(1, start, expected.size()), expected);
+            QVERIFY(!index.rangeRects(1, start, expected.size()).empty());
+        }
+    }
+
     void closeWhileJobsAreQueued()
     {
         RenderEngine engine;

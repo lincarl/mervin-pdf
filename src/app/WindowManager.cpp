@@ -1203,9 +1203,14 @@ void WindowManager::checkDocumentActivity()
 
 void WindowManager::notifySuspensionFailure(const QString &message)
 {
+    //: Title of a tray notification: an inactive document could not be unloaded from memory.
+    notifyInTray(tr("Document remains loaded"), message);
+}
+
+void WindowManager::notifyInTray(const QString &title, const QString &message)
+{
     if (tray_ && tray_->isVisible())
-        //: Title of a tray notification: an inactive document could not be unloaded from memory.
-        tray_->showMessage(tr("Document remains loaded"), message, QSystemTrayIcon::Warning);
+        tray_->showMessage(title, message, QSystemTrayIcon::Warning);
 }
 
 void WindowManager::notifyActivated(MainWindow *w)

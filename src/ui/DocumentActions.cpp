@@ -69,36 +69,108 @@ bool sameFile(const QString &a, const QString &b)
     return mervin::fileKey(QFileInfo(a)) == mervin::fileKey(QFileInfo(b));
 }
 
-// Retry once with a prompted password and remember it only on success. Its
-// strings belong to the window that runs it (context "MainWindow").
-bool runWriteOp(QWidget *parent, TabPage *tab,
-                const std::function<PageOps::Status(const QString &, QString *)> &op)
+// Shows a message that blocks only `window`, so the other windows stay usable.
+void tellInWindow(QWidget *window, QMessageBox::Icon icon, const QString &title,
+                  const QString &text)
 {
-    QString err;
-    PageOps::Status st = op(tab->password(), &err);
-    if (st == PageOps::Status::NeedsPassword) {
-        bool ok = false;
-        const QString pw = QInputDialog::getText(
-            parent, MainWindow::tr("Password Required"),
-            MainWindow::tr("Enter the document password:"), QLineEdit::Password, QString(), &ok);
-        if (ok) {
-            st = op(pw, &err);
-            if (st == PageOps::Status::Ok)
-                tab->setPassword(pw);
-        }
-    }
-    if (st != PageOps::Status::Ok) {
-        QMessageBox::warning(parent, MainWindow::tr("Operation failed"),
-                             st == PageOps::Status::NeedsPassword
-                                 ? MainWindow::tr("A password is required.")
-                                 : MainWindow::tr("The operation failed.\n\n%1").arg(err));
-        return false;
-    }
-    return true;
+    const QPointer<QMessageBox> box(new QMessageBox(icon, title, text, QMessageBox::Ok, window));
+    box->setWindowModality(Qt::WindowModal);
+    box->exec();
+    delete box.data(); // a Quit in another window may already have deleted its parent
 }
 
+// Comparison keys of the files open in tabs, which hold canonical paths already, so
+// this reads no disk. A page tool's job compares its outputs' fileKey() with them.
+QSet<QString> openFileKeys(const QStringList &paths)
+{
+    QSet<QString> keys;
+    for (const QString &path : paths)
+        keys.insert(mervin::normalizePathKey(path));
+    return keys;
+}
 
 } // namespace
+
+struct MainWindow::PageToolResult
+{
+    PageOps::Status status = PageOps::Status::Failed;
+    QString error;
+    bool destinationOpen = false; // nothing written, as an output is open in a tab
+    QStringList written;          // the files a split wrote
+};
+
+struct MainWindow::PageTool
+{
+    QString title;       // of its messages, such as "Rotate Pages"
+    QString destination; // the folder it writes to, which its tab's wait bar names
+    // On the job's thread, with the password to open the source with.
+    std::function<PageToolResult(const QString &password)> work;
+    // In the tab's window once the tool succeeded.
+    std::function<void(MainWindow &window, TabPage &tab, const PageToolResult &result)> succeeded;
+};
+
+void MainWindow::runPageTool(TabPage *tab, const std::shared_ptr<const PageTool> &tool,
+                             const QString &password, bool asked)
+{
+    const auto result = std::make_shared<PageToolResult>();
+    TabPage::Operation operation;
+    operation.destination = tool->destination;
+    operation.work = [tool, password, result] { *result = tool->work(password); };
+    // The tab can have moved to another window meanwhile.
+    operation.finished = [page = QPointer<TabPage>(tab), tool, password, asked, result] {
+        auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!window)
+            return;
+        window->whenTabsCanChange([page, tool, password, asked, result] {
+            if (auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr)
+                window->finishPageTool(page, tool, password, asked, *result);
+        });
+    };
+    tab->startOperation(std::move(operation));
+}
+
+void MainWindow::finishPageTool(TabPage *tab, const std::shared_ptr<const PageTool> &tool,
+                                const QString &password, bool asked,
+                                const PageToolResult &result)
+{
+    const OperationScope operation(this);
+    // The boxes below run their own event loops, in which the tab can go.
+    const QPointer<TabPage> page(tab);
+    if (result.status == PageOps::Status::NeedsPassword && !asked && !hiddenToTray_) {
+        const QPointer<QInputDialog> prompt(new QInputDialog(this));
+        prompt->setWindowModality(Qt::WindowModal);
+        prompt->setWindowTitle(tr("Password Required"));
+        prompt->setLabelText(tr("Enter the document password:"));
+        prompt->setTextEchoMode(QLineEdit::Password);
+        const bool accepted = prompt->exec() == QDialog::Accepted;
+        const QString supplied = prompt ? prompt->textValue() : QString();
+        delete prompt.data();
+        if (accepted && page && page->isUsable())
+            runPageTool(page, tool, supplied, true);
+        return;
+    }
+    QString title = tr("Operation failed");
+    QString failure;
+    if (result.destinationOpen) {
+        title = tool->title;
+        failure = tr("The destination is open in a tab.");
+    } else if (result.status == PageOps::Status::NeedsPassword) {
+        failure = tr("A password is required.");
+    } else if (result.status != PageOps::Status::Ok) {
+        failure = tr("The operation failed.\n\n%1").arg(result.error);
+    }
+    if (!failure.isEmpty()) {
+        if (!hiddenToTray_)
+            tellInWindow(this, QMessageBox::Warning, title, failure);
+        else if (wm_)
+            wm_->notifyInTray(title, failure);
+        return;
+    }
+    if (asked)
+        page->setPassword(password);
+    if (!hiddenToTray_)
+        tool->succeeded(*this, *page, result);
+}
 
 QList<int> MainWindow::askPageRange(const QString &title, int pageCount)
 {
@@ -127,11 +199,17 @@ QList<int> MainWindow::askPageRange(const QString &title, int pageCount)
 
 void MainWindow::offerToOpen(const QString &path, const QString &password)
 {
-    const auto open = QMessageBox::information(
-        //: Title of the message after a new file was written.
-        this, tr("Done"), tr("Saved to:\n%1\n\nOpen it now?").arg(QDir::toNativeSeparators(path)),
-        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
-    if (open == QMessageBox::Yes)
+    const QPointer<MainWindow> self(this);
+    const QPointer<QMessageBox> box(new QMessageBox(QMessageBox::Information,
+                    //: Title of the message after a new file was written.
+                    tr("Done"),
+                    tr("Saved to:\n%1\n\nOpen it now?").arg(QDir::toNativeSeparators(path)),
+                    QMessageBox::Yes | QMessageBox::No, this));
+    box->setDefaultButton(QMessageBox::Yes);
+    box->setWindowModality(Qt::WindowModal);
+    const int answer = box->exec();
+    delete box.data();
+    if (self && answer == QMessageBox::Yes)
         openFile(path, false, -1, true, password);
 }
 
@@ -279,7 +357,8 @@ void MainWindow::saveMeasurements()
 bool MainWindow::saveTab(TabPage *t)
 {
     const OperationScope operation(this);
-    if (!t)
+    // A busy tab's file may be read or replaced by its operation.
+    if (!t || t->isBusy())
         return false;
     // An unloaded tab keeps its edits in a recovery copy. Without one there is
     // nothing to save, so do not load the document, which can stall on a network
@@ -385,9 +464,13 @@ bool MainWindow::saveTab(TabPage *t)
 bool MainWindow::confirmClose(TabPage *tab)
 {
     const OperationScope operation(this);
-    auto *viewer = tab->viewer();
-    viewer->commitActiveFormEditor();
-    viewer->commitActiveAnnotEditor();
+    // A busy tab's editors were committed when its operation started. Cancel keeps
+    // that operation running. Removing the tab stops it in the tab's destructor.
+    if (!tab->isBusy()) {
+        auto *viewer = tab->viewer();
+        viewer->commitActiveFormEditor();
+        viewer->commitActiveAnnotEditor();
+    }
     if (!tab->hasUnsavedEdits())
         return true;
     QMessageBox box(QMessageBox::Question, tr("Unsaved changes"),
@@ -406,6 +489,12 @@ bool MainWindow::confirmClose(TabPage *tab)
     const int answer = box.exec();
     if (!page)
         return answer != QMessageBox::Cancel;
+    // In-place Save requires a usable tab. Stop only after the user chooses Save.
+    if (answer == QMessageBox::Save && page->isBusy()) {
+        page->stopWaiting();
+        if (!page)
+            return true;
+    }
     return answer == QMessageBox::Discard
         || (answer == QMessageBox::Save && saveTab(page));
 }
@@ -484,11 +573,28 @@ void MainWindow::rotatePagesOp()
         tr("PDF documents (*.pdf)"));
     if (out.isEmpty())
         return;
-    const QString in = t->path();
-    if (runWriteOp(this, t, [&](const QString &pw, QString *err) {
-            return PageOps::rotatePages(in, out, pages, angle, true, pw, err);
-        }))
-        offerToOpen(out, t->password()); // output keeps the source's encryption
+    // Only the tab waits. qpdf reads the file on disk and writes the copy in the
+    // background.
+    auto tool = std::make_shared<PageTool>();
+    tool->title = tr("Rotate Pages");
+    tool->destination = QFileInfo(out).absolutePath();
+    tool->work = [in = t->path(), out, pages, angle,
+                  open = openFileKeys(wm_ ? wm_->openTabPaths() : tabPaths())](
+                     const QString &password) {
+        PageToolResult result;
+        // The viewer holds an open file, which a replace would fail on or corrupt.
+        const QString key = mervin::fileKey(QFileInfo(out));
+        if (open.contains(key) || !mervin::job::reserveDestinations({key}))
+            result.destinationOpen = true;
+        else
+            result.status = PageOps::rotatePages(in, out, pages, angle, true, password,
+                                                 &result.error);
+        return result;
+    };
+    tool->succeeded = [out](MainWindow &window, TabPage &tab, const PageToolResult &) {
+        window.offerToOpen(out, tab.password()); // output keeps the source's encryption
+    };
+    runPageTool(t, tool, t->password(), false);
 }
 
 void MainWindow::deletePagesOp()
@@ -556,24 +662,50 @@ void MainWindow::splitDocument()
 {
     const OperationScope operation(this);
     TabPage *t = currentTab();
-    if (!t)
+    if (!t || !t->isUsable())
         return;
     const QString dir = QFileDialog::getExistingDirectory(this, tr("Choose Output Folder"),
                                                           QFileInfo(t->path()).absolutePath());
     if (dir.isEmpty())
         return;
-    const QString base = QFileInfo(t->path()).completeBaseName();
-    const QString in = t->path();
-    QStringList written;
-    if (runWriteOp(this, t, [&](const QString &pw, QString *err) {
-            return PageOps::split(in, dir, base, pw, &written, err);
-        })) {
+    // Only the tab waits. qpdf reads the file on disk and writes the pages in the
+    // background.
+    auto tool = std::make_shared<PageTool>();
+    tool->title = tr("Split Pages");
+    tool->destination = dir;
+    tool->work = [in = t->path(), dir, base = QFileInfo(t->path()).completeBaseName(),
+                  open = openFileKeys(wm_ ? wm_->openTabPaths() : tabPaths())](
+                     const QString &password) {
+        PageToolResult result;
+        // The viewer holds an open file, which a replace would fail on or corrupt.
+        const auto mayWrite = [&result, &open, &dir](const QStringList &outputs) {
+            // Resolving an output's canonical path can wait on its drive too.
+            if (!mervin::job::writing(dir)) {
+                result.error = mervin::job::notRunError();
+                return false;
+            }
+            QSet<QString> keys;
+            for (const QString &output : outputs) {
+                const QString key = mervin::fileKey(QFileInfo(output));
+                keys.insert(key);
+                result.destinationOpen = result.destinationOpen || open.contains(key);
+            }
+            if (!result.destinationOpen && !mervin::job::stopped())
+                result.destinationOpen = !mervin::job::reserveDestinations(keys);
+            return !result.destinationOpen;
+        };
+        result.status = PageOps::split(in, dir, base, password, &result.written, &result.error,
+                                       mayWrite);
+        return result;
+    };
+    tool->succeeded = [dir](MainWindow &window, TabPage &, const PageToolResult &result) {
         // The English catalog supplies "file" and "files" for "%n file(s)".
-        QMessageBox::information(this, tr("Split Pages"),
-                                 //: %1 is the folder the files were written to.
-                                 tr("Wrote %n file(s) to:\n%1", nullptr, int(written.size()))
-                                     .arg(QDir::toNativeSeparators(dir)));
-    }
+        tellInWindow(&window, QMessageBox::Information, tr("Split Pages"),
+                     //: %1 is the folder the files were written to.
+                     tr("Wrote %n file(s) to:\n%1", nullptr, int(result.written.size()))
+                         .arg(QDir::toNativeSeparators(dir)));
+    };
+    runPageTool(t, tool, t->password(), false);
 }
 
 void MainWindow::mergeDocuments()

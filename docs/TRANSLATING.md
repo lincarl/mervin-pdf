@@ -224,7 +224,8 @@ actual interface context. Do not shorten a translation by dropping a condition o
 changing an action just to make it fit.
 
 A path or file name inside a translated sentence needs a bidirectional isolate in the
-code (U+2068 before it, U+2069 after it), as the slow load notice in `TabPage` does.
+code (U+2068 before it, U+2069 after it), as the tab's slow load notice and wait bar do
+(`fitFileSentence` in `ui/WaitBar`).
 Without one, Arabic shows a path's leading slash at the wrong end and can reorder its
 folders. Translators keep the placeholder as it is. A long path also needs the code to
 mark where it may wrap. Qt allows no line break after a backslash, so a Windows folder
@@ -259,10 +260,10 @@ app uses installed system fonts. Linux installations need fonts covering the
 selected language, such as Noto Sans and the corresponding Noto CJK families.
 
 `tst_translation_layout` opens the ten custom dialogs in `src/dialogs/`, plus the
-measurement and annotation panels and a tab's slow load notice in the main window,
-using real Qt widgets and the default dark stylesheet. It discovers every compiled
-language through `i18n::availableLanguages()` and repeats each scenario at the
-default size and at the smallest size a user can resize each dialog to, with
+measurement and annotation panels and a tab's slow load notice and wait bar in the
+main window, using real Qt widgets and the default dark stylesheet. It discovers every
+compiled language through `i18n::availableLanguages()` and repeats each scenario at
+the default size and at the smallest size a user can resize each dialog to, with
 10-point and 15-point base fonts. CTest runs a separate
 `tst_translation_layout_<id>` test for each language to keep failures and timeouts
 independent. `MERVIN_TEST_LANGUAGE=<id>` selects one language when invoking the
@@ -271,10 +272,10 @@ pixel font size in the stylesheet retains that size.
 
 The scenarios include both calibration modes, all Settings pages, long filenames,
 populated lists, document security states, print range validation and selected
-input, file and network errors. The slow load notice is checked at the main window's
-narrowest width, with a long folder and a file name that cannot wrap. The OCR
-language catalog uses a fake network reply so the test exercises the real dialog
-without external requests.
+input, file and network errors. The slow load notice and the wait bar are checked at
+the main window's narrowest width, with a long folder and a file name that cannot
+wrap. The OCR language catalog uses a fake network reply so the test exercises the
+real dialog without external requests.
 `tst_text_fit` checks that the fitting helper accepts valid layouts and rejects
 deliberate clipping. Both tests run through CTest in GitHub Actions without AI.
 

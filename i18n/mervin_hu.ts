@@ -3127,6 +3127,11 @@ Ez a fájl már nincs a lemezen.</translation>
         <translation>Nem sikerült hozzárendelni a dokumentumkörnyezetet.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Nem sikerült beolvasni a dokumentumot.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Ez a dokumentum jelszóval védett.</translation>
     </message>
@@ -3345,14 +3350,29 @@ Most nyitja meg?</translation>
         <translation>%1 megnyitása a(z) %2 mappából. A meghajtó nem válaszol.</translation>
     </message>
     <message>
+        <source>Saving to %1. The drive is not answering.</source>
+        <extracomment>Shown in a bar over the document when the drive has not answered for a few seconds while a tool such as Rotate Pages or Split writes its files, or reads a file in the folder it writes to. On its right is the Stop waiting button. %1 is the folder (/nas/docs, or a network share folder on Windows).</extracomment>
+        <translation>Mentés a(z) %1 mappába. A meghajtó nem válaszol.</translation>
+    </message>
+    <message>
+        <source>Reading %1 from %2. The drive is not answering.</source>
+        <extracomment>Shown in a bar over the document when the drive has not answered for a few seconds while a tool such as Rotate Pages reads a file. On its right is the Stop waiting button. %1 is the file name (plan.pdf), %2 the folder it is read from (/nas/docs, or a network share folder on Windows).</extracomment>
+        <translation>%1 olvasása a(z) %2 mappából. A meghajtó nem válaszol.</translation>
+    </message>
+    <message>
         <source>Retry</source>
         <extracomment>Button that tries to load the document again.</extracomment>
         <translation>Próbálja újra</translation>
     </message>
     <message>
         <source>Stop waiting</source>
-        <extracomment>Button under the notice that the drive is not answering while the document loads. It gives up the load and leaves the document unloaded.</extracomment>
+        <extracomment>Button beside a notice that the drive is not answering. Under the notice of a document that loads, it gives up the load and leaves the document unloaded. In the bar over a document that a tool such as Rotate Pages works on, it gives up the tool&apos;s work, so the document can be used again.</extracomment>
         <translation>Várakozás leállítása</translation>
+    </message>
+    <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>A fájl írása folyamatban van. Próbálja újra, amikor a művelet befejeződött.</translation>
     </message>
     <message>
         <source>Document is unloaded.</source>

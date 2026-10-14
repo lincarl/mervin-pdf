@@ -76,9 +76,20 @@ void ThumbnailSidebar::setCurrentPage(int page)
     renderTimer_->start();
 }
 
+void ThumbnailSidebar::setPaused(bool paused)
+{
+    if (paused == paused_)
+        return;
+    paused_ = paused;
+    if (paused_)
+        renderTimer_->stop();
+    else
+        renderTimer_->start(); // the rows scrolled into view meanwhile
+}
+
 void ThumbnailSidebar::renderVisible()
 {
-    if (!doc_ || !engine_)
+    if (!doc_ || !engine_ || paused_)
         return;
     const QRect vp = list_->viewport()->rect();
     for (int i = 0; i < list_->count(); ++i) {

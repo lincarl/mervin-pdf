@@ -7,6 +7,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <functional>
+
 namespace mervin {
 
 // Structural page operations backed by qpdf. All page indices are 0-based;
@@ -69,10 +71,14 @@ public:
     static Status merge(const QStringList &inPaths, const QString &outPath, QString *error = nullptr);
 
     // Write each page of the source to "<outDir>/<baseName>-NNN.pdf". The
-    // produced paths are appended to `outFiles` if provided.
+    // produced paths are appended to `outFiles` if provided. `mayWrite`, when given,
+    // gets every output path once the source is read, before the first write. When it
+    // answers false, nothing is written and the split fails without an error, as the
+    // caller knows why. Inside a stopped job::Scope no further file is written.
     static Status split(const QString &inPath, const QString &outDir, const QString &baseName,
                         const QString &password = QString(), QStringList *outFiles = nullptr,
-                        QString *error = nullptr);
+                        QString *error = nullptr,
+                        const std::function<bool(const QStringList &)> &mayWrite = {});
 };
 
 } // namespace mervin

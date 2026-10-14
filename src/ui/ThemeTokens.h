@@ -76,6 +76,13 @@ struct Chrome
     QColor canvasControl;       // its button
     QColor borderCanvasControl; // the button's edge
 
+    // The bar over a busy tab that says what its operation waits for, and the veil over
+    // the still picture of its pages below the bar. The bar's text is inkPrimary and
+    // its button a standard push button.
+    QColor notice;       // the bar
+    QColor borderNotice; // the line along its bottom edge
+    QColor veil;         // the wash over the pages below it
+
     // Accent: one colour carries selection, focus and the primary button.
     QColor accent;
     QColor accentHover;

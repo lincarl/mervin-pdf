@@ -8,13 +8,16 @@
 #include "render/MeasureContent.h"
 #include "render/MeasureMath.h"
 #include "render/RenderEngine.h"
+#include "recent/PathKey.h"
 #include "security/MeasureExport.h"
 #include "security/DocumentOutput.h"
 #include "ui/AnnotPanel.h"
 #include "ui/FindCard.h"
 #include "ui/MeasurePanel.h"
 #include "ui/PanelStack.h"
+#include "ui/StillPicture.h"
 #include "ui/ViewerWidget.h"
+#include "ui/WaitBar.h"
 
 #include <QFileInfo>
 #include <QFile>
@@ -28,6 +31,7 @@
 #include <QLabel>
 #include <QPointer>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QSaveFile>
 #include <QSet>
 #include <QTemporaryFile>
@@ -162,13 +166,8 @@ QJsonObject readManifest(const QString &path)
 constexpr int kPollMs = 250;
 int slowDelayMs = TabPage::kSlowMs;
 
-// The slow notice for document `name` read from `folder`, for a label `width` wide.
-// The sentence wraps where Qt allows, as at spaces, and the folder also after each
-// separator that ends a folder name, which Qt does not allow after a backslash. No line
-// ends inside or right after the separators a path starts with, such as the "\\" of a
-// network share, right before another separator or after the ellipsis of a shortened
-// part. A name or folder with a piece still too wide for a line is shortened in the
-// middle, each only as far as its own pieces need.
+// The slow notice for document `name` read from `folder`, for a label `width` wide (see
+// fitFileSentence).
 QString slowNotice(const QString &name, const QString &folder, const QFontMetrics &metrics,
                    int width)
 {
@@ -177,62 +176,29 @@ QString slowNotice(const QString &name, const QString &folder, const QFontMetric
     //: name (plan.pdf), %2 the folder it is read from (/nas/docs, or a network share
     //: folder on Windows).
     const QString sentence = TabPage::tr("Opening %1 from %2. The drive is not answering.");
-    // `text` at most `cap` pixels wide, with the breaks above, as a bidirectional
-    // isolate, so a path keeps its order in a right-to-left sentence.
-    const auto part = [&metrics](const QString &text, int cap, bool path) {
-        // elidedText() measures without rounding, so it can shorten a text that
-        // horizontalAdvance() says is `cap` wide.
-        const QString shown = metrics.horizontalAdvance(text) <= cap
-                                  ? text
-                                  : metrics.elidedText(text, Qt::ElideMiddle, cap);
-        const auto separator = [path](QChar c) { return path && (c == u'/' || c == u'\\'); };
-        QString out = QChar(0x2068); // first strong isolate
-        bool leading = true;         // in the separators the text starts with
-        for (qsizetype i = 0; i < shown.size(); ++i) {
-            const QChar c = shown.at(i);
-            out += c;
-            leading = leading && separator(c);
-            if (i + 1 == shown.size())
-                break;
-            if (leading || c == QChar(0x2026) || separator(shown.at(i + 1)))
-                out += QChar(0x2060); // word joiner, no break here
-            else if (separator(c))
-                out += QChar(0x200B); // zero width space, a break here
-        }
-        return out + QChar(0x2069); // pop directional isolate
-    };
-    const auto compose = [&](int nameCap, int folderCap) {
-        return sentence.arg(part(name, nameCap, false), part(folder, folderCap, true));
-    };
-    const auto fits = [&](const QString &text) {
-        return metrics.boundingRect(QRect(0, 0, width, 1 << 20), Qt::TextWordWrap, text).width()
-            <= width;
-    };
-    const int nameWidth = metrics.horizontalAdvance(name);
-    const int folderWidth = metrics.horizontalAdvance(folder);
-    if (width <= 0 || fits(compose(nameWidth, folderWidth)))
-        return compose(nameWidth, folderWidth);
-    // The widest cap up to `widest` at which `fitsAt` holds, or 0.
-    const auto widestFitting = [](int widest, const auto &fitsAt) {
-        if (fitsAt(widest))
-            return widest;
-        int fitting = 0;
-        int tooWide = widest;
-        while (tooWide - fitting > 1) {
-            const int cap = (fitting + tooWide) / 2;
-            (fitsAt(cap) ? fitting : tooWide) = cap;
-        }
-        return fitting;
-    };
-    // Each part beside the other shortened to nothing, so only its own pieces count.
-    const int nameCap = widestFitting(nameWidth, [&](int cap) { return fits(compose(cap, 0)); });
-    const int folderCap =
-        widestFitting(folderWidth, [&](int cap) { return fits(compose(0, cap)); });
-    // A translation can put pieces of both on one line. Then both are shortened alike.
-    const int cap = widestFitting(std::max(nameCap, folderCap), [&](int cap) {
-        return fits(compose(std::min(nameCap, cap), std::min(folderCap, cap)));
-    });
-    return compose(std::min(nameCap, cap), std::min(folderCap, cap));
+    return fitFileSentence(
+        [&sentence](const QString &file, const QString &in) { return sentence.arg(file, in); },
+        name, folder, metrics, width);
+}
+
+// The wait bar's sentence for an operation that reads the file `name` in `folder`, or
+// with an empty name, that saves to `folder` (see fitFileSentence).
+FileSentence waitSentence(const QString &name)
+{
+    if (name.isEmpty()) {
+        //: Shown in a bar over the document when the drive has not answered for a few
+        //: seconds while a tool such as Rotate Pages or Split writes its files, or reads
+        //: a file in the folder it writes to. On its right is the Stop waiting button.
+        //: %1 is the folder (/nas/docs, or a network share folder on Windows).
+        const QString sentence = TabPage::tr("Saving to %1. The drive is not answering.");
+        return [sentence](const QString &, const QString &in) { return sentence.arg(in); };
+    }
+    //: Shown in a bar over the document when the drive has not answered for a few
+    //: seconds while a tool such as Rotate Pages reads a file. On its right is the Stop
+    //: waiting button. %1 is the file name (plan.pdf), %2 the folder it is read from
+    //: (/nas/docs, or a network share folder on Windows).
+    const QString sentence = TabPage::tr("Reading %1 from %2. The drive is not answering.");
+    return [sentence](const QString &file, const QString &in) { return sentence.arg(file, in); };
 }
 
 MeasureKind kindFromString(const QString &s)
@@ -262,14 +228,16 @@ struct TabPage::OpenResult {
     bool needsPassword = false;
 };
 
-// The tab's background job, for now the load that resumeAsync() starts, shared by the
-// tab and the job's thread. The tab never destroys a running job. It takes the result,
-// waits for it (stopLoading) or lets go of it (abandon), and the job ends on its own.
+// The tab's background job, the load that resumeAsync() starts or an operation
+// (startOperation), shared by the tab and the job's thread. The tab never destroys a
+// running job. It takes the result, waits for a load (stopLoading) or lets go of the
+// job (abandon), and the job ends on its own. An operation keeps its result in what
+// its work captured, so its job has no `result`, and it opens no document.
 struct TabPage::Job {
     enum class Phase {
-        Reading, // the job reads the document
+        Reading, // the job reads the document, or the operation runs
         Closing, // the tab let go of the job, and what it read is being closed
-        Stored,  // `result` waits for the tab
+        Stored,  // `result` waits for the tab, or the operation has returned
         Ended,   // nothing is left open, as the tab took the result or it was closed
     };
 
@@ -298,7 +266,7 @@ struct TabPage::Job {
         changed.wait(lock, [this] { return phase == Phase::Ended; });
     }
 
-    const QString source;               // the file the load reads
+    const QString source;               // the file the load reads; empty for an operation
     job::State state;                   // what the job reports, and its stop
     std::mutex mutex;
     std::condition_variable changed;    // notified when `phase` changes
@@ -349,9 +317,12 @@ TabPage::TabPage(RenderEngine *engine, QWidget *parent)
     auto *retry = new QPushButton(tr("Retry"), placeholder_);
     retry->setObjectName(QStringLiteral("retryDocumentLoad"));
     retryButton_ = retry;
-    //: Button under the notice that the drive is not answering while the document
-    //: loads. It gives up the load and leaves the document unloaded.
-    auto *stop = new QPushButton(tr("Stop waiting"), placeholder_);
+    //: Button beside a notice that the drive is not answering. Under the notice of a
+    //: document that loads, it gives up the load and leaves the document unloaded. In
+    //: the bar over a document that a tool such as Rotate Pages works on, it gives up
+    //: the tool's work, so the document can be used again.
+    const QString stopText = tr("Stop waiting");
+    auto *stop = new QPushButton(stopText, placeholder_);
     stop->setObjectName(QStringLiteral("stopDocumentLoad"));
     stopButton_ = stop;
     auto *buttons = new QHBoxLayout;
@@ -366,6 +337,14 @@ TabPage::TabPage(RenderEngine *engine, QWidget *parent)
     connect(stop, &QPushButton::clicked, this, &TabPage::stopWaiting);
     layout->addWidget(placeholder_, 1);
     placeholder_->hide();
+    // While an operation runs, the still picture takes the viewer's place and the wait
+    // bar floats over its top.
+    still_ = new StillPicture(this);
+    layout->addWidget(still_, 1);
+    still_->hide();
+    waitBar_ = new WaitBar(stopText, this);
+    waitBar_->installEventFilter(this); // the veil follows the bar
+    connect(waitBar_->stopButton(), &QPushButton::clicked, this, &TabPage::stopWaiting);
     slowPoll_ = new QTimer(this);
     slowPoll_->setInterval(kPollMs);
     connect(slowPoll_, &QTimer::timeout, this, &TabPage::pollJob);
@@ -510,13 +489,18 @@ TabPage::~TabPage()
     // itself goes once no document has it open, as Windows cannot remove an open file.
     const QString snapshot = std::exchange(recoveryPath_, QString());
     clearRecovery();
-    Q_ASSERT(!doc_ || !job_); // a tab loads only while it has no document
-    if (job_) {
+    if (job_ && !doc_) {
         // A load still reading gives up at its next step. The copy goes once what the
         // load read is closed.
         job_->state.stop();
         abandon(job_, snapshot);
         return;
+    }
+    if (job_) {
+        // The operation starts no further commit. It does not use the document,
+        // which closes as below. A commit already started can finish.
+        job_->state.stop();
+        abandon(job_, {});
     }
     if (!doc_)
         appfiles::remove(snapshot);
@@ -534,7 +518,8 @@ void TabPage::abandon(const std::shared_ptr<Job> &job, const QString &removeAfte
         std::lock_guard<std::mutex> lock(job->mutex);
         job->abandoned = true;
         if (job->phase == Job::Phase::Stored) {
-            document.reset(std::exchange(job->result, nullptr)->document.release());
+            if (const auto result = std::exchange(job->result, nullptr))
+                document.reset(result->document.release());
             job->setPhase(document ? Job::Phase::Closing : Job::Phase::Ended);
         }
         ended = job->phase == Job::Phase::Ended;
@@ -625,6 +610,25 @@ void TabPage::setPath(const QString &path, bool resolve)
     canonicalPath_ = resolve ? fi.canonicalFilePath() : QDir::cleanPath(path_);
     if (canonicalPath_.isEmpty())
         canonicalPath_ = path_;
+}
+
+bool TabPage::claimPath(const QString &path)
+{
+    const QString key = normalizePathKey(path);
+    if (openPath_ && openPath_->key() == key)
+        return true;
+    auto claim = std::make_unique<job::OpenPath>(key);
+    if (!claim->admitted())
+        return false;
+    openPath_ = std::move(claim);
+    return true;
+}
+
+QString TabPage::pathBeingWrittenError()
+{
+    //: Reason when opening a page-tool output is refused until the tool finishes
+    //: writing it. This is an active write reservation, not a password or permission.
+    return tr("This file is being written. Try again when the operation finishes.");
 }
 
 bool TabPage::open(const QString &path, const QString &password, QString *error,
@@ -855,8 +859,9 @@ ViewState TabPage::capturedViewState() const
 
 void TabPage::setSavedViewState(const ViewState &state)
 {
-    // A crash checkpoint is newer than the ordinary last-saved view-state file.
-    if (!doc_ && !recoveryPath_.isEmpty())
+    // A crash checkpoint is newer than the ordinary last-saved view-state file. A busy
+    // tab keeps the view it shows, as moving the viewer would read the document.
+    if ((!doc_ && !recoveryPath_.isEmpty()) || busy_)
         return;
     if (doc_)
         saved_->viewer = viewer_->captureResumeState();
@@ -879,6 +884,8 @@ bool TabPage::suspend(QString *error)
     }
     if (!doc_)
         return true;
+    if (busy_)
+        return false; // the window does not unload a busy tab, so this says nothing
     viewer_->commitActiveFormEditor();
     viewer_->commitActiveAnnotEditor();
     saved_->viewer = viewer_->captureResumeState();
@@ -1053,6 +1060,19 @@ void TabPage::finishLoad(const std::shared_ptr<Job> &job)
 
 void TabPage::stopWaiting()
 {
+    if (busy_) {
+        // The job gives up at its next step, and a commit it already began completes.
+        // Either way the tab treats the operation as not done.
+        job_->state.stop();
+        abandon(job_, {});
+        job_.reset();
+        finished_ = nullptr;
+        const QPointer<TabPage> self(this);
+        endOperation();
+        if (self)
+            emit operationFinished(false);
+        return;
+    }
     if (!loading_)
         return;
     loading_ = false;
@@ -1087,6 +1107,83 @@ void TabPage::retryLoad()
     }
     showPlaceholder(tr("Loading"), PlaceholderButton::None);
     startSlowClock();
+    emit stateChanged();
+}
+
+void TabPage::startOperation(Operation operation)
+{
+    Q_ASSERT(isUsable() && !job_);
+    if (!isUsable() || job_)
+        return;
+    // Edits still being typed go into the document while nothing else reads it, and
+    // pauseForOperation() removes the editors, so a later focus change cannot commit.
+    viewer_->commitActiveFormEditor();
+    viewer_->commitActiveAnnotEditor();
+    // One ordinary paint while the document is idle. A tab out of view shows the plain
+    // canvas.
+    still_->setPicture(isVisible() ? viewer_->grab() : QPixmap());
+    scrollColumn_ = std::max(0, viewer_->width() - viewer_->viewport()->width());
+    viewer_->pauseForOperation();
+    viewer_->hide();
+    still_->show();
+    busy_ = true;
+    destination_ = operation.destination;
+    finished_ = std::move(operation.finished);
+    barName_.clear();
+    barFolder_.clear();
+    const auto job = std::make_shared<Job>(QString());
+    job_ = job;
+    background::start([tab = QPointer<QObject>(this), job, work = std::move(operation.work)] {
+        {
+            const job::Scope scope(job->state);
+            work();
+        }
+        std::unique_lock<std::mutex> lock(job->mutex);
+        if (job->abandoned) {
+            job->setPhase(Job::Phase::Ended);
+            return;
+        }
+        job->setPhase(Job::Phase::Stored);
+        lock.unlock();
+        background::post(tab, [tab, job] {
+            static_cast<TabPage *>(tab.data())->finishOperation(job);
+        });
+    });
+    startSlowClock();
+    emit stateChanged();
+}
+
+void TabPage::finishOperation(const std::shared_ptr<Job> &job)
+{
+    if (job != job_)
+        return; // the user stopped waiting for it
+    {
+        std::lock_guard<std::mutex> lock(job->mutex);
+        if (job->phase != Job::Phase::Stored || job->abandoned)
+            return;
+        job->setPhase(Job::Phase::Ended);
+    }
+    job_.reset();
+    // Copied first, as what the signals start may close the tab.
+    const std::function<void()> finished = std::exchange(finished_, nullptr);
+    const QPointer<TabPage> self(this);
+    endOperation();
+    if (!self)
+        return;
+    emit operationFinished(true);
+    if (self && finished)
+        finished();
+}
+
+void TabPage::endOperation()
+{
+    busy_ = false;
+    stopSlowClock();
+    waitBar_->hide();
+    still_->hide();
+    still_->setPicture({});
+    viewer_->show();
+    viewer_->resumeAfterOperation();
     emit stateChanged();
 }
 
@@ -1126,7 +1223,7 @@ void TabPage::stopSlowClock()
 
 void TabPage::pollJob()
 {
-    if (!loading_ || !job_) {
+    if (!(loading_ || busy_) || !job_) {
         stopSlowClock();
         return;
     }
@@ -1137,6 +1234,12 @@ void TabPage::pollJob()
         || now.ticks != seen_.ticks)
         quiet_.restart();
     seen_ = now;
+    if (busy_) {
+        // Once shown, the bar stays until the operation ends, and names the latest step.
+        if (!waitBar_->isHidden() || quiet_.elapsed() >= slowDelayMs)
+            showWaitBar(now);
+        return;
+    }
     if (slowFile_.isEmpty() && quiet_.elapsed() < slowDelayMs)
         return;
     // Once shown, the notice stays until the load ends, and names the latest file.
@@ -1161,10 +1264,64 @@ void TabPage::updateSlowNotice()
         placeholderLabel_->setText(text);
 }
 
+void TabPage::showWaitBar(const job::State::Snapshot &now)
+{
+    // A write names its folder, and a commit the file it replaces. A read of a file in
+    // the destination counts as saving there. Before its first step, and while it
+    // prints, the operation waits for its destination.
+    QString name;
+    QString folder = destination_;
+    switch (now.step) {
+    case job::Step::Reading:
+        if (normalizePathKey(QFileInfo(now.path).absolutePath()) != normalizePathKey(destination_)) {
+            name = QFileInfo(now.path).fileName();
+            folder = QFileInfo(now.path).absolutePath();
+        }
+        break;
+    case job::Step::Writing:
+        folder = now.path;
+        break;
+    case job::Step::Commit:
+        folder = QFileInfo(now.path).absolutePath();
+        break;
+    case job::Step::None:
+    case job::Step::Printing:
+        break;
+    }
+    if (!waitBar_->isHidden() && name == barName_ && folder == barFolder_)
+        return;
+    barName_ = name;
+    barFolder_ = folder;
+    waitBar_->setNotice(waitSentence(name), name, QDir::toNativeSeparators(folder));
+    if (waitBar_->isHidden()) {
+        waitBar_->show();
+        waitBar_->raise();
+        placeWaitBar();
+    }
+}
+
+void TabPage::placeWaitBar()
+{
+    // The scroll bar's column is on the left in a right-to-left layout.
+    waitBar_->place(layoutDirection() == Qt::RightToLeft ? scrollColumn_ : 0,
+                    std::max(0, width() - scrollColumn_));
+}
+
+void TabPage::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    if (!waitBar_->isHidden())
+        placeWaitBar();
+}
+
 bool TabPage::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched == placeholderLabel_ && event->type() == QEvent::Resize)
         updateSlowNotice();
+    if (watched == waitBar_
+        && (event->type() == QEvent::Resize || event->type() == QEvent::Show
+            || event->type() == QEvent::Hide))
+        still_->setVeil(waitBar_->isHidden() ? QRect() : waitBar_->geometry());
     return QWidget::eventFilter(watched, event);
 }
 

@@ -109,6 +109,8 @@ public:
     void applyMemorySettings(int minutes, bool closeToTray);
     void checkDocumentActivity();
     void notifySuspensionFailure(const QString &message);
+    // Shows a warning from the tray icon, for a window hidden in the tray.
+    void notifyInTray(const QString &title, const QString &message);
 
     // Detachable tabs (M9), all in-process. detachTab moves the tab at `index`
     // of `source` into a fresh window placed near globalPos (no-op if it is the

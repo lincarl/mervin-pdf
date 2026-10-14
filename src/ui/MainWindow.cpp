@@ -459,7 +459,8 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
                       wm_->duplicateToNewWindow(dupPath, dupPassword, dupState,
                                                 this->pos() + QPoint(40, 40));
               },
-              true,
+              // A duplicate opens the file, which a busy tab's operation may replace.
+              !t->isBusy(),
               mervin::icons::glyph(mervin::icons::Glyph::ShowAllWindows, ink)},
              {tr("Move to new window"),
               [this, clicked] {
@@ -605,8 +606,9 @@ mervin::TabPage *MainWindow::currentTab() const
 
 ViewerWidget *MainWindow::currentViewer() const
 {
+    // A busy tab's document is not usable until its operation ends.
     TabPage *t = currentTab();
-    return t && t->isLoaded() ? t->viewer() : nullptr;
+    return t && t->isUsable() ? t->viewer() : nullptr;
 }
 
 int MainWindow::indexOfPath(const QString &canonicalPath) const
@@ -809,7 +811,7 @@ void MainWindow::createActions()
             return;
         }
         TabPage *t = currentTab();
-        if (!t || !t->isLoaded())
+        if (!t || !t->isUsable())
             return;
         QString preset;
         const QString sel = t->viewer()->selectedText();
@@ -827,7 +829,7 @@ void MainWindow::createActions()
     findNextAction_->setShortcut(QKeySequence::FindNext); // F3
     connect(findNextAction_, &QAction::triggered, this, [this] {
         TabPage *t = currentTab();
-        if (recentActive_ || !t || !t->isLoaded())
+        if (recentActive_ || !t || !t->isUsable())
             return;
         if (t->findCard()->isOpen())
             t->findCard()->next();
@@ -839,7 +841,7 @@ void MainWindow::createActions()
     findPrevAction_->setShortcut(QKeySequence::FindPrevious); // Shift+F3
     connect(findPrevAction_, &QAction::triggered, this, [this] {
         TabPage *t = currentTab();
-        if (recentActive_ || !t || !t->isLoaded())
+        if (recentActive_ || !t || !t->isUsable())
             return;
         if (t->findCard()->isOpen())
             t->findCard()->prev();
@@ -857,7 +859,7 @@ void MainWindow::createActions()
         findAction_->shortcut().toString(QKeySequence::NativeText)));
     connect(findCardAction_, &QAction::triggered, this, [this](bool open) {
         TabPage *t = currentTab();
-        if (!t || !t->isLoaded())
+        if (!t || !t->isUsable())
             return;
         if (open)
             t->findCard()->open();
@@ -1677,6 +1679,15 @@ bool MainWindow::openFile(const QString &path, bool allowDuplicate, int atIndex,
     }
 
     auto *page = new TabPage(engine_);
+    if (!page->claimPath(canon)) {
+        delete page;
+        //: %1 is the file path, %2 the reason the file could not be opened.
+        const QString message = tr("Could not open \"%1\".\n\n%2");
+        QMessageBox::warning(this, tr("Mervin PDF"),
+                             message.arg(QDir::toNativeSeparators(path),
+                                         TabPage::pathBeingWrittenError()));
+        return false;
+    }
     wireTabLifecycle(page);
     applySettingsToViewer(page->viewer());
     QString error;
@@ -2109,7 +2120,30 @@ void MainWindow::updateForCurrentTab()
 
     updateStartPage();
 
-    ViewerWidget *v = currentTab() && currentTab()->isLoaded() ? currentViewer() : nullptr;
+    // A busy tab's document is not usable until its operation ends, so nothing here
+    // may read it. A tab that became busy while its sidebars showed it keeps them,
+    // paused, and its page number and zoom show where the viewer stopped, disabled.
+    if (TabPage *t = currentTab(); t && t->isBusy()) {
+        ViewerWidget *v = t->viewer();
+        wireCurrentViewer(nullptr);
+        if (sidebarDoc_ != v->document())
+            clearDocumentSidebars();
+        if (thumbnailSidebar_)
+            thumbnailSidebar_->setPaused(true);
+        setUiEnabled(false);
+        setWindowTitle(tr("%1 - Mervin PDF").arg(t->tabTitle()));
+        if (recentActive_ && recentPanel_)
+            statusInfo_->setText(recentPanel_->statusSummary());
+        else
+            statusInfo_->setText(QDir::toNativeSeparators(t->path()));
+        updatePageLabels(v->currentPage() + 1, v->pageCount());
+        syncZoomCombo(v);
+        return;
+    }
+    if (thumbnailSidebar_)
+        thumbnailSidebar_->setPaused(false);
+
+    ViewerWidget *v = currentViewer();
     wireCurrentViewer(v);
     updateSidebars();
     refreshCommentsSidebar(); // reflect the current tab's annotations (if shown)
@@ -2730,6 +2764,9 @@ void MainWindow::refreshCommentsSidebar()
 {
     if (!commentsSidebar_ || !commentsDock_ || !commentsDock_->isVisible())
         return; // only enumerate when the panel is actually shown
+    // A busy tab's list stays as it is, or empty after a switch to the tab.
+    if (TabPage *t = currentTab(); t && t->isBusy())
+        return;
     ViewerWidget *v = currentViewer();
     commentsSidebar_->setAnnotations(v ? v->allAnnotations() : std::vector<mervin::Annotation>{});
 }
@@ -2879,7 +2916,7 @@ void MainWindow::recognizeRegion(int pageNo, const QRectF &pageRect, const QStri
 void MainWindow::toggleMeasure(bool on)
 {
     auto *t = currentTab();
-    if (!t) {
+    if (!t || t->isBusy()) {
         if (measureAction_ && measureAction_->isChecked()) {
             QSignalBlocker block(measureAction_);
             measureAction_->setChecked(false);
@@ -2895,7 +2932,7 @@ void MainWindow::toggleMeasure(bool on)
 void MainWindow::toggleForms(bool on)
 {
     auto *t = currentTab();
-    if (!t) {
+    if (!t || t->isBusy()) {
         if (formAction_ && formAction_->isChecked()) {
             QSignalBlocker block(formAction_);
             formAction_->setChecked(false);
@@ -2912,8 +2949,8 @@ void MainWindow::toggleForms(bool on)
 
 void MainWindow::toggleComment(bool on)
 {
-    auto *t = currentTab();
-    if (!t) {
+    ViewerWidget *v = currentViewer();
+    if (!v) {
         if (commentAction_ && commentAction_->isChecked()) {
             QSignalBlocker block(commentAction_);
             commentAction_->setChecked(false);
@@ -2922,13 +2959,14 @@ void MainWindow::toggleComment(bool on)
     }
     // Opens/closes the Comment window; it docks beside the measure panel and both
     // can be open at once (only the single active gesture is exclusive).
-    t->viewer()->setCommentToolEnabled(on);
+    v->setCommentToolEnabled(on);
 }
 
 void MainWindow::onCalibrationLineDrawn(int pageNo, double lengthPoints)
 {
     auto *t = currentTab();
-    if (!t)
+    ViewerWidget *v = currentViewer();
+    if (!t || !v)
         return;
     const mervin::MeasurePanel *panel = t->measurePanel();
     const mervin::MeasureUnit unit =
@@ -2938,23 +2976,24 @@ void MainWindow::onCalibrationLineDrawn(int pageNo, double lengthPoints)
     if (dlg.exec() == QDialog::Accepted) {
         const mervin::MeasureScale s = dlg.result();
         if (s.valid())
-            t->viewer()->setPageScaleOverride(pageNo, s);
-    } else if (!t->viewer()->pageHasScale(pageNo)) {
+            v->setPageScaleOverride(pageNo, s);
+    } else if (!v->pageHasScale(pageNo)) {
         // Cancelled with still no usable scale: the drawn line is discarded and no
         // measurement is kept (a measurement without a scale isn't valid). Re-arm
         // calibration so the next drawn line prompts for the scale again.
-        t->viewer()->beginCalibration();
+        v->beginCalibration();
     } else {
         // Cancelled a manual recalibration on an already-scaled page: just resume
         // measuring with the existing scale.
-        t->viewer()->cancelCalibration();
+        v->cancelCalibration();
     }
 }
 
 void MainWindow::onSetScaleRequested(int pageNo)
 {
     auto *t = currentTab();
-    if (!t)
+    ViewerWidget *v = currentViewer();
+    if (!t || !v)
         return;
     const mervin::MeasurePanel *panel = t->measurePanel();
     const mervin::MeasureUnit unit = panel ? panel->unit() : mervin::MeasureUnit::Millimeter;
@@ -2962,7 +3001,7 @@ void MainWindow::onSetScaleRequested(int pageNo)
     if (dlg.exec() == QDialog::Accepted) {
         const mervin::MeasureScale s = dlg.result();
         if (s.valid())
-            t->viewer()->setPageScaleOverride(pageNo, s);
+            v->setPageScaleOverride(pageNo, s);
     }
     // Cancel is a no-op: the page keeps whatever scale it already had.
 }

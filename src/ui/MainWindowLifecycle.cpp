@@ -173,7 +173,8 @@ void MainWindow::clearDocumentSidebars()
 
 bool MainWindow::suspendTab(TabPage *tab)
 {
-    if (!tab->isLoaded() || suspensionFailed_.contains(tab))
+    // A busy tab keeps its document until its operation ends.
+    if (!tab->isUsable() || suspensionFailed_.contains(tab))
         return false;
     if (sidebarDoc_ == tab->viewer()->document())
         clearDocumentSidebars();

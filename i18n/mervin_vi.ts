@@ -3127,6 +3127,11 @@ Tệp này không còn trên đĩa.</translation>
         <translation>Không thể phân bổ ngữ cảnh tài liệu.</translation>
     </message>
     <message>
+        <source>Could not read the document.</source>
+        <extracomment>Shown when the complete source file cannot be read. A partially read file is not opened, even if the PDF reader could repair it.</extracomment>
+        <translation>Không thể đọc tài liệu.</translation>
+    </message>
+    <message>
         <source>This document is password-protected.</source>
         <translation>Tài liệu này được bảo vệ bằng mật khẩu.</translation>
     </message>
@@ -3345,14 +3350,29 @@ Mở nó ngay bây giờ?</translation>
         <translation>Đang mở %1 từ %2. Ổ đĩa không phản hồi.</translation>
     </message>
     <message>
+        <source>Saving to %1. The drive is not answering.</source>
+        <extracomment>Shown in a bar over the document when the drive has not answered for a few seconds while a tool such as Rotate Pages or Split writes its files, or reads a file in the folder it writes to. On its right is the Stop waiting button. %1 is the folder (/nas/docs, or a network share folder on Windows).</extracomment>
+        <translation>Đang lưu vào %1. Ổ đĩa không phản hồi.</translation>
+    </message>
+    <message>
+        <source>Reading %1 from %2. The drive is not answering.</source>
+        <extracomment>Shown in a bar over the document when the drive has not answered for a few seconds while a tool such as Rotate Pages reads a file. On its right is the Stop waiting button. %1 is the file name (plan.pdf), %2 the folder it is read from (/nas/docs, or a network share folder on Windows).</extracomment>
+        <translation>Đang đọc %1 từ %2. Ổ đĩa không phản hồi.</translation>
+    </message>
+    <message>
         <source>Retry</source>
         <extracomment>Button that tries to load the document again.</extracomment>
         <translation>Thử lại</translation>
     </message>
     <message>
         <source>Stop waiting</source>
-        <extracomment>Button under the notice that the drive is not answering while the document loads. It gives up the load and leaves the document unloaded.</extracomment>
+        <extracomment>Button beside a notice that the drive is not answering. Under the notice of a document that loads, it gives up the load and leaves the document unloaded. In the bar over a document that a tool such as Rotate Pages works on, it gives up the tool&apos;s work, so the document can be used again.</extracomment>
         <translation>Ngừng chờ</translation>
+    </message>
+    <message>
+        <source>This file is being written. Try again when the operation finishes.</source>
+        <extracomment>Reason when opening a page-tool output is refused until the tool finishes writing it. This is an active write reservation, not a password or permission.</extracomment>
+        <translation>Đang ghi vào tệp này. Thử lại khi thao tác hoàn tất.</translation>
     </message>
     <message>
         <source>Document is unloaded.</source>

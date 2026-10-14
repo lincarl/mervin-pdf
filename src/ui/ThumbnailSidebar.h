@@ -25,6 +25,9 @@ public:
 
     void setDocument(Document *doc); // rebuild for a new document (or clear)
     void setCurrentPage(int page);   // highlight without emitting
+    // While its tab is busy, the panel keeps the thumbnails it has and renders no more,
+    // as rendering reads the document.
+    void setPaused(bool paused);
 
 signals:
     void pageSelected(int page);
@@ -39,6 +42,7 @@ private:
     QTimer *renderTimer_ = nullptr;
     ThumbnailCache cache_;
     bool syncingSelection_ = false;
+    bool paused_ = false;
 };
 
 } // namespace mervin

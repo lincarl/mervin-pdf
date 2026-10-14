@@ -510,6 +510,30 @@ void ViewerWidget::invalidateRenders(PreviewPolicy preview)
     pending_.clear();
 }
 
+void ViewerWidget::pauseForOperation()
+{
+    endZoomEase();
+    // As invalidateRenders(), but the cache stays for when the viewer shows again.
+    engine_->cancelRequests(viewerId_);
+    ++viewEpoch_;
+    pending_.clear();
+    documentSearch_->cancel();
+    stopAutoScroll();
+    selecting_ = false;
+    clearLinkToolTip();
+    closeAnnotPopup();
+    closePropertiesPopup();
+    destroyFormEditors();
+}
+
+void ViewerWidget::resumeAfterOperation()
+{
+    // A search that delivered its matches keeps them. One the pause stopped has none.
+    if (findCard_ && !findCard_->isHidden() && !findQuery_.isEmpty() && matches_.empty())
+        restoreFind(findQuery_, findCaseSensitive_, findWholeWord_, currentMatch_);
+    viewport()->update();
+}
+
 void ViewerWidget::seedPreview()
 {
     if (!doc_ || pageCount() == 0)

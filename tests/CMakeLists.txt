@@ -472,6 +472,17 @@ add_test(NAME tst_document_suspension COMMAND tst_document_suspension)
 set_tests_properties(tst_document_suspension PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+
+# Rotate Pages and Split as their tab's operation, with the wait bar, Stop waiting and
+# a window that stays usable while one tab waits.
+qt_add_executable(tst_tab_operations tst_tab_operations.cpp Stalls.h)
+target_link_libraries(tst_tab_operations PRIVATE mervin_app Qt6::Test)
+set_target_properties(tst_tab_operations PROPERTIES WIN32_EXECUTABLE OFF)
+target_compile_definitions(tst_tab_operations PRIVATE MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
+add_test(NAME tst_tab_operations COMMAND tst_tab_operations)
+set_tests_properties(tst_tab_operations PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 set_tests_properties(tst_ink_rects PROPERTIES LABELS "optional-corpus")
 
 target_compile_definitions(tst_document_output PRIVATE MERVIN_SCAN_PDF="${MERVIN_FIXTURES_DIR}/scan.pdf")
