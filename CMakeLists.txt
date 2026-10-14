@@ -162,6 +162,8 @@ add_library(mervin_core STATIC
     src/io/FileFacts.h
     src/io/FileProbe.cpp
     src/io/FileProbe.h
+    src/io/JobContext.cpp
+    src/io/JobContext.h
     src/io/MemoryFiles.cpp
     src/io/MemoryFiles.h
     src/io/SaveCheck.cpp

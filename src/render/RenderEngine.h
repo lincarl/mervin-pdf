@@ -28,7 +28,8 @@ public:
     // is used to authenticate; if a (correct) password is required but not
     // supplied, returns nullptr and sets *needsPassword to true so the caller can
     // prompt and retry. Other failures return nullptr with *error set. The document
-    // can outlive the engine.
+    // can outlive the engine. The open reports job::reading() first, so the job it
+    // runs in shows the file, and a stopped job opens nothing.
     std::unique_ptr<Document> openDocument(const QString &path, const QString &password = QString(),
                                            QString *error = nullptr, bool *needsPassword = nullptr);
 

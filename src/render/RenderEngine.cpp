@@ -1,6 +1,7 @@
 #include "render/RenderEngine.h"
 
 #include "io/Background.h"
+#include "io/JobContext.h"
 #include "render/ComfortTransform.h"
 #include "render/Document.h"
 #include "render/MuPdfLocks.h"
@@ -532,6 +533,12 @@ std::unique_ptr<Document> RenderEngine::open(fz_context *ctx, std::shared_ptr<fz
     if (!ctx) {
         if (error)
             *error = tr("Could not allocate a document context.");
+        return nullptr;
+    }
+    if (!job::reading(path)) {
+        if (error)
+            *error = job::notRunError();
+        fz_drop_context(ctx);
         return nullptr;
     }
     const QByteArray utf8 = path.toUtf8();

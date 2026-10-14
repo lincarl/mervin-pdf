@@ -119,6 +119,27 @@ finishing makes the next one wait its turn on its background thread. At exit,
 behind, as flushing every C stream would wait for one that a stuck read of a
 document holds.
 
+A tab follows and stops the job it started through a `job::State` (`io/JobContext`),
+which the job makes current on its thread with a `job::Scope`. The code that reads
+and writes document files reports each step to the current scope: `AtomicPdfWriter`,
+`DocumentOutput::replace`, the qpdf opens in `PageOps`, `QpdfService` and
+`MeasureExport`, and `RenderEngine::open`. A read names its file, a write its folder
+and a commit the file it replaces, and the writers tick for each piece written, so
+the tab can tell what it waits for and that a long write still answers. A thread
+blocked in a file call cannot be stopped, so a stopped job gives up at its next step
+and never replaces a file. A writer asks `job::beginCommit()` right before its
+rename. A stop before that makes it discard its temporary file, and a stop after it
+answers Committing and lets the rename finish. `job::DestinationLock` orders the
+writers of one file in the process. A writer takes it before it opens its temporary
+file and keeps it until the rename returned, so a newer write waits behind a stopped
+writer that is still stuck instead of being replaced by it later. The key is
+`fileKey()` (`recent/PathKey.h`), the canonical file, or the canonical folder and the
+name of a new file, normalised by `normalizePathKey`. The writer computes it on its
+own thread, and a writer that waits checks every 20 ms whether its job stopped, then
+gives up. Outside a scope nothing is reported and every step goes ahead, and two
+writers of one file still take turns. Test hooks hold a step as a stuck disk would,
+make one fail, and count the steps reported on the GUI thread.
+
 `FileProbe` (`io/FileProbe`) checks files for the UI: whether each exists, its size,
 the mount it is on, and for a missing file whether its volume is attached and its
 folder is still there (`FileFacts`). Each drive, share or mount gets one thread at a
@@ -529,7 +550,11 @@ display defaults of the first contributing measurement set.
 `AtomicPdfWriter` streams all qpdf output through `QSaveFile`, including page,
 security and measurement operations. A failed write discards its temporary file;
 only a complete write replaces the destination. A split commits each output file
-individually. Flattening copies inherited resource/font dictionaries and allocates
+individually. `AtomicPdfWriter` and `DocumentOutput::replace` hold the destination's
+`job::DestinationLock` from opening the temporary file to the rename, and in a
+stopped job they discard the temporary file instead of replacing the destination
+(see Disk access off the UI thread). A split stopped part way keeps the files it
+committed before. Flattening copies inherited resource/font dictionaries and allocates
 a unique label font name, preserving existing page fonts and sibling resources.
 The Rotate prompt uses the same validated page-range grammar as Print, Extract and
 Delete.

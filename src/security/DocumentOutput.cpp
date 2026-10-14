@@ -1,10 +1,12 @@
 #include "security/DocumentOutput.h"
 
+#include "io/JobContext.h"
 #include "render/Document.h"
 #include "security/MeasureExport.h"
 
 #include <QCoreApplication>
 #include <QFile>
+#include <QFileInfo>
 #include <QSaveFile>
 #include <QTemporaryDir>
 
@@ -27,20 +29,26 @@ bool DocumentOutput::snapshot(const Document &document, const MeasureDoc &measur
 
 bool DocumentOutput::replace(const QString &source, const QString &destination, QString *error)
 {
-    QFile input(source);
-    QSaveFile output(destination);
-    output.setDirectWriteFallback(false);
     const auto fail = [&](const QString &message) {
         if (error)
             *error = message;
         return false;
     };
+    // Taken before the temporary file opens and kept until the replace returned.
+    job::DestinationLock lock(destination);
+    if (!lock.owns() || !job::writing(QFileInfo(destination).absolutePath()))
+        return fail(job::notRunError());
+    QFile input(source);
+    QSaveFile output(destination);
+    output.setDirectWriteFallback(false);
     if (!input.open(QIODevice::ReadOnly))
         return fail(input.errorString());
     if (!output.open(QIODevice::WriteOnly))
         return fail(output.errorString());
     QByteArray buffer(1024 * 1024, Qt::Uninitialized);
     for (;;) {
+        if (job::stopped())
+            return fail(job::notRunError());
         const qint64 count = input.read(buffer.data(), buffer.size());
         if (count < 0)
             return fail(input.errorString());
@@ -48,7 +56,17 @@ bool DocumentOutput::replace(const QString &source, const QString &destination, 
             break;
         if (output.write(buffer.constData(), count) != count)
             return fail(output.errorString());
+        job::progressed();
     }
-    return output.commit() || fail(output.errorString());
+    // Writes out the buffer while a stop can still keep the destination as it was.
+    if (!output.flush())
+        return fail(output.errorString());
+    if (!job::beginCommit(destination)) {
+        output.cancelWriting(); // the destructor discards the temporary file
+        return fail(job::notRunError());
+    }
+    const bool committed = output.commit();
+    job::endCommit();
+    return committed || fail(output.errorString());
 }
 } // namespace mervin

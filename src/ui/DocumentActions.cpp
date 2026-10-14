@@ -61,23 +61,12 @@ namespace {
 
 using mervin::PageOps;
 
-// A comparison key for a file that may not exist, with links resolved as far as
-// the disk allows: the whole path, or else the folder the file would be in.
-QString fileKey(const QFileInfo &file)
-{
-    if (file.exists())
-        return mervin::normalizePathKey(file.canonicalFilePath());
-    const QString folder = QFileInfo(file.absolutePath()).canonicalFilePath();
-    return mervin::normalizePathKey(folder.isEmpty() ? file.absoluteFilePath()
-                                                     : folder + QLatin1Char('/') + file.fileName());
-}
-
 // Whether two paths name the same file. QFileInfo equality also holds for two
 // paths that do not exist, so with a tab's original deleted every new name looked
 // like the original.
 bool sameFile(const QString &a, const QString &b)
 {
-    return fileKey(QFileInfo(a)) == fileKey(QFileInfo(b));
+    return mervin::fileKey(QFileInfo(a)) == mervin::fileKey(QFileInfo(b));
 }
 
 // Retry once with a prompted password and remember it only on success. Its
