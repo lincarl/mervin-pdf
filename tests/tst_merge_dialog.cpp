@@ -384,7 +384,7 @@ void TstMergeDialog::slowSaveAsCheckSaysSoAndMergeWaitsForIt()
     settle(&d);
     QCOMPARE(d.result(), int(QDialog::Accepted));
     QVERIFY(!QFileInfo::exists(target));
-    QCOMPARE(d.outputPath(), target);
+    QCOMPARE(d.outputPath(), QDir::toNativeSeparators(target));
     QCOMPARE(d.inputs().front().pages.size(), 6);
 }
 

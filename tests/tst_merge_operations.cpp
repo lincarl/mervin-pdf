@@ -326,7 +326,7 @@ private slots:
         QVERIFY(writeBytes(output_, original));
         beforeMessage_ = [this](QMessageBox *box) {
             if (box->text().contains(QStringLiteral("Replace it?")))
-                job::testing::holdWhen([output = output_, reads = 0]
+                job::testing::holdWhen([output = QDir::toNativeSeparators(output_), reads = 0]
                                       (job::Step step, const QString &path) mutable {
                     return step == job::Step::Reading && path == output && ++reads == 3;
                 });
