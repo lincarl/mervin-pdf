@@ -206,9 +206,11 @@ bar over the pages names the folder or file the tool waits for, such as "Saving 
 /nas/docs. The drive is not answering.", and offers Stop waiting. Stopping makes the
 tab usable at once and prevents later output commits. A replacement already admitted
 may still finish. Split keeps its committed files. These tools do not write over a
-file that is open in a tab. Closing a tab or quitting waits for the tool and shows
-its wait notice. Closing a window does the same unless it hides to the tray. Stop
-waiting then continues the close decision, including any unsaved-edit question.
+file that is open in a tab. Closing a tab or requesting an ordinary application
+quit waits for the tool and shows its wait notice. Closing a window does the same
+unless it hides to the tray. Stop waiting then continues the close decision,
+including any unsaved-edit question. Windows session end follows the bounded
+recovery policy above.
 
 Document > Extract Pages opens with one row that holds every page, first to last.
 Save Page As in a page's right-click menu opens it with that page as its one row.
