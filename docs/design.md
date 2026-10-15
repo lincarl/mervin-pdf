@@ -759,7 +759,9 @@ that tab is usable and selected in a visible, restored window. A confirmation
 result that arrives while the window is hidden or minimized retains the same
 form. Neither path reuses an old Yes answer. Accepting the reopened form captures
 fresh destination consent. The retained form belongs to the tab, follows owner
-changes, and does not block other queued work while waiting for visibility.
+changes, and does not block other queued work while waiting for visibility. A
+successful Security information read that finishes while its window is hidden in the tray
+retains the populated form for restoration without repeating the read.
 
 `MergePlan` and `ExtractPlan` are the GUI-free models behind the Merge PDFs and
 Extract Pages dialogs, tested in `tst_merge_plan` and `tst_extract_plan`; each dialog

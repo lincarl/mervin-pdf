@@ -278,6 +278,79 @@ private slots:
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 
+    /// Retains completed metadata while hidden and presents it once without another read.
+    void informationCompletedInTrayIsRetained()
+    {
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("encrypted.pdf"));
+        const QString password = QStringLiteral("source password");
+        QCOMPARE(QpdfService().encrypt(QStringLiteral(MERVIN_FIXTURE_PDF), source, {},
+                     password, QStringLiteral("owner password"), QpdfService::Algorithm::AES128,
+                     {false, false, false, false}), QpdfService::Status::Ok);
+        const QByteArray original = bytes(source);
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showWindow(window);
+        QVERIFY(testing::openAndWait(window, source, false, -1, true, password));
+        auto *page = currentTab(window);
+        const int guiSteps = job::testing::stepsOnMainThread();
+        std::atomic<int> reads{0};
+        job::testing::holdWhen([source](job::Step step, const QString &path) {
+            return step == job::Step::Reading && QDir::fromNativeSeparators(path) == source;
+        });
+        job::testing::failWhen([&](job::Step step, const QString &path) {
+            if (step == job::Step::Reading && QDir::fromNativeSeparators(path) == source)
+                ++reads;
+            return false;
+        });
+        const auto clearHooks = qScopeGuard([] {
+            job::testing::release();
+            job::testing::failWhen({});
+        });
+        bool restored = false;
+        bool shown = false;
+        Interaction dialogs;
+        dialogs.security = [&](SecurityDialog &dialog) {
+            QVERIFY(restored);
+            QCOMPARE(dialog.parentWidget(), &window);
+            QCOMPARE(dialog.windowModality(), Qt::WindowModal);
+            QString information;
+            for (QLabel *label : dialog.findChildren<QLabel *>())
+                if (label->textFormat() == Qt::RichText)
+                    information = label->text();
+            QVERIFY(information.contains(QStringLiteral("<b>Encrypted</b>")));
+            QVERIFY(information.contains(QStringLiteral("AES-128 (128-bit)")));
+            QCOMPARE(information.count(QStringLiteral("Not allowed")), 4);
+            shown = true;
+            dialog.reject();
+        };
+        QVERIFY(QMetaObject::invokeMethod(&window, "openSecurity"));
+        QTRY_COMPARE(job::testing::held(), 1);
+        QVERIFY(page->isBusy());
+        window.hideToTray();
+        QVERIFY(!window.isVisible());
+        job::testing::release();
+        QTRY_VERIFY(page->isUsable());
+        bool queuedWorkRan = false;
+        window.whenTabsCanChange([&] { queuedWorkRan = true; });
+        QTRY_VERIFY(queuedWorkRan);
+        QCOMPARE(reads.load(), 1);
+        QCOMPARE(dialogs.securityCount, 0);
+        QVERIFY(!QApplication::activeModalWidget());
+        QCOMPARE(bytes(source), original);
+
+        restored = true;
+        window.restoreFromTray();
+        QTRY_VERIFY_WITH_TIMEOUT(shown, 10000);
+        QTRY_VERIFY(!QApplication::activeModalWidget());
+        QCOMPARE(dialogs.securityCount, 1);
+        QCOMPARE(reads.load(), 1);
+        QCOMPARE(job::testing::stepsOnMainThread(), guiSteps);
+        QCOMPARE(bytes(source), original);
+        QVERIFY(dialogs.messages.isEmpty());
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
     /// Covers correct and incorrect answers to the security information password prompt.
     void informationPasswordRetry_data()
     {

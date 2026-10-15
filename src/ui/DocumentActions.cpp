@@ -759,14 +759,16 @@ void MainWindow::finishSecurity(TabPage *tab, const std::shared_ptr<SecurityRequ
             error = SecurityDialog::tr("A password is required.");
         else if (result->status != QpdfService::Status::Ok)
             error = result->error;
-        if (hiddenToTray_) {
-            if (!error.isEmpty() && wm_)
-                wm_->notifyInTray(SecurityDialog::tr("Document Security"), error);
-            return;
-        }
         const auto ready = std::make_shared<SecurityRequest>(*request);
         ready->info = result->info;
         ready->infoError = error;
+        if (hiddenToTray_) {
+            if (result->status == QpdfService::Status::Ok)
+                retainSecurityDialog(page, ready);
+            else if (!error.isEmpty() && wm_)
+                wm_->notifyInTray(SecurityDialog::tr("Document Security"), error);
+            return;
+        }
         showSecurityDialog(page, ready);
         return;
     }
