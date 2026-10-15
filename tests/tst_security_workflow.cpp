@@ -351,6 +351,131 @@ private slots:
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 
+    /// Covers already-cached and newly accepted source passwords before automatic unload.
+    void queuedInformationSurvivesInactivityUnload_data()
+    {
+        QTest::addColumn<bool>("prompted");
+        QTest::newRow("cached password") << false;
+        QTest::newRow("prompted password") << true;
+    }
+
+    /// Keeps completed metadata and accepted passwords when activity cleanup runs first.
+    void queuedInformationSurvivesInactivityUnload()
+    {
+        QFETCH(bool, prompted);
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("encrypted.pdf"));
+        const QString password = QStringLiteral("source password");
+        QCOMPARE(QpdfService().encrypt(QStringLiteral(MERVIN_FIXTURE_PDF), source, {},
+                     password, QStringLiteral("owner password"), QpdfService::Algorithm::AES128,
+                     {false, false, false, false}), QpdfService::Status::Ok);
+        Settings settings;
+        settings.unloadInactiveMinutes = 1;
+        QVERIFY(settings.save());
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        showWindow(*window);
+        QVERIFY(testing::openAndWait(*window, source, false, -1, true, password));
+        auto *page = currentTab(*window);
+        if (prompted)
+            page->setPassword({});
+        QWidget mouseGate;
+        mouseGate.setAttribute(Qt::WA_DontShowOnScreen);
+        mouseGate.resize(100, 100);
+        mouseGate.show();
+        bool mouseHeld = false;
+        const int guiSteps = job::testing::stepsOnMainThread();
+        const int expectedMetadataReads = prompted ? 2 : 1;
+        std::atomic<bool> restoring{false};
+        std::atomic<int> metadataReads{0};
+        std::atomic<int> resumeReads{0};
+        job::testing::holdWhen([source, expectedMetadataReads, reads = 0](
+                                  job::Step step, const QString &path) mutable {
+            return step == job::Step::Reading && QDir::fromNativeSeparators(path) == source
+                && ++reads == expectedMetadataReads;
+        });
+        job::testing::failWhen([&](job::Step step, const QString &path) {
+            if (step == job::Step::Reading && QDir::fromNativeSeparators(path) == source) {
+                if (restoring.load())
+                    ++resumeReads;
+                else
+                    ++metadataReads;
+            }
+            return false;
+        });
+        const auto clearHooks = qScopeGuard([] {
+            job::testing::release();
+            job::testing::failWhen({});
+        });
+        bool shown = false;
+        Interaction dialogs;
+        if (prompted)
+            dialogs.passwords.append(password);
+        dialogs.security = [&](SecurityDialog &dialog) {
+            QVERIFY(restoring.load());
+            QVERIFY(page->isUsable());
+            QCOMPARE(dialog.parentWidget(), window);
+            QString information;
+            for (QLabel *label : dialog.findChildren<QLabel *>())
+                if (label->textFormat() == Qt::RichText)
+                    information = label->text();
+            QVERIFY(information.contains(QStringLiteral("<b>Encrypted</b>")));
+            QVERIFY(information.contains(QStringLiteral("AES-128 (128-bit)")));
+            QCOMPARE(information.count(QStringLiteral("Not allowed")), 4);
+            shown = true;
+            dialog.reject();
+        };
+        const auto releaseMouse = qScopeGuard([&] {
+            if (mouseHeld)
+                QTest::mouseRelease(mouseGate.windowHandle(), Qt::LeftButton, {}, QPoint(10, 10));
+        });
+        QVERIFY(QMetaObject::invokeMethod(window, "openSecurity"));
+        QTRY_COMPARE(job::testing::held(), 1);
+        window->hide();
+        // Age the inactivity timestamp while the held worker prevents unloading.
+        // Ordinary hide also works on test platforms without a system tray.
+        QVERIFY(!window->updateDocumentActivity(-61000, 1));
+        QVERIFY(page->isBusy() && page->isLoaded() && !page->isSuspended());
+        mouseHeld = true;
+        QTest::mousePress(mouseGate.windowHandle(), Qt::LeftButton, {}, QPoint(10, 10));
+        QVERIFY(QApplication::mouseButtons().testFlag(Qt::LeftButton));
+        QVERIFY(!window->canChangeTabs());
+        QCoreApplication::processEvents();
+        QVERIFY(page->isBusy() && page->isLoaded() && !page->isSuspended());
+        job::testing::release();
+        QTRY_VERIFY(!page->isBusy());
+        QTRY_VERIFY(MainWindow::testing::hasQueuedTabChanges(*window));
+        // The manager's ordinary activity timer unloads this clean hidden tab
+        // while the held mouse button keeps its completed result in the queue.
+        QTRY_VERIFY_WITH_TIMEOUT(page->isSuspended(), 5000);
+        QVERIFY(MainWindow::testing::hasQueuedTabChanges(*window));
+        QVERIFY(!window->isVisible());
+        QCOMPARE(dialogs.securityCount, 0);
+        QCOMPARE(metadataReads.load(), expectedMetadataReads);
+        QCOMPARE(resumeReads.load(), 0);
+        QVERIFY(!QApplication::activeModalWidget());
+        QTest::mouseRelease(mouseGate.windowHandle(), Qt::LeftButton, {}, QPoint(10, 10));
+        mouseHeld = false;
+        QTRY_VERIFY(!MainWindow::testing::hasQueuedTabChanges(*window));
+        QVERIFY(page->isSuspended());
+        QCOMPARE(page->password(), password);
+        QCOMPARE(dialogs.securityCount, 0);
+
+        restoring.store(true);
+        window->show();
+        QTRY_VERIFY_WITH_TIMEOUT(shown, 10000);
+        QTRY_VERIFY(!QApplication::activeModalWidget());
+        QCOMPARE(dialogs.securityCount, 1);
+        QCOMPARE(dialogs.passwordCount, prompted ? 1 : 0);
+        QCOMPARE(metadataReads.load(), expectedMetadataReads);
+        // Ordinary resume reports the source at worker start and before opening
+        // it in RenderEngine. A repeated Security metadata read would add a third.
+        QCOMPARE(resumeReads.load(), 2);
+        QCOMPARE(job::testing::stepsOnMainThread(), guiSteps);
+        QVERIFY(dialogs.messages.isEmpty());
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
     /// Covers correct and incorrect answers to the security information password prompt.
     void informationPasswordRetry_data()
     {

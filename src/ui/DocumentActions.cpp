@@ -415,7 +415,7 @@ struct MainWindow::SecurityResult
     std::optional<mervin::DestinationConsent> consent;
 };
 
-/// Keeps interrupted replacement choices with their tab until its form can be shown.
+/// Keeps completed information or interrupted choices with their tab until its form can be shown.
 struct MainWindow::RetainedSecurityDialog : QObject
 {
     /// Watches the surviving tab and posts its first eligibility check.
@@ -670,7 +670,28 @@ void MainWindow::finishSecurity(TabPage *tab, const std::shared_ptr<SecurityRequ
     const OperationScope operation(this);
     const QPointer<MainWindow> self(this);
     const QPointer<TabPage> page(tab);
-    if (!tab->isUsable() || closeConfirmed_ || (wm_ && wm_->isClosing()))
+    if (closeConfirmed_ || (wm_ && wm_->isClosing()))
+        return;
+    std::shared_ptr<SecurityRequest> ready;
+    if (!request->action) {
+        ready = std::make_shared<SecurityRequest>(*request);
+        ready->info = result->info;
+        ready->infoError = result->status == QpdfService::Status::NeedsPassword
+            ? SecurityDialog::tr("A password is required.")
+            : result->status == QpdfService::Status::Ok ? QString() : result->error;
+        // Housekeeping can unload the tab before this queued result arrives.
+        // Keep completed information through unload and resume, without retaining
+        // results superseded by another user operation on the busy tab.
+        if (result->status == QpdfService::Status::Ok
+            && (hiddenToTray_ || !tab->isUsable())
+            && (!tab->isBusy() || tab->isUnloading())) {
+            if (asked)
+                page->setPassword(request->password);
+            retainSecurityDialog(page, ready);
+            return;
+        }
+    }
+    if (!tab->isUsable())
         return;
     // A requested information dialog belongs to its tab, even after the user
     // selected another one while the read waited. Do not raise its window.
@@ -753,20 +774,10 @@ void MainWindow::finishSecurity(TabPage *tab, const std::shared_ptr<SecurityRequ
     }
     if (result->status == QpdfService::Status::Ok && asked)
         page->setPassword(request->password);
-    if (!request->action) {
-        QString error;
-        if (result->status == QpdfService::Status::NeedsPassword)
-            error = SecurityDialog::tr("A password is required.");
-        else if (result->status != QpdfService::Status::Ok)
-            error = result->error;
-        const auto ready = std::make_shared<SecurityRequest>(*request);
-        ready->info = result->info;
-        ready->infoError = error;
+    if (ready) {
         if (hiddenToTray_) {
-            if (result->status == QpdfService::Status::Ok)
-                retainSecurityDialog(page, ready);
-            else if (!error.isEmpty() && wm_)
-                wm_->notifyInTray(SecurityDialog::tr("Document Security"), error);
+            if (!ready->infoError.isEmpty() && wm_)
+                wm_->notifyInTray(SecurityDialog::tr("Document Security"), ready->infoError);
             return;
         }
         showSecurityDialog(page, ready);
@@ -810,7 +821,7 @@ void MainWindow::finishSecurity(TabPage *tab, const std::shared_ptr<SecurityRequ
         queueSecurityDialog(page, request);
 }
 
-/// Retains choices after invalidated replacement approval without keeping its old answer.
+/// Retains completed information or interrupted choices without keeping an old approval.
 void MainWindow::retainSecurityDialog(TabPage *tab, const std::shared_ptr<SecurityRequest> &request)
 {
     RetainedSecurityDialog::discard(tab);
