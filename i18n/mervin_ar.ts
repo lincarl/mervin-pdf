@@ -103,7 +103,9 @@ Open it now?</source>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>أدخل كلمة المرور الخاصة بـ %1.</translation>
     </message>
     <message>
@@ -3412,14 +3414,6 @@ This file is no longer on disk.</source>
         <translation>&lt;b&gt;مشفرة&lt;/b&gt; · %1 (%2- بت)&lt;br&gt;الطباعة: %3 · النسخ: %4 · التعديل: %5 · التعليق: %6&lt;br&gt;&lt;i&gt;ملاحظة: Mervin لا يفرض علامات الأذونات هذه مطلقًا.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>كلمة المرور مطلوبة</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>أدخل كلمة المرور لهذا المستند:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>حفظ باسم</translation>
     </message>
@@ -3445,29 +3439,28 @@ Continue?</source>
         <translation>كلمة المرور الصحيحة مطلوبة.</translation>
     </message>
     <message>
+        <source>&quot;%1&quot; already exists. Replace it?</source>
+        <extracomment>%1 is the destination filename. The background check captured its contents before this question. Yes approves replacing that version; nothing has been replaced yet. A changed file will require another decision.</extracomment>
+        <translation>الملف «%1» موجود بالفعل. هل تريد استبداله؟</translation>
+    </message>
+    <message>
+        <source>The destination changed. Try again to review it.</source>
+        <extracomment>The output contents or target changed after this Security action was approved. Nothing was replaced. Security reopens with the same choices. Try again means choosing Encrypt, Remove Password or Strip Owner Restrictions again to check the destination and confirm any replacement of an existing file.</extracomment>
+        <translation>تغيّرت الوجهة. حاول مجددًا لمراجعتها.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Try again or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Nothing was replaced. Security reopens with the same choices so the user can retry the action or choose another output filename in its Save As picker.</extracomment>
+        <translation>تعذّر التحقق من الوجهة. حاول مجددًا أو اختر اسمًا آخر.</translation>
+    </message>
+    <message>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>فشلت العملية.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>تم</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>تم الحفظ في:
-%1
-
-افتحه الآن؟</translation>
     </message>
 </context>
 <context>

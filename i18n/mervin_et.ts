@@ -103,7 +103,9 @@ Kas avada see kohe?</translation>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Sisesta %1 parool.</translation>
     </message>
     <message>
@@ -3332,14 +3334,6 @@ Seda faili pole enam kettal.</translation>
         <translation>&lt;b&gt;Krüpteeritud&lt;/b&gt; · %1 (%2-bitine)&lt;br&gt;Trükkimine: %3 · Kopeerimine: %4 · Muutmine: %5 · Annoteerimine: %6&lt;br&gt;&lt;i&gt;Märkus. Mervin ei rakenda kunagi neid lubade lippe.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Nõutav parool</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Sisestage selle dokumendi parool:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Salvesta nimega</translation>
     </message>
@@ -3365,29 +3359,28 @@ Kas jätkata?</translation>
         <translation>Nõutav on õige parool.</translation>
     </message>
     <message>
+        <source>&quot;%1&quot; already exists. Replace it?</source>
+        <extracomment>%1 is the destination filename. The background check captured its contents before this question. Yes approves replacing that version; nothing has been replaced yet. A changed file will require another decision.</extracomment>
+        <translation>„%1“ on juba olemas. Kas asendada see?</translation>
+    </message>
+    <message>
+        <source>The destination changed. Try again to review it.</source>
+        <extracomment>The output contents or target changed after this Security action was approved. Nothing was replaced. Security reopens with the same choices. Try again means choosing Encrypt, Remove Password or Strip Owner Restrictions again to check the destination and confirm any replacement of an existing file.</extracomment>
+        <translation>Sihtkoht on muutunud. Selle kontrollimiseks proovige uuesti.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Try again or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Nothing was replaced. Security reopens with the same choices so the user can retry the action or choose another output filename in its Save As picker.</extracomment>
+        <translation>Sihtkohta ei saanud kontrollida. Proovige uuesti või valige teine nimi.</translation>
+    </message>
+    <message>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>Toiming nurjus.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Valmis</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Salvestatud:
-%1
-
-Kas avada see kohe?</translation>
     </message>
 </context>
 <context>

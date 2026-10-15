@@ -103,7 +103,9 @@ Jetzt öffnen?</translation>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Geben Sie das Passwort für %1 ein.</translation>
     </message>
     <message>
@@ -3332,14 +3334,6 @@ Diese Datei befindet sich nicht mehr auf der Festplatte.</translation>
         <translation>&lt;b&gt;verschlüsselt&lt;/b&gt; · %1 (%2-Bit)&lt;br&gt;Drucken: %3 · Kopieren: %4 · Ändern: %5 · Kommentieren: %6&lt;br&gt;&lt;i&gt;Hinweis: Mervin erzwingt diese Berechtigungsflags niemals.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Passwort erforderlich</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Geben Sie das Passwort für dieses Dokument ein:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Speichern unter</translation>
     </message>
@@ -3365,29 +3359,28 @@ Weiter?</translation>
         <translation>Das richtige Passwort ist erforderlich.</translation>
     </message>
     <message>
+        <source>&quot;%1&quot; already exists. Replace it?</source>
+        <extracomment>%1 is the destination filename. The background check captured its contents before this question. Yes approves replacing that version; nothing has been replaced yet. A changed file will require another decision.</extracomment>
+        <translation>„%1“ ist bereits vorhanden. Möchten Sie die Datei ersetzen?</translation>
+    </message>
+    <message>
+        <source>The destination changed. Try again to review it.</source>
+        <extracomment>The output contents or target changed after this Security action was approved. Nothing was replaced. Security reopens with the same choices. Try again means choosing Encrypt, Remove Password or Strip Owner Restrictions again to check the destination and confirm any replacement of an existing file.</extracomment>
+        <translation>Die Zieldatei hat sich geändert. Versuchen Sie es erneut, um sie zu prüfen.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Try again or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Nothing was replaced. Security reopens with the same choices so the user can retry the action or choose another output filename in its Save As picker.</extracomment>
+        <translation>Die Zieldatei konnte nicht geprüft werden. Versuchen Sie es erneut oder wählen Sie einen anderen Namen.</translation>
+    </message>
+    <message>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>Der Vorgang ist fehlgeschlagen.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Fertig</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Gespeichert unter:
-%1
-
-Jetzt öffnen?</translation>
     </message>
 </context>
 <context>

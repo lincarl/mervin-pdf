@@ -102,7 +102,9 @@ Open it now?</source>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>請輸入 %1 的密碼。</translation>
     </message>
     <message>
@@ -3312,14 +3314,6 @@ This file is no longer on disk.</source>
         <translation>&lt;b&gt;已加密&lt;/b&gt; · %1（%2 位元）&lt;br&gt;列印：%3 · 複製：%4 · 修改：%5 · 註解：%6&lt;br&gt;&lt;i&gt;注意：Mervin 不會強制執行這些權限限制。&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>需要密碼</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>輸入此文件的密碼：</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>另存新檔</translation>
     </message>
@@ -3337,6 +3331,21 @@ Continue?</source>
 要繼續嗎？</translation>
     </message>
     <message>
+        <source>&quot;%1&quot; already exists. Replace it?</source>
+        <extracomment>%1 is the destination filename. The background check captured its contents before this question. Yes approves replacing that version; nothing has been replaced yet. A changed file will require another decision.</extracomment>
+        <translation>「%1」已存在。要取代此檔案嗎？</translation>
+    </message>
+    <message>
+        <source>The destination changed. Try again to review it.</source>
+        <extracomment>The output contents or target changed after this Security action was approved. Nothing was replaced. Security reopens with the same choices. Try again means choosing Encrypt, Remove Password or Strip Owner Restrictions again to check the destination and confirm any replacement of an existing file.</extracomment>
+        <translation>目的地已變更。請重試以檢查目的地。</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Try again or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Nothing was replaced. Security reopens with the same choices so the user can retry the action or choose another output filename in its Save As picker.</extracomment>
+        <translation>無法檢查目的地。請重試或選擇其他名稱。</translation>
+    </message>
+    <message>
         <source>The correct password is required.</source>
         <translation>需要正確的密碼。</translation>
     </message>
@@ -3344,7 +3353,7 @@ Continue?</source>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>操作失敗。
 
 %1</translation>
@@ -3352,22 +3361,6 @@ Continue?</source>
     <message>
         <source>Operation failed</source>
         <translation>操作失敗</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>完成</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>已儲存至：
-%1
-
-要立即開啟嗎？</translation>
     </message>
 </context>
 <context>

@@ -238,11 +238,6 @@ These still touch the disk on the UI thread and are planned work:
   memory buffer, so these calls do not read the original file. Moving every
   viewer query to background threads remains separate work. Directory-dependent
   non-PDF formats retain their path-based lookup of relative resources.
-- Security. The chosen design
-  shows such a wait in its tab, with a bar over its locked document, so other
-  tabs and windows stay usable. New tabs and unloaded tabs already load in their
-  placeholders. Rotate Pages, Split, Extract and Delete run as tab jobs (see Page
-  and security operations).
 - Reads at startup before the first window, and the system file dialogs, which
   run on the UI thread by design.
 - Opening a folder or a link with the system's handler (`QDesktopServices::openUrl`),
@@ -655,8 +650,9 @@ encryption.
 `QpdfService` inspects and changes encryption and permission settings. These services
 write new files and do not share live MuPDF document handles with the viewer.
 
-Rotate Pages, Split and accepted Merge plans run as their tab's operation (`TabPage::startOperation`), so
-only that tab waits for the file. Their prompts and file dialogs run first, as before.
+Rotate Pages, Split, accepted Merge plans and Security run as their tab's operation
+(`TabPage::startOperation`), so only that tab waits for the file. Page tool prompts
+and file dialogs run first, as before.
 The tab then commits its form and comment editors, takes a still picture of its pages
 (`StillPicture`), pauses the viewer (`ViewerWidget::pauseForOperation`, which stops
 its renders on their way, a find search, a zoom ease, auto scroll, its popups and form
@@ -725,6 +721,49 @@ user operation or another pending close makes it return false immediately. A cho
 Save starts as the tab's background job after the callback returns false, for loaded
 and unloaded tabs alike, and never triggers a later shutdown. The adapter returns
 true only when approved windows close in that call.
+
+Security first reads the document's encryption and permission information as a
+tab operation, including any retry with a newly entered password. `SecurityDialog`
+receives the information or read error as values and does no document I/O. Choosing
+Encrypt, Remove Password or Strip Owner Restrictions closes the dialog and returns
+the destination, passwords, algorithm and permissions to the window. Its save
+picker chooses a path without confirming replacement. The next tab operation
+captures the destination's absence or exact contents through `DestinationConsent`
+before reading the source filesystem. An absent destination continues in the same
+worker. An existing destination returns that snapshot for a window-modal replacement
+question, then a new immutable request carries the approved snapshot into the write.
+The window does not refresh consent while that question is open. Open-tab checks
+reject known protected outputs before asking, and every actual write still checks
+the source identity and reserves the destination.
+
+Both encryption and decryption compare the approved snapshot again after flushing
+the temporary output, under `AtomicPdfWriter`'s destination lock and before commit
+admission. A changed or unreadable destination is preserved and reopens the retained
+Security choices for another attempt. Source-password retries keep the original
+snapshot, including an output that was absent before the password question. Fresh
+form acceptance discards old consent. Hashing stays on the tab worker and checks
+Stop between filesystem calls and chunks. Identical-byte replacement remains
+approved. The lock orders this process's writers; another process can still change
+the destination between the final comparison and rename because `QSaveFile` does
+not provide an atomic compare-and-swap.
+
+An encrypted result opens with its new open password. A failed write reopens
+Security with the choices, destination and original information or read error
+retained. Stop discards the result and opens no dialog. Queued results follow a
+moved tab if its previous window disappears, select that tab in its current window
+before showing the dialog, and are suppressed after confirmed shutdown. A replacement
+question cannot authorize a write after its owner disappears, the tab moves away,
+or the window becomes hidden or minimized. If the tab survives an interrupted
+replacement question, it retains the Security choices and reopens the form when
+that tab is usable and selected in a visible, restored window. A confirmation
+result that arrives while the window is hidden or minimized retains the same
+form. Neither path reuses an old Yes answer. Accepting the reopened form captures
+fresh destination consent. The retained form belongs to the tab, follows owner
+changes, and does not block other queued work while waiting for visibility. A
+successful Security information read that finishes while its window is hidden in
+the tray retains the populated form for restoration without repeating the read.
+Automatic unloading before queued delivery also preserves that information until
+the tab resumes, including a source password accepted for the completed read.
 
 `MergePlan` and `ExtractPlan` are the GUI-free models behind the Merge PDFs and
 Extract Pages dialogs, tested in `tst_merge_plan` and `tst_extract_plan`; each dialog

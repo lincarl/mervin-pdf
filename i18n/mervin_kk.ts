@@ -103,7 +103,9 @@ Open it now?</source>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>%1 үшін құпия сөзді енгізіңіз.</translation>
     </message>
     <message>
@@ -3332,14 +3334,6 @@ This file is no longer on disk.</source>
         <translation>&lt;b&gt;Шифрланған&lt;/b&gt; · %1 (%2-бит)&lt;br&gt;Басып шығару: %3 · Көшіру: %4 · Өзгерту: %5 · Аннотациялау: %6&lt;br&gt;&lt;i&gt;Ескерту: Mervin бұл рұқсат шектеулерін ешқашан мәжбүрлеп орындатпайды.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Құпия сөз қажет</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Осы құжаттың құпия сөзін енгізіңіз:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Басқаша сақтау</translation>
     </message>
@@ -3365,29 +3359,28 @@ Continue?</source>
         <translation>Дұрыс құпия сөз қажет.</translation>
     </message>
     <message>
+        <source>&quot;%1&quot; already exists. Replace it?</source>
+        <extracomment>%1 is the destination filename. The background check captured its contents before this question. Yes approves replacing that version; nothing has been replaced yet. A changed file will require another decision.</extracomment>
+        <translation>«%1» бұрыннан бар. Оны ауыстыру керек пе?</translation>
+    </message>
+    <message>
+        <source>The destination changed. Try again to review it.</source>
+        <extracomment>The output contents or target changed after this Security action was approved. Nothing was replaced. Security reopens with the same choices. Try again means choosing Encrypt, Remove Password or Strip Owner Restrictions again to check the destination and confirm any replacement of an existing file.</extracomment>
+        <translation>Мақсатты файл өзгерді. Оны тексеру үшін қайталап көріңіз.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Try again or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Nothing was replaced. Security reopens with the same choices so the user can retry the action or choose another output filename in its Save As picker.</extracomment>
+        <translation>Мақсатты файлды тексеру мүмкін болмады. Қайталап көріңіз немесе басқа атауды таңдаңыз.</translation>
+    </message>
+    <message>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>Операция сәтсіз аяқталды.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Дайын</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Келесіге сақталды:
-%1
-
-Қазір ашыңыз ба?</translation>
     </message>
 </context>
 <context>

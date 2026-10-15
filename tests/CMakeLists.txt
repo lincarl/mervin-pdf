@@ -554,6 +554,18 @@ set_tests_properties(tst_page_dialog_operations PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     TIMEOUT 180
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+
+# Security reads and writes run as tab jobs and keep dialog choices after failure.
+qt_add_executable(tst_security_workflow tst_security_workflow.cpp TestWaits.h Stalls.h)
+target_link_libraries(tst_security_workflow PRIVATE mervin_app Qt6::Test)
+set_target_properties(tst_security_workflow PROPERTIES WIN32_EXECUTABLE OFF)
+target_compile_definitions(tst_security_workflow PRIVATE
+    MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
+add_test(NAME tst_security_workflow COMMAND tst_security_workflow)
+set_tests_properties(tst_security_workflow PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    TIMEOUT 180
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 set_tests_properties(tst_ink_rects PROPERTIES LABELS "optional-corpus")
 
 target_compile_definitions(tst_document_output PRIVATE MERVIN_SCAN_PDF="${MERVIN_FIXTURES_DIR}/scan.pdf")

@@ -103,7 +103,9 @@ Avrir ussa?</translation>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Endatescha il pled-clav per %1.</translation>
     </message>
     <message>
@@ -3332,14 +3334,6 @@ Questa datoteca n&apos;è betg pli sin il disc.</translation>
         <translation>&lt;b&gt;Criptà&lt;/b&gt; · %1 (%2 bits)&lt;br&gt;Stampar: %3 · Copiar: %4 · Modifitgar: %5 · Annotar: %6&lt;br&gt;&lt;i&gt;Remartga: Mervin na fa mai valair questas permissiuns.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Pled-clav necessari</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Endatescha il pled-clav per quest document:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Memorisar sco</translation>
     </message>
@@ -3365,29 +3359,28 @@ Cuntinuar?</translation>
         <translation>Il pled-clav correct è necessari.</translation>
     </message>
     <message>
+        <source>&quot;%1&quot; already exists. Replace it?</source>
+        <extracomment>%1 is the destination filename. The background check captured its contents before this question. Yes approves replacing that version; nothing has been replaced yet. A changed file will require another decision.</extracomment>
+        <translation>«%1» exista gia. Vuls ti remplazzar la datoteca?</translation>
+    </message>
+    <message>
+        <source>The destination changed. Try again to review it.</source>
+        <extracomment>The output contents or target changed after this Security action was approved. Nothing was replaced. Security reopens with the same choices. Try again means choosing Encrypt, Remove Password or Strip Owner Restrictions again to check the destination and confirm any replacement of an existing file.</extracomment>
+        <translation>La destinaziun è sa midada. Emprova anc ina giada per la controllar.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Try again or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Nothing was replaced. Security reopens with the same choices so the user can retry the action or choose another output filename in its Save As picker.</extracomment>
+        <translation>Impussibel da controllar la destinaziun. Emprova anc ina giada u tscherna in auter num.</translation>
+    </message>
+    <message>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>L&apos;acziun n&apos;è betg reussida.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Terminà</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Memorisà en:
-%1
-
-Avrir ussa?</translation>
     </message>
 </context>
 <context>

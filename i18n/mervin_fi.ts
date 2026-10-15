@@ -103,7 +103,9 @@ Avaa se nyt?</translation>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Kirjoita %1 salasana.</translation>
     </message>
     <message>
@@ -3332,14 +3334,6 @@ Tämä tiedosto ei ole enää levyllä.</translation>
         <translation>&lt;b&gt;Salattu&lt;/b&gt; · %1 (%2-bittinen)&lt;br&gt;Tulostus: %3 · Kopiointi: %4 · Muokkaus: %5 · Huomautukset: %6&lt;br&gt;&lt;i&gt;Huomaa: Mervin ei koskaan valvo näitä käyttöoikeusrajoituksia.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Salasana vaaditaan</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Anna tämän asiakirjan salasana:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Tallenna nimellä</translation>
     </message>
@@ -3365,29 +3359,28 @@ Jatka?</translation>
         <translation>Oikea salasana vaaditaan.</translation>
     </message>
     <message>
+        <source>&quot;%1&quot; already exists. Replace it?</source>
+        <extracomment>%1 is the destination filename. The background check captured its contents before this question. Yes approves replacing that version; nothing has been replaced yet. A changed file will require another decision.</extracomment>
+        <translation>”%1” on jo olemassa. Korvataanko se?</translation>
+    </message>
+    <message>
+        <source>The destination changed. Try again to review it.</source>
+        <extracomment>The output contents or target changed after this Security action was approved. Nothing was replaced. Security reopens with the same choices. Try again means choosing Encrypt, Remove Password or Strip Owner Restrictions again to check the destination and confirm any replacement of an existing file.</extracomment>
+        <translation>Kohde on muuttunut. Tarkista se yrittämällä uudelleen.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Try again or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Nothing was replaced. Security reopens with the same choices so the user can retry the action or choose another output filename in its Save As picker.</extracomment>
+        <translation>Kohdetta ei voitu tarkistaa. Yritä uudelleen tai valitse toinen nimi.</translation>
+    </message>
+    <message>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>Toiminto epäonnistui.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Valmis</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Tallennettu:
-%1
-
-Avaa se nyt?</translation>
     </message>
 </context>
 <context>

@@ -103,7 +103,9 @@ Open it now?</source>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>%1 के लिए पासवर्ड दर्ज करें।</translation>
     </message>
     <message>
@@ -3332,14 +3334,6 @@ This file is no longer on disk.</source>
         <translation>&lt;b&gt;एन्क्रिप्टेड&lt;/b&gt; · %1 (%2-बिट)&lt;br&gt;मुद्रण: %3 · प्रतिलिपि बनाना: %4 · संशोधन करना: %5 · टिप्पणी करना: %6&lt;br&gt;&lt;i&gt;नोट: Mervin कभी भी इन अनुमति ध्वजों को लागू नहीं करता है।&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>पासवर्ड आवश्यक है</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>इस दस्तावेज़ के लिए पासवर्ड दर्ज करें:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>इस रूप में सहेजें</translation>
     </message>
@@ -3365,29 +3359,28 @@ Continue?</source>
         <translation>सही पासवर्ड आवश्यक है।</translation>
     </message>
     <message>
+        <source>&quot;%1&quot; already exists. Replace it?</source>
+        <extracomment>%1 is the destination filename. The background check captured its contents before this question. Yes approves replacing that version; nothing has been replaced yet. A changed file will require another decision.</extracomment>
+        <translation>“%1” पहले से मौजूद है। क्या इसे बदलना है?</translation>
+    </message>
+    <message>
+        <source>The destination changed. Try again to review it.</source>
+        <extracomment>The output contents or target changed after this Security action was approved. Nothing was replaced. Security reopens with the same choices. Try again means choosing Encrypt, Remove Password or Strip Owner Restrictions again to check the destination and confirm any replacement of an existing file.</extracomment>
+        <translation>गंतव्य बदल गया है। इसकी समीक्षा के लिए फिर से कोशिश करें।</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Try again or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Nothing was replaced. Security reopens with the same choices so the user can retry the action or choose another output filename in its Save As picker.</extracomment>
+        <translation>गंतव्य की जाँच नहीं हो सकी। फिर से कोशिश करें या दूसरा नाम चुनें।</translation>
+    </message>
+    <message>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>ऑपरेशन विफल हो गया।
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>हो गया</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>यहां सहेजा गया:
-%1
-
-इसे अभी खोलें?</translation>
     </message>
 </context>
 <context>

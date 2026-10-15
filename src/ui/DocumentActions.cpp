@@ -5,6 +5,7 @@
 #include "dialogs/MergeDialog.h"
 #include "dialogs/PrintDialog.h"
 #include "dialogs/SecurityDialog.h"
+#include "io/DestinationConsent.h"
 #include "io/JobContext.h"
 #include "print/PageRange.h"
 #include "print/PrintLayout.h"
@@ -17,12 +18,14 @@
 #include "security/MeasureExport.h"
 #include "security/PageOps.h"
 #include "ui/TabPage.h"
+#include "ui/TextLayout.h"
 #include "ui/ViewerWidget.h"
 
 #include <QAbstractButton>
 #include <QAction>
 #include <QDialog>
 #include <QDir>
+#include <QEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -38,9 +41,11 @@
 #include <QPointer>
 #include <QPrintDialog>
 #include <QPrinter>
+#include <QScreen>
 #include <QSet>
 #include <QScopeGuard>
 #include <QStatusBar>
+#include <QTabWidget>
 #include <QTemporaryDir>
 
 #include <QTimer>
@@ -58,6 +63,8 @@ using mervin::MeasureModel;
 using mervin::MeasureScale;
 using mervin::MeasureExport;
 using mervin::ExportMeasureDialog;
+using mervin::QpdfService;
+using mervin::SecurityDialog;
 
 namespace {
 
@@ -386,16 +393,503 @@ void MainWindow::createDocumentMenu()
     documentButton_->setMenu(documentMenu_);
 }
 
+/// Freezes source credentials, write choices and approved destination contents for each attempt.
+struct MainWindow::SecurityRequest
+{
+    QString source;
+    QString password;
+    QpdfService::Info info;
+    QString infoError;
+    std::optional<SecurityDialog::Request> action;
+    std::optional<mervin::DestinationConsent> consent;
+};
+
+/// Returns metadata read by the worker or the write outcome and destination conflict.
+struct MainWindow::SecurityResult
+{
+    enum class Destination { None, OpenTab, Confirm, Changed, CheckFailed };
+    QpdfService::Status status = QpdfService::Status::Failed;
+    QpdfService::Info info;
+    QString error;
+    Destination destination = Destination::None;
+    std::optional<mervin::DestinationConsent> consent;
+};
+
+/// Keeps completed information or interrupted choices with their tab until its form can be shown.
+struct MainWindow::RetainedSecurityDialog : QObject
+{
+    /// Watches the surviving tab and posts its first eligibility check.
+    RetainedSecurityDialog(TabPage *tab, std::shared_ptr<SecurityRequest> request)
+        : QObject(tab), page(tab), request(std::move(request))
+    {
+        setObjectName(QStringLiteral("securityRetainedChoices"));
+        tab->installEventFilter(this);
+        connect(tab, &TabPage::stateChanged, this, [this] { schedule(); });
+        schedule();
+    }
+
+    /// Removes choices superseded by a new explicit Security command.
+    static void discard(TabPage *tab)
+    {
+        const auto pending = tab->findChildren<QObject *>(
+            QStringLiteral("securityRetainedChoices"), Qt::FindDirectChildrenOnly);
+        for (QObject *object : pending)
+            delete object;
+    }
+
+    /// Observes restoration and reparenting without handling UI inside those events.
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        switch (event->type()) {
+        case QEvent::Show:
+        case QEvent::Hide:
+        case QEvent::ParentChange:
+        case QEvent::WindowStateChange:
+            if (page && (watched == page || watched == page->window()))
+                schedule();
+            break;
+        default:
+            break;
+        }
+        return false;
+    }
+
+    /// Coalesces real state changes into one attempt on the next GUI turn.
+    void schedule()
+    {
+        if (scheduled || handedOff)
+            return;
+        scheduled = true;
+        QTimer::singleShot(0, this, [this] {
+            scheduled = false;
+            tryQueue();
+        });
+    }
+
+    /// Returns the eligible current owner without selecting a tab or raising a window.
+    MainWindow *eligibleOwner() const
+    {
+        auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!owner || owner->closeConfirmed_ || (owner->wm_ && owner->wm_->isClosing())
+            || !page->isUsable() || owner->hiddenToTray_ || !owner->isVisible()
+            || owner->isMinimized() || owner->recentActive_ || owner->currentTab() != page)
+            return nullptr;
+        return owner;
+    }
+
+    /// Enters the ordinary tab queue only while the retained form can be presented.
+    void tryQueue()
+    {
+        if (handedOff)
+            return;
+        auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (current != observedOwner) {
+            disconnect(selectionChanged);
+            if (observedOwner)
+                observedOwner->removeEventFilter(this);
+            observedOwner = current;
+            queued = false;
+            ++deliveryGeneration;
+            if (current) {
+                current->installEventFilter(this);
+                selectionChanged = connect(current->tabs_, &QTabWidget::currentChanged,
+                    this, [this] { schedule(); });
+            }
+        }
+        if (!page || (current && (current->closeConfirmed_
+            || (current->wm_ && current->wm_->isClosing())))) {
+            deleteLater();
+            return;
+        }
+        auto *owner = eligibleOwner();
+        if (!owner || queued)
+            return;
+        queued = true;
+        const quint64 generation = ++deliveryGeneration;
+        owner->whenTabsCanChange([self = QPointer<RetainedSecurityDialog>(this),
+                                  owner = QPointer<MainWindow>(owner), generation] {
+            if (!self || self->deliveryGeneration != generation)
+                return;
+            self->queued = false;
+            if (!owner || self->eligibleOwner() != owner) {
+                self->schedule();
+                return;
+            }
+            const auto request = self->request;
+            const QPointer<TabPage> page = self->page;
+            self->handedOff = true;
+            self->deleteLater();
+            owner->showSecurityDialog(page, request);
+        });
+    }
+
+    QPointer<TabPage> page;
+    std::shared_ptr<SecurityRequest> request;
+    QPointer<MainWindow> observedOwner;
+    QMetaObject::Connection selectionChanged;
+    quint64 deliveryGeneration = 0;
+    bool scheduled = false;
+    bool queued = false;
+    bool handedOff = false;
+};
+
+/// Starts a background security-information read for the current usable tab.
 void MainWindow::openSecurity()
 {
     const OperationScope operation(this);
-    TabPage *t = currentTab();
-    if (!t)
+    TabPage *tab = currentTab();
+    if (!tab || !tab->isUsable())
         return;
-    mervin::SecurityDialog dlg(t->path(), t->password(), this);
-    connect(&dlg, &mervin::SecurityDialog::openRequested, this,
-            [this](const QString &p) { openFile(p); });
-    dlg.exec();
+    RetainedSecurityDialog::discard(tab);
+    const auto request = std::make_shared<SecurityRequest>();
+    request->source = tab->path();
+    request->password = tab->password();
+    runSecurity(tab, request, false);
+}
+
+/// Captures consent before source reads and validates it under the writer's publication lock.
+void MainWindow::runSecurity(TabPage *tab, const std::shared_ptr<SecurityRequest> &request,
+                              bool asked)
+{
+    auto *owner = qobject_cast<MainWindow *>(tab->window());
+    if (!owner || !tab->isUsable() || owner->closeConfirmed_
+        || (owner->wm_ && owner->wm_->isClosing()))
+        return;
+    const QSet<QString> open = openFileKeys(owner->wm_ ? owner->wm_->openTabPaths() : owner->tabPaths());
+    const auto result = std::make_shared<SecurityResult>();
+    TabPage::Operation operation;
+    if (request->action)
+        operation.destination = QFileInfo(request->action->output).absolutePath();
+    operation.work = [request, result, open] {
+        QpdfService service;
+        if (!request->action) {
+            result->status = service.readInfo(request->source, request->password,
+                                              result->info, &result->error);
+            return;
+        }
+        const auto &action = *request->action;
+        result->consent = request->consent;
+        if (!result->consent) {
+            result->consent = mervin::DestinationConsent::read(action.output, &result->error);
+            if (!result->consent) {
+                result->destination = SecurityResult::Destination::CheckFailed;
+                return;
+            }
+            // Open-tab keys are already in memory. Reject them before asking to
+            // replace an existing file, without touching the source filesystem.
+            if (open.contains(result->consent->key)) {
+                result->destination = SecurityResult::Destination::OpenTab;
+                return;
+            }
+            if (result->consent->exists) {
+                result->destination = SecurityResult::Destination::Confirm;
+                return;
+            }
+        }
+        if (!mervin::job::reading(request->source)) {
+            result->error = mervin::job::notRunError();
+            return;
+        }
+        const QString source = mervin::fileKey(QFileInfo(request->source));
+        if (!mervin::job::writing(QFileInfo(action.output).absolutePath())) {
+            result->error = mervin::job::notRunError();
+            return;
+        }
+        const QString destination = mervin::fileKey(QFileInfo(action.output));
+        if (destination == source || open.contains(destination)
+            || !mervin::job::reserveDestinations({destination})) {
+            result->destination = SecurityResult::Destination::OpenTab;
+            return;
+        }
+        const mervin::DestinationConsent consent = *result->consent;
+        QString consentError;
+        const auto mayCommit = [&] {
+            const auto current = mervin::DestinationConsent::read(action.output, &consentError);
+            if (!current) {
+                result->destination = SecurityResult::Destination::CheckFailed;
+                return false;
+            }
+            if (*current != consent) {
+                result->destination = SecurityResult::Destination::Changed;
+                return false;
+            }
+            return true;
+        };
+        if (action.action == SecurityDialog::Action::Encrypt) {
+            result->status = service.encrypt(request->source, action.output, request->password,
+                action.userPassword, action.ownerPassword, action.algorithm, action.permissions,
+                &result->error, mayCommit);
+        } else {
+            result->status = service.decrypt(request->source, action.output, request->password,
+                                             &result->error, mayCommit);
+        }
+        if (result->destination == SecurityResult::Destination::Changed)
+            result->error.clear();
+        else if (!consentError.isEmpty())
+            result->error = consentError;
+    };
+    operation.finished = [page = QPointer<TabPage>(tab), request, result, asked] {
+        if (page)
+            deliverSecurity(page, request, result, asked);
+    };
+    tab->startOperation(std::move(operation));
+}
+
+/// Queues the worker result for its tab owner unless shutdown was confirmed.
+void MainWindow::deliverSecurity(TabPage *tab, const std::shared_ptr<SecurityRequest> &request,
+                                  const std::shared_ptr<SecurityResult> &result, bool asked)
+{
+    const QPointer<TabPage> page(tab);
+    auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+    if (!window || window->closeConfirmed_ || (window->wm_ && window->wm_->isClosing()))
+        return;
+    const auto discarded = connect(window, &QObject::destroyed, tab, [page, request, result, asked] {
+        QTimer::singleShot(0, page, [page, request, result, asked] {
+            if (page)
+                deliverSecurity(page, request, result, asked);
+        });
+    });
+    window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window),
+                              request, result, asked, discarded] {
+        disconnect(discarded);
+        auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!current || current->closeConfirmed_ || (current->wm_ && current->wm_->isClosing()))
+            return;
+        if (current != owner) {
+            deliverSecurity(page, request, result, asked);
+            return;
+        }
+        current->finishSecurity(page, request, result, asked);
+    });
+}
+
+/// Selects the launching tab for questions and handles password retry or output opening.
+void MainWindow::finishSecurity(TabPage *tab, const std::shared_ptr<SecurityRequest> &request,
+                                 const std::shared_ptr<SecurityResult> &result, bool asked)
+{
+    const OperationScope operation(this);
+    const QPointer<MainWindow> self(this);
+    const QPointer<TabPage> page(tab);
+    if (closeConfirmed_ || (wm_ && wm_->isClosing()))
+        return;
+    std::shared_ptr<SecurityRequest> ready;
+    if (!request->action) {
+        ready = std::make_shared<SecurityRequest>(*request);
+        ready->info = result->info;
+        ready->infoError = result->status == QpdfService::Status::NeedsPassword
+            ? SecurityDialog::tr("A password is required.")
+            : result->status == QpdfService::Status::Ok ? QString() : result->error;
+        // Housekeeping can unload the tab before this queued result arrives.
+        // Keep completed information through unload and resume, without retaining
+        // results superseded by another user operation on the busy tab.
+        if (result->status == QpdfService::Status::Ok
+            && (hiddenToTray_ || !tab->isUsable())
+            && (!tab->isBusy() || tab->isUnloading())) {
+            if (asked)
+                page->setPassword(request->password);
+            retainSecurityDialog(page, ready);
+            return;
+        }
+    }
+    if (!tab->isUsable())
+        return;
+    // A requested information dialog belongs to its tab, even after the user
+    // selected another one while the read waited. Do not raise its window.
+    if (!hiddenToTray_ && (!request->action || result->status != QpdfService::Status::Ok)) {
+        recentActive_ = false;
+        tabs_->setCurrentWidget(tab);
+        if (!self || !page || !page->isUsable() || page->window() != self
+            || closeConfirmed_ || (wm_ && wm_->isClosing()))
+            return;
+        updateForCurrentTab();
+        if (!self || !page || !page->isUsable() || page->window() != self
+            || closeConfirmed_ || (wm_ && wm_->isClosing()))
+            return;
+    }
+    if (result->destination == SecurityResult::Destination::Confirm) {
+        if (!request->action || !result->consent)
+            return;
+        if (hiddenToTray_ || !isVisible() || isMinimized() || currentTab() != page) {
+            retainSecurityDialog(page, request);
+            return;
+        }
+        // The question approves this exact background snapshot. Nested events
+        // cannot refresh it while the user is deciding whether to replace it.
+        const auto confirmed = std::make_shared<SecurityRequest>(*request);
+        confirmed->consent = result->consent;
+        const QPointer<QMessageBox> question(new QMessageBox(QMessageBox::Question,
+            SecurityDialog::tr("Document Security"), QString(),
+            QMessageBox::Yes | QMessageBox::No, this));
+        question->setObjectName(QStringLiteral("securityReplace"));
+        question->setTextFormat(Qt::PlainText);
+        question->setDefaultButton(QMessageBox::No);
+        question->setWindowModality(Qt::WindowModal);
+        question->ensurePolished();
+        // QMessageBox wraps the sentence but can clip an unbroken filename.
+        // Keep both ends of the name and leave room for the icon and translated text.
+        const QString name = QChar(0x2068) + mervin::elidedLabelText(question->fontMetrics(),
+            QFileInfo(request->action->output).fileName(), Qt::ElideMiddle,
+            qMax(1, question->screen()->availableGeometry().width() / 2)) + QChar(0x2069);
+        //: %1 is the destination filename. The background check captured its contents
+        //: before this question. Yes approves replacing that version; nothing has
+        //: been replaced yet. A changed file will require another decision.
+        question->setText(SecurityDialog::tr("\"%1\" already exists. Replace it?").arg(name));
+        const int answer = question->exec();
+        delete question.data();
+        if (!self || !page || !page->isUsable() || page->window() != self
+            || closeConfirmed_ || (wm_ && wm_->isClosing()) || hiddenToTray_
+            || !isVisible() || isMinimized() || currentTab() != page) {
+            if (page)
+                retainSecurityDialog(page, request);
+            return;
+        }
+        if (answer == QMessageBox::Yes)
+            runSecurity(page, confirmed, asked);
+        else
+            queueSecurityDialog(page, request);
+        return;
+    }
+    if (result->status == QpdfService::Status::NeedsPassword && !asked
+        && !hiddenToTray_ && isVisible() && !isMinimized() && currentTab() == page) {
+        const QPointer<QInputDialog> prompt(new QInputDialog(this));
+        prompt->setWindowModality(Qt::WindowModal);
+        prompt->setWindowTitle(tr("Password required"));
+        //: %1 is the document's name. This asks for the password needed to open
+        //: its contents, not the owner password that guards permission flags.
+        prompt->setLabelText(tr("Enter the password for %1.").arg(page->tabTitle()));
+        prompt->setTextEchoMode(QLineEdit::Password);
+        const bool accepted = prompt->exec() == QDialog::Accepted;
+        const QString password = prompt && accepted ? prompt->textValue() : QString();
+        delete prompt.data();
+        if (!self || !page || !page->isUsable() || page->window() != self
+            || closeConfirmed_ || (wm_ && wm_->isClosing()) || !accepted)
+            return;
+        const auto retry = std::make_shared<SecurityRequest>(*request);
+        retry->password = password;
+        // An absent output can reach a password prompt on its first attempt.
+        // Preserve that attempt's consent instead of checking a newer file here.
+        retry->consent = result->consent;
+        runSecurity(page, retry, true);
+        return;
+    }
+    if (result->status == QpdfService::Status::Ok && asked)
+        page->setPassword(request->password);
+    if (ready) {
+        if (hiddenToTray_) {
+            if (!ready->infoError.isEmpty() && wm_)
+                wm_->notifyInTray(SecurityDialog::tr("Document Security"), ready->infoError);
+            return;
+        }
+        showSecurityDialog(page, ready);
+        return;
+    }
+    if (result->status == QpdfService::Status::Ok) {
+        if (!hiddenToTray_)
+            offerToOpen(request->action->output,
+                request->action->action == SecurityDialog::Action::Encrypt
+                    ? request->action->userPassword : QString());
+        return;
+    }
+    QString failure;
+    if (result->destination == SecurityResult::Destination::OpenTab)
+        failure = tr("The destination is open in a tab.");
+    else if (result->destination == SecurityResult::Destination::Changed) {
+        //: The output contents or target changed after this Security action was approved.
+        //: Nothing was replaced. Security reopens with the same choices. Try again means
+        //: choosing Encrypt, Remove Password or Strip Owner Restrictions again to check
+        //: the destination and confirm any replacement of an existing file.
+        failure = SecurityDialog::tr("The destination changed. Try again to review it.");
+    } else if (result->destination == SecurityResult::Destination::CheckFailed) {
+        //: The destination could not be read to verify replacement consent. Nothing was
+        //: replaced. Security reopens with the same choices so the user can retry the
+        //: action or choose another output filename in its Save As picker.
+        failure = SecurityDialog::tr("Could not check the destination. Try again or choose another name.");
+    } else if (result->status == QpdfService::Status::NeedsPassword)
+        failure = SecurityDialog::tr("The correct password is required.");
+    else {
+        //: %1 is the reason the security copy could not be written.
+        failure = SecurityDialog::tr("The operation failed.\n\n%1").arg(result->error);
+    }
+    const QString title = SecurityDialog::tr("Operation failed");
+    if (hiddenToTray_) {
+        if (wm_)
+            wm_->notifyInTray(title, failure);
+        return;
+    }
+    tellInWindow(this, QMessageBox::Warning, title, failure);
+    if (self && page && page->isUsable())
+        queueSecurityDialog(page, request);
+}
+
+/// Retains completed information or interrupted choices without keeping an old approval.
+void MainWindow::retainSecurityDialog(TabPage *tab, const std::shared_ptr<SecurityRequest> &request)
+{
+    RetainedSecurityDialog::discard(tab);
+    new RetainedSecurityDialog(tab, request);
+}
+
+/// Queues a retained information dialog or failed request in the surviving tab's window.
+void MainWindow::queueSecurityDialog(TabPage *tab, const std::shared_ptr<SecurityRequest> &request)
+{
+    const QPointer<TabPage> page(tab);
+    auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+    if (!window || window->closeConfirmed_ || (window->wm_ && window->wm_->isClosing()))
+        return;
+    const auto discarded = connect(window, &QObject::destroyed, tab, [page, request] {
+        QTimer::singleShot(0, page, [page, request] {
+            if (page)
+                queueSecurityDialog(page, request);
+        });
+    });
+    window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window),
+                              request, discarded] {
+        disconnect(discarded);
+        auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!current || current->closeConfirmed_ || (current->wm_ && current->wm_->isClosing()))
+            return;
+        if (current != owner) {
+            queueSecurityDialog(page, request);
+            return;
+        }
+        current->showSecurityDialog(page, request);
+    });
+}
+
+/// Edits retained choices in the current owner and starts the accepted worker write.
+void MainWindow::showSecurityDialog(TabPage *tab, const std::shared_ptr<SecurityRequest> &request)
+{
+    auto *owner = qobject_cast<MainWindow *>(tab->window());
+    if (!owner || !tab->isUsable() || owner->closeConfirmed_
+        || (owner->wm_ && owner->wm_->isClosing()))
+        return;
+    if (owner != this) {
+        queueSecurityDialog(tab, request);
+        return;
+    }
+    if (hiddenToTray_)
+        return;
+    const OperationScope operation(this);
+    const QPointer<MainWindow> self(this);
+    const QPointer<TabPage> page(tab);
+    recentActive_ = false;
+    tabs_->setCurrentWidget(tab);
+    if (!self || !page || !page->isUsable() || page->window() != self)
+        return;
+    updateForCurrentTab();
+    if (!self || !page || !page->isUsable() || page->window() != self)
+        return;
+    const QPointer<SecurityDialog> dialog(new SecurityDialog(request->source, request->info,
+                                                request->infoError, request->action, this));
+    dialog->setWindowModality(Qt::WindowModal);
+    const bool accepted = dialog->exec() == QDialog::Accepted;
+    const auto action = dialog && accepted ? dialog->request() : std::nullopt;
+    delete dialog.data();
+    if (!self || !page || !page->isUsable() || !action)
+        return;
+    const auto write = std::make_shared<SecurityRequest>(*request);
+    write->action = action;
+    write->consent.reset();
+    runSecurity(page, write, false);
 }
 
 // Builds PDF output values while its caller protects the live document. Measurement

@@ -10,10 +10,10 @@
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QGroupBox>
-#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QPointer>
 #include <QPushButton>
 #include <QVBoxLayout>
 
@@ -27,11 +27,12 @@ constexpr int kFieldPadding = 24;
 
 } // namespace
 
-SecurityDialog::SecurityDialog(const QString &documentPath, const QString &password,
+SecurityDialog::SecurityDialog(const QString &documentPath, const QpdfService::Info &info,
+                               const QString &error, std::optional<Request> choices,
                                QWidget *parent)
     : QDialog(parent)
     , path_(documentPath)
-    , password_(password)
+    , request_(std::move(choices))
 {
     setWindowTitle(tr("Document Security"));
     auto *layout = new QVBoxLayout(this);
@@ -47,11 +48,13 @@ SecurityDialog::SecurityDialog(const QString &documentPath, const QString &passw
     auto *encBox = new QGroupBox(tr("Encrypt / set password"), this);
     auto *form = new QFormLayout(encBox);
     userEdit_ = new QLineEdit(encBox);
+    userEdit_->setObjectName(QStringLiteral("securityUserPassword"));
     userEdit_->setEchoMode(QLineEdit::Password);
     //: Placeholder in the open-password field. An empty value means the saved
     //: PDF can be opened without entering a password.
     userEdit_->setPlaceholderText(tr("leave empty for no open password"));
     ownerEdit_ = new QLineEdit(encBox);
+    ownerEdit_->setObjectName(QStringLiteral("securityOwnerPassword"));
     ownerEdit_->setEchoMode(QLineEdit::Password);
     //: Placeholder in the owner-password field. If empty, use the open password
     //: to protect the PDF permission settings. The user can enter a different one.
@@ -62,6 +65,7 @@ SecurityDialog::SecurityDialog(const QString &documentPath, const QString &passw
         edit->setMinimumWidth(edit->fontMetrics().horizontalAdvance(edit->placeholderText())
                               + kFieldPadding);
     algoCombo_ = new QComboBox(encBox);
+    algoCombo_->setObjectName(QStringLiteral("securityAlgorithm"));
     //: Encryption algorithm choice. Keep the algorithm name as it is.
     algoCombo_->addItem(tr("AES-256 (recommended)"), int(QpdfService::Algorithm::AES256));
     //: Encryption algorithm choice. Keep the algorithm name as it is.
@@ -73,6 +77,10 @@ SecurityDialog::SecurityDialog(const QString &documentPath, const QString &passw
     allowCopy_ = new QCheckBox(tr("Allow copying text"), encBox);
     allowModify_ = new QCheckBox(tr("Allow modifying"), encBox);
     allowAnnotate_ = new QCheckBox(tr("Allow annotating"), encBox);
+    allowPrint_->setObjectName(QStringLiteral("securityAllowPrint"));
+    allowCopy_->setObjectName(QStringLiteral("securityAllowCopy"));
+    allowModify_->setObjectName(QStringLiteral("securityAllowModify"));
+    allowAnnotate_->setObjectName(QStringLiteral("securityAllowAnnotate"));
     for (QCheckBox *c : {allowPrint_, allowCopy_, allowModify_, allowAnnotate_})
         c->setChecked(true);
     //: The password needed to open the document.
@@ -86,6 +94,7 @@ SecurityDialog::SecurityDialog(const QString &documentPath, const QString &passw
     form->addRow(allowModify_);
     form->addRow(allowAnnotate_);
     auto *encBtn = new QPushButton(tr("Encrypt and Save As"), encBox);
+    encBtn->setObjectName(QStringLiteral("securityEncrypt"));
     connect(encBtn, &QPushButton::clicked, this, &SecurityDialog::doEncrypt);
     form->addRow(encBtn);
     layout->addWidget(encBox);
@@ -94,8 +103,10 @@ SecurityDialog::SecurityDialog(const QString &documentPath, const QString &passw
     auto *remBox = new QGroupBox(tr("Remove encryption"), this);
     auto *remLay = new QVBoxLayout(remBox);
     auto *removeBtn = new QPushButton(tr("Remove Password (Save Decrypted Copy)"), remBox);
+    removeBtn->setObjectName(QStringLiteral("securityDecrypt"));
     connect(removeBtn, &QPushButton::clicked, this, [this] { doDecrypt(false); });
     auto *stripBtn = new QPushButton(tr("Strip Owner Restrictions"), remBox);
+    stripBtn->setObjectName(QStringLiteral("securityStrip"));
     connect(stripBtn, &QPushButton::clicked, this, [this] { doDecrypt(true); });
     remLay->addWidget(removeBtn);
     remLay->addWidget(stripBtn);
@@ -105,25 +116,24 @@ SecurityDialog::SecurityDialog(const QString &documentPath, const QString &passw
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(buttons);
 
-    refreshInfo();
+    if (request_) {
+        userEdit_->setText(request_->userPassword);
+        ownerEdit_->setText(request_->ownerPassword);
+        algoCombo_->setCurrentIndex(algoCombo_->findData(int(request_->algorithm)));
+        allowPrint_->setChecked(request_->permissions.canPrint);
+        allowCopy_->setChecked(request_->permissions.canCopy);
+        allowModify_->setChecked(request_->permissions.canModify);
+        allowAnnotate_->setChecked(request_->permissions.canAnnotate);
+    }
+    showInfo(info, error);
 }
 
-void SecurityDialog::refreshInfo()
+void SecurityDialog::showInfo(const QpdfService::Info &info, const QString &error)
 {
-    QpdfService::Info info;
-    QString err;
-    QpdfService::Status st = svc_.readInfo(path_, password_, info, &err);
-    if (st == QpdfService::Status::NeedsPassword) {
-        if (ensurePassword())
-            st = svc_.readInfo(path_, password_, info, &err);
-    }
-
-    if (st != QpdfService::Status::Ok) {
+    if (!error.isEmpty()) {
         //: %1 is the reason.
         infoLabel_->setText(tr("<b>Could not read security information.</b><br>%1")
-                                .arg(st == QpdfService::Status::NeedsPassword
-                                         ? tr("A password is required.")
-                                         : err.toHtmlEscaped()));
+                                .arg(error.toHtmlEscaped()));
         return;
     }
 
@@ -142,104 +152,84 @@ void SecurityDialog::refreshInfo()
         infoLabel_->setText(tr("<b>Encrypted</b> · %1 (%2-bit)<br>"
                                "Printing: %3 · Copying: %4 · Modifying: %5 · Annotating: %6<br>"
                                "<i>Note: Mervin never enforces these permission flags.</i>")
-                                .arg(info.algorithm)
+                                .arg(info.algorithm.toHtmlEscaped())
                                 .arg(info.keyLengthBits)
                                 .arg(yn(info.permissions.canPrint), yn(info.permissions.canCopy),
                                      yn(info.permissions.canModify), yn(info.permissions.canAnnotate)));
     }
 }
 
-bool SecurityDialog::ensurePassword()
-{
-    bool ok = false;
-    const QString pw = QInputDialog::getText(this, tr("Password Required"),
-                                             tr("Enter the password for this document:"),
-                                             QLineEdit::Password, QString(), &ok);
-    if (!ok)
-        return false;
-    password_ = pw;
-    return true;
-}
-
-QString SecurityDialog::chooseOutput(const QString &suffix)
+QString SecurityDialog::chooseOutput(Action action, const QString &suffix)
 {
     const QFileInfo fi(path_);
-    const QString suggested =
-        fi.absolutePath() + QLatin1Char('/') + fi.completeBaseName() + suffix + QStringLiteral(".pdf");
-    return QFileDialog::getSaveFileName(this, tr("Save As"), suggested,
+    const QString suggested = request_ && request_->action == action
+        ? request_->output
+        : fi.absolutePath() + QLatin1Char('/') + fi.completeBaseName() + suffix + QStringLiteral(".pdf");
+    const QPointer<SecurityDialog> self(this);
+    const QPointer<QFileDialog> picker(new QFileDialog(this, tr("Save As"), suggested,
                                         //: File type filter. Keep "(*.pdf)" as it is.
-                                        tr("PDF documents (*.pdf)"));
+                                        tr("PDF documents (*.pdf)")));
+    picker->setAcceptMode(QFileDialog::AcceptSave);
+    // The worker captures the destination before the app asks to replace it.
+    // A native confirmation here would approve contents that have not been checked.
+    picker->setOption(QFileDialog::DontConfirmOverwrite);
+    picker->setWindowModality(Qt::WindowModal);
+    const bool accepted = picker->exec() == QDialog::Accepted;
+    const QStringList files = picker && accepted ? picker->selectedFiles() : QStringList();
+    delete picker.data();
+    return self && !files.isEmpty() ? files.front() : QString();
+}
+
+SecurityDialog::Request SecurityDialog::choices() const
+{
+    Request result;
+    result.userPassword = userEdit_->text();
+    result.ownerPassword = ownerEdit_->text();
+    result.algorithm = static_cast<QpdfService::Algorithm>(algoCombo_->currentData().toInt());
+    result.permissions.canPrint = allowPrint_->isChecked();
+    result.permissions.canCopy = allowCopy_->isChecked();
+    result.permissions.canModify = allowModify_->isChecked();
+    result.permissions.canAnnotate = allowAnnotate_->isChecked();
+    return result;
 }
 
 void SecurityDialog::doEncrypt()
 {
-    const QString out = chooseOutput(QStringLiteral("-encrypted"));
-    if (out.isEmpty())
+    const QPointer<SecurityDialog> self(this);
+    const QString out = chooseOutput(Action::Encrypt, QStringLiteral("-encrypted"));
+    if (!self || out.isEmpty())
         return;
-    QpdfService::Permissions perms;
-    perms.canPrint = allowPrint_->isChecked();
-    perms.canCopy = allowCopy_->isChecked();
-    perms.canModify = allowModify_->isChecked();
-    perms.canAnnotate = allowAnnotate_->isChecked();
-    const auto algo = static_cast<QpdfService::Algorithm>(algoCombo_->currentData().toInt());
-    QString err;
-    const auto st = svc_.encrypt(path_, out, password_, userEdit_->text(), ownerEdit_->text(),
-                                 algo, perms, &err);
-    if (st == QpdfService::Status::NeedsPassword && ensurePassword()) {
-        const auto st2 = svc_.encrypt(path_, out, password_, userEdit_->text(), ownerEdit_->text(),
-                                      algo, perms, &err);
-        reportResult(st2, err, out);
-        return;
-    }
-    reportResult(st, err, out);
+    request_ = choices();
+    request_->action = Action::Encrypt;
+    request_->output = out;
+    QDialog::accept();
 }
 
 void SecurityDialog::doDecrypt(bool stripRestrictions)
 {
+    const QPointer<SecurityDialog> self(this);
     if (stripRestrictions) {
-        const auto choice = QMessageBox::question(
-            this, tr("Strip Owner Restrictions"),
+        const QPointer<QMessageBox> question(new QMessageBox(QMessageBox::Question,
+            tr("Strip Owner Restrictions"),
             tr("This writes a copy with all owner-password restrictions removed "
                "(printing, copying, and editing become permitted).\n\nContinue?"),
-            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-        if (choice != QMessageBox::Yes)
+            QMessageBox::Yes | QMessageBox::No, this));
+        question->setDefaultButton(QMessageBox::No);
+        question->setWindowModality(Qt::WindowModal);
+        const int answer = question->exec();
+        delete question.data();
+        if (!self || answer != QMessageBox::Yes)
             return;
     }
-    const QString out = chooseOutput(stripRestrictions ? QStringLiteral("-unrestricted")
-                                                       : QStringLiteral("-decrypted"));
-    if (out.isEmpty())
+    const Action action = stripRestrictions ? Action::StripRestrictions : Action::Decrypt;
+    const QString out = chooseOutput(action, stripRestrictions ? QStringLiteral("-unrestricted")
+                                                              : QStringLiteral("-decrypted"));
+    if (!self || out.isEmpty())
         return;
-    QString err;
-    auto st = svc_.decrypt(path_, out, password_, &err);
-    if (st == QpdfService::Status::NeedsPassword && ensurePassword())
-        st = svc_.decrypt(path_, out, password_, &err);
-    reportResult(st, err, out);
-}
-
-void SecurityDialog::reportResult(QpdfService::Status st, const QString &error, const QString &outPath)
-{
-    if (st != QpdfService::Status::Ok) {
-        // Separate statements: lupdate before Qt 6.11 drops a //: comment placed in
-        // front of the ':' branch of a ternary.
-        QString message;
-        if (st == QpdfService::Status::NeedsPassword) {
-            message = tr("The correct password is required.");
-        } else {
-            //: %1 is the reason.
-            message = tr("The operation failed.\n\n%1").arg(error);
-        }
-        QMessageBox::warning(this, tr("Operation failed"), message);
-        return;
-    }
-    refreshInfo();
-    const auto open = QMessageBox::information(
-        //: Message box title after a copy was saved.
-        this, tr("Done"),
-        //: %1 is the path of the saved copy.
-        tr("Saved to:\n%1\n\nOpen it now?").arg(QDir::toNativeSeparators(outPath)),
-        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
-    if (open == QMessageBox::Yes)
-        emit openRequested(outPath);
+    request_ = choices();
+    request_->action = action;
+    request_->output = out;
+    QDialog::accept();
 }
 
 } // namespace mervin

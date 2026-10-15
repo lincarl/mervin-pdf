@@ -104,8 +104,10 @@ QpdfService::Status QpdfService::readInfo(const QString &path, const QString &pa
     }
 }
 
+/// Writes an unencrypted copy after any destination validator approves publication.
 QpdfService::Status QpdfService::decrypt(const QString &inPath, const QString &outPath,
-                                         const QString &password, QString *error)
+                                         const QString &password, QString *error,
+                                         const std::function<bool()> &mayCommit)
 {
     QPDF q;
     const Status st = open(q, inPath, password, error);
@@ -115,7 +117,7 @@ QpdfService::Status QpdfService::decrypt(const QString &inPath, const QString &o
     try {
         AtomicPdfWriter output(q, outPath);
         output.options().setPreserveEncryption(false); // drop encryption AND all owner restrictions
-        output.write();
+        output.write(mayCommit);
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)
@@ -124,10 +126,12 @@ QpdfService::Status QpdfService::decrypt(const QString &inPath, const QString &o
     }
 }
 
+/// Writes the chosen encryption and permissions after any destination validator approves.
 QpdfService::Status QpdfService::encrypt(const QString &inPath, const QString &outPath,
                                          const QString &currentPassword, const QString &userPassword,
                                          const QString &ownerPassword, Algorithm algo,
-                                         const Permissions &perms, QString *error)
+                                         const Permissions &perms, QString *error,
+                                         const std::function<bool()> &mayCommit)
 {
     QPDF q;
     const Status st = open(q, inPath, currentPassword, error);
@@ -164,7 +168,7 @@ QpdfService::Status QpdfService::encrypt(const QString &inPath, const QString &o
                                                 /*encrypt_metadata=*/true, /*use_aes=*/false);
             break;
         }
-        output.write();
+        output.write(mayCommit);
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)

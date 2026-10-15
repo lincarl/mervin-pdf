@@ -97,6 +97,8 @@ private slots:
     void destinationConsentDistinguishesContentsAndErrors();
     void delayedMergeRequiresFreshConsent_data();
     void delayedMergeRequiresFreshConsent();
+    void delayedSecurityRequiresFreshConsent_data();
+    void delayedSecurityRequiresFreshConsent();
     void probeDistinguishesLockedFromUnreadable();
     void splitWritesOnePerPage();
     void rotateKeepsCount();
@@ -201,6 +203,69 @@ void TstQpdf::delayedMergeRequiresFreshConsent()
     }), PageOps::Status::Ok);
     QCOMPARE(validations, 2);
     QCOMPARE(PageOps::pageCount(output), 2);
+}
+
+/// Covers both Security writers with absent and previously approved destinations.
+void TstQpdf::delayedSecurityRequiresFreshConsent_data()
+{
+    QTest::addColumn<bool>("encrypt");
+    QTest::addColumn<bool>("existing");
+    QTest::newRow("encrypt absent") << true << false;
+    QTest::newRow("encrypt existing") << true << true;
+    QTest::newRow("decrypt absent") << false << false;
+    QTest::newRow("decrypt existing") << false << true;
+}
+
+/// Both Qpdf writers preserve the winner until a new request approves its exact bytes.
+void TstQpdf::delayedSecurityRequiresFreshConsent()
+{
+    QFETCH(bool, encrypt);
+    QFETCH(bool, existing);
+    QTemporaryDir folder;
+    const QString source = folder.filePath("source.pdf");
+    const QString encrypted = folder.filePath("encrypted.pdf");
+    const QString output = folder.filePath("output.pdf");
+    const QString password = QStringLiteral("source password");
+    makePdf(source, 3);
+    QpdfService service;
+    QCOMPARE(service.encrypt(source, encrypted, {}, password, {}, QpdfService::Algorithm::AES256, {}),
+             QpdfService::Status::Ok);
+    if (existing)
+        makePdf(output, 3);
+    const auto approved = mervin::DestinationConsent::read(output);
+    QVERIFY(approved);
+    QCOMPARE(approved->exists, existing);
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{source, {0}, {}}}, output),
+             PageOps::Status::Ok);
+    QFile winnerFile(output);
+    QVERIFY(winnerFile.open(QIODevice::ReadOnly));
+    const QByteArray winner = winnerFile.readAll();
+    winnerFile.close();
+    int validations = 0;
+    auto expected = approved;
+    const auto validate = [&] {
+        ++validations;
+        return mervin::DestinationConsent::read(output) == expected;
+    };
+    const auto write = [&] {
+        return encrypt
+            ? service.encrypt(source, output, {}, password, {}, QpdfService::Algorithm::AES256,
+                              {}, nullptr, validate)
+            : service.decrypt(encrypted, output, password, nullptr, validate);
+    };
+    QCOMPARE(write(), QpdfService::Status::Failed);
+    QCOMPARE(validations, 1);
+    QVERIFY(winnerFile.open(QIODevice::ReadOnly));
+    QCOMPARE(winnerFile.readAll(), winner);
+    winnerFile.close();
+    expected = mervin::DestinationConsent::read(output);
+    QVERIFY(expected);
+    QCOMPARE(write(), QpdfService::Status::Ok);
+    QCOMPARE(validations, 2);
+    QpdfService::Info info;
+    QCOMPARE(service.readInfo(output, password, info), QpdfService::Status::Ok);
+    QCOMPARE(info.encrypted, encrypt);
+    QCOMPARE(PageOps::pageCount(output, password), 3);
 }
 
 void TstQpdf::pageCountRoundTrip()

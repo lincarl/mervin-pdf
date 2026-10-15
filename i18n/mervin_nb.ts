@@ -103,7 +103,9 @@ Open it now?</source>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Skriv inn passordet for %1.</translation>
     </message>
     <message>
@@ -3332,14 +3334,6 @@ Denne filen er ikke lenger på disken.</translation>
         <translation>&lt;b&gt;kryptert&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;Utskrift: %3 · Kopiering: %4 · Endre: %5 · Annotering: %6&lt;br&gt;&lt;i&gt;Merk: Mervin håndhever aldri disse tillatelsesflaggene.&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Passord kreves</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Skriv inn passordet for dette dokumentet:</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Lagre som</translation>
     </message>
@@ -3365,29 +3359,28 @@ Fortsette?</translation>
         <translation>Riktig passord kreves.</translation>
     </message>
     <message>
+        <source>&quot;%1&quot; already exists. Replace it?</source>
+        <extracomment>%1 is the destination filename. The background check captured its contents before this question. Yes approves replacing that version; nothing has been replaced yet. A changed file will require another decision.</extracomment>
+        <translation>«%1» finnes allerede. Vil du erstatte den?</translation>
+    </message>
+    <message>
+        <source>The destination changed. Try again to review it.</source>
+        <extracomment>The output contents or target changed after this Security action was approved. Nothing was replaced. Security reopens with the same choices. Try again means choosing Encrypt, Remove Password or Strip Owner Restrictions again to check the destination and confirm any replacement of an existing file.</extracomment>
+        <translation>Målfilen er endret. Prøv igjen for å kontrollere den.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Try again or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Nothing was replaced. Security reopens with the same choices so the user can retry the action or choose another output filename in its Save As picker.</extracomment>
+        <translation>Kunne ikke kontrollere målfilen. Prøv igjen eller velg et annet navn.</translation>
+    </message>
+    <message>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
         <translation>Operasjonen mislyktes.
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Ferdig</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Lagret til:
-%1
-
-Åpne den nå?</translation>
     </message>
 </context>
 <context>

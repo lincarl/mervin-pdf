@@ -19,7 +19,7 @@
         <source>The operation failed.
 
 %1</source>
-        <translation>Վիրահատությունը ձախողվեց։
+        <translation>Գործողությունը ձախողվեց։
 
 %1</translation>
     </message>
@@ -103,7 +103,9 @@ Open it now?</source>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the document&apos;s name. This asks for the password needed to open its contents, not the owner password that guards permission flags.
+----------
+%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>Մուտքագրեք գաղտնաբառը %1-ի համար:</translation>
     </message>
     <message>
@@ -3332,14 +3334,6 @@ This file is no longer on disk.</source>
         <translation>&lt;b&gt;Կոդավորված&lt;/b&gt; · %1 (%2-բիթ)&lt;br&gt;Տպագրություն՝ %3 · Պատճենում՝ %4 · Փոփոխում. %5 · Ծանոթագրում՝ %6&lt;br&gt;&lt;i&gt;Նշում․ Mervin-ը երբեք չի պարտադրում թույլտվությունների այս սահմանափակումները։&lt;/i&gt;</translation>
     </message>
     <message>
-        <source>Password Required</source>
-        <translation>Պահանջվում է գաղտնաբառը</translation>
-    </message>
-    <message>
-        <source>Enter the password for this document:</source>
-        <translation>Մուտքագրեք այս փաստաթղթի գաղտնաբառը.</translation>
-    </message>
-    <message>
         <source>Save As</source>
         <translation>Պահպանել որպես</translation>
     </message>
@@ -3365,29 +3359,28 @@ Continue?</source>
         <translation>Պահանջվում է ճիշտ գաղտնաբառը:</translation>
     </message>
     <message>
+        <source>&quot;%1&quot; already exists. Replace it?</source>
+        <extracomment>%1 is the destination filename. The background check captured its contents before this question. Yes approves replacing that version; nothing has been replaced yet. A changed file will require another decision.</extracomment>
+        <translation>«%1»-ն արդեն գոյություն ունի։ Փոխարինե՞լ այն։</translation>
+    </message>
+    <message>
+        <source>The destination changed. Try again to review it.</source>
+        <extracomment>The output contents or target changed after this Security action was approved. Nothing was replaced. Security reopens with the same choices. Try again means choosing Encrypt, Remove Password or Strip Owner Restrictions again to check the destination and confirm any replacement of an existing file.</extracomment>
+        <translation>Նպատակակետը փոխվել է։ Այն ստուգելու համար կրկին փորձեք։</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Try again or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Nothing was replaced. Security reopens with the same choices so the user can retry the action or choose another output filename in its Save As picker.</extracomment>
+        <translation>Չհաջողվեց ստուգել նպատակակետը։ Կրկին փորձեք կամ ընտրեք այլ անուն։</translation>
+    </message>
+    <message>
         <source>The operation failed.
 
 %1</source>
-        <extracomment>%1 is the reason.</extracomment>
-        <translation>Վիրահատությունը ձախողվեց։
+        <extracomment>%1 is the reason the security copy could not be written.</extracomment>
+        <translation>Գործողությունը ձախողվեց։
 
 %1</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <extracomment>Message box title after a copy was saved.</extracomment>
-        <translation>Կատարված է</translation>
-    </message>
-    <message>
-        <source>Saved to:
-%1
-
-Open it now?</source>
-        <extracomment>%1 is the path of the saved copy.</extracomment>
-        <translation>Պահված՝
-%1
-
-Բացե՞լ հիմա:</translation>
     </message>
 </context>
 <context>
