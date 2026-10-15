@@ -3359,6 +3359,21 @@ Halda áfram?</translation>
         <translation>Rétt lykilorð er krafist.</translation>
     </message>
     <message>
+        <source>&quot;%1&quot; already exists. Replace it?</source>
+        <extracomment>%1 is the destination filename. The background check captured its contents before this question. Yes approves replacing that version; nothing has been replaced yet. A changed file will require another decision.</extracomment>
+        <translation>„%1“ er þegar til. Viltu skipta henni út?</translation>
+    </message>
+    <message>
+        <source>The destination changed. Try again to review it.</source>
+        <extracomment>The output contents or target changed after this Security action was approved. Nothing was replaced. Security reopens with the same choices. Try again means choosing Encrypt, Remove Password or Strip Owner Restrictions again to check the destination and confirm any replacement of an existing file.</extracomment>
+        <translation>Áfangastaðurinn hefur breyst. Reyndu aftur til að yfirfara hann.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Try again or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Nothing was replaced. Security reopens with the same choices so the user can retry the action or choose another output filename in its Save As picker.</extracomment>
+        <translation>Ekki tókst að athuga áfangastaðinn. Reyndu aftur eða veldu annað nafn.</translation>
+    </message>
+    <message>
         <source>The operation failed.
 
 %1</source>

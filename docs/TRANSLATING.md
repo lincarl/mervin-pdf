@@ -250,6 +250,13 @@ mark where it may wrap. Qt allows no line break after a backslash, so a Windows 
 otherwise wraps nowhere, and it can end a line on the `\\` of a network share or the
 `/` a path starts with.
 
+`QMessageBox` can wrap a translated sentence while clipping a long filename with
+no break opportunities. Polish the message box before measuring its font, then
+use `elidedLabelText` to shorten only the filename in the middle to a conservative
+share of the available screen width. Keep its bidirectional isolate and the full
+translated question. Check the real message box with an unbroken filename, since
+a wrapped-label check alone does not establish that the question fits.
+
 Run the translation and layout checks after building the test targets. For a
 local Linux run, set `mervin_build_dir` to your existing isolated build directory:
 

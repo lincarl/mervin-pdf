@@ -17,6 +17,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileDialog>
@@ -49,6 +50,13 @@ QByteArray bytes(const QString &path)
 {
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+
+/// Replaces a local test destination and reports whether every byte was written.
+bool writeBytes(const QString &path, const QByteArray &contents)
+{
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly) && file.write(contents) == contents.size();
 }
 
 /// Realizes an isolated test window without showing it on the desktop.
@@ -177,6 +185,20 @@ void setEncryptionChoices(SecurityDialog &dialog)
     for (const QString &name : {QStringLiteral("securityAllowPrint"), QStringLiteral("securityAllowCopy"),
                                QStringLiteral("securityAllowModify"), QStringLiteral("securityAllowAnnotate")})
         dialog.findChild<QCheckBox *>(name)->setChecked(false);
+}
+
+/// Checks that failure recovery preserves the chosen output and every encryption control.
+void verifyEncryptionChoices(const SecurityDialog &dialog, const QString &output)
+{
+    QVERIFY(dialog.request());
+    QCOMPARE(QDir::fromNativeSeparators(dialog.request()->output), output);
+    QCOMPARE(dialog.findChild<QLineEdit *>(QStringLiteral("securityUserPassword"))->text(),
+             QStringLiteral("new password"));
+    QCOMPARE(dialog.findChild<QLineEdit *>(QStringLiteral("securityOwnerPassword"))->text(),
+             QStringLiteral("owner guard"));
+    QCOMPARE(dialog.findChild<QComboBox *>(QStringLiteral("securityAlgorithm"))->currentIndex(), 1);
+    for (QCheckBox *permission : dialog.findChildren<QCheckBox *>())
+        QVERIFY(!permission->isChecked());
 }
 
 } // namespace
@@ -434,6 +456,323 @@ private slots:
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 
+    /// Covers changes after absent or existing approval and inside the replacement question.
+    void changedDestinationRequiresFreshApproval_data()
+    {
+        QTest::addColumn<bool>("existing");
+        QTest::addColumn<bool>("duringQuestion");
+        QTest::newRow("absent output while source waits") << false << false;
+        QTest::newRow("existing output while source waits") << true << false;
+        QTest::newRow("existing output during confirmation") << true << true;
+    }
+
+    /// Preserves competing bytes, retains choices and obtains new consent on explicit retry.
+    void changedDestinationRequiresFreshApproval()
+    {
+        QFETCH(bool, existing);
+        QFETCH(bool, duringQuestion);
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("source.pdf"));
+        const QString output = files.filePath(QStringLiteral("output.pdf"));
+        const QByteArray original("original contents");
+        const QByteArray changed("changed contents!");
+        QCOMPARE(original.size(), changed.size());
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        if (existing)
+            QVERIFY(writeBytes(output, original));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showWindow(window);
+        QVERIFY(testing::openAndWait(window, source));
+        const int guiSteps = job::testing::stepsOnMainThread();
+        const auto release = qScopeGuard([] { job::testing::release(); });
+        Interaction dialogs;
+        dialogs.files << output << output;
+        int questions = 0;
+        int completions = 0;
+        bool changedWritten = false;
+        bool checkedRetained = false;
+        QString failure;
+        dialogs.answer = [&](const QMessageBox &box) {
+            if (box.objectName() == QStringLiteral("securityReplace")) {
+                if (++questions == 1 && duringQuestion)
+                    changedWritten = writeBytes(output, changed);
+                return QMessageBox::Yes;
+            }
+            if (box.windowTitle() == QStringLiteral("Done")) {
+                ++completions;
+                return QMessageBox::No;
+            }
+            failure = box.text();
+            return QMessageBox::Ok;
+        };
+        dialogs.security = [&](SecurityDialog &dialog) {
+            if (dialogs.securityCount == 1) {
+                setEncryptionChoices(dialog);
+                if (!duringQuestion)
+                    job::testing::holdWhen([source](job::Step step, const QString &path) {
+                        return step == job::Step::Reading
+                            && QDir::fromNativeSeparators(path) == source;
+                    });
+            } else {
+                verifyEncryptionChoices(dialog, output);
+                QCOMPARE(bytes(output), changed);
+                checkedRetained = true;
+            }
+            dialog.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
+        };
+        QVERIFY(QMetaObject::invokeMethod(&window, "openSecurity"));
+        if (!duringQuestion) {
+            QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+            QCOMPARE(questions, existing ? 1 : 0);
+            changedWritten = writeBytes(output, changed);
+            job::testing::release();
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(completions, 1, 10000);
+        QVERIFY(changedWritten);
+        QVERIFY(checkedRetained);
+        QCOMPARE(dialogs.securityCount, 2);
+        QCOMPARE(questions, existing ? 2 : 1);
+        QVERIFY(failure.contains(QStringLiteral("The destination changed.")));
+        QCOMPARE(dialogs.suggested.size(), 2);
+        QCOMPARE(QDir::fromNativeSeparators(dialogs.suggested.last()), output);
+        QCOMPARE(job::testing::stepsOnMainThread(), guiSteps);
+        QpdfService::Info info;
+        QCOMPARE(QpdfService().readInfo(output, QStringLiteral("new password"), info),
+                 QpdfService::Status::Ok);
+        QCOMPARE(info.keyLengthBits, 128);
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
+    /// A password retry must keep the initial absence even when no request carried it yet.
+    void passwordRetryRetainsAbsentDestinationConsent()
+    {
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("source.pdf"));
+        const QString output = files.filePath(QStringLiteral("output.pdf"));
+        const QByteArray winner("another completed writer");
+        QCOMPARE(QpdfService().encrypt(QStringLiteral(MERVIN_FIXTURE_PDF), source, {},
+                     QStringLiteral("source password"), {}, QpdfService::Algorithm::AES256, {}),
+                 QpdfService::Status::Ok);
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showWindow(window);
+        QVERIFY(testing::openAndWait(window, source, false, -1, true, QStringLiteral("source password")));
+        currentTab(window)->setPassword({});
+        const int guiSteps = job::testing::stepsOnMainThread();
+        Interaction dialogs;
+        dialogs.files << output << output;
+        dialogs.passwords << QStringLiteral("wrong") << QStringLiteral("source password");
+        bool attemptedWinner = false;
+        bool winnerWritten = false;
+        bool checkedRetained = false;
+        int questions = 0;
+        int completions = 0;
+        QString failure;
+        dialogs.intercept = [&](QWidget *modal) {
+            if (!attemptedWinner && dialogs.passwordCount == 1 && qobject_cast<QInputDialog *>(modal)) {
+                attemptedWinner = true;
+                winnerWritten = writeBytes(output, winner);
+            }
+            return false;
+        };
+        dialogs.answer = [&](const QMessageBox &box) {
+            if (box.objectName() == QStringLiteral("securityReplace")) {
+                ++questions;
+                return QMessageBox::Yes;
+            }
+            if (box.windowTitle() == QStringLiteral("Done")) {
+                ++completions;
+                return QMessageBox::No;
+            }
+            failure = box.text();
+            return QMessageBox::Ok;
+        };
+        dialogs.security = [&](SecurityDialog &dialog) {
+            const auto labels = dialog.findChildren<QLabel *>();
+            QVERIFY(std::any_of(labels.cbegin(), labels.cend(), [](QLabel *label) {
+                return label->text().contains(QStringLiteral("A password is required."));
+            }));
+            if (dialogs.securityCount == 1) {
+                setEncryptionChoices(dialog);
+            } else {
+                verifyEncryptionChoices(dialog, output);
+                QCOMPARE(bytes(output), winner);
+                QCOMPARE(questions, 0);
+                QCOMPARE(completions, 0);
+                checkedRetained = true;
+            }
+            dialog.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
+        };
+        QVERIFY(QMetaObject::invokeMethod(&window, "openSecurity"));
+        QTRY_COMPARE_WITH_TIMEOUT(completions, 1, 10000);
+        QVERIFY(winnerWritten);
+        QVERIFY(checkedRetained);
+        QCOMPARE(dialogs.securityCount, 2);
+        QCOMPARE(dialogs.passwordCount, 2);
+        QCOMPARE(questions, 1);
+        QVERIFY(failure.contains(QStringLiteral("The destination changed.")));
+        QCOMPARE(QDir::fromNativeSeparators(dialogs.suggested.last()), output);
+        QCOMPARE(job::testing::stepsOnMainThread(), guiSteps);
+        QpdfService::Info info;
+        QCOMPARE(QpdfService().readInfo(output, QStringLiteral("new password"), info),
+                 QpdfService::Status::Ok);
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
+    /// Covers unreadable destinations before confirmation and immediately before publication.
+    void failedDestinationCheckRetainsChoices_data()
+    {
+        QTest::addColumn<bool>("finalRead");
+        QTest::newRow("initial capture") << false;
+        QTest::newRow("final comparison") << true;
+    }
+
+    /// Reports an actionable error and allows a retained request to choose another output.
+    void failedDestinationCheckRetainsChoices()
+    {
+        QFETCH(bool, finalRead);
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("source.pdf"));
+        const QString output = files.filePath(QStringLiteral("output.pdf"));
+        const QString alternative = files.filePath(QStringLiteral("alternative.pdf"));
+        const QByteArray original("keep the unchecked destination");
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        QVERIFY(writeBytes(output, original));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showWindow(window);
+        QVERIFY(testing::openAndWait(window, source));
+        const int guiSteps = job::testing::stepsOnMainThread();
+        const auto failRead = [&] {
+            job::testing::failWhen([output](job::Step step, const QString &path) {
+                return step == job::Step::Reading && QDir::fromNativeSeparators(path) == output;
+            });
+        };
+        const auto clearHook = qScopeGuard([] { job::testing::failWhen({}); });
+        Interaction dialogs;
+        dialogs.files << output << alternative;
+        int questions = 0;
+        int completions = 0;
+        bool checkedRetained = false;
+        QString failure;
+        dialogs.answer = [&](const QMessageBox &box) {
+            if (box.objectName() == QStringLiteral("securityReplace")) {
+                ++questions;
+                if (finalRead)
+                    failRead();
+                return QMessageBox::Yes;
+            }
+            if (box.windowTitle() == QStringLiteral("Done")) {
+                ++completions;
+                return QMessageBox::No;
+            }
+            failure = box.text();
+            return QMessageBox::Ok;
+        };
+        dialogs.security = [&](SecurityDialog &dialog) {
+            if (dialogs.securityCount == 1) {
+                setEncryptionChoices(dialog);
+                if (!finalRead)
+                    failRead();
+            } else {
+                verifyEncryptionChoices(dialog, output);
+                QCOMPARE(bytes(output), original);
+                checkedRetained = true;
+                job::testing::failWhen({});
+            }
+            dialog.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
+        };
+        QVERIFY(QMetaObject::invokeMethod(&window, "openSecurity"));
+        QTRY_COMPARE_WITH_TIMEOUT(completions, 1, 10000);
+        QVERIFY(checkedRetained);
+        QCOMPARE(dialogs.securityCount, 2);
+        QCOMPARE(questions, finalRead ? 1 : 0);
+        QCOMPARE(failure, QStringLiteral("Could not check the destination. Try again or choose another name."));
+        QVERIFY(!failure.contains(job::notRunError()));
+        QCOMPARE(bytes(output), original);
+        QCOMPARE(dialogs.suggested.size(), 2);
+        QCOMPARE(QDir::fromNativeSeparators(dialogs.suggested.last()), output);
+        QCOMPARE(job::testing::stepsOnMainThread(), guiSteps);
+        QpdfService::Info info;
+        QCOMPARE(QpdfService().readInfo(alternative, QStringLiteral("new password"), info),
+                 QpdfService::Status::Ok);
+        QCOMPARE(info.keyLengthBits, 128);
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
+    /// Covers cancellation in both the initial snapshot and final comparison.
+    void stopDuringDestinationConsentRead_data()
+    {
+        QTest::addColumn<bool>("finalRead");
+        QTest::newRow("initial capture") << false;
+        QTest::newRow("final comparison") << true;
+    }
+
+    /// Stop between hash chunks keeps the source edits and old destination without late UI.
+    void stopDuringDestinationConsentRead()
+    {
+        QFETCH(bool, finalRead);
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("source.pdf"));
+        const QString output = files.filePath(QStringLiteral("output.pdf"));
+        const QByteArray original(3 * 1024 * 1024, 'x');
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        QVERIFY(writeBytes(output, original));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showWindow(window);
+        QVERIFY(testing::openAndWait(window, source));
+        auto *page = currentTab(window);
+        page->viewer()->loadMeasurements(
+            {{0, MeasureKind::Distance, {{15, 80}, {85, 80}}}}, {}, MeasureUnit::Millimeter, 2, 2);
+        page->viewer()->setMeasurePrecision(3);
+        QVERIFY(page->hasUnsavedEdits());
+        const int running = background::running();
+        const int guiSteps = job::testing::stepsOnMainThread();
+        const auto armHold = [&] {
+            job::testing::holdWhen([output, reads = 0](job::Step step, const QString &path) mutable {
+                return step == job::Step::Reading && QDir::fromNativeSeparators(path) == output
+                    && ++reads == 3;
+            });
+        };
+        const auto release = qScopeGuard([] { job::testing::release(); });
+        Interaction dialogs;
+        dialogs.files.append(output);
+        int questions = 0;
+        dialogs.answer = [&](const QMessageBox &box) {
+            if (box.objectName() == QStringLiteral("securityReplace")) {
+                ++questions;
+                if (finalRead)
+                    armHold();
+                return QMessageBox::Yes;
+            }
+            return QMessageBox::NoButton;
+        };
+        dialogs.security = [&](SecurityDialog &dialog) {
+            if (!finalRead)
+                armHold();
+            setEncryptionChoices(dialog);
+            dialog.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
+        };
+        QVERIFY(QMetaObject::invokeMethod(&window, "openSecurity"));
+        QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+        QVERIFY(page->isBusy());
+        page->stopWaiting();
+        QVERIFY(page->isUsable() && page->hasUnsavedEdits());
+        job::testing::release();
+        QTRY_VERIFY_WITH_TIMEOUT(background::running() <= running, 10000);
+        QTest::qWait(50);
+        QCOMPARE(bytes(output), original);
+        QCOMPARE(dialogs.securityCount, 1);
+        QCOMPARE(questions, finalRead ? 1 : 0);
+        QCOMPARE(dialogs.messages.size(), questions);
+        QCOMPARE(page->viewer()->committedMeasurements().size(), size_t(1));
+        QCOMPARE(page->viewer()->measurePrecision(), 3);
+        QCOMPARE(job::testing::stepsOnMainThread(), guiSteps);
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
     /// Checks that reopening after write failure preserves the earlier information read error.
     void failedInformationStaysVisibleAfterAFailedWrite()
     {
@@ -570,7 +909,7 @@ private slots:
         QVERIFY(testing::openAndWait(window, source));
         Interaction dialogs;
         dialogs.files.append(output);
-        dialogs.answers << QMessageBox::Yes << QMessageBox::Ok;
+        dialogs.answers.append(QMessageBox::Ok);
         dialogs.security = [&](SecurityDialog &dialog) {
             if (dialogs.securityCount == 1)
                 dialog.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
@@ -769,7 +1108,7 @@ private slots:
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 
-    /// Covers owner deletion during Security, password, output and restriction questions.
+    /// Covers owner deletion during Security, passwords, output and confirmation questions.
     void modalOwnerCanBeDestroyed_data()
     {
         QTest::addColumn<QString>("phase");
@@ -777,6 +1116,7 @@ private slots:
         QTest::newRow("password prompt") << QStringLiteral("password");
         QTest::newRow("output picker") << QStringLiteral("picker");
         QTest::newRow("strip question") << QStringLiteral("strip");
+        QTest::newRow("replacement question") << QStringLiteral("replace");
     }
 
     /// Checks that all nested Security dialogs tolerate deletion of their owner.
@@ -785,6 +1125,10 @@ private slots:
         QFETCH(QString, phase);
         QTemporaryDir files;
         const QString source = files.filePath(QStringLiteral("source.pdf"));
+        const QString output = files.filePath(QStringLiteral("output.pdf"));
+        const QByteArray original("keep existing destination");
+        if (phase == QStringLiteral("replace"))
+            QVERIFY(writeBytes(output, original));
         if (phase == QStringLiteral("password"))
             QCOMPARE(QpdfService().encrypt(QStringLiteral(MERVIN_FIXTURE_PDF), source, {},
                          QStringLiteral("source password"), {}, QpdfService::Algorithm::AES256, {}),
@@ -800,14 +1144,23 @@ private slots:
         if (phase == QStringLiteral("password"))
             currentTab(*owner)->setPassword({});
         bool destroyed = false;
+        bool replacementHadOwner = false;
         Interaction dialogs;
+        if (phase == QStringLiteral("replace"))
+            dialogs.files.append(output);
         dialogs.intercept = [&](QWidget *modal) {
+            if (destroyed)
+                return false;
             const bool matches = phase == QStringLiteral("dialog") ? qobject_cast<SecurityDialog *>(modal) != nullptr
                 : phase == QStringLiteral("password") ? qobject_cast<QInputDialog *>(modal) != nullptr
                 : phase == QStringLiteral("picker") ? qobject_cast<QFileDialog *>(modal) != nullptr
+                : phase == QStringLiteral("replace") ? modal && modal->objectName() == QStringLiteral("securityReplace")
                 : qobject_cast<QMessageBox *>(modal) != nullptr;
             if (!matches)
                 return false;
+            if (phase == QStringLiteral("replace"))
+                replacementHadOwner = modal->parentWidget() == owner
+                    && modal->windowModality() == Qt::WindowModal;
             destroyed = true;
             delete owner.data();
             return true;
@@ -819,6 +1172,16 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(owner, "openSecurity"));
         QTRY_VERIFY(destroyed);
         QVERIFY(!owner);
+        if (phase == QStringLiteral("replace")) {
+            QVERIFY(replacementHadOwner);
+            // The surviving manager keeps its render workers running. Only the
+            // deleted owner's document must finish closing here.
+            QTRY_COMPARE_WITH_TIMEOUT(Document::closing(), 0, 10000);
+            QTest::qWait(50);
+            QCOMPARE(bytes(output), original);
+            QCOMPARE(dialogs.securityCount, 1);
+            QVERIFY(dialogs.messages.isEmpty());
+        }
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 

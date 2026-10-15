@@ -30,6 +30,7 @@
 #include "ui/MainWindow.h"
 #include "ui/MeasurePanel.h"
 #include "ui/TabPage.h"
+#include "ui/TextLayout.h"
 #include "ui/Theme.h"
 #include "ui/ThemeTokens.h"
 #include "ui/ViewerWidget.h"
@@ -62,6 +63,7 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QRegularExpression>
+#include <QScreen>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSpinBox>
@@ -1156,7 +1158,7 @@ void TstTranslationLayout::print()
     inspect(dialog, QStringLiteral("Print invalid page selection"));
 }
 
-/// Checks translated Security layouts for plain, encrypted and failed-read retained-choice states.
+/// Checks Security information, retained choices and destination-consent messages in every language.
 void TstTranslationLayout::security()
 {
     mervin::SecurityDialog clear(plain_, mervin::QpdfService::Info{});
@@ -1175,6 +1177,26 @@ void TstTranslationLayout::security()
     mervin::SecurityDialog failedRead(encrypted_, {},
         mervin::SecurityDialog::tr("A password is required."), choices);
     inspect(failedRead, QStringLiteral("Security failed information and retained choices"));
+
+    const QStringList failures{
+        mervin::SecurityDialog::tr("The destination changed. Try again to review it."),
+        mervin::SecurityDialog::tr("Could not check the destination. Try again or choose another name.")};
+    for (int index = 0; index < failures.size(); ++index) {
+        QMessageBox warning(QMessageBox::Warning,
+            mervin::SecurityDialog::tr("Operation failed"), failures.at(index), QMessageBox::Ok);
+        inspect(warning, QStringLiteral("Security destination failure %1").arg(index));
+    }
+    QMessageBox replacement(QMessageBox::Question,
+        mervin::SecurityDialog::tr("Document Security"), {},
+        QMessageBox::Yes | QMessageBox::No);
+    replacement.setTextFormat(Qt::PlainText);
+    replacement.setDefaultButton(QMessageBox::No);
+    replacement.ensurePolished();
+    const QString name = QChar(0x2068) + mervin::elidedLabelText(replacement.fontMetrics(),
+        QStringLiteral("Revision").repeated(30) + QStringLiteral(".pdf"), Qt::ElideMiddle,
+        qMax(1, replacement.screen()->availableGeometry().width() / 2)) + QChar(0x2069);
+    replacement.setText(mervin::SecurityDialog::tr("\"%1\" already exists. Replace it?").arg(name));
+    inspect(replacement, QStringLiteral("Security replacement with long filename"));
 }
 
 void TstTranslationLayout::settings()

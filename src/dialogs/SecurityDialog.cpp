@@ -170,6 +170,9 @@ QString SecurityDialog::chooseOutput(Action action, const QString &suffix)
                                         //: File type filter. Keep "(*.pdf)" as it is.
                                         tr("PDF documents (*.pdf)")));
     picker->setAcceptMode(QFileDialog::AcceptSave);
+    // The worker captures the destination before the app asks to replace it.
+    // A native confirmation here would approve contents that have not been checked.
+    picker->setOption(QFileDialog::DontConfirmOverwrite);
     picker->setWindowModality(Qt::WindowModal);
     const bool accepted = picker->exec() == QDialog::Accepted;
     const QStringList files = picker && accepted ? picker->selectedFiles() : QStringList();

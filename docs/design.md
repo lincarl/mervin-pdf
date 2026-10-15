@@ -726,13 +726,34 @@ Security first reads the document's encryption and permission information as a
 tab operation, including any retry with a newly entered password. `SecurityDialog`
 receives the information or read error as values and does no document I/O. Choosing
 Encrypt, Remove Password or Strip Owner Restrictions closes the dialog and returns
-the destination, passwords, algorithm and permissions to the window. A second tab
-operation checks and reserves the destination before writing the separate copy.
+the destination, passwords, algorithm and permissions to the window. Its save
+picker chooses a path without confirming replacement. The next tab operation
+captures the destination's absence or exact contents through `DestinationConsent`
+before reading the source filesystem. An absent destination continues in the same
+worker. An existing destination returns that snapshot for a window-modal replacement
+question, then a new immutable request carries the approved snapshot into the write.
+The window does not refresh consent while that question is open. Open-tab checks
+reject known protected outputs before asking, and every actual write still checks
+the source identity and reserves the destination.
+
+Both encryption and decryption compare the approved snapshot again after flushing
+the temporary output, under `AtomicPdfWriter`'s destination lock and before commit
+admission. A changed or unreadable destination is preserved and reopens the retained
+Security choices for another attempt. Source-password retries keep the original
+snapshot, including an output that was absent before the password question. Fresh
+form acceptance discards old consent. Hashing stays on the tab worker and checks
+Stop between filesystem calls and chunks. Identical-byte replacement remains
+approved. The lock orders this process's writers; another process can still change
+the destination between the final comparison and rename because `QSaveFile` does
+not provide an atomic compare-and-swap.
+
 An encrypted result opens with its new open password. A failed write reopens
 Security with the choices, destination and original information or read error
 retained. Stop discards the result and opens no dialog. Queued results follow a
 moved tab if its previous window disappears, select that tab in its current window
-before showing the dialog, and are suppressed after confirmed shutdown.
+before showing the dialog, and are suppressed after confirmed shutdown. A replacement
+question cannot authorize a write after its owner disappears, the tab moves away,
+or the window becomes hidden or minimized.
 
 `MergePlan` and `ExtractPlan` are the GUI-free models behind the Merge PDFs and
 Extract Pages dialogs, tested in `tst_merge_plan` and `tst_extract_plan`; each dialog

@@ -3,6 +3,8 @@
 #include <QCoreApplication>
 #include <QString>
 
+#include <functional>
+
 namespace mervin {
 
 // Wraps qpdf for the document-security operations (Document -> Security). All
@@ -55,17 +57,20 @@ public:
 
     // Write an unencrypted copy (removes the password AND all owner
     // restrictions). `password` opens the source if it has a user password.
+    // Optional mayCommit validates the destination under its write lock before publication.
     Status decrypt(const QString &inPath, const QString &outPath, const QString &password,
-                   QString *error = nullptr);
+                   QString *error = nullptr, const std::function<bool()> &mayCommit = {});
 
     // Write an encrypted copy. `currentPassword` opens the source (empty if the
     // source is unencrypted). `userPassword` is required to open the result
     // (may be empty for owner-only encryption); `ownerPassword` governs
     // permission changes (defaults to userPassword if empty). Use for both "add
-    // password" (currentPassword empty) and "change password".
+    // password" (currentPassword empty) and "change password". Optional mayCommit
+    // validates the destination under its write lock before publication.
     Status encrypt(const QString &inPath, const QString &outPath, const QString &currentPassword,
                    const QString &userPassword, const QString &ownerPassword, Algorithm algo,
-                   const Permissions &perms, QString *error = nullptr);
+                   const Permissions &perms, QString *error = nullptr,
+                   const std::function<bool()> &mayCommit = {});
 };
 
 } // namespace mervin
