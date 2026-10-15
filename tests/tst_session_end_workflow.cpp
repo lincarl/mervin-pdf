@@ -303,6 +303,62 @@ private slots:
         QCOMPARE(AnnotModel(*recovered).pageAnnots(0).front().contents, QStringLiteral("preserved"));
     }
 
+    // Supplies both OS outcomes for cleanup of a superseded adopted checkpoint.
+    void supersededUnloadCleanupFollowsSessionOutcome_data()
+    {
+        QTest::addColumn<bool>("ended");
+        QTest::newRow("successful end retains both old files") << true;
+        QTest::newRow("cancellation removes both old files") << false;
+    }
+
+    // Starts session end during adoption before the old document's cleanup is scheduled.
+    void supersededUnloadCleanupFollowsSessionOutcome()
+    {
+        QFETCH(bool, ended);
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("edited.pdf"));
+        WindowManager manager;
+        TabPage tab(manager.engine());
+        const auto finish = qScopeGuard([&] { manager.finishSessionEnd(false); });
+        QVERIFY(prepare(tab, path));
+        QVERIFY(testing::suspendAndWait(tab));
+        QVERIFY(Document::waitForCloses(10000));
+        const QString priorCopy = tab.recoveryPath();
+        const QString priorManifest = priorCopy + QStringLiteral(".json");
+        QVERIFY(QFileInfo::exists(priorCopy));
+        QVERIFY(QFileInfo::exists(priorManifest));
+        QVERIFY(tab.resume());
+        QVERIFY(tab.viewer()->annotModel()->addTextNote(0, {60, 60}, Qt::yellow, {},
+                                                       QStringLiteral("second edit")) >= 0);
+        std::optional<sessionend::Result> request;
+        connect(tab.viewer(), &ViewerWidget::formModeChanged, &tab, [&](bool) {
+            if (!request && tab.isBusy() && tab.hasRecoverySnapshot()
+                && tab.recoveryPath() != priorCopy)
+                request = manager.prepareSessionEnd(0);
+        });
+        QVERIFY(testing::suspendAndWait(tab));
+        QVERIFY(request.has_value());
+        QCOMPARE(*request, sessionend::Result::Settled);
+        QVERIFY(sessionend::active());
+        const QString currentCopy = tab.recoveryPath();
+        QVERIFY(currentCopy != priorCopy);
+        const bool waitedForOutcome = !Document::waitForCloses(80);
+        manager.finishSessionEnd(ended);
+        QVERIFY(Document::waitForCloses(10000));
+        QCOMPARE(QFileInfo::exists(priorCopy), ended);
+        QCOMPARE(QFileInfo::exists(priorManifest), ended);
+        QVERIFY(waitedForOutcome);
+        QVERIFY(QFileInfo::exists(currentCopy));
+        QVERIFY(QFileInfo::exists(currentCopy + QStringLiteral(".json")));
+        QVERIFY(tab.hasRecoverySnapshot() && tab.hasUnsavedEdits());
+        auto recovered = manager.engine()->openDocument(currentCopy);
+        QVERIFY(recovered);
+        const auto annotations = AnnotModel(*recovered).pageAnnots(0);
+        QCOMPARE(annotations.size(), size_t(2));
+        QCOMPARE(annotations.front().contents, QStringLiteral("preserved"));
+        QCOMPARE(annotations.back().contents, QStringLiteral("second edit"));
+    }
+
     // Checks durable unload does not wait for its queued GUI ownership transfer.
     void durableUnloadDoesNotWaitForQueuedAdoption()
     {

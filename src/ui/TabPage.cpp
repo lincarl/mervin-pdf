@@ -1234,6 +1234,8 @@ void TabPage::finishUnload(const std::shared_ptr<Job> &job)
             [copy, manifest, readers] {
                 for (const auto &reader : readers)
                     reader->waitUntilEnded();
+                if (!sessionend::beginRecoveryRemoval())
+                    return;
                 // Keep the old cleanup record if its PDF cannot be removed.
                 if ((copy.isEmpty() || QFile::remove(copy)) && !manifest.isEmpty())
                     QFile::remove(manifest);

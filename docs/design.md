@@ -374,11 +374,14 @@ Before a worker deletes a committed pre-adoption recovery, it atomically rearms
 its protection. If a session request already started, the worker keeps the copy
 and waits for the OS outcome. Cancellation permits deletion. Successful end keeps
 the discoverable copy for startup. `appfiles::removeRecovery` gates adopted
-recovery removals on its writer thread against an already active OS request,
-without adding snapshot protection. Cleanup admitted before the query remains
-ordinary cleanup, so obsolete copies do not add grace after a newer recovery or
-the original is durable. File calls occur outside the registry mutex. Ordinary
-appfiles jobs keep their existing behavior.
+recovery removals on its writer thread against an already active OS request.
+Superseded Unload cleanup uses the same `sessionend::beginRecoveryRemoval` gate
+after the old document closes and its retained readers finish. It removes the PDF
+before the manifest, and keeps the manifest if PDF removal fails. Neither path
+adds snapshot protection. Cleanup admitted before the query remains ordinary
+cleanup, so obsolete copies do not add grace after a newer recovery or the original
+is durable. File calls occur outside the registry mutex. Ordinary appfiles jobs
+keep their existing behavior.
 
 The development-only `--profile <directory>` option redirects application files and
 Qt settings, and gives the process a separate single-instance identity. Tests and
