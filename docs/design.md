@@ -379,6 +379,14 @@ replacing the approved destination snapshot or repeating downloads. Load
 continuations reject stale generations. Successful session end keeps them suppressed until
 their owners are destroyed. These operations add no recovery grace.
 
+Startup batches retain both pending documents and their completion callbacks.
+Confirmed late restores, Reopen Closed presses and accepted IPC path batches also
+wait for the session outcome. Cancellation resumes this manager-owned work on a
+coalesced GUI turn, retaining path order and each batch's window behavior. Reopen
+starts a fresh file check so an expired pre-cancellation timer cannot consume its
+press. Closed restore targets stay closed. These continuations add no recovery
+grace and remain suppressed after successful session end.
+
 Qt 6.12 normally flushes every buffered C output stream after its logoff callback.
 A writer holding a stream lock can extend that wait beyond our deadline. The native
 filter forwards logoff queries for existing Qt windows back through Qt with only

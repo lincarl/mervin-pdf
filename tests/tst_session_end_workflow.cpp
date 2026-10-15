@@ -14,6 +14,7 @@
 #include "render/Document.h"
 #include "render/RenderEngine.h"
 #include "session/SessionEnd.h"
+#include "session/SessionStore.h"
 #include "ui/MainWindow.h"
 #include "ui/TabPage.h"
 #include "ui/ViewerWidget.h"
@@ -42,6 +43,7 @@
 #include <QWindow>
 #include <QTimer>
 #include <QScopeGuard>
+#include <QSignalBlocker>
 #include <QTemporaryDir>
 #include <QtTest>
 
@@ -388,6 +390,301 @@ private slots:
         QVERIFY(appfiles::flush(10000));
         ConfigPaths::setOverrideDir({});
         profile_.reset();
+    }
+
+    /// Covers queued startup documents and empty-batch completion for both session outcomes.
+    void stagedOpensWaitForSessionOutcome_data()
+    {
+        QTest::addColumn<bool>("ended");
+        QTest::addColumn<bool>("empty");
+        QTest::addColumn<bool>("closeTarget");
+        QTest::newRow("documents after cancellation") << false << false << false;
+        QTest::newRow("documents after successful end") << true << false << false;
+        QTest::newRow("empty batch after cancellation") << false << true << false;
+        QTest::newRow("empty batch after successful end") << true << true << false;
+        QTest::newRow("closed target after cancellation") << false << false << true;
+    }
+
+    /// Keeps startup order and its completion callback intact until cancellation.
+    void stagedOpensWaitForSessionOutcome()
+    {
+        QFETCH(bool, ended);
+        QFETCH(bool, empty);
+        QFETCH(bool, closeTarget);
+        QTemporaryDir files;
+        const QString first = files.filePath(QStringLiteral("first.pdf"));
+        const QString second = files.filePath(QStringLiteral("second.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), first));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), second));
+        WindowManager manager;
+        QPointer<MainWindow> window(manager.createWindow());
+        showWindow(*window);
+        MainWindow *kept = closeTarget ? manager.createWindow() : nullptr;
+        if (kept)
+            showWindow(*kept);
+        int completed = 0;
+        QStringList completedPaths;
+        const QList<StagedOpen> batch = empty ? QList<StagedOpen>{}
+            : QList<StagedOpen>{{first, 0, false, true}, {second, 1, false, true}};
+        manager.openStaged(batch, {first, second}, [&] {
+            ++completed;
+            completedPaths = window ? window->tabPaths() : QStringList{};
+        }, window);
+        QCOMPARE(manager.prepareSessionEnd(0), sessionend::Result::Settled);
+        QTest::qWait(80);
+        QCOMPARE(window->tabCount(), 0);
+        QCOMPARE(completed, 0);
+        if (closeTarget) {
+            delete window.data();
+            QVERIFY(!window);
+        }
+        manager.finishSessionEnd(ended);
+        if (!ended)
+            manager.finishSessionEnd(false);
+        if (ended) {
+            QTest::qWait(80);
+            QCOMPARE(window->tabCount(), 0);
+            QCOMPARE(completed, 0);
+        } else {
+            QTRY_COMPARE_WITH_TIMEOUT(completed, 1, 10000);
+            const QStringList expected = empty || closeTarget ? QStringList{} : QStringList{first, second};
+            if (closeTarget) {
+                QCOMPARE(kept->tabCount(), 0);
+                QVERIFY(manager.openTabPaths().isEmpty());
+            } else {
+                QCOMPARE(window->tabPaths(), expected);
+            }
+            QCOMPARE(completedPaths, expected);
+            QTest::qWait(80);
+            QCOMPARE(completed, 1);
+        }
+    }
+
+    /// Selects cancellation replay or permanent suppression of a ready late restore.
+    void lateRestoreWaitsForSessionOutcome_data()
+    {
+        QTest::addColumn<bool>("ended");
+        QTest::newRow("cancellation restores the late file") << false;
+        QTest::newRow("successful end suppresses the late file") << true;
+    }
+
+    /// Defers a real probe answer delivered after startup timed out during session end.
+    void lateRestoreWaitsForSessionOutcome()
+    {
+        QFETCH(bool, ended);
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("late.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        WindowManager manager;
+        manager.holdSession(true);
+        MainWindow *window = manager.createWindow();
+        showWindow(*window);
+        QVERIFY(appfiles::flush(10000));
+        SessionStore saved;
+        saved.setPaths({path});
+        QVERIFY(saved.save());
+        FileProbe *probe = manager.fileProbe();
+        QSignalBlocker blocked(probe);
+        int completed = 0;
+        QStringList restored;
+        manager.restoreSession([&](const QStringList &paths) {
+            ++completed;
+            restored = paths;
+        });
+        QTRY_VERIFY_WITH_TIMEOUT(probe->facts({path, {}}).has_value(), 10000);
+        QVERIFY(probe->facts({path, {}})->exists);
+        QTRY_COMPARE_WITH_TIMEOUT(completed, 1, 10000);
+        QVERIFY(restored.isEmpty());
+        manager.holdSession(false);
+        QCOMPARE(manager.prepareSessionEnd(0), sessionend::Result::Settled);
+        blocked.unblock();
+        QSignalSpy delivered(probe, &FileProbe::checked);
+        probe->check({{path, {}}}, 60000);
+        QTRY_COMPARE_WITH_TIMEOUT(delivered.size(), 1, 10000);
+        QCOMPARE(window->tabCount(), 0);
+        manager.finishSessionEnd(ended);
+        if (!ended)
+            manager.finishSessionEnd(false);
+        if (ended) {
+            QTest::qWait(80);
+            QCOMPARE(window->tabCount(), 0);
+        } else {
+            QTRY_COMPARE_WITH_TIMEOUT(window->tabPaths(), QStringList{path}, 10000);
+            QTest::qWait(80);
+            QCOMPARE(window->tabPaths(), QStringList{path});
+        }
+        QCOMPARE(completed, 1);
+    }
+
+    /// Selects cancellation replay or suppression of a pending Reopen Closed request.
+    void reopenClosedWaitsForSessionOutcome_data()
+    {
+        QTest::addColumn<bool>("ended");
+        QTest::newRow("cancellation reopens the retained history") << false;
+        QTest::newRow("successful end suppresses reopening") << true;
+    }
+
+    /// Keeps a checked closed-tab entry and its callback until the session outcome.
+    void reopenClosedWaitsForSessionOutcome()
+    {
+        QFETCH(bool, ended);
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("closed.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        showWindow(*window);
+        manager.rememberClosedTab(path, path, {path}, 0);
+        FileProbe *probe = manager.fileProbe();
+        QSignalBlocker blocked(probe);
+        QList<WindowManager::Reopen> results;
+        manager.reopenClosedTab(window, [&](WindowManager::Reopen result) {
+            results.append(result);
+        });
+        QTRY_VERIFY_WITH_TIMEOUT(probe->facts({path, {}}).has_value(), 10000);
+        QVERIFY(probe->facts({path, {}})->exists);
+        QCOMPARE(manager.prepareSessionEnd(0), sessionend::Result::Settled);
+        blocked.unblock();
+        QSignalSpy delivered(probe, &FileProbe::checked);
+        probe->check({{path, {}}}, 60000);
+        QTRY_COMPARE_WITH_TIMEOUT(delivered.size(), 1, 10000);
+        QCOMPARE(window->tabCount(), 0);
+        QVERIFY(results.isEmpty());
+        manager.finishSessionEnd(ended);
+        if (!ended)
+            manager.finishSessionEnd(false);
+        if (ended) {
+            QTest::qWait(80);
+            QCOMPARE(window->tabCount(), 0);
+            QVERIFY(results.isEmpty());
+        } else {
+            QTRY_COMPARE_WITH_TIMEOUT(results.size(), 1, 10000);
+            QCOMPARE(results.front(), WindowManager::Reopen::Reopened);
+            QTRY_COMPARE_WITH_TIMEOUT(window->tabPaths(), QStringList{path}, 10000);
+            QTRY_VERIFY_WITH_TIMEOUT(currentTab(*window)->isUsable(), 10000);
+            std::optional<WindowManager::Reopen> next;
+            manager.reopenClosedTab(window, [&](WindowManager::Reopen result) { next = result; });
+            QTRY_VERIFY_WITH_TIMEOUT(next.has_value(), 10000);
+            QCOMPARE(*next, WindowManager::Reopen::NothingToReopen);
+            QCOMPARE(results.size(), 1);
+        }
+    }
+
+    /// Keeps a new Reopen request from probing or consuming history during session end.
+    void reopenRequestedDuringSessionWaitsForCancellation()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("closed.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        showWindow(*window);
+        manager.rememberClosedTab(path, path, {path}, 0);
+        FileProbe *probe = manager.fileProbe();
+        QSignalSpy checked(probe, &FileProbe::checked);
+        QList<WindowManager::Reopen> results;
+        QCOMPARE(manager.prepareSessionEnd(0), sessionend::Result::Settled);
+        manager.reopenClosedTab(window, [&](WindowManager::Reopen result) {
+            results.append(result);
+        });
+        QTest::qWait(80);
+        QVERIFY(!probe->isChecking({path, {}}));
+        QVERIFY(!probe->facts({path, {}}).has_value());
+        QCOMPARE(checked.size(), 0);
+        QVERIFY(results.isEmpty());
+        QCOMPARE(window->tabCount(), 0);
+        manager.finishSessionEnd(false);
+        manager.finishSessionEnd(false);
+        QTRY_COMPARE_WITH_TIMEOUT(results.size(), 1, 10000);
+        QCOMPARE(results.front(), WindowManager::Reopen::Reopened);
+        QTRY_COMPARE_WITH_TIMEOUT(window->tabPaths(), QStringList{path}, 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(currentTab(*window)->isUsable(), 10000);
+        QTest::qWait(80);
+        QCOMPARE(results.size(), 1);
+    }
+
+    /// Restarts a pending Reopen when its old timer expires without session-time events.
+    void canceledSessionRestartsReopenBeforeItsExpiredTimer()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("closed.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        showWindow(*window);
+        manager.rememberClosedTab(path, path, {path}, 0);
+        FileProbe *probe = manager.fileProbe();
+        QSignalBlocker blocked(probe);
+        QList<WindowManager::Reopen> results;
+        manager.reopenClosedTab(window, [&](WindowManager::Reopen result) {
+            results.append(result);
+        });
+        QTRY_VERIFY_WITH_TIMEOUT(probe->facts({path, {}}).has_value(), 10000);
+        QVERIFY(probe->facts({path, {}})->exists);
+        QCOMPARE(manager.prepareSessionEnd(0), sessionend::Result::Settled);
+        // The OS may return an outcome without another GUI turn. Leave the old
+        // timeout overdue so cancellation must invalidate it before events resume.
+        QTest::qSleep(WindowManager::kReopenWaitMs + 100);
+        manager.finishSessionEnd(false);
+        manager.finishSessionEnd(false);
+        blocked.unblock();
+        QTRY_COMPARE_WITH_TIMEOUT(results.size(), 1, 10000);
+        QCOMPARE(results.front(), WindowManager::Reopen::Reopened);
+        QTRY_COMPARE_WITH_TIMEOUT(window->tabPaths(), QStringList{path}, 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(currentTab(*window)->isUsable(), 10000);
+        QTest::qWait(80);
+        QCOMPARE(results.size(), 1);
+    }
+
+    /// Selects cancellation delivery or successful-end suppression of accepted IPC opens.
+    void acceptedOpenPathsWaitForSessionOutcome_data()
+    {
+        QTest::addColumn<bool>("ended");
+        QTest::newRow("cancellation creates the requested window") << false;
+        QTest::newRow("successful end creates no empty window") << true;
+    }
+
+    /// Retains an accepted new-window batch without creating a shell during session end.
+    void acceptedOpenPathsWaitForSessionOutcome()
+    {
+        QFETCH(bool, ended);
+        QTemporaryDir files;
+        const QString first = files.filePath(QStringLiteral("first.pdf"));
+        const QString second = files.filePath(QStringLiteral("second.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), first));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), second));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        showWindow(*window);
+        QVERIFY(testing::openAndWait(*window, QStringLiteral(MERVIN_FIXTURE_PDF)));
+        const auto otherWindows = [window] {
+            QList<MainWindow *> result;
+            for (QWidget *widget : QApplication::topLevelWidgets())
+                if (auto *owner = qobject_cast<MainWindow *>(widget); owner && owner != window)
+                    result.append(owner);
+            return result;
+        };
+        QCOMPARE(manager.prepareSessionEnd(0), sessionend::Result::Settled);
+        manager.openPaths({first, second}, QStringLiteral("new-window"));
+        QTest::qWait(80);
+        QVERIFY(otherWindows().isEmpty());
+        QCOMPARE(window->tabPaths(), QStringList{QStringLiteral(MERVIN_FIXTURE_PDF)});
+        manager.finishSessionEnd(ended);
+        if (!ended)
+            manager.finishSessionEnd(false);
+        if (ended) {
+            QTest::qWait(80);
+            QVERIFY(otherWindows().isEmpty());
+        } else {
+            QTRY_COMPARE_WITH_TIMEOUT(otherWindows().size(), 1, 10000);
+            MainWindow *opened = otherWindows().front();
+            QTRY_COMPARE_WITH_TIMEOUT(opened->tabPaths(), (QStringList{first, second}), 10000);
+            QTRY_VERIFY_WITH_TIMEOUT(!manager.hasLoadingDocuments(), 10000);
+            QVERIFY(currentTab(*opened)->isUsable());
+            QTest::qWait(80);
+            QCOMPARE(otherWindows().size(), 1);
+            QCOMPARE(opened->tabPaths(), (QStringList{first, second}));
+        }
     }
 
     // Supplies loaded Save and activity-driven unload for worker durability checks.

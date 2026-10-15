@@ -306,6 +306,19 @@ private:
     friend class CloseFlow;
     void onWindowDestroyed(MainWindow *window);
     void stagedStep(); // opens one document of stagedQueue_, then re-arms itself
+    // Coalesce staged turns, including a wake after a canceled session request.
+    void postStagedStep();
+    // Resume retained manager work on the turn after session cancellation.
+    void postSessionContinuations();
+    // An accepted path batch retained across a pending OS session request.
+    struct SessionOpen
+    {
+        QStringList paths;
+        QString behavior;
+        QPointer<MainWindow> window; // retain a partially delivered new-window batch
+    };
+    // Deliver accepted paths, retaining any remainder while session end is pending.
+    void continueOpenPaths(SessionOpen batch);
 
     // Serve the first waiting reopenClosedTab press, once fileProbe() has
     // answered for the entry it would bring back.
@@ -386,6 +399,11 @@ private:
     bool tabScanRunning_ = false;      // a closeRemovedTabs scan is on its worker
     bool tabScanPending_ = false;      // ...and another was asked for meanwhile
     bool tabChangesPosted_ = false;    // postTabChanges has a run on its way
+    bool stagedStepPosted_ = false;
+    bool stagedSessionPaused_ = false;
+    bool reopenSessionPaused_ = false;
+    bool sessionContinuationsPosted_ = false;
+    QList<SessionOpen> sessionOpens_; // accepted IPC/path batches, including empty launches
     // Set on shutdown so a closeRemovedTabs scan stops between paths. Nothing waits
     // for the scan, so one stuck on an unreachable share is left behind.
     std::shared_ptr<std::atomic<bool>> scanCancel_ = std::make_shared<std::atomic<bool>>(false);
