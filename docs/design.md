@@ -105,12 +105,10 @@ leaves newcomers. A single-tab close follows its tab across moves, while a windo
 close and Close all tabs skip tabs moved out. Quit includes newly opened windows.
 Close rechecks edits before approval, so changing a tab after Don't save asks again.
 
-Two places still follow a position, and only the tab order can come out wrong. A
-move within the bar is `QTabBar`'s own and follows the pressed position, so a tab
-that arrives while the button is held makes it move the tab now at that position.
-`MainWindow::openFile` inserts at the position its caller worked out before the
-password prompt of an encrypted file, so a tab that arrives during the prompt can
-shift the new tab by one.
+A move within the bar is `QTabBar`'s own and follows the pressed position, so a tab
+that arrives while the button is held can make it move the tab now at that position.
+This can change tab order. New-file password prompts belong to a placeholder tab
+that was already inserted, so they retain that tab's identity.
 
 Removing a tab later, from a background answer, waits until the window can change
 its tabs (`MainWindow::canChangeTabs`). That means no modal dialog or popup in the
@@ -121,8 +119,10 @@ the call. The window runs its queue in order on the next turn of the event loop,
 after a mouse button release, after a modal window closes, when a document operation
 ends (`MainWindow::OperationScope`) and on the one-second activity tick. A change
 finds its tab and window again when it runs. Once a quit or restart closes a window,
-it runs no more changes, and those still queued go with it. Adding a tab is not
-gated. A tab's operation that has ended shows its questions and errors through this
+it runs no more changes, and those still queued go with it. `MainWindow::openFile`
+inserts its placeholder synchronously. Accepted picker choices and completed
+downloads enter through `queueOpenPaths`; active session requests prevent admission.
+A tab's operation that has ended shows its questions and errors through this
 queue too, in the window that holds the tab by then (see Page and security
 operations).
 
@@ -133,9 +133,10 @@ until the system gives up, which can take minutes or never happen on a hard NFS
 mount, and nothing can cancel it. The UI thread therefore hands disk work to
 `background::start` (`io/Background`) and never waits for it. Results come back
 through `background::post`, which drops them if the object that asked is gone.
-Nothing joins these threads. Closing a window or quitting leaves stuck work behind,
-and the process ends without running static destructors while any is left
-(`main.cpp`). A stuck call keeps its thread, so
+Nothing joins these threads. Ordinary close requests first wait asynchronously
+for user operations through `CloseFlow`. Once closing is allowed, a window or the
+application can leave stuck work behind, and the process ends without running
+static destructors while any is left (`main.cpp`). A stuck call keeps its thread, so
 work is bounded by its caller, one task per drive or per user action, never one per
 file. `background::SerialQueue` runs a caller's jobs one at a time on such a task,
 so one that is stuck holds up only the jobs behind it, on one thread.
@@ -155,14 +156,16 @@ recovery copy of a tab that closed goes after it. A document on its way between
 threads is an `OwnedDocument`, which closes in the background wherever it is dropped,
 so a result that nobody takes never closes on the UI thread. Code that removes or
 replaces the file next closes the document itself first. A recovery copy the document
-has open is removed only after it is closed, as Windows cannot remove an open file,
-while its manifest goes at once so it is never offered again. Quitting waits for
-those removals within the time it gives the app's own files (see Persistence).
+has open is removed only after it is closed, as Windows cannot remove an open file.
+Ordinary cleanup queues the manifest removal immediately. Recovery removals respect
+the session outcome gate described below, preserving committed copies after
+successful session end. Ordinary quitting waits for those removals within the time
+it gives the app's own files (see Persistence).
 MuPDF's Tesseract runs one recognition at a time in a process, so a canceled OCR
-still finishing makes the next one wait its turn on its background thread. At exit,
-`main.cpp` flushes only standard output and error before leaving with stuck work
+still finishing makes the next one wait its turn on its background thread. At
+ordinary exit, `main.cpp` flushes only standard output and error before leaving with stuck work
 behind, as flushing every C stream would wait for one that a stuck read of a document
-holds.
+holds. Successful session end skips this flush and the ordinary exit waits.
 
 A tab follows and stops the job it started through a `job::State` (`io/JobContext`),
 which the job makes current on its thread with a `job::Scope`. The code that reads and
@@ -174,8 +177,8 @@ tab can tell what it waits for and that a long write still answers. qpdf reads m
 a source only while it writes the output, so the qpdf sources (`security/QpdfSource`)
 report their file again whenever a read follows a write, and `AtomicPdfWriter` reports
 its folder again whenever a write follows a read (`job::switchTo`). A thread blocked
-in a file call cannot be stopped, so a stopped job gives up at its next step and never
-replaces a file. A writer asks `job::beginCommit()` right before
+in a file call cannot be stopped, so a stopped job gives up at its next step and
+starts no later commit. A writer asks `job::beginCommit()` right before
 `QSaveFile::commit()`, which syncs the temporary file to disk and renames it. A stop
 before that makes it discard its temporary file, and a stop after it answers
 Committing and lets the commit finish. `job::DestinationLock` orders the writers of
@@ -478,10 +481,10 @@ the resumed document's state. Closing to the tray requests suspension immediatel
 unless the interval is Never. Selecting a suspended tab reloads it asynchronously.
 A tab busy with an operation (see Page and security operations) keeps its document.
 Closing a tab abandons its housekeeping load without waiting. Choosing Save in the
-close question retries that read asynchronously, keeping the recovery copy. Stop
-while waiting for that Save prerequisite cancels the close. Explicit Save runs on
-a worker and can save an unloaded tab directly from its recovery copy. Operations
-that need a loaded document remain unavailable until its load finishes.
+close question writes the retained recovery copy on a worker without loading the
+document. Explicit Save uses the same path for an unloaded edited tab. Stop or
+failure cancels the close and retains its edits. Operations that need a loaded
+document remain unavailable until its load finishes.
 
 An unloaded or loading tab shows a placeholder on the page canvas, with its own canvas
 tokens for text and buttons in both themes. A load shows "Loading" at once. The tab
@@ -942,9 +945,10 @@ For a loaded document, the worker creates a private edited PDF and commits its
 recovery manifest before the UI transfers the old document. The worker closes that
 document before replacing the original through `QSaveFile`, with direct-write
 fallback disabled, then reopens the result. Success restores the full viewer state
-and clears the recovery files. Failure or Stop loads the private copy under the
-original logical path and keeps it unsaved. A failed recovery load keeps its
-manifest and Retry placeholder. Save from an unloaded edited tab copies its
+and clears the recovery files. Failure or Stop before recovery adoption retains
+the original live document and its edits. After adoption, it loads the private copy
+under the original logical path and keeps it unsaved. A failed recovery load keeps
+its manifest and Retry placeholder. Save from an unloaded edited tab copies its
 existing recovery PDF directly, without opening a PDF document.
 
 Stop during a live snapshot keeps the trapped notice until the document Hold is
@@ -1017,10 +1021,10 @@ security and measurement operations. A failed write discards its temporary file;
 only a complete write replaces the destination. A split commits each output file
 individually. `AtomicPdfWriter` and `DocumentOutput::replace` hold the destination's
 `job::DestinationLock` from opening the temporary file to the end of the commit, and
-in a stopped job they discard the temporary file instead of replacing the destination
-(see Disk access off the UI thread). A split stopped part way keeps the files it
-committed before. Flattening copies inherited resource/font dictionaries and allocates
-a unique label font name, preserving existing page fonts and sibling resources.
+a stop before commit admission discards the temporary file. An admitted commit can
+still finish after Stop (see Disk access off the UI thread). A split stopped part
+way keeps its committed files. Flattening copies inherited resource/font
+dictionaries and allocates a unique label font name, preserving existing page fonts and sibling resources.
 The Rotate prompt uses the same validated page-range grammar as Print, Extract and
 Delete.
 
@@ -1059,7 +1063,9 @@ Paths are normalized before deduplication and lookup, with case folding on Windo
 Corrupt or missing state files fall back to defaults instead of blocking startup.
 
 The directory can be on a network share, as with a roaming or redirected Windows
-profile or a home folder on NFS, so after startup the UI thread does not touch it.
+profile or a home folder on NFS. After startup, settings, store and recovery file
+work runs in the background. Open from URL still creates and writes its download
+directory on the UI thread, including when a profile or fallback places it here.
 Startup reads the settings, the three stores and the recovery manifests before the
 first window, which needs them; `ConfigPaths` creates the folders then, once. Later
 `Settings::load()` returns the values in memory, and `appfiles::write`
@@ -1084,8 +1090,11 @@ their worker. They set owner-only permissions and commit the manifest through
 guarded `QSaveFile` before releasing the original document. These writes must
 finish before adoption, so they do not use the application's serial background
 write queue. The UI claims the manifest only after committing it. Stop or selection
-before unload adoption removes the job's PDF and manifest after its handles close.
-After adoption, the tab owns them until Save succeeds or the user closes the tab. An abandoned loader
+before unload adoption schedules removal of the job's PDF and manifest after its
+handles close. Committed recovery also waits for the session outcome and remains
+discoverable after successful session end, as described above. After adoption, the
+tab owns its recovery until Save succeeds or the user closes the tab, with the same
+session outcome gate on removal. An abandoned loader
 or an earlier stopped writer can still read a recovery input, so removal waits
 for both readers and writers without blocking the UI. A superseded unload
 checkpoint keeps its manifest until its readers close and its PDF is removed.

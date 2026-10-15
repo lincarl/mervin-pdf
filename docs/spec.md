@@ -194,9 +194,9 @@ input document. Failure reopens the chosen ranges, order and output with its rea
 
 Merge opens at once and reads each input's page count in the background. Pending
 rows show Reading and keep Merge disabled. The footer names the first row and file
-still being read, including when that row is scrolled out of view. Files on different
-drives, shares or folders are read independently. Added files that cannot be read
-produce one warning after that batch finishes. Removing a pending row suppresses
+still being read, including when that row is scrolled out of view. Windows drives
+and UNC shares have independent read queues; on Unix, folders do. Added files that
+cannot be read produce one warning after that batch finishes. Removing a pending row suppresses
 its warning.
 
 Rotate Pages, Split and Merge run in the document's tab once their questions are answered.
@@ -204,9 +204,11 @@ The tab shows its pages as they were and cannot be edited until the tool ends, w
 other tabs and windows stay usable. When the drive has not answered for 2 seconds, a
 bar over the pages names the folder or file the tool waits for, such as "Saving to
 /nas/docs. The drive is not answering.", and offers Stop waiting. Stopping makes the
-tab usable at once and writes nothing more, and Split keeps the files it wrote before.
-These tools do not write over a file that is open in a tab. Closing the tab, its window or
-the app while a tool runs stops it.
+tab usable at once and prevents later output commits. A replacement already admitted
+may still finish. Split keeps its committed files. These tools do not write over a
+file that is open in a tab. Closing a tab or quitting waits for the tool and shows
+its wait notice. Closing a window does the same unless it hides to the tray. Stop
+waiting then continues the close decision, including any unsaved-edit question.
 
 Document > Extract Pages opens with one row that holds every page, first to last.
 Save Page As in a page's right-click menu opens it with that page as its one row.
