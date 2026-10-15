@@ -77,7 +77,8 @@ public:
                 auto *print = dialog->findChild<QPushButton *>("printConfirm");
                 auto *toFile = dialog->findChild<QCheckBox *>("printToFile");
                 auto *quality = dialog->findChild<QComboBox *>("printQuality");
-                if (!print || !toFile || !quality) {
+                auto *colour = dialog->findChild<QComboBox *>("printColour");
+                if (!print || !toFile || !quality || !colour) {
                     messages.append(QStringLiteral("Print controls were missing"));
                     dialog->reject();
                     return;
@@ -86,6 +87,9 @@ public:
                     configured_ = true;
                     toFile->setChecked(true);
                     quality->setItemData(quality->currentIndex(), 72);
+                    // The red fixture requires colour regardless of the default printer.
+                    colour->setCurrentIndex(colour->findData(
+                        static_cast<int>(printing::ColourMode::Colour)));
                 }
                 if (!print->isEnabled() || queued_)
                     return;
@@ -598,11 +602,17 @@ void TstPrintOutput::measuredPreparationRunsInBackground()
     });
     bool previewReady = false;
     int previewInk = 0;
+    QString previewDetails;
     PrintInteraction dialogs(window, output, [&](PrintDialog &dialog) {
         auto *preview = dialog.findChild<PrintPreviewWidget *>();
         previewReady = preview && preview->isReady();
-        if (previewReady)
-            previewInk = darkInkOnRedPage(preview->grab().toImage());
+        if (previewReady) {
+            const QImage image = preview->grab().toImage();
+            previewInk = darkInkOnRedPage(image);
+            previewDetails = QStringLiteral("Preview ink %1, colour mode %2, image %3x%4, DPR %5")
+                .arg(previewInk).arg(static_cast<int>(dialog.printSettings().colourMode))
+                .arg(image.width()).arg(image.height()).arg(image.devicePixelRatio());
+        }
     });
     QElapsedTimer command;
     command.start();
@@ -614,7 +624,7 @@ void TstPrintOutput::measuredPreparationRunsInBackground()
     QVERIFY(!previewReady);
     job::testing::release();
     QTRY_VERIFY_WITH_TIMEOUT(previewReady, 10000);
-    QVERIFY(previewInk > 20);
+    QVERIFY2(previewInk > 20, qPrintable(previewDetails));
     QTRY_VERIFY_WITH_TIMEOUT(!tab->isBusy() && QFileInfo::exists(output), 10000);
     QVERIFY(dialogs.messages.isEmpty());
     auto document = engine.openDocument(output);
