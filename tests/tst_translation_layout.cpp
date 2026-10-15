@@ -1065,6 +1065,21 @@ void TstTranslationLayout::merge()
     dialog.addPaths({plain_});
     QTRY_VERIFY(!dialog.reading());
     inspect(dialog, QStringLiteral("Merge populated documents"));
+    for (const auto conflict : {mervin::MergeDialog::Conflict::Changed,
+                                mervin::MergeDialog::Conflict::CheckFailed}) {
+        const QString output = profile_.filePath(QStringLiteral("merge-consent-output.pdf"));
+        mervin::MergeDialog failed(dialog.plan(), output, QStringLiteral("Destination check failed"),
+                                   -1, conflict);
+        auto *reason = failed.findChild<QLabel *>(QStringLiteral("mergeError"));
+        auto *retry = failed.findChild<QPushButton *>(QStringLiteral("mergeAccept"));
+        QVERIFY(reason && retry);
+        QTRY_COMPARE(reason->text(),
+                     mervin::MergeDialog::failureSummary(dialog.plan(), output, -1, conflict));
+        QTRY_VERIFY(retry->isEnabled());
+        inspect(failed, conflict == mervin::MergeDialog::Conflict::Changed
+                            ? QStringLiteral("Merge destination changed before publication")
+                            : QStringLiteral("Merge destination could not be checked"));
+    }
     {
         // A Save as check that takes long, as on a share that stopped answering.
         auto *output = dialog.findChild<QLineEdit *>(QStringLiteral("mergeOutput"));

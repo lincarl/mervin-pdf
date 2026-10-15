@@ -6,6 +6,8 @@
 #include <qpdf/Pipeline.hh>
 #include <qpdf/QPDFWriter.hh>
 
+#include <functional>
+
 namespace mervin {
 
 // Streams to a sibling temporary file; only a complete PDF replaces the destination.
@@ -19,9 +21,9 @@ public:
     // Throws when the job stopped first.
     AtomicPdfWriter(QPDF &pdf, const QString &path);
     QPDFWriter &options() { return writer_; }
-    // Replaces the destination only after job::beginCommit() agreed. The commit syncs
-    // the temporary file to disk and renames it.
-    void write();
+    /// Flushes the new PDF, validates optional consent under the destination lock, then commits.
+    /// A rejected callback or Stop preserves the destination and discards the temporary file.
+    void write(const std::function<bool()> &mayCommit = {});
 
 private:
     class Sink final : public Pipeline

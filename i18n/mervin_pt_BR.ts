@@ -2621,6 +2621,16 @@ Abra Configurações → Aplicativos padrão do seu sistema (ou clique com o bot
         <translation>Mesclar</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>O destino mudou. Pressione “Mesclar” novamente para verificá-lo.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>Não foi possível verificar o destino. Pressione “Mesclar” para tentar novamente ou escolha outro nome.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>O arquivo não contém páginas.</translation>
     </message>

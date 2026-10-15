@@ -62,8 +62,10 @@ void post(const QPointer<QObject> &context, std::function<void()> fn)
         Qt::QueuedConnection);
 }
 
+/// Shares pending jobs and drain ownership with the running background task.
 struct SerialQueue::State
 {
+    /// Keeps one callable addressable until the worker starts it.
     struct Job
     {
         JobId id;
@@ -85,6 +87,7 @@ SerialQueue::~SerialQueue()
     clear();
 }
 
+/// Appends a job and starts one drain task when the queue was idle.
 SerialQueue::JobId SerialQueue::add(std::function<void()> job)
 {
     JobId id;
@@ -113,6 +116,7 @@ SerialQueue::JobId SerialQueue::add(std::function<void()> job)
     return id;
 }
 
+/// Drops one pending job and releases its captures outside the queue mutex.
 bool SerialQueue::remove(JobId id)
 {
     std::function<void()> dropped;
@@ -126,6 +130,7 @@ bool SerialQueue::remove(JobId id)
     return true; // the lock is destroyed before the dropped captures
 }
 
+/// Drops every pending job while leaving the running job untouched.
 void SerialQueue::clear()
 {
     std::deque<State::Job> dropped;

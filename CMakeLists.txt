@@ -187,6 +187,8 @@ add_library(mervin_core STATIC
     src/security/QpdfService.h
     src/security/AtomicPdfWriter.cpp
     src/security/AtomicPdfWriter.h
+    src/io/DestinationConsent.cpp
+    src/io/DestinationConsent.h
     src/security/DocumentOutput.cpp
     src/security/DocumentOutput.h
     src/security/MeasurementPages.cpp

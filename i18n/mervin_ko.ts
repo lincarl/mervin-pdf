@@ -2613,6 +2613,16 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>병합</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>저장 대상이 변경되었습니다. 확인하려면 ‘병합’을 다시 누르세요.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>저장 대상을 확인할 수 없습니다. 다시 시도하려면 ‘병합’을 누르거나 다른 이름을 선택하세요.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>파일에 페이지가 없습니다.</translation>
     </message>

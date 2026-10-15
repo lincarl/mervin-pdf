@@ -2621,6 +2621,16 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>मर्ज करें</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>गंतव्य बदल गया है। इसकी समीक्षा के लिए फिर से “मर्ज करें” दबाएँ।</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>गंतव्य की जाँच नहीं हो सकी। फिर से कोशिश करने के लिए “मर्ज करें” दबाएँ या दूसरा नाम चुनें।</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>फ़ाइल में कोई पेज नहीं है।</translation>
     </message>

@@ -2629,6 +2629,16 @@ Deschideți Setările sistemului dvs. → Aplicații implicite (sau faceți clic
         <translation>Îmbină</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>Destinația s-a schimbat. Apasă din nou „Îmbină” pentru a o verifica.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>Destinația nu a putut fi verificată. Apasă „Îmbină” pentru a încerca din nou sau alege alt nume.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>Fișierul nu conține pagini.</translation>
     </message>

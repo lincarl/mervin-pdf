@@ -51,6 +51,7 @@ void MergePlan::setPassword(int i, const QString &password)
         entries_[i].password = password;
 }
 
+/// Updates surviving copies of a pending probe without replacing their ranges or order.
 bool MergePlan::resolveProbe(quint64 ticket, const Entry &result)
 {
     bool found = false;
@@ -66,6 +67,7 @@ bool MergePlan::resolveProbe(quint64 ticket, const Entry &result)
     return found;
 }
 
+/// Reports whether any row still awaits its background file probe.
 bool MergePlan::hasReading() const
 {
     return std::any_of(entries_.cbegin(), entries_.cend(), [](const Entry &entry) {
@@ -88,6 +90,7 @@ QList<int> MergePlan::pagesFor(int i) const
     return zeroBased;
 }
 
+/// Explains a row's pending read or validation failure, preserving its filename.
 QString MergePlan::rowError(int i) const
 {
     if (i < 0 || i >= entries_.size())
@@ -123,6 +126,7 @@ QString MergePlan::rowError(int i) const
     return {};
 }
 
+/// Formats the selected page count or the row's unresolved load state.
 QString MergePlan::countText(int i) const
 {
     if (i < 0 || i >= entries_.size())
@@ -153,6 +157,7 @@ QString MergePlan::countText(int i) const
     return tr("%1 of %2").arg(pages.size()).arg(e.pageCount);
 }
 
+/// Supplies representative translated labels for sizing the Count column.
 QStringList MergePlan::widestCountTexts()
 {
     MergePlan p;
@@ -170,6 +175,7 @@ QStringList MergePlan::widestCountTexts()
     return {p.countText(0), p.countText(1), p.countText(2), p.countText(3)};
 }
 
+/// Computes counts and output spans in order, stopping spans at unresolved rows.
 QList<MergePlan::RowText> MergePlan::rowTexts() const
 {
     // One pass for both derived columns. outputText() is a running sum, so
@@ -228,6 +234,7 @@ int MergePlan::totalPages() const
     return n;
 }
 
+/// Allows merging only when every row in a nonempty plan can contribute pages.
 bool MergePlan::isValid() const
 {
     if (entries_.isEmpty())
@@ -257,6 +264,7 @@ QString MergePlan::summaryText() const
     return tr("Result: %n page(s) from %1, in the order shown.", nullptr, totalPages()).arg(files);
 }
 
+/// Names the first pending row, or the first validation failure once reads settle.
 QString MergePlan::errorText() const
 {
     // Keep the pending row visible even when an earlier row has already failed.

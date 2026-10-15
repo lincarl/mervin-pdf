@@ -2637,6 +2637,16 @@ Iftaħ is-Settings tas-sistema tiegħek → Applikazzjonijiet Default (jew ikkli
         <translation>Għaqqad</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>Id-destinazzjoni nbidlet. Agħfas “Għaqqad” mill-ġdid biex tirrevediha.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>Ma setgħetx tiġi ċċekkjata d-destinazzjoni. Agħfas “Għaqqad” biex terġa&apos; tipprova, jew agħżel isem ieħor.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>Il-fajl ma fih l-ebda paġni.</translation>
     </message>

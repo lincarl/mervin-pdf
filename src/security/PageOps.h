@@ -63,9 +63,11 @@ public:
 
     // Concatenate selected pages in input order (one input performs extraction). Reject invalid
     // page indices to avoid silently shortening output. On failure, failedIndex identifies the
-    // unreadable input, or -1 for errors such as output writes.
+    // unreadable input, or -1 for errors such as output writes. Optional mayCommit
+    // runs under the output lock after flushing and before commit admission.
     static Status merge(const QList<MergeInput> &inputs, const QString &outPath,
-                        QString *error = nullptr, int *failedIndex = nullptr);
+                        QString *error = nullptr, int *failedIndex = nullptr,
+                        const std::function<bool()> &mayCommit = {});
 
     // Concatenate all pages of `inPaths` (in order) into one document.
     static Status merge(const QStringList &inPaths, const QString &outPath, QString *error = nullptr);

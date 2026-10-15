@@ -1,4 +1,5 @@
 #include "i18n/UiLanguage.h"
+#include "io/DestinationConsent.h"
 #include "render/Document.h"
 #include "render/RenderEngine.h"
 #include "security/PageOps.h"
@@ -11,6 +12,7 @@
 #include <qpdf/QPDFWriter.hh>
 
 #include <QBuffer>
+#include <QFile>
 #include <QImage>
 #include <QTemporaryDir>
 #include <QTest>
@@ -92,6 +94,9 @@ private slots:
     void mergeUsesPerFilePassword();
     void mergeReportsFailedIndex();
     void mergeRejectsOutOfRangeIndex();
+    void destinationConsentDistinguishesContentsAndErrors();
+    void delayedMergeRequiresFreshConsent_data();
+    void delayedMergeRequiresFreshConsent();
     void probeDistinguishesLockedFromUnreadable();
     void splitWritesOnePerPage();
     void rotateKeepsCount();
@@ -112,6 +117,90 @@ void TstQpdf::initTestCase()
 void TstQpdf::init()
 {
     QVERIFY(dir_.isValid());
+}
+
+/// Distinguishes absent output, exact contents and failed checks without trusting metadata.
+void TstQpdf::destinationConsentDistinguishesContentsAndErrors()
+{
+    QTemporaryDir folder;
+    const QString path = folder.filePath("output.pdf");
+    QString error;
+    const auto absent = mervin::DestinationConsent::read(path, &error);
+    QVERIFY(absent);
+    QVERIFY(!absent->exists);
+    QFile output(path);
+    QVERIFY(output.open(QIODevice::WriteOnly));
+    QCOMPARE(output.write("first contents"), qint64(14));
+    output.close();
+    const auto first = mervin::DestinationConsent::read(path, &error);
+    QVERIFY(first && first->exists);
+    QVERIFY(*first != *absent);
+    QVERIFY(output.open(QIODevice::WriteOnly));
+    QCOMPARE(output.write("other contents"), qint64(14));
+    output.close();
+    const auto other = mervin::DestinationConsent::read(path, &error);
+    QVERIFY(other);
+    QVERIFY(*other != *first);
+    QVERIFY(output.open(QIODevice::WriteOnly));
+    QCOMPARE(output.write("first contents"), qint64(14));
+    output.close();
+    QCOMPARE(mervin::DestinationConsent::read(path, &error), first);
+    QVERIFY(!mervin::DestinationConsent::read(folder.path(), &error));
+    QVERIFY(!error.isEmpty());
+#ifdef Q_OS_UNIX
+    const QString dangling = folder.filePath("dangling.pdf");
+    QVERIFY(QFile::link(folder.filePath("missing-target.pdf"), dangling));
+    error.clear();
+    QVERIFY(!mervin::DestinationConsent::read(dangling, &error));
+    QVERIFY(!error.isEmpty());
+#endif
+}
+
+/// Covers an output initially absent and an existing output already approved for replacement.
+void TstQpdf::delayedMergeRequiresFreshConsent_data()
+{
+    QTest::addColumn<bool>("existing");
+    QTest::newRow("absent output") << false;
+    QTest::newRow("confirmed output") << true;
+}
+
+/// Preserves a completed winner when an older accepted request starts writing later.
+void TstQpdf::delayedMergeRequiresFreshConsent()
+{
+    QFETCH(bool, existing);
+    QTemporaryDir folder;
+    const QString source = folder.filePath("source.pdf");
+    const QString output = folder.filePath("output.pdf");
+    makePdf(source, 3);
+    if (existing)
+        makePdf(output, 3);
+    const auto approved = mervin::DestinationConsent::read(output);
+    QVERIFY(approved);
+    QCOMPARE(approved->exists, existing);
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{source, {0}, {}}}, output),
+             PageOps::Status::Ok);
+    QFile winnerFile(output);
+    QVERIFY(winnerFile.open(QIODevice::ReadOnly));
+    const QByteArray winner = winnerFile.readAll();
+    winnerFile.close();
+    int validations = 0;
+    const QList<PageOps::MergeInput> later{{source, {0, 1}, {}}};
+    QCOMPARE(PageOps::merge(later, output, nullptr, nullptr, [&] {
+        ++validations;
+        return mervin::DestinationConsent::read(output) == approved;
+    }), PageOps::Status::Failed);
+    QCOMPARE(validations, 1);
+    QVERIFY(winnerFile.open(QIODevice::ReadOnly));
+    QCOMPARE(winnerFile.readAll(), winner);
+    winnerFile.close();
+    const auto confirmed = mervin::DestinationConsent::read(output);
+    QVERIFY(confirmed);
+    QCOMPARE(PageOps::merge(later, output, nullptr, nullptr, [&] {
+        ++validations;
+        return mervin::DestinationConsent::read(output) == confirmed;
+    }), PageOps::Status::Ok);
+    QCOMPARE(validations, 2);
+    QCOMPARE(PageOps::pageCount(output), 2);
 }
 
 void TstQpdf::pageCountRoundTrip()

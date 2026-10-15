@@ -97,6 +97,8 @@ private slots:
     void volumesProbeIndependently();
     void reopenedDialogsShareTheirHeldVolume();
     void pendingRowsIgnoreAnOlderDestinationCheck();
+    void failedDestinationConsentCanRetry();
+    void closingStopsDestinationConsentRead();
     void pendingReasonRefitsFilename();
     void pendingRowsKeepTheirProbeIdentity();
     void batchWarningWaitsAndIgnoresRemovedRows_data();
@@ -625,6 +627,66 @@ void TstMergeDialog::pendingRowsIgnoreAnOlderDestinationCheck()
     settle(&d);
     QCOMPARE(output(d)->text(), chosen);
     QVERIFY(mergeBtn(d)->isEnabled());
+}
+
+/// Leaves an unreadable destination check retryable after its filesystem condition changes.
+void TstMergeDialog::failedDestinationConsentCanRetry()
+{
+    QTemporaryDir folder;
+    const QString destination = folder.filePath("output.pdf");
+    QVERIFY(QDir(folder.path()).mkdir("output.pdf"));
+    MergeDialog d(plain_, 6);
+    settle(&d);
+    replaceText(output(d), destination);
+    press(d);
+    QCOMPARE(d.result(), int(QDialog::Rejected));
+    QCOMPARE(error(d), QStringLiteral(
+        "Could not check the destination. Press Merge to try again, or choose another name."));
+    QVERIFY(mergeBtn(d)->isEnabled());
+    QVERIFY(QDir(folder.path()).rmdir("output.pdf"));
+    press(d);
+    QCOMPARE(d.result(), int(QDialog::Accepted));
+    QCOMPARE(d.outputPath(), destination);
+    QVERIFY(!d.outputConsent().exists);
+}
+
+/// Closing an acceptance check stops streamed reads after the blocked call returns.
+void TstMergeDialog::closingStopsDestinationConsentRead()
+{
+    QTemporaryDir folder;
+    const QString destination = folder.filePath("output.pdf");
+    QFile file(destination);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    const QByteArray contents(3 * 1024 * 1024, 'x');
+    QCOMPARE(file.write(contents), qint64(contents.size()));
+    file.close();
+    MergeDialog d(plain_, 6);
+    settle(&d);
+    replaceText(output(d), destination);
+    const auto reads = std::make_shared<std::atomic<int>>(0);
+    mervin::job::testing::failWhen([destination, reads](mervin::job::Step step,
+                                                      const QString &path) {
+        if (step == mervin::job::Step::Reading && path == destination)
+            ++*reads;
+        return false;
+    });
+    mervin::job::testing::holdWhen([destination, seen = 0](mervin::job::Step step,
+                                                         const QString &path) mutable {
+        return step == mervin::job::Step::Reading && path == destination && ++seen == 3;
+    });
+    const auto release = qScopeGuard([] {
+        mervin::job::testing::release();
+        mervin::job::testing::failWhen({});
+    });
+    mergeBtn(d)->click();
+    QTRY_COMPARE(mervin::job::testing::held(), 1);
+    QVERIFY(d.findChild<mervin::SaveCheck *>()->pending());
+    d.reject();
+    mervin::job::testing::release();
+    QVERIFY(mervin::background::settle(10000));
+    settle(&d);
+    QCOMPARE(d.result(), int(QDialog::Rejected));
+    QCOMPARE(reads->load(), 3);
 }
 
 /// Checks that only the pending filename shortens and returns after width or font changes.

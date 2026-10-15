@@ -2621,6 +2621,16 @@ Opne Innstillingar → Standardprogram i systemet (eller høgreklikk på ei PDF-
         <translation>Slå saman</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>Målfila er endra. Trykk på «Slå saman» igjen for å kontrollere henne.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>Kunne ikkje kontrollere målfila. Trykk på «Slå saman» for å prøve igjen, eller vel eit anna namn.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>Fila inneheld ingen sider.</translation>
     </message>

@@ -1133,11 +1133,12 @@ void MainWindow::splitDocument()
     runPageTool(t, tool, t->password(), false);
 }
 
-/// Captures the probed plan and output path independently of its dialog.
+/// Captures the probed plan, output path and replacement consent independently of its dialog.
 struct MainWindow::MergeRequest
 {
     mervin::MergePlan plan;
     QString output;
+    mervin::DestinationConsent consent;
 };
 
 /// Returns the worker outcome and the input or destination that blocked it.
@@ -1195,13 +1196,14 @@ void MainWindow::showMergeDialog(TabPage *tab, const std::shared_ptr<MergeReques
         next = std::make_shared<MergeRequest>();
         next->plan = dialog->plan();
         next->output = dialog->outputPath();
+        next->consent = dialog->outputConsent();
     }
     delete dialog.data();
     if (next && owner && page && page->isUsable())
         runMerge(page, next);
 }
 
-/// Checks file identities, reserves the output and merges on the tab worker.
+/// Checks identities, reserves output and revalidates replacement consent on the tab worker.
 void MainWindow::runMerge(TabPage *tab, const std::shared_ptr<MergeRequest> &request)
 {
     auto *owner = qobject_cast<MainWindow *>(tab->window());
@@ -1228,8 +1230,24 @@ void MainWindow::runMerge(TabPage *tab, const std::shared_ptr<MergeRequest> &req
             result->conflict = mervin::MergeDialog::Conflict::OpenTab;
             return;
         }
+        QString consentError;
         result->status = PageOps::merge(request->plan.inputs(), request->output,
-                                        &result->error, &result->failedIndex);
+            &result->error, &result->failedIndex, [&] {
+                const auto current = mervin::DestinationConsent::read(request->output, &consentError);
+                if (!current) {
+                    result->conflict = mervin::MergeDialog::Conflict::CheckFailed;
+                    return false;
+                }
+                if (*current != request->consent) {
+                    result->conflict = mervin::MergeDialog::Conflict::Changed;
+                    return false;
+                }
+                return true;
+            });
+        if (!consentError.isEmpty())
+            result->error = consentError;
+        else if (result->conflict == mervin::MergeDialog::Conflict::Changed)
+            result->error.clear();
     };
     operation.finished = [page = QPointer<TabPage>(tab), request, result] {
         if (page)

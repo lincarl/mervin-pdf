@@ -2637,6 +2637,16 @@ Odprite sistemske nastavitve → Privzete aplikacije (ali z desno miškino tipko
         <translation>Združi</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>Cilj se je spremenil. Znova pritisnite »Združi«, da ga preverite.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>Cilja ni bilo mogoče preveriti. Pritisnite »Združi« za ponovni poskus ali izberite drugo ime.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>Datoteka ne vsebuje nobenih strani.</translation>
     </message>

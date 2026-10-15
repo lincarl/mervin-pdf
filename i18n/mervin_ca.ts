@@ -2621,6 +2621,16 @@ Obriu la configuració del vostre sistema → Aplicacions predeterminades (o feu
         <translation>Combina</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>La destinació ha canviat. Premeu «Combina» de nou per revisar-la.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>No s&apos;ha pogut comprovar la destinació. Premeu «Combina» per tornar-ho a provar o trieu un altre nom.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>El fitxer no conté pàgines.</translation>
     </message>

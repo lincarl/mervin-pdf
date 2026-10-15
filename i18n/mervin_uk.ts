@@ -2629,6 +2629,16 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>Об’єднати</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>Цільовий файл змінився. Натисніть «Об’єднати» ще раз, щоб перевірити його.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>Не вдалося перевірити цільовий файл. Натисніть «Об’єднати», щоб спробувати ще раз, або виберіть інше ім’я.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>Файл не містить сторінок.</translation>
     </message>

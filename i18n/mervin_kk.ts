@@ -2621,6 +2621,16 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>Біріктіру</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>Мақсатты файл өзгерді. Оны тексеру үшін «Біріктіру» түймесін қайта басыңыз.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>Мақсатты файлды тексеру мүмкін болмады. Қайталап көру үшін «Біріктіру» түймесін басыңыз немесе басқа атауды таңдаңыз.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>Файлда беттер жоқ.</translation>
     </message>

@@ -270,9 +270,12 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
     followLayoutMinimum(*this, QSize(660, 440));
 }
 
+/// Cancels input probes and an acceptance check without waiting for filesystem calls.
 MergeDialog::~MergeDialog()
 {
     stopProbes();
+    if (outputCheckState_)
+        outputCheckState_->stop();
 }
 
 MergeDialog::MergeDialog(const MergePlan &plan, const QString &output, const QString &error,
@@ -290,6 +293,7 @@ MergeDialog::MergeDialog(const MergePlan &plan, const QString &output, const QSt
     refreshFooter();
 }
 
+/// Explains the failed input, destination conflict or write while keeping the plan retryable.
 QString MergeDialog::failureSummary(const MergePlan &plan, const QString &output,
                                     int failedIndex, Conflict conflict)
 {
@@ -298,6 +302,16 @@ QString MergeDialog::failureSummary(const MergePlan &plan, const QString &output
                   "merged. Choose a different name.");
     } else if (conflict == Conflict::OpenTab) {
         return tr("That file is open in a tab. Choose another name.");
+    } else if (conflict == Conflict::Changed) {
+        //: The output contents or target changed after this merge was approved.
+        //: Nothing was replaced. Merge is the action button; pressing it checks
+        //: the destination and asks before replacing an existing file.
+        return tr("The destination changed. Press Merge again to review it.");
+    } else if (conflict == Conflict::CheckFailed) {
+        //: The destination could not be read to verify replacement consent.
+        //: Merge remains available to retry. Save as can choose another output.
+        //: Technical I/O details are shown separately.
+        return tr("Could not check the destination. Press Merge to try again, or choose another name.");
     } else if (failedIndex >= 0 && failedIndex < plan.count()) {
         //: %1 is the name of the file being merged when it failed.
         return tr("The merge failed on \"%1\".").arg(plan.displayName(failedIndex));
@@ -739,8 +753,12 @@ QStringList MergeDialog::files() const
     return files;
 }
 
+/// Checks paths off the GUI thread and captures exact destination contents only on acceptance.
 void MergeDialog::checkOutput()
 {
+    if (outputCheckState_)
+        outputCheckState_->stop();
+    outputCheckState_.reset();
     // The source's default folder may be on the same blocked drive. Wait for its
     // probe instead of starting another filesystem call each time Merge reopens.
     if (plan_.hasReading())
@@ -751,16 +769,32 @@ void MergeDialog::checkOutput()
     // The inputs matter only to a write, and one on a share that stopped answering
     // would hold up checks of Save as.
     const bool forWrite = pressed_.has_value();
+    if (forWrite)
+        outputCheckState_ = std::make_shared<job::State>();
     saveCheck_->run(
-        [plan = plan_, text = checking_, stepDefault, forWrite] {
+        [plan = plan_, text = checking_, stepDefault, forWrite, state = outputCheckState_] {
             Checked checked;
+            std::optional<job::Scope> scope;
+            if (state)
+                scope.emplace(*state);
+            if (job::stopped())
+                return checked;
             checked.text = stepDefault ? QDir::toNativeSeparators(plan.defaultOutputPath()) : text;
+            if (job::stopped())
+                return checked;
             const QString out = withPdf(checked.text);
             checked.canonical = QFileInfo(out).canonicalFilePath();
+            if (job::stopped())
+                return checked;
             checked.key = normalizePathKey(canonicalOrAbsolute(out));
-            if (forWrite)
-                for (const MergePlan::Entry &e : plan.entries())
+            if (forWrite) {
+                for (const MergePlan::Entry &e : plan.entries()) {
+                    if (job::stopped())
+                        return checked;
                     checked.inputs << QFileInfo(e.path).canonicalFilePath();
+                }
+                checked.consent = DestinationConsent::read(out, &checked.consentError);
+            }
             return checked;
         },
         [this, requestedText = checking_, requestedFiles = checkedFiles_](const Checked &checked) {
@@ -815,6 +849,7 @@ void MergeDialog::accept()
     checkOutput();
 }
 
+/// Freezes the checked consent before asking for replacement and accepting the unchanged plan.
 void MergeDialog::write()
 {
     // Pressed before the check answered: the answer can be a reason not to write,
@@ -822,14 +857,21 @@ void MergeDialog::write()
     if (const std::optional<QString> why = problem(); !why || !why->isEmpty())
         return;
     const QString out = withPdf(outputEdit_->text());
+    const Checked checked = *checked_;
+    if (!checked.consent) {
+        writeError_ = failureSummary(plan_, out, -1, Conflict::CheckFailed);
+        writeErrorDetail_ = checked.consentError;
+        showProblem();
+        return;
+    }
 
     // The merge reads every source while it writes the output, so naming an input
     // as the output destroys the file it is copying from. canonicalFilePath()
     // resolves symlinks and case, and is empty for a file that does not exist yet
     // - which is the normal case and correctly matches nothing.
-    const QString &outCanonical = checked_->canonical;
-    if (!outCanonical.isEmpty()) {
-        if (checked_->inputs.contains(outCanonical)) {
+    const QString &outCanonical = checked.canonical;
+    if (checked.consent->exists) {
+        if (checked.inputs.contains(outCanonical)) {
             const QPointer<MergeDialog> self(this);
             warnInWindow(this, tr("The merged file cannot replace one of the files being "
                                  "merged. Choose a different name."));
@@ -856,13 +898,17 @@ void MergeDialog::write()
     }
 
     outputPath_ = out;
+    outputConsent_ = *checked.consent;
     QDialog::accept();
 }
 
+/// Stops outstanding reads before closing, allowing their blocked OS calls to return later.
 void MergeDialog::done(int result)
 {
     closed_ = true;
     stopProbes();
+    if (outputCheckState_)
+        outputCheckState_->stop();
     QDialog::done(result);
 }
 

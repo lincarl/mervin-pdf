@@ -2621,6 +2621,16 @@ Apri le Impostazioni del sistema → Applicazioni predefinite (o fai clic con il
         <translation>Unisci</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>La destinazione è cambiata. Premi di nuovo «Unisci» per verificarla.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>Impossibile verificare la destinazione. Premi «Unisci» per riprovare o scegli un altro nome.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>Il file non contiene pagine.</translation>
     </message>

@@ -2621,6 +2621,16 @@ Avra ils Parameters → Applicaziuns predefinidas dal sistem (u clicca cun la ta
         <translation>Unir</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>La destinaziun è sa midada. Smatga anc ina giada «Unir» per la controllar.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>Impussibel da controllar la destinaziun. Smatga «Unir» per empruvar anc ina giada u tscherna in auter num.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>La datoteca na cuntegna naginas paginas.</translation>
     </message>

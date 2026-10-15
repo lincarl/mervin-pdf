@@ -1,6 +1,7 @@
 #pragma once
 
 #include "merge/MergePlan.h"
+#include "io/DestinationConsent.h"
 
 #include <QDialog>
 #include <QList>
@@ -30,7 +31,7 @@ class MergeDialog : public QDialog
     Q_OBJECT
 
 public:
-    enum class Conflict { None, Input, OpenTab };
+    enum class Conflict { None, Input, OpenTab, Changed, CheckFailed };
     // Add nonempty initialPath as a normal editable row, probed with qpdf and initialPassword.
     // initialPageCount is retained for callers; the background probe determines
     // the authoritative count.
@@ -59,6 +60,8 @@ public:
     /// Reports whether any input row still awaits its background probe.
     bool reading() const { return plan_.hasReading(); }
     QString outputPath() const { return outputPath_; }
+    /// Returns the destination contents approved by this accepted dialog.
+    DestinationConsent outputConsent() const { return outputConsent_; }
 
     // Probe each path and append it as a row, in the order given. Rows that
     // cannot be merged are still added, marked and blocking, so the user can see
@@ -126,6 +129,7 @@ private:
     QString startDirectory() const;
 
     MergePlan plan_;
+    /// Tracks the dialog's ownership of one queued or running input probe.
     struct Probe
     {
         std::shared_ptr<job::State> state;
@@ -136,17 +140,22 @@ private:
     quint64 nextProbe_ = 0;
     bool closed_ = false;
     QString outputPath_;
+    DestinationConsent outputConsent_;
+    std::shared_ptr<job::State> outputCheckState_;
     bool outputEdited_ = false; // stop re-deriving the name once the user typed one
     QStringList openKeys_;      // normalizePathKey() of every file open in a tab
     QString writeError_;        // the last failed write, until the plan or Save as changes
     QString writeErrorDetail_;  // qpdf's message for it, the error line's tooltip
     // The last Save as check's answer.
+    /// Returns background path checks and, when Merge was pressed, replacement consent.
     struct Checked
     {
         QString text;       // the Save as text it is for
         QString canonical;  // the merged file's canonical path, empty when it does not exist
         QString key;        // normalizePathKey() of the merged file, symlinks resolved
         QStringList inputs; // each row's file's canonical path, in row order; for a write
+        std::optional<DestinationConsent> consent;
+        QString consentError;
     };
     std::optional<Checked> checked_;
     QString checking_;        // the text the last check asked for was for...

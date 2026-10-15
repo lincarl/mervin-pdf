@@ -766,6 +766,24 @@ dialog's work. A read already inside a filesystem call keeps its queue until it
 returns. Independent destination checks after input reads finish still use each
 dialog's SaveCheck and can outlive the dialog if their filesystem calls stall.
 
+Pressing Merge captures replacement consent on its background SaveCheck. It records
+the resolved destination key and either true absence or the SHA-256 of an existing
+regular file. Missing directory entries are distinct from unreadable files,
+nonregular entries and dangling links, which fail the check. Closing the dialog
+or requesting another check stops the old capture after its current filesystem
+call returns. Consent stays fixed across the replacement question's nested event
+loop.
+
+Before publication, Merge compares this consent with the destination again while
+AtomicPdfWriter owns its destination lock, after flushing and before commit
+admission. A changed output keeps its current bytes and reopens the retained plan
+for another explicit Merge and replacement decision. Failed destination checks
+also preserve the output and remain retryable. Existing outputs require one full
+read at acceptance and another before commit, using bounded memory and checking
+Stop between reads. Identical-byte replacement remains approved. The lock orders
+writers in this process; another process can still change a file after the final
+comparison and before rename.
+
 After SaveCheck and replacement confirmation, Merge accepts its plan and output
 without writing. The launching tab's operation checks input and output identities,
 refuses open tabs and reserves the destination before calling `PageOps::merge`.

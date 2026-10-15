@@ -2629,6 +2629,16 @@ Atidarykite sistemos Nustatymai → Numatytosios programos (arba dešiniuoju pel
         <translation>Sujungti</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>Paskirties failas pasikeitė. Norėdami jį patikrinti, dar kartą spustelėkite „Sujungti“.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>Nepavyko patikrinti paskirties failo. Spustelėkite „Sujungti“, kad bandytumėte dar kartą, arba pasirinkite kitą pavadinimą.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>Faile nėra puslapių.</translation>
     </message>

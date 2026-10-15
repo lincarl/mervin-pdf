@@ -2621,6 +2621,16 @@ Abra as Definições → Aplicações predefinidas do seu sistema (ou clique com
         <translation>Juntar</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>O destino foi alterado. Prima «Juntar» novamente para o verificar.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>Não foi possível verificar o destino. Prima «Juntar» para tentar novamente ou escolha outro nome.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>O ficheiro não contém páginas.</translation>
     </message>

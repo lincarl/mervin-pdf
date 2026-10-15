@@ -245,6 +245,111 @@ private slots:
         QTest::newRow("destination writing") << true;
     }
 
+    /// Covers a newly created destination and changed bytes of a confirmed existing one.
+    void changedDestinationReopensThePlan_data()
+    {
+        QTest::addColumn<bool>("existing");
+        QTest::newRow("absent output") << false;
+        QTest::newRow("confirmed output") << true;
+    }
+
+    /// Rejects stale consent even when the competing change finishes before worker validation.
+    void changedDestinationReopensThePlan()
+    {
+        QFETCH(bool, existing);
+        const QByteArray original("original contents");
+        const QByteArray changed("changed contents!");
+        QCOMPARE(original.size(), changed.size());
+        if (existing)
+            QVERIFY(writeBytes(output_, original));
+        int questions = 0;
+        beforeMessage_ = [&questions](QMessageBox *box) {
+            if (box->text().contains(QStringLiteral("Replace it?")))
+                ++questions;
+        };
+        beforeMerge_ = [this] {
+            job::testing::holdWhen([folder = files_->path(), first = true]
+                                  (job::Step step, const QString &path) mutable {
+                if (step != job::Step::Writing || path != folder || !first)
+                    return false;
+                first = false;
+                return true;
+            });
+        };
+        const auto release = qScopeGuard([] { job::testing::release(); });
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        QVERIFY(testing::openAndWait(window, source_));
+        const int guiSteps = job::testing::stepsOnMainThread();
+        QVERIFY(QMetaObject::invokeMethod(&window, "mergeDocuments"));
+        QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+        QCOMPARE(questions, existing ? 1 : 0);
+        QVERIFY(writeBytes(output_, changed));
+        job::testing::release();
+        QTRY_COMPARE_WITH_TIMEOUT(dialogsSeen_, 2, 10000);
+        QCOMPARE(reopenedSpec_, spec_);
+        QCOMPARE(reopenedOutput_, QDir::toNativeSeparators(output_));
+        QCOMPARE(reopenedError_, QStringLiteral("The destination changed. Press Merge again to review it."));
+        QCOMPARE(bytes(output_), changed);
+        QCOMPARE(successes_, 0);
+        QCOMPARE(job::testing::stepsOnMainThread(), guiSteps);
+    }
+
+    /// Keeps the version shown by the first question and asks again before replacing newer bytes.
+    void replacementQuestionKeepsItsOwnConsent()
+    {
+        const QByteArray original("original contents");
+        const QByteArray changed("changed contents!");
+        QVERIFY(writeBytes(output_, original));
+        int questions = 0;
+        beforeMessage_ = [this, &questions, changed](QMessageBox *box) {
+            if (box->text().contains(QStringLiteral("Replace it?")) && ++questions == 1)
+                QVERIFY(writeBytes(output_, changed));
+        };
+        beforeReopen_ = [this, changed](MergeDialog *) { QCOMPARE(bytes(output_), changed); };
+        repair_ = [] {}; // retry must obtain fresh consent through the existing replacement question
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        QVERIFY(testing::openAndWait(window, source_));
+        QVERIFY(QMetaObject::invokeMethod(&window, "mergeDocuments"));
+        QTRY_COMPARE_WITH_TIMEOUT(successes_, 1, 10000);
+        QCOMPARE(dialogsSeen_, 2);
+        QCOMPARE(questions, 2);
+        QCOMPARE(reopenedError_, QStringLiteral("The destination changed. Press Merge again to review it."));
+        QCOMPARE(PageOps::pageCount(output_), 2);
+    }
+
+    /// Stop during the final streamed destination check preserves bytes and suppresses completion.
+    void stopDuringDestinationConsentRead()
+    {
+        const QByteArray original(3 * 1024 * 1024, 'x');
+        QVERIFY(writeBytes(output_, original));
+        beforeMessage_ = [this](QMessageBox *box) {
+            if (box->text().contains(QStringLiteral("Replace it?")))
+                job::testing::holdWhen([output = output_, reads = 0]
+                                      (job::Step step, const QString &path) mutable {
+                    return step == job::Step::Reading && path == output && ++reads == 3;
+                });
+        };
+        const auto release = qScopeGuard([] { job::testing::release(); });
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        QVERIFY(testing::openAndWait(window, source_));
+        auto *tab = window.findChild<TabPage *>();
+        QVERIFY(tab);
+        const int tasks = background::running();
+        QVERIFY(QMetaObject::invokeMethod(&window, "mergeDocuments"));
+        QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+        QVERIFY(tab->isBusy());
+        tab->stopWaiting();
+        QVERIFY(tab->isUsable());
+        job::testing::release();
+        QTRY_VERIFY_WITH_TIMEOUT(background::running() <= tasks, 10000);
+        QCOMPARE(bytes(output_), original);
+        QCOMPARE(dialogsSeen_, 1);
+        QCOMPARE(successes_, 0);
+    }
+
     /// Checks that failure recovery selects its source after the user switches tabs.
     void failedMergeSelectsItsLaunchingTab()
     {

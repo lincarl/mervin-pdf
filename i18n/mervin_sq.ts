@@ -2621,6 +2621,16 @@ Hapni Cilësimet e sistemit tuaj → Aplikacionet e parazgjedhura (ose kliko me 
         <translation>Bashko</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>Destinacioni ka ndryshuar. Shtypni sërish «Bashko» për ta kontrolluar.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>Destinacioni nuk mund të kontrollohej. Shtypni «Bashko» për të provuar sërish ose zgjidhni një emër tjetër.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>Skedari nuk përmban faqe.</translation>
     </message>
