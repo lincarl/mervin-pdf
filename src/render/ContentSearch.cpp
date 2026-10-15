@@ -1,11 +1,14 @@
 #include "render/ContentSearch.h"
 
 #include "io/Background.h"
+#include "io/JobContext.h"
+#include "recent/PathKey.h"
 #include "render/MuPdfLocks.h"
 
 #include <mupdf/fitz.h>
 
 #include <QByteArray>
+#include <QFileInfo>
 #include <QPointer>
 
 #include <atomic>
@@ -185,6 +188,7 @@ void ContentSearch::drain(const std::shared_ptr<Shared> &shared)
         fz_drop_context(ctx);
 }
 
+// Searches the current generation while excluding paths owned by active output writers.
 void ContentSearch::run(const std::shared_ptr<Shared> &shared, const QStringList &paths,
                         const QString &query, quint64 generation, fz_context *ctx)
 {
@@ -210,34 +214,44 @@ void ContentSearch::run(const std::shared_ptr<Shared> &shared, const QStringList
                 break;
             }
 
-            const QByteArray utf8 = path.toUtf8();
-            fz_document *doc = nullptr;
+            // Resolve links on this worker. The query skips known writers without
+            // reserving reads against a writer that starts afterward.
+            const QString key = fileKey(QFileInfo(path));
+            if (!current()) {
+                canceled = true;
+                break;
+            }
             int matchPage = 0; // 1-based; 0 == no match
             QString snippet;
-            fz_var(doc);
-            fz_try(ctx) {
-                doc = fz_open_document(ctx, utf8.constData());
-                const int n = doc ? fz_count_pages(ctx, doc) : 0;
-                for (int p = 0; p < n; ++p) {
-                    if (!current())
-                        break;
-                    QString text;
-                    if (extractPageText(ctx, doc, p, text)
-                        && text.contains(query, Qt::CaseInsensitive)) {
-                        matchPage = p + 1;
-                        snippet = makeSnippet(text, query);
-                        break; // first matching page is enough
+            if (!job::destinationInUse(key)) {
+                const QByteArray utf8 = path.toUtf8();
+                fz_document *doc = nullptr;
+                fz_var(doc);
+                fz_try(ctx) {
+                    doc = fz_open_document(ctx, utf8.constData());
+                    const int n = doc ? fz_count_pages(ctx, doc) : 0;
+                    for (int p = 0; p < n; ++p) {
+                        if (!current())
+                            break;
+                        QString text;
+                        if (extractPageText(ctx, doc, p, text)
+                            && text.contains(query, Qt::CaseInsensitive)) {
+                            matchPage = p + 1;
+                            snippet = makeSnippet(text, query);
+                            break; // first matching page is enough
+                        }
                     }
                 }
-            }
-            fz_always(ctx) {
-                if (doc)
-                    fz_drop_document(ctx, doc);
-            }
-            fz_catch(ctx) {
-                matchPage = 0; // unreadable file -> simply no hit
+                fz_always(ctx) {
+                    if (doc)
+                        fz_drop_document(ctx, doc);
+                }
+                fz_catch(ctx) {
+                    matchPage = 0; // unreadable file -> simply no hit
+                }
             }
 
+            // A skipped writer still counts as a checked input, like an unreadable file.
             ++scanned;
             if (!current()) {
                 canceled = true;

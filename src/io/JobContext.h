@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <mutex>
 
 // What a background job of a tab is doing, so the tab can say what it waits for and
@@ -20,6 +21,9 @@
 // state of the calling thread's scope. Outside a scope nothing is reported to a job
 // and every step goes ahead, unless a test hook holds it or makes it fail.
 namespace mervin::job {
+
+using ClaimId = quint64;
+class OpenPath;
 
 // What a job is doing, for the wording of its tab.
 enum class Step
@@ -80,6 +84,13 @@ public:
     // Atomically reserves output keys against tabs admitted in this process. Keys
     // were resolved on the worker. Stop releases them unless a commit already began.
     bool reserveDestinations(const QSet<QString> &keys);
+    // In-place Save may keep its own admission. The captured identity must still
+    // be the sole admission of this key when the worker reserves it.
+    bool reserveOwnedDestination(const QString &key, ClaimId owner);
+    // Transfers a sole reservation into an admission before the scope releases
+    // it. The original captured admission must still identify its owner.
+    std::unique_ptr<OpenPath> admitReservedDestination(const QString &key,
+                                                     const QString &ownerKey, ClaimId owner);
 
 private:
     friend class Scope;
@@ -120,22 +131,34 @@ bool stopped();
 class OpenPath
 {
 public:
+    // Adds a tab admission unless output ownership already blocks this key.
     explicit OpenPath(const QString &key);
+    // Releases this tab identity without changing other admissions of the key.
     ~OpenPath();
     OpenPath(const OpenPath &) = delete;
     OpenPath &operator=(const OpenPath &) = delete;
     bool admitted() const { return admitted_; }
     const QString &key() const { return key_; }
+    // Returns the stable tab admission identity used to authorize in-place Save.
+    ClaimId identity() const { return identity_; }
 
 private:
+    friend class State;
+    // Adopts an admission already transferred from the current job reservation.
+    OpenPath(const QString &key, ClaimId identity);
     QString key_;
     bool admitted_ = false;
+    ClaimId identity_ = 0;
 };
 
 // Reserves every output before the current job can write any of them. False when
 // stopped or when a tab already owns one of these keys. Reservations last through
 // commit, and otherwise release on Stop or when the last Scope closes.
 bool reserveDestinations(const QSet<QString> &keys);
+// Reserves in-place output for the sole captured tab owner in the current scope.
+bool reserveOwnedDestination(const QString &key, ClaimId owner);
+// Memory-only query for a key already normalized by the caller's worker.
+bool destinationInUse(const QString &key);
 
 // Reserve live document use for the current job. False once stopped. Release the
 // Document::Hold before endHolding(), so Stop keeps the still picture until then.

@@ -19,6 +19,7 @@
 #include "io/SaveCheck.h"
 #include "ocr/TessdataManager.h"
 #include "print/PrintPreviewWidget.h"
+#include "render/AnnotModel.h"
 #include "render/Document.h"
 #include "render/RenderEngine.h"
 #include "recent/PathKey.h"
@@ -74,6 +75,7 @@
 #include <QToolButton>
 #include <QXmlStreamReader>
 
+#include <atomic>
 #include <cstring>
 #include <functional>
 #include <utility>
@@ -245,6 +247,9 @@ private slots:
     void print();
     void security_data() { addLanguageMatrix(); }
     void security();
+    // Selects language, font and minimum-width rows for saved-file recovery warnings.
+    void saveRecoveryWarning_data() { addLanguageMatrix(); }
+    void saveRecoveryWarning();
     void settings_data() { addLanguageMatrix(); }
     void settings();
     void toolPanels_data() { addLanguageMatrix(); }
@@ -734,8 +739,55 @@ void TstTranslationLayout::inspectMessage(QWidget &parent, const QString &state,
     });
     poll.start(10);
     action();
+    while (!sawMessage && !timedOut)
+        QTest::qWait(10);
     poll.stop();
     QVERIFY2(!timedOut && sawMessage, qPrintable(state + QStringLiteral(" did not show the expected message")));
+}
+
+// Checks the actual Save recovery warning across committed replacement failure states.
+void TstTranslationLayout::saveRecoveryWarning()
+{
+    QTemporaryDir files(profile_.filePath(QStringLiteral("save-warning-XXXXXX")));
+    QVERIFY(files.isValid());
+    const QString path = files.filePath(QFileInfo(plain_).fileName());
+    QVERIFY(QFile::copy(plain_, path));
+    mervin::RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    window.show();
+    QVERIFY(mervin::testing::openAndWait(window, path));
+    auto *tab = window.findChild<mervin::TabPage *>();
+    QVERIFY(tab);
+    QVERIFY(tab->viewer()->annotModel()->addTextNote(
+                0, {40, 40}, Qt::yellow, {}, QStringLiteral("Retained edit")) >= 0);
+    std::atomic<bool> reopenFailed{false};
+    const auto restore = qScopeGuard([] {
+        mervin::job::testing::release();
+        mervin::job::testing::failWhen({});
+    });
+    mervin::job::testing::failWhen([path, &reopenFailed, reads = 0]
+                                (mervin::job::Step step, const QString &file) mutable {
+        if (step == mervin::job::Step::Reading && file == path && ++reads >= 3) {
+            reopenFailed = true;
+            return true;
+        }
+        return false;
+    });
+    // Keep recovery loading while the actual Save warning gives its retained path.
+    mervin::job::testing::holdWhen([&reopenFailed]
+                                (mervin::job::Step step, const QString &file) {
+        return reopenFailed && step == mervin::job::Step::Reading
+            && file.contains(QStringLiteral("/recovery/"));
+    });
+    inspectMessage(window, QStringLiteral("Saved file awaiting recovery after reopen failure"), [&] {
+        QVERIFY(QMetaObject::invokeMethod(&window, "saveMeasurements"));
+    });
+    QVERIFY(tab->isLoading());
+    QVERIFY(tab->hasRecoverySnapshot());
+    mervin::job::testing::release();
+    QTRY_VERIFY(tab->isUsable());
+    QVERIFY(tab->hasUnsavedEdits());
 }
 
 void TstTranslationLayout::calibration()

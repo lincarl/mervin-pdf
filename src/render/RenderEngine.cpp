@@ -30,6 +30,7 @@ namespace mervin {
 static_assert(FZ_LOCK_MAX <= 4, "the lock array is too small for MuPDF's FZ_LOCK_MAX");
 
 namespace {
+std::atomic<int> attemptedOpens{0};
 
 // Sized to MuPDF's FZ_LOCK_MAX (currently 3); 4 is a safe upper bound.
 using LockArray = std::array<std::mutex, 4>;
@@ -494,29 +495,40 @@ void RenderEngine::shutdown()
     shared_->queueCv.notify_all();
 }
 
+// Opens through an independent context so the request does not retain this engine.
 std::unique_ptr<Document> RenderEngine::openDocument(const QString &path, const QString &password,
                                                      QString *error, bool *needsPassword)
 {
     return opener()->open(path, password, error, needsPassword);
 }
 
+// Captures an independent opener whose context can outlive this render engine.
 std::shared_ptr<DocumentOpener> RenderEngine::opener()
 {
     return std::make_shared<DocumentOpener>(base_);
 }
 
+// Clones a retained base context before one background open begins.
 DocumentOpener::DocumentOpener(std::shared_ptr<fz_context> base)
     : base_(std::move(base))
     , ctx_(fz_clone_context(base_.get()))
 {
 }
 
+// Releases the cloned context unless its single open already transferred ownership.
 DocumentOpener::~DocumentOpener()
 {
     if (ctx_)
         fz_drop_context(ctx_);
 }
 
+// Returns attempted document opens for checks that unloaded Save never parses a PDF.
+int RenderEngine::testing::opens()
+{
+    return attemptedOpens.load();
+}
+
+// Transfers the captured context into one document open on the calling worker.
 std::unique_ptr<Document> DocumentOpener::open(const QString &path, const QString &password,
                                                QString *error, bool *needsPassword)
 {
@@ -524,10 +536,12 @@ std::unique_ptr<Document> DocumentOpener::open(const QString &path, const QStrin
                               needsPassword);
 }
 
+// Consumes an opener context and opens with the job's read and Stop checks.
 std::unique_ptr<Document> RenderEngine::open(fz_context *ctx, std::shared_ptr<fz_context> base,
                                              const QString &path, const QString &password,
                                              QString *error, bool *needsPassword)
 {
+    ++attemptedOpens;
     if (needsPassword)
         *needsPassword = false;
 

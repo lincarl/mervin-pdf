@@ -33,6 +33,7 @@
 #include <QPaintEvent>
 #include <QPlainTextEdit>
 #include <QPolygonF>
+#include <QPointer>
 #include <QResizeEvent>
 #include <QRubberBand>
 #include <QScrollBar>
@@ -698,12 +699,17 @@ void ViewerWidget::commitFormEditor(int editorIndex)
     }
 }
 
+// Commits pending field values and stops if an edit observer destroys the viewer.
 void ViewerWidget::commitActiveFormEditor()
 {
     // Idempotent (unchanged values are no-ops), so flushing every editor before a
     // save / print or mode change is safe and catches the field still being typed.
-    for (int i = static_cast<int>(formEditors_.size()) - 1; i >= 0; --i)
+    const QPointer<ViewerWidget> self(this);
+    for (int i = static_cast<int>(formEditors_.size()) - 1; i >= 0; --i) {
         commitFormEditor(i);
+        if (!self)
+            return;
+    }
 }
 
 void ViewerWidget::applyFormFieldChange(int page)

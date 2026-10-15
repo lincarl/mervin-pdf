@@ -98,16 +98,12 @@ Open it now?</source>
     </message>
     <message>
         <source>Enter the password for %1.</source>
-        <extracomment>%1 is the file name.
-----------
-%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
+        <extracomment>%1 is the name of the document being opened or resumed. This asks for the password needed to open its contents, not its owner password.</extracomment>
         <translation>%1 üçün parolu daxil edin.</translation>
     </message>
     <message>
         <source>Save</source>
-        <extracomment>Title of messages about saving the document.
-----------
-Toolbar button (verb) that opens a menu of ways to save.</extracomment>
+        <extracomment>Toolbar button (verb) that opens a menu of ways to save.</extracomment>
         <translation>Saxla</translation>
     </message>
     <message>
@@ -127,7 +123,7 @@ Toolbar button (verb) that opens a menu of ways to save.</extracomment>
         <source>%1
 Edited document retained at %2.
 %3</source>
-        <extracomment>%1 is why saving failed (may be empty), %2 the path of the kept copy, %3 why that copy could not be opened.</extracomment>
+        <extracomment>%1 describes the Save or reopening result, %2 is the retained copy, and %3 is a recovery error.</extracomment>
         <translation>%1
 Redaktə edilmiş sənəd %2-də saxlanılır.
 %3</translation>
@@ -184,6 +180,11 @@ Redaktə edilmiş sənəd %2-də saxlanılır.
 %1</source>
         <translation>İxrac etmək mümkün olmadı:
 %1</translation>
+    </message>
+    <message>
+        <source>The file was saved, but could not be reopened.</source>
+        <extracomment>The original file was replaced successfully, but reading it again failed. The retained edited copy may still be loading for recovery.</extracomment>
+        <translation>Fayl saxlanıldı, amma yenidən açıla bilmədi.</translation>
     </message>
     <message>
         <source>Rotate Pages</source>

@@ -8,6 +8,7 @@
 
 #include <functional>
 #include <memory>
+#include <vector>
 
 class QFontMetrics;
 class QLabel;
@@ -76,8 +77,7 @@ public:
     bool isLoaded() const { return doc_ != nullptr; }
     bool isLoading() const { return loading_; }
     bool isSuspended() const { return !doc_ && !loading_ && !busy_; }
-    // An operation runs (startOperation). The document stays loaded, but nothing may
-    // use it until the operation ends.
+    // A document operation freezes the tab, with or without a loaded document.
     bool isBusy() const { return busy_; }
     // Stop was chosen for the last operation. A new operation resets this flag.
     bool isOperationStopped() const { return operationStopped_; }
@@ -112,11 +112,33 @@ public:
     // the picture names the folder or file the job waits for and offers Stop waiting.
     void startOperation(Operation operation);
 
+    enum class SaveResult { Saved, Failed, Stopped, Canceled };
+    // Describes one Save result and whether replacing the original already succeeded.
+    struct SaveCompletion {
+        SaveResult result = SaveResult::Failed;
+        QString error;
+        bool originalSaved = false;
+        quint64 generation = 0;
+    };
+    // Queues changed-source approval and delivers the explicit terminal Save outcome.
+    struct SaveCallbacks {
+        // Queue the existing changed-file question in the current owner. Validate
+        // again before showing it and after its nested event loop returns.
+        std::function<void(std::function<bool()> valid, std::function<void(bool)> answer)> changed;
+        // Also runs on Stop, which ordinary Operation completion suppresses.
+        std::function<void(const SaveCompletion &)> finished;
+    };
+    // Captures editors and restore state here. All file work and document closing
+    // runs on workers. Unloaded edits save directly from their recovery copy.
+    void startSave(SaveCallbacks callbacks);
+    // Identifies the latest Save attempt for completion ownership checks.
+    quint64 saveGeneration() const { return saveGeneration_; }
+
     // Stop waiting without joining the worker. Its file call continues until the
     // drive answers. A held snapshot keeps the tab locked until document release;
-    // otherwise the operation restores use immediately. Stop suppresses completion
-    // delivery and new commits, but an already-started rename may finish. A fresh
-    // open closes its tab. A recovery load keeps its unloaded tab and copy with
+    // otherwise the operation restores use immediately. Stop suppresses ordinary
+    // operation completion and new commits. A rename already started may finish.
+    // A fresh open closes its tab. A recovery load keeps its unloaded tab and copy with
     // Retry, which can take back the blocked read.
     void stopWaiting();
     // Retry. Takes back a stopped load that still reads, or starts a new one, which
@@ -169,11 +191,6 @@ public:
     // Their canonical paths, or original ones where no canonical path was recorded.
     static QStringList recoverablePaths();
 
-    // Release the open Document and close its file here, waiting for any work in it
-    // (needed before replacing the file on disk, e.g. an in-place "Save
-    // Measurements"). The viewer shows a blank page until open() is called again.
-    void detachDocument();
-    bool recoverSnapshot(const QString &snapshot, QString *error);
     bool hasRecoverySnapshot() const { return !recoveryPath_.isEmpty(); }
 
     ViewerWidget *viewer() const { return viewer_; }
@@ -215,6 +232,7 @@ private:
     struct SavedState;
     struct OpenResult;
     struct Job;
+    struct Save;
     static std::shared_ptr<OpenResult> readDocument(DocumentOpener &opener, const QString &path,
                                                   const QString &password);
     // Shows the document `result` read. A document shown before closes on a background
@@ -239,6 +257,7 @@ private:
     // on its own thread or, for a result it already stored, on a background thread, and
     // `removeAfter` goes after that.
     static void abandon(const std::shared_ptr<Job> &job, const QString &removeAfter);
+    static void removeAfterJobs(const QString &copy, std::vector<std::shared_ptr<Job>> jobs);
     // Drops the load in progress, or a stopped one that has not ended, waiting for it,
     // for the callers that read or replace the document's file on this thread next.
     void stopLoading();
@@ -249,6 +268,9 @@ private:
     void endOperation();
     // Detaches a stopped operation only once its document reservation is released.
     void finishStoppedOperation();
+    void saveCheckpoint(const std::shared_ptr<Job> &job);
+    void finishSave(const std::shared_ptr<Job> &job);
+    void completeSave(const SaveCompletion &completion);
     // The slow clock. While a load or an operation runs, a poll reads what its job
     // reports, and after the slow delay without progress the placeholder or the wait
     // bar names what it waits for.
@@ -303,13 +325,18 @@ private:
     bool loadStopped_ = false;
     std::optional<FreshOpen> freshOpen_;
     quint64 loadGeneration_ = 0;
-    // The tab's job slot, with the load in progress or one the user stopped, which may
-    // still read, for Retry to take back, or close what it read, or with the operation
-    // in progress. The tab takes the job's result (finishLoad, finishOperation), lets
-    // go of it without waiting (abandon) or, for the synchronous callers, waits for a
-    // load (stopLoading). A tab loads only without a document and runs an operation
-    // only with one.
+    // Owns the current load, operation or Save, including a stopped load retained for Retry.
+    // The tab adopts results only from its matching job. Abandon releases GUI ownership
+    // without waiting; synchronous file callers use stopLoading only for loads.
     std::shared_ptr<Job> job_;
+    // A stopped Save can still read its recovery input or finish a rename. A retry
+    // waits on this job on its worker before replacing that recovery copy.
+    std::shared_ptr<Job> previousSave_;
+    // An unloaded Save abandoned this loader. Keep its input until the read ends,
+    // even if that Save is stopped and a later Save succeeds.
+    std::vector<std::shared_ptr<Job>> recoveryReaders_;
+    SaveCallbacks saveCallbacks_;
+    quint64 saveGeneration_ = 0;
     QTimer *slowPoll_ = nullptr;
     QElapsedTimer quiet_;        // since the job last made progress
     job::State::Snapshot seen_;  // what the job reported at the last poll

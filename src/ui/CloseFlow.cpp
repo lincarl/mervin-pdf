@@ -80,6 +80,7 @@ void CloseFlow::requestQuit(WindowManager *manager, bool restart)
         start(manager, nullptr, restart ? Intent::Restart : Intent::Quit);
 }
 
+// Coalesces compatible close requests and begins collecting their current tab owners.
 CloseFlow *CloseFlow::start(WindowManager *manager, MainWindow *window, Intent intent,
                            TabPage *tab, bool remember)
 {
@@ -105,6 +106,7 @@ CloseFlow *CloseFlow::start(WindowManager *manager, MainWindow *window, Intent i
                     if (Entry *next = flow->entry(item.tab)) {
                         next->accepted = item.accepted;
                         next->save = item.save;
+                        next->saving = item.saving;
                     }
             existing->cancel();
         }
@@ -264,6 +266,7 @@ void CloseFlow::attention(TabPage *tab)
         window->updateForCurrentTab();
 }
 
+// Observes the active tab prerequisite and makes its Stop choice match the close stage.
 void CloseFlow::wait(Entry &item, WaitReason reason)
 {
     clearWait();
@@ -283,7 +286,7 @@ void CloseFlow::wait(Entry &item, WaitReason reason)
         if (waiting_ == WaitReason::Operation) {
             clearWait();
             post();
-        } else if (waiting_ == WaitReason::ResumeForSave
+        } else if (waiting_ == WaitReason::Save
                    || waiting_ == WaitReason::DocumentReleaseForSave) {
             cancel();
         }
@@ -293,6 +296,34 @@ void CloseFlow::wait(Entry &item, WaitReason reason)
     attention(tab);
     if (self && !ended_ && tab)
         tab->showWaitImmediately(reason == WaitReason::DocumentReleaseForSave);
+}
+
+// Continues close only after Saved, asking again if completion introduced another edit.
+void CloseFlow::finishSave(TabPage *tab, TabPage::SaveResult result)
+{
+    if (ended_ || !tab)
+        return;
+    Entry *item = entry(tab);
+    if (!item || !item->saving)
+        return;
+    item->save = false;
+    item->saving = false;
+    // A moved-out tab still settles its retained entry. Its result neither
+    // approves nor cancels the remaining close scope in its former window.
+    if (!includes(tab)) {
+        item->accepted.reset();
+        return;
+    }
+    if (result != TabPage::SaveResult::Saved) {
+        cancel();
+        return;
+    }
+    // A direct unfreeze observer can introduce another edit before completion.
+    // Ask again rather than accepting changes this Save did not write.
+    item->accepted = tab->hasUnsavedEdits() ? std::nullopt
+        : std::optional<quint64>(tab->editGeneration());
+    clearWait();
+    post(tab);
 }
 
 void CloseFlow::clearWait()
@@ -308,6 +339,7 @@ void CloseFlow::clearWait()
         tab->clearCloseWait();
 }
 
+// Processes current-owner decisions and asynchronous prerequisites before final close.
 void CloseFlow::advance(MainWindow *readyWindow)
 {
     if (ended_)
@@ -342,14 +374,9 @@ void CloseFlow::advance(MainWindow *readyWindow)
             if ((waiting_ == WaitReason::Operation || waiting_ == WaitReason::DocumentReleaseForSave)
                 && tab->isBusy())
                 return;
-            if (waiting_ == WaitReason::ResumeForSave) {
-                if (tab->isLoading())
+            if (waiting_ == WaitReason::Save)
+                if (const Entry *item = entry(tab); item && item->saving)
                     return;
-                if (!tab->isLoaded()) {
-                    cancel();
-                    return;
-                }
-            }
         }
         clearWait();
     }
@@ -446,38 +473,35 @@ void CloseFlow::advance(MainWindow *readyWindow)
             return;
         }
         if (item.save) {
+            if (item.saving) {
+                wait(item, WaitReason::Save);
+                return;
+            }
             if (tab->isBusy()) {
                 wait(item, WaitReason::DocumentReleaseForSave);
                 return;
             }
-            if (!tab->isLoaded()) {
-                const QPointer<CloseFlow> self(this);
-                tab->retryLoad();
-                if (!self || ended_)
-                    return;
-                if (!tab) {
-                    post();
-                    return;
-                }
-                if (Entry *current = entry(tab))
-                    wait(*current, WaitReason::ResumeForSave);
-                return;
-            }
             const QPointer<CloseFlow> self(this);
-            const bool saved = window->saveTab(tab);
-            if (!self || ended_)
+            // Attention can transfer the decision before any Save has started.
+            wait(item, WaitReason::Save);
+            if (!self || ended_ || !tab)
                 return;
-            if (!saved) {
-                cancel();
-                return;
-            }
-            if (!tab) {
+            window = owner(tab);
+            if (!window) {
                 post();
                 return;
             }
-            item.save = false;
-            item.accepted = tab->editGeneration();
-            post(tab);
+            item.saving = true;
+            // A broader request can take ownership while Save runs. Its explicit
+            // result also settles this flow's retained entry after a tab move.
+            window->saveTab(tab, [self, tab](TabPage::SaveResult result) {
+                if (self)
+                    self->finishSave(tab, result);
+                if (tab && tab->closeOwner_ && tab->closeOwner_ != self)
+                    tab->closeOwner_->finishSave(tab, result);
+            });
+            if (self && !ended_ && tab && tab->isBusy())
+                tab->showWaitImmediately();
             return;
         }
         item.accepted = tab->editGeneration();

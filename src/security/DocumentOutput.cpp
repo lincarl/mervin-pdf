@@ -41,25 +41,34 @@ bool DocumentOutput::replace(const QString &source, const QString &destination, 
     QFile input(source);
     QSaveFile output(destination);
     output.setDirectWriteFallback(false);
+    if (!job::reading(source))
+        return fail(job::notRunError());
     if (!input.open(QIODevice::ReadOnly))
         return fail(input.errorString());
+    const QString folder = QFileInfo(destination).absolutePath();
+    if (!job::writing(folder))
+        return fail(job::notRunError());
     if (!output.open(QIODevice::WriteOnly))
         return fail(output.errorString());
     QByteArray buffer(1024 * 1024, Qt::Uninitialized);
     for (;;) {
-        if (job::stopped())
+        if (!job::reading(source))
             return fail(job::notRunError());
         const qint64 count = input.read(buffer.data(), buffer.size());
         if (count < 0)
             return fail(input.errorString());
         if (count == 0)
             break;
+        if (!job::writing(folder))
+            return fail(job::notRunError());
         if (output.write(buffer.constData(), count) != count)
             return fail(output.errorString());
         job::progressed();
     }
     // Writes out Qt's buffer while a stop can still keep the destination as it was.
     // The commit then syncs the temporary file to disk and renames it.
+    if (!job::writing(folder))
+        return fail(job::notRunError());
     if (!output.flush())
         return fail(output.errorString());
     if (!job::beginCommit(destination)) {
