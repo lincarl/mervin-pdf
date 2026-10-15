@@ -97,7 +97,11 @@ QString MergePlan::rowError(int i) const
     const Entry &e = entries_.at(i);
     switch (e.load) {
     case Load::Reading:
-        return {};
+        //: Shown after the row number in Merge's footer while a background probe
+        //: reads the PDF. %1 is the file name, for example b.pdf. Merge stays
+        //: disabled until reading finishes. This is a pending state, not a read failure.
+        return tr("\"%1\" is still being read.")
+            .arg(QChar(0x2068) + displayName(i) + QChar(0x2069));
     case Load::Locked:
         //: %1 is a file name.
         return tr("\"%1\" is encrypted and cannot be merged.").arg(displayName(i));
@@ -255,10 +259,14 @@ QString MergePlan::summaryText() const
 
 QString MergePlan::errorText() const
 {
+    // Keep the pending row visible even when an earlier row has already failed.
+    const bool reading = hasReading();
     for (int i = 0; i < entries_.size(); ++i) {
+        if (reading && entries_.at(i).load != Load::Reading)
+            continue;
         const QString e = rowError(i);
         if (!e.isEmpty()) {
-            //: %1 is the row number, %2 the sentence saying what is wrong with it.
+            //: %1 is the row number, %2 the sentence describing the pending read or row problem.
             return tr("Row %1: %2").arg(i + 1).arg(e);
         }
     }

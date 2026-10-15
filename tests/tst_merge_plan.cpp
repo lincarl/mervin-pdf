@@ -42,6 +42,7 @@ private slots:
     void rowTextsMatchesThePerRowGetters();
     void dropGapsMapToTheRightRow();
     void readingBlocksUnknownOutputPositions();
+    void readingReasonFollowsOrderAndCompletion();
     void probeResolutionFollowsPendingCopies();
 
 private:
@@ -77,14 +78,41 @@ void TstMergePlan::readingBlocksUnknownOutputPositions()
     plan.append(ok(QStringLiteral("/a/later.pdf"), 3));
     QVERIFY(plan.hasReading());
     QVERIFY(!plan.isValid());
-    QVERIFY(plan.errorText().isEmpty());
+    QCOMPARE(plan.errorText(), QStringLiteral("Row 2: \"\u2068reading.pdf\u2069\" is still being read."));
     QCOMPARE(plan.countText(1), QStringLiteral("Reading…"));
     QCOMPARE(plan.outputText(0), QStringLiteral("1-2"));
     QVERIFY(plan.outputText(1).isEmpty() && plan.outputText(2).isEmpty());
     auto result = ok(pending.path, 4);
     QVERIFY(plan.resolveProbe(1, result));
     QVERIFY(plan.isValid() && !plan.hasReading());
+    QVERIFY(plan.errorText().isEmpty());
     QCOMPARE(plan.outputText(2), QStringLiteral("7-9"));
+}
+
+/// Checks that the footer follows pending rows before reporting settled failures.
+void TstMergePlan::readingReasonFollowsOrderAndCompletion()
+{
+    MergePlan plan;
+    auto failed = ok(QStringLiteral("/a/missing.pdf"), 0);
+    failed.load = MergePlan::Load::Unreadable;
+    plan.append(failed);
+    auto first = ok(QStringLiteral("/a/first.pdf"), 0);
+    first.load = MergePlan::Load::Reading;
+    first.probeTicket = 1;
+    plan.append(first);
+    auto second = first;
+    second.path = QStringLiteral("/b/second.pdf");
+    second.probeTicket = 2;
+    plan.append(second);
+    QCOMPARE(plan.errorText(), QStringLiteral("Row 2: \"\u2068first.pdf\u2069\" is still being read."));
+    QCOMPARE(plan.moveToGap(2, 0), 0);
+    QCOMPARE(plan.errorText(), QStringLiteral("Row 1: \"\u2068second.pdf\u2069\" is still being read."));
+    QVERIFY(plan.resolveProbe(2, ok(second.path, 1)));
+    QCOMPARE(plan.errorText(), QStringLiteral("Row 3: \"\u2068first.pdf\u2069\" is still being read."));
+    plan.remove(0);
+    QCOMPARE(plan.errorText(), QStringLiteral("Row 2: \"\u2068first.pdf\u2069\" is still being read."));
+    QVERIFY(plan.resolveProbe(1, ok(first.path, 1)));
+    QCOMPARE(plan.errorText(), QStringLiteral("Row 1: \"missing.pdf\" could not be read."));
 }
 
 /// Checks probe identity across duplication, reordered ranges and stale answers.

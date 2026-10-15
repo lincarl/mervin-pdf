@@ -104,8 +104,8 @@ public:
     bool isValid() const; // non-empty and every row contributes
     // "Result: 25 pages from 4 files, in the order shown."
     QString summaryText() const;
-    // "Row 2: Page 40 is out of range (1-31)." - the first problem only. Empty
-    // when the plan is valid.
+    // Names the first Reading row while probes remain, otherwise the first
+    // problem, such as "Row 2: Page 40 is out of range (1-31)." Empty when valid.
     QString errorText() const;
 
     // The plan as the backend wants it. Only meaningful when isValid().

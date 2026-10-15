@@ -93,6 +93,7 @@ private slots:
     void outputOpenInATabIsRefused();
     void failedPlanCanBeReopened();
     void volumesProbeIndependently();
+    void pendingReasonRefitsFilename();
     void pendingRowsKeepTheirProbeIdentity();
     void batchWarningWaitsAndIgnoresRemovedRows_data();
     void batchWarningWaitsAndIgnoresRemovedRows();
@@ -473,10 +474,62 @@ void TstMergeDialog::volumesProbeIndependently()
     QCOMPARE(counts.at(0)->text(), QStringLiteral("Reading…"));
     QCOMPARE(counts.at(1)->text(), QStringLiteral("Reading…"));
     QVERIFY(!mergeBtn(d)->isEnabled());
-    QVERIFY(error(d).isEmpty());
+    QCOMPARE(error(d), QStringLiteral("Row 1: \"\u2068a.pdf\u2069\" is still being read."));
+    QPushButton *up = nullptr;
+    for (auto *button : d.findChildren<QPushButton *>())
+        if (button->text() == QStringLiteral("Move Up"))
+            up = button;
+    QVERIFY(up);
+    list(d)->setCurrentRow(2);
+    up->click();
+    up->click();
+    QCOMPARE(error(d), QStringLiteral("Row 2: \"\u2068a.pdf\u2069\" is still being read."));
+    QVERIFY(!mergeBtn(d)->isEnabled());
     QCOMPARE(mervin::job::testing::stepsOnMainThread(), guiSteps);
     mervin::job::testing::release();
     settle(&d);
+    QVERIFY(mergeBtn(d)->isEnabled());
+    QVERIFY(error(d).isEmpty());
+}
+
+/// Checks that only the pending filename shortens and returns after width or font changes.
+void TstMergeDialog::pendingReasonRefitsFilename()
+{
+    QTemporaryDir files;
+    const QString held = files.filePath(QString(100, QLatin1Char('w')) + QStringLiteral(".pdf"));
+    QVERIFY(QFile::copy(plain_, held));
+    mervin::job::testing::holdWhen([held](mervin::job::Step step, const QString &path) {
+        return step == mervin::job::Step::Reading && path == held;
+    });
+    const auto release = qScopeGuard([] { mervin::job::testing::release(); });
+    MergeDialog d(held, 6);
+    QFont large = d.font();
+    large.setPointSize(15);
+    d.setFont(large);
+    d.resize(760, 600);
+    d.show();
+    QTRY_COMPARE(mervin::job::testing::held(), 1);
+    auto *reason = d.findChild<QLabel *>(QStringLiteral("mergeError"));
+    QVERIFY(reason);
+    QTRY_VERIFY(reason->text().contains(QChar(0x2026)));
+    QVERIFY(reason->text().startsWith(QStringLiteral("Row 1: \"\u2068")));
+    QVERIFY(reason->text().endsWith(QStringLiteral(".pdf\u2069\" is still being read.")));
+    QVERIFY(!mergeBtn(d)->isEnabled());
+
+    const QString complete = d.plan().errorText();
+    d.resize(reason->fontMetrics().horizontalAdvance(complete) + 100, d.height());
+    QTRY_COMPARE(reason->text(), complete);
+    d.resize(760, d.height());
+    QTRY_VERIFY(reason->text().contains(QChar(0x2026)));
+    QFont small = reason->font();
+    small.setPointSize(5);
+    reason->setFont(small);
+    QTRY_COMPARE(reason->text(), complete);
+    reason->setFont(large);
+    QTRY_VERIFY(reason->text().contains(QChar(0x2026)));
+    mervin::job::testing::release();
+    settle(&d);
+    QVERIFY(reason->text().isEmpty());
     QVERIFY(mergeBtn(d)->isEnabled());
 }
 
@@ -552,13 +605,15 @@ void TstMergeDialog::batchWarningWaitsAndIgnoresRemovedRows()
     QTRY_COMPARE(mervin::job::testing::held(), 1);
     QTRY_COMPARE(d.plan().at(1).load, mervin::MergePlan::Load::Unreadable);
     QVERIFY(warnings.isEmpty());
-    QVERIFY(error(d).isEmpty());
+    QCOMPARE(error(d), QStringLiteral("Row 3: \"\u2068held.pdf\u2069\" is still being read."));
+    QVERIFY(!mergeBtn(d)->isEnabled());
     if (remove) {
         list(d)->setCurrentRow(1);
         for (auto *button : d.findChildren<QPushButton *>())
             if (button->text() == QStringLiteral("Remove"))
                 button->click();
         QCOMPARE(list(d)->count(), 2);
+        QCOMPARE(error(d), QStringLiteral("Row 2: \"\u2068held.pdf\u2069\" is still being read."));
     }
     mervin::job::testing::release();
     settle(&d);

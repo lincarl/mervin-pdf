@@ -2713,6 +2713,11 @@ Atidarykite sistemos Nustatymai → Numatytosios programos (arba dešiniuoju pel
 <context>
     <name>mervin::MergePlan</name>
     <message>
+        <source>&quot;%1&quot; is still being read.</source>
+        <extracomment>Shown after the row number in Merge&apos;s footer while a background probe reads the PDF. %1 is the file name, for example b.pdf. Merge stays disabled until reading finishes. This is a pending state, not a read failure.</extracomment>
+        <translation>„%1“ vis dar skaitoma.</translation>
+    </message>
+    <message>
         <source>&quot;%1&quot; is encrypted and cannot be merged.</source>
         <extracomment>%1 is a file name.</extracomment>
         <translation>„%1“ yra užšifruotas ir jo negalima sujungti.</translation>
@@ -2779,7 +2784,7 @@ Atidarykite sistemos Nustatymai → Numatytosios programos (arba dešiniuoju pel
     </message>
     <message>
         <source>Row %1: %2</source>
-        <extracomment>%1 is the row number, %2 the sentence saying what is wrong with it.</extracomment>
+        <extracomment>%1 is the row number, %2 the sentence describing the pending read or row problem.</extracomment>
         <translation>%1 eilutė: %2</translation>
     </message>
 </context>

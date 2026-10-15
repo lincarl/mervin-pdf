@@ -1035,16 +1035,34 @@ void TstTranslationLayout::manageLanguages()
 /// Checks translated Merge layouts while rows read, output checks wait and validation fails.
 void TstTranslationLayout::merge()
 {
-    mervin::job::testing::holdWhen([this](mervin::job::Step step, const QString &path) {
-        return step == mervin::job::Step::Reading && path == plain_;
-    });
-    const auto release = qScopeGuard([] { mervin::job::testing::release(); });
+    QTemporaryDir inputs;
+    QVERIFY(inputs.isValid());
+    for (const QString &name : {
+             QStringLiteral("Building coordination report with structural revisions and updated floor plans.pdf"),
+             QStringLiteral("BuildingCoordinationReportWithStructuralRevisionsAndUpdatedFloorPlans"
+                            "WithStructuralRevisionsAndUpdatedFloorPlans.pdf")}) {
+        const QString pending = inputs.filePath(name);
+        QVERIFY(QFile::copy(plain_, pending));
+        mervin::job::testing::holdWhen([pending](mervin::job::Step step, const QString &path) {
+            return step == mervin::job::Step::Reading && path == pending;
+        });
+        const auto release = qScopeGuard([] { mervin::job::testing::release(); });
+        mervin::MergeDialog reading(pending, 12);
+        QTRY_VERIFY(mervin::job::testing::held() > 0);
+        QVERIFY(reading.reading());
+        inspect(reading, QStringLiteral("Merge reading a long input file name"));
+        const auto *reason = reading.findChild<QLabel *>(QStringLiteral("mergeError"));
+        QVERIFY(reason);
+        // Elision may shorten the name, but its identity and direction stay visible.
+        QVERIFY(reason->text().contains(QChar(0x2068)));
+        QVERIFY(reason->text().contains(QChar(0x2069)));
+        QVERIFY(reason->text().contains(QStringLiteral("Building")));
+        QVERIFY(reason->text().contains(QStringLiteral(".pdf")));
+        mervin::job::testing::release();
+        QTRY_VERIFY(!reading.reading());
+    }
     mervin::MergeDialog dialog(plain_, 12);
     dialog.addPaths({plain_});
-    QTRY_VERIFY(mervin::job::testing::held() > 0);
-    QVERIFY(dialog.reading());
-    inspect(dialog, QStringLiteral("Merge reading an input row"));
-    mervin::job::testing::release();
     QTRY_VERIFY(!dialog.reading());
     inspect(dialog, QStringLiteral("Merge populated documents"));
     {

@@ -279,7 +279,9 @@ qt_add_executable(tst_merge_dialog tst_merge_dialog.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/RowList.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/RowList.h
     ${CMAKE_SOURCE_DIR}/src/ui/Theme.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/Theme.h)
+    ${CMAKE_SOURCE_DIR}/src/ui/Theme.h
+    ${CMAKE_SOURCE_DIR}/src/ui/WaitBar.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/WaitBar.h)
 target_link_libraries(tst_merge_dialog
     PRIVATE mervin_icons mervin_core Qt6::Test Qt6::Widgets qpdf::libqpdf)
 set_target_properties(tst_merge_dialog PROPERTIES WIN32_EXECUTABLE OFF)

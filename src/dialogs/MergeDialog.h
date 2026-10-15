@@ -86,9 +86,13 @@ private:
     // Save as stays, so a quick check does not make it flicker; SaveCheck::slow()
     // says when it takes long.
     void showProblem();
+    /// Fits the pending filename while retaining its row number and read reason.
+    QString fitPendingReason(const QString &reason) const;
     // The rows' files and ranges, which a write depends on.
     QStringList files() const;
     void resizeEvent(QResizeEvent *event) override;
+    /// Refits the pending filename after its label changes width or font.
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
     void addFiles();
     void removeCurrent();

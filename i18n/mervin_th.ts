@@ -2691,6 +2691,11 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
 <context>
     <name>mervin::MergePlan</name>
     <message>
+        <source>&quot;%1&quot; is still being read.</source>
+        <extracomment>Shown after the row number in Merge&apos;s footer while a background probe reads the PDF. %1 is the file name, for example b.pdf. Merge stays disabled until reading finishes. This is a pending state, not a read failure.</extracomment>
+        <translation>ยังอ่าน &quot;%1&quot; อยู่</translation>
+    </message>
+    <message>
         <source>&quot;%1&quot; is encrypted and cannot be merged.</source>
         <extracomment>%1 is a file name.</extracomment>
         <translation>&quot;%1&quot; ถูกเข้ารหัสและไม่สามารถรวมเข้าด้วยกันได้</translation>
@@ -2753,7 +2758,7 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     </message>
     <message>
         <source>Row %1: %2</source>
-        <extracomment>%1 is the row number, %2 the sentence saying what is wrong with it.</extracomment>
+        <extracomment>%1 is the row number, %2 the sentence describing the pending read or row problem.</extracomment>
         <translation>แถว %1: %2</translation>
     </message>
 </context>

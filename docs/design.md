@@ -749,8 +749,11 @@ failures through its tray notice.
 Merge's constructor and Add Files append pending rows immediately, each with a
 probe ticket. One `background::SerialQueue` per lexical `RecentStore::volumeKey`
 reads the PDF information under a separate job state. A blocked drive, share or
-Linux folder holds only its own queue. Reading rows keep Merge disabled and the
-error line empty. Duplicate pending rows share a ticket, and completion follows
+Linux folder holds only its own queue. Reading rows keep Merge disabled. The
+footer names the first pending row and its file, following row moves and removals
+until every probe answers. A filename that cannot wrap shortens in the middle to
+keep the row number and reading reason visible. The footer then shows any settled
+validation error. Duplicate pending rows share a ticket, and completion follows
 that ticket through row removal and reordering. Answers update existing widgets
 in place, preserving a range editor or drag grip. One warning reports the remaining
 failed rows after their Add Files batch finishes. Closing the dialog stops and

@@ -183,9 +183,11 @@ and Stop waiting as other page tools. None saves over a file open in a tab or ov
 input document. Failure reopens the chosen ranges, order and output with its reason.
 
 Merge opens at once and reads each input's page count in the background. Pending
-rows show Reading and keep Merge disabled. Files on different drives, shares or
-folders are read independently. Added files that cannot be read produce one warning
-after that batch finishes. Removing a pending row suppresses its warning.
+rows show Reading and keep Merge disabled. The footer names the first row and file
+still being read, including when that row is scrolled out of view. Files on different
+drives, shares or folders are read independently. Added files that cannot be read
+produce one warning after that batch finishes. Removing a pending row suppresses
+its warning.
 
 Rotate Pages, Split and Merge run in the document's tab once their questions are answered.
 The tab shows its pages as they were and cannot be edited until the tool ends, while

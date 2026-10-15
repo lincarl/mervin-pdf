@@ -10,6 +10,7 @@
 #include "recent/RecentStore.h"
 #include "ui/Icons.h"
 #include "ui/Theme.h"
+#include "ui/WaitBar.h"
 
 #include <QApplication>
 #include <QDialogButtonBox>
@@ -201,6 +202,10 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
 
     error_ = new QLabel(this);
     error_->setObjectName(QStringLiteral("mergeError"));
+    error_->setTextFormat(Qt::PlainText);
+    error_->setWordWrap(true);
+    error_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    error_->installEventFilter(this);
     // Reserve the line even when empty so the buttons below never jump as the
     // user types a range in and out of validity.
     error_->setMinimumHeight(error_->fontMetrics().lineSpacing());
@@ -589,6 +594,14 @@ void MergeDialog::resizeEvent(QResizeEvent *event)
     reelideNames();
 }
 
+bool MergeDialog::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == error_ && plan_.hasReading()
+        && (event->type() == QEvent::Resize || event->type() == QEvent::FontChange))
+        showProblem();
+    return QDialog::eventFilter(watched, event);
+}
+
 void MergeDialog::refreshFooter()
 {
     // The per-row Count and Output cells are derived from the whole plan (Output
@@ -645,14 +658,7 @@ std::optional<QString> MergeDialog::saveAsProblem() const
 
 void MergeDialog::showProblem()
 {
-    if (plan_.hasReading()) {
-        error_->clear();
-        error_->setToolTip({});
-        mergeBtn_->setEnabled(false);
-        saveAsReasonShown_ = false;
-        return;
-    }
-    const QString planReason = plan_.errorText();
+    const QString planReason = fitPendingReason(plan_.errorText());
     const bool planOk = planReason.isEmpty() && !plan_.isEmpty();
     const std::optional<QString> saveAsReason =
         planOk ? saveAsProblem() : std::optional<QString>(QString());
@@ -676,9 +682,27 @@ void MergeDialog::showProblem()
     // but leaves Merge enabled, so closing the file in the program that holds it
     // and pressing Merge again is enough.
     const bool showWrite = why.isEmpty() && !writeError_.isEmpty();
-    error_->setText(showWrite ? writeError_ : why);
+    const QString text = showWrite ? writeError_ : why;
+    if (error_->text() != text)
+        error_->setText(text);
     error_->setToolTip(showWrite ? writeErrorDetail_ : QString());
     mergeBtn_->setEnabled(!plan_.isEmpty() && plan_.isValid() && why.isEmpty());
+}
+
+QString MergeDialog::fitPendingReason(const QString &reason) const
+{
+    for (int i = 0; i < plan_.count(); ++i) {
+        if (plan_.at(i).load != MergePlan::Load::Reading)
+            continue;
+        const QString name = plan_.displayName(i);
+        const QString isolated = QChar(0x2068) + name + QChar(0x2069);
+        // Keep the translated row and reason intact, shortening only the named
+        // file when an unbroken part cannot fit at the current label width.
+        return fitFileSentence([&reason, &isolated](const QString &shown, const QString &) {
+            return QString(reason).replace(isolated, shown);
+        }, name, {}, error_->fontMetrics(), error_->contentsRect().width());
+    }
+    return reason;
 }
 
 QStringList MergeDialog::files() const
