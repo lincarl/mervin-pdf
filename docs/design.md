@@ -912,7 +912,8 @@ write queue. The UI claims the manifest only after committing it. Stop or select
 before unload adoption removes the job's PDF and manifest after its handles close.
 After adoption, the tab owns them until Save succeeds or the user closes the tab. An abandoned loader
 or an earlier stopped writer can still read a recovery input, so removal waits
-for both readers and writers without blocking the UI.
+for both readers and writers without blocking the UI. A superseded unload
+checkpoint keeps its manifest until its readers close and its PDF is removed.
 
 Settings saves merge only fields changed since that window's last load/save, preventing
 stale windows from overwriting newer preferences, and commit through `QSaveFile`.

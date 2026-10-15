@@ -380,6 +380,65 @@ private slots:
         QVERIFY(recoveryEntries().isEmpty());
     }
 
+    /// Covers successful and failed removal of a superseded recovery PDF.
+    void supersededRecoveryKeepsItsManifestUntilPdfRemoval_data()
+    {
+        QTest::addColumn<bool>("removalFails");
+        QTest::newRow("removed PDF releases its manifest") << false;
+        QTest::newRow("failed PDF removal retains its manifest") << true;
+    }
+
+    /// Retains the old cleanup record on removal failure without losing the new checkpoint.
+    void supersededRecoveryKeepsItsManifestUntilPdfRemoval()
+    {
+        QFETCH(bool, removalFails);
+        QTemporaryDir files;
+        const QString path = copy(files, QStringLiteral("edited.pdf"));
+        QVERIFY(!path.isEmpty());
+        const QByteArray original = bytes(path);
+        RenderEngine engine;
+        TabPage tab(&engine);
+        QVERIFY(tab.open(path));
+        QVERIFY(edit(tab, QStringLiteral("First retained edit")));
+        QVERIFY(testing::suspendAndWait(tab));
+        const QString priorCopy = tab.recoveryPath();
+        const QString priorManifest = priorCopy + QStringLiteral(".json");
+        const QByteArray priorMetadata = bytes(priorManifest);
+        QVERIFY(!priorMetadata.isEmpty());
+        QVERIFY(tab.resume());
+        QVERIFY(edit(tab, QStringLiteral("Second retained edit")));
+        if (removalFails) {
+            // The open PDF owns its bytes. A nonempty directory makes removal
+            // fail on every platform without relying on filesystem permissions.
+            QVERIFY(QFile::remove(priorCopy));
+            QVERIFY(QDir().mkpath(priorCopy));
+            QFile blocker(QDir(priorCopy).filePath(QStringLiteral("keep")));
+            QVERIFY(blocker.open(QIODevice::WriteOnly));
+            QCOMPARE(blocker.write("occupied"), qint64(8));
+            blocker.close();
+        }
+        QVERIFY(testing::suspendAndWait(tab));
+        const QString currentCopy = tab.recoveryPath();
+        QVERIFY(currentCopy != priorCopy);
+        QVERIFY(tab.hasRecoverySnapshot() && tab.hasUnsavedEdits());
+        QVERIFY(!bytes(currentCopy).isEmpty());
+        QVERIFY(!bytes(currentCopy + QStringLiteral(".json")).isEmpty());
+        engine.shutdown();
+        QVERIFY(background::settle(10000));
+        QVERIFY(Document::waitForCloses(10000));
+        QVERIFY(appfiles::flush(10000));
+        if (removalFails) {
+            QVERIFY(QFileInfo(priorCopy).isDir());
+            QCOMPARE(bytes(priorManifest), priorMetadata);
+        } else {
+            QVERIFY(!QFileInfo::exists(priorCopy));
+            QVERIFY(!QFileInfo::exists(priorManifest));
+        }
+        QCOMPARE(bytes(path), original);
+        QVERIFY(tab.resume());
+        QCOMPARE(tab.viewer()->annotModel()->pageAnnots(0).size(), size_t(2));
+    }
+
     /// Preserves adopted edits when viewer signals synchronously request Stop.
     void stopDuringViewerDetachmentKeepsTheCommittedRecovery()
     {

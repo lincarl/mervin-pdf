@@ -1197,16 +1197,22 @@ void TabPage::finishUnload(const std::shared_ptr<Job> &job)
     retainedEdits_ = true;
     claimedRecoveries.insert(recoveryManifest_);
     claimedRecoveries.remove(unload->priorManifest);
-    appfiles::remove(unload->priorManifest);
     recoveryReaders_.clear();
     previousSave_.reset();
     // Adoption is visible before viewer signals can Stop or delete the tab. A
     // scope guard closes the transferred Document even if those signals delete us.
     OwnedDocument previous(doc_.release());
     const auto closePrevious = qScopeGuard([&previous, copy = unload->priorCopy,
+                                           manifest = unload->priorManifest,
                                            readers = unload->readers] {
         Document::closeInBackground(std::unique_ptr<Document>(previous.release()),
-            [copy, readers] { removeAfterJobs(copy, readers); });
+            [copy, manifest, readers] {
+                for (const auto &reader : readers)
+                    reader->waitUntilEnded();
+                // Keep the old cleanup record if its PDF cannot be removed.
+                if ((copy.isEmpty() || QFile::remove(copy)) && !manifest.isEmpty())
+                    QFile::remove(manifest);
+            });
     });
     viewer_->setDocument(nullptr);
     if (!self || job_ != job)
