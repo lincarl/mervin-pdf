@@ -530,6 +530,17 @@ add_test(NAME tst_background_unload COMMAND tst_background_unload)
 set_tests_properties(tst_background_unload PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+
+qt_add_executable(tst_page_dialog_operations tst_page_dialog_operations.cpp TestWaits.h Stalls.h)
+target_link_libraries(tst_page_dialog_operations PRIVATE mervin_app Qt6::Test)
+set_target_properties(tst_page_dialog_operations PROPERTIES WIN32_EXECUTABLE OFF)
+target_compile_definitions(tst_page_dialog_operations PRIVATE
+    MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
+add_test(NAME tst_page_dialog_operations COMMAND tst_page_dialog_operations)
+set_tests_properties(tst_page_dialog_operations PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    TIMEOUT 180
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 set_tests_properties(tst_ink_rects PROPERTIES LABELS "optional-corpus")
 
 target_compile_definitions(tst_document_output PRIVATE MERVIN_SCAN_PDF="${MERVIN_FIXTURES_DIR}/scan.pdf")

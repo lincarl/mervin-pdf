@@ -2047,6 +2047,11 @@ Izvoženo datoteko si lahko ogledate v katerem koli pregledovalniku PDF.</transl
         <translation>PDF dokumenti (*.pdf)</translation>
     </message>
     <message>
+        <source>The page count changed. Check the ranges and try again.</source>
+        <extracomment>The source file changed its number of pages after the dialog&apos;s initial probe. The user&apos;s ranges remain and need another review.</extracomment>
+        <translation>Število strani se je spremenilo. Preverite obsege in poskusite znova.</translation>
+    </message>
+    <message>
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
         <translation>&quot;%1&quot; že obstaja. Zamenjati?</translation>

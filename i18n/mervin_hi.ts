@@ -2043,6 +2043,11 @@ The exported file is viewable in any PDF viewer.</source>
         <translation>पीडीएफ दस्तावेज़(*.pdf)</translation>
     </message>
     <message>
+        <source>The page count changed. Check the ranges and try again.</source>
+        <extracomment>The source file changed its number of pages after the dialog&apos;s initial probe. The user&apos;s ranges remain and need another review.</extracomment>
+        <translation>पृष्ठों की संख्या बदल गई है। पृष्ठ सीमाएँ जाँचें और फिर से कोशिश करें।</translation>
+    </message>
+    <message>
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
         <translation>&quot;%1&quot; पहले से मौजूद है। इसे बदलें?</translation>

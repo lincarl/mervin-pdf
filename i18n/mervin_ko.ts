@@ -2041,6 +2041,11 @@ The exported file is viewable in any PDF viewer.</source>
         <translation>PDF 문서 (*.pdf)</translation>
     </message>
     <message>
+        <source>The page count changed. Check the ranges and try again.</source>
+        <extracomment>The source file changed its number of pages after the dialog&apos;s initial probe. The user&apos;s ranges remain and need another review.</extracomment>
+        <translation>페이지 수가 변경되었습니다. 페이지 범위를 확인하고 다시 시도하세요.</translation>
+    </message>
+    <message>
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
         <translation>&quot;%1&quot;이(가) 이미 존재합니다. 덮어쓰시겠습니까?</translation>

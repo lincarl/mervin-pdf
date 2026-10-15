@@ -42,6 +42,7 @@
 #include <QScopeGuard>
 #include <QStatusBar>
 #include <QTemporaryDir>
+
 #include <QTimer>
 #include <QToolButton>
 #include <QWidgetAction>
@@ -880,53 +881,205 @@ void MainWindow::extractPagesOp()
     pagesDialog(mervin::ExtractPlan::Mode::Extract, std::nullopt);
 }
 
+// The probe and failed-attempt choices travel with their tab. Only the worker
+// mutates a running result, published through TabPage's job mutex before delivery.
+struct MainWindow::PagesJob
+{
+    mervin::ExtractDialog::Source source;
+    std::optional<mervin::ExtractDialog::Choices> choices;
+    mervin::ExtractPlan::Job output;
+    bool writing = false;
+    bool succeeded = false;
+};
+
+/// Captures the launching tab and starts its source probe before opening the editor.
 void MainWindow::pagesDialog(mervin::ExtractPlan::Mode mode, std::optional<int> seedPage)
 {
     const OperationScope operation(this);
-    TabPage *t = currentTab();
-    ViewerWidget *v = currentViewer();
-    if (!t || !v)
+    const QPointer<MainWindow> self(this);
+    const QPointer<TabPage> tab(currentTab());
+    if (!tab || !tab->isUsable())
         return;
-    // Bake an edit still being typed into the live document so the unsaved-changes
-    // note sees it. Nothing is written here, since both modes copy from the file on disk.
-    v->commitActiveFormEditor();
-    v->commitActiveAnnotEditor();
-
-    mervin::ExtractDialog::Source src;
-    src.mode = mode;
-    src.path = t->path();
-    src.canonicalPath = t->canonicalPath();
-    src.password = t->password();
-    src.viewerPageCount = v->pageCount();
-    src.seedPage = seedPage;
-    // The tab's own state, since a document reloaded from its recovery copy shows
-    // edits the viewer does not count as unsaved.
-    src.hasUnsavedEdits = t->hasUnsavedEdits();
-    src.openWhenDone = settings_.extractOpenWhenDone;
-    src.doc = v->document();
-    src.engine = engine_;
-    src.openPaths = wm_ ? wm_->openTabPaths() : tabPaths();
-
-    mervin::ExtractDialog dlg(src, this);
-    if (dlg.exec() != QDialog::Accepted)
+    tab->viewer()->commitActiveFormEditor();
+    if (!self || !tab || !tab->isUsable())
         return;
+    tab->viewer()->commitActiveAnnotEditor();
+    if (!self || !tab || !tab->isUsable())
+        return;
+    auto job = std::make_shared<PagesJob>();
+    auto &source = job->source;
+    source.mode = mode;
+    source.path = tab->path();
+    source.canonicalPath = tab->canonicalPath();
+    source.password = tab->password();
+    source.viewerPageCount = tab->viewer()->pageCount();
+    source.seedPage = seedPage;
+    source.hasUnsavedEdits = tab->hasUnsavedEdits();
+    source.openWhenDone = settings_.extractOpenWhenDone;
+    runPagesJob(tab, job, false);
+}
 
-    if (!dlg.password().isEmpty())
-        t->setPassword(dlg.password()); // verified by the dialog; typed there or the tab's own
-    if (dlg.openWhenDone() != settings_.extractOpenWhenDone) {
-        settings_.extractOpenWhenDone = dlg.openWhenDone();
+/// Runs a source probe or accepted page plan as a tab-owned worker operation.
+void MainWindow::runPagesJob(TabPage *tab, const std::shared_ptr<PagesJob> &result, bool write)
+{
+    if (!tab || !tab->isUsable())
+        return;
+    auto *owner = qobject_cast<MainWindow *>(tab->window());
+    if (!owner)
+        return;
+    const QSet<QString> open = openFileKeys(owner->wm_ ? owner->wm_->openTabPaths()
+                                                     : owner->tabPaths());
+    result->writing = write;
+    result->succeeded = false;
+    TabPage::Operation operation;
+    operation.destination = QFileInfo(write ? result->output.path : result->source.path).absolutePath();
+    operation.work = [result, open, write] {
+        using Dialog = mervin::ExtractDialog;
+        auto &source = result->source;
+        if (!write) {
+            source.probe = Dialog::probeSource(source.path, source.password);
+            return;
+        }
+        auto &choices = *result->choices;
+        choices.failure = Dialog::Choices::Failure::Write;
+        choices.error = mervin::job::notRunError();
+        const QString folder = QFileInfo(result->output.path).absolutePath();
+        if (!mervin::job::writing(folder))
+            return;
+        const QString key = mervin::fileKey(QFileInfo(result->output.path));
+        // The source may have been redirected while the dialog was open. Its
+        // current target must remain protected even when the tab owns the old key.
+        if (!mervin::job::reading(source.path))
+            return;
+        const QString sourceKey = mervin::fileKey(QFileInfo(source.path));
+        if (mervin::job::stopped())
+            return;
+        if (key == sourceKey) {
+            choices.failure = Dialog::Choices::Failure::Source;
+            choices.error.clear();
+            return;
+        }
+        if (open.contains(key) || !mervin::job::reserveDestinations({key})) {
+            choices.failure = Dialog::Choices::Failure::Destination;
+            choices.error.clear();
+            return;
+        }
+        const int oldCount = source.probe.status == PageOps::Status::Ok
+            ? source.probe.pageCount : source.viewerPageCount;
+        // Verification belongs here even if the row was absent. The source may
+        // have changed since the first probe while the user chose its pages.
+        Dialog::Probe probe;
+        probe.status = PageOps::probe(source.path, &probe.pageCount, choices.password, &probe.error);
+        if (probe.status == PageOps::Status::Ok)
+            probe.password = choices.password;
+        source.probe = probe;
+        if (probe.status != PageOps::Status::Ok) {
+            choices.failure = probe.status == PageOps::Status::NeedsPassword
+                ? Dialog::Choices::Failure::Password : Dialog::Choices::Failure::Read;
+            choices.error = probe.error;
+            return;
+        }
+        if (probe.pageCount != oldCount) {
+            choices.failure = Dialog::Choices::Failure::ChangedCount;
+            choices.error.clear();
+            return;
+        }
+        // Use page indices captured on the GUI thread. A language change cannot
+        // change the meaning of a localized range while this worker runs.
+        const auto job = result->output;
+        if (mervin::job::stopped())
+            return;
+        const PageOps::Status status = job.mode == mervin::ExtractPlan::Mode::Delete
+            ? PageOps::deletePages(source.path, job.path, job.pages, choices.password, &choices.error)
+            : PageOps::merge({PageOps::MergeInput{source.path, job.pages, choices.password}},
+                             job.path, &choices.error);
+        result->succeeded = status == PageOps::Status::Ok;
+        if (!result->succeeded)
+            choices.failure = status == PageOps::Status::NeedsPassword
+                ? Dialog::Choices::Failure::Password : Dialog::Choices::Failure::Write;
+    };
+    operation.finished = [page = QPointer<TabPage>(tab), result] {
+        if (page)
+            queuePagesResult(page, result);
+    };
+    tab->startOperation(std::move(operation));
+}
+
+/// Routes completed page work through the surviving tab owner and close guards.
+void MainWindow::queuePagesResult(TabPage *tab, const std::shared_ptr<PagesJob> &result)
+{
+    const QPointer<TabPage> page(tab);
+    const QPointer<MainWindow> owner(qobject_cast<MainWindow *>(tab->window()));
+    if (!owner)
+        return;
+    const auto discarded = connect(owner, &QObject::destroyed, page, [page, result] {
+        if (page)
+            QTimer::singleShot(0, page, [page, result] {
+                if (page)
+                    queuePagesResult(page, result);
+            });
+    });
+    owner->whenTabsCanChange([page, owner, result, discarded] {
+        disconnect(discarded);
+        auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!current || current->closeConfirmed_ || (current->wm_ && current->wm_->isClosing()))
+            return;
+        if (current != owner) {
+            queuePagesResult(page, result);
+            return;
+        }
+        if (page->isUsable())
+            current->finishPagesJob(page, result);
+    });
+}
+
+/// Opens accepted output or restores failed choices in the launching tab context.
+void MainWindow::finishPagesJob(TabPage *tab, const std::shared_ptr<PagesJob> &result)
+{
+    const OperationScope operation(this);
+    const QPointer<MainWindow> self(this);
+    const QPointer<TabPage> page(tab);
+    if (result->writing && result->succeeded) {
+        if (!result->source.probe.password.isEmpty())
+            page->setPassword(result->source.probe.password);
+        statusBar()->showMessage(mervin::ExtractPlan::doneText(result->output), 5000);
+        if (result->choices->openWhenDone && !hiddenToTray_)
+            openFile(result->output.path, false, -1, true,
+                result->output.mode == mervin::ExtractPlan::Mode::Delete
+                    ? result->source.probe.password : QString());
+        return;
+    }
+    if (hiddenToTray_) {
+        if (result->writing && wm_)
+            wm_->notifyInTray(tr("Operation failed"),
+                mervin::ExtractDialog::failureText(*result->choices, result->source.mode));
+        return;
+    }
+    auto source = result->source;
+    source.doc = page->viewer()->document();
+    source.engine = engine_;
+    source.hasUnsavedEdits = page->hasUnsavedEdits();
+    source.openPaths = wm_ ? wm_->openTabPaths() : tabPaths();
+    const QPointer<mervin::ExtractDialog> dialog =
+        new mervin::ExtractDialog(source, this, result->choices);
+    dialog->setWindowModality(Qt::WindowModal);
+    const bool accepted = dialog->exec() == QDialog::Accepted;
+    if (!self || !page || !dialog) {
+        delete dialog.data();
+        return;
+    }
+    if (!accepted) {
+        delete dialog.data();
+        return;
+    }
+    result->choices = dialog->choices();
+    result->output = dialog->job();
+    delete dialog.data();
+    if (result->choices->openWhenDone != settings_.extractOpenWhenDone) {
+        settings_.extractOpenWhenDone = result->choices->openWhenDone;
         settings_.save();
     }
-
-    // The dialog has written the file: it writes before closing, so a failed
-    // write stays in the dialog with the rows. No completion modal: the status
-    // bar says what was written, and Open when done decides what happens next.
-    // Delete's copy keeps the source's encryption, so it opens with its password.
-    const mervin::ExtractPlan::Job job = dlg.job();
-    statusBar()->showMessage(mervin::ExtractPlan::doneText(job), 5000);
-    if (dlg.openWhenDone())
-        openFile(job.path, false, -1, true,
-                 job.mode == mervin::ExtractPlan::Mode::Delete ? dlg.password() : QString());
+    runPagesJob(page, result, true);
 }
 
 // Captures split choices and reserves every output before writing any file.

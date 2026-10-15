@@ -21,6 +21,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QPointer>
 #include <QSignalBlocker>
 #include <QStyle>
 #include <QTimer>
@@ -50,7 +51,22 @@ QHBoxLayout *row()
 }
 } // namespace
 
-ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
+/// Counts source pages on a worker, retrying only with a supplied open password.
+ExtractDialog::Probe ExtractDialog::probeSource(const QString &path, const QString &knownPassword)
+{
+    Probe result;
+    result.status = PageOps::probe(path, &result.pageCount, {}, &result.error);
+    if (result.status == PageOps::Status::NeedsPassword && !knownPassword.isEmpty()) {
+        result.status = PageOps::probe(path, &result.pageCount, knownPassword, &result.error);
+        if (result.status == PageOps::Status::Ok)
+            result.password = knownPassword;
+    }
+    return result;
+}
+
+/// Builds the editor from completed source facts and optional retained choices.
+ExtractDialog::ExtractDialog(const Source &source, QWidget *parent,
+                             const std::optional<Choices> &choices)
     : QDialog(parent)
     , source_(source)
     , plan_(source.path, source.viewerPageCount, source.mode, source.canonicalPath)
@@ -64,29 +80,13 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
         setWindowTitle(tr("Extract Pages"));
     }
 
-    // qpdf is what will write, so qpdf is asked: whatever it can open, the write
-    // can read. It never prompts. An encrypted file is tried with the tab's
-    // password, and gets the inline password row only when that does not open it.
-    int count = 0;
-    bool needsPassword = false;
-    PageOps::Status st = PageOps::probe(source.path, &count, QString(), &readErrorDetail_);
-    if (st == PageOps::Status::NeedsPassword && !source.password.isEmpty()) {
-        st = PageOps::probe(source.path, &count, source.password, &readErrorDetail_);
-        if (st == PageOps::Status::Ok)
-            password_ = source.password;
-    }
-    switch (st) {
-    case PageOps::Status::Ok:
-        if (count > 0)
-            plan_.setPageCount(count);
-        break;
-    case PageOps::Status::NeedsPassword:
-        needsPassword = true;
-        break;
-    case PageOps::Status::Failed:
-        readError_ = true;
-        break;
-    }
+    const Probe &probe = source.probe;
+    const bool needsPassword = probe.status == PageOps::Status::NeedsPassword;
+    readError_ = probe.status == PageOps::Status::Failed;
+    readErrorDetail_ = probe.error;
+    password_ = probe.password;
+    if (probe.status == PageOps::Status::Ok && probe.pageCount > 0)
+        plan_.setPageCount(probe.pageCount);
     plan_.setOpenFiles(source.openPaths);
     saveCheck_ = new SaveCheck(this);
     connect(saveCheck_, &SaveCheck::slow, this, &ExtractDialog::showProblem);
@@ -323,12 +323,31 @@ ExtractDialog::ExtractDialog(const Source &source, QWidget *parent)
     // Page As was opened for, or every page, first to last. Delete starts on the
     // page in view, since deleting the page being read is the common case.
     const int last = qMax(1, plan_.pageCount());
-    if (source.seedPage)
+    if (choices) {
+        for (const QString &spec : choices->specs)
+            plan_.append(spec);
+        outputEdited_ = choices->outputEdited;
+        defaultName_ = plan_.fileName();
+        output_->setText(choices->output);
+        openWhenDone_->setChecked(choices->openWhenDone);
+        password_ = choices->password;
+        if (passwordEdit_)
+            passwordEdit_->setText(choices->password);
+        passwordRejected_ = choices->failure == Choices::Failure::Password;
+        if (choices->failure == Choices::Failure::Read) {
+            readError_ = true;
+            readErrorDetail_ = choices->error;
+        } else if (choices->failure != Choices::Failure::Password) {
+            writeError_ = failureText(*choices, source.mode);
+            writeErrorDetail_ = choices->error;
+        }
+    } else if (source.seedPage) {
         plan_.append(QString::number(qBound(0, *source.seedPage, last - 1) + 1));
-    else if (deleting)
+    } else if (deleting) {
         plan_.append(QString());
-    else
+    } else {
         plan_.append(last > 1 ? QStringLiteral("1-%1").arg(last) : QStringLiteral("1"));
+    }
     rebuild(0, Focus::SelectAll);
 
     resize(kWidth, kHeight);
@@ -667,17 +686,26 @@ std::optional<QString> ExtractDialog::saveAsProblem() const
     return plan_.destinationError(text, checked_->facts);
 }
 
+/// Applies a chosen destination only if the editor survives its picker.
 void ExtractDialog::browseForOutput()
 {
     //: Title of the file picker for the new file Delete pages writes.
     const QString title = plan_.mode() == ExtractPlan::Mode::Delete ? tr("Save Edited Copy")
                                                                      : tr("Save Extracted Pages");
-    const QString picked = QFileDialog::getSaveFileName(this, title,
-                                                        plan_.resolvePath(output_->text()),
-                                                        //: File type filter. Keep "(*.pdf)".
-                                                        tr("PDF documents (*.pdf)"));
-    if (picked.isEmpty())
+    const QPointer<ExtractDialog> self(this);
+    const QPointer<QFileDialog> picker = new QFileDialog(this, title);
+    picker->setAcceptMode(QFileDialog::AcceptSave);
+    picker->setFileMode(QFileDialog::AnyFile);
+    picker->setWindowModality(Qt::WindowModal);
+    picker->selectFile(plan_.resolvePath(output_->text()));
+    //: File type filter. Keep "(*.pdf)".
+    picker->setNameFilter(tr("PDF documents (*.pdf)"));
+    const bool accepted = picker->exec() == QDialog::Accepted;
+    const QStringList files = accepted && picker ? picker->selectedFiles() : QStringList{};
+    delete picker.data();
+    if (!self || files.isEmpty() || files.first().isEmpty())
         return;
+    const QString picked = files.first();
     output_->setText(QDir::toNativeSeparators(picked));
     outputEdited_ = true;
     writeError_.clear();
@@ -693,91 +721,75 @@ void ExtractDialog::accept()
     checkOutput();
 }
 
+/// Formats retained worker failures for the dialog or a hidden-owner notice.
+QString ExtractDialog::failureText(const Choices &choices, ExtractPlan::Mode mode)
+{
+    switch (choices.failure) {
+    case Choices::Failure::None:
+        return {};
+    case Choices::Failure::Password:
+        return tr("That password is not correct.");
+    case Choices::Failure::Read:
+        return mode == ExtractPlan::Mode::Delete
+            ? tr("This PDF cannot be read for deleting pages.")
+            : tr("This PDF cannot be read for extraction.");
+    case Choices::Failure::Source:
+        return mode == ExtractPlan::Mode::Delete
+            ? QCoreApplication::translate("mervin::ExtractPlan",
+                "The edited copy cannot replace the document it comes from.")
+            : QCoreApplication::translate("mervin::ExtractPlan",
+                "The extract cannot replace the document it comes from.");
+    case Choices::Failure::Destination:
+        return QCoreApplication::translate("mervin::ExtractPlan",
+            "That file is open in a tab. Choose another name.");
+    case Choices::Failure::ChangedCount:
+        //: The source file changed its number of pages after the dialog's
+        //: initial probe. The user's ranges remain and need another review.
+        return tr("The page count changed. Check the ranges and try again.");
+    case Choices::Failure::Write:
+        if (mode == ExtractPlan::Mode::Delete) {
+            //: %1 is the new file's name. "Delete pages" is the button's text.
+            return tr("Could not write \"%1\". If another program has it open, close "
+                      "it and press Delete pages again, or choose another name.")
+                .arg(QFileInfo(choices.output).fileName());
+        }
+        //: %1 is the new file's name.
+        return tr("Could not write \"%1\". If another program has it open, close it "
+                  "and press Extract again, or choose another name.")
+            .arg(QFileInfo(choices.output).fileName());
+    }
+    return {};
+}
+
+/// Copies the current plan and editable fields for asynchronous writing or retry.
+ExtractDialog::Choices ExtractDialog::choices() const
+{
+    return {plan_.specs(), output_->text(), password_, outputEdited_, openWhenDone(),
+            Choices::Failure::None, {}};
+}
+
+/// Captures an accepted plan after destination checks and overwrite approval.
 void ExtractDialog::write()
 {
     if (const std::optional<QString> why = problem(); !why || !why->isEmpty())
         return;
-
-    // Verify the password before closing, so a wrong one is fixed here rather
-    // than after the dialog has gone.
-    if (passwordEdit_) {
-        int count = 0;
-        QString err;
-        QApplication::setOverrideCursor(Qt::WaitCursor);
-        const PageOps::Status st =
-            PageOps::probe(source_.path, &count, passwordEdit_->text(), &err);
-        QApplication::restoreOverrideCursor();
-        if (st == PageOps::Status::NeedsPassword) {
-            passwordRejected_ = true;
-            refresh();
-            passwordEdit_->setFocus();
-            passwordEdit_->selectAll();
-            return;
-        }
-        if (st == PageOps::Status::Failed) {
-            readError_ = true;
-            readErrorDetail_ = err;
-            refresh();
-            return;
-        }
-        // Until now the count was the viewer's; qpdf's is the one the write uses.
-        if (count > 0 && count != plan_.pageCount()) {
-            plan_.setPageCount(count);
-            refresh();
-            const std::optional<QString> why = problem();
-            if (!why) {
-                pressed_ = plan_.job(output_->text()); // the new default name is being checked
-                return;
-            }
-            if (!why->isEmpty())
-                return;
-        }
-    }
-
     const ExtractPlan::Job job = plan_.job(output_->text());
-    if (checked_->facts.exists
-        && QMessageBox::question(this, windowTitle(),
-                                 //: %1 is a file path.
-                                 tr("\"%1\" already exists. Replace it?")
-                                     .arg(QDir::toNativeSeparators(job.path)),
-                                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
-               != QMessageBox::Yes)
-        return;
-
+    const QPointer<ExtractDialog> self(this);
+    if (checked_->facts.exists) {
+        const QPointer<QMessageBox> question = new QMessageBox(QMessageBox::Question,
+            windowTitle(),
+            //: %1 is a file path.
+            tr("\"%1\" already exists. Replace it?").arg(QDir::toNativeSeparators(job.path)),
+            QMessageBox::Yes | QMessageBox::No, this);
+        question->setDefaultButton(QMessageBox::No);
+        question->setWindowModality(Qt::WindowModal);
+        const bool replace = question->exec() == QMessageBox::Yes;
+        delete question.data();
+        if (!self || !replace)
+            return;
+    }
     if (passwordEdit_)
         password_ = passwordEdit_->text();
-
-    // Written here rather than by the caller after the dialog closes: a file
-    // another program holds open, or a full disk, then costs a message on the
-    // error line instead of every row. merge() fails on an out-of-range page
-    // rather than skipping it, and one input on the same file is exactly an
-    // extract. deletePages() copies the whole file minus the pages, so the copy
-    // keeps the source's structure and encryption, as Delete Pages always has.
-    const bool deleting = job.mode == ExtractPlan::Mode::Delete;
-    QString err;
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    const PageOps::Status st =
-        deleting ? PageOps::deletePages(source_.path, job.path, job.pages, password_, &err)
-                 : PageOps::merge({PageOps::MergeInput{source_.path, job.pages, password_}},
-                                  job.path, &err);
-    QApplication::restoreOverrideCursor();
-    if (st != PageOps::Status::Ok) {
-        const QString name = QFileInfo(job.path).fileName();
-        if (deleting) {
-            //: %1 is the new file's name. "Delete pages" is the button's text.
-            writeError_ = tr("Could not write \"%1\". If another program has it open, close "
-                             "it and press Delete pages again, or choose another name.")
-                              .arg(name);
-        } else {
-            //: %1 is the new file's name.
-            writeError_ = tr("Could not write \"%1\". If another program has it open, close it "
-                             "and press Extract again, or choose another name.")
-                              .arg(name);
-        }
-        writeErrorDetail_ = QDir::toNativeSeparators(err);
-        refresh();
-        return;
-    }
     job_ = job;
     QDialog::accept();
 }

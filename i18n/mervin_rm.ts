@@ -2043,6 +2043,11 @@ La datoteca exportada po vegnir mussada en mintga lectur PDF.</translation>
         <translation>Documents PDF (*.pdf)</translation>
     </message>
     <message>
+        <source>The page count changed. Check the ranges and try again.</source>
+        <extracomment>The source file changed its number of pages after the dialog&apos;s initial probe. The user&apos;s ranges remain and need another review.</extracomment>
+        <translation>Il dumber da paginas è sa midà. Controllai ils intervals ed empruvai anc ina giada.</translation>
+    </message>
+    <message>
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
         <translation>&quot;%1&quot; exista gia. Surscriver?</translation>
