@@ -333,6 +333,7 @@ private:
     QString barName_;
     QString barFolder_;
     bool barTrapped_ = false;
+    bool barPrinting_ = false;
     bool retainedEdits_ = false;
     quint64 editGeneration_ = 0;
     QPointer<CloseFlow> closeOwner_;

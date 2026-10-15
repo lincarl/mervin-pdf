@@ -164,6 +164,11 @@ Edited document retained at %2.
         <translation>沒有可匯出的測量標記。請先新增測量標記。</translation>
     </message>
     <message>
+        <source>Could not finish the print job.</source>
+        <extracomment>The printer system rejected completion of the print job. It may have accepted earlier pages.</extracomment>
+        <translation>無法完成列印工作。</translation>
+    </message>
+    <message>
         <source>Export</source>
         <extracomment>Title of messages about exporting with measurements.</extracomment>
         <translation>匯出</translation>
@@ -3401,6 +3406,11 @@ Open it now?</source>
         <source>Stopped waiting. The document stays locked until the drive answers.</source>
         <extracomment>A stopped job still holds the shown document while a file call finishes. Locked means unavailable for viewing or editing, not password protection or file permissions. The tab becomes usable when the job releases it.</extracomment>
         <translation>已停止等待。磁碟機回應前，文件仍無法操作。</translation>
+    </message>
+    <message>
+        <source>Printing to %1. The printer is not answering.</source>
+        <extracomment>A print job has waited for the printer system without progress. %1 is the printer name, such as Office Laser. Stop waiting leaves the blocked printer call on a worker and prevents further pages from being submitted.</extracomment>
+        <translation>正在使用 %1 列印。印表機沒有回應。</translation>
     </message>
 </context>
 <context>

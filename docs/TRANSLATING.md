@@ -103,6 +103,10 @@ temporarily unavailable for use, rather than password-protected. Preserve the
 condition that it becomes usable when the drive responds. Follow the source note
 for each notice instead of implying that Stop immediately releases the document.
 
+A printer wait notice names the printer system, which can continue handling a call
+after Stop waiting. Distinguish a failure to finish submitting a print job from a
+failure to open the document. Earlier pages may already have reached the printer.
+
 Distinguish access-key ampersands from literal conjunctions. The plain menu
 heading "Select & Annotate" means "Select and Annotate". A translation that spells
 out the conjunction must not gain an access-key marker.

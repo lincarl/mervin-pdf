@@ -107,6 +107,37 @@ Document::~Document()
         fz_drop_context(ctx_);
 }
 
+QImage Document::renderPage(int pageNo, double scale, int rotation) const
+{
+    const ScreenQuery query(*lifetime_, "Document::renderPage");
+    if (query.refused())
+        return {};
+    std::lock_guard<std::mutex> lock(access_);
+    fz_page *page = nullptr;
+    fz_pixmap *pixmap = nullptr;
+    fz_var(page);
+    fz_var(pixmap);
+    QImage image;
+    fz_try(ctx_) {
+        page = fz_load_page(ctx_, doc_, pageNo);
+        const fz_matrix transform = fz_pre_rotate(
+            fz_scale(static_cast<float>(scale), static_cast<float>(scale)),
+            static_cast<float>(rotation));
+        pixmap = fz_new_pixmap_from_page(ctx_, page, transform, fz_device_rgb(ctx_), 0);
+        image = QImage(fz_pixmap_samples(ctx_, pixmap), fz_pixmap_width(ctx_, pixmap),
+                       fz_pixmap_height(ctx_, pixmap), fz_pixmap_stride(ctx_, pixmap),
+                       QImage::Format_RGB888).copy();
+    }
+    fz_always(ctx_) {
+        fz_drop_pixmap(ctx_, pixmap);
+        fz_drop_page(ctx_, page);
+    }
+    fz_catch(ctx_) {
+        image = {};
+    }
+    return image;
+}
+
 namespace {
 std::atomic<int> closesInFlight{0};
 std::mutex followUpsMutex;

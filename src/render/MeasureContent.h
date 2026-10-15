@@ -61,7 +61,7 @@ bool parseMeasurements(const QByteArray &json, MeasureDoc *out);
 // geometry, the page transform that lands it in PDF user space, and the
 // pre-formatted value label. Built from captured measurement values and document
 // queries, then given to MeasureExport. Background callers protect those queries
-// with Document::Hold. Print still builds these values on the UI thread.
+// with Document::Hold, including measured print preparation.
 struct RenderMeasurement
 {
     int page = -1;

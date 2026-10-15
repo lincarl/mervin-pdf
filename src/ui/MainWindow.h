@@ -259,6 +259,14 @@ private:
                             const std::shared_ptr<CopyResult> &result);
     void finishCopy(const QString &destination, const QString &password, bool flatten,
                     const CopyResult &result);
+    struct PrintRequest;
+    // Prepared measured documents follow the tab to its current dialog owner.
+    static void deliverPrintDialog(mervin::TabPage *tab,
+                                   const std::shared_ptr<PrintRequest> &request);
+    // Collects custom or native print choices before transferring output to its worker.
+    void showPrintDialog(mervin::TabPage *tab, const std::shared_ptr<PrintRequest> &request);
+    // Queues printer failure in the current surviving window of the source tab.
+    static void deliverPrintFailure(mervin::TabPage *tab, const QString &message);
     // Gather a viewer's committed measurements + per-page overrides for saving
     // (the Mervin blob), or paired with each page's PDF transform + value label
     // for export/print rendering.

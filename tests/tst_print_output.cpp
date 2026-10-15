@@ -1,10 +1,20 @@
 #include "TestWaits.h"
+#include "app/WindowManager.h"
 #include "config/ConfigPaths.h"
+#include "config/Settings.h"
 #include "io/AppFiles.h"
+#include "io/Background.h"
+#include "io/JobContext.h"
 #include "dialogs/PrintDialog.h"
+#include "print/PrintPreviewWidget.h"
 #include "render/Document.h"
+#include "render/AnnotModel.h"
 #include "render/RenderEngine.h"
 #include "ui/MainWindow.h"
+#include "ui/TabPage.h"
+#include "ui/ViewerWidget.h"
+#include "security/MeasureExport.h"
+#include "Stalls.h"
 
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFPageDocumentHelper.hh>
@@ -16,22 +26,164 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QLineEdit>
+#include <QLabel>
 #include <QMessageBox>
 #include <QPainter>
+#include <QPlainTextEdit>
+#include <QPointer>
 #include <QPdfWriter>
 #include <QPrinter>
 #include <QPrinterInfo>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QTemporaryDir>
+#include <QScopeGuard>
 #include <QTimer>
 #include <QtTest>
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 using namespace mervin;
 
+namespace {
+
+// Drives the actual custom dialog and file picker while leaving asynchronous
+// completion active for assertions, including worker failures after acceptance.
+class PrintInteraction
+{
+public:
+    // Polls real print controls until acceptance or a bounded interaction timeout.
+    PrintInteraction(MainWindow &window, QString output,
+                     std::function<void(PrintDialog &)> preview = {})
+    {
+        elapsed_.start();
+        QObject::connect(&timer_, &QTimer::timeout, &window,
+                [this, output = std::move(output), preview = std::move(preview)] {
+            QWidget *modal = QApplication::activeModalWidget();
+            if (elapsed_.elapsed() > 20000) {
+                if (messages.isEmpty())
+                    messages.append(QStringLiteral("Print interaction timed out"));
+                if (auto *dialog = qobject_cast<QDialog *>(modal))
+                    dialog->reject();
+                return;
+            }
+            if (auto *box = qobject_cast<QMessageBox *>(modal)) {
+                messageOwner = box->parentWidget();
+                messages.append(box->text());
+                box->accept();
+            } else if (auto *dialog = qobject_cast<PrintDialog *>(modal)) {
+                auto *print = dialog->findChild<QPushButton *>("printConfirm");
+                auto *toFile = dialog->findChild<QCheckBox *>("printToFile");
+                auto *quality = dialog->findChild<QComboBox *>("printQuality");
+                auto *colour = dialog->findChild<QComboBox *>("printColour");
+                if (!print || !toFile || !quality || !colour) {
+                    messages.append(QStringLiteral("Print controls were missing"));
+                    dialog->reject();
+                    return;
+                }
+                if (!configured_) {
+                    configured_ = true;
+                    toFile->setChecked(true);
+                    // Changing the selection also refreshes the preview at this quality.
+                    quality->addItem(QStringLiteral("Test (72 dpi)"), 72);
+                    quality->setCurrentIndex(quality->count() - 1);
+                    // The red fixture requires colour regardless of the default printer.
+                    colour->setCurrentIndex(colour->findData(
+                        static_cast<int>(printing::ColourMode::Colour)));
+                }
+                if (!print->isEnabled() || queued_)
+                    return;
+                if (preview) {
+                    auto *rendered = dialog->findChild<PrintPreviewWidget *>();
+                    if (!rendered || !rendered->isReady())
+                        return;
+                }
+                if (preview)
+                    preview(*dialog);
+                queued_ = true;
+                QTimer::singleShot(0, print, &QPushButton::click);
+            } else if (auto *picker = qobject_cast<QFileDialog *>(modal)) {
+                if (saveQueued_)
+                    return;
+                auto *name = picker->findChild<QLineEdit *>("fileNameEdit");
+                if (!name) {
+                    messages.append(QStringLiteral("Save controls were missing"));
+                    picker->reject();
+                    return;
+                }
+                saveQueued_ = true;
+                picker->setOption(QFileDialog::DontConfirmOverwrite, true);
+                name->setText(QDir::toNativeSeparators(output));
+                QMetaObject::invokeMethod(picker, "accept", Qt::DirectConnection);
+                saved = picker->result() == QDialog::Accepted;
+            }
+        });
+        timer_.start(10);
+    }
+
+    QStringList messages;
+    QPointer<QWidget> messageOwner;
+    bool saved = false;
+
+private:
+    QTimer timer_;
+    QElapsedTimer elapsed_;
+    bool configured_ = false;
+    bool queued_ = false;
+    bool saveQueued_ = false;
+};
+
+// Reads fixture bytes to prove stopped output leaves an existing destination intact.
+QByteArray bytes(const QString &path)
+{
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+
+// Finds the synthetic page while excluding the surrounding preview controls.
+QRect redPageBounds(const QImage &image)
+{
+    QRect red;
+    for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor pixel = image.pixelColor(x, y);
+            if (pixel.red() > 170 && pixel.green() < 90 && pixel.blue() < 90)
+                red |= QRect(x, y, 1, 1);
+        }
+    return red;
+}
+
+// Counts black label text in the full-size flattened print output.
+int darkInkOnRedPage(const QImage &image)
+{
+    const QRect red = redPageBounds(image);
+    int ink = 0;
+    for (int y = red.top(); !red.isEmpty() && y <= red.bottom(); ++y)
+        for (int x = red.left(); x <= red.right(); ++x) {
+            const QColor pixel = image.pixelColor(x, y);
+            ink += pixel.red() < 80 && pixel.green() < 80 && pixel.blue() < 80;
+        }
+    return ink;
+}
+
+// Counts the blue measurement stroke, which remains visible in low-resolution previews.
+int blueInkOnRedPage(const QImage &image)
+{
+    const QRect red = redPageBounds(image);
+    int ink = 0;
+    for (int y = red.top(); !red.isEmpty() && y <= red.bottom(); ++y)
+        for (int x = red.left(); x <= red.right(); ++x) {
+            const QColor pixel = image.pixelColor(x, y);
+            ink += pixel.blue() > pixel.red() + 50 && pixel.blue() > pixel.green() + 20;
+        }
+    return ink;
+}
+
+} // namespace
+
+// Checks rendered print placement, worker cancellation and prepared-input ownership.
 class TstPrintOutput : public QObject
 {
     Q_OBJECT
@@ -39,8 +191,20 @@ class TstPrintOutput : public QObject
 private slots:
     void initTestCase();
     void cleanupTestCase();
+    void cleanup();
     void applicationPrintPlacement_data();
     void applicationPrintPlacement();
+    void printDoesNotWaitForPageAccess();
+    void printDestinationConflict_data();
+    void printDestinationConflict();
+    void stoppedFileOutputKeepsDestination_data();
+    void stoppedFileOutputKeepsDestination();
+    void printEndFailureIsReported();
+    void measuredPreparationRunsInBackground();
+    void stoppedMeasuredPreparationRemovesItsFiles();
+    void editorCommitCanDeletePrintOwner();
+    void queuedDeliverySurvivesOldOwnerDestruction_data();
+    void queuedDeliverySurvivesOldOwnerDestruction();
 
 private:
     QTemporaryDir files_;
@@ -70,6 +234,18 @@ void TstPrintOutput::cleanupTestCase()
     ConfigPaths::setOverrideDir({});
 }
 
+// Releases print stalls and settles background closes between output cases.
+void TstPrintOutput::cleanup()
+{
+    job::testing::release();
+    job::testing::failWhen({});
+    TabPage::setSlowDelayForTesting(TabPage::kSlowMs);
+    QVERIFY(background::settle(10000));
+    QCoreApplication::processEvents();
+    QVERIFY(Document::waitForCloses(10000));
+    QVERIFY(appfiles::flush(10000));
+}
+
 void TstPrintOutput::applicationPrintPlacement_data()
 {
     QTest::addColumn<int>("alignment");
@@ -87,6 +263,7 @@ void TstPrintOutput::applicationPrintPlacement_data()
     QTest::newRow("black and white") << 0 << 1 << 100 << 2;
 }
 
+// Checks asynchronous PDF output preserves placement and requested colour conversion.
 void TstPrintOutput::applicationPrintPlacement()
 {
     QFETCH(int, alignment);
@@ -224,11 +401,14 @@ void TstPrintOutput::applicationPrintPlacement()
     });
     dialogs.start(10);
     QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
+    auto *tab = window.findChild<TabPage *>();
+    QVERIFY(tab);
+    QTRY_VERIFY_WITH_TIMEOUT(!tab->isBusy(), 10000);
     dialogs.stop();
     QVERIFY2(errors.isEmpty(), qPrintable(errors.join('\n')));
     QVERIFY(configured);
     QVERIFY(saved);
-    QVERIFY(QFileInfo::exists(output));
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(output), 10000);
     auto printed = engine.openDocument(output);
     QVERIFY(printed);
     QCOMPARE(printed->pageCount(), 1);
@@ -293,6 +473,339 @@ void TstPrintOutput::applicationPrintPlacement()
         }
         QVERIFY(black);
         QVERIFY(white);
+    }
+}
+
+// Checks the accepted print command returns while live document access is stalled.
+void TstPrintOutput::printDoesNotWaitForPageAccess()
+{
+    RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    QVERIFY(mervin::testing::openAndWait(window, sourcePath_));
+    auto *tab = window.findChild<TabPage *>();
+    QVERIFY(tab);
+    const auto lifetime = tab->viewer()->document()->lifetime();
+    const QString output = files_.filePath("held-access.pdf");
+    job::testing::holdWhen([](job::Step step, const QString &) {
+        return step == job::Step::Printing;
+    });
+    PrintInteraction dialogs(window, output);
+    QElapsedTimer command;
+    command.start();
+    QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
+    QVERIFY2(command.elapsed() < 1000, qPrintable(QString("Print took %1 ms").arg(command.elapsed())));
+    QVERIFY(tab->isBusy());
+    QTRY_COMPARE(job::testing::held(), 1);
+    mervin::testing::Stall access(tab->viewer()->document()->accessMutex(), 10000);
+    const int guiSteps = job::testing::stepsOnMainThread();
+    const int tasks = background::running() - 1;
+    job::testing::release();
+    QTRY_VERIFY(lifetime->holds.load() > 0);
+    tab->stopWaiting();
+    QVERIFY(tab->isBusy());
+    QVERIFY(tab->isOperationStopped());
+    QCOMPARE(job::testing::stepsOnMainThread(), guiSteps);
+    access.release();
+    QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(background::running() <= tasks, 10000);
+    QVERIFY(!QFileInfo::exists(output));
+    QVERIFY(dialogs.messages.isEmpty());
+}
+
+// Selects the source, its alias and another tab as protected print destinations.
+void TstPrintOutput::printDestinationConflict_data()
+{
+    QTest::addColumn<int>("kind");
+    QTest::newRow("source") << 0;
+    QTest::newRow("another open file") << 1;
+#ifdef Q_OS_UNIX
+    QTest::newRow("source alias") << 2;
+#endif
+}
+
+// Checks protected destination refusal preserves original PDF bytes.
+void TstPrintOutput::printDestinationConflict()
+{
+    QFETCH(int, kind);
+    QTemporaryDir files;
+    RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    QString output = sourcePath_;
+    if (kind == 1) {
+        output = files.filePath("other.pdf");
+        QVERIFY(QFile::copy(sourcePath_, output));
+        QVERIFY(mervin::testing::openAndWait(window, output));
+    } else if (kind == 2) {
+        output = files.filePath("alias.pdf");
+        QVERIFY(QFile::link(sourcePath_, output));
+    }
+    QVERIFY(mervin::testing::openAndWait(window, sourcePath_));
+    const QByteArray before = bytes(output);
+    QVERIFY(!before.isEmpty());
+    PrintInteraction dialogs(window, output);
+    QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
+    QTRY_COMPARE_WITH_TIMEOUT(dialogs.messages, QStringList{"The destination is open in a tab."}, 10000);
+    QCOMPARE(bytes(output), before);
+    QCOMPARE(bytes(sourcePath_), before);
+}
+
+// Selects Stop during writing and before final print-to-file commit.
+void TstPrintOutput::stoppedFileOutputKeepsDestination_data()
+{
+    QTest::addColumn<bool>("commit");
+    QTest::newRow("destination writing") << false;
+    QTest::newRow("before rename") << true;
+}
+
+// Checks Stop preserves earlier destination bytes and removes only private print output.
+void TstPrintOutput::stoppedFileOutputKeepsDestination()
+{
+    QFETCH(bool, commit);
+    QTemporaryDir files;
+    const QString output = files.filePath("existing.pdf");
+    const QByteArray before("Existing destination bytes");
+    QFile destination(output);
+    QVERIFY(destination.open(QIODevice::WriteOnly));
+    QCOMPARE(destination.write(before), before.size());
+    destination.close();
+    RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    QVERIFY(mervin::testing::openAndWait(window, sourcePath_));
+    auto *tab = window.findChild<TabPage *>();
+    QVERIFY(tab);
+    const int tasks = background::running();
+    job::testing::holdWhen([&, writes = 0](job::Step step, const QString &path) mutable {
+        if (commit)
+            return step == job::Step::Commit && path == output;
+        return step == job::Step::Writing && path == files.path() && ++writes == 2;
+    });
+    PrintInteraction dialogs(window, output);
+    QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
+    QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+    tab->stopWaiting();
+    QVERIFY(tab->isUsable());
+    QCOMPARE(bytes(output), before);
+    job::testing::release();
+    QTRY_VERIFY_WITH_TIMEOUT(background::running() <= tasks, 10000);
+    QCOMPARE(bytes(output), before);
+    QCOMPARE(QDir(files.path()).entryList(QDir::Files | QDir::Hidden), QStringList{"existing.pdf"});
+    QVERIFY(dialogs.messages.isEmpty());
+}
+
+// Checks final printer submission failure is reported after the tab restores use.
+void TstPrintOutput::printEndFailureIsReported()
+{
+    RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    QVERIFY(mervin::testing::openAndWait(window, sourcePath_));
+    const QString output = files_.filePath("failed-end.pdf");
+    job::testing::failWhen([prints = 0](job::Step step, const QString &) mutable {
+        return step == job::Step::Printing && ++prints == 3;
+    });
+    PrintInteraction dialogs(window, output);
+    QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
+    QTRY_COMPARE_WITH_TIMEOUT(dialogs.messages, QStringList{"Could not finish the print job."}, 10000);
+    QVERIFY(!QFileInfo::exists(output));
+}
+
+// Checks measured preparation returns while held and produces a real flattened preview.
+void TstPrintOutput::measuredPreparationRunsInBackground()
+{
+    RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    QVERIFY(mervin::testing::openAndWait(window, sourcePath_));
+    auto *tab = window.findChild<TabPage *>();
+    QVERIFY(tab);
+    tab->viewer()->loadMeasurements(
+        {{0, MeasureKind::Distance, {{15, 80}, {85, 80}}}}, {}, MeasureUnit::Millimeter, 2, 2);
+    const QString output = files_.filePath("measured-print.pdf");
+    job::testing::holdWhen([](job::Step step, const QString &path) {
+        return step == job::Step::Writing && path != QDir::tempPath();
+    });
+    bool previewReady = false;
+    int previewInk = 0;
+    QString previewDetails;
+    PrintInteraction dialogs(window, output, [&](PrintDialog &dialog) {
+        auto *preview = dialog.findChild<PrintPreviewWidget *>();
+        previewReady = preview && preview->isReady();
+        if (previewReady) {
+            const QImage image = preview->grab().toImage();
+            previewInk = blueInkOnRedPage(image);
+            const int labelInk = darkInkOnRedPage(image);
+            previewDetails = QStringLiteral(
+                "Preview blue stroke %1, black label %2, colour mode %3, image %4x%5, DPR %6")
+                .arg(previewInk).arg(labelInk)
+                .arg(static_cast<int>(dialog.printSettings().colourMode))
+                .arg(image.width()).arg(image.height()).arg(image.devicePixelRatio());
+        }
+    });
+    QElapsedTimer command;
+    command.start();
+    QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
+    QVERIFY2(command.elapsed() < 1000,
+             qPrintable(QString("Measured preparation took %1 ms").arg(command.elapsed())));
+    QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+    QVERIFY(tab->isBusy());
+    QVERIFY(!previewReady);
+    job::testing::release();
+    QTRY_VERIFY_WITH_TIMEOUT(previewReady, 10000);
+    QVERIFY2(previewInk > 20, qPrintable(previewDetails));
+    QTRY_VERIFY_WITH_TIMEOUT(!tab->isBusy() && QFileInfo::exists(output), 10000);
+    QVERIFY(dialogs.messages.isEmpty());
+    auto document = engine.openDocument(output);
+    QVERIFY(document);
+    QVERIFY(!document->hasMervinMeasurements());
+    const QImage image = document->renderPage(0, 1, 0);
+    QVERIFY(!image.isNull());
+    QVERIFY(darkInkOnRedPage(image) > 100);
+    QVERIFY(tab->viewer()->hasMeasurements());
+}
+
+// Checks editor-driven owner deletion prevents Print from using a stale tab.
+void TstPrintOutput::editorCommitCanDeletePrintOwner()
+{
+    RenderEngine engine;
+    const QPointer<MainWindow> window(new MainWindow(&engine, nullptr));
+    QVERIFY(mervin::testing::openAndWait(*window, sourcePath_));
+    const QPointer<TabPage> tab(window->findChild<TabPage *>());
+    QVERIFY(tab);
+    auto *viewer = tab->viewer();
+    const int note = viewer->annotModel()->addTextNote(
+        0, QPointF(30, 60), QColor(Qt::yellow), {}, QStringLiteral("Initial comment"));
+    QVERIFY(note >= 0);
+    window->show();
+    viewer->setCommentToolEnabled(true);
+    viewer->setAnnotSubMode(AnnotSubMode::Note);
+    viewer->revealAnnotation(0, note);
+    auto *editor = viewer->findChild<QPlainTextEdit *>();
+    QVERIFY(editor && editor->isVisible());
+    editor->setPlainText(QStringLiteral("Typed before Print"));
+    connect(viewer, &ViewerWidget::annotationsChanged, this, [window] { delete window.data(); });
+    QVERIFY(QMetaObject::invokeMethod(window.data(), "printDocument"));
+    QVERIFY(!window && !tab);
+    QVERIFY(!qobject_cast<PrintDialog *>(QApplication::activeModalWidget()));
+}
+
+// Checks canceled measured preparation removes private documents and folders.
+void TstPrintOutput::stoppedMeasuredPreparationRemovesItsFiles()
+{
+    RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    QVERIFY(mervin::testing::openAndWait(window, sourcePath_));
+    auto *tab = window.findChild<TabPage *>();
+    QVERIFY(tab);
+    tab->viewer()->loadMeasurements(
+        {{0, MeasureKind::Distance, {{15, 80}, {85, 80}}}}, {}, MeasureUnit::Millimeter, 2, 2);
+    const int tasks = background::running();
+    QString stage;
+    job::testing::holdWhen([&](job::Step step, const QString &path) {
+        if (step != job::Step::Writing || path == QDir::tempPath())
+            return false;
+        stage = path;
+        return true;
+    });
+    QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
+    QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+    QVERIFY(!stage.isEmpty() && QFileInfo::exists(stage));
+    tab->stopWaiting();
+    QVERIFY(tab->isBusy());
+    job::testing::release();
+    QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(background::running() <= tasks, 10000);
+    QVERIFY(!QFileInfo::exists(stage));
+    QVERIFY(tab->viewer()->hasMeasurements());
+    QVERIFY(!qobject_cast<PrintDialog *>(QApplication::activeModalWidget()));
+}
+
+// Selects prepared dialog and error delivery after an earlier queued owner move.
+void TstPrintOutput::queuedDeliverySurvivesOldOwnerDestruction_data()
+{
+    QTest::addColumn<bool>("preparation");
+    QTest::addColumn<bool>("normalMove");
+    QTest::newRow("prepared dialog after last-tab merge") << true << true;
+    QTest::newRow("prepared dialog after immediate deletion") << true << false;
+    QTest::newRow("failure after last-tab merge") << false << true;
+    QTest::newRow("failure after immediate deletion") << false << false;
+}
+
+// Checks queued print delivery follows the moved tab after its previous window closes.
+void TstPrintOutput::queuedDeliverySurvivesOldOwnerDestruction()
+{
+    QFETCH(bool, preparation);
+    QFETCH(bool, normalMove);
+    Settings settings;
+    settings.autoUpdate = false;
+    settings.closeToTray = false;
+    QVERIFY(settings.save());
+    WindowManager manager;
+    const QPointer<MainWindow> source(manager.createWindow());
+    MainWindow *target = manager.createWindow();
+    QVERIFY(source->openFile(sourcePath_));
+    const QPointer<TabPage> tab(source->findChild<TabPage *>());
+    QTRY_VERIFY_WITH_TIMEOUT(tab && tab->isUsable(), 10000);
+    if (preparation) {
+        tab->viewer()->loadMeasurements(
+            {{0, MeasureKind::Distance, {{15, 80}, {85, 80}}}}, {}, MeasureUnit::Millimeter, 2, 2);
+        job::testing::holdWhen([](job::Step step, const QString &path) {
+            return step == job::Step::Writing && path != QDir::tempPath();
+        });
+    } else {
+        job::testing::holdWhen([](job::Step step, const QString &) {
+            return step == job::Step::Printing;
+        });
+        job::testing::failWhen([prints = 0](job::Step step, const QString &) mutable {
+            return step == job::Step::Printing && ++prints == 3;
+        });
+    }
+    const auto release = qScopeGuard([] { job::testing::release(); });
+    QTemporaryDir files;
+    const QString output = files.filePath("printed.pdf");
+    bool previewReady = false;
+    bool correctOwner = false;
+    PrintInteraction dialogs(*target, output, preparation ? std::function<void(PrintDialog &)>(
+        [&](PrintDialog &dialog) {
+            previewReady = true;
+            correctOwner = dialog.parentWidget() == target;
+        }) : std::function<void(PrintDialog &)>());
+    QVERIFY(QMetaObject::invokeMethod(source, "printDocument"));
+    QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+    QVERIFY(tab->isBusy());
+    QDialog modal;
+    modal.setWindowModality(Qt::ApplicationModal);
+    modal.show();
+    if (normalMove)
+        source->whenTabsCanChange([&manager, source, target] {
+            manager.mergeTab(source, 0, target, 0);
+        });
+    job::testing::release();
+    QTRY_VERIFY_WITH_TIMEOUT(tab && !tab->isBusy(), 10000);
+    QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
+    QVERIFY(source && !source->canChangeTabs());
+    if (!normalMove) {
+        target->adoptTab(source->releaseTab(0));
+        delete source.data();
+    }
+    modal.hide();
+    if (normalMove)
+        source->runTabChanges();
+    QTRY_VERIFY_WITH_TIMEOUT(!source, 10000);
+    QVERIFY(tab && tab->window() == target);
+    if (preparation) {
+        QTRY_VERIFY_WITH_TIMEOUT(previewReady, 10000);
+        QVERIFY(correctOwner);
+        QTRY_VERIFY_WITH_TIMEOUT(!tab->isBusy() && QFileInfo::exists(output), 10000);
+        QVERIFY(dialogs.messages.isEmpty());
+        auto document = manager.engine()->openDocument(output);
+        QVERIFY(document);
+        QCOMPARE(document->pageCount(), 1);
+        QVERIFY(!document->hasMervinMeasurements());
+        QVERIFY(darkInkOnRedPage(document->renderPage(0, 1, 0)) > 100);
+    } else {
+        QTRY_COMPARE_WITH_TIMEOUT(dialogs.messages,
+                                 QStringList{"Could not finish the print job."}, 10000);
+        QCOMPARE(dialogs.messageOwner.data(), static_cast<QWidget *>(target));
+        QVERIFY(!QFileInfo::exists(output));
     }
 }
 

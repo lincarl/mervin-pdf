@@ -627,6 +627,21 @@ void TstTranslationLayout::waitBar()
     mervin::job::testing::release();
     QTRY_COMPARE(mervin::job::testing::held(), 0);
 
+    const QString printer = QStringLiteral("OfficeLaserArchitecturalDrawingsDepartmentPrinter")
+                                .repeated(8);
+    mervin::job::testing::holdWhen([printer](mervin::job::Step step, const QString &path) {
+        return step == mervin::job::Step::Printing && path == printer;
+    });
+    mervin::TabPage::Operation printing;
+    printing.work = [printer] { mervin::job::printing(printer); };
+    tab->startOperation(std::move(printing));
+    QTRY_VERIFY(stop->isVisible());
+    QVERIFY(stop->parentWidget()->findChild<QLabel *>()->text().contains(QStringLiteral("Office")));
+    inspect(window, QStringLiteral("Wait bar for a long printer name"), tab);
+    tab->stopWaiting();
+    mervin::job::testing::release();
+    QTRY_COMPARE(mervin::job::testing::held(), 0);
+
     // Stop hides its button while an actual document Hold waits for the drive.
     // The longer notice gets the full bar width at every language/font/window size.
     mervin::job::testing::holdWhen([folder](mervin::job::Step step, const QString &path) {

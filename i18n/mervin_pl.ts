@@ -78,6 +78,11 @@ Otwórz teraz?</translation>
         <translation>Dokumenty PDF (*.pdf)</translation>
     </message>
     <message>
+        <source>Could not finish the print job.</source>
+        <extracomment>The printer system rejected completion of the print job. It may have accepted earlier pages.</extracomment>
+        <translation>Nie udało się zakończyć zadania drukowania.</translation>
+    </message>
+    <message>
         <source>Choose a different file name - use Save edits to write back to the original.</source>
         <extracomment>&quot;Save edits&quot; is a command in the Save menu. Use its translation here.</extracomment>
         <translation>Wybierz inną nazwę pliku. Użyj Zapisz zmiany, aby nadpisać plik źródłowy.</translation>
@@ -3441,6 +3446,11 @@ Otwórz teraz?</translation>
         <source>Stopped waiting. The document stays locked until the drive answers.</source>
         <extracomment>A stopped job still holds the shown document while a file call finishes. Locked means unavailable for viewing or editing, not password protection or file permissions. The tab becomes usable when the job releases it.</extracomment>
         <translation>Oczekiwanie zostało przerwane. Dokument pozostaje zablokowany, dopóki dysk nie odpowie.</translation>
+    </message>
+    <message>
+        <source>Printing to %1. The printer is not answering.</source>
+        <extracomment>A print job has waited for the printer system without progress. %1 is the printer name, such as Office Laser. Stop waiting leaves the blocked printer call on a worker and prevents further pages from being submitted.</extracomment>
+        <translation>Drukowanie na %1. Drukarka nie odpowiada.</translation>
     </message>
 </context>
 <context>

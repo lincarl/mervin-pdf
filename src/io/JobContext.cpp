@@ -346,6 +346,16 @@ bool beginCommit(const QString &destination)
     return true;
 }
 
+bool beginPrintingCommit(const QString &printer)
+{
+    if (!reportStep(Step::Printing, printer))
+        return false;
+    if (current && !current->beginCommit())
+        return false;
+    holdIf(commitHoldMatch, printer);
+    return true;
+}
+
 void endCommit()
 {
     if (current)

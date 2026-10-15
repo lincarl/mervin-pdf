@@ -2108,12 +2108,11 @@ void TabPage::updateSlowNotice()
         placeholderLabel_->setText(text);
 }
 
-// Fits the active job notice and close-flow Stop choice without querying the document.
+// Fits file or printer notices and keeps trapped Stop visibility consistent with close waits.
 void TabPage::showWaitBar(const job::State::Snapshot &now)
 {
     // A write names its folder, and a commit the file it replaces. A read of a file in
-    // the destination counts as saving there. Before its first step, and while it
-    // prints, the operation waits for its destination.
+    // the destination counts as saving there. A printer step names its printer.
     QString name;
     QString folder = destination_;
     switch (now.step) {
@@ -2132,17 +2131,23 @@ void TabPage::showWaitBar(const job::State::Snapshot &now)
         folder = QFileInfo(now.path).absolutePath();
         break;
     case job::Step::None:
+        break;
     case job::Step::Printing:
+        name = now.path;
+        folder.clear();
         break;
     }
     const bool trapped = now.stopped && now.holding;
     const bool offerStop = !trapped || closeWaitStop_;
+    const bool printing = now.step == job::Step::Printing;
     if (!waitBar_->isHidden() && name == barName_ && folder == barFolder_
-        && trapped == barTrapped_ && waitBar_->stopButton()->isHidden() == !offerStop)
+        && trapped == barTrapped_ && printing == barPrinting_
+        && waitBar_->stopButton()->isHidden() == !offerStop)
         return;
     barName_ = name;
     barFolder_ = folder;
     barTrapped_ = trapped;
+    barPrinting_ = printing;
     waitBar_->stopButton()->setVisible(offerStop);
     if (trapped) {
         //: A stopped job still holds the shown document while a file call finishes.
@@ -2150,6 +2155,14 @@ void TabPage::showWaitBar(const job::State::Snapshot &now)
         //: or file permissions. The tab becomes usable when the job releases it.
         const QString notice = tr("Stopped waiting. The document stays locked until the drive answers.");
         waitBar_->setNotice([notice](const QString &, const QString &) { return notice; }, {}, {});
+    } else if (printing) {
+        //: A print job has waited for the printer system without progress. %1 is
+        //: the printer name, such as Office Laser. Stop waiting leaves the blocked
+        //: printer call on a worker and prevents further pages from being submitted.
+        const QString notice = tr("Printing to %1. The printer is not answering.");
+        waitBar_->setNotice([notice](const QString &printer, const QString &) {
+            return notice.arg(printer);
+        }, name, {});
     } else {
         waitBar_->setNotice(waitSentence(name), name, QDir::toNativeSeparators(folder));
     }

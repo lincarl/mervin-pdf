@@ -238,7 +238,7 @@ These still touch the disk on the UI thread and are planned work:
   memory buffer, so these calls do not read the original file. Moving every
   viewer query to background threads remains separate work. Directory-dependent
   non-PDF formats retain their path-based lookup of relative resources.
-- Print, Delete Pages, Extract Pages, merge, and security. The chosen design
+- Delete Pages, Extract Pages, merge, and security. The chosen design
   shows such a wait in its tab, with a bar over its locked document, so other
   tabs and windows stay usable. New tabs and unloaded tabs already load in their
   placeholders, and Rotate Pages and Split run as tab jobs (see Page and security
@@ -828,8 +828,27 @@ failure through its existing tray notice and receives no success question. The
 Export explanation and completion prompts use guarded heap ownership because a
 Quit in another window can destroy their owner during the nested dialog loop.
 
-Printing a document with measurements uses a complete flattened snapshot
-and reports preparation or rendering failures. Closing tabs or windows commits active
+Print captures the committed document state before showing its existing dialog.
+Measured documents first prepare a complete flattened copy on a worker under a
+document hold. Its preview and output use that same owned copy. Cancel closes the
+copy in the background before removing its temporary folder.
+
+Prepared Print dialogs and failure messages follow the tab's current window queue.
+If an earlier tab move closes that queue's owner, its destruction reposts delivery
+through the surviving tab. The prepared document remains owned until delivery, and
+the dialog still checks that its live document identity matches before opening.
+
+After the dialog, the worker owns the QPrinter, begins and ends its QPainter, and
+renders each page with Document::renderPage on the document's own context. A short
+document hold covers rendering and page geometry, then releases before painting or
+calling the printer system. A blocked printer call names its printer in the wait bar.
+Stop aborts further pages and suppresses completion. A print completion already
+submitted may finish. The worker checks painter.end and reports a completion failure.
+
+Print to file reserves and checks the destination against source and open tabs before
+output begins. QPrinter writes a private local PDF, then closes before the worker
+replaces the destination through DocumentOutput. Stop before that guarded replacement
+keeps the destination's previous bytes. Closing tabs or windows commits active
 editors and offers Save, Discard, or Cancel for unsaved changes.
 
 Page deletion, extraction, merge, split, and rotation preserve editable measurement

@@ -78,6 +78,11 @@ Open it now?</source>
         <translation>PDF 文档 (*.pdf)</translation>
     </message>
     <message>
+        <source>Could not finish the print job.</source>
+        <extracomment>The printer system rejected completion of the print job. It may have accepted earlier pages.</extracomment>
+        <translation>无法完成打印任务。</translation>
+    </message>
+    <message>
         <source>Choose a different file name - use Save edits to write back to the original.</source>
         <extracomment>&quot;Save edits&quot; is a command in the Save menu. Use its translation here.</extracomment>
         <translation>请选择其他文件名。要写回原文件，请使用“保存更改”。</translation>
@@ -3401,6 +3406,11 @@ Open it now?</source>
         <source>Stopped waiting. The document stays locked until the drive answers.</source>
         <extracomment>A stopped job still holds the shown document while a file call finishes. Locked means unavailable for viewing or editing, not password protection or file permissions. The tab becomes usable when the job releases it.</extracomment>
         <translation>已停止等待。驱动器响应前，文档仍不可操作。</translation>
+    </message>
+    <message>
+        <source>Printing to %1. The printer is not answering.</source>
+        <extracomment>A print job has waited for the printer system without progress. %1 is the printer name, such as Office Laser. Stop waiting leaves the blocked printer call on a worker and prevents further pages from being submitted.</extracomment>
+        <translation>正在向 %1 打印。打印机没有响应。</translation>
     </message>
 </context>
 <context>

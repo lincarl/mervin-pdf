@@ -5,6 +5,7 @@
 #include "dialogs/MergeDialog.h"
 #include "dialogs/PrintDialog.h"
 #include "dialogs/SecurityDialog.h"
+#include "io/JobContext.h"
 #include "print/PageRange.h"
 #include "print/PrintLayout.h"
 #include "render/Document.h"
@@ -79,6 +80,118 @@ QSet<QString> openFileKeys(const QStringList &paths)
     for (const QString &path : paths)
         keys.insert(mervin::normalizePathKey(path));
     return keys;
+}
+
+// The measured preview's files must outlive its Document, including pending preview
+// renders. Neither document closure nor temporary-folder cleanup runs on the GUI.
+struct PreparedPrintDocument
+{
+    std::unique_ptr<QTemporaryDir> stage;
+    mervin::OwnedDocument document;
+
+    // Defers private-folder removal until the prepared document and its readers close.
+    ~PreparedPrintDocument()
+    {
+        if (stage) {
+            auto files = std::shared_ptr<QTemporaryDir>(std::move(stage));
+            Document::closeInBackground(std::unique_ptr<Document>(document.release()),
+                                       [files = std::move(files)] {});
+        }
+    }
+};
+
+// Carries printer start, page and final submission failures to GUI reporting.
+struct PrintResult
+{
+    enum class Failure { None, DestinationOpen, TemporaryFile, Start, NextPage, Render, End, Write };
+    Failure failure = Failure::None;
+    QString error;
+    int page = 0;
+};
+
+// Paints on the worker that owns `printer`. Each page releases live document access
+// before painting or entering the printer system.
+void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetime> &lifetime,
+                const QList<int> &pages, int rotation, const mervin::printing::Settings &settings,
+                const QString &printerName, bool liveDocument, PrintResult &result)
+{
+    if (!mervin::job::printing(printerName)) {
+        result.failure = PrintResult::Failure::Start;
+        return;
+    }
+    QPainter painter;
+    if (!painter.begin(&printer)) {
+        result.failure = PrintResult::Failure::Start;
+        return;
+    }
+    // Error paths and Stop abort instead of submitting a partial print job. The
+    // painter still closes its engine while the QPrinter remains alive here.
+    const auto abort = qScopeGuard([&] {
+        if (painter.isActive())
+            printer.abort();
+    });
+    const int resolution = printer.resolution();
+    const int renderDpi = qMin(resolution, qMax(72, settings.qualityDpi));
+    const QRectF printable = printer.pageLayout().paintRect(QPageLayout::Point);
+    bool first = true;
+    for (int page : pages) {
+        if (mervin::job::stopped())
+            return;
+        QImage image;
+        QSizeF pagePoints;
+        {
+            if (liveDocument && !mervin::job::beginHolding())
+                return;
+            const auto release = qScopeGuard([liveDocument] {
+                if (liveDocument)
+                    mervin::job::endHolding();
+            });
+            const Document::Hold hold(lifetime, mervin::job::stopped);
+            Document *document = hold.document();
+            if (!document) {
+                result.failure = PrintResult::Failure::Render;
+                result.page = page;
+                return;
+            }
+            image = document->renderPage(page - 1, renderDpi / 72.0, rotation);
+            pagePoints = document->pageSize(page - 1);
+        }
+        if (mervin::job::stopped())
+            return;
+        if (image.isNull()) {
+            result.failure = PrintResult::Failure::Render;
+            result.page = page;
+            return;
+        }
+        if (!mervin::job::printing(printerName)) {
+            result.failure = PrintResult::Failure::NextPage;
+            return;
+        }
+        if (!first && !printer.newPage()) {
+            result.failure = PrintResult::Failure::NextPage;
+            return;
+        }
+        if (mervin::job::stopped())
+            return;
+        first = false;
+        if (rotation == 90 || rotation == 270)
+            pagePoints.transpose();
+        painter.save();
+        painter.scale(resolution / 72.0, resolution / 72.0);
+        if (!printer.fullPage())
+            painter.translate(-printable.topLeft());
+        mervin::printing::paintPage(painter, image, pagePoints, printable, settings);
+        painter.restore();
+        mervin::job::progressed();
+    }
+    if (!mervin::job::beginPrintingCommit(printerName)) {
+        result.failure = PrintResult::Failure::End;
+        return;
+    }
+    const bool ended = painter.end();
+    mervin::job::endCommit();
+    if (!ended)
+        result.failure = PrintResult::Failure::End;
 }
 
 } // namespace
@@ -886,147 +999,308 @@ void MainWindow::mergeDocuments()
     offerToOpen(dlg.outputPath());
 }
 
+// Retains captured print choices and any prepared document across owner moves.
+struct MainWindow::PrintRequest
+{
+    std::shared_ptr<mervin::DocumentLifetime> liveLifetime;
+    std::shared_ptr<PreparedPrintDocument> prepared;
+    int pageCount = 0;
+    int currentPage = 0;
+    int rotation = 0;
+    QPageLayout::Orientation orientation = QPageLayout::Portrait;
+    QString baseName;
+    QString sourceKey;
+    QString error;
+};
+
+// Captures source choices and prepares measured print input before showing a dialog.
 void MainWindow::printDocument()
 {
     const OperationScope operation(this);
-    TabPage *t = currentTab();
-    ViewerWidget *v = currentViewer();
-    if (!t || !v || !v->document())
+    TabPage *tab = currentTab();
+    ViewerWidget *viewer = currentViewer();
+    if (!tab || !tab->isUsable() || !viewer)
         return;
-    v->commitActiveFormEditor();  // bake the field still being typed into the live doc
-    v->commitActiveAnnotEditor(); // bake a comment still being typed into the live doc
-    const int pageCount = v->pageCount();
-    if (pageCount <= 0)
+    const QPointer<MainWindow> owner(this);
+    const QPointer<TabPage> page(tab);
+    const QPointer<ViewerWidget> view(viewer);
+    viewer->commitActiveFormEditor();
+    if (!owner || !page || !view)
         return;
-
-    // Preview and output share the live document, including form/annotation
-    // edits, or the same flattened snapshot when measurements are present.
-    QTemporaryDir measureTmp;
-    std::unique_ptr<Document> flatDoc;
-    Document *printDoc = v->document();
-    if (v->hasMeasurements()) {
-        const QString live = measureTmp.filePath(QStringLiteral("live.pdf"));
-        const QString flat = measureTmp.filePath(QStringLiteral("measured.pdf"));
-        QString error;
-        if (!measureTmp.isValid()
-            || !mervin::DocumentOutput::snapshot(*v->document(), collectMeasureDoc(v),
-                                                 live, t->password(), &error)
-            || MeasureExport::flatten(live, flat, collectRenderMeasurements(v),
-                                      t->password(), &error) != MeasureExport::Status::Ok
-            || !(flatDoc = engine_->openDocument(flat, t->password(), &error))) {
-            //: Title of the print dialog and of messages about printing.
-            QMessageBox::warning(this, tr("Print"), tr("Could not prepare the document:\n%1").arg(error));
+    viewer->commitActiveAnnotEditor();
+    if (!owner || !page || !view || !page->isUsable() || !view->document())
+        return;
+    auto request = std::make_shared<PrintRequest>();
+    request->liveLifetime = viewer->document()->lifetime();
+    request->pageCount = viewer->pageCount();
+    request->currentPage = viewer->currentPage();
+    request->rotation = viewer->rotation();
+    request->baseName = QFileInfo(tab->path()).completeBaseName();
+    request->sourceKey = mervin::normalizePathKey(tab->canonicalPath());
+    if (request->pageCount <= 0)
+        return;
+    QSizeF pageSize = viewer->document()->pageSize(request->currentPage);
+    if (request->rotation == 90 || request->rotation == 270)
+        pageSize.transpose();
+    request->orientation = pageSize.width() > pageSize.height()
+        ? QPageLayout::Landscape : QPageLayout::Portrait;
+    if (!viewer->hasMeasurements()) {
+        showPrintDialog(tab, request);
+        return;
+    }
+    const auto measurements = collectMeasureDoc(viewer);
+    const auto opener = engine_->opener();
+    const QString password = tab->password();
+    request->prepared = std::make_shared<PreparedPrintDocument>();
+    TabPage::Operation prepare;
+    prepare.destination = QDir::tempPath();
+    prepare.work = [request, measurements, opener, password] {
+        if (!mervin::job::writing(QDir::tempPath()))
+            return;
+        auto &prepared = *request->prepared;
+        prepared.stage = std::make_unique<QTemporaryDir>();
+        if (!prepared.stage->isValid()) {
+            request->error = prepared.stage->errorString();
             return;
         }
-        printDoc = flatDoc.get();
-    }
-    const int rotation = v->rotation();
-
-    // Pre-select the paper orientation matching the page the user is looking at.
-    // pageSize() is the page's unrotated size; fold in the viewer's rotation
-    // (90/270 swap the displayed aspect - same rule as ViewLayout::displaySize) so
-    // a landscape page rotated to display portrait pre-selects Portrait. Square
-    // pages fall through to Portrait.
-    QSizeF pageSz = v->document()->pageSize(v->currentPage());
-    if (v->rotation() == 90 || v->rotation() == 270)
-        pageSz.transpose();
-    const QPageLayout::Orientation initialOrientation =
-        pageSz.width() > pageSz.height() ? QPageLayout::Landscape : QPageLayout::Portrait;
-
-    QPrinter printer(QPrinter::HighResolution);
-    printer.setPageOrientation(initialOrientation);
-
-    // Our own dialog, not QPrintDialog: on Windows the native dialog ignores the
-    // orientation we set and renders the driver's mangled option labels. PrintDialog
-    // pre-selects orientation reliably and applies the user's choices to `printer`.
-    PrintDialog dialog(&printer, engine_, printDoc, rotation, initialOrientation, v->currentPage() + 1,
-                       QFileInfo(t->path()).completeBaseName(), this);
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-
-    // Resolve which pages to print and how to scale/rasterize them. The in-app
-    // dialog supplies an explicit page list plus scale + quality; "Print using
-    // system dialogue…" hands off to the native QPrintDialog, from which we
-    // derive the same values (Fit/Normal, since it has no equivalents).
-    QList<int> pages;
-    mervin::printing::Settings printSettings;
-    if (dialog.useSystemDialog()) {
-        printer.setFromTo(1, pageCount);
-        QPrintDialog native(&printer, this);
-        native.setWindowTitle(tr("Print"));
-        native.setOption(QAbstractPrintDialog::PrintPageRange, true);
-        native.setOption(QAbstractPrintDialog::PrintCurrentPage, true);
-        if (native.exec() != QDialog::Accepted)
+        const QString live = prepared.stage->filePath(QStringLiteral("live.pdf"));
+        const QString flat = prepared.stage->filePath(QStringLiteral("measured.pdf"));
+        std::vector<mervin::RenderMeasurement> marks;
+        {
+            if (!mervin::job::beginHolding())
+                return;
+            const auto release = qScopeGuard([] { mervin::job::endHolding(); });
+            const Document::Hold hold(request->liveLifetime, mervin::job::stopped);
+            Document *document = hold.document();
+            if (!document)
+                return;
+            marks = renderMeasurements(*document, measurements);
+            if (!mervin::job::writing(prepared.stage->path())
+                || !document->savePdfTo(live, &request->error))
+                return;
+        }
+        if (mervin::job::stopped()
+            || MeasureExport::flatten(live, flat, marks, password, &request->error)
+                != MeasureExport::Status::Ok)
             return;
-        printSettings.colourMode = printer.colorMode() == QPrinter::GrayScale
-                                       ? mervin::printing::ColourMode::Grayscale
-                                       : mervin::printing::ColourMode::Colour;
-        switch (printer.printRange()) {
+        prepared.document.reset(opener->open(flat, password, &request->error).release());
+    };
+    prepare.finished = [page = QPointer<TabPage>(tab), request] {
+        if (page)
+            deliverPrintDialog(page, request);
+    };
+    tab->startOperation(std::move(prepare));
+}
+
+// Queues the prepared print dialog in the surviving owner of its source tab.
+void MainWindow::deliverPrintDialog(TabPage *tab, const std::shared_ptr<PrintRequest> &request)
+{
+    const QPointer<TabPage> page(tab);
+    auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+    if (!window)
+        return;
+    // The old owner discards its queue when its last tab moves away. Retain the
+    // prepared document and deliver through the surviving tab after destruction.
+    const auto discarded = connect(window, &QObject::destroyed, tab, [page, request] {
+        QTimer::singleShot(0, page, [page, request] {
+            if (page)
+                deliverPrintDialog(page, request);
+        });
+    });
+    window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window), request, discarded] {
+        disconnect(discarded);
+        auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!current)
+            return;
+        if (current != owner) {
+            deliverPrintDialog(page, request);
+            return;
+        }
+        current->showPrintDialog(page, request);
+    });
+}
+
+// Collects printer choices on the GUI, then transfers all output calls to a tab worker.
+void MainWindow::showPrintDialog(TabPage *tab, const std::shared_ptr<PrintRequest> &request)
+{
+    const OperationScope operation(this);
+    const QPointer<MainWindow> owner(this);
+    const QPointer<TabPage> page(tab);
+    if (!tab->isUsable() || tab->viewer()->document()->lifetime() != request->liveLifetime)
+        return;
+    if (request->prepared && !request->prepared->document) {
+        if (!hiddenToTray_)
+            tellInWindow(this, QMessageBox::Warning, tr("Print"),
+                         tr("Could not prepare the document:\n%1").arg(request->error));
+        else if (wm_)
+            wm_->notifyInTray(tr("Print"), tr("Could not prepare the document:\n%1").arg(request->error));
+        return;
+    }
+    if (hiddenToTray_)
+        return;
+    Document *document = request->prepared ? request->prepared->document.get()
+                                           : tab->viewer()->document();
+    auto printer = std::make_unique<QPrinter>(QPrinter::HighResolution);
+    printer->setPageOrientation(request->orientation);
+    const QPointer<PrintDialog> dialog(new PrintDialog(
+        printer.get(), engine_, document, request->rotation, request->orientation,
+        request->currentPage + 1, request->baseName, this));
+    const bool accepted = dialog->exec() == QDialog::Accepted;
+    QList<int> pages;
+    mervin::printing::Settings settings;
+    const bool system = dialog && dialog->useSystemDialog();
+    if (dialog) {
+        pages = dialog->selectedPages();
+        settings = dialog->printSettings();
+    }
+    delete dialog.data();
+    if (!accepted || !owner || !page || !page->isUsable())
+        return;
+    if (system) {
+        printer->setFromTo(1, request->pageCount);
+        const QPointer<QPrintDialog> native(new QPrintDialog(printer.get(), this));
+        native->setWindowTitle(tr("Print"));
+        native->setOption(QAbstractPrintDialog::PrintPageRange, true);
+        native->setOption(QAbstractPrintDialog::PrintCurrentPage, true);
+        const bool accepted = native->exec() == QDialog::Accepted;
+        delete native.data();
+        if (!accepted || !owner || !page || !page->isUsable())
+            return;
+        settings = {};
+        settings.colourMode = printer->colorMode() == QPrinter::GrayScale
+            ? mervin::printing::ColourMode::Grayscale : mervin::printing::ColourMode::Colour;
+        pages.clear();
+        switch (printer->printRange()) {
         case QPrinter::PageRange: {
-            const int f = qBound(1, printer.fromPage(), pageCount);
-            const int tt = qBound(f, printer.toPage(), pageCount);
-            for (int p = f; p <= tt; ++p)
-                pages << p;
+            const int first = qBound(1, printer->fromPage(), request->pageCount);
+            const int last = qBound(first, printer->toPage(), request->pageCount);
+            for (int p = first; p <= last; ++p)
+                pages.append(p);
             break;
         }
         case QPrinter::CurrentPage:
-            pages << (v->currentPage() + 1);
+            pages.append(request->currentPage + 1);
             break;
-        default: // AllPages / Selection
-            for (int p = 1; p <= pageCount; ++p)
-                pages << p;
+        default:
+            for (int p = 1; p <= request->pageCount; ++p)
+                pages.append(p);
             break;
         }
-    } else {
-        pages = dialog.selectedPages();
-        printSettings = dialog.printSettings();
     }
     if (pages.isEmpty())
         return;
+    // Transfers the configured printer to the worker that owns output and teardown.
+    struct Work {
+        std::unique_ptr<QPrinter> printer;
+    };
+    auto work = std::make_shared<Work>();
+    work->printer = std::move(printer);
+    const QString output = work->printer->outputFileName();
+    const QString printerName = work->printer->printerName().isEmpty()
+        ? QCoreApplication::translate("PrintDialog", "Print to file") : work->printer->printerName();
+    QSet<QString> open = openFileKeys(wm_ ? wm_->openTabPaths() : tabPaths());
+    open.insert(request->sourceKey);
+    const auto lifetime = document->lifetime();
+    auto result = std::make_shared<PrintResult>();
+    TabPage::Operation print;
+    print.destination = output.isEmpty() ? QString() : QFileInfo(output).absolutePath();
+    print.work = [work, request, lifetime, pages, settings, printerName, output, open, result] {
+        // Once output begins, every QPrinter call and its destruction stays here.
+        auto printer = std::move(work->printer);
+        std::unique_ptr<QTemporaryDir> stage;
+        if (!output.isEmpty()) {
+            if (!mervin::job::writing(QFileInfo(output).absolutePath()))
+                return;
+            const QString key = mervin::fileKey(QFileInfo(output));
+            if (open.contains(key) || !mervin::job::reserveDestinations({key})) {
+                result->failure = PrintResult::Failure::DestinationOpen;
+                return;
+            }
+            if (!mervin::job::writing(QDir::tempPath()))
+                return;
+            stage = std::make_unique<QTemporaryDir>();
+            if (!stage->isValid()) {
+                result->failure = PrintResult::Failure::TemporaryFile;
+                result->error = stage->errorString();
+                return;
+            }
+            printer->setOutputFileName(stage->filePath(QStringLiteral("printed.pdf")));
+        }
+        printPages(*printer, lifetime, pages, request->rotation, settings, printerName,
+                   !request->prepared, *result);
+        // QPrinter can keep the PDF engine's file open until destruction on Windows.
+        printer.reset();
+        if (!output.isEmpty() && result->failure == PrintResult::Failure::None
+            && !mervin::job::stopped()
+            && !mervin::DocumentOutput::replace(stage->filePath(QStringLiteral("printed.pdf")),
+                                               output, &result->error))
+            result->failure = PrintResult::Failure::Write;
+    };
+    print.finished = [page, result] {
+        if (!page || result->failure == PrintResult::Failure::None)
+            return;
+        QString message;
+        switch (result->failure) {
+        case PrintResult::Failure::None:
+            return;
+        case PrintResult::Failure::DestinationOpen:
+            message = tr("The destination is open in a tab.");
+            break;
+        case PrintResult::Failure::TemporaryFile:
+            message = tr("Could not prepare the document:\n%1").arg(result->error);
+            break;
+        case PrintResult::Failure::Write:
+            message = tr("Could not save:\n%1").arg(result->error);
+            break;
+        case PrintResult::Failure::Start:
+            message = tr("Could not start the print job.");
+            break;
+        case PrintResult::Failure::NextPage:
+            message = tr("Could not start the next printed page.");
+            break;
+        case PrintResult::Failure::Render:
+            message = tr("Could not render page %1.").arg(result->page);
+            break;
+        case PrintResult::Failure::End:
+            //: The printer system rejected completion of the print job. It may
+            //: have accepted earlier pages.
+            message = tr("Could not finish the print job.");
+            break;
+        }
+        deliverPrintFailure(page, message);
+    };
+    page->startOperation(std::move(print));
+}
 
-    QPainter painter;
-    if (!painter.begin(&printer)) {
-        QMessageBox::warning(this, tr("Print"), tr("Could not start the print job."));
+// Reports terminal printer failure through the current owner after queued tab changes.
+void MainWindow::deliverPrintFailure(TabPage *tab, const QString &message)
+{
+    const QPointer<TabPage> page(tab);
+    auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+    if (!window)
         return;
-    }
-
-    // Rasterize at the chosen quality, capped at the printer's own resolution
-    // (asking for more than the device offers just wastes memory). The page image
-    // is then scaled to the device per the scale mode below.
-    const int printerRes = printer.resolution();
-    const int renderDpi = qMin(printerRes, qMax(72, printSettings.qualityDpi));
-    const double scale = renderDpi / 72.0;
-    const QRectF printable = printer.pageLayout().paintRect(QPageLayout::Point);
-
-    bool first = true;
-    for (int p : pages) {
-        if (p < 1 || p > pageCount)
-            continue;
-        if (!first && !printer.newPage()) {
-            QMessageBox::warning(this, tr("Print"), tr("Could not start the next printed page."));
+    const auto discarded = connect(window, &QObject::destroyed, tab, [page, message] {
+        QTimer::singleShot(0, page, [page, message] {
+            if (page)
+                deliverPrintFailure(page, message);
+        });
+    });
+    window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window), message, discarded] {
+        disconnect(discarded);
+        auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!current)
+            return;
+        if (current != owner) {
+            deliverPrintFailure(page, message);
             return;
         }
-        first = false;
-        const QImage img = engine_->renderPageImage(printDoc, p - 1, scale, rotation);
-        if (img.isNull()) {
-            QMessageBox::warning(this, tr("Print"), tr("Could not render page %1.").arg(p));
-            return;
-        }
-
-        QSizeF pagePoints = printDoc->pageSize(p - 1);
-        if (rotation == 90 || rotation == 270)
-            pagePoints.transpose();
-        painter.save();
-        // Normal QPrinter coordinates already start at the printable corner.
-        // Map full-sheet points to that origin once so printer margins are not
-        // added twice. The shared painter then matches the preview's geometry.
-        painter.scale(printerRes / 72.0, printerRes / 72.0);
-        if (!printer.fullPage())
-            painter.translate(-printable.topLeft());
-        mervin::printing::paintPage(painter, img, pagePoints, printable, printSettings);
-        painter.restore();
-    }
-    painter.end();
+        //: Title of the print dialog and of messages about printing.
+        const QString title = tr("Print");
+        if (!current->hiddenToTray_)
+            tellInWindow(current, QMessageBox::Warning, title, message);
+        else if (current->wm_)
+            current->wm_->notifyInTray(title, message);
+    });
 }
 
 // ---- Detachable tabs (M9) --------------------------------------------------

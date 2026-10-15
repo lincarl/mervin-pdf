@@ -78,6 +78,11 @@ Open it now?</source>
         <translation>PDF 문서 (*.pdf)</translation>
     </message>
     <message>
+        <source>Could not finish the print job.</source>
+        <extracomment>The printer system rejected completion of the print job. It may have accepted earlier pages.</extracomment>
+        <translation>인쇄 작업을 완료할 수 없습니다.</translation>
+    </message>
+    <message>
         <source>Choose a different file name - use Save edits to write back to the original.</source>
         <extracomment>&quot;Save edits&quot; is a command in the Save menu. Use its translation here.</extracomment>
         <translation>다른 파일 이름을 선택하세요. 편집 내용 저장을 사용하여 원본에 다시 쓰세요.</translation>
@@ -3401,6 +3406,11 @@ Open it now?</source>
         <source>Stopped waiting. The document stays locked until the drive answers.</source>
         <extracomment>A stopped job still holds the shown document while a file call finishes. Locked means unavailable for viewing or editing, not password protection or file permissions. The tab becomes usable when the job releases it.</extracomment>
         <translation>대기를 중지했습니다. 드라이브가 응답할 때까지 문서를 사용할 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Printing to %1. The printer is not answering.</source>
+        <extracomment>A print job has waited for the printer system without progress. %1 is the printer name, such as Office Laser. Stop waiting leaves the blocked printer call on a worker and prevents further pages from being submitted.</extracomment>
+        <translation>%1에서 인쇄 중입니다. 프린터가 응답하지 않습니다.</translation>
     </message>
 </context>
 <context>

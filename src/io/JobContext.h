@@ -185,6 +185,9 @@ void switchTo(Step step, const QString &path);
 // may be replaced. Otherwise the commit goes ahead and endCommit() follows once it
 // returned.
 bool beginCommit(const QString &destination);
+// Submits a printer's completed pages with the same Stop/commit ordering while
+// retaining Printing as the reported step. Follow with endCommit after it returns.
+bool beginPrintingCommit(const QString &printer);
 void endCommit();
 
 // Counts progress for the current job, which keeps its tab from saying that the disk
