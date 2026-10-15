@@ -23,7 +23,6 @@
 
 #include <QAbstractButton>
 #include <QAction>
-#include <QApplication>
 #include <QDialog>
 #include <QDir>
 #include <QEvent>
@@ -424,7 +423,7 @@ struct MainWindow::RetainedSecurityDialog : QObject
         : QObject(tab), page(tab), request(std::move(request))
     {
         setObjectName(QStringLiteral("securityRetainedChoices"));
-        qApp->installEventFilter(this);
+        tab->installEventFilter(this);
         connect(tab, &TabPage::stateChanged, this, [this] { schedule(); });
         schedule();
     }
@@ -486,12 +485,16 @@ struct MainWindow::RetainedSecurityDialog : QObject
         auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
         if (current != observedOwner) {
             disconnect(selectionChanged);
+            if (observedOwner)
+                observedOwner->removeEventFilter(this);
             observedOwner = current;
             queued = false;
             ++deliveryGeneration;
-            if (current)
+            if (current) {
+                current->installEventFilter(this);
                 selectionChanged = connect(current->tabs_, &QTabWidget::currentChanged,
                     this, [this] { schedule(); });
+            }
         }
         if (!page || (current && (current->closeConfirmed_
             || (current->wm_ && current->wm_->isClosing())))) {
