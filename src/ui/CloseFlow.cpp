@@ -415,6 +415,14 @@ void CloseFlow::advance(MainWindow *readyWindow)
             post();
             return;
         }
+        // An unload copy is housekeeping. Stop it without treating that as a
+        // user's Stop answer, then handle the tab's retained edits below.
+        if (tab->isUnloading() && !tab->isOperationStopped()) {
+            tab->abandonUnloadForClose();
+            if (self && !ended_)
+                post(tab);
+            return;
+        }
         if (tab->isBusy() && !tab->isOperationStopped()) {
             wait(item, item.save ? WaitReason::DocumentReleaseForSave : WaitReason::Operation);
             return;

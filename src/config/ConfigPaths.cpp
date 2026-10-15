@@ -48,8 +48,13 @@ QString ConfigPaths::overrideDir()
 
 QString ConfigPaths::configDir()
 {
+    return made(configDirPath());
+}
+
+QString ConfigPaths::configDirPath()
+{
     if (!g_overrideDir.isEmpty())
-        return made(g_overrideDir);
+        return g_overrideDir;
 #ifdef Q_OS_WIN
     // The spec calls for %APPDATA%/MervinPDF/ exactly (not Org/App nested).
     QString base = qEnvironmentVariable("APPDATA");
@@ -65,7 +70,7 @@ QString ConfigPaths::configDir()
         base = QDir::homePath() + QStringLiteral("/.config");
     const QString dir = QDir(base).filePath(QStringLiteral("mervin-pdf"));
 #endif
-    return made(dir);
+    return dir;
 }
 
 QString ConfigPaths::configFile()
