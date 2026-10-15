@@ -169,6 +169,73 @@ private slots:
         QCOMPARE(QDir(files.path()).entryList({QStringLiteral(".mervin-save-*")}, QDir::Files | QDir::Hidden).size(), 0);
     }
 
+    // Keeps one captured recovery folder when the profile changes during a held Save.
+    void loadedSaveUsesItsCapturedRecoveryDirectory()
+    {
+        QTemporaryDir files;
+        QTemporaryDir changedProfile;
+        QVERIFY(files.isValid());
+        QVERIFY(changedProfile.isValid());
+        const QString path = files.filePath(QStringLiteral("edited.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        const QByteArray original = bytes(path);
+        const QString initialProfile = ConfigPaths::overrideDir();
+        const QString initialRecovery = QDir(initialProfile).filePath(QStringLiteral("recovery"));
+        const QString changedRecovery = changedProfile.filePath(QStringLiteral("recovery"));
+        RenderEngine engine;
+        auto tab = std::make_unique<TabPage>(&engine);
+        QVERIFY(tab->open(path));
+        QVERIFY(edit(*tab));
+        engine.shutdown();
+        QVERIFY(background::settle(10000));
+        Outcome outcome;
+        std::atomic<bool> reportedInitial{false}, reportedChanged{false};
+        const auto restore = qScopeGuard([&] {
+            job::testing::release();
+            tab.reset();
+            engine.shutdown();
+            const bool settled = background::settle(10000);
+            const bool closed = Document::waitForCloses(10000);
+            const bool flushed = appfiles::flush(10000);
+            job::testing::failWhen({});
+            QVERIFY(settled && closed && flushed);
+            ConfigPaths::setOverrideDir(initialProfile);
+        });
+        job::testing::holdWhen([path](job::Step step, const QString &file) {
+            return step == job::Step::Reading && file == path;
+        });
+        job::testing::failWhen([&](job::Step step, const QString &file) {
+            if (step == job::Step::Writing) {
+                if (file == initialRecovery)
+                    reportedInitial = true;
+                if (file == changedRecovery)
+                    reportedChanged = true;
+            }
+            // Keep the adopted copy so the assertion can inspect its durable location.
+            return step == job::Step::Commit && file == path;
+        });
+        tab->startSave(outcome.callbacks());
+        QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+        // The only active worker is held before its first recovery-folder read.
+        QCOMPARE(background::running(), 1);
+        ConfigPaths::setOverrideDir(changedProfile.path());
+        job::testing::release();
+        QTRY_VERIFY_WITH_TIMEOUT(outcome.completion.has_value(), 10000);
+        QCOMPARE(outcome.completion->result, TabPage::SaveResult::Failed);
+        QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable(), 10000);
+        QVERIFY(background::settle(10000));
+        ConfigPaths::setOverrideDir(initialProfile);
+        QVERIFY(tab->hasUnsavedEdits());
+        QVERIFY(tab->hasRecoverySnapshot());
+        QCOMPARE(bytes(path), original);
+        QCOMPARE(QFileInfo(tab->recoveryPath()).absolutePath(), initialRecovery);
+        QVERIFY(QFileInfo::exists(tab->recoveryPath()));
+        QVERIFY(QFileInfo::exists(tab->recoveryPath() + QStringLiteral(".json")));
+        QVERIFY(reportedInitial);
+        QVERIFY(!reportedChanged);
+        QVERIFY(!QFileInfo::exists(changedRecovery));
+    }
+
     // Selects the document gate or its access mutex for a real worker stall.
     void actualDocumentStall_data()
     {

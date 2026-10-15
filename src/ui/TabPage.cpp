@@ -282,6 +282,7 @@ struct TabPage::OpenResult {
 struct TabPage::Save {
     enum class Checkpoint { None, Changed, Adopt };
     QString original;
+    QString directory;
     QString canonical;
     QString ownerKey;
     job::ClaimId owner = 0;
@@ -1618,6 +1619,7 @@ void TabPage::startSave(SaveCallbacks callbacks)
     save->priorCopy = recoveryPath_;
     save->priorManifest = recoveryManifest_;
     if (doc_) {
+        save->directory = recoveryDirectory();
         save->measurements = viewer_->measurementDocument();
         save->lifetime = doc_->lifetime();
         save->opener = engine_->opener();
@@ -1715,13 +1717,13 @@ void TabPage::startSave(SaveCallbacks callbacks)
                 if (job::stopped())
                     return;
                 if (save->loaded) {
-                    if (!job::writing(recoveryDirectory()))
+                    if (!job::writing(save->directory))
                         return;
-                    save->copy = createRecoveryFile(recoveryDirectory(), &save->completion.error);
+                    save->copy = createRecoveryFile(save->directory, &save->completion.error);
                     if (save->copy.isEmpty() || job::stopped())
                         return;
                     save->manifest = save->copy + QStringLiteral(".json");
-                    QTemporaryDir stage(QDir(recoveryDirectory()).filePath(QStringLiteral(".save-XXXXXX")));
+                    QTemporaryDir stage(QDir(save->directory).filePath(QStringLiteral(".save-XXXXXX")));
                     if (!stage.isValid()) {
                         save->completion.error = stage.errorString();
                         return;
@@ -1974,7 +1976,7 @@ void TabPage::finishOperation(const std::shared_ptr<Job> &job)
         finished();
 }
 
-// Restores a stopped tab after document release, loading adopted Save recovery if needed.
+// Restores a stopped tab after document release, loading adopted recovery if needed.
 void TabPage::finishStoppedOperation()
 {
     if (!job_ || job_->state.snapshot().holding)
