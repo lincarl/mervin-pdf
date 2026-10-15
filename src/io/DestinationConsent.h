@@ -16,6 +16,7 @@ struct DestinationConsent
 
     /// Reads absence or hashes an existing regular file on a worker, failing closed on errors.
     static std::optional<DestinationConsent> read(const QString &path, QString *error = nullptr);
+    /// Compares the resolved target, presence and exact contents approved for replacement.
     bool operator==(const DestinationConsent &) const = default;
 };
 

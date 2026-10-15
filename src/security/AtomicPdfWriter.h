@@ -20,6 +20,7 @@ public:
     // file, so another writer of the same file waits until this one is destroyed.
     // Throws when the job stopped first.
     AtomicPdfWriter(QPDF &pdf, const QString &path);
+    /// Exposes qpdf's output options before writing begins.
     QPDFWriter &options() { return writer_; }
     /// Flushes the new PDF, validates optional consent under the destination lock, then commits.
     /// A rejected callback or Stop preserves the destination and discards the temporary file.

@@ -8,6 +8,7 @@
 
 namespace mervin {
 
+/// Acquires the destination before opening a sibling temporary PDF.
 AtomicPdfWriter::AtomicPdfWriter(QPDF &pdf, const QString &path)
     : destination_(path), file_(path), sink_(file_, QFileInfo(path).absolutePath()), writer_(pdf)
 {
@@ -21,6 +22,7 @@ AtomicPdfWriter::AtomicPdfWriter(QPDF &pdf, const QString &path)
     writer_.setStaticID(false);
 }
 
+/// Streams qpdf output with Stop checks and progress reports.
 void AtomicPdfWriter::Sink::write(const unsigned char *data, size_t length)
 {
     // qpdf reads its source between the pieces it writes.
