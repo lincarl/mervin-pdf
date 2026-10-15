@@ -19,7 +19,7 @@
         <source>The operation failed.
 
 %1</source>
-        <translation>Վիրահատությունը ձախողվեց։
+        <translation>Գործողությունը ձախողվեց։
 
 %1</translation>
     </message>
@@ -3378,7 +3378,7 @@ Continue?</source>
 
 %1</source>
         <extracomment>%1 is the reason the security copy could not be written.</extracomment>
-        <translation>Վիրահատությունը ձախողվեց։
+        <translation>Գործողությունը ձախողվեց։
 
 %1</translation>
     </message>

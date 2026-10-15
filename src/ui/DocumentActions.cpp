@@ -23,8 +23,10 @@
 
 #include <QAbstractButton>
 #include <QAction>
+#include <QApplication>
 #include <QDialog>
 #include <QDir>
+#include <QEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -44,6 +46,7 @@
 #include <QSet>
 #include <QScopeGuard>
 #include <QStatusBar>
+#include <QTabWidget>
 #include <QTemporaryDir>
 
 #include <QTimer>
@@ -413,6 +416,120 @@ struct MainWindow::SecurityResult
     std::optional<mervin::DestinationConsent> consent;
 };
 
+/// Keeps interrupted replacement choices with their tab until its form can be shown.
+struct MainWindow::RetainedSecurityDialog : QObject
+{
+    /// Watches the surviving tab and posts its first eligibility check.
+    RetainedSecurityDialog(TabPage *tab, std::shared_ptr<SecurityRequest> request)
+        : QObject(tab), page(tab), request(std::move(request))
+    {
+        setObjectName(QStringLiteral("securityRetainedChoices"));
+        qApp->installEventFilter(this);
+        connect(tab, &TabPage::stateChanged, this, [this] { schedule(); });
+        schedule();
+    }
+
+    /// Removes choices superseded by a new explicit Security command.
+    static void discard(TabPage *tab)
+    {
+        const auto pending = tab->findChildren<QObject *>(
+            QStringLiteral("securityRetainedChoices"), Qt::FindDirectChildrenOnly);
+        for (QObject *object : pending)
+            delete object;
+    }
+
+    /// Observes restoration and reparenting without handling UI inside those events.
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        switch (event->type()) {
+        case QEvent::Show:
+        case QEvent::Hide:
+        case QEvent::ParentChange:
+        case QEvent::WindowStateChange:
+            if (page && (watched == page || watched == page->window()))
+                schedule();
+            break;
+        default:
+            break;
+        }
+        return false;
+    }
+
+    /// Coalesces real state changes into one attempt on the next GUI turn.
+    void schedule()
+    {
+        if (scheduled || handedOff)
+            return;
+        scheduled = true;
+        QTimer::singleShot(0, this, [this] {
+            scheduled = false;
+            tryQueue();
+        });
+    }
+
+    /// Returns the eligible current owner without selecting a tab or raising a window.
+    MainWindow *eligibleOwner() const
+    {
+        auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!owner || owner->closeConfirmed_ || (owner->wm_ && owner->wm_->isClosing())
+            || !page->isUsable() || owner->hiddenToTray_ || !owner->isVisible()
+            || owner->isMinimized() || owner->recentActive_ || owner->currentTab() != page)
+            return nullptr;
+        return owner;
+    }
+
+    /// Enters the ordinary tab queue only while the retained form can be presented.
+    void tryQueue()
+    {
+        if (handedOff)
+            return;
+        auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (current != observedOwner) {
+            disconnect(selectionChanged);
+            observedOwner = current;
+            queued = false;
+            ++deliveryGeneration;
+            if (current)
+                selectionChanged = connect(current->tabs_, &QTabWidget::currentChanged,
+                    this, [this] { schedule(); });
+        }
+        if (!page || (current && (current->closeConfirmed_
+            || (current->wm_ && current->wm_->isClosing())))) {
+            deleteLater();
+            return;
+        }
+        auto *owner = eligibleOwner();
+        if (!owner || queued)
+            return;
+        queued = true;
+        const quint64 generation = ++deliveryGeneration;
+        owner->whenTabsCanChange([self = QPointer<RetainedSecurityDialog>(this),
+                                  owner = QPointer<MainWindow>(owner), generation] {
+            if (!self || self->deliveryGeneration != generation)
+                return;
+            self->queued = false;
+            if (!owner || self->eligibleOwner() != owner) {
+                self->schedule();
+                return;
+            }
+            const auto request = self->request;
+            const QPointer<TabPage> page = self->page;
+            self->handedOff = true;
+            self->deleteLater();
+            owner->showSecurityDialog(page, request);
+        });
+    }
+
+    QPointer<TabPage> page;
+    std::shared_ptr<SecurityRequest> request;
+    QPointer<MainWindow> observedOwner;
+    QMetaObject::Connection selectionChanged;
+    quint64 deliveryGeneration = 0;
+    bool scheduled = false;
+    bool queued = false;
+    bool handedOff = false;
+};
+
 /// Starts a background security-information read for the current usable tab.
 void MainWindow::openSecurity()
 {
@@ -420,6 +537,7 @@ void MainWindow::openSecurity()
     TabPage *tab = currentTab();
     if (!tab || !tab->isUsable())
         return;
+    RetainedSecurityDialog::discard(tab);
     const auto request = std::make_shared<SecurityRequest>();
     request->source = tab->path();
     request->password = tab->password();
@@ -565,9 +683,12 @@ void MainWindow::finishSecurity(TabPage *tab, const std::shared_ptr<SecurityRequ
             return;
     }
     if (result->destination == SecurityResult::Destination::Confirm) {
-        if (!request->action || !result->consent || hiddenToTray_ || !isVisible()
-            || isMinimized() || currentTab() != page)
+        if (!request->action || !result->consent)
             return;
+        if (hiddenToTray_ || !isVisible() || isMinimized() || currentTab() != page) {
+            retainSecurityDialog(page, request);
+            return;
+        }
         // The question approves this exact background snapshot. Nested events
         // cannot refresh it while the user is deciding whether to replace it.
         const auto confirmed = std::make_shared<SecurityRequest>(*request);
@@ -593,8 +714,11 @@ void MainWindow::finishSecurity(TabPage *tab, const std::shared_ptr<SecurityRequ
         delete question.data();
         if (!self || !page || !page->isUsable() || page->window() != self
             || closeConfirmed_ || (wm_ && wm_->isClosing()) || hiddenToTray_
-            || !isVisible() || isMinimized() || currentTab() != page)
+            || !isVisible() || isMinimized() || currentTab() != page) {
+            if (page)
+                retainSecurityDialog(page, request);
             return;
+        }
         if (answer == QMessageBox::Yes)
             runSecurity(page, confirmed, asked);
         else
@@ -679,6 +803,13 @@ void MainWindow::finishSecurity(TabPage *tab, const std::shared_ptr<SecurityRequ
     tellInWindow(this, QMessageBox::Warning, title, failure);
     if (self && page && page->isUsable())
         queueSecurityDialog(page, request);
+}
+
+/// Retains choices after invalidated replacement approval without keeping its old answer.
+void MainWindow::retainSecurityDialog(TabPage *tab, const std::shared_ptr<SecurityRequest> &request)
+{
+    RetainedSecurityDialog::discard(tab);
+    new RetainedSecurityDialog(tab, request);
 }
 
 /// Queues a retained information dialog or failed request in the surviving tab's window.

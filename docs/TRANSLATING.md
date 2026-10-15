@@ -116,6 +116,10 @@ open password. A read failure means the app could not obtain all the file bytes.
 Damage is a format error the reader could not repair. Do not turn an unclassified
 reader message into a diagnosis. Follow each source's note for those distinctions.
 
+An "operation" in a document failure means a software action. Use the same term
+as the related failure title, and avoid a medical sense such as surgery when the
+language distinguishes these meanings.
+
 Preserve recovery states such as retained, kept, saved and open. A path alone does
 not say that the app kept the edits, and a retained copy need not already be open.
 

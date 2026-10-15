@@ -240,6 +240,7 @@ private:
     struct PageToolResult;
     struct SecurityRequest;
     struct SecurityResult;
+    struct RetainedSecurityDialog;
     // Read security information or write the chosen copy as an operation of this
     // tab. Dialogs and password retries follow its current owner.
     static void runSecurity(mervin::TabPage *tab, const std::shared_ptr<SecurityRequest> &request,
@@ -249,6 +250,7 @@ private:
     void finishSecurity(mervin::TabPage *tab, const std::shared_ptr<SecurityRequest> &request,
                           const std::shared_ptr<SecurityResult> &result, bool asked);
     static void queueSecurityDialog(mervin::TabPage *tab, const std::shared_ptr<SecurityRequest> &request);
+    static void retainSecurityDialog(mervin::TabPage *tab, const std::shared_ptr<SecurityRequest> &request);
     void showSecurityDialog(mervin::TabPage *tab, const std::shared_ptr<SecurityRequest> &request);
     // Runs `tool` on the file of the usable `tab` with `password`, as the tab's
     // operation, so only the tab waits. Once the tool ends, the window that holds the

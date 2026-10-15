@@ -753,7 +753,13 @@ retained. Stop discards the result and opens no dialog. Queued results follow a
 moved tab if its previous window disappears, select that tab in its current window
 before showing the dialog, and are suppressed after confirmed shutdown. A replacement
 question cannot authorize a write after its owner disappears, the tab moves away,
-or the window becomes hidden or minimized.
+or the window becomes hidden or minimized. If the tab survives an interrupted
+replacement question, it retains the Security choices and reopens the form when
+that tab is usable and selected in a visible, restored window. A confirmation
+result that arrives while the window is hidden or minimized retains the same
+form. Neither path reuses an old Yes answer. Accepting the reopened form captures
+fresh destination consent. The retained form belongs to the tab, follows owner
+changes, and does not block other queued work while waiting for visibility.
 
 `MergePlan` and `ExtractPlan` are the GUI-free models behind the Merge PDFs and
 Extract Pages dialogs, tested in `tst_merge_plan` and `tst_extract_plan`; each dialog

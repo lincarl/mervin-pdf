@@ -32,6 +32,7 @@
 #include <QTabWidget>
 #include <QTest>
 #include <QTimer>
+#include <QWindow>
 
 #include <algorithm>
 #include <atomic>
@@ -541,6 +542,245 @@ private slots:
         QCOMPARE(QpdfService().readInfo(output, QStringLiteral("new password"), info),
                  QpdfService::Status::Ok);
         QCOMPARE(info.keyLengthBits, 128);
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
+    /// Covers completed confirmation and answers invalidated by window or tab changes.
+    void invalidatedConfirmationRetainsChoices_data()
+    {
+        QTest::addColumn<QString>("invalidation");
+        QTest::addColumn<bool>("beforeQuestion");
+        QTest::newRow("hidden after question") << QStringLiteral("hidden") << false;
+        QTest::newRow("minimized after question") << QStringLiteral("minimized") << false;
+        QTest::newRow("tray after question") << QStringLiteral("tray") << false;
+        QTest::newRow("other tab after question") << QStringLiteral("selection") << false;
+        QTest::newRow("hidden before question") << QStringLiteral("hidden") << true;
+    }
+
+    /// Reopens retained choices when usable again and obtains fresh consent only on acceptance.
+    void invalidatedConfirmationRetainsChoices()
+    {
+        QFETCH(QString, invalidation);
+        QFETCH(bool, beforeQuestion);
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("source.pdf"));
+        const QString other = files.filePath(QStringLiteral("other.pdf"));
+        const QString output = files.filePath(QStringLiteral("output.pdf"));
+        const QByteArray original("original contents");
+        const QByteArray changed("changed contents!");
+        for (const QString &path : {source, other})
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        QVERIFY(writeBytes(output, original));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        const bool nativeMinimize = invalidation == QStringLiteral("minimized")
+            && QApplication::platformName() != QStringLiteral("offscreen")
+            && QApplication::platformName() != QStringLiteral("minimal");
+        if (nativeMinimize) {
+            // Native minimization needs a mapped window and its platform acknowledgements.
+            window.resize(1000, 800);
+            window.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&window));
+        } else {
+            showWindow(window);
+        }
+        QVERIFY(testing::openAndWait(window, other));
+        auto *otherPage = currentTab(window);
+        QVERIFY(testing::openAndWait(window, source));
+        auto *page = currentTab(window);
+        bool invalidated = false;
+        bool restored = false;
+        bool retained = false;
+        int questions = 0;
+        int completions = 0;
+        QString failure;
+        const auto invalidate = [&] {
+            invalidated = true;
+            if (invalidation == QStringLiteral("minimized"))
+                window.setWindowState(Qt::WindowMinimized);
+            else if (invalidation == QStringLiteral("tray"))
+                window.hideToTray();
+            else if (invalidation == QStringLiteral("selection"))
+                window.findChild<QTabWidget *>()->setCurrentWidget(otherPage);
+            else
+                window.hide();
+        };
+        const auto release = qScopeGuard([] { job::testing::release(); });
+        Interaction dialogs;
+        dialogs.files << output << output;
+        dialogs.intercept = [&](QWidget *modal) {
+            auto *box = qobject_cast<QMessageBox *>(modal);
+            if (beforeQuestion || invalidated || !box
+                || box->objectName() != QStringLiteral("securityReplace"))
+                return false;
+            ++questions;
+            const QPointer<QMessageBox> question(box);
+            invalidate();
+            if (question)
+                question->done(QMessageBox::Yes);
+            return true;
+        };
+        dialogs.answer = [&](const QMessageBox &box) {
+            if (box.objectName() == QStringLiteral("securityReplace")) {
+                ++questions;
+                return QMessageBox::Yes;
+            }
+            if (box.windowTitle() == QStringLiteral("Done")) {
+                ++completions;
+                return QMessageBox::No;
+            }
+            failure = box.text();
+            return QMessageBox::Ok;
+        };
+        dialogs.security = [&](SecurityDialog &dialog) {
+            if (dialogs.securityCount == 1) {
+                setEncryptionChoices(dialog);
+                if (beforeQuestion)
+                    job::testing::holdWhen([output](job::Step step, const QString &path) {
+                        return step == job::Step::Reading
+                            && QDir::fromNativeSeparators(path) == output;
+                    });
+            } else {
+                QVERIFY(restored);
+                QCOMPARE(dialogs.securityCount, 2);
+                QCOMPARE(dialog.parentWidget(), &window);
+                verifyEncryptionChoices(dialog, output);
+                QCOMPARE(bytes(output), changed);
+                QCOMPARE(questions, beforeQuestion ? 0 : 1);
+                QCOMPARE(completions, 0);
+                retained = true;
+            }
+            dialog.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
+        };
+        QVERIFY(QMetaObject::invokeMethod(&window, "openSecurity"));
+        if (beforeQuestion) {
+            QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+            invalidate();
+            job::testing::release();
+            QTRY_VERIFY_WITH_TIMEOUT(!page->isBusy(), 10000);
+        } else {
+            QTRY_VERIFY_WITH_TIMEOUT(invalidated, 10000);
+        }
+        if (nativeMinimize) {
+            QTRY_VERIFY(window.isMinimized());
+            QTRY_VERIFY(!window.windowHandle()->isExposed());
+        }
+        QTest::qWait(80);
+        QCOMPARE(dialogs.securityCount, 1);
+        QCOMPARE(questions, beforeQuestion ? 0 : 1);
+        QCOMPARE(completions, 0);
+        QCOMPARE(bytes(output), original);
+        QVERIFY(!QApplication::activeModalWidget());
+        bool otherWorkRan = false;
+        window.whenTabsCanChange([&] { otherWorkRan = true; });
+        QTRY_VERIFY(otherWorkRan);
+        QVERIFY(writeBytes(output, changed));
+        restored = true;
+        if (invalidation == QStringLiteral("tray"))
+            window.restoreFromTray();
+        else {
+            window.setWindowState(Qt::WindowNoState);
+            window.show();
+            window.findChild<QTabWidget *>()->setCurrentWidget(page);
+        }
+        if (nativeMinimize) {
+            QVERIFY(QTest::qWaitForWindowExposed(&window));
+            QVERIFY(!window.isMinimized());
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(completions, 1, 10000);
+        QVERIFY(retained);
+        QCOMPARE(dialogs.securityCount, 2);
+        QCOMPARE(questions, beforeQuestion ? 1 : 2);
+        QVERIFY(failure.isEmpty());
+        QpdfService::Info info;
+        QCOMPARE(QpdfService().readInfo(output, QStringLiteral("new password"), info),
+                 QpdfService::Status::Ok);
+        QCOMPARE(info.keyLengthBits, 128);
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
+    /// Covers a retained form following its tab and dying with its tab or confirmed shutdown.
+    void retainedConfirmationFollowsItsTab_data()
+    {
+        QTest::addColumn<QString>("disposition");
+        QTest::newRow("moved tab") << QStringLiteral("move");
+        QTest::newRow("destroyed tab") << QStringLiteral("destroy");
+        QTest::newRow("confirmed shutdown") << QStringLiteral("quit");
+    }
+
+    /// A hidden request neither writes from old Yes nor outlives its retained tab.
+    void retainedConfirmationFollowsItsTab()
+    {
+        QFETCH(QString, disposition);
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("source.pdf"));
+        const QString kept = files.filePath(QStringLiteral("kept.pdf"));
+        const QString output = files.filePath(QStringLiteral("output.pdf"));
+        const QByteArray original("keep the existing destination");
+        for (const QString &path : {source, kept})
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        QVERIFY(writeBytes(output, original));
+        WindowManager manager;
+        QPointer<MainWindow> first(manager.createWindow());
+        QPointer<MainWindow> second(manager.createWindow());
+        showWindow(*first);
+        showWindow(*second);
+        QVERIFY(testing::openAndWait(*second, kept));
+        QVERIFY(testing::openAndWait(*first, source));
+        QPointer<TabPage> page(currentTab(*first));
+        Interaction dialogs;
+        dialogs.files.append(output);
+        bool invalidated = false;
+        bool retained = false;
+        dialogs.intercept = [&](QWidget *modal) {
+            auto *box = qobject_cast<QMessageBox *>(modal);
+            if (invalidated || !box || box->objectName() != QStringLiteral("securityReplace"))
+                return false;
+            invalidated = true;
+            const QPointer<QMessageBox> question(box);
+            first->hide();
+            if (question)
+                question->done(QMessageBox::Yes);
+            return true;
+        };
+        dialogs.security = [&](SecurityDialog &dialog) {
+            if (dialogs.securityCount == 1) {
+                setEncryptionChoices(dialog);
+                dialog.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
+            } else {
+                QCOMPARE(disposition, QStringLiteral("move"));
+                QCOMPARE(dialog.parentWidget(), second.data());
+                verifyEncryptionChoices(dialog, output);
+                retained = true;
+                dialog.reject();
+            }
+        };
+        QVERIFY(QMetaObject::invokeMethod(first, "openSecurity"));
+        QTRY_VERIFY_WITH_TIMEOUT(invalidated, 10000);
+        QTest::qWait(80);
+        QCOMPARE(dialogs.securityCount, 1);
+        QCOMPARE(bytes(output), original);
+        if (disposition == QStringLiteral("move")) {
+            manager.mergeTab(first, 0, second, -1);
+            delete first.data();
+            QTRY_VERIFY_WITH_TIMEOUT(retained, 10000);
+            QVERIFY(page && page->window() == second);
+            QCOMPARE(dialogs.securityCount, 2);
+        } else {
+            if (disposition == QStringLiteral("destroy"))
+                delete first.data();
+            else
+                manager.quitAll();
+            QTRY_VERIFY(!first && !page);
+            if (disposition == QStringLiteral("quit")) {
+                QTRY_VERIFY(!second);
+                QVERIFY(manager.isClosing());
+            }
+            QTest::qWait(80);
+            QCOMPARE(dialogs.securityCount, 1);
+        }
+        QCOMPARE(bytes(output), original);
+        QVERIFY(dialogs.messages.isEmpty());
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 
