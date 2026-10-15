@@ -1716,6 +1716,7 @@ QStringList MainWindow::askForPdfs()
     return dialog.selectedFiles();
 }
 
+/// Captures accepted picker choices and queues them in this surviving window.
 void MainWindow::onOpen()
 {
     const QPointer<MainWindow> self(this);
@@ -1831,6 +1832,7 @@ void MainWindow::openUrl(const QUrl &url, bool inNewWindow)
             });
 }
 
+/// Captures accepted picker choices and queues the new-window open mode.
 void MainWindow::onOpenInNewWindow()
 {
     const QPointer<MainWindow> self(this);

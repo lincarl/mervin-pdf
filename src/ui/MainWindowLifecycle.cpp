@@ -201,6 +201,7 @@ void MainWindow::queueResumeResult(TabPage *tab, quint64 generation, bool succes
     });
 }
 
+/// Prompts for a failed load generation in its visible owner and queues accepted retries.
 void MainWindow::queueLoadPassword(TabPage *tab, quint64 generation)
 {
     const QPointer<MainWindow> self(this);
