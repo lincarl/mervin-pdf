@@ -4,10 +4,13 @@
 #include "dialogs/LayoutMinimum.h"
 #include "dialogs/RowList.h"
 #include "io/SaveCheck.h"
+#include "io/JobContext.h"
 #include "print/PageRange.h"
 #include "recent/PathKey.h"
+#include "recent/RecentStore.h"
 #include "ui/Icons.h"
 #include "ui/Theme.h"
+#include "ui/WaitBar.h"
 
 #include <QApplication>
 #include <QDialogButtonBox>
@@ -19,11 +22,15 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QPointer>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QShortcut>
+#include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
+
+#include <algorithm>
 
 namespace mervin {
 
@@ -45,6 +52,21 @@ QString canonicalOrAbsolute(const QString &path)
     return canonical.isEmpty() ? fi.absoluteFilePath() : canonical;
 }
 
+/// Shares one probe worker per lexical volume, including reads whose dialogs closed.
+std::shared_ptr<background::SerialQueue> probeQueue(const QString &volume)
+{
+    Q_ASSERT(QThread::isMainThread());
+    static std::map<QString, std::weak_ptr<background::SerialQueue>> queues;
+    std::erase_if(queues, [](const auto &entry) { return entry.second.expired(); });
+    auto &weak = queues[volume];
+    auto queue = weak.lock();
+    if (!queue) {
+        queue = std::make_shared<background::SerialQueue>();
+        weak = queue;
+    }
+    return queue;
+}
+
 // Merge's own column widths; RowList owns the rest. Sized so the longest values
 // ("Unreadable", "12 of 999") still fit at 125% Windows text scaling. A longer
 // translation widens its column instead (see RowList::widthFor).
@@ -60,7 +82,24 @@ QString specPlaceholder()
     //: Placeholder of an empty page range field in the merge list.
     return MergeDialog::tr("e.g. 1-3, 5");
 }
+
+/// Shows a window-modal warning that tolerates deletion of its owner.
+void warnInWindow(QWidget *parent, const QString &text)
+{
+    const QPointer<QMessageBox> box(new QMessageBox(QMessageBox::Warning,
+        MergeDialog::tr("Merge PDFs"), text, QMessageBox::Ok, parent));
+    box->setWindowModality(Qt::WindowModal);
+    box->exec();
+    delete box.data();
+}
 } // namespace
+
+/// Collects one warning per surviving failed row after an Add Files batch settles.
+struct MergeDialog::ProbeBatch
+{
+    int remaining = 0;
+    QList<std::pair<quint64, QString>> warnings;
+};
 
 MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
                          const QString &initialPassword, QWidget *parent)
@@ -179,6 +218,10 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
 
     error_ = new QLabel(this);
     error_->setObjectName(QStringLiteral("mergeError"));
+    error_->setTextFormat(Qt::PlainText);
+    error_->setWordWrap(true);
+    error_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    error_->installEventFilter(this);
     // Reserve the line even when empty so the buttons below never jump as the
     // user types a range in and out of validity.
     error_->setMinimumHeight(error_->fontMetrics().lineSpacing());
@@ -220,16 +263,138 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
     saveCheck_ = new SaveCheck(this);
     connect(saveCheck_, &SaveCheck::slow, this, &MergeDialog::showProblem);
 
-    if (!initialPath.isEmpty()) {
-        // Probe the current document with qpdf like any input: MuPDF accepts files qpdf may
-        // reject. Use the tab's password; probing never prompts.
-        MergePlan::Entry e = probeEntry(initialPath, initialPassword);
-        if (e.load == MergePlan::Load::Ok && e.pageCount <= 0 && initialPageCount > 0)
-            e.pageCount = initialPageCount; // qpdf read it but counted nothing
-        plan_.append(e);
-    }
+    Q_UNUSED(initialPageCount);
+    if (!initialPath.isEmpty())
+        queueProbe(initialPath, initialPassword);
     rebuild(plan_.isEmpty() ? -1 : 0);
     followLayoutMinimum(*this, QSize(660, 440));
+}
+
+/// Cancels input probes and an acceptance check without waiting for filesystem calls.
+MergeDialog::~MergeDialog()
+{
+    stopProbes();
+    if (outputCheckState_)
+        outputCheckState_->stop();
+}
+
+MergeDialog::MergeDialog(const MergePlan &plan, const QString &output, const QString &error,
+                         int failedIndex, Conflict conflict, QWidget *parent)
+    : MergeDialog(QString(), 0, QString(), parent)
+{
+    plan_ = plan;
+    for (const auto &entry : plan_.entries())
+        nextProbe_ = qMax(nextProbe_, entry.probeTicket);
+    outputEdited_ = true;
+    outputEdit_->setText(QDir::toNativeSeparators(output));
+    rebuild(plan_.isEmpty() ? -1 : 0);
+    writeError_ = failureSummary(plan_, output, failedIndex, conflict);
+    writeErrorDetail_ = QDir::toNativeSeparators(error);
+    refreshFooter();
+}
+
+/// Explains the failed input, destination conflict or write while keeping the plan retryable.
+QString MergeDialog::failureSummary(const MergePlan &plan, const QString &output,
+                                    int failedIndex, Conflict conflict)
+{
+    if (conflict == Conflict::Input) {
+        return tr("The merged file cannot replace one of the files being "
+                  "merged. Choose a different name.");
+    } else if (conflict == Conflict::OpenTab) {
+        return tr("That file is open in a tab. Choose another name.");
+    } else if (conflict == Conflict::Changed) {
+        //: The output contents or target changed after this merge was approved.
+        //: Nothing was replaced. Merge is the action button; pressing it checks
+        //: the destination and asks before replacing an existing file.
+        return tr("The destination changed. Press Merge again to review it.");
+    } else if (conflict == Conflict::CheckFailed) {
+        //: The destination could not be read to verify replacement consent.
+        //: Merge remains available to retry. Save as can choose another output.
+        //: Technical I/O details are shown separately.
+        return tr("Could not check the destination. Press Merge to try again, or choose another name.");
+    } else if (failedIndex >= 0 && failedIndex < plan.count()) {
+        //: %1 is the name of the file being merged when it failed.
+        return tr("The merge failed on \"%1\".").arg(plan.displayName(failedIndex));
+    } else {
+        //: %1 is the merged file's name.
+        return tr("Could not write \"%1\". If another program has it open, close "
+                  "it and press Merge again, or choose another name.")
+                   .arg(QFileInfo(output).fileName());
+    }
+}
+
+void MergeDialog::queueProbe(const QString &path, const QString &password,
+                             const std::shared_ptr<ProbeBatch> &batch, int index)
+{
+    MergePlan::Entry entry;
+    entry.path = path;
+    entry.load = MergePlan::Load::Reading;
+    entry.probeTicket = ++nextProbe_;
+    plan_.append(entry);
+    const auto state = std::make_shared<job::State>();
+    const auto queue = probeQueue(RecentStore::volumeKey(path));
+    const auto queuedJob = queue->add([queue, guard = QPointer<QObject>(this), path, password, state,
+                ticket = entry.probeTicket, batch, index] {
+        Q_UNUSED(queue); // keeps the shared volume queue alive until this probe returns
+        if (state->stopped())
+            return;
+        MergePlan::Entry result;
+        {
+            const job::Scope scope(*state);
+            result = probeEntry(path, password);
+        }
+        if (state->stopped())
+            return;
+        background::post(guard, [guard, ticket, result, batch, index] {
+            static_cast<MergeDialog *>(guard.data())->finishProbe(ticket, result, batch, index);
+        });
+    });
+    probes_.emplace(entry.probeTicket, Probe{state, queue, queuedJob});
+}
+
+void MergeDialog::stopProbes()
+{
+    for (const auto &[ticket, probe] : probes_) {
+        probe.state->stop();
+        probe.queue->remove(probe.queuedJob);
+    }
+    probes_.clear();
+}
+
+void MergeDialog::finishProbe(quint64 ticket, const MergePlan::Entry &entry,
+                              const std::shared_ptr<ProbeBatch> &batch, int index)
+{
+    probes_.erase(ticket);
+    if (closed_)
+        return;
+    const bool remains = plan_.resolveProbe(ticket, entry);
+    const QPointer<MergeDialog> self(this);
+    refreshRows();
+    refreshFooter();
+    if (!self || !batch)
+        return;
+    if (remains && entry.load != MergePlan::Load::Ok) {
+        //: One line of the "cannot be merged" list: %1 is a file name, %2 why.
+        batch->warnings[index] = {ticket,
+            tr("%1 - %2").arg(QFileInfo(entry.path).fileName(), entry.loadError)};
+    }
+    if (--batch->remaining != 0)
+        return;
+    QStringList warnings;
+    for (const auto &[id, warning] : batch->warnings)
+        if (id && std::any_of(plan_.entries().cbegin(), plan_.entries().cend(),
+                             [id](const MergePlan::Entry &row) { return row.probeTicket == id; }))
+            warnings.append(warning);
+    if (warnings.isEmpty())
+        return;
+    const QPointer<QMessageBox> box(new QMessageBox(QMessageBox::Warning, tr("Merge PDFs"),
+        //: %1 is a list of files, one per line. The number of files picks the
+        //: singular or plural form.
+        tr("These files cannot be merged:\n\n%1", nullptr, int(warnings.size()))
+            .arg(warnings.join(QStringLiteral("\n"))), QMessageBox::Ok, this));
+    box->setWindowModality(Qt::WindowModal);
+    box->exec();
+    delete box.data();
 }
 
 MergePlan::Entry MergeDialog::probeEntry(const QString &path, const QString &password)
@@ -281,13 +446,21 @@ QString MergeDialog::startDirectory() const
     return QString();
 }
 
+/// Appends files chosen in an owner-guarded, window-modal picker.
 void MergeDialog::addFiles()
 {
     //: File type filter. Keep "(*.pdf)" as it is.
     const QString filter = tr("PDF documents (*.pdf)");
-    const QStringList picked = QFileDialog::getOpenFileNames(this, tr("Add PDFs to Merge"),
-                                                             startDirectory(), filter);
-    addPaths(picked);
+    const QPointer<MergeDialog> self(this);
+    const QPointer<QFileDialog> picker(new QFileDialog(this, tr("Add PDFs to Merge"),
+                                                       startDirectory(), filter));
+    picker->setFileMode(QFileDialog::ExistingFiles);
+    picker->setWindowModality(Qt::WindowModal);
+    const bool accepted = picker->exec() == QDialog::Accepted;
+    const QStringList picked = picker && accepted ? picker->selectedFiles() : QStringList();
+    delete picker.data();
+    if (self)
+        addPaths(picked);
 }
 
 void MergeDialog::addPaths(const QStringList &paths)
@@ -296,28 +469,12 @@ void MergeDialog::addPaths(const QStringList &paths)
         return;
 
     const int firstNew = plan_.count();
-    QStringList problems;
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    for (const QString &p : paths) {
-        const MergePlan::Entry e = probeEntry(p);
-        if (e.load != MergePlan::Load::Ok) {
-            //: One line of the "cannot be merged" list: %1 is a file name, %2 why.
-            problems << tr("%1 - %2").arg(QFileInfo(p).fileName(), e.loadError);
-        }
-        plan_.append(e);
-    }
-    QApplication::restoreOverrideCursor();
+    const auto batch = std::make_shared<ProbeBatch>();
+    batch->remaining = paths.size();
+    batch->warnings.resize(paths.size());
+    for (int index = 0; index < paths.size(); ++index)
+        queueProbe(paths.at(index), {}, batch, index);
     rebuild(firstNew);
-
-    // One report for the batch, not one box per bad file. The rows are added
-    // either way, marked and blocking, so the user can see and remove them.
-    if (!problems.isEmpty())
-        QMessageBox::warning(this, tr("Merge PDFs"),
-                             //: %1 is a list of files, one per line. The number of
-                             //: files picks the singular or plural form.
-                             tr("These files cannot be merged:\n\n%1", nullptr,
-                                int(problems.size()))
-                                 .arg(problems.join(QStringLiteral("\n"))));
 }
 
 void MergeDialog::removeCurrent()
@@ -347,16 +504,23 @@ void MergeDialog::moveCurrent(int delta)
         rebuild(to);
 }
 
+/// Updates the output choice only while the dialog survives its save picker.
 void MergeDialog::browseForOutput()
 {
     // The file dialog asks before replacing a file, so the plain default will do.
     const QString suggested =
         outputEdit_->text().isEmpty() ? plan_.plainOutputPath() : outputEdit_->text();
-    const QString out = QFileDialog::getSaveFileName(this, tr("Save Merged PDF"), suggested,
-                                                     tr("PDF documents (*.pdf)"));
-    if (out.isEmpty())
+    const QPointer<MergeDialog> self(this);
+    const QPointer<QFileDialog> picker(new QFileDialog(this, tr("Save Merged PDF"), suggested,
+                                                       tr("PDF documents (*.pdf)")));
+    picker->setAcceptMode(QFileDialog::AcceptSave);
+    picker->setWindowModality(Qt::WindowModal);
+    const bool accepted = picker->exec() == QDialog::Accepted;
+    const QStringList picked = picker && accepted ? picker->selectedFiles() : QStringList();
+    delete picker.data();
+    if (!self || picked.isEmpty())
         return;
-    outputEdit_->setText(QDir::toNativeSeparators(out));
+    outputEdit_->setText(QDir::toNativeSeparators(picked.front()));
     outputEdited_ = true;
     writeError_.clear();
     refreshFooter();
@@ -372,9 +536,10 @@ void MergeDialog::rebuild(int selectRow)
     // A structural change (a row added, removed, moved) may be the fix for an
     // input that stopped the last merge, so its verdict no longer stands.
     writeError_.clear();
-    const QColor ink = Theme::iconInk(palette());
     nameLabels_.clear();
     nameTexts_.clear();
+    badges_.clear();
+    specEditors_.clear();
     list_->clear();
 
     for (int i = 0; i < plan_.count(); ++i) {
@@ -388,19 +553,14 @@ void MergeDialog::rebuild(int selectRow)
                                  ? QDir::toNativeSeparators(e.path)
                                  : QStringLiteral("%1\n\n%2").arg(
                                        QDir::toNativeSeparators(e.path), e.loadError));
-            if (e.load != MergePlan::Load::Ok) {
-                auto *badge = new QLabel(row);
-                badge->setFixedSize(18, 18);
-                badge->setPixmap(icons::glyphPixmap(e.load == MergePlan::Load::Locked
-                                                        ? icons::Glyph::Security
-                                                        : icons::Glyph::Close,
-                                                    ink, 16));
-                badge->setToolTip(name->toolTip());
-                h->addWidget(badge, 0);
-            }
+            auto *badge = new QLabel(row);
+            badge->setFixedSize(18, 18);
+            badges_.append(badge);
+            h->addWidget(badge, 0);
             h->addWidget(name, 1);
 
             auto *spec = new QLineEdit(e.spec, row);
+            specEditors_.append(spec);
             spec->setObjectName(QStringLiteral("mergeRowSpec"));
             spec->setFixedWidth(specWidth_);
             // A format prompt, not "All": a greyed placeholder identical to the
@@ -408,7 +568,7 @@ void MergeDialog::rebuild(int selectRow)
             // force while it was actually blocking the merge.
             spec->setPlaceholderText(specPlaceholder());
             spec->setEnabled(e.load == MergePlan::Load::Ok);
-            // The list is rebuilt wholesale on every mutation, so this build-time
+            // The list is rebuilt on every structural change, so this build-time
             // index stays valid for as long as the widget it is captured in exists.
             connect(spec, &QLineEdit::textChanged, this, [this, i](const QString &t) {
                 plan_.setSpec(i, t);
@@ -420,6 +580,8 @@ void MergeDialog::rebuild(int selectRow)
         });
     }
 
+    refreshRows();
+
     if (selectRow >= 0 && selectRow < plan_.count()) {
         list_->setCurrentRow(selectRow);
         list_->scrollToItem(list_->item(selectRow));
@@ -429,6 +591,26 @@ void MergeDialog::rebuild(int selectRow)
     // real widths - the same two-step MeasurePanel uses for its row text.
     reelideNames();
     QTimer::singleShot(0, this, [this] { reelideNames(); });
+}
+
+void MergeDialog::refreshRows()
+{
+    const QColor ink = Theme::iconInk(palette());
+    for (int row = 0; row < plan_.count() && row < nameLabels_.size(); ++row) {
+        const auto &entry = plan_.at(row);
+        nameTexts_[row] = plan_.displayName(row);
+        nameLabels_.at(row)->setToolTip(entry.loadError.isEmpty()
+            ? QDir::toNativeSeparators(entry.path)
+            : QStringLiteral("%1\n\n%2").arg(QDir::toNativeSeparators(entry.path), entry.loadError));
+        auto *badge = badges_.at(row);
+        badge->setPixmap(icons::glyphPixmap(entry.load == MergePlan::Load::Locked
+            ? icons::Glyph::Security : icons::Glyph::Close, ink, 16));
+        badge->setToolTip(nameLabels_.at(row)->toolTip());
+        badge->setVisible(entry.load == MergePlan::Load::Locked
+                          || entry.load == MergePlan::Load::Unreadable);
+        specEditors_.at(row)->setEnabled(entry.load == MergePlan::Load::Ok);
+    }
+    reelideNames();
 }
 
 void MergeDialog::reelideNames()
@@ -451,6 +633,14 @@ void MergeDialog::resizeEvent(QResizeEvent *event)
 {
     QDialog::resizeEvent(event);
     reelideNames();
+}
+
+bool MergeDialog::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == error_ && plan_.hasReading()
+        && (event->type() == QEvent::Resize || event->type() == QEvent::FontChange))
+        showProblem();
+    return QDialog::eventFilter(watched, event);
 }
 
 void MergeDialog::refreshFooter()
@@ -500,8 +690,7 @@ std::optional<QString> MergeDialog::saveAsProblem() const
         return tr("Choose where to save the merged PDF.");
     if (!checked_ || checked_->text != text)
         return std::nullopt;
-    // The viewer keeps an open tab's file open, so the write would fail only once
-    // Merge was pressed.
+    // Protect a file used by an open tab before Merge is pressed.
     if (openKeys_.contains(checked_->key))
         return tr("That file is open in a tab. Choose another name.");
     return QString();
@@ -509,7 +698,7 @@ std::optional<QString> MergeDialog::saveAsProblem() const
 
 void MergeDialog::showProblem()
 {
-    const QString planReason = plan_.errorText();
+    const QString planReason = fitPendingReason(plan_.errorText());
     const bool planOk = planReason.isEmpty() && !plan_.isEmpty();
     const std::optional<QString> saveAsReason =
         planOk ? saveAsProblem() : std::optional<QString>(QString());
@@ -533,9 +722,27 @@ void MergeDialog::showProblem()
     // but leaves Merge enabled, so closing the file in the program that holds it
     // and pressing Merge again is enough.
     const bool showWrite = why.isEmpty() && !writeError_.isEmpty();
-    error_->setText(showWrite ? writeError_ : why);
+    const QString text = showWrite ? writeError_ : why;
+    if (error_->text() != text)
+        error_->setText(text);
     error_->setToolTip(showWrite ? writeErrorDetail_ : QString());
     mergeBtn_->setEnabled(!plan_.isEmpty() && plan_.isValid() && why.isEmpty());
+}
+
+QString MergeDialog::fitPendingReason(const QString &reason) const
+{
+    for (int i = 0; i < plan_.count(); ++i) {
+        if (plan_.at(i).load != MergePlan::Load::Reading)
+            continue;
+        const QString name = plan_.displayName(i);
+        const QString isolated = QChar(0x2068) + name + QChar(0x2069);
+        // Keep the translated row and reason intact, shortening only the named
+        // file when an unbroken part cannot fit at the current label width.
+        return fitFileSentence([&reason, &isolated](const QString &shown, const QString &) {
+            return QString(reason).replace(isolated, shown);
+        }, name, {}, error_->fontMetrics(), error_->contentsRect().width());
+    }
+    return reason;
 }
 
 QStringList MergeDialog::files() const
@@ -546,27 +753,55 @@ QStringList MergeDialog::files() const
     return files;
 }
 
+/// Checks paths off the GUI thread and captures exact destination contents only on acceptance.
 void MergeDialog::checkOutput()
 {
+    if (outputCheckState_)
+        outputCheckState_->stop();
+    outputCheckState_.reset();
+    // The source's default folder may be on the same blocked drive. Wait for its
+    // probe instead of starting another filesystem call each time Merge reopens.
+    if (plan_.hasReading())
+        return;
     checking_ = outputEdit_->text();
     checkedFiles_ = files();
     const bool stepDefault = !outputEdited_;
     // The inputs matter only to a write, and one on a share that stopped answering
     // would hold up checks of Save as.
     const bool forWrite = pressed_.has_value();
+    if (forWrite)
+        outputCheckState_ = std::make_shared<job::State>();
     saveCheck_->run(
-        [plan = plan_, text = checking_, stepDefault, forWrite] {
+        [plan = plan_, text = checking_, stepDefault, forWrite, state = outputCheckState_] {
             Checked checked;
+            std::optional<job::Scope> scope;
+            if (state)
+                scope.emplace(*state);
+            if (job::stopped())
+                return checked;
             checked.text = stepDefault ? QDir::toNativeSeparators(plan.defaultOutputPath()) : text;
+            if (job::stopped())
+                return checked;
             const QString out = withPdf(checked.text);
             checked.canonical = QFileInfo(out).canonicalFilePath();
+            if (job::stopped())
+                return checked;
             checked.key = normalizePathKey(canonicalOrAbsolute(out));
-            if (forWrite)
-                for (const MergePlan::Entry &e : plan.entries())
+            if (forWrite) {
+                for (const MergePlan::Entry &e : plan.entries()) {
+                    if (job::stopped())
+                        return checked;
                     checked.inputs << QFileInfo(e.path).canonicalFilePath();
+                }
+                checked.consent = DestinationConsent::read(out, &checked.consentError);
+            }
             return checked;
         },
-        [this](const Checked &checked) {
+        [this, requestedText = checking_, requestedFiles = checkedFiles_](const Checked &checked) {
+            // Pending input probes defer replacement checks. An older answer must
+            // not restore the default name from rows the user has since changed.
+            if (closed_ || requestedText != outputEdit_->text() || requestedFiles != files())
+                return;
             if (!outputEdited_ && checked.text != outputEdit_->text()) {
                 // The default, past a name in use. Text selected for typing over
                 // stays selected.
@@ -599,19 +834,22 @@ void MergeDialog::setOpenFiles(const QStringList &paths)
 void MergeDialog::accept()
 {
     if (!plan_.isValid()) {
-        QMessageBox::warning(this, tr("Merge PDFs"), plan_.errorText());
+        warnInWindow(this, plan_.errorText());
         return;
     }
 
     if (outputEdit_->text().trimmed().isEmpty()) {
-        QMessageBox::warning(this, tr("Merge PDFs"), tr("Choose where to save the merged PDF."));
-        outputEdit_->setFocus();
+        const QPointer<MergeDialog> self(this);
+        warnInWindow(this, tr("Choose where to save the merged PDF."));
+        if (self)
+            outputEdit_->setFocus();
         return;
     }
     pressed_ = std::pair(outputEdit_->text(), files());
     checkOutput();
 }
 
+/// Freezes the checked consent before asking for replacement and accepting the unchanged plan.
 void MergeDialog::write()
 {
     // Pressed before the check answered: the answer can be a reason not to write,
@@ -619,60 +857,59 @@ void MergeDialog::write()
     if (const std::optional<QString> why = problem(); !why || !why->isEmpty())
         return;
     const QString out = withPdf(outputEdit_->text());
+    const Checked checked = *checked_;
+    if (!checked.consent) {
+        writeError_ = failureSummary(plan_, out, -1, Conflict::CheckFailed);
+        writeErrorDetail_ = checked.consentError;
+        showProblem();
+        return;
+    }
 
     // The merge reads every source while it writes the output, so naming an input
     // as the output destroys the file it is copying from. canonicalFilePath()
     // resolves symlinks and case, and is empty for a file that does not exist yet
     // - which is the normal case and correctly matches nothing.
-    const QString &outCanonical = checked_->canonical;
-    if (!outCanonical.isEmpty()) {
-        if (checked_->inputs.contains(outCanonical)) {
-            QMessageBox::warning(this, tr("Merge PDFs"),
-                                 tr("The merged file cannot replace one of the files being "
-                                    "merged. Choose a different name."));
-            outputEdit_->setFocus();
-            outputEdit_->selectAll();
+    const QString &outCanonical = checked.canonical;
+    if (checked.consent->exists) {
+        if (checked.inputs.contains(outCanonical)) {
+            const QPointer<MergeDialog> self(this);
+            warnInWindow(this, tr("The merged file cannot replace one of the files being "
+                                 "merged. Choose a different name."));
+            if (self) {
+                outputEdit_->setFocus();
+                outputEdit_->selectAll();
+            }
             return;
         }
-        if (QMessageBox::question(this, tr("Merge PDFs"),
-                                  //: %1 is a file path.
-                                  tr("\"%1\" already exists. Replace it?")
-                                      .arg(QDir::toNativeSeparators(out)),
-                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
-            != QMessageBox::Yes)
+        const QStringList originalFiles = files();
+        const QString originalText = outputEdit_->text();
+        const QPointer<MergeDialog> self(this);
+        const QPointer<QMessageBox> box(new QMessageBox(QMessageBox::Question, tr("Merge PDFs"),
+            //: %1 is a file path.
+            tr("\"%1\" already exists. Replace it?").arg(QDir::toNativeSeparators(out)),
+            QMessageBox::Yes | QMessageBox::No, this));
+        box->setDefaultButton(QMessageBox::No);
+        box->setWindowModality(Qt::WindowModal);
+        const int answer = box->exec();
+        delete box.data();
+        if (!self || answer != QMessageBox::Yes || files() != originalFiles
+            || outputEdit_->text() != originalText)
             return;
     }
 
-    // Written here rather than by the caller after the dialog closes: a file
-    // another program holds open, an input that went bad, or a full disk then
-    // costs a message on the error line instead of the whole plan.
-    const QList<PageOps::MergeInput> inputs = plan_.inputs();
-    QString err;
-    int failed = -1;
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    const PageOps::Status st = PageOps::merge(inputs, out, &err, &failed);
-    QApplication::restoreOverrideCursor();
-    if (st != PageOps::Status::Ok) {
-        // Name the input that stopped it when the backend can tell; otherwise
-        // it was the write.
-        // Separate statements: lupdate before Qt 6.11 drops a //: comment placed in
-        // front of the ':' branch of a ternary.
-        if (failed >= 0 && failed < inputs.size()) {
-            //: %1 is the name of the file being merged when it failed.
-            writeError_ = tr("The merge failed on \"%1\".")
-                              .arg(QFileInfo(inputs.at(failed).path).fileName());
-        } else {
-            //: %1 is the merged file's name.
-            writeError_ = tr("Could not write \"%1\". If another program has it open, close "
-                             "it and press Merge again, or choose another name.")
-                              .arg(QFileInfo(out).fileName());
-        }
-        writeErrorDetail_ = QDir::toNativeSeparators(err);
-        refreshFooter();
-        return;
-    }
     outputPath_ = out;
+    outputConsent_ = *checked.consent;
     QDialog::accept();
+}
+
+/// Stops outstanding reads before closing, allowing their blocked OS calls to return later.
+void MergeDialog::done(int result)
+{
+    closed_ = true;
+    stopProbes();
+    if (outputCheckState_)
+        outputCheckState_->stop();
+    QDialog::done(result);
 }
 
 } // namespace mervin

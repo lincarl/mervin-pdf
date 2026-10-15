@@ -2621,6 +2621,16 @@ Opnaðu stillingar kerfisins þíns → Sjálfgefin forrit (eða hægrismelltu �
         <translation>Sameina</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>Áfangastaðurinn hefur breyst. Ýttu aftur á „Sameina“ til að yfirfara hann.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>Ekki tókst að athuga áfangastaðinn. Ýttu á „Sameina“ til að reyna aftur eða veldu annað nafn.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>Skráin inniheldur engar síður.</translation>
     </message>
@@ -2702,6 +2712,11 @@ Opnaðu stillingar kerfisins þíns → Sjálfgefin forrit (eða hægrismelltu �
 <context>
     <name>mervin::MergePlan</name>
     <message>
+        <source>&quot;%1&quot; is still being read.</source>
+        <extracomment>Shown after the row number in Merge&apos;s footer while a background probe reads the PDF. %1 is the file name, for example b.pdf. Merge stays disabled until reading finishes. This is a pending state, not a read failure.</extracomment>
+        <translation>Enn er verið að lesa „%1“.</translation>
+    </message>
+    <message>
         <source>&quot;%1&quot; is encrypted and cannot be merged.</source>
         <extracomment>%1 is a file name.</extracomment>
         <translation>„%1“ er dulkóðuð og ekki hægt að sameina hana.</translation>
@@ -2719,6 +2734,11 @@ Opnaðu stillingar kerfisins þíns → Sjálfgefin forrit (eða hægrismelltu �
     <message>
         <source>Enter pages like 1-3, 5, 8-10.</source>
         <translation>Sláðu inn síður eins og 1-3, 5, 8-10.</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <extracomment>Count column of a Merge input while its background file probe runs. This means reading the PDF&apos;s information, not a page selection.</extracomment>
+        <translation>Les…</translation>
     </message>
     <message>
         <source>Locked</source>
@@ -2761,7 +2781,7 @@ Opnaðu stillingar kerfisins þíns → Sjálfgefin forrit (eða hægrismelltu �
     </message>
     <message>
         <source>Row %1: %2</source>
-        <extracomment>%1 is the row number, %2 the sentence saying what is wrong with it.</extracomment>
+        <extracomment>%1 is the row number, %2 the sentence describing the pending read or row problem.</extracomment>
         <translation>Röð %1: %2</translation>
     </message>
 </context>

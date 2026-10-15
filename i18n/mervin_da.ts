@@ -2621,6 +2621,16 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>Flet</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>Destinationen er ændret. Tryk på »Flet« igen for at gennemgå den.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>Destinationen kunne ikke kontrolleres. Tryk på »Flet« for at prøve igen, eller vælg et andet navn.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>Filen indeholder ingen sider.</translation>
     </message>
@@ -2702,6 +2712,11 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
 <context>
     <name>mervin::MergePlan</name>
     <message>
+        <source>&quot;%1&quot; is still being read.</source>
+        <extracomment>Shown after the row number in Merge&apos;s footer while a background probe reads the PDF. %1 is the file name, for example b.pdf. Merge stays disabled until reading finishes. This is a pending state, not a read failure.</extracomment>
+        <translation>&quot;%1&quot; læses stadig.</translation>
+    </message>
+    <message>
         <source>&quot;%1&quot; is encrypted and cannot be merged.</source>
         <extracomment>%1 is a file name.</extracomment>
         <translation>&quot;%1&quot; er krypteret og kan ikke flettes.</translation>
@@ -2719,6 +2734,11 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     <message>
         <source>Enter pages like 1-3, 5, 8-10.</source>
         <translation>Indtast sider som 1-3, 5, 8-10.</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <extracomment>Count column of a Merge input while its background file probe runs. This means reading the PDF&apos;s information, not a page selection.</extracomment>
+        <translation>Læser…</translation>
     </message>
     <message>
         <source>Locked</source>
@@ -2761,7 +2781,7 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     </message>
     <message>
         <source>Row %1: %2</source>
-        <extracomment>%1 is the row number, %2 the sentence saying what is wrong with it.</extracomment>
+        <extracomment>%1 is the row number, %2 the sentence describing the pending read or row problem.</extracomment>
         <translation>Række %1: %2</translation>
     </message>
 </context>

@@ -2621,6 +2621,16 @@ Opne Innstillingar → Standardprogram i systemet (eller høgreklikk på ei PDF-
         <translation>Slå saman</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>Målfila er endra. Trykk på «Slå saman» igjen for å kontrollere henne.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>Kunne ikkje kontrollere målfila. Trykk på «Slå saman» for å prøve igjen, eller vel eit anna namn.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>Fila inneheld ingen sider.</translation>
     </message>
@@ -2702,6 +2712,11 @@ Opne Innstillingar → Standardprogram i systemet (eller høgreklikk på ei PDF-
 <context>
     <name>mervin::MergePlan</name>
     <message>
+        <source>&quot;%1&quot; is still being read.</source>
+        <extracomment>Shown after the row number in Merge&apos;s footer while a background probe reads the PDF. %1 is the file name, for example b.pdf. Merge stays disabled until reading finishes. This is a pending state, not a read failure.</extracomment>
+        <translation>Lesinga av «%1» er framleis i gang.</translation>
+    </message>
+    <message>
         <source>&quot;%1&quot; is encrypted and cannot be merged.</source>
         <extracomment>%1 is a file name.</extracomment>
         <translation>«%1» er kryptert og kan ikkje slåast saman.</translation>
@@ -2719,6 +2734,11 @@ Opne Innstillingar → Standardprogram i systemet (eller høgreklikk på ei PDF-
     <message>
         <source>Enter pages like 1-3, 5, 8-10.</source>
         <translation>Skriv inn sider som 1-3, 5, 8-10.</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <extracomment>Count column of a Merge input while its background file probe runs. This means reading the PDF&apos;s information, not a page selection.</extracomment>
+        <translation>Les…</translation>
     </message>
     <message>
         <source>Locked</source>
@@ -2761,7 +2781,7 @@ Opne Innstillingar → Standardprogram i systemet (eller høgreklikk på ei PDF-
     </message>
     <message>
         <source>Row %1: %2</source>
-        <extracomment>%1 is the row number, %2 the sentence saying what is wrong with it.</extracomment>
+        <extracomment>%1 is the row number, %2 the sentence describing the pending read or row problem.</extracomment>
         <translation>Rad %1: %2</translation>
     </message>
 </context>

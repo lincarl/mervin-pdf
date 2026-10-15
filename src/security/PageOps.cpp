@@ -190,8 +190,10 @@ PageOps::Status PageOps::rotatePages(const QString &inPath, const QString &outPa
     }
 }
 
+/// Combines the selected pages and validates optional destination consent before publication.
 PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &outPath,
-                               QString *error, int *failedIndex)
+                               QString *error, int *failedIndex,
+                               const std::function<bool()> &mayCommit)
 {
     if (failedIndex)
         *failedIndex = -1;
@@ -253,7 +255,7 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
         measurementPages::write(out, mergedMeasurements);
 
         AtomicPdfWriter output(out, outPath);
-        output.write();
+        output.write(mayCommit);
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)

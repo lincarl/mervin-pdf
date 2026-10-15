@@ -1,5 +1,6 @@
 #include "io/Background.h"
 
+#include <QScopeGuard>
 #include <QtTest>
 
 #include <atomic>
@@ -127,6 +128,63 @@ private slots:
         gate->open();
         QVERIFY(background::settle(10000));
         QCOMPARE(log->all(), std::vector<int>{1});
+    }
+
+    /// Removes one pending job, releasing reentrant captures while other work survives.
+    void removeDropsOnlyThePendingJobWithoutHoldingTheLock()
+    {
+        const auto log = std::make_shared<Log>();
+        const auto gate = std::make_shared<Gate>();
+        const auto release = qScopeGuard([gate] { gate->open(); });
+        const auto queue = std::make_shared<background::SerialQueue>();
+        const auto running = queue->add([log, gate] {
+            gate->pass();
+            log->add(1);
+        });
+        QVERIFY(gate->reached(10000));
+        auto capture = std::shared_ptr<int>(new int(0), [queue, log](int *value) {
+            delete value;
+            queue->add([log] { log->add(4); });
+        });
+        const std::weak_ptr<int> dropped = capture;
+        const auto pending = queue->add([log, capture] { log->add(2); });
+        queue->add([log] { log->add(3); });
+        capture.reset();
+        const auto removed = std::make_shared<std::atomic<bool>>(false);
+        const auto answered = std::make_shared<std::atomic<bool>>(false);
+        // A bad lock lifetime fails within the timeout instead of blocking the test thread.
+        background::start([queue, pending, removed, answered] {
+            removed->store(queue->remove(pending));
+            answered->store(true);
+        });
+        QTRY_VERIFY_WITH_TIMEOUT(answered->load(), 5000);
+        QVERIFY(removed->load());
+        QVERIFY(dropped.expired());
+        QVERIFY(!queue->remove(pending));
+        QVERIFY(!queue->remove(running));
+        QVERIFY(!queue->remove(0));
+        gate->open();
+        QVERIFY(background::settle(10000));
+        QCOMPARE(log->all(), (std::vector<int>{1, 3, 4}));
+    }
+
+    /// Releases a queue held only by its final running job after that job returns.
+    void runningJobReleasesItsQueueKeepalive()
+    {
+        const auto gate = std::make_shared<Gate>();
+        const auto release = qScopeGuard([gate] { gate->open(); });
+        auto queue = std::make_shared<background::SerialQueue>();
+        const std::weak_ptr<background::SerialQueue> retained = queue;
+        queue->add([queue, gate] {
+            Q_UNUSED(queue);
+            gate->pass();
+        });
+        QVERIFY(gate->reached(10000));
+        queue.reset();
+        QVERIFY(!retained.expired());
+        gate->open();
+        QVERIFY(background::settle(10000));
+        QVERIFY(retained.expired());
     }
 };
 

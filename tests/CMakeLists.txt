@@ -279,13 +279,26 @@ qt_add_executable(tst_merge_dialog tst_merge_dialog.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/RowList.cpp
     ${CMAKE_SOURCE_DIR}/src/dialogs/RowList.h
     ${CMAKE_SOURCE_DIR}/src/ui/Theme.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/Theme.h)
+    ${CMAKE_SOURCE_DIR}/src/ui/Theme.h
+    ${CMAKE_SOURCE_DIR}/src/ui/WaitBar.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/WaitBar.h)
 target_link_libraries(tst_merge_dialog
     PRIVATE mervin_icons mervin_core Qt6::Test Qt6::Widgets qpdf::libqpdf)
 set_target_properties(tst_merge_dialog PROPERTIES WIN32_EXECUTABLE OFF)
 add_test(NAME tst_merge_dialog COMMAND tst_merge_dialog)
 set_tests_properties(tst_merge_dialog PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+
+qt_add_executable(tst_merge_operations tst_merge_operations.cpp TestWaits.h)
+target_link_libraries(tst_merge_operations PRIVATE mervin_app Qt6::Test)
+set_target_properties(tst_merge_operations PROPERTIES WIN32_EXECUTABLE OFF)
+target_compile_definitions(tst_merge_operations PRIVATE
+    MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
+add_test(NAME tst_merge_operations COMMAND tst_merge_operations)
+set_tests_properties(tst_merge_operations PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    TIMEOUT 180
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
 # Widget-level guard rails for the extract dialog, arranged like tst_merge_dialog

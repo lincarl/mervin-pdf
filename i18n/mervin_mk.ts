@@ -2629,6 +2629,16 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>Спои</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>Одредиштето се промени. Притиснете „Спои“ повторно за да го проверите.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>Не може да се провери одредиштето. Притиснете „Спои“ за да се обидете повторно или изберете друго име.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>Датотеката не содржи страници.</translation>
     </message>
@@ -2713,6 +2723,11 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
 <context>
     <name>mervin::MergePlan</name>
     <message>
+        <source>&quot;%1&quot; is still being read.</source>
+        <extracomment>Shown after the row number in Merge&apos;s footer while a background probe reads the PDF. %1 is the file name, for example b.pdf. Merge stays disabled until reading finishes. This is a pending state, not a read failure.</extracomment>
+        <translation>„%1“ сè уште се чита.</translation>
+    </message>
+    <message>
         <source>&quot;%1&quot; is encrypted and cannot be merged.</source>
         <extracomment>%1 is a file name.</extracomment>
         <translation>„%1“ е шифрирана и не може да се спои.</translation>
@@ -2730,6 +2745,11 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     <message>
         <source>Enter pages like 1-3, 5, 8-10.</source>
         <translation>Внесете страници како 1-3, 5, 8-10.</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <extracomment>Count column of a Merge input while its background file probe runs. This means reading the PDF&apos;s information, not a page selection.</extracomment>
+        <translation>Читање…</translation>
     </message>
     <message>
         <source>Locked</source>
@@ -2774,7 +2794,7 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     </message>
     <message>
         <source>Row %1: %2</source>
-        <extracomment>%1 is the row number, %2 the sentence saying what is wrong with it.</extracomment>
+        <extracomment>%1 is the row number, %2 the sentence describing the pending read or row problem.</extracomment>
         <translation>Ред %1: %2</translation>
     </message>
 </context>

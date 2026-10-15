@@ -2629,6 +2629,16 @@ Otevřete Nastavení systému → Výchozí aplikace (nebo klepněte pravým tla
         <translation>Sloučit</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>Cíl se změnil. Stiskněte znovu „Sloučit“ a zkontrolujte ho.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>Cíl se nepodařilo zkontrolovat. Stiskněte „Sloučit“ a zkuste to znovu, nebo vyberte jiný název.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>Soubor neobsahuje žádné stránky.</translation>
     </message>
@@ -2713,6 +2723,11 @@ Otevřete Nastavení systému → Výchozí aplikace (nebo klepněte pravým tla
 <context>
     <name>mervin::MergePlan</name>
     <message>
+        <source>&quot;%1&quot; is still being read.</source>
+        <extracomment>Shown after the row number in Merge&apos;s footer while a background probe reads the PDF. %1 is the file name, for example b.pdf. Merge stays disabled until reading finishes. This is a pending state, not a read failure.</extracomment>
+        <translation>&quot;%1&quot; se stále čte.</translation>
+    </message>
+    <message>
         <source>&quot;%1&quot; is encrypted and cannot be merged.</source>
         <extracomment>%1 is a file name.</extracomment>
         <translation>&quot;%1&quot; je zašifrováno a nelze jej sloučit.</translation>
@@ -2730,6 +2745,11 @@ Otevřete Nastavení systému → Výchozí aplikace (nebo klepněte pravým tla
     <message>
         <source>Enter pages like 1-3, 5, 8-10.</source>
         <translation>Zadejte stránky jako 1-3, 5, 8-10.</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <extracomment>Count column of a Merge input while its background file probe runs. This means reading the PDF&apos;s information, not a page selection.</extracomment>
+        <translation>Čtení…</translation>
     </message>
     <message>
         <source>Locked</source>
@@ -2774,7 +2794,7 @@ Otevřete Nastavení systému → Výchozí aplikace (nebo klepněte pravým tla
     </message>
     <message>
         <source>Row %1: %2</source>
-        <extracomment>%1 is the row number, %2 the sentence saying what is wrong with it.</extracomment>
+        <extracomment>%1 is the row number, %2 the sentence describing the pending read or row problem.</extracomment>
         <translation>Řádek %1: %2</translation>
     </message>
 </context>

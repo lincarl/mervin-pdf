@@ -1,4 +1,5 @@
 #include "io/JobContext.h"
+#include "io/DestinationConsent.h"
 #include "render/Document.h"
 #include "render/RenderEngine.h"
 #include "security/DocumentOutput.h"
@@ -369,6 +370,7 @@ private slots:
     void laterWriterWaitsForTheStoppedOne();
     void laterWriterWaitsForACommitThatBegan_data() { writers(); }
     void laterWriterWaitsForACommitThatBegan();
+    void mergeConsentWaitsForThePublicationLock();
     void differentFilesDoNotWait_data() { writers(); }
     void differentFilesDoNotWait();
 #ifdef Q_OS_WIN
@@ -590,6 +592,35 @@ void TstJobContext::laterWriterWaitsForACommitThatBegan()
     QVERIFY(two.result());
     QCOMPARE(versionAt(writer, path), 2);
     QCOMPARE(entries(dir), QStringList{QStringLiteral("result.pdf")});
+}
+
+/// Validates consent only after the earlier writer releases its completed replacement.
+void TstJobContext::mergeConsentWaitsForThePublicationLock()
+{
+    QTemporaryDir sources, dir;
+    const QString path = dir.filePath(QStringLiteral("result.pdf"));
+    const auto approved = DestinationConsent::read(path);
+    QVERIFY(approved && !approved->exists);
+    holdFirstWrite(dir.path());
+    job::State first, second;
+    JobThread one(first, [&] { return writeVersion(Writer::Pdf, sources, path, 1); });
+    QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, kWaitMs);
+    std::atomic<bool> validated{false};
+    JobThread two(second, [&] {
+        return PageOps::merge(
+            QList<PageOps::MergeInput>{{QStringLiteral(MERVIN_FIXTURE_PDF), {0, 1}, {}}},
+            path, nullptr, nullptr, [&] {
+                validated.store(true);
+                return DestinationConsent::read(path) == approved;
+            }) == PageOps::Status::Ok;
+    });
+    QVERIFY(!two.endsWithin(100));
+    QVERIFY(!validated.load());
+    job::testing::release();
+    QVERIFY(one.result());
+    QVERIFY(!two.result());
+    QVERIFY(validated.load());
+    QCOMPARE(versionAt(Writer::Pdf, path), 1);
 }
 
 void TstJobContext::differentFilesDoNotWait()

@@ -261,6 +261,15 @@ QT_QPA_PLATFORM=offscreen ctest --test-dir "$mervin_build_dir" \
   -R 'i18n_catalogs|i18n_content|tst_text_fit|tst_translation_layout' --output-on-failure
 ```
 
+For offscreen checks at 125 percent scaling, configure the virtual screen as well
+as `QT_SCALE_FACTOR=1.25`. Qt's default 800 by 800 screen becomes only 640 by 640
+logical pixels and can produce unrelated dialog-sizing failures. Use
+`QT_QPA_PLATFORM=offscreen:configfile=<path>` with a screen configuration matching
+the 1920 by 1080 physical baseline and its measured available work area. Verify
+that Qt reports 1536 by 864 logical pixels and device pixel ratio 1.25. An available
+physical area of 1920 by 1032 becomes approximately 1536 by 826 logical pixels. This emulates geometry; native checks still
+verify the visible taskbar and window decorations.
+
 GitHub Actions supplies the same pinned Noto Sans fonts on Linux and Windows.
 The fetch script verifies every font and its SIL OFL license by SHA-256. The set
 covers extended Latin, Greek, Cyrillic, Armenian, Georgian, Arabic, Devanagari,

@@ -2613,6 +2613,16 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>병합</translation>
     </message>
     <message>
+        <source>The destination changed. Press Merge again to review it.</source>
+        <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
+        <translation>저장 대상이 변경되었습니다. 확인하려면 ‘병합’을 다시 누르세요.</translation>
+    </message>
+    <message>
+        <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
+        <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
+        <translation>저장 대상을 확인할 수 없습니다. 다시 시도하려면 ‘병합’을 누르거나 다른 이름을 선택하세요.</translation>
+    </message>
+    <message>
         <source>The file contains no pages.</source>
         <translation>파일에 페이지가 없습니다.</translation>
     </message>
@@ -2691,6 +2701,11 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
 <context>
     <name>mervin::MergePlan</name>
     <message>
+        <source>&quot;%1&quot; is still being read.</source>
+        <extracomment>Shown after the row number in Merge&apos;s footer while a background probe reads the PDF. %1 is the file name, for example b.pdf. Merge stays disabled until reading finishes. This is a pending state, not a read failure.</extracomment>
+        <translation>&quot;%1&quot; 읽기가 아직 진행 중입니다.</translation>
+    </message>
+    <message>
         <source>&quot;%1&quot; is encrypted and cannot be merged.</source>
         <extracomment>%1 is a file name.</extracomment>
         <translation>&quot;%1&quot;는 암호화되어 병합할 수 없습니다.</translation>
@@ -2708,6 +2723,11 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     <message>
         <source>Enter pages like 1-3, 5, 8-10.</source>
         <translation>1-3, 5, 8-10과 같은 페이지를 입력하세요.</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <extracomment>Count column of a Merge input while its background file probe runs. This means reading the PDF&apos;s information, not a page selection.</extracomment>
+        <translation>읽는 중…</translation>
     </message>
     <message>
         <source>Locked</source>
@@ -2748,7 +2768,7 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     </message>
     <message>
         <source>Row %1: %2</source>
-        <extracomment>%1 is the row number, %2 the sentence saying what is wrong with it.</extracomment>
+        <extracomment>%1 is the row number, %2 the sentence describing the pending read or row problem.</extracomment>
         <translation>%1행: %2</translation>
     </message>
 </context>

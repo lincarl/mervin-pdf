@@ -4,6 +4,7 @@
 #include <QThreadPool>
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -61,10 +62,18 @@ void post(const QPointer<QObject> &context, std::function<void()> fn)
         Qt::QueuedConnection);
 }
 
+/// Shares pending jobs and drain ownership with the running background task.
 struct SerialQueue::State
 {
+    /// Keeps one callable addressable until the worker starts it.
+    struct Job
+    {
+        JobId id;
+        std::function<void()> work;
+    };
     std::mutex mutex;
-    std::deque<std::function<void()>> jobs; // guarded by mutex
+    std::deque<Job> jobs;                   // guarded by mutex
+    JobId nextId = 0;                       // guarded by mutex
     bool working = false;                   // guarded by mutex: a task is running the jobs
 };
 
@@ -78,13 +87,16 @@ SerialQueue::~SerialQueue()
     clear();
 }
 
-void SerialQueue::add(std::function<void()> job)
+/// Appends a job and starts one drain task when the queue was idle.
+SerialQueue::JobId SerialQueue::add(std::function<void()> job)
 {
+    JobId id;
     {
         std::lock_guard<std::mutex> lock(state_->mutex);
-        state_->jobs.push_back(std::move(job));
+        id = ++state_->nextId;
+        state_->jobs.push_back({id, std::move(job)});
         if (std::exchange(state_->working, true))
-            return;
+            return id;
     }
     start([state = state_] {
         for (;;) {
@@ -95,17 +107,33 @@ void SerialQueue::add(std::function<void()> job)
                     state->working = false;
                     return;
                 }
-                job = std::move(state->jobs.front());
+                job = std::move(state->jobs.front().work);
                 state->jobs.pop_front();
             }
             job();
         }
     });
+    return id;
 }
 
+/// Drops one pending job and releases its captures outside the queue mutex.
+bool SerialQueue::remove(JobId id)
+{
+    std::function<void()> dropped;
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    const auto found = std::find_if(state_->jobs.begin(), state_->jobs.end(),
+                                    [id](const State::Job &job) { return job.id == id; });
+    if (found == state_->jobs.end())
+        return false;
+    dropped = std::move(found->work);
+    state_->jobs.erase(found);
+    return true; // the lock is destroyed before the dropped captures
+}
+
+/// Drops every pending job while leaving the running job untouched.
 void SerialQueue::clear()
 {
-    std::deque<std::function<void()>> dropped;
+    std::deque<State::Job> dropped;
     std::lock_guard<std::mutex> lock(state_->mutex);
     dropped.swap(state_->jobs);
 }

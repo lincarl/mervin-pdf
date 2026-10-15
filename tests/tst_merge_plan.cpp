@@ -41,6 +41,9 @@ private slots:
     void defaultOutputPathAvoidsExistingAndInputFiles();
     void rowTextsMatchesThePerRowGetters();
     void dropGapsMapToTheRightRow();
+    void readingBlocksUnknownOutputPositions();
+    void readingReasonFollowsOrderAndCompletion();
+    void probeResolutionFollowsPendingCopies();
 
 private:
     static MergePlan::Entry ok(const QString &path, int pages, const QString &spec = QString())
@@ -60,6 +63,79 @@ void TstMergePlan::initTestCase()
     // The English plural forms ("1 page", "13 pages") come from the English
     // catalog; without it Qt would show "13 page(s)".
     mervin::i18n::apply(QStringLiteral("en"));
+}
+
+/// Checks that pending counts block Merge and hide dependent output positions.
+void TstMergePlan::readingBlocksUnknownOutputPositions()
+{
+    MergePlan plan;
+    plan.append(ok(QStringLiteral("/a/first.pdf"), 2));
+    MergePlan::Entry pending;
+    pending.path = QStringLiteral("/b/reading.pdf");
+    pending.load = MergePlan::Load::Reading;
+    pending.probeTicket = 1;
+    plan.append(pending);
+    plan.append(ok(QStringLiteral("/a/later.pdf"), 3));
+    QVERIFY(plan.hasReading());
+    QVERIFY(!plan.isValid());
+    QCOMPARE(plan.errorText(), QStringLiteral("Row 2: \"\u2068reading.pdf\u2069\" is still being read."));
+    QCOMPARE(plan.countText(1), QStringLiteral("Reading…"));
+    QCOMPARE(plan.outputText(0), QStringLiteral("1-2"));
+    QVERIFY(plan.outputText(1).isEmpty() && plan.outputText(2).isEmpty());
+    auto result = ok(pending.path, 4);
+    QVERIFY(plan.resolveProbe(1, result));
+    QVERIFY(plan.isValid() && !plan.hasReading());
+    QVERIFY(plan.errorText().isEmpty());
+    QCOMPARE(plan.outputText(2), QStringLiteral("7-9"));
+}
+
+/// Checks that the footer follows pending rows before reporting settled failures.
+void TstMergePlan::readingReasonFollowsOrderAndCompletion()
+{
+    MergePlan plan;
+    auto failed = ok(QStringLiteral("/a/missing.pdf"), 0);
+    failed.load = MergePlan::Load::Unreadable;
+    plan.append(failed);
+    auto first = ok(QStringLiteral("/a/first.pdf"), 0);
+    first.load = MergePlan::Load::Reading;
+    first.probeTicket = 1;
+    plan.append(first);
+    auto second = first;
+    second.path = QStringLiteral("/b/second.pdf");
+    second.probeTicket = 2;
+    plan.append(second);
+    QCOMPARE(plan.errorText(), QStringLiteral("Row 2: \"\u2068first.pdf\u2069\" is still being read."));
+    QCOMPARE(plan.moveToGap(2, 0), 0);
+    QCOMPARE(plan.errorText(), QStringLiteral("Row 1: \"\u2068second.pdf\u2069\" is still being read."));
+    QVERIFY(plan.resolveProbe(2, ok(second.path, 1)));
+    QCOMPARE(plan.errorText(), QStringLiteral("Row 3: \"\u2068first.pdf\u2069\" is still being read."));
+    plan.remove(0);
+    QCOMPARE(plan.errorText(), QStringLiteral("Row 2: \"\u2068first.pdf\u2069\" is still being read."));
+    QVERIFY(plan.resolveProbe(1, ok(first.path, 1)));
+    QCOMPARE(plan.errorText(), QStringLiteral("Row 1: \"missing.pdf\" could not be read."));
+}
+
+/// Checks probe identity across duplication, reordered ranges and stale answers.
+void TstMergePlan::probeResolutionFollowsPendingCopies()
+{
+    MergePlan plan;
+    MergePlan::Entry pending;
+    pending.path = QStringLiteral("/a/file.pdf");
+    pending.load = MergePlan::Load::Reading;
+    pending.probeTicket = 7;
+    pending.spec = QStringLiteral("3,1");
+    plan.append(pending);
+    plan.duplicate(0);
+    plan.setSpec(1, QStringLiteral("2"));
+    plan.append(ok(QStringLiteral("/b/ready.pdf"), 1));
+    QCOMPARE(plan.moveToGap(1, 3), 2);
+    const auto result = ok(pending.path, 3);
+    QVERIFY(!plan.resolveProbe(99, result));
+    QVERIFY(plan.resolveProbe(7, result));
+    QCOMPARE(plan.pagesFor(0), (QList<int>{2, 0}));
+    QCOMPARE(plan.pagesFor(2), (QList<int>{1}));
+    QVERIFY(!plan.resolveProbe(7, result));
+    QCOMPARE(plan.at(1).path, QStringLiteral("/b/ready.pdf"));
 }
 
 void TstMergePlan::appendAndCount()
@@ -144,6 +220,7 @@ void TstMergePlan::specPreservesTypedOrderAndDuplicates()
     QCOMPARE(p.pagesFor(0), QList<int>({4, 5, 0, 0}));
 }
 
+/// Checks translated count text for complete, partial and pending inputs.
 void TstMergePlan::countTextDistinguishesAllFromASubset()
 {
     MergePlan p;
@@ -160,7 +237,7 @@ void TstMergePlan::countTextDistinguishesAllFromASubset()
     // What the dialog sizes its Count column for.
     QCOMPARE(MergePlan::widestCountTexts(),
              QStringList({QStringLiteral("Locked"), QStringLiteral("Unreadable"),
-                          QStringLiteral("998 of 999")}));
+                          QStringLiteral("998 of 999"), QStringLiteral("Reading…")}));
 }
 
 void TstMergePlan::outputRangesAreARunningSum()

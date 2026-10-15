@@ -177,19 +177,25 @@ PDFs takes a list per file (`1-3, 5, 8-10`); Extract Pages builds one file from 
 of one page or range each, reordered like the files in Merge PDFs (typing a comma
 starts the next row). Extract and Merge take pages in the order given and keep
 duplicates. A range that does not resolve is reported, never skipped, and Extract
-shows the result as thumbnails before anything is written. None saves over a file
-that is open in a tab or over the document it reads. Extract and Delete close when
-accepted and write in the tab, with the same wait bar and Stop waiting as the other
-page tools. A failed write reopens their choices with the reason. Merge still writes
-before closing and keeps its plan open after failure.
+shows the result as thumbnails before anything is written. Extract, Delete and Merge
+close with their selected plan and write in the launching tab, with the same wait bar
+and Stop waiting as other page tools. None saves over a file open in a tab or over an
+input document. Failure reopens the chosen ranges, order and output with its reason.
 
-Rotate Pages and Split run in the document's tab once their questions are answered.
+Merge opens at once and reads each input's page count in the background. Pending
+rows show Reading and keep Merge disabled. The footer names the first row and file
+still being read, including when that row is scrolled out of view. Files on different
+drives, shares or folders are read independently. Added files that cannot be read
+produce one warning after that batch finishes. Removing a pending row suppresses
+its warning.
+
+Rotate Pages, Split and Merge run in the document's tab once their questions are answered.
 The tab shows its pages as they were and cannot be edited until the tool ends, while
 other tabs and windows stay usable. When the drive has not answered for 2 seconds, a
 bar over the pages names the folder or file the tool waits for, such as "Saving to
 /nas/docs. The drive is not answering.", and offers Stop waiting. Stopping makes the
 tab usable at once and writes nothing more, and Split keeps the files it wrote before.
-Neither tool writes over a file that is open in a tab. Closing the tab, its window or
+These tools do not write over a file that is open in a tab. Closing the tab, its window or
 the app while a tool runs stops it.
 
 Document > Extract Pages opens with one row that holds every page, first to last.

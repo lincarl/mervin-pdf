@@ -1032,11 +1032,54 @@ void TstTranslationLayout::manageLanguages()
     inspect(empty, QStringLiteral("OCR languages none installed"));
 }
 
+/// Checks translated Merge layouts while rows read, output checks wait and validation fails.
 void TstTranslationLayout::merge()
 {
+    QTemporaryDir inputs;
+    QVERIFY(inputs.isValid());
+    for (const QString &name : {
+             QStringLiteral("Building coordination report with structural revisions and updated floor plans.pdf"),
+             QStringLiteral("BuildingCoordinationReportWithStructuralRevisionsAndUpdatedFloorPlans"
+                            "WithStructuralRevisionsAndUpdatedFloorPlans.pdf")}) {
+        const QString pending = inputs.filePath(name);
+        QVERIFY(QFile::copy(plain_, pending));
+        mervin::job::testing::holdWhen([pending](mervin::job::Step step, const QString &path) {
+            return step == mervin::job::Step::Reading && path == pending;
+        });
+        const auto release = qScopeGuard([] { mervin::job::testing::release(); });
+        mervin::MergeDialog reading(pending, 12);
+        QTRY_VERIFY(mervin::job::testing::held() > 0);
+        QVERIFY(reading.reading());
+        inspect(reading, QStringLiteral("Merge reading a long input file name"));
+        const auto *reason = reading.findChild<QLabel *>(QStringLiteral("mergeError"));
+        QVERIFY(reason);
+        // Elision may shorten the name, but its identity and direction stay visible.
+        QVERIFY(reason->text().contains(QChar(0x2068)));
+        QVERIFY(reason->text().contains(QChar(0x2069)));
+        QVERIFY(reason->text().contains(QStringLiteral("Building")));
+        QVERIFY(reason->text().contains(QStringLiteral(".pdf")));
+        mervin::job::testing::release();
+        QTRY_VERIFY(!reading.reading());
+    }
     mervin::MergeDialog dialog(plain_, 12);
     dialog.addPaths({plain_});
+    QTRY_VERIFY(!dialog.reading());
     inspect(dialog, QStringLiteral("Merge populated documents"));
+    for (const auto conflict : {mervin::MergeDialog::Conflict::Changed,
+                                mervin::MergeDialog::Conflict::CheckFailed}) {
+        const QString output = profile_.filePath(QStringLiteral("merge-consent-output.pdf"));
+        mervin::MergeDialog failed(dialog.plan(), output, QStringLiteral("Destination check failed"),
+                                   -1, conflict);
+        auto *reason = failed.findChild<QLabel *>(QStringLiteral("mergeError"));
+        auto *retry = failed.findChild<QPushButton *>(QStringLiteral("mergeAccept"));
+        QVERIFY(reason && retry);
+        QTRY_COMPARE(reason->text(),
+                     mervin::MergeDialog::failureSummary(dialog.plan(), output, -1, conflict));
+        QTRY_VERIFY(retry->isEnabled());
+        inspect(failed, conflict == mervin::MergeDialog::Conflict::Changed
+                            ? QStringLiteral("Merge destination changed before publication")
+                            : QStringLiteral("Merge destination could not be checked"));
+    }
     {
         // A Save as check that takes long, as on a share that stopped answering.
         auto *output = dialog.findChild<QLineEdit *>(QStringLiteral("mergeOutput"));
@@ -1058,6 +1101,7 @@ void TstTranslationLayout::merge()
     inspect(dialog, QStringLiteral("Merge invalid range"));
     inspectMessage(dialog, QStringLiteral("Merge unreadable-file warning"), [&] {
         dialog.addPaths({encrypted_, profile_.filePath(QStringLiteral("missing-source.pdf"))});
+        QVERIFY(QTest::qWaitFor([&dialog] { return !dialog.reading(); }, 5000));
     });
     inspect(dialog, QStringLiteral("Merge encrypted and missing documents"));
     mervin::MergeDialog empty(QString(), 0);

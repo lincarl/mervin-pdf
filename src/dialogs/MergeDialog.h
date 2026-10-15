@@ -1,6 +1,7 @@
 #pragma once
 
 #include "merge/MergePlan.h"
+#include "io/DestinationConsent.h"
 
 #include <QDialog>
 #include <QList>
@@ -8,6 +9,8 @@
 #include <QStringList>
 
 #include <optional>
+#include <memory>
+#include <map>
 
 class QLabel;
 class QLineEdit;
@@ -17,28 +20,48 @@ namespace mervin {
 
 class RowList;
 class SaveCheck;
+namespace background { class SerialQueue; }
+namespace job { class State; }
 
-// MergePlan-backed editor: each row contributes a file/page range in output order. Rebuild rows
-// after every mutation so captured row indices remain valid.
+// MergePlan-backed editor. Each row contributes a file/page range in output order.
+// Structural changes rebuild rows so captured indices remain valid. Probe answers
+// refresh existing widgets without interrupting a drag or an active range editor.
 class MergeDialog : public QDialog
 {
     Q_OBJECT
 
 public:
+    enum class Conflict { None, Input, OpenTab, Changed, CheckFailed };
     // Add nonempty initialPath as a normal editable row, probed with qpdf and initialPassword.
-    // initialPageCount is only a fallback when qpdf opens but reports no pages.
+    // initialPageCount is retained for callers; the background probe determines
+    // the authoritative count.
     explicit MergeDialog(const QString &initialPath, int initialPageCount,
                          const QString &initialPassword = QString(),
                          QWidget *parent = nullptr);
+    // Reopens a failed merge from its previously probed plan without reading the
+    // inputs again. The output and row ranges remain editable.
+    MergeDialog(const MergePlan &plan, const QString &output, const QString &error,
+                int failedIndex, Conflict conflict = Conflict::None, QWidget *parent = nullptr);
+    /// Stops outstanding probe requests without waiting for their workers.
+    ~MergeDialog() override;
 
-    // Files open in the app's tabs. The viewer holds each one open, so the merged
-    // file may not replace one; the error line says so before Merge is pressed.
+    // Shared failure summary for a reopened plan and its tray notification.
+    static QString failureSummary(const MergePlan &plan, const QString &output,
+                                  int failedIndex, Conflict conflict);
+
+    // Files open in the app's tabs. Merge cannot replace these destinations;
+    // the error line explains the conflict before Merge is pressed.
     void setOpenFiles(const QStringList &paths);
 
-    // Valid after exec() == Accepted, by which time the merged file is written:
-    // write() writes it and keeps the dialog open on a failure, so the plan survives it.
+    // Valid after Accepted. The caller writes this plan on its worker.
     QList<PageOps::MergeInput> inputs() const { return plan_.inputs(); }
+    /// Returns the probed rows and editable ranges for the accepted worker request.
+    MergePlan plan() const { return plan_; }
+    /// Reports whether any input row still awaits its background probe.
+    bool reading() const { return plan_.hasReading(); }
     QString outputPath() const { return outputPath_; }
+    /// Returns the destination contents approved by this accepted dialog.
+    DestinationConsent outputConsent() const { return outputConsent_; }
 
     // Probe each path and append it as a row, in the order given. Rows that
     // cannot be merged are still added, marked and blocking, so the user can see
@@ -47,12 +70,12 @@ public:
     void addPaths(const QStringList &paths);
 
 private:
-    // Validate, then check Save as again, as the disk can have changed since the
-    // last answer, and write once that answers (write()) if the rows and Save as
-    // are still what Merge was pressed for.
+    // Validates the plan, then checks the current Save as choice before accepting
+    // the unchanged request for a worker write.
     void accept() override;
-    // Confirm an overwrite, then write the merged file. Closes only once the write
-    // succeeded; a failure goes on the error line instead.
+    /// Stops probe states and clears queued probes before closing the dialog.
+    void done(int result) override;
+    // Confirm an overwrite, then close with the validated plan.
     void write();
     // Checks the Save as text off the UI thread (see SaveCheck). While Save as is
     // not edited, the check also steps the default past names in use.
@@ -66,9 +89,13 @@ private:
     // Save as stays, so a quick check does not make it flicker; SaveCheck::slow()
     // says when it takes long.
     void showProblem();
+    /// Fits the pending filename while retaining its row number and read reason.
+    QString fitPendingReason(const QString &reason) const;
     // The rows' files and ranges, which a write depends on.
     QStringList files() const;
     void resizeEvent(QResizeEvent *event) override;
+    /// Refits the pending filename after its label changes width or font.
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
     void addFiles();
     void removeCurrent();
@@ -81,6 +108,17 @@ private:
     // encrypted file is tried with `password` when one is given; if it opens, the
     // row is Ok and keeps the password. Added files have none, so they stay Locked.
     static MergePlan::Entry probeEntry(const QString &path, const QString &password = QString());
+    struct ProbeBatch;
+    /// Appends a Reading row and schedules its probe on the volume queue.
+    void queueProbe(const QString &path, const QString &password,
+                    const std::shared_ptr<ProbeBatch> &batch = {}, int index = 0);
+    /// Resolves the matching rows and reports surviving failures once per batch.
+    void finishProbe(quint64 ticket, const MergePlan::Entry &entry,
+                     const std::shared_ptr<ProbeBatch> &batch, int index);
+    /// Stops this dialog's probes and drops only its own work that has not started.
+    void stopProbes();
+    // Refreshes existing widgets so a late probe cannot delete an active drag grip.
+    void refreshRows();
 
     // Tear down and rebuild every row from plan_, then refresh the summary, the
     // error line and the enabled states. `selectRow` is reselected afterwards.
@@ -91,18 +129,33 @@ private:
     QString startDirectory() const;
 
     MergePlan plan_;
+    /// Tracks the dialog's ownership of one queued or running input probe.
+    struct Probe
+    {
+        std::shared_ptr<job::State> state;
+        std::shared_ptr<background::SerialQueue> queue;
+        quint64 queuedJob;
+    };
+    std::map<quint64, Probe> probes_;
+    quint64 nextProbe_ = 0;
+    bool closed_ = false;
     QString outputPath_;
+    DestinationConsent outputConsent_;
+    std::shared_ptr<job::State> outputCheckState_;
     bool outputEdited_ = false; // stop re-deriving the name once the user typed one
     QStringList openKeys_;      // normalizePathKey() of every file open in a tab
     QString writeError_;        // the last failed write, until the plan or Save as changes
     QString writeErrorDetail_;  // qpdf's message for it, the error line's tooltip
     // The last Save as check's answer.
+    /// Returns background path checks and, when Merge was pressed, replacement consent.
     struct Checked
     {
         QString text;       // the Save as text it is for
         QString canonical;  // the merged file's canonical path, empty when it does not exist
         QString key;        // normalizePathKey() of the merged file, symlinks resolved
         QStringList inputs; // each row's file's canonical path, in row order; for a write
+        std::optional<DestinationConsent> consent;
+        QString consentError;
     };
     std::optional<Checked> checked_;
     QString checking_;        // the text the last check asked for was for...
@@ -116,6 +169,8 @@ private:
     int specWidth_ = 0;          // the Pages column: its caption and fields
     RowList *list_ = nullptr;
     QList<QLabel *> nameLabels_; // one per row, rebuilt with the list
+    QList<QLabel *> badges_;
+    QList<QLineEdit *> specEditors_;
     QStringList nameTexts_;      // their untruncated text, for re-eliding
     QLabel *summary_ = nullptr;
     QLabel *error_ = nullptr;
