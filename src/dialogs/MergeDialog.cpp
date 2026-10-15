@@ -26,6 +26,7 @@
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QShortcut>
+#include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -49,6 +50,21 @@ QString canonicalOrAbsolute(const QString &path)
     const QFileInfo fi(path);
     const QString canonical = fi.canonicalFilePath();
     return canonical.isEmpty() ? fi.absoluteFilePath() : canonical;
+}
+
+/// Shares one probe worker per lexical volume, including reads whose dialogs closed.
+std::shared_ptr<background::SerialQueue> probeQueue(const QString &volume)
+{
+    Q_ASSERT(QThread::isMainThread());
+    static std::map<QString, std::weak_ptr<background::SerialQueue>> queues;
+    std::erase_if(queues, [](const auto &entry) { return entry.second.expired(); });
+    auto &weak = queues[volume];
+    auto queue = weak.lock();
+    if (!queue) {
+        queue = std::make_shared<background::SerialQueue>();
+        weak = queue;
+    }
+    return queue;
 }
 
 // Merge's own column widths; RowList owns the rest. Sized so the longest values
@@ -256,8 +272,7 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
 
 MergeDialog::~MergeDialog()
 {
-    for (const auto &[ticket, state] : probeStates_)
-        state->stop();
+    stopProbes();
 }
 
 MergeDialog::MergeDialog(const MergePlan &plan, const QString &output, const QString &error,
@@ -303,27 +318,39 @@ void MergeDialog::queueProbe(const QString &path, const QString &password,
     entry.probeTicket = ++nextProbe_;
     plan_.append(entry);
     const auto state = std::make_shared<job::State>();
-    probeStates_.emplace(entry.probeTicket, state);
-    auto &queue = probes_[RecentStore::volumeKey(path)];
-    if (!queue)
-        queue = std::make_unique<background::SerialQueue>();
-    queue->add([guard = QPointer<QObject>(this), path, password, state,
+    const auto queue = probeQueue(RecentStore::volumeKey(path));
+    const auto queuedJob = queue->add([queue, guard = QPointer<QObject>(this), path, password, state,
                 ticket = entry.probeTicket, batch, index] {
+        Q_UNUSED(queue); // keeps the shared volume queue alive until this probe returns
+        if (state->stopped())
+            return;
         MergePlan::Entry result;
         {
             const job::Scope scope(*state);
             result = probeEntry(path, password);
         }
+        if (state->stopped())
+            return;
         background::post(guard, [guard, ticket, result, batch, index] {
             static_cast<MergeDialog *>(guard.data())->finishProbe(ticket, result, batch, index);
         });
     });
+    probes_.emplace(entry.probeTicket, Probe{state, queue, queuedJob});
+}
+
+void MergeDialog::stopProbes()
+{
+    for (const auto &[ticket, probe] : probes_) {
+        probe.state->stop();
+        probe.queue->remove(probe.queuedJob);
+    }
+    probes_.clear();
 }
 
 void MergeDialog::finishProbe(quint64 ticket, const MergePlan::Entry &entry,
                               const std::shared_ptr<ProbeBatch> &batch, int index)
 {
-    probeStates_.erase(ticket);
+    probes_.erase(ticket);
     if (closed_)
         return;
     const bool remains = plan_.resolveProbe(ticket, entry);
@@ -649,8 +676,7 @@ std::optional<QString> MergeDialog::saveAsProblem() const
         return tr("Choose where to save the merged PDF.");
     if (!checked_ || checked_->text != text)
         return std::nullopt;
-    // The viewer keeps an open tab's file open, so the write would fail only once
-    // Merge was pressed.
+    // Protect a file used by an open tab before Merge is pressed.
     if (openKeys_.contains(checked_->key))
         return tr("That file is open in a tab. Choose another name.");
     return QString();
@@ -715,6 +741,10 @@ QStringList MergeDialog::files() const
 
 void MergeDialog::checkOutput()
 {
+    // The source's default folder may be on the same blocked drive. Wait for its
+    // probe instead of starting another filesystem call each time Merge reopens.
+    if (plan_.hasReading())
+        return;
     checking_ = outputEdit_->text();
     checkedFiles_ = files();
     const bool stepDefault = !outputEdited_;
@@ -733,7 +763,11 @@ void MergeDialog::checkOutput()
                     checked.inputs << QFileInfo(e.path).canonicalFilePath();
             return checked;
         },
-        [this](const Checked &checked) {
+        [this, requestedText = checking_, requestedFiles = checkedFiles_](const Checked &checked) {
+            // Pending input probes defer replacement checks. An older answer must
+            // not restore the default name from rows the user has since changed.
+            if (closed_ || requestedText != outputEdit_->text() || requestedFiles != files())
+                return;
             if (!outputEdited_ && checked.text != outputEdit_->text()) {
                 // The default, past a name in use. Text selected for typing over
                 // stays selected.
@@ -828,10 +862,7 @@ void MergeDialog::write()
 void MergeDialog::done(int result)
 {
     closed_ = true;
-    for (const auto &[ticket, state] : probeStates_)
-        state->stop();
-    for (const auto &[volume, queue] : probes_)
-        queue->clear();
+    stopProbes();
     QDialog::done(result);
 }
 

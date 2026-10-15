@@ -57,7 +57,11 @@ public:
     SerialQueue(const SerialQueue &) = delete;
     SerialQueue &operator=(const SerialQueue &) = delete;
 
-    void add(std::function<void()> job);
+    using JobId = quint64;
+    /// Queues a job and returns its queue-local identity for pending cancellation.
+    JobId add(std::function<void()> job);
+    /// Drops this job only if it has not started. Releases captures without the queue lock.
+    bool remove(JobId id);
     // Drops the jobs not started yet, as when only the newest request counts.
     void clear();
 

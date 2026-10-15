@@ -112,6 +112,8 @@ private:
     /// Resolves the matching rows and reports surviving failures once per batch.
     void finishProbe(quint64 ticket, const MergePlan::Entry &entry,
                      const std::shared_ptr<ProbeBatch> &batch, int index);
+    /// Stops this dialog's probes and drops only its own work that has not started.
+    void stopProbes();
     // Refreshes existing widgets so a late probe cannot delete an active drag grip.
     void refreshRows();
 
@@ -124,8 +126,13 @@ private:
     QString startDirectory() const;
 
     MergePlan plan_;
-    std::map<QString, std::unique_ptr<background::SerialQueue>> probes_;
-    std::map<quint64, std::shared_ptr<job::State>> probeStates_;
+    struct Probe
+    {
+        std::shared_ptr<job::State> state;
+        std::shared_ptr<background::SerialQueue> queue;
+        quint64 queuedJob;
+    };
+    std::map<quint64, Probe> probes_;
     quint64 nextProbe_ = 0;
     bool closed_ = false;
     QString outputPath_;

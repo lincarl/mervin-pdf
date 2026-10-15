@@ -747,17 +747,24 @@ and output opening, while a rename already begun may finish. A hidden window sho
 failures through its tray notice.
 
 Merge's constructor and Add Files append pending rows immediately, each with a
-probe ticket. One `background::SerialQueue` per lexical `RecentStore::volumeKey`
-reads the PDF information under a separate job state. A blocked drive, share or
-Linux folder holds only its own queue. Reading rows keep Merge disabled. The
+probe ticket. A shared `background::SerialQueue` per lexical `RecentStore::volumeKey`
+reads the PDF information under a separate job state. A running probe keeps its
+queue alive after its dialog closes, so reopening against the same blocked source
+adds no worker. The lexical key is a drive or UNC share on Windows and a folder on
+Unix. Other keys keep their own queues.
+Reading rows keep Merge disabled. Destination checks wait until the input probes
+finish, avoiding another filesystem call to the source's default folder. The
 footer names the first pending row and its file, following row moves and removals
 until every probe answers. A filename that cannot wrap shortens in the middle to
 keep the row number and reading reason visible. The footer then shows any settled
 validation error. Duplicate pending rows share a ticket, and completion follows
 that ticket through row removal and reordering. Answers update existing widgets
 in place, preserving a range editor or drag grip. One warning reports the remaining
-failed rows after their Add Files batch finishes. Closing the dialog stops and
-discards its probe requests without waiting.
+failed rows after their Add Files batch finishes. Closing the dialog stops its
+probes and removes only its pending requests without waiting or dropping another
+dialog's work. A read already inside a filesystem call keeps its queue until it
+returns. Independent destination checks after input reads finish still use each
+dialog's SaveCheck and can outlive the dialog if their filesystem calls stall.
 
 After SaveCheck and replacement confirmation, Merge accepts its plan and output
 without writing. The launching tab's operation checks input and output identities,
