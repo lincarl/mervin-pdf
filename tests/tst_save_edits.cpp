@@ -530,6 +530,8 @@ private slots:
         QVERIFY(edit(tab, QStringLiteral("newer")));
         Outcome retry;
         tab.startSave(retry.callbacks());
+        // Observe noncompletion while the old worker remains held. Busy and the
+        // wait notice also describe startup, so neither proves this wait began.
         QTest::qWait(100);
         QVERIFY(tab.isBusy());
         QVERIFY(!retry.completion.has_value());
@@ -867,6 +869,8 @@ private slots:
             QVERIFY(tab.hasUnsavedEdits());
             Outcome retry;
             tab.startSave(retry.callbacks());
+            // Startup and waiting for the old commit share the same notice, so
+            // allow delivery time before checking that retry has not completed.
             QTest::qWait(100);
             QVERIFY(!retry.completion.has_value());
             QVERIFY(QFileInfo::exists(copy));

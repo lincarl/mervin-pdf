@@ -64,19 +64,25 @@ namespace {
 // A self-contained AcroForm exercises pending editor text as well as saved PDF objects.
 // A `measured` one says in its catalog that it carries Mervin measurements, so a load
 // reads the file a second time, for them, after it opened it.
-QByteArray formPdf(bool measured = false)
+// A second field exercises continued commits after an edit observer deletes the tab.
+QByteArray formPdf(bool measured = false, bool secondField = false)
 {
-    const QList<QByteArray> objects{
+    QList<QByteArray> objects{
         QByteArray("<< /Type /Catalog /Pages 2 0 R ")
             + (measured ? "/Mervin_Measurements () " : "")
-            + "/AcroForm << /Fields [4 0 R] /DR << /Font << /Helv 5 0 R >> >> "
+            + "/AcroForm << /Fields [4 0 R " + (secondField ? "6 0 R" : "")
+            + "] /DR << /Font << /Helv 5 0 R >> >> "
               "/DA (/Helv 12 Tf 0 g) >> >>",
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Annots [4 0 R] "
+        QByteArray("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Annots [4 0 R ")
+        + (secondField ? "6 0 R" : "") + "] "
         "/Resources << /Font << /Helv 5 0 R >> >> >>",
         "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /Rect [20 740 280 770] "
         "/F 4 /DA (/Helv 12 Tf 0 g) /V () /P 3 0 R >>",
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"};
+    if (secondField)
+        objects.append("<< /Type /Annot /Subtype /Widget /FT /Tx /T (second) "
+                       "/Rect [20 690 280 720] /F 4 /DA (/Helv 12 Tf 0 g) /V () /P 3 0 R >>");
     QByteArray pdf = "%PDF-1.7\n";
     QList<qsizetype> offsets;
     for (qsizetype i = 0; i < objects.size(); ++i) {
@@ -84,10 +90,11 @@ QByteArray formPdf(bool measured = false)
         pdf += QByteArray::number(i + 1) + " 0 obj\n" + objects.at(i) + "\nendobj\n";
     }
     const qsizetype start = pdf.size();
-    pdf += "xref\n0 6\n0000000000 65535 f \n";
+    const QByteArray count = QByteArray::number(objects.size() + 1);
+    pdf += "xref\n0 " + count + "\n0000000000 65535 f \n";
     for (qsizetype offset : offsets)
         pdf += QByteArray::number(offset).rightJustified(10, '0') + " 00000 n \n";
-    pdf += "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" + QByteArray::number(start)
+    pdf += "trailer\n<< /Size " + count + " /Root 1 0 R >>\nstartxref\n" + QByteArray::number(start)
            + "\n%%EOF\n";
     return pdf;
 }
@@ -1352,21 +1359,33 @@ private slots:
         QCOMPARE(tab.viewer()->scale(), 1.5);
     }
 
-    // Checks the active form editor reaches the background Save snapshot.
+    // Selects one or two pending form editors for Save and direct owner deletion.
+    void saveCommitsTheActiveFormEditor_data()
+    {
+        QTest::addColumn<bool>("secondField");
+        QTest::newRow("one editor") << false;
+        QTest::newRow("two editors") << true;
+    }
+
+    // Checks every active form editor reaches the background Save snapshot.
     void saveCommitsTheActiveFormEditor()
     {
+        QFETCH(bool, secondField);
         const QString path = profile_->filePath(QStringLiteral("form.pdf"));
-        QVERIFY(writeFile(path, formPdf()));
+        QVERIFY(writeFile(path, formPdf(false, secondField)));
         RenderEngine engine;
         TabPage tab(&engine);
         showForLayout(tab);
         QVERIFY(tab.open(path));
         tab.viewer()->setFormMode(true);
-        QTRY_VERIFY(!tab.viewer()->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly).isEmpty());
-        auto *editor = tab.viewer()->viewport()->findChild<QLineEdit *>(Qt::FindDirectChildrenOnly);
-        QVERIFY(editor);
-        editor->setText(QStringLiteral("Text still being typed"));
-        QVERIFY(tab.viewer()->formModel()->pageFields(0).front().value.isEmpty());
+        const int count = secondField ? 2 : 1;
+        QTRY_COMPARE(tab.viewer()->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly).size(), count);
+        const auto editors = tab.viewer()->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly);
+        QCOMPARE(tab.viewer()->formModel()->pageFields(0).size(), size_t(count));
+        for (int i = 0; i < count; ++i) {
+            editors[i]->setText(QStringLiteral("Text still being typed %1").arg(i + 1));
+            QVERIFY(tab.viewer()->formModel()->pageFields(0)[i].value.isEmpty());
+        }
         std::optional<TabPage::SaveCompletion> completion;
         TabPage::SaveCallbacks callbacks;
         callbacks.finished = [&](const auto &result) { completion = result; };
@@ -1376,30 +1395,45 @@ private slots:
         QVERIFY(tab.isUsable());
         QVERIFY(!tab.hasUnsavedEdits());
         QVERIFY(tab.viewer()->formMode());
-        QCOMPARE(tab.viewer()->formModel()->pageFields(0).front().value,
-                 QStringLiteral("Text still being typed"));
         auto saved = engine.openDocument(path);
         QVERIFY(saved);
-        QCOMPARE(FormModel(*saved).pageFields(0).front().value,
-                 QStringLiteral("Text still being typed"));
+        FormModel savedForm(*saved);
+        QCOMPARE(savedForm.pageFields(0).size(), size_t(count));
+        for (int i = 0; i < count; ++i) {
+            const QString text = QStringLiteral("Text still being typed %1").arg(i + 1);
+            QCOMPARE(tab.viewer()->formModel()->pageFields(0)[i].value, text);
+            QCOMPARE(savedForm.pageFields(0)[i].value, text);
+        }
+    }
+
+    // Selects one or two pending editors for deletion during the first committed value.
+    void saveStopsWhenCommittingTheEditorDeletesItsTab_data()
+    {
+        saveCommitsTheActiveFormEditor_data();
     }
 
     // Checks editor-driven tab deletion prevents a Save from using its former owner.
     void saveStopsWhenCommittingTheEditorDeletesItsTab()
     {
+        QFETCH(bool, secondField);
         const QString path = profile_->filePath(QStringLiteral("form.pdf"));
-        QVERIFY(writeFile(path, formPdf()));
+        QVERIFY(writeFile(path, formPdf(false, secondField)));
         const QByteArray original = readFile(path);
         RenderEngine engine;
         auto *tab = new TabPage(&engine);
         const QPointer<TabPage> page(tab);
+        const QPointer<ViewerWidget> viewer(tab->viewer());
         showForLayout(*tab);
         QVERIFY(tab->open(path));
         tab->viewer()->setFormMode(true);
-        QTRY_VERIFY(!tab->viewer()->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly).isEmpty());
-        auto *editor = tab->viewer()->viewport()->findChild<QLineEdit *>(Qt::FindDirectChildrenOnly);
-        QVERIFY(editor);
-        editor->setText(QStringLiteral("Text still being typed"));
+        const int count = secondField ? 2 : 1;
+        QTRY_COMPARE(viewer->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly).size(), count);
+        const auto editors = viewer->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly);
+        QCOMPARE(viewer->formModel()->pageFields(0).size(), size_t(count));
+        for (int i = 0; i < count; ++i) {
+            editors[i]->setText(QStringLiteral("Text still being typed %1").arg(i + 1));
+            QVERIFY(viewer->formModel()->pageFields(0)[i].value.isEmpty());
+        }
         connect(tab->viewer(), &ViewerWidget::formEditsChanged, &engine, [page] {
             delete page.data();
         });
@@ -1408,6 +1442,7 @@ private slots:
         callbacks.finished = [&](const auto &) { completed = true; };
         tab->startSave(std::move(callbacks));
         QVERIFY(!page);
+        QVERIFY(!viewer);
         QVERIFY(!completed);
         QCOMPARE(readFile(path), original);
     }
