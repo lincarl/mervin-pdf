@@ -86,7 +86,9 @@ public:
                 if (!configured_) {
                     configured_ = true;
                     toFile->setChecked(true);
-                    quality->setItemData(quality->currentIndex(), 72);
+                    // Changing the selection also refreshes the preview at this quality.
+                    quality->addItem(QStringLiteral("Test (72 dpi)"), 72);
+                    quality->setCurrentIndex(quality->count() - 1);
                     // The red fixture requires colour regardless of the default printer.
                     colour->setCurrentIndex(colour->findData(
                         static_cast<int>(printing::ColourMode::Colour)));
@@ -140,8 +142,8 @@ QByteArray bytes(const QString &path)
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
 
-// Counts visible flattened marks independently from the synthetic page background.
-int darkInkOnRedPage(const QImage &image)
+// Finds the synthetic page while excluding the surrounding preview controls.
+QRect redPageBounds(const QImage &image)
 {
     QRect red;
     for (int y = 0; y < image.height(); ++y)
@@ -150,11 +152,31 @@ int darkInkOnRedPage(const QImage &image)
             if (pixel.red() > 170 && pixel.green() < 90 && pixel.blue() < 90)
                 red |= QRect(x, y, 1, 1);
         }
+    return red;
+}
+
+// Counts black label text in the full-size flattened print output.
+int darkInkOnRedPage(const QImage &image)
+{
+    const QRect red = redPageBounds(image);
     int ink = 0;
     for (int y = red.top(); !red.isEmpty() && y <= red.bottom(); ++y)
         for (int x = red.left(); x <= red.right(); ++x) {
             const QColor pixel = image.pixelColor(x, y);
             ink += pixel.red() < 80 && pixel.green() < 80 && pixel.blue() < 80;
+        }
+    return ink;
+}
+
+// Counts the blue measurement stroke, which remains visible in low-resolution previews.
+int blueInkOnRedPage(const QImage &image)
+{
+    const QRect red = redPageBounds(image);
+    int ink = 0;
+    for (int y = red.top(); !red.isEmpty() && y <= red.bottom(); ++y)
+        for (int x = red.left(); x <= red.right(); ++x) {
+            const QColor pixel = image.pixelColor(x, y);
+            ink += pixel.blue() > pixel.red() + 50 && pixel.blue() > pixel.green() + 20;
         }
     return ink;
 }
@@ -608,9 +630,12 @@ void TstPrintOutput::measuredPreparationRunsInBackground()
         previewReady = preview && preview->isReady();
         if (previewReady) {
             const QImage image = preview->grab().toImage();
-            previewInk = darkInkOnRedPage(image);
-            previewDetails = QStringLiteral("Preview ink %1, colour mode %2, image %3x%4, DPR %5")
-                .arg(previewInk).arg(static_cast<int>(dialog.printSettings().colourMode))
+            previewInk = blueInkOnRedPage(image);
+            const int labelInk = darkInkOnRedPage(image);
+            previewDetails = QStringLiteral(
+                "Preview blue stroke %1, black label %2, colour mode %3, image %4x%5, DPR %6")
+                .arg(previewInk).arg(labelInk)
+                .arg(static_cast<int>(dialog.printSettings().colourMode))
                 .arg(image.width()).arg(image.height()).arg(image.devicePixelRatio());
         }
     });
