@@ -29,6 +29,7 @@
 #include "mervin_version.h"
 #include "recent/PathKey.h"
 #include "session/StartupPlan.h"
+#include "session/SessionEnd.h"
 #include "ui/TabPage.h"
 #include "ui/Theme.h"
 #include "update/Updater.h"
@@ -426,6 +427,7 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
 
 } // namespace
 
+// Initializes the selected profile and routes startup to the UI or the existing instance.
 int main(int argc, char *argv[])
 {
 #ifdef Q_OS_WIN
@@ -467,6 +469,10 @@ int main(int argc, char *argv[])
     // A restart asked for while running (a new UI language) starts the new copy here,
     // after runUi has released the single-instance pipe.
     const auto finish = [&app](int code) {
+        // Session end already used its bounded grace. Do not restart or spend
+        // another exit budget waiting for stuck work or static destructors.
+        if (mervin::sessionend::active())
+            std::_Exit(code);
         // The settings, Recent and the session are written on a background thread.
         // WindowManager waited for them before it let go of the single-instance pipe,
         // so a restarted copy reads them. Writes still queued are stuck on a profile

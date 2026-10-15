@@ -50,6 +50,7 @@ set(_mervin_tests
     tst_tessdata
     tst_ocr_provisioner
     tst_session_store
+    tst_session_end
     tst_file_probe
     tst_app_files
     tst_background
@@ -566,6 +567,19 @@ set_tests_properties(tst_security_workflow PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     TIMEOUT 180
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+
+qt_add_executable(tst_session_end_workflow tst_session_end_workflow.cpp)
+target_link_libraries(tst_session_end_workflow PRIVATE mervin_app Qt6::Test)
+target_compile_definitions(tst_session_end_workflow PRIVATE MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
+set_target_properties(tst_session_end_workflow PROPERTIES WIN32_EXECUTABLE OFF)
+add_test(NAME tst_session_end_workflow COMMAND tst_session_end_workflow)
+set_tests_properties(tst_session_end_workflow PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+if(WIN32)
+    set_tests_properties(tst_session_end_workflow PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=windows")
+endif()
+
 set_tests_properties(tst_ink_rects PROPERTIES LABELS "optional-corpus")
 
 target_compile_definitions(tst_document_output PRIVATE MERVIN_SCAN_PDF="${MERVIN_FIXTURES_DIR}/scan.pdf")

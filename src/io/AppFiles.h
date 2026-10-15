@@ -32,6 +32,11 @@ Wait writeAndWait(const QString &path, const QByteArray &data, int ms, QString *
 // Removes `path`, after everything asked for before.
 void remove(const QString &path);
 
+// Removes a recovery file in the same queue. Its worker retains the file during
+// an OS session request, resumes removal after cancellation, and preserves it
+// after successful session end so startup can recover the committed edits.
+void removeRecovery(const QString &path);
+
 // Waits up to `ms` milliseconds for everything asked for so far, for the end of
 // the process and for tests. True when nothing is left.
 bool flush(int ms);

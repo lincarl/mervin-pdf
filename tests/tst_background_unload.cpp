@@ -335,6 +335,7 @@ private slots:
         engine.shutdown();
         QVERIFY(background::settle(10000));
         QCoreApplication::processEvents();
+        QVERIFY(background::settle(10000));
         QVERIFY(appfiles::flush(10000));
         QVERIFY(recoveryEntries().isEmpty());
     }

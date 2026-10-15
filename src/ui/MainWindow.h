@@ -229,6 +229,7 @@ private:
     // Rotate Pages uses it.
     QList<int> askPageRange(const QString &title, int pageCount);
     QStringList askForPdfs();              // app picker: local multi-select or typed URL
+    void queueOpenPaths(const QStringList &paths, bool inNewWindow);
     void openUrl(const QUrl &url, bool inNewWindow = false); // download, then open its cache file
     // Ask whether to open a written file. `password` is tried before any prompt,
     // for outputs that keep the source tab's encryption. The question blocks only this
@@ -243,6 +244,8 @@ private:
     struct RetainedSecurityDialog;
     // Read security information or write the chosen copy as an operation of this
     // tab. Dialogs and password retries follow its current owner.
+    static void queueSecurityOperation(mervin::TabPage *tab,
+                                       const std::shared_ptr<SecurityRequest> &request, bool asked);
     static void runSecurity(mervin::TabPage *tab, const std::shared_ptr<SecurityRequest> &request,
                              bool asked);
     static void deliverSecurity(mervin::TabPage *tab, const std::shared_ptr<SecurityRequest> &request,
@@ -288,6 +291,8 @@ private:
     static void deliverPrintFailure(mervin::TabPage *tab, const QString &message);
     struct MergeRequest;
     struct MergeResult;
+    static void queueMergeOperation(mervin::TabPage *tab,
+                                    const std::shared_ptr<MergeRequest> &request);
     static void runMerge(mervin::TabPage *tab, const std::shared_ptr<MergeRequest> &request);
     static void deliverMergeDialog(mervin::TabPage *tab,
                                   const std::shared_ptr<MergeRequest> &request,
@@ -371,7 +376,9 @@ private:
     void wireTabLifecycle(mervin::TabPage *tab);
     void queueFreshLoad(mervin::TabPage *tab, const QString &canonical, quint64 generation);
     void queueFreshRemoval(mervin::TabPage *tab, quint64 generation);
+    void queueResumeResult(mervin::TabPage *tab, quint64 generation, bool success, bool needsPassword);
     void queueLoadPassword(mervin::TabPage *tab, quint64 generation);
+    void queueLoadRetry(mervin::TabPage *tab, quint64 generation, const QString &password);
     void reportUnloadFailure(mervin::TabPage *tab, const QString &error);
     void unwireTabLifecycle(mervin::TabPage *tab);
     // Queues resume of the selected document after visibility and close-claim checks.
@@ -379,6 +386,7 @@ private:
     // Unloads a usable tab unless a close claim or earlier suspension failure keeps it resident.
     bool suspendTab(mervin::TabPage *tab);
     void clearDocumentSidebars();
+    // Reports whether dialogs, document work and session state permit unloading or tab changes.
     bool canSuspendDocuments() const;
     void persistWindowState();
     // Run the queued tab changes on the next turn of the event loop.

@@ -7,6 +7,7 @@
 #include "ipc/Message.h"
 #include "ipc/SingleInstanceServer.h"
 #include "recent/PathKey.h"
+#include "session/SessionEnd.h"
 #include "render/Document.h"
 #include "render/RenderEngine.h"
 #include "ui/MainWindow.h"
@@ -30,6 +31,7 @@
 #include <QSet>
 #include <QStyleHints>
 #include <QTimer>
+#include <QWindow>
 
 #include <algorithm>
 #include <optional>
@@ -74,6 +76,13 @@ WindowManager::WindowManager()
     , viewStateFile_(ViewStateStore::defaultFile())
     , sessionFile_(SessionStore::defaultFile())
 {
+#ifdef Q_OS_WIN
+    qApp->installNativeEventFilter(this);
+#if QT_CONFIG(sessionmanager)
+    connect(qApp, &QGuiApplication::commitDataRequest, this,
+            [this](QSessionManager &) { prepareSessionEnd(); }, Qt::DirectConnection);
+#endif
+#endif
     Settings s = Settings::load();
     unloadInactiveMinutes_ = s.unloadInactiveMinutes;
     closeToTray_ = s.closeToTray;
@@ -130,6 +139,67 @@ WindowManager::WindowManager()
         runTabChanges();
     });
     activityTimer_->start();
+}
+
+sessionend::Result WindowManager::prepareSessionEnd(int graceMs)
+{
+    const sessionend::Result result = sessionend::waitForRecovery(graceMs);
+    if (!reopenPresses_.isEmpty()) {
+        // No GUI events run during the wait. Invalidate even a probe whose
+        // timeout or answer has not yet observed the pending request.
+        reopenCheck_.reset();
+        ++reopenAttempt_;
+        reopenSessionPaused_ = true;
+    }
+    return result;
+}
+
+void WindowManager::finishSessionEnd(bool ended)
+{
+    sessionend::finishRequest(ended);
+    // The native filter runs before Qt restores input after cancellation. Resume
+    // queued dialogs next turn, once the platform processed that outcome.
+    if (!ended) {
+        postTabChanges();
+        postSessionContinuations();
+    }
+}
+
+bool WindowManager::nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result)
+{
+    Q_UNUSED(result);
+#ifdef Q_OS_WIN
+    if (eventType == QByteArrayLiteral("windows_generic_MSG")
+        || eventType == QByteArrayLiteral("windows_dispatcher_MSG")) {
+        const auto *event = static_cast<const MSG *>(message);
+#if QT_CONFIG(sessionmanager)
+        constexpr LPARAM logoffFlag = static_cast<LPARAM>(ENDSESSION_LOGOFF);
+        if (event->message == WM_QUERYENDSESSION && (event->lParam & logoffFlag)
+            && !forwardingSessionQuery_) {
+            const auto windows = QGuiApplication::allWindows();
+            const bool owned = std::any_of(windows.cbegin(), windows.cend(), [event](QWindow *window) {
+                return window->handle() && reinterpret_cast<HWND>(window->winId()) == event->hwnd;
+            });
+            if (owned) {
+                // Qt 6.12 blocks input and emits commitDataRequest, then flushes
+                // every C stream for logoff. A locked writer can exceed our grace.
+                // Forward through Qt with only that flush flag removed, preserving
+                // its session state, callback and exact cancellation result.
+                const QScopedValueRollback guard(forwardingSessionQuery_, true);
+                *result = SendMessage(event->hwnd, event->message, event->wParam,
+                                      event->lParam & ~logoffFlag);
+                return true;
+            }
+        }
+#endif
+        if (event->message == WM_ENDSESSION)
+            finishSessionEnd(event->wParam != 0);
+    }
+#else
+    Q_UNUSED(eventType);
+    Q_UNUSED(message);
+#endif
+    return false; // Qt still handles the OS outcome and its normal quit signal.
 }
 
 void WindowManager::applyColorSchemeToQt(const QString &scheme)
@@ -218,6 +288,32 @@ void WindowManager::postTabChanges()
     QTimer::singleShot(0, this, [this] {
         tabChangesPosted_ = false;
         runTabChanges();
+    });
+}
+
+void WindowManager::postSessionContinuations()
+{
+    if (sessionContinuationsPosted_)
+        return;
+    sessionContinuationsPosted_ = true;
+    QTimer::singleShot(0, this, [this] {
+        sessionContinuationsPosted_ = false;
+        if (isClosing())
+            return;
+        const QPointer<WindowManager> self(this);
+        if (std::exchange(stagedSessionPaused_, false))
+            postStagedStep();
+        openLateWaiting();
+        if (!self || isClosing())
+            return;
+        if (std::exchange(reopenSessionPaused_, false))
+            serveReopen();
+        if (!self || isClosing() || sessionOpens_.isEmpty())
+            return;
+        // One accepted batch per turn. Callbacks may start another session request.
+        continueOpenPaths(sessionOpens_.takeFirst());
+        if (self && !sessionOpens_.isEmpty())
+            postSessionContinuations();
     });
 }
 
@@ -599,7 +695,7 @@ void WindowManager::restoreLate(const QString &path, const FileFacts &facts)
     }
     // Restored tabs are placed against the live bar, so a late one waits until the
     // session's own tabs are in.
-    if (sessionHeld_ || !stagedQueue_.isEmpty()) {
+    if (sessionend::active() || sessionHeld_ || !stagedQueue_.isEmpty()) {
         if (!lateWaiting_.contains(path))
             lateWaiting_.append(path);
         return;
@@ -688,11 +784,29 @@ void WindowManager::openStaged(const QList<StagedOpen> &batch, const QStringList
     // Explorer open with the "new window" behaviour would all make the fresh
     // window active and divert the rest of the session into it.
     stagedWindow_ = into && windows_.contains(into) ? into : activeOrNewWindow();
-    QTimer::singleShot(0, this, &WindowManager::stagedStep);
+    postStagedStep();
+}
+
+void WindowManager::postStagedStep()
+{
+    if (stagedStepPosted_)
+        return;
+    stagedStepPosted_ = true;
+    QTimer::singleShot(0, this, [this] {
+        stagedStepPosted_ = false;
+        stagedStep();
+    });
 }
 
 void WindowManager::stagedStep()
 {
+    // Keep both documents and completion callbacks until cancellation. Successful
+    // session end leaves them untouched for the next process's startup restore.
+    if (sessionend::active()) {
+        stagedSessionPaused_ = true;
+        return;
+    }
+    stagedSessionPaused_ = false;
     // The window this batch belongs to can be closed (or the process asked to
     // quit) while the batch is still trickling in. Stop rather than resurrect a
     // window to open into: the session file still lists those documents, so the
@@ -706,9 +820,10 @@ void WindowManager::stagedStep()
         // Move the callback out before running it: it may start another batch.
         const std::function<void()> done = std::move(stagedDone_);
         stagedDone_ = {};
+        const QPointer<WindowManager> self(this);
         if (done)
             done();
-        if (stagedQueue_.isEmpty() && !sessionHeld_)
+        if (self && !isClosing() && stagedQueue_.isEmpty() && !sessionHeld_)
             openLateWaiting();
         return;
     }
@@ -725,7 +840,7 @@ void WindowManager::stagedStep()
 
     // One document per event-loop turn: Qt gets to paint and handle input between
     // documents, so the window stays live through a slow cold-cache batch.
-    QTimer::singleShot(0, this, &WindowManager::stagedStep);
+    postStagedStep();
 }
 
 void WindowManager::rememberClosedTab(const QString &path, const QString &canonicalPath,
@@ -750,7 +865,17 @@ void WindowManager::reopenClosedTab(MainWindow *into, std::function<void(Reopen)
 
 void WindowManager::serveReopen()
 {
-    while (!reopenPresses_.isEmpty()) {
+    const QPointer<WindowManager> self(this);
+    while (self && !reopenPresses_.isEmpty()) {
+        if (sessionend::active()) {
+            // The old timeout must not consume the press after cancellation.
+            // Restart its probe then, preserving both history and the callback.
+            reopenCheck_.reset();
+            ++reopenAttempt_;
+            reopenSessionPaused_ = true;
+            return;
+        }
+        reopenSessionPaused_ = false;
         if (shuttingDown_ || quitting_) {
             reopenCheck_.reset();
             for (const ReopenPress &press : std::exchange(reopenPresses_, {}))
@@ -865,6 +990,10 @@ QStringList WindowManager::openTabPaths() const
 
 WindowManager::~WindowManager()
 {
+#ifdef Q_OS_WIN
+    if (qApp)
+        qApp->removeNativeEventFilter(this);
+#endif
     shuttingDown_ = true;
     if (activityTimer_)
         activityTimer_->stop();
@@ -886,6 +1015,10 @@ WindowManager::~WindowManager()
     // tab's recovery copy is removed once its document has closed on a background
     // thread, so those closes come first, and the updater's state, as a pending
     // update it put back, comes last, all within the same time.
+    // Windows already received its bounded answer. A stalled close, profile or
+    // updater must not add the ordinary five-second exit budget to logoff.
+    if (sessionend::active())
+        return;
     QElapsedTimer exitWait;
     exitWait.start();
     const auto left = [&exitWait] {
@@ -979,39 +1112,68 @@ bool WindowManager::focusExistingTab(const QString &canonicalPath)
 
 void WindowManager::openPaths(const QStringList &paths, const QString &behavior)
 {
-    if (paths.isEmpty()) {
-        // A launch without files brings the app up, like a tray click: every window
-        // hidden in the tray returns, not only the active one.
+    continueOpenPaths({paths, behavior, {}});
+}
+
+void WindowManager::continueOpenPaths(SessionOpen batch)
+{
+    if (shuttingDown_ || sessionFinal_)
+        return;
+    if (sessionend::active()) {
+        sessionOpens_.append(std::move(batch));
+        return;
+    }
+    if (batch.paths.isEmpty()) {
+        // A launch without files brings back every window hidden in the tray.
         restoreFromTray();
         return;
     }
 
-    const bool newWin = (behavior == QLatin1String("new-window"));
-    MainWindow *batchWindow = nullptr;
-
-    for (const QString &path : paths) {
+    const bool newWin = (batch.behavior == QLatin1String("new-window"));
+    const QPointer<WindowManager> self(this);
+    while (!batch.paths.isEmpty()) {
+        if (isClosing()) {
+            if (sessionend::active())
+                sessionOpens_.prepend(std::move(batch));
+            return;
+        }
+        const QString path = batch.paths.first();
         const QString canon = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
-        if (focusExistingTab(canon))
-            continue; // already open somewhere - focused, not duplicated
+        const bool focused = focusExistingTab(canon);
+        if (!self)
+            return;
+        if (focused) {
+            batch.paths.removeFirst();
+            continue;
+        }
+        if (isClosing())
+            continue; // retain this path before creating or selecting a target
 
-        MainWindow *target;
+        QPointer<MainWindow> target;
         if (newWin) {
-            if (!batchWindow) {
-                // Reuse a document-less window if one exists rather than
-                // leaving an empty stray window behind.
-                batchWindow = emptyWindow();
-                if (!batchWindow)
-                    batchWindow = createWindow();
+            if (!batch.window || !windows_.contains(batch.window)) {
+                // Reuse a document-less window before creating another one.
+                batch.window = emptyWindow();
+                if (!batch.window)
+                    batch.window = createWindow();
             }
-            target = batchWindow;
+            target = batch.window;
         } else {
             target = activeOrNewWindow();
         }
-        target->openFile(path);
+        if (!self)
+            return;
+        if (isClosing())
+            continue;
+        if (target)
+            target->openFile(path);
+        if (!self)
+            return;
+        batch.paths.removeFirst();
     }
 
-    MainWindow *focusW = batchWindow ? batchWindow : active_;
-    if (focusW)
+    MainWindow *focusW = batch.window ? batch.window.data() : active_;
+    if (!isClosing() && focusW)
         surfaceWindow(focusW);
 }
 
@@ -1164,7 +1326,7 @@ void WindowManager::applyMemorySettings(int minutes, bool closeToTray)
 
 void WindowManager::checkDocumentActivity()
 {
-    if (shuttingDown_ || quitting_ || checkingActivity_)
+    if (shuttingDown_ || quitting_ || checkingActivity_ || sessionend::active())
         return;
     QScopedValueRollback<bool> guard(checkingActivity_, true);
     updateTrayAvailability();

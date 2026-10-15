@@ -259,6 +259,7 @@ private:
     // Which buttons the placeholder shows under its text.
     enum class PlaceholderButton { None, Retry, StopWaiting };
     void showPlaceholder(const QString &message, PlaceholderButton button);
+    // Retires adopted recovery ownership and queues removal through the session outcome gate.
     void clearRecovery();
     bool adoptRecovery();
     // The tab's path and canonical path. `resolve` follows links on the disk;
@@ -272,6 +273,7 @@ private:
     // on its own thread or, for a result it already stored, on a background thread, and
     // `removeAfter` goes after that.
     static void abandon(const std::shared_ptr<Job> &job, const QString &removeAfter);
+    // Queues recovery cleanup after all retained reader jobs end.
     static void removeAfterJobs(const QString &copy, std::vector<std::shared_ptr<Job>> jobs);
     // Drops the load in progress, or a stopped one that has not ended, waiting for it,
     // for the callers that read or replace the document's file on this thread next.
@@ -283,6 +285,7 @@ private:
     void endOperation();
     // Detaches a stopped operation only once its document reservation is released.
     void finishStoppedOperation();
+    // Resolves Save questions or adopts committed recovery before transferring the original.
     void saveCheckpoint(const std::shared_ptr<Job> &job);
     void finishSave(const std::shared_ptr<Job> &job);
     void completeSave(const SaveCompletion &completion);

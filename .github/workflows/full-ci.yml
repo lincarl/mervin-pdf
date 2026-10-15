@@ -395,6 +395,8 @@ jobs:
             build/x64-release/MervinPDF-*-x64-msix-pri/
             build/x64-release/windows-payload.json
             build/x64-release/tests/fixtures/properties.pdf
+            build/x64-release/results.xml
+            build/x64-release/Testing/Temporary/LastTest.log
           if-no-files-found: error
           retention-days: 7
 

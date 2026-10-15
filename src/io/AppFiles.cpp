@@ -1,6 +1,7 @@
 #include "io/AppFiles.h"
 
 #include "io/Background.h"
+#include "session/SessionEnd.h"
 
 #include <QDebug>
 #include <QDir>
@@ -21,6 +22,7 @@ namespace mervin::appfiles {
 
 namespace {
 
+// Stores a queued application file write or removal and its completion identity.
 struct Job
 {
     QString path;
@@ -28,6 +30,7 @@ struct Job
     bool remove = false;
     bool waited = false; // a caller waits for this write's own result
     quint64 serial = 0;  // tells that caller when it is done
+    bool recovery = false;
 };
 
 std::mutex mutex;
@@ -48,6 +51,8 @@ QString perform(const Job &job, bool *failed)
 {
     *failed = false;
     if (job.remove) {
+        if (job.recovery && !sessionend::beginRecoveryRemoval())
+            return {};
         if (QFileInfo::exists(job.path) && !QFile::remove(job.path)) {
             qWarning() << "Could not remove" << job.path;
             *failed = true;
@@ -155,6 +160,12 @@ void remove(const QString &path)
 {
     if (!path.isEmpty())
         add({path, {}, true});
+}
+
+void removeRecovery(const QString &path)
+{
+    if (!path.isEmpty())
+        add({.path = path, .remove = true, .recovery = true});
 }
 
 namespace testing {

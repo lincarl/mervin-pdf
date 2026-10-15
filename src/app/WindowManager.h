@@ -8,9 +8,11 @@
 #include "recent/ViewStateStore.h"
 #include "session/ClosedTabStack.h"
 #include "session/SessionStore.h"
+#include "session/SessionEnd.h"
 #include "session/StartupPlan.h"
 
 #include <QList>
+#include <QAbstractNativeEventFilter>
 #include <QElapsedTimer>
 #include <QObject>
 #include <QPoint>
@@ -45,12 +47,14 @@ class CloseFlow;
 // Owns the shared RenderEngine, windows, recent history and view state. The primary process
 // routes IPC opens and owns the tray. Shutdown workers before freeing final
 // documents, and keep the MuPDF base context alive until every document is destroyed.
-class WindowManager : public QObject
+class WindowManager : public QObject, public QAbstractNativeEventFilter
 {
     Q_OBJECT
 
 public:
+    // Initializes shared services and Windows session hooks before creating any window.
     WindowManager();
+    // Releases windows and skips the ordinary close and write budget during session end.
     ~WindowManager() override;
 
     // Force Qt's colour scheme for a "light"/"dark" setting, or follow the OS for
@@ -82,8 +86,15 @@ public:
     // focusExistingTab this only answers the question - it does not select the tab
     // or raise the window, which a background open must not do.
     bool isOpenAnywhere(const QString &canonicalPath, const TabPage *except = nullptr) const;
-    bool isClosing() const { return shuttingDown_ || sessionFinal_; }
+    // Reports whether shutdown or an active session request blocks new window work.
+    bool isClosing() const { return shuttingDown_ || sessionFinal_ || sessionend::active(); }
     bool hasLoadingDocuments() const;
+
+    // Direct Windows session callback, on the GUI thread. Existing recovery
+    // snapshots get a bounded grace period, then logoff proceeds in all cases.
+    sessionend::Result prepareSessionEnd(int graceMs = sessionend::kGraceMs);
+    // Receives WM_ENDSESSION. Cancellation reopens snapshot admission.
+    void finishSessionEnd(bool ended);
 
     // Every file open in a tab, in any window of this process (canonical paths).
     // Extract Pages and Merge PDFs refuse to write over one: the viewer holds it
@@ -114,6 +125,7 @@ public:
     // none hidden, brings up the active window instead.
     void restoreFromTray();
     void applyMemorySettings(int minutes, bool closeToTray);
+    // Unloads idle documents only when Quit and session requests permit new work.
     void checkDocumentActivity();
     void notifySuspensionFailure(const QString &message);
     // Shows a warning from the tray icon, for a window hidden in the tray.
@@ -283,6 +295,8 @@ signals:
 protected:
     // Reapplies the theme on an OS theme or palette change (see the constructor).
     bool eventFilter(QObject *watched, QEvent *event) override;
+    // Preserves Qt session handling while avoiding its global logoff flush.
+    bool nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result) override;
 
 private slots:
     // An open delivered by a later launch over the single-instance pipe.
@@ -292,6 +306,19 @@ private:
     friend class CloseFlow;
     void onWindowDestroyed(MainWindow *window);
     void stagedStep(); // opens one document of stagedQueue_, then re-arms itself
+    // Coalesce staged turns, including a wake after a canceled session request.
+    void postStagedStep();
+    // Resume retained manager work on the turn after session cancellation.
+    void postSessionContinuations();
+    // An accepted path batch retained across a pending OS session request.
+    struct SessionOpen
+    {
+        QStringList paths;
+        QString behavior;
+        QPointer<MainWindow> window; // retain a partially delivered new-window batch
+    };
+    // Deliver accepted paths, retaining any remainder while session end is pending.
+    void continueOpenPaths(SessionOpen batch);
 
     // Serve the first waiting reopenClosedTab press, once fileProbe() has
     // answered for the entry it would bring back.
@@ -351,6 +378,9 @@ private:
     MainWindow *stagedWindow_ = nullptr; // the window the batch opens into
     std::function<void()> stagedDone_;   // runs when stagedQueue_ empties
     MainWindow *active_ = nullptr;
+#ifdef Q_OS_WIN
+    bool forwardingSessionQuery_ = false; // GUI-thread native forwarding recursion guard
+#endif
     bool shuttingDown_ = false;
     bool quitting_ = false;
     bool checkingActivity_ = false;
@@ -369,6 +399,11 @@ private:
     bool tabScanRunning_ = false;      // a closeRemovedTabs scan is on its worker
     bool tabScanPending_ = false;      // ...and another was asked for meanwhile
     bool tabChangesPosted_ = false;    // postTabChanges has a run on its way
+    bool stagedStepPosted_ = false;
+    bool stagedSessionPaused_ = false;
+    bool reopenSessionPaused_ = false;
+    bool sessionContinuationsPosted_ = false;
+    QList<SessionOpen> sessionOpens_; // accepted IPC/path batches, including empty launches
     // Set on shutdown so a closeRemovedTabs scan stops between paths. Nothing waits
     // for the scan, so one stuck on an unreachable share is left behind.
     std::shared_ptr<std::atomic<bool>> scanCancel_ = std::make_shared<std::atomic<bool>>(false);

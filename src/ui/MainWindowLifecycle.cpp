@@ -43,21 +43,7 @@ void MainWindow::wireTabLifecycle(TabPage *tab)
         [this, tab](quint64 generation) { queueFreshRemoval(tab, generation); }));
     connections.append(connect(tab, &TabPage::resumeFinished, this,
         [this, tab](bool success, const QString &, bool needsPassword) {
-            if (closeConfirmed_ || (wm_ && wm_->isClosing()))
-                return;
-            if (success) {
-                if (currentTab() == tab)
-                    updateForCurrentTab();
-                if (hiddenToTray_)
-                    QTimer::singleShot(0, this, [this] { suspendHiddenDocuments(); });
-            } else if (needsPassword) {
-                queueLoadPassword(tab, tab->loadGeneration());
-            } else if (tab->freshOpen()) {
-                if (tab->freshOpen()->closeOnFailure && !tab->hasRecoverySnapshot())
-                    queueFreshRemoval(tab, tab->loadGeneration());
-            } else if (wm_) {
-                wm_->closeRemovedTabs();
-            }
+            queueResumeResult(tab, tab->loadGeneration(), success, needsPassword);
         }));
     connections.append(connect(tab, &TabPage::unloadFinished, this,
         [this, tab](bool unloaded, const QString &error) {
@@ -176,6 +162,46 @@ void MainWindow::queueFreshRemoval(TabPage *tab, quint64 generation)
     });
 }
 
+/// Keeps the whole load reaction with its generation until the current owner can deliver it.
+void MainWindow::queueResumeResult(TabPage *tab, quint64 generation, bool success, bool needsPassword)
+{
+    const QPointer<MainWindow> self(this);
+    const QPointer<TabPage> page(tab);
+    const auto discarded = connect(this, &QObject::destroyed, tab,
+        [page, generation, success, needsPassword] {
+            QTimer::singleShot(0, page, [page, generation, success, needsPassword] {
+                if (auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr)
+                    owner->queueResumeResult(page, generation, success, needsPassword);
+            });
+        });
+    whenTabsCanChange([self, page, generation, success, needsPassword, discarded] {
+        disconnect(discarded);
+        auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!self || !owner || owner->closeConfirmed_ || (owner->wm_ && owner->wm_->isClosing()))
+            return;
+        if (owner != self) {
+            owner->queueResumeResult(page, generation, success, needsPassword);
+            return;
+        }
+        if (page->loadGeneration() != generation)
+            return;
+        if (success) {
+            if (owner->currentTab() == page)
+                owner->updateForCurrentTab();
+            if (self && owner->hiddenToTray_)
+                QTimer::singleShot(0, owner, [owner] { owner->suspendHiddenDocuments(); });
+        } else if (needsPassword) {
+            owner->queueLoadPassword(page, generation);
+        } else if (page->freshOpen()) {
+            if (page->freshOpen()->closeOnFailure && !page->hasRecoverySnapshot())
+                owner->queueFreshRemoval(page, generation);
+        } else if (owner->wm_) {
+            owner->wm_->closeRemovedTabs();
+        }
+    });
+}
+
+/// Prompts for a failed load generation in its visible owner and queues accepted retries.
 void MainWindow::queueLoadPassword(TabPage *tab, quint64 generation)
 {
     const QPointer<MainWindow> self(this);
@@ -211,14 +237,41 @@ void MainWindow::queueLoadPassword(TabPage *tab, quint64 generation)
         const bool accepted = prompt->exec() == QDialog::Accepted;
         const QString password = accepted && prompt ? prompt->textValue() : QString();
         delete prompt.data();
-        if (!self || !page || page->loadGeneration() != generation)
+        auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!current || page->loadGeneration() != generation)
             return;
-        if (accepted) {
-            page->setPassword(password);
-            page->retryLoad();
-        } else if (page->freshOpen() && page->freshOpen()->closeOnFailure) {
-            owner->queueFreshRemoval(page, generation);
+        if (accepted)
+            current->queueLoadRetry(page, generation, password);
+        else if (page->freshOpen() && page->freshOpen()->closeOnFailure)
+            current->queueFreshRemoval(page, generation);
+    });
+}
+
+/// Defers an accepted password without changing credentials or starting a read during session end.
+void MainWindow::queueLoadRetry(TabPage *tab, quint64 generation, const QString &password)
+{
+    const QPointer<MainWindow> self(this);
+    const QPointer<TabPage> page(tab);
+    const auto discarded = connect(this, &QObject::destroyed, tab, [page, generation, password] {
+        QTimer::singleShot(0, page, [page, generation, password] {
+            if (auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr)
+                owner->queueLoadRetry(page, generation, password);
+        });
+    });
+    whenTabsCanChange([self, page, generation, password, discarded] {
+        disconnect(discarded);
+        auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!self || !owner || owner->closeConfirmed_ || (owner->wm_ && owner->wm_->isClosing()))
+            return;
+        if (owner != self) {
+            owner->queueLoadRetry(page, generation, password);
+            return;
         }
+        if (page->loadGeneration() != generation || page->isBusy() || page->isLoading()
+            || page->isLoaded())
+            return;
+        page->setPassword(password);
+        page->retryLoad();
     });
 }
 
@@ -267,6 +320,7 @@ bool MainWindow::canSuspendDocuments() const
     // Nested dialogs and document operations may hold raw document pointers. Defer until
     // their event loops return, including native print and save dialogs.
     return !closeConfirmed_ && !suspending_ && documentOperationDepth_ == 0
+        && !mervin::sessionend::active()
         && !QApplication::activeModalWidget() && !QApplication::activePopupWidget();
 }
 
