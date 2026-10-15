@@ -347,8 +347,12 @@ void MainWindow::offerToOpen(const QString &path, const QString &password)
     box->setWindowModality(Qt::WindowModal);
     const int answer = box->exec();
     delete box.data();
-    if (self && answer == QMessageBox::Yes)
-        openFile(path, false, -1, true, password);
+    if (self && answer == QMessageBox::Yes) {
+        whenTabsCanChange([self, path, password] {
+            if (self)
+                self->openFile(path, false, -1, true, password);
+        });
+    }
 }
 
 void MainWindow::addSectionHeader(QMenu *menu, const QString &text)
@@ -470,8 +474,8 @@ struct MainWindow::RetainedSecurityDialog : QObject
     MainWindow *eligibleOwner() const
     {
         auto *owner = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
-        if (!owner || owner->closeConfirmed_ || (owner->wm_ && owner->wm_->isClosing())
-            || !page->isUsable() || owner->hiddenToTray_ || !owner->isVisible()
+        if (!owner || owner->closeConfirmed_ || !page->isUsable()
+            || owner->hiddenToTray_ || !owner->isVisible()
             || owner->isMinimized() || owner->recentActive_ || owner->currentTab() != page)
             return nullptr;
         return owner;
@@ -496,8 +500,7 @@ struct MainWindow::RetainedSecurityDialog : QObject
                     this, [this] { schedule(); });
             }
         }
-        if (!page || (current && (current->closeConfirmed_
-            || (current->wm_ && current->wm_->isClosing())))) {
+        if (!page || (current && current->closeConfirmed_)) {
             deleteLater();
             return;
         }
@@ -513,6 +516,10 @@ struct MainWindow::RetainedSecurityDialog : QObject
             self->queued = false;
             if (!owner || self->eligibleOwner() != owner) {
                 self->schedule();
+                return;
+            }
+            if (owner->wm_ && owner->wm_->isClosing()) {
+                self->deleteLater();
                 return;
             }
             const auto request = self->request;
@@ -545,6 +552,33 @@ void MainWindow::openSecurity()
     request->source = tab->path();
     request->password = tab->password();
     runSecurity(tab, request, false);
+}
+
+/// Retains an accepted request and its exact consent until its current owner can start it.
+void MainWindow::queueSecurityOperation(TabPage *tab,
+                                         const std::shared_ptr<SecurityRequest> &request, bool asked)
+{
+    const QPointer<TabPage> page(tab);
+    auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+    if (!window || window->closeConfirmed_)
+        return;
+    const auto discarded = connect(window, &QObject::destroyed, tab, [page, request, asked] {
+        QTimer::singleShot(0, page, [page, request, asked] {
+            if (page)
+                queueSecurityOperation(page, request, asked);
+        });
+    });
+    window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window), request, asked, discarded] {
+        disconnect(discarded);
+        auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!current || current->closeConfirmed_ || (current->wm_ && current->wm_->isClosing()))
+            return;
+        if (current != owner) {
+            queueSecurityOperation(page, request, asked);
+            return;
+        }
+        runSecurity(page, request, asked);
+    });
 }
 
 /// Captures consent before source reads and validates it under the writer's publication lock.
@@ -641,7 +675,7 @@ void MainWindow::deliverSecurity(TabPage *tab, const std::shared_ptr<SecurityReq
 {
     const QPointer<TabPage> page(tab);
     auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
-    if (!window || window->closeConfirmed_ || (window->wm_ && window->wm_->isClosing()))
+    if (!window || window->closeConfirmed_)
         return;
     const auto discarded = connect(window, &QObject::destroyed, tab, [page, request, result, asked] {
         QTimer::singleShot(0, page, [page, request, result, asked] {
@@ -737,14 +771,14 @@ void MainWindow::finishSecurity(TabPage *tab, const std::shared_ptr<SecurityRequ
         const int answer = question->exec();
         delete question.data();
         if (!self || !page || !page->isUsable() || page->window() != self
-            || closeConfirmed_ || (wm_ && wm_->isClosing()) || hiddenToTray_
+            || closeConfirmed_ || hiddenToTray_
             || !isVisible() || isMinimized() || currentTab() != page) {
             if (page)
                 retainSecurityDialog(page, request);
             return;
         }
         if (answer == QMessageBox::Yes)
-            runSecurity(page, confirmed, asked);
+            queueSecurityOperation(page, confirmed, asked);
         else
             queueSecurityDialog(page, request);
         return;
@@ -762,14 +796,14 @@ void MainWindow::finishSecurity(TabPage *tab, const std::shared_ptr<SecurityRequ
         const QString password = prompt && accepted ? prompt->textValue() : QString();
         delete prompt.data();
         if (!self || !page || !page->isUsable() || page->window() != self
-            || closeConfirmed_ || (wm_ && wm_->isClosing()) || !accepted)
+            || closeConfirmed_ || !accepted)
             return;
         const auto retry = std::make_shared<SecurityRequest>(*request);
         retry->password = password;
         // An absent output can reach a password prompt on its first attempt.
         // Preserve that attempt's consent instead of checking a newer file here.
         retry->consent = result->consent;
-        runSecurity(page, retry, true);
+        queueSecurityOperation(page, retry, true);
         return;
     }
     if (result->status == QpdfService::Status::Ok && asked)
@@ -833,7 +867,7 @@ void MainWindow::queueSecurityDialog(TabPage *tab, const std::shared_ptr<Securit
 {
     const QPointer<TabPage> page(tab);
     auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
-    if (!window || window->closeConfirmed_ || (window->wm_ && window->wm_->isClosing()))
+    if (!window || window->closeConfirmed_)
         return;
     const auto discarded = connect(window, &QObject::destroyed, tab, [page, request] {
         QTimer::singleShot(0, page, [page, request] {
@@ -889,7 +923,7 @@ void MainWindow::showSecurityDialog(TabPage *tab, const std::shared_ptr<Security
     const auto write = std::make_shared<SecurityRequest>(*request);
     write->action = action;
     write->consent.reset();
-    runSecurity(page, write, false);
+    queueSecurityOperation(page, write, false);
 }
 
 // Builds PDF output values while its caller protects the live document. Measurement
@@ -1694,7 +1728,33 @@ void MainWindow::showMergeDialog(TabPage *tab, const std::shared_ptr<MergeReques
     }
     delete dialog.data();
     if (next && owner && page && page->isUsable())
-        runMerge(page, next);
+        queueMergeOperation(page, next);
+}
+
+/// Keeps an accepted plan and destination snapshot queued across a pending session outcome.
+void MainWindow::queueMergeOperation(TabPage *tab, const std::shared_ptr<MergeRequest> &request)
+{
+    const QPointer<TabPage> page(tab);
+    auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+    if (!window || window->closeConfirmed_)
+        return;
+    const auto discarded = connect(window, &QObject::destroyed, tab, [page, request] {
+        QTimer::singleShot(0, page, [page, request] {
+            if (page)
+                queueMergeOperation(page, request);
+        });
+    });
+    window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window), request, discarded] {
+        disconnect(discarded);
+        auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
+        if (!current || current->closeConfirmed_ || (current->wm_ && current->wm_->isClosing()))
+            return;
+        if (current != owner) {
+            queueMergeOperation(page, request);
+            return;
+        }
+        runMerge(page, request);
+    });
 }
 
 /// Checks identities, reserves output and revalidates replacement consent on the tab worker.
@@ -1756,7 +1816,7 @@ void MainWindow::deliverMergeDialog(TabPage *tab, const std::shared_ptr<MergeReq
 {
     const QPointer<TabPage> page(tab);
     auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
-    if (!window || window->closeConfirmed_ || (window->wm_ && window->wm_->isClosing()))
+    if (!window || window->closeConfirmed_)
         return;
     // The old window drops its queue on destruction. A tab that moved away must
     // still receive the result in its surviving owner.

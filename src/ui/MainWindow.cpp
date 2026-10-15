@@ -1718,15 +1718,48 @@ QStringList MainWindow::askForPdfs()
 
 void MainWindow::onOpen()
 {
+    const QPointer<MainWindow> self(this);
     const QStringList paths = askForPdfs();
-    if (paths.isEmpty())
-        return;
-    for (const QString &path : paths) {
-        if (const auto url = mervin::urlopen::fromUserInput(path))
-            openUrl(*url);
-        else
-            openFile(path); // openFile() adds it as a tab in this window
-    }
+    if (self && !paths.isEmpty())
+        queueOpenPaths(paths, false);
+}
+
+/// Keeps accepted picker choices or completed downloads until their tabs or window can open.
+void MainWindow::queueOpenPaths(const QStringList &paths, bool inNewWindow)
+{
+    const QPointer<MainWindow> self(this);
+    whenTabsCanChange([self, paths, inNewWindow] {
+        if (!self || self->closeConfirmed_ || (self->wm_ && self->wm_->isClosing()))
+            return;
+        QStringList localPaths;
+        for (qsizetype index = 0; index < paths.size(); ++index) {
+            const QString &path = paths[index];
+            if (const auto url = mervin::urlopen::fromUserInput(path))
+                self->openUrl(*url, inNewWindow);
+            else if (inNewWindow)
+                localPaths.append(path);
+            else
+                self->openFile(path);
+            // URL setup processes events. Retain the rest if session end or a
+            // newly opened modal blocks delivery, without repeating this URL.
+            if (!self)
+                return;
+            if (!self->canChangeTabs()) {
+                localPaths.append(paths.mid(index + 1));
+                if (!localPaths.isEmpty())
+                    self->queueOpenPaths(localPaths, inNewWindow);
+                return;
+            }
+        }
+        if (localPaths.isEmpty())
+            return;
+        if (self->wm_)
+            self->wm_->openPaths(localPaths, QStringLiteral("new-window"));
+        else {
+            for (const QString &path : localPaths)
+                self->openFile(path);
+        }
+    });
 }
 
 void MainWindow::openUrl(const QUrl &url, bool inNewWindow)
@@ -1794,34 +1827,16 @@ void MainWindow::openUrl(const QUrl &url, bool inNewWindow)
                     }
                     return;
                 }
-                if (inNewWindow && wm_)
-                    wm_->openPaths({destination}, QStringLiteral("new-window"));
-                else
-                    openFile(destination);
+                queueOpenPaths({destination}, inNewWindow);
             });
 }
 
 void MainWindow::onOpenInNewWindow()
 {
+    const QPointer<MainWindow> self(this);
     const QStringList paths = askForPdfs();
-    if (paths.isEmpty())
-        return;
-
-    QStringList localPaths;
-    for (const QString &path : paths) {
-        if (const auto url = mervin::urlopen::fromUserInput(path))
-            openUrl(*url, /*inNewWindow=*/true);
-        else
-            localPaths.append(path);
-    }
-    if (localPaths.isEmpty())
-        return;
-    if (wm_)
-        wm_->openPaths(localPaths, QStringLiteral("new-window"));
-    else {
-        for (const QString &path : localPaths)
-            openFile(path); // no window manager (standalone): fall back to tabs
-    }
+    if (self && !paths.isEmpty())
+        queueOpenPaths(paths, true);
 }
 
 void MainWindow::showAbout()

@@ -99,7 +99,10 @@ in progress to become recoverable. Mervin then allows logoff, including when the
 snapshot has not finished. Edits that still exist only in memory can be lost. This
 does not save other unsaved tabs or wait for replacing and reopening the original
 after a recovery manifest commits. If the OS cancels logoff, Save and unloading
-become available again.
+become available again. Accepted Security and Merge actions, document passwords,
+open actions and completed results wait for that outcome. Eligible actions
+continue after cancellation and remain suppressed during successful logoff.
+The four-second limit bounds Mervin's own wait. OS scheduling can delay its return.
 
 The exception is an unloaded tab without unsaved edits whose file was deleted, moved
 or renamed, such as the temporary copy of a mail attachment. It closes without a

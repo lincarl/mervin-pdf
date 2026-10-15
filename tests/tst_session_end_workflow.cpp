@@ -2,6 +2,11 @@
 #include "app/WindowManager.h"
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
+#include "dialogs/MergeDialog.h"
+#include "dialogs/SecurityDialog.h"
+#include "io/SaveCheck.h"
+#include "net/UrlOpen.h"
+#include "net/UrlDownloadLocation.h"
 #include "io/AppFiles.h"
 #include "io/Background.h"
 #include "io/JobContext.h"
@@ -13,7 +18,18 @@
 #include "ui/TabPage.h"
 #include "ui/ViewerWidget.h"
 
+#include <QAbstractButton>
 #include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QFileDialog>
+#include <QInputDialog>
+#include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QTabWidget>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QElapsedTimer>
 #include <QDeadlineTimer>
 #include <QDir>
@@ -29,6 +45,8 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
+#include <atomic>
+#include <functional>
 #include <thread>
 #include <utility>
 
@@ -46,6 +64,204 @@
 using namespace mervin;
 
 namespace {
+/// Reads exact file contents for source and destination preservation assertions.
+QByteArray bytes(const QString &path)
+{
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+
+/// Replaces a local test destination and reports whether every byte was written.
+bool writeBytes(const QString &path, const QByteArray &contents)
+{
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly) && file.write(contents) == contents.size();
+}
+
+/// Realizes an isolated test window without showing it on the desktop.
+void showWindow(MainWindow &window)
+{
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    window.resize(1000, 800);
+    window.show();
+    QCoreApplication::processEvents();
+}
+
+/// Finds the selected tab through the actual window tab widget.
+TabPage *currentTab(MainWindow &window)
+{
+    return qobject_cast<TabPage *>(window.findChild<QTabWidget *>()->currentWidget());
+}
+
+// Drives the actual modal controls. Submit each answer once before it can enter
+// another event loop, and keep answering nested overwrite questions.
+class Interaction
+{
+public:
+    /// Starts modal-control polling with one answer per dialog and guarded nested actions.
+    Interaction()
+    {
+        timer.setInterval(5);
+        QObject::connect(&timer, &QTimer::timeout, [&] {
+            QWidget *modal = QApplication::activeModalWidget();
+            if (intercept && intercept(modal))
+                return;
+            if (auto *dialog = qobject_cast<SecurityDialog *>(modal)) {
+                if (seenSecurity == dialog)
+                    return;
+                seenSecurity = dialog;
+                ++securityCount;
+                securityOwners.append(dialog->parentWidget());
+                QMetaObject::invokeMethod(dialog, [this, dialog] {
+                    const auto dismiss = qScopeGuard([guard = QPointer<SecurityDialog>(dialog)] {
+                        if (guard && guard->isVisible())
+                            guard->reject();
+                    });
+                    if (security)
+                        security(*dialog);
+                    else
+                        dialog->reject();
+                }, Qt::QueuedConnection);
+            } else if (auto *dialog = qobject_cast<MergeDialog *>(modal)) {
+                if (seenMerge == dialog)
+                    return;
+                seenMerge = dialog;
+                ++mergeCount;
+                QMetaObject::invokeMethod(dialog, [this, dialog] {
+                    const auto dismiss = qScopeGuard([guard = QPointer<MergeDialog>(dialog)] {
+                        if (guard && guard->isVisible())
+                            guard->reject();
+                    });
+                    if (merge)
+                        merge(*dialog);
+                    else
+                        dialog->reject();
+                }, Qt::QueuedConnection);
+            } else if (auto *picker = qobject_cast<QFileDialog *>(modal)) {
+                if (seenPicker == picker)
+                    return;
+                seenPicker = picker;
+                suggested.append(picker->selectedFiles().value(0));
+                if (files.isEmpty()) {
+                    unexpected.append(picker->windowTitle());
+                    picker->reject();
+                    return;
+                }
+                const QString path = files.takeFirst();
+                picker->selectFile(path);
+                if (auto *name = picker->findChild<QLineEdit *>(QStringLiteral("fileNameEdit")))
+                    name->setText(QDir::toNativeSeparators(path));
+                QMetaObject::invokeMethod(picker, "accept", Qt::QueuedConnection);
+            } else if (auto *prompt = qobject_cast<QInputDialog *>(modal)) {
+                if (answered == prompt)
+                    return;
+                answered = prompt;
+                ++passwordCount;
+                if (passwords.isEmpty()) {
+                    unexpected.append(prompt->windowTitle());
+                    prompt->reject();
+                    return;
+                }
+                const auto password = passwords.takeFirst();
+                if (password) {
+                    prompt->setTextValue(*password);
+                    prompt->accept();
+                } else {
+                    prompt->reject();
+                }
+            } else if (auto *box = qobject_cast<QMessageBox *>(modal)) {
+                if (answered == box)
+                    return;
+                answered = box;
+                messages.append(box->text());
+                messageOwners.append(box->parentWidget());
+                const auto choice = answer ? answer(*box)
+                    : answers.isEmpty() ? QMessageBox::NoButton : answers.takeFirst();
+                QAbstractButton *button = box->button(choice);
+                if (!button) {
+                    unexpected.append(box->windowTitle() + QStringLiteral(": ") + box->text());
+                    box->reject();
+                } else {
+                    button->click();
+                }
+            }
+        });
+        timer.start();
+    }
+
+    QStringList files;
+    QList<std::optional<QString>> passwords;
+    QList<QMessageBox::StandardButton> answers;
+    std::function<QMessageBox::StandardButton(const QMessageBox &)> answer;
+    std::function<void(SecurityDialog &)> security;
+    std::function<void(MergeDialog &)> merge;
+    std::function<bool(QWidget *)> intercept;
+    QStringList messages;
+    QStringList suggested;
+    QStringList unexpected;
+    QList<QPointer<QWidget>> securityOwners;
+    QList<QPointer<QWidget>> messageOwners;
+    int securityCount = 0;
+    int mergeCount = 0;
+    int passwordCount = 0;
+
+private:
+    QTimer timer;
+    QPointer<SecurityDialog> seenSecurity;
+    QPointer<MergeDialog> seenMerge;
+    QPointer<QFileDialog> seenPicker;
+    QPointer<QWidget> answered;
+};
+
+/// Selects distinct passwords, AES-128 and restricted permissions for retry assertions.
+void setEncryptionChoices(SecurityDialog &dialog)
+{
+    dialog.findChild<QLineEdit *>(QStringLiteral("securityUserPassword"))->setText(QStringLiteral("new password"));
+    dialog.findChild<QLineEdit *>(QStringLiteral("securityOwnerPassword"))->setText(QStringLiteral("owner guard"));
+    dialog.findChild<QComboBox *>(QStringLiteral("securityAlgorithm"))->setCurrentIndex(1);
+    for (const QString &name : {QStringLiteral("securityAllowPrint"), QStringLiteral("securityAllowCopy"),
+                               QStringLiteral("securityAllowModify"), QStringLiteral("securityAllowAnnotate")})
+        dialog.findChild<QCheckBox *>(name)->setChecked(false);
+}
+
+/// Checks that failure recovery preserves the chosen output and every encryption control.
+void verifyEncryptionChoices(const SecurityDialog &dialog, const QString &output)
+{
+    QVERIFY(dialog.request());
+    QCOMPARE(QDir::fromNativeSeparators(dialog.request()->output), output);
+    QCOMPARE(dialog.findChild<QLineEdit *>(QStringLiteral("securityUserPassword"))->text(),
+             QStringLiteral("new password"));
+    QCOMPARE(dialog.findChild<QLineEdit *>(QStringLiteral("securityOwnerPassword"))->text(),
+             QStringLiteral("owner guard"));
+    QCOMPARE(dialog.findChild<QComboBox *>(QStringLiteral("securityAlgorithm"))->currentIndex(), 1);
+    for (QCheckBox *permission : dialog.findChildren<QCheckBox *>())
+        QVERIFY(!permission->isChecked());
+}
+
+/// Selects a nondefault Merge range and waits for its destination validation.
+void setMergeChoices(MergeDialog &dialog, const QString &output)
+{
+    QTRY_VERIFY_WITH_TIMEOUT(!dialog.reading(), 10000);
+    auto *check = dialog.findChild<SaveCheck *>();
+    QVERIFY(check);
+    QTRY_VERIFY_WITH_TIMEOUT(!check->pending(), 10000);
+    dialog.findChild<QLineEdit *>(QStringLiteral("mergeRowSpec"))->setText(QStringLiteral("2-3"));
+    auto *field = dialog.findChild<QLineEdit *>(QStringLiteral("mergeOutput"));
+    field->setFocus();
+    field->selectAll();
+    QTest::keyClicks(field, QDir::toNativeSeparators(output));
+    QTRY_VERIFY_WITH_TIMEOUT(!check->pending(), 10000);
+    QTRY_VERIFY(dialog.findChild<QPushButton *>(QStringLiteral("mergeAccept"))->isEnabled());
+}
+
+/// Verifies that a completed failure keeps the accepted Merge plan and output.
+void verifyMergeChoices(const MergeDialog &dialog, const QString &output)
+{
+    QCOMPARE(dialog.findChild<QLineEdit *>(QStringLiteral("mergeRowSpec"))->text(), QStringLiteral("2-3"));
+    QCOMPARE(QDir::fromNativeSeparators(dialog.findChild<QLineEdit *>(QStringLiteral("mergeOutput"))->text()), output);
+    QVERIFY(!dialog.findChild<QLabel *>(QStringLiteral("mergeError"))->text().isEmpty());
+}
+
 // Copies a PDF fixture and adds an annotation whose recovery content can be checked.
 bool prepare(TabPage &tab, const QString &path)
 {
@@ -137,6 +353,14 @@ class TstSessionEndWorkflow : public QObject
     Q_OBJECT
     std::unique_ptr<QTemporaryDir> profile_;
 
+public:
+    /// Uses controllable Qt pickers for Security and non-Windows ordinary opens.
+    TstSessionEndWorkflow()
+    {
+        QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    }
+
+
 private slots:
     // Creates an isolated profile with automatic updates disabled for each workflow.
     void init()
@@ -146,6 +370,8 @@ private slots:
         ConfigPaths::setOverrideDir(profile_->path());
         Settings settings;
         settings.autoUpdate = false;
+        settings.closeToTray = false;
+        settings.unloadInactiveMinutes = 0;
         QVERIFY(settings.save());
     }
 
@@ -154,6 +380,7 @@ private slots:
     {
         sessionend::finishRequest(false);
         job::testing::release();
+        job::testing::failWhen({});
         appfiles::testing::hold(false);
         QVERIFY(background::settle(10000));
         QCoreApplication::processEvents();
@@ -476,6 +703,843 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(questions, 1, 1000);
         QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable(), 10000);
         QVERIFY(tab->hasUnsavedEdits());
+    }
+
+    /// Covers a completed confirmation and an already accepted replacement choice.
+    void securityConsentWaitsForSessionOutcome_data()
+    {
+        QTest::addColumn<bool>("accepted");
+        QTest::addColumn<bool>("ended");
+        QTest::newRow("completed confirmation after cancellation") << false << false;
+        QTest::newRow("completed confirmation during successful end") << false << true;
+        QTest::newRow("accepted replacement after cancellation") << true << false;
+        QTest::newRow("accepted replacement during successful end") << true << true;
+    }
+
+    /// Retains the original destination snapshot and follows a moved tab after cancellation.
+    void securityConsentWaitsForSessionOutcome()
+    {
+        QFETCH(bool, accepted);
+        QFETCH(bool, ended);
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("source.pdf"));
+        const QString output = files.filePath(QStringLiteral("output.pdf"));
+        const QByteArray original("original contents");
+        const QByteArray changed("changed contents!");
+        QCOMPARE(original.size(), changed.size());
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        QVERIFY(writeBytes(output, original));
+        WindowManager manager;
+        QPointer<MainWindow> window(manager.createWindow());
+        showWindow(*window);
+        QVERIFY(testing::openAndWait(*window, source));
+        QPointer<TabPage> page(currentTab(*window));
+        QPointer<MainWindow> expectedOwner(window);
+        std::atomic<int> workerSteps{0};
+        Interaction dialogs;
+        dialogs.files << output;
+        int questions = 0;
+        QString failure;
+        bool retained = false;
+        std::optional<sessionend::Result> pending;
+        dialogs.answer = [&](const QMessageBox &box) {
+            if (box.objectName() == QStringLiteral("securityReplace")) {
+                ++questions;
+                if (accepted && !pending) {
+                    job::testing::failWhen([&](job::Step, const QString &) {
+                        ++workerSteps;
+                        return false;
+                    });
+                    pending = manager.prepareSessionEnd(0);
+                }
+                return QMessageBox::Yes;
+            }
+            failure = box.text();
+            return QMessageBox::Ok;
+        };
+        dialogs.security = [&](SecurityDialog &dialog) {
+            if (dialogs.securityCount == 1) {
+                setEncryptionChoices(dialog);
+                if (!accepted) {
+                    job::testing::holdWhen([output](job::Step step, const QString &path) {
+                        return step == job::Step::Reading && QDir::fromNativeSeparators(path) == output;
+                    });
+                }
+                dialog.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
+            } else {
+                verifyEncryptionChoices(dialog, output);
+                QCOMPARE(dialog.parentWidget(), expectedOwner.data());
+                QCOMPARE(bytes(output), changed);
+                retained = true;
+                dialog.reject();
+            }
+        };
+        const auto release = qScopeGuard([] {
+            job::testing::release();
+            job::testing::failWhen({});
+        });
+        QVERIFY(QMetaObject::invokeMethod(window, "openSecurity"));
+        if (!accepted) {
+            QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+            pending = manager.prepareSessionEnd(0);
+            job::testing::release();
+        } else {
+            QTRY_VERIFY_WITH_TIMEOUT(pending.has_value(), 10000);
+        }
+        QCOMPARE(*pending, sessionend::Result::Settled);
+        QTRY_VERIFY_WITH_TIMEOUT(page->isUsable(), 10000);
+        QTest::qWait(80);
+        QCOMPARE(questions, accepted ? 1 : 0);
+        QCOMPARE(dialogs.securityCount, 1);
+        QVERIFY(!QApplication::activeModalWidget());
+        if (accepted)
+            QCOMPARE(workerSteps.load(), 0);
+        QVERIFY(writeBytes(output, changed));
+        if (!accepted && !ended) {
+            expectedOwner = manager.createWindow();
+            showWindow(*expectedOwner);
+            manager.mergeTab(window, 0, expectedOwner, -1);
+            QTRY_VERIFY(page && page->window() == expectedOwner);
+            if (window)
+                delete window.data();
+            QVERIFY(!window);
+        }
+        manager.finishSessionEnd(ended);
+        if (ended) {
+            QTest::qWait(80);
+            QCOMPARE(dialogs.securityCount, 1);
+            QCOMPARE(questions, accepted ? 1 : 0);
+            delete window.data();
+        } else {
+            QTRY_VERIFY_WITH_TIMEOUT(retained, 10000);
+            QCOMPARE(questions, 1);
+            QVERIFY(failure.contains(QStringLiteral("The destination changed.")));
+            QCOMPARE(dialogs.securityCount, 2);
+        }
+        QCOMPARE(bytes(output), changed);
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
+    /// A failed worker result keeps its editable Merge plan until logoff is canceled.
+    void completedMergeFailureWaitsForCancellation()
+    {
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("source.pdf"));
+        const QString output = files.filePath(QStringLiteral("merged.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        showWindow(*window);
+        QVERIFY(testing::openAndWait(*window, source));
+        TabPage *page = currentTab(*window);
+        Interaction dialogs;
+        bool retained = false;
+        dialogs.merge = [&](MergeDialog &dialog) {
+            if (dialogs.mergeCount == 1) {
+                setMergeChoices(dialog, output);
+                job::testing::holdWhen([folder = files.path()](job::Step step, const QString &path) {
+                    return step == job::Step::Writing && QDir::fromNativeSeparators(path) == folder;
+                });
+                job::testing::failWhen([output](job::Step step, const QString &path) {
+                    return step == job::Step::Commit && QDir::fromNativeSeparators(path) == output;
+                });
+                dialog.findChild<QPushButton *>(QStringLiteral("mergeAccept"))->click();
+                QTRY_VERIFY_WITH_TIMEOUT(!dialog.isVisible(), 10000);
+            } else {
+                verifyMergeChoices(dialog, output);
+                QCOMPARE(dialog.parentWidget(), window);
+                retained = true;
+                dialog.reject();
+            }
+        };
+        const auto clear = qScopeGuard([] {
+            job::testing::release();
+            job::testing::failWhen({});
+        });
+        QVERIFY(QMetaObject::invokeMethod(window, "mergeDocuments"));
+        QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+        QCOMPARE(manager.prepareSessionEnd(0), sessionend::Result::Settled);
+        job::testing::release();
+        QTRY_VERIFY_WITH_TIMEOUT(page->isUsable(), 10000);
+        QTest::qWait(80);
+        QCOMPARE(dialogs.mergeCount, 1);
+        QVERIFY(!QFile::exists(output));
+        manager.finishSessionEnd(false);
+        QTRY_VERIFY_WITH_TIMEOUT(retained, 10000);
+        QCOMPARE(dialogs.mergeCount, 2);
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
+    /// An accepted Merge keeps its original consent while the OS outcome is pending.
+    void acceptedMergeWaitsForCancellation()
+    {
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("source.pdf"));
+        const QString output = files.filePath(QStringLiteral("merged.pdf"));
+        const QByteArray original("original contents");
+        const QByteArray changed("changed contents!");
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        QVERIFY(writeBytes(output, original));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        showWindow(*window);
+        QVERIFY(testing::openAndWait(*window, source));
+        std::atomic<int> workerSteps{0};
+        Interaction dialogs;
+        int questions = 0;
+        bool retained = false;
+        std::optional<sessionend::Result> pending;
+        dialogs.answer = [&](const QMessageBox &box) {
+            if (box.text().contains(QStringLiteral("Replace it?"))) {
+                ++questions;
+                job::testing::failWhen([&](job::Step, const QString &) {
+                    ++workerSteps;
+                    return false;
+                });
+                pending = manager.prepareSessionEnd(0);
+                return QMessageBox::Yes;
+            }
+            return QMessageBox::No;
+        };
+        dialogs.merge = [&](MergeDialog &dialog) {
+            if (dialogs.mergeCount == 1) {
+                setMergeChoices(dialog, output);
+                dialog.findChild<QPushButton *>(QStringLiteral("mergeAccept"))->click();
+                QTRY_VERIFY_WITH_TIMEOUT(!dialog.isVisible(), 10000);
+            } else {
+                verifyMergeChoices(dialog, output);
+                QVERIFY(dialog.findChild<QLabel *>(QStringLiteral("mergeError"))->text()
+                            .contains(QStringLiteral("The destination changed.")));
+                retained = true;
+                dialog.reject();
+            }
+        };
+        const auto clear = qScopeGuard([] { job::testing::failWhen({}); });
+        QVERIFY(QMetaObject::invokeMethod(window, "mergeDocuments"));
+        QTRY_VERIFY_WITH_TIMEOUT(pending.has_value(), 10000);
+        QCOMPARE(*pending, sessionend::Result::Settled);
+        QTest::qWait(80);
+        QVERIFY(currentTab(*window)->isUsable());
+        QCOMPARE(workerSteps.load(), 0);
+        QCOMPARE(bytes(output), original);
+        QVERIFY(writeBytes(output, changed));
+        manager.finishSessionEnd(false);
+        QTRY_VERIFY_WITH_TIMEOUT(retained, 10000);
+        QCOMPARE(questions, 1);
+        QCOMPARE(bytes(output), changed);
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
+    /// Covers cancellation, successful end and a newer load replacing a queued password failure.
+    void completedResumeWaitsForSessionOutcome_data()
+    {
+        QTest::addColumn<int>("outcome");
+        QTest::newRow("canceled password failure") << 0;
+        QTest::newRow("successful session end") << 1;
+        QTest::newRow("newer generation after cancellation") << 2;
+    }
+
+    /// A non-fresh resume retains its password reaction without replaying stale generations.
+    void completedResumeWaitsForSessionOutcome()
+    {
+        QFETCH(int, outcome);
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("encrypted.pdf"));
+        const QString password = QStringLiteral("source password");
+        QCOMPARE(QpdfService().encrypt(QStringLiteral(MERVIN_FIXTURE_PDF), source, {}, password,
+                     {}, QpdfService::Algorithm::AES128, {}), QpdfService::Status::Ok);
+        WindowManager manager;
+        QPointer<MainWindow> window(manager.createWindow());
+        showWindow(*window);
+        QVERIFY(testing::openAndWait(*window, source, false, -1, true, password));
+        TabPage *page = currentTab(*window);
+        QVERIFY(!page->freshOpen());
+        QVERIFY(testing::suspendAndWait(*page));
+        page->setPassword({});
+        Interaction dialogs;
+        dialogs.passwords << password;
+        job::testing::holdWhen([source](job::Step step, const QString &path) {
+            return step == job::Step::Reading && QDir::fromNativeSeparators(path) == source;
+        });
+        const auto release = qScopeGuard([] { job::testing::release(); });
+        QSignalSpy resumed(page, &TabPage::resumeFinished);
+        page->resumeAsync();
+        QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+        const quint64 generation = page->loadGeneration();
+        QCOMPARE(manager.prepareSessionEnd(0), sessionend::Result::Settled);
+        job::testing::release();
+        QTRY_COMPARE_WITH_TIMEOUT(resumed.size(), 1, 10000);
+        QVERIFY(!resumed.first().at(0).toBool());
+        QVERIFY(resumed.first().at(2).toBool());
+        QVERIFY(!page->isLoading());
+        QTest::qWait(80);
+        QCOMPARE(dialogs.passwordCount, 0);
+        manager.finishSessionEnd(outcome == 1);
+        if (outcome == 1) {
+            QTest::qWait(80);
+            QCOMPARE(dialogs.passwordCount, 0);
+            QCOMPARE(page->loadGeneration(), generation);
+            delete window.data();
+        } else {
+            if (outcome == 2) {
+                page->setPassword(password);
+                page->retryLoad();
+            }
+            QTRY_VERIFY_WITH_TIMEOUT(page->isUsable(), 10000);
+            QCOMPARE(dialogs.passwordCount, outcome == 2 ? 0 : 1);
+            QCOMPARE(page->loadGeneration(), generation + 1);
+            QCOMPARE(page->password(), password);
+        }
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
+    /// Successful resume keeps its hidden-window suspension reaction through cancellation.
+    void successfulResumeWaitsForCancellation()
+    {
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("source.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        WindowManager manager;
+        // A standalone owner isolates this reaction from the manager's desktop
+        // tray-availability timer, which can restore windows when no tray exists.
+        MainWindow window(manager.engine(), &manager);
+        showWindow(window);
+        window.applyMemorySettings(1, true);
+        QVERIFY(testing::openAndWait(window, source));
+        TabPage *page = currentTab(window);
+        QVERIFY(testing::suspendAndWait(*page));
+        job::testing::holdWhen([source](job::Step step, const QString &path) {
+            return step == job::Step::Reading && QDir::fromNativeSeparators(path) == source;
+        });
+        const auto release = qScopeGuard([] { job::testing::release(); });
+        QSignalSpy resumed(page, &TabPage::resumeFinished);
+        page->resumeAsync();
+        QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+        QCOMPARE(manager.prepareSessionEnd(0), sessionend::Result::Settled);
+        window.hideToTray();
+        job::testing::release();
+        QTRY_COMPARE_WITH_TIMEOUT(resumed.size(), 1, 10000);
+        QVERIFY(resumed.first().at(0).toBool());
+        QTest::qWait(80);
+        QVERIFY(page->isLoaded());
+        QVERIFY(window.isInTray());
+        manager.finishSessionEnd(false);
+        // This owner is intentionally outside the manager's registered windows.
+        // Wake its ordinary queue as cancellation does for registered owners.
+        window.whenTabsCanChange([] {});
+        QTRY_VERIFY_WITH_TIMEOUT(page->isSuspended(), 10000);
+        QCOMPARE(resumed.size(), 1);
+    }
+
+    /// Missing-file reconciliation is retained with the whole non-fresh resume reaction.
+    void missingResumeWaitsForCancellation()
+    {
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("source.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        showWindow(*window);
+        QVERIFY(testing::openAndWait(*window, source));
+        QPointer<TabPage> page(currentTab(*window));
+        QVERIFY(testing::suspendAndWait(*page));
+        QVERIFY(Document::waitForCloses(10000));
+        job::testing::holdWhen([source](job::Step step, const QString &path) {
+            return step == job::Step::Reading && QDir::fromNativeSeparators(path) == source;
+        });
+        const auto release = qScopeGuard([] { job::testing::release(); });
+        QSignalSpy resumed(page, &TabPage::resumeFinished);
+        page->resumeAsync();
+        QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+        QCOMPARE(manager.prepareSessionEnd(0), sessionend::Result::Settled);
+        QVERIFY(QFile::remove(source));
+        job::testing::release();
+        QTRY_COMPARE_WITH_TIMEOUT(resumed.size(), 1, 10000);
+        QVERIFY(!resumed.first().at(0).toBool());
+        QVERIFY(!resumed.first().at(2).toBool());
+        QTest::qWait(80);
+        QVERIFY(page);
+        manager.finishSessionEnd(false);
+        QTRY_VERIFY_WITH_TIMEOUT(!page, 10000);
+        QCOMPARE(window->tabCount(), 0);
+    }
+
+    /// An accepted Security form executes once after canceled logoff.
+    void acceptedSecurityFormWaitsForCancellation()
+    {
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("source.pdf"));
+        const QString output = files.filePath(QStringLiteral("output.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        showWindow(*window);
+        QVERIFY(testing::openAndWait(*window, source));
+        Interaction dialogs;
+        dialogs.files << output;
+        dialogs.answers << QMessageBox::No;
+        std::optional<sessionend::Result> pending;
+        std::atomic<int> reads{0};
+        dialogs.intercept = [&](QWidget *modal) {
+            if (!pending && qobject_cast<QFileDialog *>(modal))
+                pending = manager.prepareSessionEnd(0);
+            return false;
+        };
+        dialogs.security = [&](SecurityDialog &dialog) {
+            setEncryptionChoices(dialog);
+            job::testing::failWhen([&](job::Step step, const QString &path) {
+                if (step == job::Step::Reading && QDir::fromNativeSeparators(path) == source)
+                    ++reads;
+                return false;
+            });
+            dialog.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
+        };
+        const auto clear = qScopeGuard([] { job::testing::failWhen({}); });
+        QVERIFY(QMetaObject::invokeMethod(window, "openSecurity"));
+        QTRY_VERIFY_WITH_TIMEOUT(pending.has_value(), 10000);
+        QCOMPARE(*pending, sessionend::Result::Settled);
+        QTest::qWait(80);
+        QCOMPARE(reads.load(), 0);
+        QVERIFY(!QFile::exists(output));
+        manager.finishSessionEnd(false);
+        QTRY_COMPARE_WITH_TIMEOUT(dialogs.messages.size(), 1, 10000);
+        QCOMPARE(dialogs.securityCount, 1);
+        QpdfService::Info info;
+        QCOMPARE(QpdfService().readInfo(output, QStringLiteral("new password"), info), QpdfService::Status::Ok);
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
+    /// An accepted source password keeps the original absent-destination consent.
+    void acceptedSecurityPasswordWaitsForCancellation()
+    {
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("encrypted.pdf"));
+        const QString output = files.filePath(QStringLiteral("output.pdf"));
+        const QString password = QStringLiteral("source password");
+        const QByteArray winner("another completed writer");
+        QCOMPARE(QpdfService().encrypt(QStringLiteral(MERVIN_FIXTURE_PDF), source, {}, password,
+                     {}, QpdfService::Algorithm::AES128, {}), QpdfService::Status::Ok);
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        showWindow(*window);
+        QVERIFY(testing::openAndWait(*window, source, false, -1, true, password));
+        currentTab(*window)->setPassword({});
+        std::atomic<int> workerSteps{0};
+        Interaction dialogs;
+        dialogs.files << output;
+        dialogs.passwords << QStringLiteral("wrong") << password;
+        dialogs.answers << QMessageBox::Ok;
+        std::optional<sessionend::Result> pending;
+        bool retained = false;
+        dialogs.intercept = [&](QWidget *modal) {
+            if (!pending && dialogs.passwordCount == 1 && qobject_cast<QInputDialog *>(modal)) {
+                job::testing::failWhen([&](job::Step, const QString &) {
+                    ++workerSteps;
+                    return false;
+                });
+                pending = manager.prepareSessionEnd(0);
+            }
+            return false;
+        };
+        dialogs.security = [&](SecurityDialog &dialog) {
+            if (dialogs.securityCount == 1) {
+                setEncryptionChoices(dialog);
+                dialog.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
+            } else {
+                verifyEncryptionChoices(dialog, output);
+                retained = true;
+                dialog.reject();
+            }
+        };
+        const auto clear = qScopeGuard([] { job::testing::failWhen({}); });
+        QVERIFY(QMetaObject::invokeMethod(window, "openSecurity"));
+        QTRY_VERIFY_WITH_TIMEOUT(pending.has_value(), 10000);
+        QCOMPARE(*pending, sessionend::Result::Settled);
+        QTest::qWait(80);
+        QVERIFY(currentTab(*window)->isUsable());
+        QCOMPARE(workerSteps.load(), 0);
+        QCOMPARE(dialogs.passwordCount, 2);
+        QVERIFY(!QFile::exists(output));
+        QVERIFY(writeBytes(output, winner));
+        manager.finishSessionEnd(false);
+        QTRY_VERIFY_WITH_TIMEOUT(retained, 10000);
+        QCOMPARE(dialogs.messages.size(), 1);
+        QVERIFY(dialogs.messages.first().contains(QStringLiteral("The destination changed.")));
+        QCOMPARE(bytes(output), winner);
+        QCOMPARE(dialogs.passwordCount, 2);
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
+    /// Dismissing a failure warning during pending logoff retains the Security form.
+    void securityFailureDismissalWaitsForCancellation()
+    {
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("source.pdf"));
+        const QString output = files.filePath(QStringLiteral("output.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        showWindow(*window);
+        QVERIFY(testing::openAndWait(*window, source));
+        job::testing::failWhen([output](job::Step step, const QString &path) {
+            return step == job::Step::Commit && QDir::fromNativeSeparators(path) == output;
+        });
+        const auto clear = qScopeGuard([] { job::testing::failWhen({}); });
+        Interaction dialogs;
+        dialogs.files << output;
+        std::optional<sessionend::Result> pending;
+        bool retained = false;
+        dialogs.answer = [&](const QMessageBox &) {
+            pending = manager.prepareSessionEnd(0);
+            return QMessageBox::Ok;
+        };
+        dialogs.security = [&](SecurityDialog &dialog) {
+            if (dialogs.securityCount == 1) {
+                setEncryptionChoices(dialog);
+                dialog.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
+            } else {
+                verifyEncryptionChoices(dialog, output);
+                retained = true;
+                dialog.reject();
+            }
+        };
+        QVERIFY(QMetaObject::invokeMethod(window, "openSecurity"));
+        QTRY_VERIFY_WITH_TIMEOUT(pending.has_value(), 10000);
+        QCOMPARE(*pending, sessionend::Result::Settled);
+        QTest::qWait(80);
+        QCOMPARE(dialogs.securityCount, 1);
+        manager.finishSessionEnd(false);
+        QTRY_VERIFY_WITH_TIMEOUT(retained, 10000);
+        QCOMPARE(dialogs.securityCount, 2);
+        QCOMPARE(dialogs.messages.size(), 1);
+        QVERIFY(!QFile::exists(output));
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
+    /// Covers resumed password acceptance under both OS outcomes.
+    void acceptedDocumentPasswordWaitsForSessionOutcome_data()
+    {
+        QTest::addColumn<bool>("ended");
+        QTest::newRow("canceled session end") << false;
+        QTest::newRow("successful session end") << true;
+    }
+
+    /// A modal password answer cannot cache credentials or start a load while logoff is pending.
+    void acceptedDocumentPasswordWaitsForSessionOutcome()
+    {
+        QFETCH(bool, ended);
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("encrypted.pdf"));
+        const QString password = QStringLiteral("source password");
+        QCOMPARE(QpdfService().encrypt(QStringLiteral(MERVIN_FIXTURE_PDF), source, {}, password,
+                     {}, QpdfService::Algorithm::AES128, {}), QpdfService::Status::Ok);
+        WindowManager manager;
+        QPointer<MainWindow> window(manager.createWindow());
+        showWindow(*window);
+        QVERIFY(testing::openAndWait(*window, source, false, -1, true, password));
+        TabPage *page = currentTab(*window);
+        QVERIFY(testing::suspendAndWait(*page));
+        page->setPassword({});
+        Interaction dialogs;
+        dialogs.passwords << password;
+        std::optional<sessionend::Result> pending;
+        quint64 generation = 0;
+        std::atomic<int> reads{0};
+        dialogs.intercept = [&](QWidget *modal) {
+            if (!pending && modal && modal->objectName() == QStringLiteral("documentPassword")) {
+                generation = page->loadGeneration();
+                job::testing::holdWhen([source](job::Step step, const QString &path) {
+                    return step == job::Step::Reading && QDir::fromNativeSeparators(path) == source;
+                });
+                job::testing::failWhen([&](job::Step step, const QString &path) {
+                    if (step == job::Step::Reading && QDir::fromNativeSeparators(path) == source)
+                        ++reads;
+                    return false;
+                });
+                pending = manager.prepareSessionEnd(0);
+            }
+            return false;
+        };
+        const auto clear = qScopeGuard([] {
+            job::testing::release();
+            job::testing::failWhen({});
+        });
+        page->resumeAsync();
+        QTRY_VERIFY_WITH_TIMEOUT(pending.has_value(), 10000);
+        QCOMPARE(*pending, sessionend::Result::Settled);
+        QTest::qWait(80);
+        QCOMPARE(page->loadGeneration(), generation);
+        QCOMPARE(reads.load(), 0);
+        QCOMPARE(job::testing::held(), 0);
+        QVERIFY(page->password().isEmpty());
+        manager.finishSessionEnd(ended);
+        if (ended) {
+            QTest::qWait(80);
+            QCOMPARE(page->loadGeneration(), generation);
+            QCOMPARE(reads.load(), 0);
+            QCOMPARE(job::testing::held(), 0);
+            delete window.data();
+        } else {
+            QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+            QCOMPARE(page->loadGeneration(), generation + 1);
+            job::testing::release();
+            QTRY_VERIFY_WITH_TIMEOUT(page->isUsable(), 10000);
+            QCOMPARE(page->password(), password);
+        }
+        QCOMPARE(dialogs.passwordCount, 1);
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
+    /// Rejected failed Duplicate prompts still close the failed window after canceled logoff.
+    void rejectedDuplicatePasswordWaitsForCancellation()
+    {
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("encrypted.pdf"));
+        QCOMPARE(QpdfService().encrypt(QStringLiteral(MERVIN_FIXTURE_PDF), source, {},
+                     QStringLiteral("password"), {}, QpdfService::Algorithm::AES128, {}), QpdfService::Status::Ok);
+        WindowManager manager;
+        MainWindow *kept = manager.createWindow();
+        Interaction dialogs;
+        dialogs.passwords << std::nullopt;
+        std::optional<sessionend::Result> pending;
+        dialogs.intercept = [&](QWidget *modal) {
+            if (!pending && modal && modal->objectName() == QStringLiteral("documentPassword"))
+                pending = manager.prepareSessionEnd(0);
+            return false;
+        };
+        manager.duplicateToNewWindow(source, {}, {}, {});
+        QPointer<MainWindow> duplicate;
+        for (QWidget *widget : QApplication::topLevelWidgets())
+            if (auto *window = qobject_cast<MainWindow *>(widget); window && window != kept)
+                duplicate = window;
+        QVERIFY(duplicate);
+        QTRY_VERIFY_WITH_TIMEOUT(pending.has_value(), 10000);
+        QCOMPARE(*pending, sessionend::Result::Settled);
+        QTest::qWait(80);
+        QVERIFY(duplicate);
+        QCOMPARE(duplicate->tabCount(), 1);
+        manager.finishSessionEnd(false);
+        QTRY_VERIFY_WITH_TIMEOUT(!duplicate, 10000);
+        QCOMPARE(dialogs.passwordCount, 1);
+        QVERIFY(kept->isVisible());
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
+    /// An accepted output offer retains the encrypted path and password until cancellation.
+    void acceptedOpenOfferWaitsForCancellation()
+    {
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("source.pdf"));
+        const QString output = files.filePath(QStringLiteral("output.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        showWindow(*window);
+        QVERIFY(testing::openAndWait(*window, source));
+        Interaction dialogs;
+        dialogs.files << output;
+        std::optional<sessionend::Result> pending;
+        dialogs.security = [&](SecurityDialog &dialog) {
+            setEncryptionChoices(dialog);
+            dialog.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
+        };
+        dialogs.answer = [&](const QMessageBox &box) {
+            if (box.windowTitle() == QStringLiteral("Done")) {
+                pending = manager.prepareSessionEnd(0);
+                return QMessageBox::Yes;
+            }
+            return QMessageBox::No;
+        };
+        QVERIFY(QMetaObject::invokeMethod(window, "openSecurity"));
+        QTRY_VERIFY_WITH_TIMEOUT(pending.has_value(), 10000);
+        QCOMPARE(*pending, sessionend::Result::Settled);
+        QTest::qWait(80);
+        QCOMPARE(window->tabCount(), 1);
+        QVERIFY(QFile::exists(output));
+        manager.finishSessionEnd(false);
+        QTRY_COMPARE_WITH_TIMEOUT(window->tabCount(), 2, 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(currentTab(*window)->isUsable(), 10000);
+        QCOMPARE(currentTab(*window)->path(), output);
+        QCOMPARE(currentTab(*window)->password(), QStringLiteral("new password"));
+        QCOMPARE(dialogs.passwordCount, 0);
+        QCOMPARE(dialogs.messages.size(), 1);
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
+#ifndef Q_OS_WIN
+    /// A completed local HTTP download retains its new-window choice until cancellation.
+    void completedDownloadWaitsForCancellation()
+    {
+        QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost, 0));
+        const QUrl url(QStringLiteral("http://127.0.0.1:%1/source.pdf").arg(server.serverPort()));
+        const QString destination = QDir(urlopen::downloadDirectory()).filePath(urlopen::cachedFileName(url));
+        const QByteArray pdf = bytes(QStringLiteral(MERVIN_FIXTURE_PDF));
+        QVERIFY(pdf.startsWith("%PDF-"));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        showWindow(*window);
+        QVERIFY(testing::openAndWait(*window, QStringLiteral(MERVIN_FIXTURE_PDF)));
+        Interaction dialogs;
+        dialogs.files << url.toString();
+        QVERIFY(QMetaObject::invokeMethod(window, "onOpenInNewWindow"));
+        QTRY_VERIFY_WITH_TIMEOUT(server.hasPendingConnections(), 10000);
+        QTcpSocket *peer = server.nextPendingConnection();
+        QVERIFY(peer);
+        QTRY_VERIFY_WITH_TIMEOUT(peer->bytesAvailable() > 0, 10000);
+        QVERIFY(peer->readAll().startsWith("GET /source.pdf "));
+        QCOMPARE(manager.prepareSessionEnd(0), sessionend::Result::Settled);
+        const QByteArray response = "HTTP/1.1 200 OK\r\nContent-Type: application/pdf\r\nContent-Length: "
+            + QByteArray::number(pdf.size()) + "\r\nConnection: close\r\n\r\n" + pdf;
+        QCOMPARE(peer->write(response), response.size());
+        peer->disconnectFromHost();
+        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(destination), 10000);
+        QCOMPARE(bytes(destination), pdf);
+        QTest::qWait(80);
+        QCOMPARE(window->tabCount(), 1);
+        const auto destinationWindow = [&]() -> MainWindow * {
+            for (QWidget *widget : QApplication::topLevelWidgets())
+                if (auto *owner = qobject_cast<MainWindow *>(widget); owner && owner != window)
+                    return owner;
+            return nullptr;
+        };
+        QVERIFY(!destinationWindow());
+        manager.finishSessionEnd(false);
+        QTRY_VERIFY_WITH_TIMEOUT(destinationWindow(), 10000);
+        MainWindow *opened = destinationWindow();
+        QTRY_COMPARE_WITH_TIMEOUT(opened->tabCount(), 1, 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(currentTab(*opened)->isUsable(), 10000);
+        QCOMPARE(currentTab(*opened)->path(), destination);
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
+    /// The ordinary open wrapper uses Qt controls only outside Windows.
+    void acceptedPickerWaitsForCancellation_data()
+    {
+        QTest::addColumn<bool>("newWindow");
+        QTest::newRow("ordinary open") << false;
+        QTest::newRow("open in new window") << true;
+    }
+
+    /// Accepted picker paths cannot open or create an empty window while logoff is pending.
+    void acceptedPickerWaitsForCancellation()
+    {
+        QFETCH(bool, newWindow);
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("source.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        showWindow(*window);
+        QVERIFY(testing::openAndWait(*window, QStringLiteral(MERVIN_FIXTURE_PDF)));
+        Interaction dialogs;
+        dialogs.files << source;
+        std::optional<sessionend::Result> pending;
+        dialogs.intercept = [&](QWidget *modal) {
+            if (!pending && qobject_cast<QFileDialog *>(modal))
+                pending = manager.prepareSessionEnd(0);
+            return false;
+        };
+        const auto windows = [] {
+            QList<MainWindow *> result;
+            for (QWidget *widget : QApplication::topLevelWidgets())
+                if (auto *owner = qobject_cast<MainWindow *>(widget))
+                    result.append(owner);
+            return result;
+        };
+        QVERIFY(QMetaObject::invokeMethod(window, newWindow ? "onOpenInNewWindow" : "onOpen"));
+        QVERIFY(pending.has_value());
+        QCOMPARE(*pending, sessionend::Result::Settled);
+        QTest::qWait(80);
+        QCOMPARE(windows().size(), 1);
+        QCOMPARE(window->tabCount(), 1);
+        manager.finishSessionEnd(false);
+        QTRY_COMPARE_WITH_TIMEOUT(windows().size(), newWindow ? 2 : 1, 10000);
+        MainWindow *owner = window;
+        if (newWindow)
+            for (MainWindow *candidate : windows())
+                if (candidate != window)
+                    owner = candidate;
+        QTRY_COMPARE_WITH_TIMEOUT(owner->tabCount(), newWindow ? 1 : 2, 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(currentTab(*owner)->isUsable(), 10000);
+        QCOMPARE(currentTab(*owner)->path(), source);
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+#endif
+
+    /// Covers cancellation wakeup, successful suppression and ordinary later visibility.
+    void retainedSecurityFormWaitsForSessionOutcome_data()
+    {
+        QTest::addColumn<int>("outcome");
+        QTest::newRow("restore while pending then cancel") << 0;
+        QTest::newRow("restore while pending then end") << 1;
+        QTest::newRow("cancel while hidden then restore") << 2;
+    }
+
+    /// A hidden retained form survives pending state and needs no later visibility wakeup.
+    void retainedSecurityFormWaitsForSessionOutcome()
+    {
+        QFETCH(int, outcome);
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("source.pdf"));
+        const QString output = files.filePath(QStringLiteral("output.pdf"));
+        const QByteArray original("existing destination");
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        QVERIFY(writeBytes(output, original));
+        WindowManager manager;
+        QPointer<MainWindow> window(manager.createWindow());
+        showWindow(*window);
+        QVERIFY(testing::openAndWait(*window, source));
+        Interaction dialogs;
+        dialogs.files << output;
+        dialogs.answers << QMessageBox::No;
+        std::optional<sessionend::Result> pending;
+        bool retained = false;
+        dialogs.intercept = [&](QWidget *modal) {
+            if (!pending && modal && modal->objectName() == QStringLiteral("securityReplace")) {
+                pending = manager.prepareSessionEnd(0);
+                window->hide();
+            }
+            return false;
+        };
+        dialogs.security = [&](SecurityDialog &dialog) {
+            if (dialogs.securityCount == 1) {
+                setEncryptionChoices(dialog);
+                dialog.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
+            } else {
+                verifyEncryptionChoices(dialog, output);
+                retained = true;
+                dialog.reject();
+            }
+        };
+        QVERIFY(QMetaObject::invokeMethod(window, "openSecurity"));
+        QTRY_VERIFY_WITH_TIMEOUT(pending.has_value(), 10000);
+        QCOMPARE(*pending, sessionend::Result::Settled);
+        QTest::qWait(80);
+        QVERIFY(!window->isVisible());
+        QCOMPARE(dialogs.securityCount, 1);
+        if (outcome != 2) {
+            window->show();
+            QTest::qWait(80);
+            QCOMPARE(dialogs.securityCount, 1);
+        }
+        manager.finishSessionEnd(outcome == 1);
+        if (outcome == 1) {
+            QTest::qWait(80);
+            QCOMPARE(dialogs.securityCount, 1);
+            delete window.data();
+        } else {
+            if (outcome == 2) {
+                QTest::qWait(80);
+                QCOMPARE(dialogs.securityCount, 1);
+                window->show();
+            }
+            QTRY_VERIFY_WITH_TIMEOUT(retained, 10000);
+            QCOMPARE(dialogs.securityCount, 2);
+        }
+        QCOMPARE(bytes(output), original);
+        QCOMPARE(dialogs.messages.size(), 1);
+        QVERIFY(dialogs.unexpected.isEmpty());
     }
 
     // Supplies ordinary file work and actual windows with held Save or unload snapshots.

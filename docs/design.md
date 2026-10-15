@@ -242,6 +242,8 @@ These still touch the disk on the UI thread and are planned work:
   run on the UI thread by design.
 - Opening a folder or a link with the system's handler (`QDesktopServices::openUrl`),
   which on Windows waits for `ShellExecute`.
+- Open from URL creates its cache folder and writes and commits its download on
+  the UI thread. Opening the completed local PDF uses the background loader.
 - Two small updater steps: telling how this copy was installed when the updater
   starts (a registry read on Windows, a check that `$APPIMAGE` is a file on Linux),
   and starting the Windows installer, whose working folder is the updates folder.
@@ -353,14 +355,26 @@ period by themselves.
 
 The callback closes snapshot admission and polls memory state without processing
 GUI events, showing dialogs or accessing files. It uses a 3900 ms monotonic budget,
-leaving 100 ms within the four-second limit for returning. It allows session end
-when snapshots settle or the deadline expires. Edits without a committed recovery
-manifest can be lost. Repeated queries reuse the answer. A native WM_ENDSESSION
-filter resets admission after cancellation and retains it after successful end.
+leaving 100 ms within the four-second limit for returning. This bounds Mervin's
+wait, but an OS scheduling delay can still postpone the callback's return. It
+allows session end when snapshots settle or the deadline expires. Edits without a
+committed recovery manifest can be lost. Repeated queries reuse the answer. A native
+WM_ENDSESSION filter resets admission after cancellation and retains it after
+successful end.
 Queued tab changes and dialogs wait for that outcome too. Cancellation posts their
 resumption for the next GUI turn, after Qt has restored Windows input handling.
 The successful session path skips the normal five-second close/write budget,
 restart and background-settlement delay.
+
+Completed Security and Merge results, retained Security choices and document-load
+reactions enter the tab-change queue before checking final shutdown. Accepted
+Security and Merge requests preserve any already captured destination consent
+through pending session end. Accepted document passwords, Open picker choices,
+completed URL downloads and output-open confirmations also wait in that queue.
+Cancellation delivers eligible continuations in their surviving owner without
+replacing the approved destination snapshot or repeating downloads. Load
+continuations reject stale generations. Successful session end keeps them suppressed until
+their owners are destroyed. These operations add no recovery grace.
 
 Qt 6.12 normally flushes every buffered C output stream after its logoff callback.
 A writer holding a stream lock can extend that wait beyond our deadline. The native
