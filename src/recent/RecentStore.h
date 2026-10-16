@@ -18,7 +18,7 @@ class RecentStore
 public:
     explicit RecentStore(int retention = 500);
 
-    void setRetention(int retention); // re-trims immediately if lowered
+    void setRetention(int retention); // re-trims immediately
     int retention() const { return retention_; }
 
     // Move `path` to the front, stamped with `whenMs`, deduping any prior entry

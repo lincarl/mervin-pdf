@@ -23,7 +23,7 @@ class ViewStateStore
 public:
     explicit ViewStateStore(int retention = 500);
 
-    void setRetention(int retention); // re-prunes immediately if lowered
+    void setRetention(int retention); // re-trims immediately
     int retention() const { return retention_; }
 
     // Replace the kept paths. A path no longer kept counts again from the next

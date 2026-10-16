@@ -1144,9 +1144,11 @@ and `recent_keep_removed` have.
 Closing a window batches view-state updates into one write.
 Recent history kept (`recent_retention`) caps both stores. `RecentStore` keeps that
 many of the newest entries that are not favourites, plus every favourite.
-`ViewStateStore` keeps that many of the most recently updated view states, plus
-those of the files `WindowManager` marks as favourites (`ViewStateStore::setKept`),
-so a starred file never loses its place or its view to age.
+`ViewStateStore` keeps that many of the most recently updated view states of files
+that are not favourites, plus every favourite's, which `WindowManager` marks
+(`ViewStateStore::setKept`). A starred file therefore never loses its place or its
+view to age. An entry that loses its star, and its view state, count again from
+the next trim.
 When the Recent setting to keep deleted or moved files is off, `WindowManager` has
 `FileProbe` check the recent paths whenever the list is shown and drops entries
 whose file is gone while its volume is attached (`FileFacts::removed`), together
