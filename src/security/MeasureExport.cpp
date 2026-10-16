@@ -1,12 +1,9 @@
 #include "security/MeasureExport.h"
-#include "io/JobContext.h"
 #include "security/AtomicPdfWriter.h"
 #include "security/MeasurementPages.h"
 #include "security/QpdfSource.h"
 
-#include <qpdf/Constants.h>
 #include <qpdf/QPDF.hh>
-#include <qpdf/QPDFExc.hh>
 #include <qpdf/QPDFObjectHandle.hh>
 #include <qpdf/QPDFPageDocumentHelper.hh>
 #include <qpdf/QPDFPageObjectHelper.hh>
@@ -17,50 +14,13 @@
 #include <exception>
 #include <initializer_list>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace mervin {
 
 namespace {
-
-using Status = MeasureExport::Status;
-
-std::string u8(const QString &s)
-{
-    const QByteArray b = s.toUtf8();
-    return std::string(b.constData(), static_cast<size_t>(b.size()));
-}
-
-// Mirrors PageOps' open(): NeedsPassword when the source is user-encrypted and
-// no/incorrect password is supplied.
-Status openQpdf(QPDF &q, const QString &path, const QString &password, QString *error)
-{
-    if (!job::reading(path)) {
-        if (error)
-            *error = job::notRunError();
-        return Status::Failed;
-    }
-    try {
-        const std::string pw = u8(password);
-        processReportedFile(q, path, password.isEmpty() ? nullptr : pw.c_str());
-        return Status::Ok;
-    } catch (const QPDFExc &e) {
-        if (e.getErrorCode() == qpdf_e_password) {
-            // QpdfService's message, so translators see it once.
-            if (error)
-                *error = QpdfService::tr("A password is required to open this document.");
-            return Status::NeedsPassword;
-        }
-        if (error)
-            *error = QString::fromUtf8(e.what());
-        return Status::Failed;
-    } catch (const std::exception &e) {
-        if (error)
-            *error = QString::fromUtf8(e.what());
-        return Status::Failed;
-    }
-}
 
 // Copy the font dictionary before adding a private name: resources may be inherited/shared.
 std::string addHelvetica(QPDF &q, QPDFObjectHandle resources)
@@ -86,10 +46,11 @@ MeasureExport::Status MeasureExport::flatten(const QString &inPath, const QStrin
                                              const std::vector<RenderMeasurement> &marks,
                                              const QString &password, QString *error)
 {
-    QPDF q;
-    const Status st = openQpdf(q, inPath, password, error);
+    std::unique_ptr<QPDF> source;
+    const Status st = openQpdf(inPath, password, source, error);
     if (st != Status::Ok)
         return st;
+    QPDF &q = *source;
     try {
         QPDFPageDocumentHelper dh(q);
         auto pages = dh.getAllPages();
@@ -142,10 +103,11 @@ MeasureExport::Status MeasureExport::embedMervin(const QString &inPath, const QS
                                                  const MeasureDoc &doc, const QString &password,
                                                  QString *error)
 {
-    QPDF q;
-    const Status st = openQpdf(q, inPath, password, error);
+    std::unique_ptr<QPDF> source;
+    const Status st = openQpdf(inPath, password, source, error);
     if (st != Status::Ok)
         return st;
+    QPDF &q = *source;
     try {
         const QByteArray json = serializeMeasurements(doc);
         auto stream = q.newStream(std::string(json.constData(), static_cast<size_t>(json.size())));
@@ -163,11 +125,11 @@ MeasureExport::Status MeasureExport::embedMervin(const QString &inPath, const QS
 std::optional<QByteArray> MeasureExport::readMervinBlob(const QString &inPath,
                                                         const QString &password)
 {
-    QPDF q;
-    if (openQpdf(q, inPath, password, nullptr) != Status::Ok)
+    std::unique_ptr<QPDF> source;
+    if (openQpdf(inPath, password, source, nullptr) != Status::Ok)
         return std::nullopt;
     try {
-        auto root = q.getRoot();
+        auto root = source->getRoot();
         if (!root.hasKey("/Mervin_Measurements"))
             return std::nullopt;
         auto blob = root.getKey("/Mervin_Measurements");

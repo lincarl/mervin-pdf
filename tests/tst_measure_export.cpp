@@ -88,6 +88,13 @@ void makeBlobPdf(const QString &path, const std::string &encoded, QPDFObjectHand
     w.write();
 }
 
+// R4 AES-128 keyed with the PDFDocEncoding bytes of "café", as the PDF format requires.
+void pdfDocCafe(QPDFWriter &w)
+{
+    w.setR4EncryptionParametersInsecure("caf\xE9", "caf\xE9", true, true, true, true, true, true,
+                                        qpdf_r3p_full, true, true);
+}
+
 std::string pageContent(QPDFObjectHandle page)
 {
     std::string out;
@@ -187,6 +194,8 @@ private slots:
     void serializeParseRoundTrip();
     void overrideOnlyRoundTrip();
     void embedReadRoundTrip();
+    void pdfDocKeyedSourceReadsMeasurements();
+    void pdfDocKeyedSourceSavesMeasurements();
     void blobReadStopsAtTheCap_data();
     void blobReadStopsAtTheCap();
     void pageOperationsStopAtTheCap_data();
@@ -284,6 +293,33 @@ void TstMeasureExport::embedReadRoundTrip()
 
     // A document without the key reads back as nullopt.
     QVERIFY(!MeasureExport::readMervinBlob(in).has_value());
+}
+
+/// An R4 file keyed in PDFDocEncoding returns its measurements for the password as typed.
+void TstMeasureExport::pdfDocKeyedSourceReadsMeasurements()
+{
+    const QByteArray json = serializeMeasurements(oneDistance());
+    const QString stored = p("pd-stored.pdf");
+    makeBlobPdf(stored, json.toStdString(), QPDFObjectHandle::newNull(), pdfDocCafe);
+    const auto blob = MeasureExport::readMervinBlob(stored, QStringLiteral("café"));
+    QVERIFY(blob.has_value());
+    QCOMPARE(*blob, json);
+}
+
+/// Save edits stores measurements in an R4 file keyed in PDFDocEncoding.
+void TstMeasureExport::pdfDocKeyedSourceSavesMeasurements()
+{
+    const QString password = QStringLiteral("café");
+    const QString plain = p("pd-plain.pdf"), saved = p("pd-saved.pdf");
+    makeBlobPdf(plain, {}, QPDFObjectHandle::newNull(), pdfDocCafe);
+    QString err;
+    QCOMPARE(MeasureExport::embedMervin(plain, saved, oneDistance(), password, &err),
+             MeasureExport::Status::Ok);
+    const auto blob = MeasureExport::readMervinBlob(saved, password);
+    QVERIFY(blob.has_value());
+    MeasureDoc back;
+    QVERIFY(parseMeasurements(*blob, &back));
+    QCOMPARE(static_cast<int>(back.measurements.size()), 1);
 }
 
 void TstMeasureExport::blobReadStopsAtTheCap_data()

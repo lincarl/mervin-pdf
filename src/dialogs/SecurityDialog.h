@@ -11,6 +11,7 @@ class QLabel;
 class QLineEdit;
 class QComboBox;
 class QCheckBox;
+class QFormLayout;
 
 namespace mervin {
 
@@ -45,6 +46,8 @@ private:
     /// Displays the supplied security facts or escaped information read error.
     void showInfo(const QpdfService::Info &info, const QString &error);
     /// Chooses an output and accepts an encryption request without writing a file.
+    /// Refuses below the owner field, before the picker, an owner password equal to
+    /// the open password while a permission is restricted.
     void doEncrypt();
     /// Confirms restriction removal when needed and accepts a decrypted-copy request.
     void doDecrypt(bool stripRestrictions); // false = remove password, true = strip
@@ -52,11 +55,15 @@ private:
     QString chooseOutput(Action action, const QString &suffix);
     /// Captures the current passwords, encryption algorithm and permissions.
     Request choices() const;
+    /// Shows `text` below the owner password, or hides that line when it is empty.
+    void setError(const QString &text);
 
     QString path_;
     std::optional<Request> request_;
 
     QLabel *infoLabel_ = nullptr;
+    QFormLayout *encryptForm_ = nullptr;
+    QLabel *error_ = nullptr;
     QLineEdit *userEdit_ = nullptr;
     QLineEdit *ownerEdit_ = nullptr;
     QComboBox *algoCombo_ = nullptr;

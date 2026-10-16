@@ -1,5 +1,6 @@
 #include "dialogs/SecurityDialog.h"
 
+#include "dialogs/LayoutMinimum.h"
 #include "ui/TextLayout.h"
 
 #include <QCheckBox>
@@ -8,6 +9,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFontMetrics>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QLabel>
@@ -56,14 +58,22 @@ SecurityDialog::SecurityDialog(const QString &documentPath, const QpdfService::I
     ownerEdit_ = new QLineEdit(encBox);
     ownerEdit_->setObjectName(QStringLiteral("securityOwnerPassword"));
     ownerEdit_->setEchoMode(QLineEdit::Password);
-    //: Placeholder in the owner-password field. If empty, use the open password
-    //: to protect the PDF permission settings. The user can enter a different one.
-    ownerEdit_->setPlaceholderText(tr("defaults to the open password"));
+    //: Placeholder in the owner-password field while every permission below is
+    //: allowed. If empty, the open password also becomes the owner password. The
+    //: user can enter a different one.
+    const QString ownerIsOpen = tr("defaults to the open password");
+    //: Placeholder in the owner-password field while a permission below is not
+    //: allowed. If empty, Mervin protects the permission settings with a random
+    //: owner password that nobody is told. The user can enter one instead.
+    const QString ownerIsRandom = tr("defaults to a random password");
     // QLineEdit's size hint ignores the placeholder, so a narrow dialog cut it
-    // off. Make each field at least as wide as its placeholder.
-    for (QLineEdit *edit : {userEdit_, ownerEdit_})
-        edit->setMinimumWidth(edit->fontMetrics().horizontalAdvance(edit->placeholderText())
-                              + kFieldPadding);
+    // off. Make each field at least as wide as its longest placeholder.
+    const QFontMetrics metrics = userEdit_->fontMetrics();
+    userEdit_->setMinimumWidth(metrics.horizontalAdvance(userEdit_->placeholderText())
+                               + kFieldPadding);
+    ownerEdit_->setMinimumWidth(qMax(metrics.horizontalAdvance(ownerIsOpen),
+                                     metrics.horizontalAdvance(ownerIsRandom))
+                                + kFieldPadding);
     algoCombo_ = new QComboBox(encBox);
     algoCombo_->setObjectName(QStringLiteral("securityAlgorithm"));
     //: Encryption algorithm choice. Keep the algorithm name as it is.
@@ -87,6 +97,13 @@ SecurityDialog::SecurityDialog(const QString &documentPath, const QpdfService::I
     form->addRow(tr("Open password"), userEdit_);
     //: The password that guards the permission settings below.
     form->addRow(tr("Owner password"), ownerEdit_);
+    // A refused owner password shows its reason below the field to change.
+    error_ = new QLabel(encBox);
+    error_->setObjectName(QStringLiteral("securityError"));
+    error_->setWordWrap(true);
+    form->addRow(QString(), error_);
+    encryptForm_ = form;
+    setError({});
     //: Label for the encryption algorithm picker.
     form->addRow(tr("Algorithm"), algoCombo_);
     form->addRow(allowPrint_);
@@ -112,6 +129,9 @@ SecurityDialog::SecurityDialog(const QString &documentPath, const QpdfService::I
     remLay->addWidget(stripBtn);
     layout->addWidget(remBox);
 
+    // Spare height gathers above Close, so the fields stay in place when a refusal
+    // that made the dialog taller goes away.
+    layout->addStretch();
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(buttons);
@@ -125,7 +145,28 @@ SecurityDialog::SecurityDialog(const QString &documentPath, const QpdfService::I
         allowModify_->setChecked(request_->permissions.canModify);
         allowAnnotate_->setChecked(request_->permissions.canAnnotate);
     }
+    // The placeholder says what an empty owner password becomes, and a refusal
+    // lasts until the next change to the choices it concerns.
+    const auto choicesChanged = [this, ownerIsOpen, ownerIsRandom] {
+        // The constructor's parameter hides choices().
+        const bool allowed = this->choices().permissions.allowsEverything();
+        ownerEdit_->setPlaceholderText(allowed ? ownerIsOpen : ownerIsRandom);
+        setError({});
+    };
+    for (QLineEdit *edit : {userEdit_, ownerEdit_})
+        connect(edit, &QLineEdit::textChanged, this, choicesChanged);
+    for (QCheckBox *c : {allowPrint_, allowCopy_, allowModify_, allowAnnotate_})
+        connect(c, &QCheckBox::toggled, this, choicesChanged);
+    choicesChanged();
     showInfo(info, error);
+    // The layout alone sets the minimum, which grows while a refusal shows.
+    followLayoutMinimum(*this, QSize());
+}
+
+void SecurityDialog::setError(const QString &text)
+{
+    error_->setText(text);
+    encryptForm_->setRowVisible(error_, !text.isEmpty());
 }
 
 void SecurityDialog::showInfo(const QpdfService::Info &info, const QString &error)
@@ -137,25 +178,38 @@ void SecurityDialog::showInfo(const QpdfService::Info &info, const QString &erro
         return;
     }
 
-    auto yn = [this](bool v) {
-        //: Permission state, fills %3 to %6 of the encryption summary.
-        const QString allowed = tr("Allowed");
-        //: Permission state, fills %3 to %6 of the encryption summary.
-        const QString notAllowed = tr("Not allowed");
-        return v ? allowed : notAllowed;
+    //: Permission state, fills %3 to %6 of the encryption summary.
+    const QString allowed = tr("Allowed");
+    //: Permission state, fills %3 to %6 of the encryption summary.
+    const QString notAllowed = tr("Not allowed");
+    // A limited state replaces Not allowed when the file allows part of the action.
+    const auto state = [&](bool full, bool limited = false, const QString &limitedText = {}) {
+        return full ? allowed : limited ? limitedText : notAllowed;
     };
     if (!info.encrypted) {
         infoLabel_->setText(tr("This document is <b>not encrypted</b>."));
     } else {
+        //: Printing state, fills %3 of the encryption summary. The PDF allows
+        //: printing, but only in low resolution, possibly of degraded quality.
+        const QString lowResolution = tr("Low resolution only");
+        //: Modifying state, fills %5 of the encryption summary. The PDF allows only
+        //: page assembly, such as inserting, rotating or deleting pages, and no other
+        //: changes to its content.
+        const QString pageAssembly = tr("Page assembly only");
         //: %1 is the encryption algorithm, such as AES-256. %2 is the key length in bits.
-        //: %3 to %6 are Allowed or Not allowed.
+        //: %3 is Allowed, Low resolution only or Not allowed. %5 is Allowed, Page
+        //: assembly only or Not allowed. %4 and %6 are Allowed or Not allowed.
         infoLabel_->setText(tr("<b>Encrypted</b> · %1 (%2-bit)<br>"
                                "Printing: %3 · Copying: %4 · Modifying: %5 · Annotating: %6<br>"
                                "<i>Note: Mervin never enforces these permission flags.</i>")
                                 .arg(info.algorithm.toHtmlEscaped())
                                 .arg(info.keyLengthBits)
-                                .arg(yn(info.permissions.canPrint), yn(info.permissions.canCopy),
-                                     yn(info.permissions.canModify), yn(info.permissions.canAnnotate)));
+                                .arg(state(info.permissions.canPrint, info.lowResolutionPrintOnly,
+                                           lowResolution),
+                                     state(info.permissions.canCopy),
+                                     state(info.permissions.canModify, info.pageAssemblyOnly,
+                                           pageAssembly),
+                                     state(info.permissions.canAnnotate)));
     }
 }
 
@@ -195,11 +249,23 @@ SecurityDialog::Request SecurityDialog::choices() const
 
 void SecurityDialog::doEncrypt()
 {
+    const Request chosen = choices();
+    // The open password would grant owner rights, which ignore the restrictions.
+    if (!chosen.permissions.allowsEverything() && !chosen.ownerPassword.isEmpty()
+        && chosen.ownerPassword == chosen.userPassword) {
+        //: Shown below the owner-password field when it repeats the open password while
+        //: a permission is not allowed. Anyone with the open password could then lift
+        //: the restrictions. An empty owner field is also accepted.
+        setError(tr("Use a different owner password to restrict permissions."));
+        ownerEdit_->setFocus();
+        ownerEdit_->selectAll();
+        return;
+    }
     const QPointer<SecurityDialog> self(this);
     const QString out = chooseOutput(Action::Encrypt, QStringLiteral("-encrypted"));
     if (!self || out.isEmpty())
         return;
-    request_ = choices();
+    request_ = chosen;
     request_->action = Action::Encrypt;
     request_->output = out;
     QDialog::accept();

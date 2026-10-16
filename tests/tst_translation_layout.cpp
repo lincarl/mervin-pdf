@@ -46,8 +46,10 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileDialog>
 #include <QFontDatabase>
 #include <QFontMetrics>
+#include <QGroupBox>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -1196,6 +1198,49 @@ void TstTranslationLayout::security()
              mervin::QpdfService::Status::Ok);
     mervin::SecurityDialog protectedDocument(encrypted_, info);
     inspect(protectedDocument, QStringLiteral("Security restricted encrypted document"));
+    // The longest summary: both limited states beside two Not allowed.
+    mervin::QpdfService::Info limited;
+    limited.encrypted = true;
+    limited.algorithm = QStringLiteral("RC4");
+    limited.keyLengthBits = 128;
+    limited.revision = 3;
+    limited.permissions = {false, false, false, false};
+    limited.lowResolutionPrintOnly = limited.pageAssemblyOnly = true;
+    mervin::SecurityDialog limitedDocument(encrypted_, limited);
+    const QString summary = limitedDocument.findChild<QGroupBox *>()->findChild<QLabel *>()->text();
+    QVERIFY(summary.contains(mervin::SecurityDialog::tr("Low resolution only")));
+    QVERIFY(summary.contains(mervin::SecurityDialog::tr("Page assembly only")));
+    // A restriction below changes what an empty owner password becomes.
+    limitedDocument.findChild<QCheckBox *>(QStringLiteral("securityAllowCopy"))->setChecked(false);
+    QCOMPARE(limitedDocument.findChild<QLineEdit *>(QStringLiteral("securityOwnerPassword"))
+                 ->placeholderText(),
+             mervin::SecurityDialog::tr("defaults to a random password"));
+    inspect(limitedDocument, QStringLiteral("Security low-resolution and assembly-only permissions"));
+
+    // The inline refusal of an owner password that repeats the open password. It
+    // appears in an open dialog, which must grow to fit it.
+    mervin::SecurityDialog refusal(plain_, mervin::QpdfService::Info{});
+    refusal.setAttribute(Qt::WA_DontShowOnScreen);
+    refusal.show();
+    settle();
+    refusal.findChild<QLineEdit *>(QStringLiteral("securityUserPassword"))->setText(QStringLiteral("same"));
+    refusal.findChild<QLineEdit *>(QStringLiteral("securityOwnerPassword"))->setText(QStringLiteral("same"));
+    refusal.findChild<QCheckBox *>(QStringLiteral("securityAllowPrint"))->setChecked(false);
+    // A Save As picker here would mean the refusal failed. Close it rather than wait.
+    QTimer guard;
+    connect(&guard, &QTimer::timeout, &refusal, [] {
+        if (auto *picker = qobject_cast<QFileDialog *>(QApplication::activeModalWidget()))
+            picker->reject();
+    });
+    guard.start(50);
+    refusal.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
+    guard.stop();
+    auto *refused = refusal.findChild<QLabel *>(QStringLiteral("securityError"));
+    QVERIFY(refused && !refused->isHidden());
+    QCOMPARE(refused->text(),
+             mervin::SecurityDialog::tr("Use a different owner password to restrict permissions."));
+    inspect(refusal, QStringLiteral("Security refused owner password"));
+
     mervin::SecurityDialog::Request choices;
     choices.output = QStringLiteral("/srv/nas/docs/chosen-encrypted-copy.pdf");
     choices.userPassword = QStringLiteral("chosen open password");
@@ -1208,7 +1253,10 @@ void TstTranslationLayout::security()
 
     const QStringList failures{
         mervin::SecurityDialog::tr("The destination changed. Try again to review it."),
-        mervin::SecurityDialog::tr("Could not check the destination. Try again or choose another name.")};
+        mervin::SecurityDialog::tr("Could not check the destination. Try again or choose another name."),
+        mervin::SecurityDialog::tr("The operation failed.\n\n%1")
+            .arg(mervin::QpdfService::tr("A password contains characters that AES-128 and "
+                                         "RC4-128 cannot use. Choose AES-256."))};
     for (int index = 0; index < failures.size(); ++index) {
         QMessageBox warning(QMessageBox::Warning,
             mervin::SecurityDialog::tr("Operation failed"), failures.at(index), QMessageBox::Ok);

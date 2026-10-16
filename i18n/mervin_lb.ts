@@ -2979,6 +2979,11 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <extracomment>Shown as the encryption algorithm when qpdf cannot identify it.</extracomment>
         <translation>Onbekannt</translation>
     </message>
+    <message>
+        <source>A password contains characters that AES-128 and RC4-128 cannot use. Choose AES-256.</source>
+        <extracomment>Reason shown after &quot;The operation failed.&quot; when encrypting. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
+        <translation>E Passwuert enthält Zeechen, déi AES-128 an RC4-128 net benotze kënnen. Wielt AES-256.</translation>
+    </message>
 </context>
 <context>
     <name>mervin::RecentFilesPanel</name>
@@ -3266,8 +3271,13 @@ Dëse Fichier ass net méi op der Disk.</translation>
     </message>
     <message>
         <source>defaults to the open password</source>
-        <extracomment>Placeholder in the owner-password field. If empty, use the open password to protect the PDF permission settings. The user can enter a different one.</extracomment>
+        <extracomment>Placeholder in the owner-password field while every permission below is allowed. If empty, the open password also becomes the owner password. The user can enter a different one.</extracomment>
         <translation>standardméisseg d&apos;Ëffnungspasswuert</translation>
+    </message>
+    <message>
+        <source>defaults to a random password</source>
+        <extracomment>Placeholder in the owner-password field while a permission below is not allowed. If empty, Mervin protects the permission settings with a random owner password that nobody is told. The user can enter one instead.</extracomment>
+        <translation>standardméisseg en zoufällegt Passwuert</translation>
     </message>
     <message>
         <source>AES-256 (recommended)</source>
@@ -3355,8 +3365,18 @@ Dëse Fichier ass net méi op der Disk.</translation>
         <translation>Dëst Dokument ass &lt;b&gt;net verschlësselt&lt;/b&gt;.</translation>
     </message>
     <message>
+        <source>Low resolution only</source>
+        <extracomment>Printing state, fills %3 of the encryption summary. The PDF allows printing, but only in low resolution, possibly of degraded quality.</extracomment>
+        <translation>Nëmmen niddreg Opléisung</translation>
+    </message>
+    <message>
+        <source>Page assembly only</source>
+        <extracomment>Modifying state, fills %5 of the encryption summary. The PDF allows only page assembly, such as inserting, rotating or deleting pages, and no other changes to its content.</extracomment>
+        <translation>Nëmmen Säitenzesummestellung</translation>
+    </message>
+    <message>
         <source>&lt;b&gt;Encrypted&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;Printing: %3 · Copying: %4 · Modifying: %5 · Annotating: %6&lt;br&gt;&lt;i&gt;Note: Mervin never enforces these permission flags.&lt;/i&gt;</source>
-        <extracomment>%1 is the encryption algorithm, such as AES-256. %2 is the key length in bits. %3 to %6 are Allowed or Not allowed.</extracomment>
+        <extracomment>%1 is the encryption algorithm, such as AES-256. %2 is the key length in bits. %3 is Allowed, Low resolution only or Not allowed. %5 is Allowed, Page assembly only or Not allowed. %4 and %6 are Allowed or Not allowed.</extracomment>
         <translation>&lt;b&gt;Verschlësselt&lt;/b&gt; · %1 (%2-Bit)&lt;br&gt;Drécken: %3 · Kopéieren: %4 · Änneren: %5 · Umierkungen: %6&lt;br&gt;&lt;i&gt;Hiweis: Mervin setzt dës Berechtegungsfändelen ni duerch.&lt;/i&gt;</translation>
     </message>
     <message>
@@ -3367,6 +3387,11 @@ Dëse Fichier ass net méi op der Disk.</translation>
         <source>PDF documents (*.pdf)</source>
         <extracomment>File type filter. Keep &quot;(*.pdf)&quot; as it is.</extracomment>
         <translation>PDF Dokumenter (*.pdf)</translation>
+    </message>
+    <message>
+        <source>Use a different owner password to restrict permissions.</source>
+        <extracomment>Shown below the owner-password field when it repeats the open password while a permission is not allowed. Anyone with the open password could then lift the restrictions. An empty owner field is also accepted.</extracomment>
+        <translation>Benotzt en anert Besëtzerpasswuert, fir Berechtegungen ze beschränken.</translation>
     </message>
     <message>
         <source>This writes a copy with all owner-password restrictions removed (printing, copying, and editing become permitted).

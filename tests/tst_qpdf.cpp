@@ -12,15 +12,22 @@
 #include <qpdf/QPDFWriter.hh>
 
 #include <QBuffer>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QImage>
 #include <QTemporaryDir>
 #include <QTest>
 
 #include <cctype>
+#include <functional>
+#include <memory>
 
 using mervin::PageOps;
 using mervin::QpdfService;
+
+Q_DECLARE_METATYPE(QpdfService::Algorithm)
+Q_DECLARE_METATYPE(qpdf_r3_print_e)
 
 namespace {
 
@@ -91,6 +98,28 @@ bool omitKeyLength(const QString &path)
     return file.seek(0) && file.write(data) == data.size() && file.flush();
 }
 
+// Writes a one-page PDF whose encryption `setUp` chooses on the writer, as another
+// program would write it. Password bytes go to qpdf unchanged.
+void makeEncrypted(const QString &path, const std::function<void(QPDFWriter &)> &setUp)
+{
+    QPDF q;
+    q.emptyPDF();
+    QPDFPageDocumentHelper(q).addPage(QPDFPageObjectHelper(q.makeIndirectObject(
+        QPDFObjectHandle::parse("<< /Type /Page /MediaBox [0 0 612 792] /Resources << >> >>"))), false);
+    const QByteArray outputName = path.toUtf8();
+    QPDFWriter writer(q, outputName.constData());
+    setUp(writer);
+    writer.write();
+}
+
+// Opens `path` with qpdf and the exact password bytes, for checks of what a writer stored.
+std::unique_ptr<QPDF> openWithBytes(const QString &path, const QByteArray &password)
+{
+    auto q = std::make_unique<QPDF>();
+    q->processFile(path.toUtf8().constData(), password.constData());
+    return q;
+}
+
 } // namespace
 
 class TstQpdf : public QObject
@@ -107,6 +136,19 @@ private slots:
     void decryptRemovesEncryption();
     void userPasswordRequiredToOpen();
     void permissionsRoundTrip();
+    void legacyEncryptionStoresPdfDocPasswords_data();
+    void legacyEncryptionStoresPdfDocPasswords();
+    void legacyEncryptionRefusesOtherCharacters_data();
+    void legacyEncryptionRefusesOtherCharacters();
+    void aes256KeepsUnicodePasswords();
+    void pdfDocKeyedSourcesOpenWithTheirPassword();
+    void utf8KeyedSourcesStillOpen();
+    void emptyOwnerPasswordKeepsRestrictions_data();
+    void emptyOwnerPasswordKeepsRestrictions();
+    void limitedPermissionsAreReported_data();
+    void limitedPermissionsAreReported();
+    void rc4RevisionsAreReportedAsRc4_data();
+    void rc4RevisionsAreReportedAsRc4();
     void deletePagesReducesCount();
     void mergeConcatenates();
     void mergeHonoursPerFileRanges();
@@ -435,6 +477,7 @@ void TstQpdf::permissionsRoundTrip()
     QpdfService::Permissions perms; // owner-only encryption: no user password
     perms.canPrint = false;
     perms.canCopy = false;
+    perms.canModify = false;
 
     QpdfService svc;
     QVERIFY(svc.encrypt(src, enc, QString(), QString(), QStringLiteral("owner"),
@@ -446,6 +489,251 @@ void TstQpdf::permissionsRoundTrip()
     QVERIFY(info.encrypted);
     QVERIFY(!info.permissions.canPrint);
     QVERIFY(!info.permissions.canCopy);
+    QVERIFY(!info.permissions.canModify);
+    QVERIFY(info.permissions.canAnnotate);
+    // Mervin's writer allows printing fully or not at all, and assembly with the rest.
+    QVERIFY(!info.lowResolutionPrintOnly);
+    QVERIFY(!info.pageAssemblyOnly);
+}
+
+void TstQpdf::legacyEncryptionStoresPdfDocPasswords_data()
+{
+    QTest::addColumn<QpdfService::Algorithm>("algorithm");
+    QTest::newRow("AES-128") << QpdfService::Algorithm::AES128;
+    QTest::newRow("RC4-128") << QpdfService::Algorithm::RC4_128;
+}
+
+/// R4 keys use PDFDocEncoding, so MuPDF and qpdf both open the result with the typed text.
+void TstQpdf::legacyEncryptionStoresPdfDocPasswords()
+{
+    QFETCH(QpdfService::Algorithm, algorithm);
+    const QString src = in(QStringLiteral("l_src.pdf"));
+    const QString enc = in(QStringLiteral("l_enc.pdf"));
+    makePdf(src, 2);
+    const QString password = QStringLiteral("Müller");
+    QString err;
+    QCOMPARE(QpdfService().encrypt(src, enc, {}, password, {}, algorithm, {}, &err),
+             QpdfService::Status::Ok);
+
+    mervin::RenderEngine engine;
+    bool needsPassword = false;
+    auto doc = engine.openDocument(enc, password, &err, &needsPassword);
+    QVERIFY2(doc, qPrintable(err));
+    QCOMPARE(doc->pageCount(), 2);
+    int count = 0;
+    QCOMPARE(PageOps::probe(enc, &count, password, &err), PageOps::Status::Ok);
+    QCOMPARE(count, 2);
+    // The stored key is the PDFDocEncoding of the text, as other readers expect.
+    QVERIFY(openWithBytes(enc, QByteArray("M\xFCller"))->userPasswordMatched());
+}
+
+void TstQpdf::legacyEncryptionRefusesOtherCharacters_data()
+{
+    QTest::addColumn<QpdfService::Algorithm>("algorithm");
+    QTest::addColumn<QString>("user");
+    QTest::addColumn<QString>("owner");
+    QTest::newRow("AES-128 open password")
+        << QpdfService::Algorithm::AES128 << QStringLiteral("密码") << QString();
+    QTest::newRow("RC4-128 owner password")
+        << QpdfService::Algorithm::RC4_128 << QStringLiteral("open") << QStringLiteral("密码");
+}
+
+/// PDFDocEncoding has no Chinese characters, so legacy encryption writes nothing.
+void TstQpdf::legacyEncryptionRefusesOtherCharacters()
+{
+    QFETCH(QpdfService::Algorithm, algorithm);
+    QFETCH(QString, user);
+    QFETCH(QString, owner);
+    const QString src = in(QStringLiteral("x_src.pdf"));
+    const QString enc = in(QStringLiteral("x_enc.pdf"));
+    makePdf(src, 1);
+    QString err;
+    QCOMPARE(QpdfService().encrypt(src, enc, {}, user, owner, algorithm, {}, &err),
+             QpdfService::Status::Failed);
+    QCOMPARE(err, QpdfService::tr("A password contains characters that AES-128 and RC4-128 "
+                                  "cannot use. Choose AES-256."));
+    // Not even a temporary file.
+    QCOMPARE(QDir(dir_.path()).entryList({QStringLiteral("x_enc*")}, QDir::Files | QDir::Hidden),
+             QStringList());
+}
+
+/// AES-256 stores UTF-8, which MuPDF and qpdf both accept for any character.
+void TstQpdf::aes256KeepsUnicodePasswords()
+{
+    const QString src = in(QStringLiteral("u8_src.pdf"));
+    const QString enc = in(QStringLiteral("u8_enc.pdf"));
+    makePdf(src, 1);
+    const QString password = QStringLiteral("密码");
+    QString err;
+    QCOMPARE(QpdfService().encrypt(src, enc, {}, password, {}, QpdfService::Algorithm::AES256, {},
+                                   &err),
+             QpdfService::Status::Ok);
+    mervin::RenderEngine engine;
+    auto doc = engine.openDocument(enc, password, &err, nullptr);
+    QVERIFY2(doc, qPrintable(err));
+    QCOMPARE(PageOps::probe(enc, nullptr, password, &err), PageOps::Status::Ok);
+    QVERIFY(openWithBytes(enc, password.toUtf8())->userPasswordMatched());
+}
+
+/// A third-party R4 file keyed with PDFDocEncoding opens with the typed text in every qpdf
+/// reader, and its one-file copy keeps that key.
+void TstQpdf::pdfDocKeyedSourcesOpenWithTheirPassword()
+{
+    const QString enc = in(QStringLiteral("pd_enc.pdf"));
+    const QString out = in(QStringLiteral("pd_out.pdf"));
+    makeEncrypted(enc, [](QPDFWriter &writer) {
+        writer.setR4EncryptionParametersInsecure("caf\xE9", "caf\xE9", true, true, true, true, true,
+                                                 true, qpdf_r3p_full, true, true);
+    });
+    const QString password = QStringLiteral("café");
+    QString err;
+    int count = 0;
+    QCOMPARE(PageOps::probe(enc, &count, password, &err), PageOps::Status::Ok);
+    QCOMPARE(count, 1);
+    QpdfService::Info info;
+    QCOMPARE(QpdfService().readInfo(enc, password, info, &err), QpdfService::Status::Ok);
+    QCOMPARE(info.algorithm, QStringLiteral("AES-128"));
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{enc, {}, password}}, out, &err),
+             PageOps::Status::Ok);
+    // The copy of one file keeps its encryption, keyed with the same PDFDocEncoding bytes.
+    QCOMPARE(PageOps::probe(out, &count, {}, &err), PageOps::Status::NeedsPassword);
+    QCOMPARE(PageOps::probe(out, &count, password, &err), PageOps::Status::Ok);
+    QCOMPARE(count, 1);
+    QVERIFY(openWithBytes(out, QByteArray("caf\xE9"))->userPasswordMatched());
+    // A wrong password still asks for the right one.
+    QCOMPARE(PageOps::probe(enc, &count, QStringLiteral("cafe"), &err),
+             PageOps::Status::NeedsPassword);
+}
+
+/// R4 files keyed with UTF-8, as earlier versions of Mervin wrote them, stay readable.
+void TstQpdf::utf8KeyedSourcesStillOpen()
+{
+    const QString enc = in(QStringLiteral("u8k_enc.pdf"));
+    const QByteArray utf8 = QStringLiteral("Müller").toUtf8();
+    makeEncrypted(enc, [&utf8](QPDFWriter &writer) {
+        writer.setR4EncryptionParametersInsecure(utf8.constData(), utf8.constData(), true, true,
+                                                 true, true, true, true, qpdf_r3p_full, true, true);
+    });
+    QString err;
+    int count = 0;
+    QCOMPARE(PageOps::probe(enc, &count, QStringLiteral("Müller"), &err), PageOps::Status::Ok);
+    QCOMPARE(count, 1);
+}
+
+void TstQpdf::emptyOwnerPasswordKeepsRestrictions_data()
+{
+    QTest::addColumn<QpdfService::Algorithm>("algorithm");
+    QTest::addColumn<QString>("user");
+    QTest::addColumn<bool>("restricted");
+    QTest::newRow("AES-128 restricted") << QpdfService::Algorithm::AES128 << QStringLiteral("x") << true;
+    QTest::newRow("AES-256 restricted") << QpdfService::Algorithm::AES256 << QStringLiteral("x") << true;
+    QTest::newRow("no open password, restricted")
+        << QpdfService::Algorithm::AES256 << QString() << true;
+    QTest::newRow("everything allowed") << QpdfService::Algorithm::AES128 << QStringLiteral("x") << false;
+}
+
+/// Restrictions get an owner password that the open password does not match.
+void TstQpdf::emptyOwnerPasswordKeepsRestrictions()
+{
+    QFETCH(QpdfService::Algorithm, algorithm);
+    QFETCH(QString, user);
+    QFETCH(bool, restricted);
+    const QString src = in(QStringLiteral("o_src.pdf"));
+    const QString enc = in(QStringLiteral("o_enc.pdf"));
+    const QString dec = in(QStringLiteral("o_dec.pdf"));
+    makePdf(src, 1);
+    QpdfService::Permissions perms;
+    perms.canPrint = !restricted;
+    QpdfService svc;
+    QString err;
+    QCOMPARE(svc.encrypt(src, enc, {}, user, {}, algorithm, perms, &err), QpdfService::Status::Ok);
+
+    const auto q = openWithBytes(enc, user.toUtf8());
+    QVERIFY(q->userPasswordMatched());
+    // Owner rights ignore the flags, so restricted files must not grant them.
+    // With everything allowed the open password stays the owner password, so other
+    // programs still let its holder change the security settings.
+    QCOMPARE(q->ownerPasswordMatched(), !restricted);
+    QCOMPARE(q->allowPrintLowRes(), !restricted);
+
+    // Strip Owner Restrictions needs only the open password.
+    QCOMPARE(svc.decrypt(enc, dec, user, &err), QpdfService::Status::Ok);
+    QpdfService::Info info;
+    QCOMPARE(svc.readInfo(dec, {}, info, &err), QpdfService::Status::Ok);
+    QVERIFY(!info.encrypted);
+}
+
+void TstQpdf::limitedPermissionsAreReported_data()
+{
+    QTest::addColumn<qpdf_r3_print_e>("print");
+    QTest::addColumn<bool>("assemble");
+    QTest::addColumn<bool>("modifyOther");
+    QTest::addColumn<bool>("canPrint");
+    QTest::addColumn<bool>("canModify");
+    QTest::addColumn<bool>("lowResolution");
+    QTest::addColumn<bool>("pageAssembly");
+    QTest::newRow("low resolution and assembly only")
+        << qpdf_r3p_low << true << false << false << false << true << true;
+    QTest::newRow("everything") << qpdf_r3p_full << true << true << true << true << false << false;
+    QTest::newRow("nothing") << qpdf_r3p_none << false << false << false << false << false << false;
+    // Bit 4 alone already permits assembly in the PDF format.
+    QTest::newRow("modify without bit 11")
+        << qpdf_r3p_none << false << true << false << true << false << false;
+}
+
+/// Printing and modifying read as allowed only when every kind is allowed.
+void TstQpdf::limitedPermissionsAreReported()
+{
+    QFETCH(qpdf_r3_print_e, print);
+    QFETCH(bool, assemble);
+    QFETCH(bool, modifyOther);
+    QFETCH(bool, canPrint);
+    QFETCH(bool, canModify);
+    QFETCH(bool, lowResolution);
+    QFETCH(bool, pageAssembly);
+    const QString enc = in(QStringLiteral("lp_enc.pdf"));
+    makeEncrypted(enc, [&](QPDFWriter &writer) {
+        writer.setR4EncryptionParametersInsecure("", "owner", true, false, assemble, false, false,
+                                                 modifyOther, print, true, true);
+    });
+    QpdfService::Info info;
+    QString err;
+    QCOMPARE(QpdfService().readInfo(enc, {}, info, &err), QpdfService::Status::Ok);
+    QCOMPARE(info.permissions.canPrint, canPrint);
+    QCOMPARE(info.permissions.canModify, canModify);
+    QCOMPARE(info.lowResolutionPrintOnly, lowResolution);
+    QCOMPARE(info.pageAssemblyOnly, pageAssembly);
+}
+
+void TstQpdf::rc4RevisionsAreReportedAsRc4_data()
+{
+    QTest::addColumn<int>("revision");
+    QTest::addColumn<int>("bits");
+    QTest::newRow("R2") << 2 << 40;
+    QTest::newRow("R3") << 3 << 128;
+}
+
+/// qpdf reports no method for V1 and V2 files, which always use RC4.
+void TstQpdf::rc4RevisionsAreReportedAsRc4()
+{
+    QFETCH(int, revision);
+    QFETCH(int, bits);
+    const QString enc = in(QStringLiteral("rc4_enc.pdf"));
+    makeEncrypted(enc, [revision](QPDFWriter &writer) {
+        if (revision == 2)
+            writer.setR2EncryptionParametersInsecure("open", "owner", true, true, true, true);
+        else
+            writer.setR3EncryptionParametersInsecure("open", "owner", true, true, true, true, true,
+                                                     true, qpdf_r3p_full);
+    });
+    QpdfService::Info info;
+    QString err;
+    QCOMPARE(QpdfService().readInfo(enc, QStringLiteral("open"), info, &err),
+             QpdfService::Status::Ok);
+    QVERIFY(info.encrypted);
+    QCOMPARE(info.revision, revision);
+    QCOMPARE(info.algorithm, QStringLiteral("RC4"));
+    QCOMPARE(info.keyLengthBits, bits);
 }
 
 void TstQpdf::deletePagesReducesCount()
@@ -595,20 +883,38 @@ void TstQpdf::singleSourceCopiesKeepItsEncryption_data()
     QTest::addColumn<QString>("label");
     QTest::addColumn<int>("bits");
     QTest::addColumn<int>("revision");
+    QTest::addColumn<QString>("password");
+    // The PDFDocEncoding bytes the copies must be keyed with, when they differ from UTF-8.
+    QTest::addColumn<QByteArray>("pdfDocKey");
+    const QString secret = QStringLiteral("secret");
     QTest::newRow("AES-256")
-        << QpdfService::Algorithm::AES256 << false << QStringLiteral("AES-256") << 256 << 6;
+        << QpdfService::Algorithm::AES256 << false << QStringLiteral("AES-256") << 256 << 6
+        << secret << QByteArray();
     QTest::newRow("AES-128")
-        << QpdfService::Algorithm::AES128 << false << QStringLiteral("AES-128") << 128 << 4;
+        << QpdfService::Algorithm::AES128 << false << QStringLiteral("AES-128") << 128 << 4
+        << secret << QByteArray();
     // qpdf writes every V4 copy with AES, as Acrobat does.
     QTest::newRow("RC4-128")
-        << QpdfService::Algorithm::RC4_128 << false << QStringLiteral("AES-128") << 128 << 4;
+        << QpdfService::Algorithm::RC4_128 << false << QStringLiteral("AES-128") << 128 << 4
+        << secret << QByteArray();
     QTest::newRow("AES-128 without /Length")
-        << QpdfService::Algorithm::AES128 << true << QStringLiteral("AES-128") << 128 << 4;
+        << QpdfService::Algorithm::AES128 << true << QStringLiteral("AES-128") << 128 << 4
+        << secret << QByteArray();
     QTest::newRow("AES-256 without /Length")
-        << QpdfService::Algorithm::AES256 << true << QStringLiteral("AES-256") << 256 << 6;
+        << QpdfService::Algorithm::AES256 << true << QStringLiteral("AES-256") << 256 << 6
+        << secret << QByteArray();
     // Revision 3 keeps RC4. An empty label expects the source's own label.
     QTest::newRow("RC4-128 revision 3")
-        << QpdfService::Algorithm::RC4_128 << false << QString() << 128 << 3;
+        << QpdfService::Algorithm::RC4_128 << false << QString() << 128 << 3 << secret
+        << QByteArray();
+    // AES-128 and RC4-128 key the source with the PDFDocEncoding form of the password,
+    // and the copies keep that key.
+    QTest::newRow("AES-128 with a Western European password")
+        << QpdfService::Algorithm::AES128 << false << QStringLiteral("AES-128") << 128 << 4
+        << QStringLiteral("Müller") << QByteArray("M\xFCller");
+    QTest::newRow("RC4-128 with a Western European password")
+        << QpdfService::Algorithm::RC4_128 << false << QStringLiteral("AES-128") << 128 << 4
+        << QStringLiteral("Müller") << QByteArray("M\xFCller");
 }
 
 /// Extract, a merge of one file's ranges and Split open only with the source's passwords.
@@ -619,6 +925,8 @@ void TstQpdf::singleSourceCopiesKeepItsEncryption()
     QFETCH(QString, label);
     QFETCH(int, bits);
     QFETCH(int, revision);
+    QFETCH(QString, password);
+    QFETCH(QByteArray, pdfDocKey);
     QTemporaryDir files;
     QVERIFY(files.isValid());
     const QString src = files.filePath(QStringLiteral("src.pdf"));
@@ -631,18 +939,19 @@ void TstQpdf::singleSourceCopiesKeepItsEncryption()
         pdf.processFile(src.toUtf8().constData());
         const QByteArray name = enc.toUtf8();
         QPDFWriter writer(pdf, name.constData());
-        writer.setR3EncryptionParametersInsecure("secret", "owner", true, true, true, true, true,
-                                                 true, qpdf_r3p_full);
+        const QByteArray user = password.toUtf8(); // ASCII, the same in every encoding
+        writer.setR3EncryptionParametersInsecure(user.constData(), "owner", true, true, true, true,
+                                                 true, true, qpdf_r3p_full);
         writer.write();
     } else {
-        QCOMPARE(svc.encrypt(src, enc, QString(), QStringLiteral("secret"),
+        QCOMPARE(svc.encrypt(src, enc, QString(), password,
                              QStringLiteral("owner"), algorithm, {}, nullptr),
                  QpdfService::Status::Ok);
     }
     QString err;
     if (label.isEmpty()) {
         QpdfService::Info source;
-        QCOMPARE(svc.readInfo(enc, QStringLiteral("secret"), source, &err),
+        QCOMPARE(svc.readInfo(enc, password, source, &err),
                  QpdfService::Status::Ok);
         QCOMPARE(source.revision, revision);
         label = source.algorithm;
@@ -650,19 +959,19 @@ void TstQpdf::singleSourceCopiesKeepItsEncryption()
     if (withoutLength) {
         QVERIFY(omitKeyLength(enc));
         int pages = 0;
-        QCOMPARE(PageOps::probe(enc, &pages, QStringLiteral("secret")), PageOps::Status::Ok);
+        QCOMPARE(PageOps::probe(enc, &pages, password), PageOps::Status::Ok);
     }
 
     const QString extracted = files.filePath(QStringLiteral("extracted.pdf"));
     const QString ranges = files.filePath(QStringLiteral("ranges.pdf"));
-    QCOMPARE(PageOps::merge({{enc, {1}, QStringLiteral("secret")}}, extracted, &err),
+    QCOMPARE(PageOps::merge({{enc, {1}, password}}, extracted, &err),
              PageOps::Status::Ok);
-    QCOMPARE(PageOps::merge({{enc, {2}, QStringLiteral("secret")},
-                             {enc, {0, 1}, QStringLiteral("secret")}},
+    QCOMPARE(PageOps::merge({{enc, {2}, password},
+                             {enc, {0, 1}, password}},
                             ranges, &err),
              PageOps::Status::Ok);
     QStringList parts;
-    QCOMPARE(PageOps::split(enc, files.path(), QStringLiteral("part"), QStringLiteral("secret"),
+    QCOMPARE(PageOps::split(enc, files.path(), QStringLiteral("part"), password,
                             &parts, &err),
              PageOps::Status::Ok);
     QCOMPARE(parts.size(), 3);
@@ -675,10 +984,10 @@ void TstQpdf::singleSourceCopiesKeepItsEncryption()
         int pages = -1;
         QCOMPARE(PageOps::probe(path, &pages), PageOps::Status::NeedsPassword);
         QCOMPARE(PageOps::probe(path, &pages, QStringLiteral("owner")), PageOps::Status::Ok);
-        QCOMPARE(PageOps::probe(path, &pages, QStringLiteral("secret")), PageOps::Status::Ok);
+        QCOMPARE(PageOps::probe(path, &pages, password), PageOps::Status::Ok);
         QCOMPARE(pages, count);
         QpdfService::Info info;
-        QCOMPARE(svc.readInfo(path, QStringLiteral("secret"), info, &err), QpdfService::Status::Ok);
+        QCOMPARE(svc.readInfo(path, password, info, &err), QpdfService::Status::Ok);
         QVERIFY(info.encrypted);
         QCOMPARE(info.algorithm, label);
         QCOMPARE(info.keyLengthBits, bits);
@@ -688,12 +997,14 @@ void TstQpdf::singleSourceCopiesKeepItsEncryption()
         bool needsPassword = false;
         QVERIFY(!engine.openDocument(path, QString(), &err, &needsPassword));
         QVERIFY(needsPassword);
-        const auto doc = engine.openDocument(path, QStringLiteral("secret"), &err, &needsPassword);
+        const auto doc = engine.openDocument(path, password, &err, &needsPassword);
         QVERIFY2(doc, qPrintable(err));
         QList<int> shown;
         for (int i = 0; i < doc->pageCount(); ++i)
             shown << qRound(doc->pageSize(i).width());
         QCOMPARE(shown, widths);
+        if (!pdfDocKey.isEmpty())
+            QVERIFY(openWithBytes(path, pdfDocKey)->userPasswordMatched());
     }
 }
 

@@ -2963,6 +2963,11 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <extracomment>Shown as the encryption algorithm when qpdf cannot identify it.</extracomment>
         <translation>알려지지 않은</translation>
     </message>
+    <message>
+        <source>A password contains characters that AES-128 and RC4-128 cannot use. Choose AES-256.</source>
+        <extracomment>Reason shown after &quot;The operation failed.&quot; when encrypting. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
+        <translation>암호에 AES-128 및 RC4-128에서 사용할 수 없는 문자가 있습니다. AES-256을 선택하세요.</translation>
+    </message>
 </context>
 <context>
     <name>mervin::RecentFilesPanel</name>
@@ -3244,8 +3249,13 @@ This file is no longer on disk.</source>
     </message>
     <message>
         <source>defaults to the open password</source>
-        <extracomment>Placeholder in the owner-password field. If empty, use the open password to protect the PDF permission settings. The user can enter a different one.</extracomment>
+        <extracomment>Placeholder in the owner-password field while every permission below is allowed. If empty, the open password also becomes the owner password. The user can enter a different one.</extracomment>
         <translation>비워 두면 문서 열기 암호 사용</translation>
+    </message>
+    <message>
+        <source>defaults to a random password</source>
+        <extracomment>Placeholder in the owner-password field while a permission below is not allowed. If empty, Mervin protects the permission settings with a random owner password that nobody is told. The user can enter one instead.</extracomment>
+        <translation>비워 두면 임의 암호 사용</translation>
     </message>
     <message>
         <source>AES-256 (recommended)</source>
@@ -3333,8 +3343,18 @@ This file is no longer on disk.</source>
         <translation>이 문서는 &lt;b&gt;암호화되지 않았습니다&lt;/b&gt;.</translation>
     </message>
     <message>
+        <source>Low resolution only</source>
+        <extracomment>Printing state, fills %3 of the encryption summary. The PDF allows printing, but only in low resolution, possibly of degraded quality.</extracomment>
+        <translation>저해상도만</translation>
+    </message>
+    <message>
+        <source>Page assembly only</source>
+        <extracomment>Modifying state, fills %5 of the encryption summary. The PDF allows only page assembly, such as inserting, rotating or deleting pages, and no other changes to its content.</extracomment>
+        <translation>페이지 조합만</translation>
+    </message>
+    <message>
         <source>&lt;b&gt;Encrypted&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;Printing: %3 · Copying: %4 · Modifying: %5 · Annotating: %6&lt;br&gt;&lt;i&gt;Note: Mervin never enforces these permission flags.&lt;/i&gt;</source>
-        <extracomment>%1 is the encryption algorithm, such as AES-256. %2 is the key length in bits. %3 to %6 are Allowed or Not allowed.</extracomment>
+        <extracomment>%1 is the encryption algorithm, such as AES-256. %2 is the key length in bits. %3 is Allowed, Low resolution only or Not allowed. %5 is Allowed, Page assembly only or Not allowed. %4 and %6 are Allowed or Not allowed.</extracomment>
         <translation>&lt;b&gt;암호화됨&lt;/b&gt; · %1 (%2비트)&lt;br&gt;인쇄: %3 · 복사: %4 · 수정: %5 · 주석 달기: %6&lt;br&gt;&lt;i&gt;참고: Mervin은 이러한 권한 제한을 적용하지 않습니다.&lt;/i&gt;</translation>
     </message>
     <message>
@@ -3345,6 +3365,11 @@ This file is no longer on disk.</source>
         <source>PDF documents (*.pdf)</source>
         <extracomment>File type filter. Keep &quot;(*.pdf)&quot; as it is.</extracomment>
         <translation>PDF 문서 (*.pdf)</translation>
+    </message>
+    <message>
+        <source>Use a different owner password to restrict permissions.</source>
+        <extracomment>Shown below the owner-password field when it repeats the open password while a permission is not allowed. Anyone with the open password could then lift the restrictions. An empty owner field is also accepted.</extracomment>
+        <translation>권한을 제한하려면 다른 권한 설정 암호를 사용하세요.</translation>
     </message>
     <message>
         <source>This writes a copy with all owner-password restrictions removed (printing, copying, and editing become permitted).

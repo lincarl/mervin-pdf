@@ -41,6 +41,9 @@ public:
         bool canCopy = true;   // extract text / graphics
         bool canModify = true; // assemble + modify content
         bool canAnnotate = true;
+
+        /// Whether no flag restricts anything.
+        bool allowsEverything() const { return canPrint && canCopy && canModify && canAnnotate; }
     };
 
     struct Info
@@ -49,7 +52,11 @@ public:
         QString algorithm;     // "AES-256" | "AES-128" | "RC4", or a translated "None" | "Unknown"
         int keyLengthBits = 0; // 0 when not encrypted
         int revision = 0;      // R
-        Permissions permissions; // all true when not encrypted
+        // All true when not encrypted. canPrint and canModify are true only when the file
+        // allows every kind of printing or modification.
+        Permissions permissions;
+        bool lowResolutionPrintOnly = false; // printing allowed, at low resolution only
+        bool pageAssemblyOnly = false;       // only inserting, rotating or deleting pages allowed
     };
 
     // Read encryption / permission metadata. `password` may be empty.
@@ -64,9 +71,14 @@ public:
     // Write an encrypted copy. `currentPassword` opens the source (empty if the
     // source is unencrypted). `userPassword` is required to open the result
     // (may be empty for owner-only encryption); `ownerPassword` governs
-    // permission changes (defaults to userPassword if empty). Use for both "add
-    // password" (currentPassword empty) and "change password". Optional mayCommit
-    // validates the destination under its write lock before publication.
+    // permission changes. An empty `ownerPassword` becomes `userPassword` when
+    // `perms` allows everything, and otherwise a random password nobody is told,
+    // so the open password cannot lift the restrictions. decrypt() still removes
+    // them with the open password. AES-128 and RC4-128 store both passwords in
+    // PDFDocEncoding and fail without writing when a character has no PDFDocEncoding
+    // form; AES-256 stores UTF-8. Use for both "add password" (currentPassword
+    // empty) and "change password". Optional mayCommit validates the destination
+    // under its write lock before publication.
     Status encrypt(const QString &inPath, const QString &outPath, const QString &currentPassword,
                    const QString &userPassword, const QString &ownerPassword, Algorithm algo,
                    const Permissions &perms, QString *error = nullptr,
