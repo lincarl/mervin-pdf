@@ -221,6 +221,13 @@ close with their selected plan and write in the launching tab, with the same wai
 and Stop waiting as other page tools. None saves over a file open in a tab or over an
 input document. Failure reopens the chosen ranges, order and output with its reason.
 
+Extract, Split and Merge keep the form fields of the pages they copy, so the new file
+can be filled in, and leave out the fields and values of pages they do not copy. Each
+copied page gets its own fields. A copied field whose name the new file already has is
+renamed, for example to `name+1`, so the copies of a repeated page, fields of the same
+name in merged files, and a field that appears on several copied pages fill in
+separately.
+
 Merge opens at once and reads each input's page count in the background. Pending
 rows show Reading and keep Merge disabled. The footer names the first row and file
 still being read, including when that row is scrolled out of view. Windows drives

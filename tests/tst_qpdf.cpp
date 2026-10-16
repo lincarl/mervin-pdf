@@ -396,6 +396,97 @@ bool pdfContains(const QString &path, const std::string &needle, const QString &
     return false;
 }
 
+// Builds a form with one text field per page, named `prefix` plus the page number, on
+// pages of the given widths. Its /AcroForm sets /NeedAppearances.
+void makeFormPdf(const QString &path, const QList<int> &widths, const std::string &prefix)
+{
+    QPDF q;
+    q.emptyPDF();
+    QPDFPageDocumentHelper dh(q);
+    std::vector<QPDFObjectHandle> fields;
+    for (int i = 0; i < widths.size(); ++i) {
+        QPDFObjectHandle page = textPage(q, "form page " + std::to_string(i + 1), widths.at(i));
+        dh.addPage(QPDFPageObjectHelper(page), false);
+        const std::string n = std::to_string(i + 1);
+        fields.push_back(widget(q, page, "/FT /Tx /T (" + prefix + n + ") /V (value " + n
+                                             + ") /DA (/Helv 12 Tf 0 g)"));
+    }
+    installForm(q, fields);
+    const QByteArray outputName = path.toUtf8();
+    QPDFWriter writer(q, outputName.constData());
+    writer.write();
+}
+
+// The first reason `path` has no fillable form with `widgets` widgets, or an empty string.
+// Each widget must belong to a field that /AcroForm /Fields reaches, point its /P at the
+// page that lists it, and have its own top-level field, as each field of makeFormPdf has
+// one widget. No two top-level fields may share a name, or they would fill in together.
+// /NeedAppearances must still be true, and MuPDF must see the form.
+QString formProblem(const QString &path, int widgets, const QString &password = {})
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    const QByteArray pw = password.toUtf8();
+    q.processFile(name.constData(), password.isEmpty() ? nullptr : pw.constData());
+    QPDFObjectHandle form = q.getRoot().getKey("/AcroForm");
+    if (!form.isDictionary())
+        return QStringLiteral("no /AcroForm");
+    QPDFObjectHandle fields = form.getKey("/Fields");
+    if (!fields.isArray() || fields.getArrayNItems() == 0)
+        return QStringLiteral("no /Fields");
+    if (!form.getKey("/NeedAppearances").isBool() || !form.getKey("/NeedAppearances").getBoolValue())
+        return QStringLiteral("/NeedAppearances lost");
+    std::set<std::string> names;
+    for (QPDFObjectHandle field : fields.aitems())
+        if (!names.insert(field.getKey("/T").getUTF8Value()).second)
+            return QStringLiteral("two fields share a name");
+    std::map<QPDFObjGen, QPDFObjGen> topOf; // every field and widget below /Fields
+    std::vector<std::pair<QPDFObjectHandle, QPDFObjGen>> queue;
+    for (QPDFObjectHandle field : fields.aitems())
+        queue.emplace_back(field, field.getObjGen());
+    while (!queue.empty()) {
+        auto [field, top] = queue.back();
+        queue.pop_back();
+        if (!topOf.emplace(field.getObjGen(), top).second)
+            continue;
+        QPDFObjectHandle kids = field.getKey("/Kids");
+        if (kids.isArray())
+            for (QPDFObjectHandle kid : kids.aitems())
+                queue.emplace_back(kid, top);
+    }
+    std::set<QPDFObjGen> seenWidgets, seenTops;
+    int count = 0;
+    for (QPDFObjectHandle page : q.getAllPages()) {
+        QPDFObjectHandle annots = page.getKey("/Annots");
+        if (!annots.isArray())
+            continue;
+        for (QPDFObjectHandle annot : annots.aitems()) {
+            if (!annot.getKey("/Subtype").isNameAndEquals("/Widget"))
+                continue;
+            ++count;
+            auto top = topOf.find(annot.getObjGen());
+            if (top == topOf.end())
+                return QStringLiteral("a widget is not below /Fields");
+            if (!seenWidgets.insert(annot.getObjGen()).second)
+                return QStringLiteral("two pages share a widget");
+            if (!seenTops.insert(top->second).second)
+                return QStringLiteral("two widgets share a field");
+            if (annot.getKey("/P").getObjGen() != page.getObjGen())
+                return QStringLiteral("a widget's /P is another page");
+        }
+    }
+    if (count != widgets)
+        return QStringLiteral("%1 widgets").arg(count);
+    mervin::RenderEngine engine;
+    QString err;
+    auto doc = engine.openDocument(path, password, &err, nullptr);
+    if (!doc)
+        return err;
+    if (!doc->hasForm())
+        return QStringLiteral("Document::hasForm() is false");
+    return {};
+}
+
 // Build a valid PDF whose pages have the given MediaBox widths (all 792 tall).
 // Distinct widths make each page identifiable after a copy, which is the only
 // way to assert that pages came out in the right ORDER - makePdf's pages are all
@@ -541,6 +632,9 @@ private slots:
     void deleteLeavesOutDeletedContent_data();
     void deleteLeavesOutDeletedContent();
     void deleteKeepsEncryptionWithoutDeletedContent();
+    void copiesKeepFormFields();
+    void copiesLeaveOutFieldsOfOtherPages_data();
+    void copiesLeaveOutFieldsOfOtherPages();
     void mergeConcatenates();
     void mergeHonoursPerFileRanges();
     void mergeRepeatsAPage();
@@ -1328,6 +1422,87 @@ void TstQpdf::deleteKeepsEncryptionWithoutDeletedContent()
     QVERIFY(info.encrypted);
     QVERIFY(!pdfContains(out, kSecret, QStringLiteral("secret")));
     QVERIFY(pdfContains(out, "shared value", QStringLiteral("secret")));
+}
+
+/// Checks that Merge, Extract, a repeated page and Split write forms that can be filled.
+void TstQpdf::copiesKeepFormFields()
+{
+    const QString a = in(QStringLiteral("form_a.pdf"));
+    const QString b = in(QStringLiteral("form_b.pdf"));
+    const QString enc = in(QStringLiteral("form_enc.pdf"));
+    const QString out = in(QStringLiteral("form_out.pdf"));
+    // The same field names in both files, so the merge has to tell them apart.
+    makeFormPdf(a, {100, 200}, "field");
+    makeFormPdf(b, {300, 400}, "field");
+
+    QCOMPARE(PageOps::merge({a, b}, out), PageOps::Status::Ok);
+    QCOMPARE(widthsOf(out), QList<int>({100, 200, 300, 400}));
+    QCOMPARE(formProblem(out, 4), QString());
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{a, {1}, {}}}, out), PageOps::Status::Ok);
+    QCOMPARE(widthsOf(out), QList<int>({200}));
+    QCOMPARE(formProblem(out, 1), QString());
+
+    // A repeated page gets its own widget and field, so the copies fill in separately.
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{a, {0, 0}, {}}}, out), PageOps::Status::Ok);
+    QCOMPARE(widthsOf(out), QList<int>({100, 100}));
+    QCOMPARE(formProblem(out, 2), QString());
+
+    QpdfService svc;
+    QCOMPARE(svc.encrypt(a, enc, QString(), QStringLiteral("secret"), QString(),
+                         QpdfService::Algorithm::AES256, {}, nullptr),
+             QpdfService::Status::Ok);
+    QCOMPARE(PageOps::merge({{enc, {}, QStringLiteral("secret")}, {b, {0}, {}}}, out),
+             PageOps::Status::Ok);
+    QCOMPARE(widthsOf(out), QList<int>({100, 200, 300}));
+    QCOMPARE(formProblem(out, 3), QString());
+
+    QStringList parts;
+    QCOMPARE(PageOps::split(a, dir_.path(), QStringLiteral("form-part"), QString(), &parts),
+             PageOps::Status::Ok);
+    QCOMPARE(parts.size(), 2);
+    for (const QString &part : parts)
+        QCOMPARE(formProblem(part, 1), QString());
+}
+
+/// Fixtures whose page 1 widget shares a field tree with a field or widget of page 2.
+void TstQpdf::copiesLeaveOutFieldsOfOtherPages_data()
+{
+    QTest::addColumn<int>("reference");
+    QTest::addColumn<QString>("kept");
+    QTest::newRow("child field") << int(Reference::ChildField) << QStringLiteral("kept street");
+    QTest::newRow("shared field") << int(Reference::SharedField) << QStringLiteral("shared value");
+}
+
+/// Checks that Extract, Merge and Split copy no form data of pages they leave out, and keep
+/// a value that a parent field shares with a widget they copy.
+void TstQpdf::copiesLeaveOutFieldsOfOtherPages()
+{
+    QFETCH(int, reference);
+    QFETCH(QString, kept);
+    const QString src = in(QStringLiteral("other_src_%1.pdf").arg(reference));
+    const QString out = in(QStringLiteral("other_out_%1.pdf").arg(reference));
+    makeReferencedPdf(src, Reference(reference));
+    const std::string keptText = kept.toStdString();
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0}, {}}}, out), PageOps::Status::Ok);
+    QVERIFY(!pdfContains(out, kSecret));
+    QVERIFY(pdfContains(out, keptText));
+    QCOMPARE(formProblem(out, 1), QString());
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {2, 0}, {}}}, out), PageOps::Status::Ok);
+    QVERIFY(!pdfContains(out, kSecret));
+    QVERIFY(pdfContains(out, keptText));
+
+    QStringList parts;
+    QCOMPARE(PageOps::split(src, dir_.path(), QStringLiteral("other-%1").arg(reference), QString(),
+                            &parts),
+             PageOps::Status::Ok);
+    QCOMPARE(parts.size(), 3);
+    QVERIFY(!pdfContains(parts.at(0), kSecret));
+    QVERIFY(pdfContains(parts.at(0), keptText));
+    QVERIFY(!pdfContains(parts.at(2), kSecret));
+    QVERIFY(!pdfContains(parts.at(2), keptText));
 }
 
 void TstQpdf::mergeConcatenates()

@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include <qpdf/QPDF.hh>
+#include <qpdf/QPDFAcroFormDocumentHelper.hh>
 #include <qpdf/QPDFNameTreeObjectHelper.hh>
 #include <qpdf/QPDFNumberTreeObjectHelper.hh>
 #include <qpdf/QPDFOutlineDocumentHelper.hh>
@@ -490,6 +491,117 @@ void removeDeletedContent(QPDF &q, const std::vector<QPDFPageObjectHelper> &page
             q.replaceObject(id, QPDFObjectHandle::newNull());
 }
 
+/// Form helpers for the documents that pages are copied from, each made once.
+class SourceForms
+{
+public:
+    /// The helper for `pdf`, or null when it has no form or qpdf cannot read the form, in
+    /// which case its pages are copied as addPage leaves them.
+    QPDFAcroFormDocumentHelper *of(QPDF &pdf)
+    {
+        auto it = forms_.find(&pdf);
+        if (it == forms_.end()) {
+            std::unique_ptr<QPDFAcroFormDocumentHelper> form;
+            try {
+                // The constructor, as QPDFAcroFormDocumentHelper::get needs qpdf 12.3.
+                form = std::make_unique<QPDFAcroFormDocumentHelper>(pdf);
+                if (!form->hasAcroForm())
+                    form.reset();
+            } catch (const std::exception &) {
+                form.reset();
+            }
+            it = forms_.emplace(&pdf, std::move(form)).first;
+        }
+        return it->second.get();
+    }
+
+private:
+    std::map<QPDF *, std::unique_ptr<QPDFAcroFormDocumentHelper>> forms_;
+};
+
+/// Copies form fields along with the pages that one output gets from QPDFPageDocumentHelper::
+/// addPage, which copies only the page and leaves its fields out of the output's /AcroForm.
+/// As in qpdf's own page selection, each copied page gets its own annotations and fields,
+/// and a field whose name the output already has is renamed, for example to "name+1", so
+/// two copies of one page fill in separately.
+class FormCopy
+{
+public:
+    FormCopy(QPDF &out, SourceForms &sources) : out_(out), form_(out), sources_(sources) {}
+
+    /// Copies the annotations and fields of `page` from `source` onto the page that addPage
+    /// just added last to the output.
+    void copied(QPDF &source, QPDFPageObjectHelper page)
+    {
+        QPDFAcroFormDocumentHelper *from = sources_.of(source);
+        if (!from)
+            return;
+        QPDFObjectHandle copy = out_.getAllPages().back();
+        QPDFObjectHandle plain = copy.getKey("/Annots");
+        try {
+            form_.fixCopiedAnnotations(copy, page.getObjectHandle(), *from);
+        } catch (const std::exception &) {
+            // qpdf before 12.4 can throw on damaged annotations. Like qpdf, keep the page
+            // as addPage copied it.
+            if (plain.isNull())
+                copy.removeKey("/Annots");
+            else
+                copy.replaceKey("/Annots", plain);
+            return;
+        }
+        // qpdf before 12.3 leaves /P on the page the annotations came from, which is the
+        // first copy when a page is copied again.
+        QPDFObjectHandle annots = copy.getKey("/Annots");
+        if (annots.isArray())
+            for (QPDFObjectHandle annot : annots.aitems())
+                if (annot.isDictionary() && annot.hasKey("/P"))
+                    annot.replaceKey("/P", copy);
+    }
+
+    /// Removes the copied fields that have no widget on an output page. A field tree that
+    /// spans several pages comes along whole, and the output must not carry the values of
+    /// pages it leaves out. A value on a parent that a copied widget shares stays.
+    void finish()
+    {
+        ObjectSet widgets;
+        for (QPDFObjectHandle page : out_.getAllPages())
+            addAnnotations(page, widgets);
+        FieldPruner pruner(widgets, nullptr);
+        QPDFObjectHandle root = out_.getRoot();
+        QPDFObjectHandle form = root.getKey("/AcroForm");
+        if (form.isDictionary()) {
+            QPDFObjectHandle fields = form.getKey("/Fields");
+            pruner.pruneArray(fields);
+            if (!fields.isArray() || fields.getArrayNItems() == 0)
+                root.removeKey("/AcroForm");
+        }
+        // The widgets of a page whose form could not be copied reach their copied field
+        // tree only through /Parent. Fields have no /Type, which keeps the climb out of
+        // anything else that a damaged /Parent might name.
+        for (QPDFObjectHandle page : out_.getAllPages()) {
+            QPDFObjectHandle annots = page.getKey("/Annots");
+            if (!annots.isArray())
+                continue;
+            for (QPDFObjectHandle top : annots.aitems()) {
+                if (!top.isDictionary() || !top.getKey("/Subtype").isNameAndEquals("/Widget"))
+                    continue;
+                for (int depth = 0; depth < kMaxDepth; ++depth) {
+                    QPDFObjectHandle parent = top.getKey("/Parent");
+                    if (!parent.isDictionary() || parent.hasKey("/Type"))
+                        break;
+                    top = parent;
+                }
+                pruner.prune(top);
+            }
+        }
+    }
+
+private:
+    QPDF &out_;
+    QPDFAcroFormDocumentHelper form_;
+    SourceForms &sources_;
+};
+
 } // namespace
 
 int PageOps::pageCount(const QString &path, const QString &password)
@@ -683,6 +795,8 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
         // would copy its shared objects into the output twice.
         std::vector<std::unique_ptr<QPDF>> sources;
         std::map<QString, QPDF *> opened;
+        SourceForms sourceForms;
+        FormCopy forms(out, sourceForms);
         MeasureDoc mergedMeasurements;
         int outputPage = 0;
 
@@ -722,11 +836,13 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
                     return Status::Failed;
                 }
                 odh.addPage(all[static_cast<size_t>(idx)], false);
+                forms.copied(*it->second, all[static_cast<size_t>(idx)]);
             }
             measurementPages::append(mergedMeasurements, measurementPages::read(*it->second),
                                      selected, outputPage);
             outputPage += selected.size();
         }
+        forms.finish();
         measurementPages::write(out, mergedMeasurements);
 
         AtomicPdfWriter output(out, outPath);
@@ -773,10 +889,14 @@ PageOps::Status PageOps::split(const QString &inPath, const QString &outDir, con
         if (mayWrite && !mayWrite(paths))
             return Status::Failed;
         const auto data = measurementPages::read(q);
+        SourceForms sourceForms;
         for (int i = 0; i < static_cast<int>(all.size()); ++i) {
             QPDF out;
             out.emptyPDF();
+            FormCopy forms(out, sourceForms);
             QPDFPageDocumentHelper(out).addPage(all[static_cast<size_t>(i)], false);
+            forms.copied(q, all[static_cast<size_t>(i)]);
+            forms.finish();
             MeasureDoc selected;
             measurementPages::append(selected, data, {i}, 0);
             measurementPages::write(out, selected);

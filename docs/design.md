@@ -920,6 +920,18 @@ that the result will not be encrypted. The window opens an Extract or Delete res
 or a one-file merge (`MergePlan::resultPassword`), with the password that read its
 source.
 
+Extract, Split and Merge build each output from an empty PDF with
+`QPDFPageDocumentHelper::addPage`, which copies a page but not its form fields. After
+each page, `FormCopy` calls `QPDFAcroFormDocumentHelper::fixCopiedAnnotations`, as
+qpdf's own page selection does. It gives the page private annotations and adds their
+fields to the output's `/AcroForm`, renaming a field whose name is taken. `FormCopy`
+then points each annotation's `/P` at its new page, which qpdf releases before 12.3
+do not do. If the call throws, as qpdf before 12.4 can on damaged annotations, the page
+stays as `addPage` copied it. A copied field tree comes along whole, so before writing,
+`FormCopy::finish` removes the fields that have no widget on an output page, keeping a
+parent that a copied widget shares. The source helpers are built with the
+`QPDFAcroFormDocumentHelper` constructor, as `get` needs qpdf 12.3.
+
 Delete Pages removes pages from the source's own `QPDF` and writes it, so it keeps
 encryption, outlines and structure. `QPDFPageDocumentHelper::removePage` only takes a
 page out of `/Pages`, so `removeDeletedContent` then removes what only the deleted

@@ -73,9 +73,10 @@ public:
     };
 
     // Concatenate selected pages in input order (one input performs extraction). Reject invalid
-    // page indices to avoid silently shortening output. On failure, failedIndex identifies the
-    // unreadable input, or -1 for errors such as output writes. Optional mayCommit
-    // runs under the output lock after flushing and before commit admission. The
+    // page indices to avoid silently shortening output. Form fields come along with their
+    // pages, without the fields and values of pages left out. On failure, failedIndex
+    // identifies the unreadable input, or -1 for errors such as output writes. Optional
+    // mayCommit runs under the output lock after flushing and before commit admission. The
     // output is encrypted like its source when every input names the same path.
     // Combined measurements past kMaxMeasurementBlobBytes fail with
     // measurementsTooLargeError() and failedIndex -1, before anything is written.
@@ -90,7 +91,8 @@ public:
     // Concatenate all pages of `inPaths` (in order) into one document.
     static Status merge(const QStringList &inPaths, const QString &outPath, QString *error = nullptr);
 
-    // Write each page of the source to "<outDir>/<baseName>-NNN.pdf". The
+    // Write each page of the source to "<outDir>/<baseName>-NNN.pdf", with the form fields
+    // of that page as merge() copies them. The
     // produced paths are appended to `outFiles` if provided. `mayWrite`, when given,
     // gets every output path once the source is read, before the first write. When it
     // answers false, nothing is written and the split fails without an error, as the
