@@ -12,6 +12,7 @@
 #include "security/DocumentOutput.h"
 #include "security/MeasureExport.h"
 #include "security/PageOps.h"
+#include "security/QpdfService.h"
 #include "ui/MainWindow.h"
 #include "ui/TabPage.h"
 #include "ui/ViewerWidget.h"
@@ -20,6 +21,7 @@
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -71,6 +73,12 @@ public:
                     dialog->reject();
                 return;
             }
+            // A result that should open with the tab's password must not ask for one.
+            if (auto *prompt = qobject_cast<QInputDialog *>(modal)) {
+                unexpected_.append(prompt->windowTitle());
+                prompt->reject();
+                return;
+            }
             if (auto *box = qobject_cast<QMessageBox *>(modal)) {
                 if (beforeMessage_)
                     beforeMessage_(box);
@@ -78,7 +86,7 @@ public:
                     box->button(QMessageBox::Yes)->click();
                 else if (box->windowTitle() == QStringLiteral("Done")) {
                     successes_++;
-                    box->button(QMessageBox::No)->click();
+                    box->button(openResult_ ? QMessageBox::Yes : QMessageBox::No)->click();
                 } else if (box->windowTitle() == QStringLiteral("Unsaved changes")) {
                     quitAnswered_ = true;
                     box->button(QMessageBox::Cancel)->click();
@@ -156,6 +164,7 @@ private slots:
         dialogsSeen_ = successes_ = 0;
         submitted_ = false;
         quitAnswered_ = false;
+        openResult_ = false;
         reopenedSpec_.clear();
         reopenedOutput_.clear();
         reopenedError_.clear();
@@ -220,6 +229,33 @@ private slots:
         QCOMPARE(retained.measurements.size(), size_t(1));
         QCOMPARE(retained.measurements.front().page, 0);
         QCOMPARE(retained.measurements.front().pts, measurements.measurements.front().pts);
+    }
+
+    /// Opens a merge of the encrypted tab's own pages with its password, which the copy keeps.
+    void singleSourceMergeOpensWithTheTabPassword()
+    {
+        const QString plain = files_->filePath("plain.pdf");
+        QVERIFY(QFile::rename(source_, plain));
+        QCOMPARE(QpdfService().encrypt(plain, source_, {}, QStringLiteral("secret"), {},
+                                       QpdfService::Algorithm::AES256, {}, nullptr),
+                 QpdfService::Status::Ok);
+        openResult_ = true;
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.show();
+        QVERIFY(testing::openAndWait(window, source_, false, -1, true, QStringLiteral("secret")));
+        QVERIFY(QMetaObject::invokeMethod(&window, "mergeDocuments"));
+        QTRY_COMPARE_WITH_TIMEOUT(successes_, 1, 10000);
+        QTRY_COMPARE(window.tabCount(), 2);
+        auto *opened = qobject_cast<TabPage *>(window.findChild<QTabWidget *>()->currentWidget());
+        QVERIFY(opened);
+        QTRY_VERIFY(opened->isLoaded());
+        QCOMPARE(opened->path(), output_);
+        QCOMPARE(opened->viewer()->pageCount(), 2);
+        QCOMPARE(opened->password(), QStringLiteral("secret"));
+        int pages = 0;
+        QCOMPARE(PageOps::probe(output_, &pages), PageOps::Status::NeedsPassword);
     }
 
     /// Checks that a removed input reopens its plan with the failing filename.
@@ -544,6 +580,7 @@ private:
     QPointer<MergeDialog> current_;
     bool submitted_ = false;
     bool quitAnswered_ = false;
+    bool openResult_ = false; // answers "Open it now?" with Yes
     int dialogsSeen_ = 0;
     int successes_ = 0;
     std::function<void()> repair_, beforeMerge_;

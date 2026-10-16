@@ -106,7 +106,8 @@ private:
     // Probe `path` with qpdf and build the row it deserves (page count, or a
     // Locked / Unreadable state with the backend's message as its tooltip). An
     // encrypted file is tried with `password` when one is given; if it opens, the
-    // row is Ok and keeps the password. Added files have none, so they stay Locked.
+    // row is Ok and keeps the password. Added files have none, so they stay Locked,
+    // unless they have only an owner password. An Ok row records its encryption.
     static MergePlan::Entry probeEntry(const QString &path, const QString &password = QString());
     struct ProbeBatch;
     /// Appends a Reading row and schedules its probe on the volume queue.
@@ -173,6 +174,7 @@ private:
     QList<QLineEdit *> specEditors_;
     QStringList nameTexts_;      // their untruncated text, for re-eliding
     QLabel *summary_ = nullptr;
+    QLabel *encryptionNote_ = nullptr; // shown while MergePlan::losesEncryption()
     QLabel *error_ = nullptr;
     QLineEdit *outputEdit_ = nullptr;
     QPushButton *removeBtn_ = nullptr;

@@ -2627,6 +2627,11 @@ Opne Innstillingar → Standardprogram i systemet (eller høgreklikk på ei PDF-
         <translation>Fjern</translation>
     </message>
     <message>
+        <source>The merged file will not be encrypted.</source>
+        <extracomment>Shown below the merge result when the files include an encrypted one, with an open password or only permission restrictions, and more than one file is merged. The new PDF then has no password and no permission restrictions.</extracomment>
+        <translation>Den samanslegne fila blir ikkje kryptert.</translation>
+    </message>
+    <message>
         <source>Save as:</source>
         <translation>Lagre som:</translation>
     </message>

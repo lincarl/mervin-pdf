@@ -20,6 +20,7 @@
 #include <QCheckBox>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -101,6 +102,12 @@ public:
     TstPageDialogOperations()
     {
         connect(&dialogs_, &QTimer::timeout, this, [this] {
+            // A result that should open with the tab's password must not ask for one.
+            if (auto *prompt = qobject_cast<QInputDialog *>(QApplication::activeModalWidget())) {
+                unexpected_ << prompt->windowTitle();
+                prompt->reject();
+                return;
+            }
             auto *dialog = qobject_cast<ExtractDialog *>(QApplication::activeModalWidget());
             if (!dialog || answered_ == dialog)
                 return;
@@ -430,6 +437,33 @@ private slots:
         QCOMPARE(current(window)->viewer()->pageCount(), 2);
     }
 
+    /// Opens an encrypted tab's extract with the tab's password, which the copy keeps.
+    void encryptedExtractOpensWithoutAPasswordPrompt()
+    {
+        QTemporaryDir files;
+        const QString plain = copy(files);
+        const QString locked = files.filePath(QStringLiteral("locked.pdf"));
+        const QString out = files.filePath(QStringLiteral("chosen.pdf"));
+        QpdfService service;
+        QCOMPARE(service.encrypt(plain, locked, {}, QStringLiteral("secret"), {},
+                                 QpdfService::Algorithm::AES256, {}, nullptr), QpdfService::Status::Ok);
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showWindow(window);
+        QVERIFY(testing::openAndWait(window, locked, false, -1, true, QStringLiteral("secret")));
+        choices_ << [out](ExtractDialog &dialog) {
+            choose(dialog, out, QStringLiteral("2"), true);
+        };
+        QVERIFY(QMetaObject::invokeMethod(&window, "extractPagesOp"));
+        QTRY_COMPARE(window.tabCount(), 2);
+        QTRY_VERIFY(current(window)->isLoaded());
+        QCOMPARE(current(window)->path(), out);
+        QCOMPARE(current(window)->viewer()->pageCount(), 1);
+        QCOMPARE(current(window)->password(), QStringLiteral("secret"));
+        int pages = 0;
+        QCOMPARE(PageOps::probe(out, &pages), PageOps::Status::NeedsPassword);
+    }
+
     /// Preserves choices and allows a corrected open password after worker rejection.
     void wrongPasswordReopensAndAChangedPasswordCanRetry()
     {
@@ -471,8 +505,10 @@ private slots:
         QTRY_VERIFY(tab->isUsable());
         QTRY_VERIFY(QFileInfo::exists(out));
         QTRY_COMPARE(tab->password(), QStringLiteral("changed"));
+        // The extract keeps the source's encryption, so the password that worked opens it.
         int pages = 0;
-        QCOMPARE(PageOps::probe(out, &pages), PageOps::Status::Ok);
+        QCOMPARE(PageOps::probe(out, &pages), PageOps::Status::NeedsPassword);
+        QCOMPARE(PageOps::probe(out, &pages, QStringLiteral("changed")), PageOps::Status::Ok);
         QCOMPARE(pages, 1);
     }
 

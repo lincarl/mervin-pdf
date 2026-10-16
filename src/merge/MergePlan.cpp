@@ -62,6 +62,7 @@ bool MergePlan::resolveProbe(quint64 ticket, const Entry &result)
         entry.pageCount = result.pageCount;
         entry.loadError = result.loadError;
         entry.password = result.password;
+        entry.encrypted = result.encrypted;
         found = true;
     }
     return found;
@@ -288,6 +289,34 @@ QList<PageOps::MergeInput> MergePlan::inputs() const
     for (int i = 0; i < entries_.size(); ++i)
         out.append(PageOps::MergeInput{entries_.at(i).path, pagesFor(i), entries_.at(i).password});
     return out;
+}
+
+namespace {
+
+/// True when every row names the first row's path, which PageOps::merge opens once.
+bool namesOneFile(const QList<MergePlan::Entry> &entries)
+{
+    return !entries.isEmpty()
+        && std::all_of(entries.cbegin(), entries.cend(), [&entries](const MergePlan::Entry &e) {
+               return e.path == entries.first().path;
+           });
+}
+
+} // namespace
+
+/// Reports an encrypted row that opened in a plan that reads more than one file.
+bool MergePlan::losesEncryption() const
+{
+    return !namesOneFile(entries_)
+        && std::any_of(entries_.cbegin(), entries_.cend(), [](const Entry &e) {
+               return e.load == Load::Ok && e.encrypted;
+           });
+}
+
+/// Returns the password the merge reads a single file with, which also opens its copy.
+QString MergePlan::resultPassword() const
+{
+    return namesOneFile(entries_) ? entries_.first().password : QString();
 }
 
 QString MergePlan::plainOutputPath() const

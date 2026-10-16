@@ -797,7 +797,8 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
             .arg(css(t.accentWash)));
     add(QStringLiteral("QLabel#rowListNum, QLabel#rowListOutput { color:%1; }")
             .arg(css(t.inkSoft)));
-    add(QStringLiteral("QLabel#mergeSummary, QLabel#extractSummary { color:%1; }")
+    add(QStringLiteral("QLabel#mergeSummary, QLabel#mergeEncryptionNote,"
+                       " QLabel#extractSummary { color:%1; }")
             .arg(css(t.ink)));
     // The one red in the dialog: a range that does not resolve blocks the Merge
     // or Extract button, so the reason has to read as a blocker, not as a hint.

@@ -2627,6 +2627,11 @@ Abra Configurações → Aplicativos padrão do seu sistema (ou clique com o bot
         <translation>Remover</translation>
     </message>
     <message>
+        <source>The merged file will not be encrypted.</source>
+        <extracomment>Shown below the merge result when the files include an encrypted one, with an open password or only permission restrictions, and more than one file is merged. The new PDF then has no password and no permission restrictions.</extracomment>
+        <translation>O arquivo mesclado não será criptografado.</translation>
+    </message>
+    <message>
         <source>Save as:</source>
         <translation>Salvar como:</translation>
     </message>

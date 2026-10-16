@@ -216,6 +216,15 @@ MergeDialog::MergeDialog(const QString &initialPath, int initialPageCount,
     summary_->setObjectName(QStringLiteral("mergeSummary"));
     layout->addWidget(summary_);
 
+    //: Shown below the merge result when the files include an encrypted one, with
+    //: an open password or only permission restrictions, and more than one file is
+    //: merged. The new PDF then has no password and no permission restrictions.
+    encryptionNote_ = new QLabel(tr("The merged file will not be encrypted."), this);
+    encryptionNote_->setObjectName(QStringLiteral("mergeEncryptionNote"));
+    encryptionNote_->setWordWrap(true);
+    encryptionNote_->hide();
+    layout->addWidget(encryptionNote_);
+
     error_ = new QLabel(this);
     error_->setObjectName(QStringLiteral("mergeError"));
     error_->setTextFormat(Qt::PlainText);
@@ -402,10 +411,11 @@ MergePlan::Entry MergeDialog::probeEntry(const QString &path, const QString &pas
     MergePlan::Entry e;
     e.path = path;
     int n = 0;
+    bool encrypted = false;
     QString err;
-    PageOps::Status st = PageOps::probe(path, &n, QString(), &err);
+    PageOps::Status st = PageOps::probe(path, &n, QString(), &err, &encrypted);
     if (st == PageOps::Status::NeedsPassword && !password.isEmpty()) {
-        st = PageOps::probe(path, &n, password, &err);
+        st = PageOps::probe(path, &n, password, &err, &encrypted);
         if (st == PageOps::Status::Ok)
             e.password = password; // MergePlan::inputs() hands it to the merge
     }
@@ -413,6 +423,7 @@ MergePlan::Entry MergeDialog::probeEntry(const QString &path, const QString &pas
     case PageOps::Status::Ok:
         e.load = n > 0 ? MergePlan::Load::Ok : MergePlan::Load::Unreadable;
         e.pageCount = n;
+        e.encrypted = encrypted;
         if (n <= 0)
             e.loadError = tr("The file contains no pages.");
         break;
@@ -652,6 +663,7 @@ void MergeDialog::refreshFooter()
         list_->setRowTexts(i, texts.at(i).count, texts.at(i).output);
 
     summary_->setText(plan_.summaryText());
+    encryptionNote_->setVisible(plan_.losesEncryption());
 
     // Native separators: QDir hands back '/' on Windows too, and a path with
     // forward slashes in a Save-as field reads as something the app generated

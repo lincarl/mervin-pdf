@@ -2627,6 +2627,11 @@ Sisteminizin Parametrlər → Defolt Proqramları açın (və ya PDF-i sağ klik
         <translation>Sil</translation>
     </message>
     <message>
+        <source>The merged file will not be encrypted.</source>
+        <extracomment>Shown below the merge result when the files include an encrypted one, with an open password or only permission restrictions, and more than one file is merged. The new PDF then has no password and no permission restrictions.</extracomment>
+        <translation>Birləşdirilmiş fayl şifrələnməyəcək.</translation>
+    </message>
+    <message>
         <source>Save as:</source>
         <translation>Belə yadda saxlayın:</translation>
     </message>

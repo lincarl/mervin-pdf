@@ -74,7 +74,7 @@ int PageOps::pageCount(const QString &path, const QString &password)
 }
 
 PageOps::Status PageOps::probe(const QString &path, int *count, const QString &password,
-                               QString *error)
+                               QString *error, bool *encrypted)
 {
     QPDF q;
     const Status st = open(q, path, password, error);
@@ -83,6 +83,8 @@ PageOps::Status PageOps::probe(const QString &path, int *count, const QString &p
     try {
         if (count)
             *count = static_cast<int>(QPDFPageDocumentHelper(q).getAllPages().size());
+        if (encrypted)
+            *encrypted = q.isEncrypted();
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)
@@ -190,6 +192,24 @@ PageOps::Status PageOps::rotatePages(const QString &inPath, const QString &outPa
     }
 }
 
+namespace {
+
+/// Encrypts `output` like `source`, with the same passwords and permission flags.
+/// Leaves it unencrypted when the source is.
+void copyEncryption(AtomicPdfWriter &output, QPDF &source)
+{
+    if (!source.isEncrypted())
+        return;
+    // qpdf copies the key length from /Length, which V4 and V5 files may omit. This
+    // sets the length qpdf read the source with, in memory only.
+    source.getTrailer().getKey("/Encrypt").replaceKey(
+        "/Length", QPDFObjectHandle::newInteger(
+                       static_cast<long long>(source.getEncryptionKey().size()) * 8));
+    output.options().copyEncryptionParameters(source);
+}
+
+} // namespace
+
 /// Combines the selected pages and validates optional destination consent before publication.
 PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &outPath,
                                QString *error, int *failedIndex,
@@ -255,6 +275,9 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
         measurementPages::write(out, mergedMeasurements);
 
         AtomicPdfWriter output(out, outPath);
+        // Pages of one file keep its encryption. A merge of several files has none.
+        if (sources.size() == 1)
+            copyEncryption(output, *sources.front());
         output.write(mayCommit);
         return Status::Ok;
     } catch (const std::exception &e) {
@@ -304,6 +327,7 @@ PageOps::Status PageOps::split(const QString &inPath, const QString &outDir, con
             const QString &path = paths.at(i);
             // A stopped job throws here, before it takes the next file.
             AtomicPdfWriter output(out, path);
+            copyEncryption(output, q);
             output.write([&mayCommit, &path] { return !mayCommit || mayCommit(path); });
             if (outFiles)
                 outFiles->append(path);

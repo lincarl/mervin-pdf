@@ -76,6 +76,9 @@ translators and agents can apply it.
 
 Use the same term for the same concept throughout each language. These meanings
 guide the choice of words, even when the English term has several translations.
+Before translating a new message, look up how each catalog already translates its
+key words, such as "encrypted" or "merged", and reuse those words. A correct
+synonym still reads as a different concept next to the existing text.
 
 | English term | Meaning in Mervin |
 | --- | --- |

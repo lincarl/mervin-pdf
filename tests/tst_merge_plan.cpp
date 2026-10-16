@@ -44,6 +44,7 @@ private slots:
     void readingBlocksUnknownOutputPositions();
     void readingReasonFollowsOrderAndCompletion();
     void probeResolutionFollowsPendingCopies();
+    void encryptionFollowsTheFilesRead();
 
 private:
     static MergePlan::Entry ok(const QString &path, int pages, const QString &spec = QString())
@@ -136,6 +137,53 @@ void TstMergePlan::probeResolutionFollowsPendingCopies()
     QCOMPARE(plan.pagesFor(2), (QList<int>{1}));
     QVERIFY(!plan.resolveProbe(7, result));
     QCOMPARE(plan.at(1).path, QStringLiteral("/b/ready.pdf"));
+}
+
+/// Checks that only a plan reading one file keeps its encryption and opens with its password.
+void TstMergePlan::encryptionFollowsTheFilesRead()
+{
+    MergePlan plan;
+    QVERIFY(!plan.losesEncryption());
+    QCOMPARE(plan.resultPassword(), QString());
+
+    // The tab's encrypted document in two rows is still one file for the merge.
+    MergePlan::Entry pending;
+    pending.path = QStringLiteral("/a/locked.pdf");
+    pending.load = MergePlan::Load::Reading;
+    pending.probeTicket = 3;
+    plan.append(pending);
+    auto locked = ok(pending.path, 3);
+    locked.password = QStringLiteral("secret");
+    locked.encrypted = true;
+    QVERIFY(plan.resolveProbe(3, locked));
+    QVERIFY(plan.at(0).encrypted);
+    plan.duplicate(0);
+    QVERIFY(!plan.losesEncryption());
+    QCOMPARE(plan.resultPassword(), QStringLiteral("secret"));
+
+    // Another file makes the merge read two, so the result has no encryption.
+    plan.append(ok(QStringLiteral("/a/plain.pdf"), 1));
+    QVERIFY(plan.losesEncryption());
+    QCOMPARE(plan.resultPassword(), QString());
+    plan.remove(2);
+    QVERIFY(!plan.losesEncryption());
+
+    // Plain files lose nothing, and a row that did not open does not count.
+    MergePlan plain;
+    plain.append(ok(QStringLiteral("/a/one.pdf"), 1));
+    plain.append(ok(QStringLiteral("/a/two.pdf"), 1));
+    QVERIFY(!plain.losesEncryption());
+    auto unopened = ok(QStringLiteral("/a/other.pdf"), 0);
+    unopened.load = MergePlan::Load::Locked;
+    unopened.encrypted = true;
+    plain.append(unopened);
+    QVERIFY(!plain.losesEncryption());
+    // A file with only an owner password opens without one and still counts.
+    auto restricted = ok(QStringLiteral("/a/restricted.pdf"), 2);
+    restricted.encrypted = true;
+    plain.append(restricted);
+    QVERIFY(plain.losesEncryption());
+    QCOMPARE(plain.resultPassword(), QString());
 }
 
 void TstMergePlan::appendAndCount()

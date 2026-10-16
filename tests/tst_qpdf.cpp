@@ -17,6 +17,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <cctype>
+
 using mervin::PageOps;
 using mervin::QpdfService;
 
@@ -98,6 +100,10 @@ private slots:
     void delayedSecurityRequiresFreshConsent_data();
     void delayedSecurityRequiresFreshConsent();
     void probeDistinguishesLockedFromUnreadable();
+    void singleSourceCopiesKeepItsEncryption_data();
+    void singleSourceCopiesKeepItsEncryption();
+    void singleSourceCopiesKeepOwnerRestrictions();
+    void mergeOfSeveralFilesIsNotEncrypted();
     void splitWritesOnePerPage();
     void rotateKeepsCount();
     void openEncryptedNeedsPassword();
@@ -555,6 +561,178 @@ void TstQpdf::probeDistinguishesLockedFromUnreadable()
     QCOMPARE(PageOps::probe(enc, &n, QStringLiteral("secret")), PageOps::Status::Ok);
     QCOMPARE(n, 4);
     QCOMPARE(PageOps::probe(in(QStringLiteral("absent.pdf")), &n), PageOps::Status::Failed);
+}
+
+/// Covers each algorithm Mervin writes, V4 and V5 files without the optional /Length,
+/// and the revision 3 RC4 files of older writers.
+void TstQpdf::singleSourceCopiesKeepItsEncryption_data()
+{
+    QTest::addColumn<QpdfService::Algorithm>("algorithm");
+    QTest::addColumn<bool>("withoutLength");
+    QTest::addColumn<QString>("label");
+    QTest::addColumn<int>("bits");
+    QTest::addColumn<int>("revision");
+    QTest::newRow("AES-256")
+        << QpdfService::Algorithm::AES256 << false << QStringLiteral("AES-256") << 256 << 6;
+    QTest::newRow("AES-128")
+        << QpdfService::Algorithm::AES128 << false << QStringLiteral("AES-128") << 128 << 4;
+    // qpdf writes every V4 copy with AES, as Acrobat does.
+    QTest::newRow("RC4-128")
+        << QpdfService::Algorithm::RC4_128 << false << QStringLiteral("AES-128") << 128 << 4;
+    QTest::newRow("AES-128 without /Length")
+        << QpdfService::Algorithm::AES128 << true << QStringLiteral("AES-128") << 128 << 4;
+    QTest::newRow("AES-256 without /Length")
+        << QpdfService::Algorithm::AES256 << true << QStringLiteral("AES-256") << 256 << 6;
+    // Revision 3 keeps RC4. An empty label expects the source's own label.
+    QTest::newRow("RC4-128 revision 3")
+        << QpdfService::Algorithm::RC4_128 << false << QString() << 128 << 3;
+}
+
+/// Extract, a merge of one file's ranges and Split open only with the source's passwords.
+void TstQpdf::singleSourceCopiesKeepItsEncryption()
+{
+    QFETCH(QpdfService::Algorithm, algorithm);
+    QFETCH(bool, withoutLength);
+    QFETCH(QString, label);
+    QFETCH(int, bits);
+    QFETCH(int, revision);
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    const QString src = files.filePath(QStringLiteral("src.pdf"));
+    const QString enc = files.filePath(QStringLiteral("enc.pdf"));
+    makePdfSized(src, {100, 200, 300});
+    QpdfService svc;
+    if (revision == 3) {
+        // Mervin does not write revision 3, so qpdf builds this source directly.
+        QPDF pdf;
+        pdf.processFile(src.toUtf8().constData());
+        const QByteArray name = enc.toUtf8();
+        QPDFWriter writer(pdf, name.constData());
+        writer.setR3EncryptionParametersInsecure("secret", "owner", true, true, true, true, true,
+                                                 true, qpdf_r3p_full);
+        writer.write();
+    } else {
+        QCOMPARE(svc.encrypt(src, enc, QString(), QStringLiteral("secret"),
+                             QStringLiteral("owner"), algorithm, {}, nullptr),
+                 QpdfService::Status::Ok);
+    }
+    QString err;
+    if (label.isEmpty()) {
+        QpdfService::Info source;
+        QCOMPARE(svc.readInfo(enc, QStringLiteral("secret"), source, &err),
+                 QpdfService::Status::Ok);
+        QCOMPARE(source.revision, revision);
+        label = source.algorithm;
+    }
+    if (withoutLength) {
+        // The PDF specification makes /Length optional unless V is 2 or 3. Blanking it
+        // with spaces keeps every cross-reference offset valid.
+        QFile file(enc);
+        QVERIFY(file.open(QIODevice::ReadWrite));
+        QByteArray data = file.readAll();
+        const QByteArray key("/Standard /Length ");
+        const qsizetype at = data.indexOf(key);
+        QVERIFY(at >= 0);
+        qsizetype end = at + key.size();
+        while (end < data.size() && std::isdigit(static_cast<unsigned char>(data.at(end))))
+            ++end;
+        const qsizetype from = at + qsizetype(sizeof("/Standard ") - 1);
+        data.replace(from, end - from, QByteArray(end - from, ' '));
+        QVERIFY(file.seek(0));
+        QCOMPARE(file.write(data), data.size());
+        file.close();
+        int pages = 0;
+        QCOMPARE(PageOps::probe(enc, &pages, QStringLiteral("secret")), PageOps::Status::Ok);
+    }
+
+    const QString extracted = files.filePath(QStringLiteral("extracted.pdf"));
+    const QString ranges = files.filePath(QStringLiteral("ranges.pdf"));
+    QCOMPARE(PageOps::merge({{enc, {1}, QStringLiteral("secret")}}, extracted, &err),
+             PageOps::Status::Ok);
+    QCOMPARE(PageOps::merge({{enc, {2}, QStringLiteral("secret")},
+                             {enc, {0, 1}, QStringLiteral("secret")}},
+                            ranges, &err),
+             PageOps::Status::Ok);
+    QStringList parts;
+    QCOMPARE(PageOps::split(enc, files.path(), QStringLiteral("part"), QStringLiteral("secret"),
+                            &parts, &err),
+             PageOps::Status::Ok);
+    QCOMPARE(parts.size(), 3);
+
+    // Each output with the source page widths it should hold, in order.
+    const QList<std::pair<QString, QList<int>>> outputs{
+        {extracted, {200}}, {ranges, {300, 100, 200}}, {parts.at(0), {100}}, {parts.at(2), {300}}};
+    for (const auto &[path, widths] : outputs) {
+        const int count = int(widths.size());
+        int pages = -1;
+        QCOMPARE(PageOps::probe(path, &pages), PageOps::Status::NeedsPassword);
+        QCOMPARE(PageOps::probe(path, &pages, QStringLiteral("owner")), PageOps::Status::Ok);
+        QCOMPARE(PageOps::probe(path, &pages, QStringLiteral("secret")), PageOps::Status::Ok);
+        QCOMPARE(pages, count);
+        QpdfService::Info info;
+        QCOMPARE(svc.readInfo(path, QStringLiteral("secret"), info, &err), QpdfService::Status::Ok);
+        QVERIFY(info.encrypted);
+        QCOMPARE(info.algorithm, label);
+        QCOMPARE(info.keyLengthBits, bits);
+        QCOMPARE(info.revision, revision);
+        // MuPDF, which shows the copy, reads it with the same password.
+        mervin::RenderEngine engine;
+        bool needsPassword = false;
+        QVERIFY(!engine.openDocument(path, QString(), &err, &needsPassword));
+        QVERIFY(needsPassword);
+        const auto doc = engine.openDocument(path, QStringLiteral("secret"), &err, &needsPassword);
+        QVERIFY2(doc, qPrintable(err));
+        QList<int> shown;
+        for (int i = 0; i < doc->pageCount(); ++i)
+            shown << qRound(doc->pageSize(i).width());
+        QCOMPARE(shown, widths);
+    }
+}
+
+/// A copy of a file with only an owner password keeps its permission flags.
+void TstQpdf::singleSourceCopiesKeepOwnerRestrictions()
+{
+    const QString src = in(QStringLiteral("or_src.pdf"));
+    const QString enc = in(QStringLiteral("or_enc.pdf"));
+    const QString out = in(QStringLiteral("or_out.pdf"));
+    makePdf(src, 2);
+    QpdfService::Permissions perms;
+    perms.canPrint = false;
+    QpdfService svc;
+    QCOMPARE(svc.encrypt(src, enc, QString(), QString(), QStringLiteral("owner"),
+                         QpdfService::Algorithm::AES256, perms, nullptr),
+             QpdfService::Status::Ok);
+    QCOMPARE(PageOps::merge({{enc, {1}, {}}, {enc, {0}, {}}}, out), PageOps::Status::Ok);
+    QStringList parts;
+    QCOMPARE(PageOps::split(enc, dir_.path(), QStringLiteral("or_part"), QString(), &parts),
+             PageOps::Status::Ok);
+    for (const QString &path : {out, parts.at(0)}) {
+        QpdfService::Info info;
+        QCOMPARE(svc.readInfo(path, QString(), info, nullptr), QpdfService::Status::Ok);
+        QVERIFY(info.encrypted);
+        QVERIFY(!info.permissions.canPrint);
+        QVERIFY(info.permissions.canCopy);
+    }
+}
+
+/// A merge that reads several files writes no encryption, even when one input has it.
+void TstQpdf::mergeOfSeveralFilesIsNotEncrypted()
+{
+    const QString src = in(QStringLiteral("mx_src.pdf"));
+    const QString enc = in(QStringLiteral("mx_enc.pdf"));
+    const QString plain = in(QStringLiteral("mx_plain.pdf"));
+    const QString out = in(QStringLiteral("mx_out.pdf"));
+    makePdf(src, 2);
+    makePdf(plain, 1);
+    QpdfService svc;
+    QCOMPARE(svc.encrypt(src, enc, QString(), QStringLiteral("secret"), QString(),
+                         QpdfService::Algorithm::AES256, {}, nullptr),
+             QpdfService::Status::Ok);
+    QCOMPARE(PageOps::merge({{enc, {}, QStringLiteral("secret")}, {plain, {}, {}}}, out),
+             PageOps::Status::Ok);
+    QpdfService::Info info;
+    QCOMPARE(svc.readInfo(out, QString(), info, nullptr), QpdfService::Status::Ok);
+    QVERIFY(!info.encrypted);
 }
 
 void TstQpdf::splitWritesOnePerPage()

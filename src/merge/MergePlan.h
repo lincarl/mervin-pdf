@@ -33,6 +33,7 @@ public:
         Load load = Load::Ok;
         QString loadError;  // backend message, shown as the row's tooltip
         QString password;   // only ever non-empty once a caller unlocks the row
+        bool encrypted = false; // opened, but has a password or owner restrictions
         quint64 probeTicket = 0; // pending duplicates share their probe's identity
     };
 
@@ -110,6 +111,15 @@ public:
 
     // The plan as the backend wants it. Only meaningful when isValid().
     QList<PageOps::MergeInput> inputs() const;
+
+    // PageOps::merge keeps encryption only when every row names the same file.
+    // True when the rows name several files and one that opened is encrypted, so
+    // the merged file has no password and none of that file's restrictions.
+    bool losesEncryption() const;
+    // The password that opens the merged file. When every row names the same file,
+    // the merge keeps its encryption and this is the first row's password. Otherwise
+    // it is empty.
+    QString resultPassword() const;
 
     // "<dir of row 0>/<base of row 0>-merged.pdf": the Save as default before
     // defaultOutputPath() steps past names in use. Empty when the plan is empty.
