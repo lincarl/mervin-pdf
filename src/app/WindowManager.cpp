@@ -109,6 +109,7 @@ WindowManager::WindowManager()
     recent_.setRetention(s.recentRetention);
     viewState_.setRetention(s.recentRetention);
     recent_.load(recentFile_);       // missing file -> empty store (normal)
+    keepFavouriteViewStates();       // before the load trims the view states
     viewState_.load(viewStateFile_);
     keepMissingRecent_ = s.recentKeepMissing;
     connect(&probe_, &FileProbe::checked, this, &WindowManager::onFileChecked);
@@ -424,6 +425,7 @@ void WindowManager::removeRecent(const QString &canonicalPath)
     const bool removedRecent = recent_.remove(canonicalPath);
     const bool removedState = viewState_.remove(canonicalPath); // drop its resume state too
     if (removedRecent) {
+        keepFavouriteViewStates();
         appfiles::write(recentFile_, recent_.toJson());
         emit recentListChanged(recent_.entries());
     }
@@ -458,6 +460,7 @@ void WindowManager::dropFoundRecent()
     if (removed.isEmpty())
         return;
 
+    keepFavouriteViewStates();
     appfiles::write(recentFile_, recent_.toJson());
     emit recentListChanged(recent_.entries());
 
@@ -489,9 +492,19 @@ void WindowManager::setFavorite(const QString &canonicalPath, bool favorite)
     if (canonicalPath.isEmpty())
         return;
     if (recent_.setFavorite(canonicalPath, favorite)) {
+        keepFavouriteViewStates();
         appfiles::write(recentFile_, recent_.toJson());
         emit recentListChanged(recent_.entries());
     }
+}
+
+void WindowManager::keepFavouriteViewStates()
+{
+    QStringList favourites;
+    for (const RecentEntry &e : recent_.entries())
+        if (e.favorite)
+            favourites.append(e.path);
+    viewState_.setKept(favourites);
 }
 
 void WindowManager::refreshRecent()

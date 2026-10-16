@@ -194,7 +194,8 @@ public:
     // check on a background thread finds them.
     void clearMissingRecent(const QStringList &paths);
 
-    // Set or clear the favourite flag on a recent entry.
+    // Set or clear the favourite flag on a recent entry. A favourite never ages
+    // out of Recent, and neither does its view state.
     void setFavorite(const QString &canonicalPath, bool favorite);
 
     // Re-broadcast the current recent list to every panel, then prune it (see
@@ -337,6 +338,9 @@ private:
     // in one save (RecentStore::setMissingMounts).
     void recordMount(const QString &path, const QString &mount);
     void recordFoundMounts();
+    // Give viewState_ the favourites, whose view state never ages out
+    // (ViewStateStore::setKept). Run after anything that changes them.
+    void keepFavouriteViewStates();
 
     MainWindow *activeOrNewWindow();
     MainWindow *emptyWindow() const; // a document-less window, or nullptr

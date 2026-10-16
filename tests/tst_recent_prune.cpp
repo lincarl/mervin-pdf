@@ -132,6 +132,55 @@ private slots:
         QCOMPARE(onDisk.recordedMount(away_), QString());
     }
 
+    // Favourites never age out of Recent, and their view state stays with them,
+    // also when the history is read again with the lower retention.
+    void lowerRetentionKeepsFavourites()
+    {
+        // Saved views, oldest first: away_, gone_, kept_.
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        ViewStateStore states;
+        states.put(away_, ViewState{}, now - 30);
+        states.put(gone_, ViewState{}, now - 20);
+        states.put(kept_, ViewState{}, now - 10);
+        QVERIFY(states.save(ViewStateStore::defaultFile()));
+
+        {
+            WindowManager wm;
+            wm.setFavorite(away_, true); // the oldest entry
+            wm.applyRecentSettings(7, 1, true);
+            QCOMPARE(wm.recentEntries().size(), 2);
+            QCOMPARE(wm.recentEntries().at(0).path, kept_);
+            QCOMPARE(wm.recentEntries().at(1).path, away_);
+
+            QVERIFY(mervin::appfiles::flush(10000));
+            RecentStore onDisk;
+            QVERIFY(onDisk.load(RecentStore::defaultFile()));
+            QCOMPARE(onDisk.count(), 2);
+            QVERIFY(onDisk.entries().at(1).favorite);
+            ViewStateStore statesOnDisk;
+            QVERIFY(statesOnDisk.load(ViewStateStore::defaultFile()));
+            QCOMPARE(statesOnDisk.count(), 2);
+            QVERIFY(statesOnDisk.get(kept_));
+            QVERIFY(statesOnDisk.get(away_));
+        }
+
+        Settings s = Settings::load();
+        s.recentRetention = 1;
+        QVERIFY(s.save());
+        WindowManager wm;
+        QCOMPARE(wm.recentEntries().size(), 2);
+        // A newer view state for another file takes the one place from kept_'s,
+        // not from the favourite's.
+        wm.saveViewState(gone_, ViewState{});
+        QVERIFY(mervin::appfiles::flush(10000));
+        ViewStateStore statesOnDisk;
+        QVERIFY(statesOnDisk.load(ViewStateStore::defaultFile()));
+        QCOMPARE(statesOnDisk.count(), 2);
+        QVERIFY(statesOnDisk.get(gone_));
+        QVERIFY(!statesOnDisk.get(kept_));
+        QVERIFY(statesOnDisk.get(away_));
+    }
+
     void keepsEverythingWhileTheSettingIsOn()
     {
         Settings s = Settings::load();

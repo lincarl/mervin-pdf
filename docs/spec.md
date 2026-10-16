@@ -42,7 +42,9 @@ the last window exits. Mervin does not install a login service.
 
 The Recent screen provides:
 
-- recent files, with starred favourites in their own section at the top;
+- recent files, with starred favourites in their own section at the top.
+  Favourites never age out of the history. Recent history kept in Settings counts
+  only the other files;
 - one search field that searches file names, the text inside recent documents, or
   both (names first, then contents). Settings chooses where it starts, Names by
   default. A search inside documents shows which file it is reading and can be

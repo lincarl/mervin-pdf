@@ -21,6 +21,9 @@ private slots:
 #endif
     void retentionTrimsOldest();
     void loweringRetentionRetrims();
+    void loweringRetentionKeepsFavourites();
+    void addingKeepsOldFavourites();
+    void loadKeepsFavouritesPastTheRetention();
     void removeDeletesEntry();
     void removeEntriesRemovesOnlyThoseListed();
     void setMountRecordsTheCurrentMount();
@@ -99,6 +102,66 @@ void TstRecentStore::loweringRetentionRetrims()
     s.setRetention(2);
     QCOMPARE(s.count(), 2);
     QCOMPARE(s.entries()[0].path, QStringLiteral("C:/f5.pdf"));
+}
+
+// Favourites never age out, and only the other entries count against the
+// retention, so a lower retention still keeps that many of them.
+void TstRecentStore::loweringRetentionKeepsFavourites()
+{
+    RecentStore s(10);
+    for (int i = 0; i < 5; ++i)
+        s.add(QStringLiteral("C:/f%1.pdf").arg(i), i);
+    QVERIFY(s.setFavorite(QStringLiteral("C:/f0.pdf"), true)); // the oldest
+    s.setRetention(2);
+    QCOMPARE(s.count(), 3);
+    QCOMPARE(s.entries()[0].path, QStringLiteral("C:/f4.pdf"));
+    QCOMPARE(s.entries()[1].path, QStringLiteral("C:/f3.pdf"));
+    QCOMPARE(s.entries()[2].path, QStringLiteral("C:/f0.pdf"));
+    QVERIFY(s.entries()[2].favorite);
+
+    // Unstarred, it counts again and goes at the next trim.
+    QVERIFY(s.setFavorite(QStringLiteral("C:/f0.pdf"), false));
+    s.setRetention(2);
+    QCOMPARE(s.count(), 2);
+    QCOMPARE(s.entries()[1].path, QStringLiteral("C:/f3.pdf"));
+}
+
+void TstRecentStore::addingKeepsOldFavourites()
+{
+    RecentStore s; // the default retention, 500
+    s.add(QStringLiteral("C:/star.pdf"), 0);
+    QVERIFY(s.setFavorite(QStringLiteral("C:/star.pdf"), true));
+    for (int i = 1; i <= 500; ++i)
+        s.add(QStringLiteral("C:/f%1.pdf").arg(i), i);
+    QCOMPARE(s.count(), 501);
+    QCOMPARE(s.entries().last().path, QStringLiteral("C:/star.pdf"));
+    QVERIFY(s.entries().last().favorite);
+    s.add(QStringLiteral("C:/f501.pdf"), 501);
+    QCOMPARE(s.count(), 501); // f1, the oldest other entry, went instead
+    QCOMPARE(s.entries()[499].path, QStringLiteral("C:/f2.pdf"));
+    QCOMPARE(s.entries().last().path, QStringLiteral("C:/star.pdf"));
+}
+
+// A file with more entries than the retention, such as one saved before the
+// retention was lowered, keeps its favourites when it is read.
+void TstRecentStore::loadKeepsFavouritesPastTheRetention()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString file = dir.filePath(QStringLiteral("recent.json"));
+    RecentStore a(10);
+    for (int i = 0; i < 5; ++i)
+        a.add(QStringLiteral("C:/f%1.pdf").arg(i), i);
+    QVERIFY(a.setFavorite(QStringLiteral("C:/f1.pdf"), true));
+    QVERIFY(a.save(file));
+
+    RecentStore b(2);
+    QVERIFY(b.load(file));
+    QCOMPARE(b.count(), 3);
+    QCOMPARE(b.entries()[0].path, QStringLiteral("C:/f4.pdf"));
+    QCOMPARE(b.entries()[1].path, QStringLiteral("C:/f3.pdf"));
+    QCOMPARE(b.entries()[2].path, QStringLiteral("C:/f1.pdf"));
+    QVERIFY(b.entries()[2].favorite);
 }
 
 void TstRecentStore::removeDeletesEntry()

@@ -308,8 +308,14 @@ void RecentStore::clear()
 
 void RecentStore::trim()
 {
-    if (retention_ > 0 && entries_.size() > retention_)
-        entries_.erase(entries_.begin() + retention_, entries_.end());
+    if (retention_ <= 0)
+        return;
+    // Newest first, so the entries past the first `retention_` others are the
+    // oldest. Favourites never count.
+    int others = 0;
+    entries_.removeIf([this, &others](const RecentEntry &e) {
+        return !e.favorite && ++others > retention_;
+    });
 }
 
 bool RecentStore::load(const QString &file)
