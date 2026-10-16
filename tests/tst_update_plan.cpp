@@ -54,8 +54,13 @@ private slots:
     void isNewerStableVersion_data();
     void isNewerStableVersion();
     void parsesTheRealRelease();
-    void rejectsReleasesWithoutAVersion_data();
-    void rejectsReleasesWithoutAVersion();
+    void unreadableResponses_data();
+    void unreadableResponses();
+    void noStableRelease_data();
+    void noStableRelease();
+    void packageFileNames_data();
+    void packageFileNames();
+    void packageKindNames();
     void assetForEachKind_data();
     void assetForEachKind();
     void assetForIgnoresOtherArchitectures_data();
@@ -148,7 +153,9 @@ void TestUpdatePlan::isNewerStableVersion()
 
 void TestUpdatePlan::parsesTheRealRelease()
 {
-    const std::optional<Release> r = parseRelease(kRelease163);
+    const ReleaseResponse response = parseRelease(kRelease163);
+    QVERIFY(response.understood);
+    const std::optional<Release> &r = response.release;
     QVERIFY(r);
     QCOMPARE(r->tag, QStringLiteral("v1.63.3"));
     QCOMPARE(r->version, QVersionNumber(1, 63, 3));
@@ -167,12 +174,31 @@ void TestUpdatePlan::parsesTheRealRelease()
     QVERIFY(r->assets.at(4).sha256.isEmpty());
 }
 
-void TestUpdatePlan::rejectsReleasesWithoutAVersion_data()
+// Not a release answer at all, such as a proxy's page sent with HTTP 200. The
+// updater keeps the check due rather than calling this copy current.
+void TestUpdatePlan::unreadableResponses_data()
 {
     QTest::addColumn<QByteArray>("json");
     QTest::newRow("empty") << QByteArray();
     QTest::newRow("not json") << QByteArray("<html>rate limited</html>");
     QTest::newRow("API error body") << QByteArray(R"({"message": "Not Found"})");
+    QTest::newRow("empty object") << QByteArray("{}");
+    QTest::newRow("tag is not a string") << QByteArray(R"({"tag_name": 1.64, "assets": []})");
+}
+
+void TestUpdatePlan::unreadableResponses()
+{
+    QFETCH(QByteArray, json);
+    const ReleaseResponse response = parseRelease(json);
+    QVERIFY(!response.understood);
+    QVERIFY(!response.release);
+}
+
+// A definite answer that offers nothing to install. It still counts as a check,
+// so an unusual tag does not cause a request on every start.
+void TestUpdatePlan::noStableRelease_data()
+{
+    QTest::addColumn<QByteArray>("json");
     QTest::newRow("tag is not a version") << QByteArray(R"({"tag_name": "nightly", "assets": []})");
     QTest::newRow("numeric prerelease")
         << QByteArray(R"({"tag_name": "v1.64.9", "prerelease": true, "assets": []})");
@@ -182,10 +208,62 @@ void TestUpdatePlan::rejectsReleasesWithoutAVersion_data()
         << QByteArray(R"({"tag_name": "v1.64.10", "draft": true, "assets": []})");
 }
 
-void TestUpdatePlan::rejectsReleasesWithoutAVersion()
+void TestUpdatePlan::noStableRelease()
 {
     QFETCH(QByteArray, json);
-    QVERIFY(!parseRelease(json));
+    const ReleaseResponse response = parseRelease(json);
+    QVERIFY(response.understood);
+    QVERIFY(!response.release);
+}
+
+// A pending download is installed only by a copy of its own kind, so an AppImage
+// copy never copies a .deb over itself. The name is all that an older version's
+// record says about its kind.
+void TestUpdatePlan::packageFileNames_data()
+{
+    QTest::addColumn<PackageKind>("kind");
+    QTest::addColumn<QString>("name");
+    QTest::addColumn<bool>("matches");
+    const QString msi = QStringLiteral("MervinPDF-1.64.0.msi");
+    const QString appImage = QStringLiteral("MervinPDF-1.64.0-x86_64.AppImage");
+    const QString deb = QStringLiteral("mervin-pdf_1.64.0_ubuntu26.04_amd64.deb");
+    const QString rpm = QStringLiteral("mervin-pdf-1.64.0.x86_64.rpm");
+    QTest::newRow("MSI") << PackageKind::Msi << msi << true;
+    QTest::newRow("AppImage") << PackageKind::AppImage << appImage << true;
+    QTest::newRow("AppImage, other case")
+        << PackageKind::AppImage << QStringLiteral("mervinpdf-1.64.0-x86_64.appimage") << true;
+    QTest::newRow("deb") << PackageKind::Deb << deb << true;
+    QTest::newRow("rpm") << PackageKind::Rpm << rpm << true;
+    QTest::newRow("deb for the AppImage") << PackageKind::AppImage << deb << false;
+    QTest::newRow("AppImage for the deb") << PackageKind::Deb << appImage << false;
+    QTest::newRow("deb for the rpm") << PackageKind::Rpm << deb << false;
+    QTest::newRow("AppImage for the MSI") << PackageKind::Msi << appImage << false;
+    QTest::newRow("unfinished download")
+        << PackageKind::AppImage << appImage + QStringLiteral(".part") << false;
+    QTest::newRow("in another folder")
+        << PackageKind::AppImage << QStringLiteral("MervinPDF-/../x-x86_64.AppImage") << false;
+    QTest::newRow("Store copy") << PackageKind::Msix << msi << false;
+    QTest::newRow("dev build") << PackageKind::None << appImage << false;
+}
+
+void TestUpdatePlan::packageFileNames()
+{
+    QFETCH(PackageKind, kind);
+    QFETCH(QString, name);
+    QFETCH(bool, matches);
+    QCOMPARE(isPackageFileName(kind, name), matches);
+}
+
+// Each user's settings and cache keep these names, so renaming one would lose
+// that kind's pending download.
+void TestUpdatePlan::packageKindNames()
+{
+    QCOMPARE(packageKindName(PackageKind::None), QStringLiteral("none"));
+    QCOMPARE(packageKindName(PackageKind::Msi), QStringLiteral("msi"));
+    QCOMPARE(packageKindName(PackageKind::Msix), QStringLiteral("msix"));
+    QCOMPARE(packageKindName(PackageKind::AppImage), QStringLiteral("appimage"));
+    QCOMPARE(packageKindName(PackageKind::Deb), QStringLiteral("deb"));
+    QCOMPARE(packageKindName(PackageKind::Rpm), QStringLiteral("rpm"));
 }
 
 void TestUpdatePlan::assetForEachKind_data()
@@ -204,12 +282,12 @@ void TestUpdatePlan::assetForEachKind()
 {
     QFETCH(PackageKind, kind);
     QFETCH(QString, expected);
-    const QList<ReleaseAsset> assets = parseRelease(kRelease163)->assets;
+    const QList<ReleaseAsset> assets = parseRelease(kRelease163).release->assets;
     const std::optional<ReleaseAsset> a = assetFor(assets, kind, QStringLiteral("26.04"));
     QCOMPARE(a ? a->name : QString(), expected);
 
     // A release that lacks this kind's asset offers nothing to download.
-    const QList<ReleaseAsset> sumsOnly{parseRelease(kRelease163)->assets.last()};
+    const QList<ReleaseAsset> sumsOnly{parseRelease(kRelease163).release->assets.last()};
     QVERIFY(!assetFor(sumsOnly, kind, QStringLiteral("26.04")));
 }
 

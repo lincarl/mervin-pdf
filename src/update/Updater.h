@@ -28,7 +28,9 @@ namespace mervin {
 // Asset URLs come only from the configured release API response. Its state in
 // QSettings, the downloads and the installation steps touch the disk on one
 // background thread, in order, as the profile can be on a share that stopped
-// answering; each step goes on when its disk work answers.
+// answering; each step goes on when its disk work answers. Each package kind
+// keeps its own check date, pending update and downloads, so copies of different
+// kinds run by one user never install or delete each other's packages.
 class Updater : public QObject
 {
     Q_OBJECT
@@ -39,9 +41,9 @@ public:
 
     static Updater *instance(); // nullptr when none exists
 
-    // Last definite check or Windows installer handoff (UTC); invalid if never, or
-    // until it has been read at start (see lastCheckChanged). A failed check leaves
-    // the previous date.
+    // This package kind's last definite check or Windows installer handoff (UTC);
+    // invalid if never, or until it has been read at start (see lastCheckChanged).
+    // A failed check, or an answer that cannot be read, leaves the previous date.
     static QDateTime lastCheck();
 
     // Whether this copy can download and install updates itself. Portable and dev
@@ -53,7 +55,9 @@ public:
 
     // Run once after the first window is up. When automatic updates are enabled,
     // resumes a pending installation or checks when due. The check and download
-    // are asynchronous, so startup never waits on the network.
+    // are asynchronous, so startup never waits on the network. Either way it
+    // deletes this kind's downloads it no longer needs, such as one that is not
+    // newer than this copy.
     void onStartup();
 
     // Settings -> Updates -> Check for Updates checks now regardless of the last check or setting,
@@ -102,8 +106,11 @@ private:
     void installWhenIdle(); // manual checks can finish over Settings
     void pollInstall();
     bool shouldWaitForDialogs() const;
-    void install(const QString &file, const QString &version);
-    void handOffToInstaller(const QString &file, const QString &version);
+    // Installs `file`, a verified download of `version` whose SHA-256 is `sha256`
+    // (empty if an older version recorded it). Ends the operation instead when
+    // the file is not this kind's package.
+    void install(const QString &file, const QString &version, const QString &sha256);
+    void handOffToInstaller(const QString &file, const QString &version, const QString &sha256);
     void installWithPackageManager(const QString &file, const QString &version);
     void runPackageManager(const QStringList &command, const QString &file, const QString &version);
     void restart(const QString &exe);

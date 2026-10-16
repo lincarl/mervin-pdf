@@ -67,17 +67,42 @@ const QByteArray kUserAgent = QByteArrayLiteral("MervinPDF/" MERVIN_VERSION_STRI
 // A stalled transfer (no bytes either way) is abandoned after this long.
 constexpr int kTransferTimeoutMs = 30'000;
 
-// Update state in QSettings (redirected into the profile by --profile).
-const QString kLastCheckKey = QStringLiteral("update/lastCheckUtc");
-const QString kPendingVersionKey = QStringLiteral("update/pendingVersion");
-const QString kPendingFileKey = QStringLiteral("update/pendingFile");
+// Update state in QSettings (redirected into the profile by --profile). Copies of
+// different package kinds can run for one user, such as an AppImage beside the
+// .deb install, and share these settings and the updates folder. So each kind
+// keeps its state under update/<kind>/ and its downloads in its own folder, and
+// never installs or deletes another kind's.
+QString stateKey(update::PackageKind kind, QLatin1StringView name)
+{
+    return QStringLiteral("update/%1/%2").arg(update::packageKindName(kind), name);
+}
+constexpr QLatin1StringView kLastCheck("lastCheckUtc");
+constexpr QLatin1StringView kPendingVersion("pendingVersion");
+constexpr QLatin1StringView kPendingFile("pendingFile");
+constexpr QLatin1StringView kPendingSha256("pendingSha256");
+
+// The state that versions before this shared between all kinds, and that older
+// copies still use.
+const QString kSharedLastCheckKey = QStringLiteral("update/lastCheckUtc");
+const QString kSharedPendingVersionKey = QStringLiteral("update/pendingVersion");
+const QString kSharedPendingFileKey = QStringLiteral("update/pendingFile");
 
 // A download in progress is <asset name> plus this suffix until it verifies.
 const QString kPartSuffix = QStringLiteral(".part");
 
-QDateTime readLastCheck()
+// This kind's last check. Until it has one, the date older versions shared, so
+// an update to this version keeps the date Settings shows.
+QDateTime readLastCheck(update::PackageKind kind)
 {
-    return QSettings().value(kLastCheckKey).toDateTime();
+    const QSettings st;
+    const QVariant own = st.value(stateKey(kind, kLastCheck));
+    return (own.isValid() ? own : st.value(kSharedLastCheckKey)).toDateTime();
+}
+
+// Whether `file` is a `kind` package, judged by its name.
+bool isPackageOf(update::PackageKind kind, const QString &file)
+{
+    return update::isPackageFileName(kind, QFileInfo(file).fileName());
 }
 
 // A verified download awaiting installation. Windows consumes the pending state
@@ -86,6 +111,9 @@ struct Pending
 {
     QVersionNumber version;
     QString file;
+    // The asset's SHA-256 in lower-case hex. Empty for a download that an older
+    // version recorded, which checked it when it arrived.
+    QString sha256;
 
     // Still worth installing. Newer than this copy and not deleted since.
     bool usable() const
@@ -95,18 +123,65 @@ struct Pending
     }
 };
 
-Pending loadPending()
+// This kind's pending update: its own record, or else the one an older version
+// recorded in the shared keys if that file is this kind's package.
+Pending loadPending(update::PackageKind kind)
 {
     const QSettings st;
-    return {update::parseVersion(st.value(kPendingVersionKey).toString()),
-            st.value(kPendingFileKey).toString()};
+    const Pending pending =
+        st.contains(stateKey(kind, kPendingFile))
+            ? Pending{update::parseVersion(st.value(stateKey(kind, kPendingVersion)).toString()),
+                      st.value(stateKey(kind, kPendingFile)).toString(),
+                      st.value(stateKey(kind, kPendingSha256)).toString()}
+            : Pending{update::parseVersion(st.value(kSharedPendingVersionKey).toString()),
+                      st.value(kSharedPendingFileKey).toString(), {}};
+    return isPackageOf(kind, pending.file) ? pending : Pending{};
 }
 
-void savePending(const QString &version, const QString &file)
+void savePending(update::PackageKind kind, const QString &version, const QString &file,
+                 const QString &sha256)
 {
     QSettings st;
-    st.setValue(kPendingVersionKey, version);
-    st.setValue(kPendingFileKey, file);
+    st.setValue(stateKey(kind, kPendingVersion), version);
+    st.setValue(stateKey(kind, kPendingFile), file);
+    st.setValue(stateKey(kind, kPendingSha256), sha256);
+}
+
+// Forgets this kind's pending update, including one an older version recorded in
+// the shared keys. Another kind's record stays.
+void clearPending(update::PackageKind kind, QSettings &st)
+{
+    st.remove(stateKey(kind, kPendingVersion));
+    st.remove(stateKey(kind, kPendingFile));
+    st.remove(stateKey(kind, kPendingSha256));
+    if (isPackageOf(kind, st.value(kSharedPendingFileKey).toString())) {
+        st.remove(kSharedPendingVersionKey);
+        st.remove(kSharedPendingFileKey);
+    }
+}
+
+// Records the pending update again, on the disk thread, after a Windows handoff
+// consumed it and then did not happen.
+void putBackPending(update::PackageKind kind, const QString &version, const QString &file,
+                    const QString &sha256)
+{
+    onDiskThread([=] { savePending(kind, version, file, sha256); });
+}
+
+// This kind's downloads: its own folder in the updates folder.
+QString downloadsDir(update::PackageKind kind)
+{
+    return QDir(ConfigPaths::updatesDir()).filePath(update::packageKindName(kind));
+}
+
+// The SHA-256 of `path` in lower-case hex, or empty when it cannot be read.
+QString fileSha256(const QString &path)
+{
+    QFile file(path);
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!file.open(QIODevice::ReadOnly) || !hash.addData(&file))
+        return {};
+    return QString::fromLatin1(hash.result().toHex());
 }
 
 // The download in progress (<asset>.part), open from the start of the transfer to
@@ -120,10 +195,12 @@ void closePart()
     delete std::exchange(g_part, nullptr);
 }
 
-// Opens `path` as the download in progress. Returns why it failed, or empty.
+// Opens `path` as the download in progress, making its folder. Returns why it
+// failed, or empty.
 QString openPart(const QString &path)
 {
     closePart();
+    QDir().mkpath(QFileInfo(path).absolutePath());
     auto file = std::make_unique<QFile>(path);
     if (!file->open(QIODevice::WriteOnly | QIODevice::Truncate))
         return file->errorString();
@@ -131,25 +208,50 @@ QString openPart(const QString &path)
     return {};
 }
 
-// Deletes everything in the updates folder except `keep` (interrupted .part
-// files, superseded or already installed downloads). An installer that is still
-// running stays locked on Windows and goes on a later start.
-void removeDownloadsExcept(const QString &keep)
+// Deletes this kind's downloads except `keep` (interrupted .part files,
+// superseded or already installed downloads): everything in its folder, and its
+// packages that older versions saved in the updates folder itself. Other kinds'
+// downloads stay. An installer that is still running stays locked on Windows and
+// goes on a later start.
+void removeDownloadsExcept(update::PackageKind kind, const QString &keep)
 {
     closePart(); // an open file cannot be deleted on Windows
     const QString kept = keep.isEmpty() ? QString() : QFileInfo(keep).absoluteFilePath();
-    const QDir dir(ConfigPaths::updatesDir());
-    for (const QFileInfo &fi : dir.entryInfoList(QDir::Files | QDir::Hidden))
+    const auto remove = [&kept](const QFileInfo &fi) {
         if (fi.absoluteFilePath() != kept)
             QFile::remove(fi.absoluteFilePath());
+    };
+    const QDir::Filters files = QDir::Files | QDir::Hidden;
+    for (const QFileInfo &fi : QDir(downloadsDir(kind)).entryInfoList(files))
+        remove(fi);
+    for (const QFileInfo &fi : QDir(ConfigPaths::updatesDir()).entryInfoList(files)) {
+        QString name = fi.fileName();
+        if (name.endsWith(kPartSuffix))
+            name.chop(kPartSuffix.size());
+        if (update::isPackageFileName(kind, name))
+            remove(fi);
+    }
 }
 
-void discardDownloads()
+void discardDownloads(update::PackageKind kind)
 {
     QSettings st;
-    st.remove(kPendingVersionKey);
-    st.remove(kPendingFileKey);
-    removeDownloadsExcept({});
+    clearPending(kind, st);
+    removeDownloadsExcept(kind, {});
+}
+
+// Keeps this kind's pending update while it is newer than this copy and still
+// there, and deletes the rest of this kind's downloads, such as the package this
+// copy was updated with. True when an update is kept.
+bool tidyDownloads(update::PackageKind kind)
+{
+    const Pending pending = loadPending(kind);
+    if (!pending.usable()) {
+        discardDownloads(kind); // installed, deleted by hand, or never there
+        return false;
+    }
+    removeDownloadsExcept(kind, pending.file);
+    return true;
 }
 
 // The active window, or failing that any visible main window, so a prompt that
@@ -192,6 +294,13 @@ void warn(const QString &text)
     QMessageBox::warning(dialogParent(), Updater::tr("Update"), text);
 }
 
+// Tells a manual check that it got no answer it could use.
+void warnCheckFailed(const QString &reason)
+{
+    //: %1 says why, such as a network error message.
+    warn(Updater::tr("Couldn't check for updates right now.\n\n%1").arg(reason));
+}
+
 void warnInstallerNotStarted(const QString &file)
 {
     //: %1 is the path of the downloaded installer.
@@ -221,7 +330,7 @@ Updater::Updater(QObject *parent)
 {
     g_instance = this;
     onDisk(
-        readLastCheck,
+        [kind = kind_] { return readLastCheck(kind); },
         [this](const QDateTime &utc) {
             if (lastCheckKnown_)
                 return; // a check has set it meanwhile
@@ -287,17 +396,17 @@ QDateTime Updater::lastCheck()
     return g_instance ? g_instance->lastCheck_ : QDateTime();
 }
 
-// The next automatic check is 30 days away. A definite answer or a Windows
-// installer handoff resets the interval. A network error leaves the check due
-// so the next start retries.
+// This kind's next automatic check is 30 days away. A definite answer or a
+// Windows installer handoff resets the interval. A network error or an answer
+// that cannot be read leaves the check due so the next start retries.
 void Updater::markChecked()
 {
     const QDateTime now = QDateTime::currentDateTimeUtc();
     lastCheck_ = now;
     lastCheckKnown_ = true;
-    onDiskThread([now] {
+    onDiskThread([kind = kind_, now] {
         QSettings st;
-        st.setValue(kLastCheckKey, now);
+        st.setValue(stateKey(kind, kLastCheck), now);
         st.remove(QStringLiteral("update/startsSinceCheck"));
     });
     emit checked(now);
@@ -308,19 +417,20 @@ void Updater::onStartup()
 {
     // The update state belongs to installed copies. A dev build run against the
     // real settings must neither offer nor delete an installed copy's download.
-    if (!canSelfUpdate() || busy_ || !Settings::load().autoUpdate)
+    if (!canSelfUpdate() || busy_)
         return;
+    if (!Settings::load().autoUpdate) {
+        // Nothing installs on its own, but a download that is no longer newer,
+        // such as the package of the update that just finished, goes.
+        onDiskThread([kind = kind_] { tidyDownloads(kind); });
+        return;
+    }
 
     busy_ = true;
     onDisk(
-        [] {
-            const Pending pending = loadPending();
-            const bool resume = pending.usable();
-            if (resume)
-                removeDownloadsExcept(pending.file);
-            else
-                discardDownloads(); // installed, deleted by hand, or never there
-            return std::pair(resume, readLastCheck());
+        [kind = kind_] {
+            const bool resume = tidyDownloads(kind);
+            return std::pair(resume, readLastCheck(kind));
         },
         [this](const std::pair<bool, QDateTime> &start) {
             busy_ = false;
@@ -369,7 +479,7 @@ void Updater::onAutoUpdateChanged(bool on)
         reply_->abort(); // its finished handler removes the .part file
     else
         endOperation();
-    onDiskThread(discardDownloads);
+    onDiskThread([kind = kind_] { discardDownloads(kind); });
 }
 
 void Updater::check(bool manual)
@@ -395,13 +505,25 @@ void Updater::onReleaseReply(QNetworkReply *reply)
 
     if (reply->error() != QNetworkReply::NoError) {
         if (manual_ && reply->error() != QNetworkReply::OperationCanceledError)
-            //: %1 is the network error message.
-            warn(tr("Couldn't check for updates right now.\n\n%1").arg(reply->errorString()));
+            warnCheckFailed(reply->errorString());
         endOperation();
         return;
     }
 
-    const std::optional<update::Release> release = update::parseRelease(reply->readAll());
+    const update::ReleaseResponse response = update::parseRelease(reply->readAll());
+    if (!response.understood) {
+        // Not a release at all, such as a network filter's page sent with HTTP 200.
+        // Like a network error, it leaves the automatic check due.
+        if (manual_) {
+            //: Shown below "Couldn't check for updates right now." when the update
+            //: server's answer was not release information, such as a web page
+            //: from a network filter.
+            warnCheckFailed(tr("The update server's answer couldn't be read."));
+        }
+        endOperation();
+        return;
+    }
+    const std::optional<update::Release> &release = response.release;
     if (!release || !update::isNewerStableVersion(release->version,
                                                  QStringLiteral(MERVIN_VERSION_STRING))) {
         markChecked();
@@ -441,8 +563,8 @@ void Updater::onReleaseReply(QNetworkReply *reply)
     }
 
     onDisk(
-        [] {
-            const Pending pending = loadPending();
+        [kind = kind_] {
+            const Pending pending = loadPending(kind);
             return std::pair(pending.usable(), pending.version);
         },
         [this, asset = *asset, version = release->version](
@@ -465,8 +587,8 @@ void Updater::download(const update::ReleaseAsset &asset, const QString &version
     // If the operation ends while the file opens, the file stays open until the
     // discard that follows closes it on the disk thread.
     onDisk(
-        [name = asset.name] {
-            return openPart(QDir(ConfigPaths::updatesDir()).filePath(name + kPartSuffix));
+        [kind = kind_, name = asset.name] {
+            return openPart(QDir(downloadsDir(kind)).filePath(name + kPartSuffix));
         },
         [this](const QString &error) {
             if (!error.isEmpty()) {
@@ -559,7 +681,8 @@ void Updater::onDownloadFinished()
     };
     const std::shared_ptr<std::atomic<bool>> failed = std::exchange(partFailed_, nullptr);
     onDisk(
-        [failed, rest, received, verified, version = downloadVersion_] {
+        [failed, rest, received, verified, kind = kind_, version = downloadVersion_,
+         sha256 = asset_.sha256] {
             const std::unique_ptr<QFile> part(std::exchange(g_part, nullptr));
             if (!part)
                 return Finish{Outcome::WriteFailed, {}};
@@ -585,12 +708,14 @@ void Updater::onDownloadFinished()
                 QFile::remove(partPath);
                 return Finish{Outcome::RenameFailed, {}};
             }
-            // The new download supersedes any older pending one.
-            const Pending previous = loadPending();
+            // The new download supersedes any older pending one of this kind.
+            const Pending previous = loadPending(kind);
             if (!previous.file.isEmpty()
                 && QFileInfo(previous.file).absoluteFilePath() != QFileInfo(file).absoluteFilePath())
                 QFile::remove(previous.file);
-            savePending(version, file);
+            QSettings st;
+            clearPending(kind, st);
+            savePending(kind, version, file, sha256);
             return Finish{Outcome::Saved, {}};
         },
         [this, networkError, canceled](const Finish &finish) {
@@ -648,13 +773,28 @@ void Updater::pollInstall()
         return;
     }
     installQueued_ = false;
+    struct Ready
+    {
+        Pending pending;      // empty when there is nothing to install
+        bool altered = false; // the file changed after it was verified, and was discarded
+    };
     onDisk(
-        [] {
-            const Pending pending = loadPending();
-            return pending.usable() ? pending : Pending{};
+        [kind = kind_] {
+            const Pending pending = loadPending(kind);
+            if (!pending.usable())
+                return Ready{};
+            // Hashed again: the file can have changed since it was downloaded.
+            if (!pending.sha256.isEmpty() && fileSha256(pending.file) != pending.sha256) {
+                discardDownloads(kind);
+                return Ready{{}, true};
+            }
+            return Ready{pending};
         },
-        [this](const Pending &pending) {
+        [this](const Ready &ready) {
+            const Pending &pending = ready.pending;
             if (pending.file.isEmpty()) {
+                if (ready.altered && manual_)
+                    warn(tr("The downloaded update failed its integrity check and was discarded."));
                 endOperation();
                 return;
             }
@@ -663,7 +803,7 @@ void Updater::pollInstall()
                 return;
             }
             installing_ = true;
-            install(pending.file, pending.version.toString());
+            install(pending.file, pending.version.toString(), pending.sha256);
         });
 }
 
@@ -674,8 +814,14 @@ bool Updater::shouldWaitForDialogs() const
     return (!manual_ && QApplication::activeModalWidget()) || QApplication::activePopupWidget();
 }
 
-void Updater::install(const QString &file, const QString &version)
+void Updater::install(const QString &file, const QString &version, const QString &sha256)
 {
+    // The last guard: whatever the record says, never install another kind's
+    // package, such as a .deb copied over this AppImage.
+    if (!isPackageOf(kind_, file)) {
+        endOperation();
+        return;
+    }
     switch (kind_) {
     case update::PackageKind::Msi:
         // The helper relaunches even if MSI fails or is cancelled, so this attempt
@@ -683,27 +829,26 @@ void Updater::install(const QString &file, const QString &version)
         // app must not enter an install/relaunch loop. The file stays until the
         // installer exits and startup cleans it up.
         onDisk(
-            [] {
+            [kind = kind_] {
                 QSettings st;
-                st.remove(kPendingVersionKey);
-                st.remove(kPendingFileKey);
+                clearPending(kind, st);
                 st.sync();
                 return st.status() == QSettings::NoError;
             },
-            [this, file, version](bool consumed) {
+            [this, file, version, sha256](bool consumed) {
                 if (!consumed) {
-                    onDiskThread([file, version] { savePending(version, file); });
+                    putBackPending(kind_, version, file, sha256);
                     warnInstallerNotStarted(file);
                     endOperation();
                     return;
                 }
                 if (shouldWaitForDialogs()) { // one opened meanwhile
-                    onDiskThread([file, version] { savePending(version, file); });
+                    putBackPending(kind_, version, file, sha256);
                     installing_ = false;
                     installWhenIdle();
                     return;
                 }
-                handOffToInstaller(file, version);
+                handOffToInstaller(file, version, sha256);
             });
         return;
     case update::PackageKind::AppImage:
@@ -740,15 +885,16 @@ void Updater::install(const QString &file, const QString &version)
 // detached and this process quits, all in this one call. A dialog's event loop
 // that ran in between would delete the closed windows under the dialog. The
 // pending update was consumed before; it is put back if the handoff fails.
-void Updater::handOffToInstaller(const QString &file, const QString &version)
+void Updater::handOffToInstaller(const QString &file, const QString &version,
+                                 const QString &sha256)
 {
     if (!closeWindows()) {
-        onDiskThread([file, version] { savePending(version, file); });
+        putBackPending(kind_, version, file, sha256);
         endOperation();
         return;
     }
     if (!update::startWindowsInstaller(file)) {
-        onDiskThread([file, version] { savePending(version, file); });
+        putBackPending(kind_, version, file, sha256);
         warnInstallerNotStarted(file);
         endOperation();
         QApplication::quit();
