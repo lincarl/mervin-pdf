@@ -1194,17 +1194,20 @@ same folder counts as the file's volume, unless that folder is `/media`,
 the mount it is on now replaces it once the check finds the file there. An entry
 without a recorded mount, such as one an older version wrote, gets the mount from
 the first check of any kind that finds its file there, such as the Recent page's
-own checks or a prune pass. `WindowManager::onFileChecked` collects those mounts
-and, as for the entries it drops, saves `recent.json` and announces the list once
-per batch rather than once per file. Such a check never replaces a recorded mount.
+own checks or a prune pass. `WindowManager::onFileChecked` collects those mounts.
+It saves `recent.json` and announces the list once when the prune pass that found
+them has its last answer, and otherwise `kMountSaveMs` (half a second) after the
+first one, on a timer that later finds do not restart. `FileProbe` answers one file
+at a time, so a pass on a slow share saves at most twice a second rather than once
+per file. Such a check never replaces a recorded mount.
 `recordOpen` gives the mount to the session too, which saves it for each open or kept
 document in `"mounts"` of `session.json`. Restore therefore still has it after Recent
 trims or clears the file. For a session saved before that field existed, restore
-takes the mount from Recent and keeps it from then on. A missing file under a folder that was a mount point when the
-file was opened, and is no longer used as one, stays listed as away until it is
-cleared by hand or opened again. An entry from an older version has no recorded
-mount until a check finds its file. Until then, a share mounted outside fstab that
-holds the file is not recognised while it is unmounted.
+takes the mount from Recent and keeps it from then on. A missing file under a
+folder that is its recorded mount point, and is no longer used as one, stays listed
+as away until it is cleared by hand or opened again. An entry from an older version
+has no recorded mount until a check finds its file. Until then, a share mounted
+outside fstab that holds the file is not recognised while it is unmounted.
 
 `SettingsDialog` edits a copy of the settings. It emits a request for a manual update
 check, and on Apply, or OK with changes pending, a request to apply the edited copy;

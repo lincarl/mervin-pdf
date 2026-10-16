@@ -216,7 +216,7 @@ bool answers(const QString &folder)
 #endif
 
 // Whether the volume holding `absPath` is attached, given the mount recorded
-// when the file was opened, if any (see isVolumeAttached).
+// for the file, if any (see isVolumeAttached).
 bool volumeAttached(const QString &absPath, const QString &mount)
 {
 #ifdef Q_OS_WIN
@@ -237,7 +237,7 @@ bool volumeAttached(const QString &absPath, const QString &mount)
     const QList<mounts::Mount> mounted = mountedNow();
     // A share mounted by hand outside fstab leaves an empty folder once it is
     // unmounted, which the mount list cannot tell from a folder whose file was
-    // deleted. While the folder the file was opened from is still there and
+    // deleted. While the recorded mount's folder is still there and
     // another file system holds the path, the volume is away. Otherwise the mount
     // list decides, so a recorded mount never makes a volume look attached. That
     // covers a folder that went with its volume, as udisks and per-login mounts

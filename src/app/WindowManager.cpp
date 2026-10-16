@@ -113,6 +113,10 @@ WindowManager::WindowManager()
     viewState_.load(viewStateFile_);
     keepMissingRecent_ = s.recentKeepMissing;
     connect(&probe_, &FileProbe::checked, this, &WindowManager::onFileChecked);
+    mountSaveTimer_ = new QTimer(this);
+    mountSaveTimer_->setSingleShot(true);
+    mountSaveTimer_->setInterval(kMountSaveMs);
+    connect(mountSaveTimer_, &QTimer::timeout, this, &WindowManager::recordFoundMounts);
 
     activityClock_.start();
     trayMenu_ = std::make_unique<QMenu>();
@@ -370,7 +374,7 @@ void WindowManager::recordOpen(const QString &canonicalPath, bool restoreViewSta
 {
     if (canonicalPath.isEmpty())
         return;
-    // The mount the file was opened from, until the check below finds the file and
+    // The mount recorded for the file, until the check below finds the file and
     // the mount it is on now. A file that is not there, such as a crash recovery
     // tab opened lazily or a tab focused again after its share went away, keeps
     // it, since recording then would store the file system below the empty folder.
@@ -473,13 +477,17 @@ void WindowManager::dropFoundRecent()
 
 void WindowManager::recordMount(const QString &path, const QString &mount)
 {
-    if (mountsDue_.isEmpty())
-        QTimer::singleShot(0, this, &WindowManager::recordFoundMounts);
     mountsDue_.insert(path, mount);
+    // The probe answers one file at a time, so saving on the next turn of the
+    // event loop would save, and rebuild every Recent page, nearly once per answer.
+    // The timer is not restarted, so a slow pass still saves every kMountSaveMs.
+    if (!mountSaveTimer_->isActive())
+        mountSaveTimer_->start();
 }
 
 void WindowManager::recordFoundMounts()
 {
+    mountSaveTimer_->stop();
     if (!recent_.setMissingMounts(std::exchange(mountsDue_, {})))
         return;
     appfiles::write(recentFile_, recent_.toJson());
@@ -570,8 +578,13 @@ void WindowManager::onFileChecked(const FileCheck &file, const FileFacts &facts)
         // file there, such as for the Recent page, records the one it is on.
         recordMount(path, facts.mount);
     }
-    if (pruneWanted_.remove(key) && !keepMissingRecent_ && facts.removed())
-        dropRecent(path);
+    if (pruneWanted_.remove(key)) {
+        if (!keepMissingRecent_ && facts.removed())
+            dropRecent(path);
+        // The pass has its last answer, so the mounts it found need not wait.
+        if (pruneWanted_.isEmpty() && !mountsDue_.isEmpty())
+            recordFoundMounts();
+    }
     if (clearWanted_.remove(key) && !facts.exists)
         dropRecent(path);
     if (restoreLate_.remove(key))
@@ -590,8 +603,8 @@ void WindowManager::closeRemovedTabs()
         tabScanPending_ = true;
         return;
     }
-    // Each unloaded tab's file, once per canonical path, with the mount it was
-    // opened from. Tabs with unsaved edits reload from their recovery copy.
+    // Each unloaded tab's file, once per canonical path, with the mount recorded
+    // for it. Tabs with unsaved edits reload from their recovery copy.
     struct File
     {
         QString path;

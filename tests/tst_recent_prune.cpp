@@ -7,6 +7,7 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -130,6 +131,71 @@ private slots:
         QVERIFY(onDisk.load(RecentStore::defaultFile()));
         QCOMPARE(onDisk.recordedMount(kept_), mount);
         QCOMPARE(onDisk.recordedMount(away_), QString());
+    }
+
+    // The Recent page checks its rows itself, also with Keep removed files in list
+    // on, when nothing is pruned. Such a check records the mount too, and saves it
+    // without a prune pass to end.
+    void recordsTheMountFromAnyCheck()
+    {
+        Settings s = Settings::load();
+        s.recentKeepMissing = true;
+        QVERIFY(s.save());
+        WindowManager wm;
+        QCOMPARE(entry(wm, kept_).mount, QString());
+        wm.fileProbe()->check({{kept_, QString()}}); // as RecentFilesPanel asks
+        const QString mount = RecentStore::mountOf(kept_);
+#ifndef Q_OS_WIN
+        QVERIFY(!mount.isEmpty());
+#endif
+        QTRY_COMPARE(entry(wm, kept_).mount, mount);
+
+        QVERIFY(mervin::appfiles::flush(10000));
+        RecentStore onDisk;
+        QVERIFY(onDisk.load(RecentStore::defaultFile()));
+        QCOMPARE(onDisk.recordedMount(kept_), mount);
+    }
+
+    // A pass over many entries an older version wrote records every mount, but
+    // saves recent.json and announces the list together, not once per answer,
+    // since each announcement rebuilds every Recent page. The probe answers one
+    // file at a time, so a pass that takes long saves at most once per
+    // kMountSaveMs before it ends.
+    void savesTheMountsOfAPassTogether()
+    {
+#ifdef Q_OS_WIN
+        QSKIP("Windows records no mounts.");
+#else
+        constexpr int kEntries = 400;
+        const QDir root(profile_->path());
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        RecentStore recent;
+        for (int i = 0; i < kEntries; ++i) {
+            const QString path = root.filePath(QStringLiteral("docs/old-%1.pdf").arg(i));
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.close();
+            recent.add(path, now - 1000 - i);
+        }
+        QVERIFY(recent.save(RecentStore::defaultFile()));
+
+        WindowManager wm;
+        QSignalSpy announced(&wm, &WindowManager::recentListChanged);
+        QElapsedTimer pass;
+        pass.start();
+        wm.refreshRecent(); // announces the list once before it prunes
+        const auto recorded = [&wm] {
+            int n = 0;
+            for (const RecentEntry &e : wm.recentEntries())
+                n += e.mount.isEmpty() ? 0 : 1;
+            return n;
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(recorded(), kEntries, 20000);
+        const qint64 saves = announced.count() - 1;
+        const qint64 allowed = 1 + pass.elapsed() / WindowManager::kMountSaveMs;
+        QVERIFY2(saves >= 1 && saves <= allowed,
+                 qPrintable(QStringLiteral("%1 saves in %2 ms").arg(saves).arg(pass.elapsed())));
+#endif
     }
 
     // Favourites never age out of Recent, and their view state stays with them,
