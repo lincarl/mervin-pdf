@@ -849,6 +849,11 @@ void RenderEngine::workerLoop(const std::shared_ptr<Shared> &shared, fz_context 
         std::vector<fz_rect> fzOverlays;
         std::vector<int> fzOverlaySeq;
         QVector<ComfortImageRect> imageRects;
+        // This worker's own context, so the level returns to it in fz_always.
+        const int textLevel = fz_text_aa_level(ctx);
+        const int graphicsLevel = fz_graphics_aa_level(ctx);
+        if (!req.antialias)
+            fz_set_aa_level(ctx, 0);
         fz_try(ctx) {
             fz_matrix ctm = fz_pre_rotate(
                 fz_scale(static_cast<float>(req.scale), static_cast<float>(req.scale)),
@@ -1040,6 +1045,8 @@ void RenderEngine::workerLoop(const std::shared_ptr<Shared> &shared, fz_context 
                 fz_drop_pixmap(ctx, pix);
             if (list)
                 fz_drop_display_list(ctx, list);
+            fz_set_text_aa_level(ctx, textLevel);
+            fz_set_graphics_aa_level(ctx, graphicsLevel);
         }
         fz_catch(ctx) {
             res.ok = false;

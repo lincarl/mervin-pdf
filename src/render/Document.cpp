@@ -107,7 +107,8 @@ Document::~Document()
         fz_drop_context(ctx_);
 }
 
-QImage Document::renderPage(int pageNo, double scale, int rotation) const
+QImage Document::renderPage(int pageNo, double scale, int rotation, const QRect &clip,
+                            bool antialias) const
 {
     const ScreenQuery query(*lifetime_, "Document::renderPage");
     if (query.refused())
@@ -115,22 +116,65 @@ QImage Document::renderPage(int pageNo, double scale, int rotation) const
     std::lock_guard<std::mutex> lock(access_);
     fz_page *page = nullptr;
     fz_pixmap *pixmap = nullptr;
+    fz_device *device = nullptr;
     fz_var(page);
     fz_var(pixmap);
-    QImage image;
+    fz_var(device);
+    const fz_matrix transform = fz_pre_rotate(
+        fz_scale(static_cast<float>(scale), static_cast<float>(scale)),
+        static_cast<float>(rotation));
+    fz_irect full{};
     fz_try(ctx_) {
         page = fz_load_page(ctx_, doc_, pageNo);
-        const fz_matrix transform = fz_pre_rotate(
-            fz_scale(static_cast<float>(scale), static_cast<float>(scale)),
-            static_cast<float>(rotation));
-        pixmap = fz_new_pixmap_from_page(ctx_, page, transform, fz_device_rgb(ctx_), 0);
-        image = QImage(fz_pixmap_samples(ctx_, pixmap), fz_pixmap_width(ctx_, pixmap),
-                       fz_pixmap_height(ctx_, pixmap), fz_pixmap_stride(ctx_, pixmap),
-                       QImage::Format_RGB888).copy();
+        full = fz_round_rect(fz_transform_rect(fz_bound_page(ctx_, page), transform));
+    }
+    fz_catch(ctx_) {
+        fz_drop_page(ctx_, page);
+        return {};
+    }
+    // As in RenderEngine's deep-zoom tiles, the clip is relative to the full
+    // raster's top-left, which is the transformed page bounds' rounded origin.
+    fz_irect bbox = full;
+    if (!clip.isEmpty()) {
+        fz_irect want;
+        want.x0 = full.x0 + clip.left();
+        want.y0 = full.y0 + clip.top();
+        want.x1 = want.x0 + clip.width();
+        want.y1 = want.y0 + clip.height();
+        bbox = fz_intersect_irect(want, full);
+    }
+    // MuPDF draws straight into the image's rows, so the raster exists only once.
+    QImage image;
+    if (bbox.x1 > bbox.x0 && bbox.y1 > bbox.y0)
+        image = QImage(bbox.x1 - bbox.x0, bbox.y1 - bbox.y0, QImage::Format_RGB888);
+    if (image.isNull()) {
+        fz_drop_page(ctx_, page);
+        return {};
+    }
+    uchar *samples = image.bits();
+    const int stride = static_cast<int>(image.bytesPerLine());
+    // Level 0 also makes MuPDF widen thinner strokes to one pixel. The access lock
+    // keeps every other use of this context out until the levels are restored.
+    const int textLevel = fz_text_aa_level(ctx_);
+    const int graphicsLevel = fz_graphics_aa_level(ctx_);
+    if (!antialias)
+        fz_set_aa_level(ctx_, 0);
+    fz_try(ctx_) {
+        pixmap = fz_new_pixmap_with_data(ctx_, fz_device_rgb(ctx_), bbox.x1 - bbox.x0,
+                                         bbox.y1 - bbox.y0, nullptr, 0, stride, samples);
+        pixmap->x = bbox.x0;
+        pixmap->y = bbox.y0;
+        fz_clear_pixmap_with_value(ctx_, pixmap, 0xFF);
+        device = fz_new_draw_device(ctx_, transform, pixmap);
+        fz_run_page(ctx_, page, device, fz_identity, nullptr);
+        fz_close_device(ctx_, device);
     }
     fz_always(ctx_) {
+        fz_drop_device(ctx_, device);
         fz_drop_pixmap(ctx_, pixmap);
         fz_drop_page(ctx_, page);
+        fz_set_text_aa_level(ctx_, textLevel);
+        fz_set_graphics_aa_level(ctx_, graphicsLevel);
     }
     fz_catch(ctx_) {
         image = {};

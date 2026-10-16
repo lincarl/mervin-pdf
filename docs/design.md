@@ -48,7 +48,7 @@ src/
   net/           safe URL request and download helpers
   ocr/           language-model discovery and validation
   platform/      Windows and Linux integration
-  print/         print-range parsing
+  print/         print ranges, sheet placement, raster plans, and the preview
   recent/        recent-file and per-file view-state stores, volume checks
   render/        MuPDF documents, rendering, text, tools, forms, and annotations
   security/      qpdf page, security, and measurement-output services
@@ -1055,11 +1055,39 @@ through the surviving tab. The prepared document remains owned until delivery, a
 the dialog still checks that its live document identity matches before opening.
 
 After the dialog, the worker owns the QPrinter, begins and ends its QPainter, and
-renders each page with Document::renderPage on the document's own context. A short
-document hold covers rendering and page geometry, then releases before painting or
-calling the printer system. A blocked printer call names its printer in the wait bar.
-Stop aborts further pages and suppresses completion. A print completion already
-submitted may finish. The worker checks painter.end and reports a completion failure.
+renders pages with Document::renderPage on the document's own context.
+`printing::rasterPlan` sets the raster scale from the page's printed size, so the
+quality setting holds on paper. A page reduced to the sheet renders fewer pixels, and
+an enlarged page is not stretched. A device-pixel clip limits the raster to the part
+of the page inside the printable area, and `printing::rasterBands` splits that part
+into horizontal bands of whole raster rows, at most 2^24 pixels each. Qt's PDF engine
+holds about 8 bytes a pixel while it draws a band, so the job's peak memory stays
+near 135 MB above the app's own on any sheet and quality. Each band but the last also
+renders the next band's first row, which the next band draws over, because Qt's
+Windows engine truncates an image's position and height to whole device pixels.
+Black and white renders without antialiasing, so its threshold acts on colours, and
+MuPDF draws every stroke at least one pixel wide.
+
+Each band takes a short document hold for rendering, and the first band's hold also
+reads the page size. Each hold ends before colour conversion, painting or any printer
+call. The worker converts a band's colour mode before it draws the band. It begins the
+job or starts a sheet only after the sheet's first band converted, so a failed render
+or conversion reports its page instead of leaving a blank sheet. A blocked printer
+call names its printer in the wait bar. Stop takes effect between bands and
+suppresses completion. A print completion already submitted may finish. The worker
+checks painter.end and reports a completion failure.
+
+Qt cannot cancel a print job, because QPrinter::abort does nothing in Qt's PDF, CUPS
+and Windows engines. When Stop or a failure ends a printer job early, the painter
+still ends it, and the printer receives the sheets drawn so far, including a partly
+drawn sheet after a failure in a later band. Print to file discards its private PDF.
+
+The print preview renders through RenderEngine with the same raster plan, at screen
+resolution for colour and grayscale, and like printing for black and white, at the
+print quality without antialiasing. Its raster stays within 2048 or 4096 pixels on a
+side. It keeps the colour conversion and its reduction to
+the device size between paints, and redoes them only for a new render, colour mode or
+device size.
 
 Print to file reserves and checks the destination against source and open tabs before
 output begins. QPrinter writes a private local PDF, then closes before the worker

@@ -15,6 +15,11 @@ private slots:
     void pagePlacement_data();
     void pagePlacement();
     void oversizedPageKeepsPhysicalSize();
+    void rasterFollowsPrintedSize_data();
+    void rasterFollowsPrintedSize();
+    void invalidRasterPlansAreEmpty();
+    void rasterBandsSplitWholeRows_data();
+    void rasterBandsSplitWholeRows();
     void invalidDimensionsAreEmpty();
     void colourAndGrayscaleRemainDistinct();
     void blackAndWhiteThresholdAndTransparency();
@@ -96,6 +101,137 @@ void TstPrintLayout::oversizedPageKeepsPhysicalSize()
              QRectF(10, 20, 200, 100));
 }
 
+void TstPrintLayout::rasterFollowsPrintedSize_data()
+{
+    QTest::addColumn<QSizeF>("page");
+    QTest::addColumn<QRectF>("printable");
+    QTest::addColumn<ScaleMode>("scaleMode");
+    QTest::addColumn<int>("percent");
+    QTest::addColumn<QSize>("expectedSize");
+
+    const QSizeF a1(1684, 2384);
+    const QSizeF a4(595, 842);
+    const QRectF fullSheet(0, 0, 595, 842);
+    const QRectF margins(20, 30, 555, 782);
+    // 300 dpi of the A4 sheet, which the A1 page fills in its height.
+    QTest::newRow("fit A1 to A4") << a1 << fullSheet << ScaleMode::FitToPage << 100
+        << QSize(2479, 3509);
+    QTest::newRow("actual size on a matching sheet") << a4 << fullSheet << ScaleMode::ActualSize
+        << 100 << QSize(2480, 3509);
+    // Only the printable area of an oversized page reaches the raster.
+    QTest::newRow("actual size of A1 on A4") << a1 << margins << ScaleMode::ActualSize << 100
+        << QSize(2313, 3259);
+    QTest::newRow("custom 400% on A4") << a4 << margins << ScaleMode::Custom << 400
+        << QSize(2313, 3259);
+    QTest::newRow("custom 50% on A4") << a4 << margins << ScaleMode::Custom << 50
+        << QSize(1240, 1755);
+}
+
+// Checks print rasters keep the quality on paper and cover only the visible page.
+void TstPrintLayout::rasterFollowsPrintedSize()
+{
+    QFETCH(QSizeF, page);
+    QFETCH(QRectF, printable);
+    QFETCH(ScaleMode, scaleMode);
+    QFETCH(int, percent);
+    QFETCH(QSize, expectedSize);
+    Settings settings;
+    settings.scaleMode = scaleMode;
+    settings.scalePercent = percent;
+    constexpr double dpi = 300;
+    const RasterPlan plan = rasterPlan(page, printable, settings, dpi);
+    const QRectF destination = destinationRect(page, printable, settings);
+    QCOMPARE(plan.destination, destination);
+    // Raster pixels per page point give `dpi` on paper whatever the page's scale.
+    QVERIFY(qFuzzyCompare(plan.scale * page.width() / destination.width(), dpi / 72));
+    QVERIFY2(std::abs(plan.source.width() - expectedSize.width()) <= 1
+                 && std::abs(plan.source.height() - expectedSize.height()) <= 1,
+             qPrintable(QString("Raster %1 x %2").arg(plan.source.width())
+                            .arg(plan.source.height())));
+
+    // The source rounds the visible page out to whole pixels, which land on it.
+    const QRectF visible = destination & printable;
+    const QRectF target = rasterTarget(plan.destination, page, plan.scale, plan.source);
+    const double pixel = 72 / dpi;
+    QVERIFY(target.left() <= visible.left() + 1e-9 && target.left() > visible.left() - pixel);
+    QVERIFY(target.top() <= visible.top() + 1e-9 && target.top() > visible.top() - pixel);
+    QVERIFY(target.right() >= visible.right() - 1e-9 && target.right() < visible.right() + pixel);
+    QVERIFY(target.bottom() >= visible.bottom() - 1e-9
+            && target.bottom() < visible.bottom() + pixel);
+
+    // A centred page that overflows the sheet keeps the middle of its raster.
+    const QSizeF full = destination.size() * dpi / 72;
+    QVERIFY(plan.source.left() >= 0 && plan.source.top() >= 0);
+    QVERIFY(plan.source.right() < std::ceil(full.width()));
+    QVERIFY(plan.source.bottom() < std::ceil(full.height()));
+    QVERIFY(std::abs(QRectF(plan.source).center().x() - full.width() / 2) <= 1);
+    QVERIFY(std::abs(QRectF(plan.source).center().y() - full.height() / 2) <= 1);
+}
+
+// Checks invalid geometry and resolution give no raster to render.
+void TstPrintLayout::invalidRasterPlansAreEmpty()
+{
+    const QRectF printable(10, 20, 200, 100);
+    Settings settings;
+    QVERIFY(!rasterPlan(QSizeF(100, 100), printable, settings, 300).isEmpty());
+    QVERIFY(rasterPlan({}, printable, settings, 300).isEmpty());
+    QVERIFY(rasterPlan(QSizeF(100, 100), {}, settings, 300).isEmpty());
+    QVERIFY(rasterPlan(QSizeF(100, 100), printable, settings, 0).isEmpty());
+    QVERIFY(rasterPlan(QSizeF(100, 100), printable, settings, -300).isEmpty());
+    QVERIFY(rasterPlan(QSizeF(100, 100), printable, settings,
+                       std::numeric_limits<double>::infinity()).isEmpty());
+    // MuPDF cannot address a raster side beyond 2^24 pixels.
+    settings.scaleMode = ScaleMode::ActualSize;
+    QVERIFY(rasterPlan(QSizeF(1e7, 1e7), QRectF(0, 0, 1e7, 1e7), settings, 300).isEmpty());
+    // The largest PDF page at 400% and 1200 dpi still plans its visible part.
+    settings.scaleMode = ScaleMode::Custom;
+    settings.scalePercent = 400;
+    const RasterPlan large = rasterPlan(QSizeF(14400, 14400), printable, settings, 1200);
+    QCOMPARE(large.source.size(), QSize(3334, 1668));
+}
+
+void TstPrintLayout::rasterBandsSplitWholeRows_data()
+{
+    QTest::addColumn<QRect>("source");
+    QTest::addColumn<qint64>("maxPixels");
+    QTest::addColumn<int>("count");
+
+    QTest::newRow("fits one band") << QRect(10, 20, 100, 50) << qint64(5000) << 1;
+    QTest::newRow("exact budget") << QRect(0, 0, 100, 100) << qint64(2500) << 4;
+    QTest::newRow("uneven rows") << QRect(5, 7, 100, 101) << qint64(2500) << 5;
+    QTest::newRow("row wider than budget") << QRect(0, 0, 1000, 3) << qint64(10) << 3;
+    // A0 at 600 dpi under the print path's 2^24-pixel band budget.
+    QTest::newRow("A0 at 600 dpi") << QRect(0, 0, 19867, 28087) << (qint64(1) << 24) << 34;
+    QTest::newRow("empty") << QRect() << qint64(5000) << 0;
+}
+
+// Checks bands tile the source exactly, without gaps, overlap or excess pixels.
+void TstPrintLayout::rasterBandsSplitWholeRows()
+{
+    QFETCH(QRect, source);
+    QFETCH(qint64, maxPixels);
+    QFETCH(int, count);
+    const QList<QRect> bands = rasterBands(source, maxPixels);
+    QCOMPARE(bands.size(), count);
+    int top = source.top();
+    int shortest = std::numeric_limits<int>::max();
+    int tallest = 0;
+    for (const QRect &band : bands) {
+        QCOMPARE(band.left(), source.left());
+        QCOMPARE(band.width(), source.width());
+        QCOMPARE(band.top(), top);
+        QVERIFY(band.height() > 0);
+        QVERIFY(band.height() == 1 || qint64(band.width()) * band.height() <= maxPixels);
+        shortest = std::min(shortest, band.height());
+        tallest = std::max(tallest, band.height());
+        top = band.bottom() + 1;
+    }
+    if (!bands.isEmpty()) {
+        QCOMPARE(top, source.bottom() + 1);
+        QVERIFY(tallest - shortest <= 1);
+    }
+}
+
 void TstPrintLayout::invalidDimensionsAreEmpty()
 {
     const QRectF printable(10, 20, 200, 100);
@@ -134,6 +270,17 @@ void TstPrintLayout::colourAndGrayscaleRemainDistinct()
     QCOMPARE(grayscale.pixelColor(3, 0), QColor(127, 127, 127));
     QCOMPARE(source.pixelColor(0, 0), QColor(Qt::red));
     QVERIFY(convertColour({}, ColourMode::Grayscale).isNull());
+
+    // Renders arrive as RGB888, whose padded rows must convert like the same pixels
+    // in RGB32.
+    QImage rows(5, 3, QImage::Format_RGB32);
+    for (int y = 0; y < rows.height(); ++y)
+        for (int x = 0; x < rows.width(); ++x)
+            rows.setPixelColor(x, y, QColor(40 * x, 90 * y, 200 - 30 * x));
+    const QImage rgb = rows.convertToFormat(QImage::Format_RGB888);
+    QVERIFY(rgb.bytesPerLine() > rgb.width() * 3);
+    for (ColourMode mode : {ColourMode::Grayscale, ColourMode::BlackAndWhite})
+        QCOMPARE(convertColour(rgb, mode), convertColour(rows, mode));
 }
 
 void TstPrintLayout::blackAndWhiteThresholdAndTransparency()
@@ -174,7 +321,9 @@ void TstPrintLayout::painterClipsAndPreservesState()
     painter.setClipRect(QRectF(30, 10, 40, 60));
     painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
     const QRectF oldClip = painter.clipBoundingRect();
-    paintPage(painter, source, QSizeF(100, 80), QRectF(20, 30, 40, 20), settings);
+    const QRectF printable(20, 30, 40, 20);
+    drawImage(painter, source, destinationRect(QSizeF(100, 80), printable, settings), printable,
+              settings.colourMode);
     QCOMPARE(painter.clipBoundingRect(), oldClip);
     QVERIFY(!painter.testRenderHint(QPainter::SmoothPixmapTransform));
     painter.end();
@@ -197,9 +346,11 @@ void TstPrintLayout::blackAndWhiteScalingKeepsBinaryPixels()
     canvas.fill(Qt::white);
     Settings settings;
     settings.colourMode = ColourMode::BlackAndWhite;
+    const QImage binary = convertColour(source, settings.colourMode);
+    const QRectF destination = destinationRect(QSizeF(2, 1), QRectF(canvas.rect()), settings);
     QPainter painter(&canvas);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-    paintPage(painter, source, QSizeF(2, 1), QRectF(canvas.rect()), settings);
+    drawImage(painter, binary, destination, QRectF(canvas.rect()), settings.colourMode);
     QVERIFY(painter.testRenderHint(QPainter::SmoothPixmapTransform));
     painter.end();
 
@@ -221,7 +372,7 @@ void TstPrintLayout::blackAndWhiteScalingKeepsBinaryPixels()
     QImage preview(canvas.size(), QImage::Format_RGB32);
     preview.fill(Qt::white);
     QPainter screen(&preview);
-    paintPage(screen, source, QSizeF(2, 1), QRectF(preview.rect()), settings, true);
+    drawImage(screen, binary, destination, QRectF(preview.rect()), settings.colourMode, true);
     screen.end();
     bool hasGray = false;
     for (int x = 0; x < preview.width(); ++x) {
@@ -241,10 +392,12 @@ void TstPrintLayout::reducedPreviewRetainsFineLines()
         source.setPixelColor(1, y, Qt::black);
     QImage preview(12, 12, QImage::Format_RGB32);
     preview.fill(Qt::white);
-    Settings settings;
-    settings.colourMode = ColourMode::BlackAndWhite;
+    const QImage reduced =
+        reduceToDevice(convertColour(source, ColourMode::BlackAndWhite), preview.size());
+    QCOMPARE(reduced.size(), preview.size());
     QPainter painter(&preview);
-    paintPage(painter, source, QSizeF(120, 120), QRectF(preview.rect()), settings, true);
+    drawImage(painter, reduced, QRectF(preview.rect()), QRectF(preview.rect()),
+              ColourMode::BlackAndWhite, true);
     painter.end();
     // A one-pixel source stroke occupies a tenth of the first preview pixel.
     // It must remain visible instead of vanishing between bilinear samples.

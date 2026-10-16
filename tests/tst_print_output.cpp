@@ -441,6 +441,22 @@ void TstPrintOutput::applicationPrintPlacement()
              qPrintable(QString("Printed y %1, expected %2").arg(actual.top()).arg(expected.top())));
     QVERIFY(std::abs(actual.width() - expected.width()) <= 2);
     QVERIFY(std::abs(actual.height() - expected.height()) <= 2);
+    {
+        // Qt's PDF engine embeds an image at its own pixel size, and this 72 dpi
+        // probe renders one pixel per printed point, whatever the page's scale.
+        QPDF pdf;
+        pdf.processFile(output.toUtf8().constData());
+        auto images = QPDFPageDocumentHelper(pdf).getAllPages().front().getImages();
+        QCOMPARE(images.size(), size_t(1));
+        auto dict = images.begin()->second.getDict();
+        const long long width = dict.getKey("/Width").getIntValue();
+        const long long height = dict.getKey("/Height").getIntValue();
+        QVERIFY2(std::abs(width - expectedSize.width()) <= 2
+                     && std::abs(height - expectedSize.height()) <= 2,
+                 qPrintable(QString("Embedded %1 x %2, printed %3 x %4 pt").arg(width)
+                                .arg(height).arg(expectedSize.width())
+                                .arg(expectedSize.height())));
+    }
     const QColor ink = image.pixelColor(actual.center());
     if (colour == 0) {
         QVERIFY(ink.red() > 180 && ink.green() < 80 && ink.blue() < 80);

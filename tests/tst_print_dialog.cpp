@@ -65,6 +65,7 @@ private slots:
     void defaultsAndLiveSettings();
     void customOrderValidationAndStaleResults();
     void sheetAlwaysFitsAfterResizeAndOrientation();
+    void blackAndWhitePreviewConvertsOnce();
     void cancellingSaveKeepsDialogOpen();
 
 private:
@@ -255,6 +256,43 @@ void TstPrintDialog::sheetAlwaysFitsAfterResizeAndOrientation()
     const QRect turnedContent = matchingBounds(rotatedPreview->grab().toImage(), false);
     QVERIFY(!turnedContent.isEmpty());
     QVERIFY(std::abs(double(turnedContent.width()) / turnedContent.height() - 160.0 / 75.0) < 0.05);
+}
+
+void TstPrintDialog::blackAndWhitePreviewConvertsOnce()
+{
+    RenderEngine engine;
+    auto document = engine.openDocument(sourcePath_);
+    QVERIFY(document);
+    // A screen-resolution printer would cap the black-and-white preview below 300 dpi.
+    QPrinter printer(QPrinter::HighResolution);
+    configurePrinter(printer);
+    PrintDialog dialog(&printer, &engine, document.get(), 0, QPageLayout::Portrait, 1, "coloured");
+    dialog.show();
+    auto *preview = dialog.findChild<PrintPreviewWidget *>();
+    auto *colour = dialog.findChild<QComboBox *>("printColour");
+    QVERIFY(preview && colour);
+    QTRY_VERIFY(preview->isReady());
+    QSignalSpy rendered(preview, &PrintPreviewWidget::previewReady);
+    colour->setCurrentIndex(2);
+    QTRY_VERIFY(!rendered.isEmpty());
+    QTest::qWait(300); // no further render is due
+    QCOMPARE(centreColour(preview), QColor(Qt::black));
+    const int renders = rendered.size();
+    const int conversions = preview->conversions();
+    QVERIFY(conversions > 0);
+
+    // Exposes and resizes reuse the converted raster, since its scale follows the
+    // print quality rather than the widget size.
+    for (int i = 0; i < 5; ++i)
+        preview->repaint();
+    QCOMPARE(preview->conversions(), conversions);
+    const QSize before = preview->size();
+    dialog.resize(dialog.width() + 120, dialog.height() + 80);
+    QTest::qWait(300);
+    QVERIFY(preview->size() != before);
+    QCOMPARE(centreColour(preview), QColor(Qt::black));
+    QCOMPARE(rendered.size(), renders);
+    QCOMPARE(preview->conversions(), conversions);
 }
 
 void TstPrintDialog::cancellingSaveKeepsDialogOpen()

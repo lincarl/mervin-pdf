@@ -12,6 +12,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <algorithm>
 #include <memory>
 #include <mutex>
 
@@ -34,6 +35,9 @@ private slots:
     void pageSizesMatchLoadedPageBounds();
     void pageSizesMatchOnShippedExamples();
     void pageWithoutAnyBoxFallsBackLikeLoadedPage();
+    void clippedRenderMatchesFullRender_data();
+    void clippedRenderMatchesFullRender();
+    void renderWithoutAntialiasingKeepsHairlines();
 };
 
 namespace {
@@ -59,6 +63,24 @@ QByteArray assemblePdf(const QList<QByteArray> &bodies)
     pdf += "trailer\n<< /Size " + QByteArray::number(n) + " /Root 1 0 R >>\nstartxref\n"
            + QByteArray::number(xrefOff) + "\n%%EOF\n";
     return pdf;
+}
+
+// The largest difference between two images in any colour channel, or 256 when
+// their sizes differ.
+int largestDifference(const QImage &a, const QImage &b)
+{
+    if (a.size() != b.size())
+        return 256;
+    int largest = 0;
+    for (int y = 0; y < a.height(); ++y) {
+        for (int x = 0; x < a.width(); ++x) {
+            const QRgb p = a.pixel(x, y);
+            const QRgb q = b.pixel(x, y);
+            largest = std::max({largest, std::abs(qRed(p) - qRed(q)),
+                                std::abs(qGreen(p) - qGreen(q)), std::abs(qBlue(p) - qBlue(q))});
+        }
+    }
+    return largest;
 }
 
 QString writeTemp(const QTemporaryDir &dir, const QString &name, const QByteArray &bytes)
@@ -221,6 +243,97 @@ void TstDocument::pageWithoutAnyBoxFallsBackLikeLoadedPage()
     QCOMPARE(doc->pageCount(), 1);
     verifyEveryPage(engine, *doc, QStringLiteral("noboxes.pdf"));
     QCOMPARE(doc->pageSize(0), QSizeF(612.0, 792.0));
+}
+
+void TstDocument::clippedRenderMatchesFullRender_data()
+{
+    QTest::addColumn<int>("rotation");
+    QTest::newRow("0") << 0;
+    QTest::newRow("90") << 90;
+    QTest::newRow("180") << 180;
+    QTest::newRow("270") << 270;
+}
+
+// Print bands render with a device-pixel clip. Each clip must give the pixels of the
+// full raster it selects, also for a turned page whose crop box does not start at the
+// origin, and only the part of a clip that lies on the page.
+void TstDocument::clippedRenderMatchesFullRender()
+{
+    QFETCH(int, rotation);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // The green square sits at the crop box's centre, so the centred clip below holds
+    // its edges and the diagonal at every rotation.
+    const QByteArray content = "1 0 0 rg 160 260 100 80 re f 0 0 1 rg 300 500 120 150 re f "
+                               "0 0.5 0 rg 320 440 60 70 re f 0 G 2 w 150 250 m 550 700 l S";
+    const QByteArray pdf = assemblePdf({
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [100 200 712 992] "
+        "/CropBox [150 250 550 700] /Rotate 90 /Contents 4 0 R >>",
+        "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content
+            + "\nendstream",
+    });
+    const QString path = writeTemp(dir, QStringLiteral("clip.pdf"), pdf);
+    QVERIFY(!path.isEmpty());
+    RenderEngine engine;
+    auto doc = engine.openDocument(path);
+    QVERIFY(doc);
+
+    constexpr double scale = 0.7;
+    const QImage full = doc->renderPage(0, scale, rotation);
+    QVERIFY(!full.isNull());
+    const QRect inside(full.width() / 2 - 60, full.height() / 2 - 45, 120, 90);
+    const QImage band = doc->renderPage(0, scale, rotation, inside);
+    QCOMPARE(band.format(), QImage::Format_RGB888);
+    // MuPDF clips a path's edges to the band, which can move antialiased edge pixels
+    // by a few levels (up to 15 here). A clip one row off moves whole edges, which
+    // then differ by 255.
+    constexpr int tolerance = 32;
+    const int inner = largestDifference(band, full.copy(inside));
+    QVERIFY2(inner <= tolerance, qPrintable(QString::number(inner)));
+    // A clip past the raster's edge returns only its part on the page.
+    const QRect edge(full.width() - 30, full.height() - 20, 100, 100);
+    const int outer = largestDifference(doc->renderPage(0, scale, rotation, edge),
+                                        full.copy(edge & full.rect()));
+    QVERIFY2(outer <= tolerance, qPrintable(QString::number(outer)));
+    QVERIFY(doc->renderPage(0, scale, rotation, QRect(full.width() + 5, 0, 10, 10)).isNull());
+}
+
+// Black and white printing renders without antialiasing, so a stroke thinner than
+// a pixel still reaches full black instead of a light gray that its threshold drops.
+void TstDocument::renderWithoutAntialiasingKeepsHairlines()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray content = "0 G 0.1 w 10 50.5 m 90 50.5 l S";
+    const QByteArray pdf = assemblePdf({
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R >>",
+        "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content
+            + "\nendstream",
+    });
+    const QString path = writeTemp(dir, QStringLiteral("hairline.pdf"), pdf);
+    QVERIFY(!path.isEmpty());
+    RenderEngine engine;
+    auto doc = engine.openDocument(path);
+    QVERIFY(doc);
+
+    const auto darkest = [](const QImage &image) {
+        int value = 255;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x)
+                value = std::min(value, qGray(image.pixel(x, y)));
+        return value;
+    };
+    const QImage smooth = doc->renderPage(0, 1, 0);
+    const QImage hard = doc->renderPage(0, 1, 0, {}, false);
+    QVERIFY(!smooth.isNull() && !hard.isNull());
+    QVERIFY2(darkest(smooth) > 128, qPrintable(QString::number(darkest(smooth))));
+    QCOMPARE(darkest(hard), 0);
+    // The context's antialiasing returns for later renders.
+    QCOMPARE(doc->renderPage(0, 1, 0), smooth);
 }
 
 QTEST_GUILESS_MAIN(TstDocument)

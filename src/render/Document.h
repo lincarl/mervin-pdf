@@ -5,6 +5,7 @@
 
 #include <QPointF>
 #include <QImage>
+#include <QRect>
 #include <QRectF>
 #include <QSizeF>
 #include <QString>
@@ -250,8 +251,15 @@ public:
     bool savePdfTo(const QString &tmpPath, QString *error = nullptr) const;
 
     // Rasterizes one page on this document's own context under its access lock.
-    // A worker borrowing a live document keeps a Hold for this call.
-    QImage renderPage(int page, double scale, int rotation) const;
+    // A worker borrowing a live document keeps a Hold for this call. A non-empty
+    // `clip` renders only those device pixels, relative to the top-left of the
+    // page's full (scaled and rotated) raster, as RenderRequest::clip does. Without
+    // `antialias`, edges are hard and MuPDF draws every stroke at least one pixel
+    // wide, so a black and white threshold acts on colours rather than on partial
+    // coverage. The result is the part of `clip` inside the page, as RGB888, or null
+    // on failure.
+    QImage renderPage(int page, double scale, int rotation, const QRect &clip = {},
+                      bool antialias = true) const;
 
     // Serializes all access to handle() across threads (see class note).
     std::mutex &accessMutex() const { return access_; }

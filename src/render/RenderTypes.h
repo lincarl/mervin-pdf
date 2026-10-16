@@ -32,6 +32,9 @@ struct RenderRequest
     // Comfort is applied in the worker; Light/Inverted render identically here
     // (the viewer inverts on receipt), so only Comfort changes the output.
     PageTheme theme = PageTheme::Light;
+    // False renders hard edges and draws every stroke at least one pixel wide, as
+    // black and white printing does before its colour threshold.
+    bool antialias = true;
 };
 
 // The result of a render, posted to the UI thread and emitted there as resultReady.
