@@ -66,9 +66,11 @@ ownerEdit_->setPlaceholderText(tr("defaults to the open password"));
 `lupdate` copies these comments into `<extracomment>`. Keep explanations specific
 to a string in its source comment rather than editing the extracted comment in
 the catalog. `lupdate` reads a comment's backslashes as escapes, so `\\server\docs`
-arrives as `\serverdocs`. Describe a Windows path in words instead. When a fix
-reveals a reusable translation lesson, add it to this guide in the same change so
-later translators and agents can apply it.
+arrives as `\serverdocs`. Describe a Windows path in words instead. Qt 6.10's
+`lupdate` drops a comment that opens a brace-less `if` or `for` body inside a lambda
+passed as an argument, so put braces around such a body. When a fix reveals a
+reusable translation lesson, add it to this guide in the same change so later
+translators and agents can apply it.
 
 ## Terminology
 
@@ -220,11 +222,8 @@ replacement question.
 
 The `i18n_catalogs` CTest test (`cmake/CheckTranslations.cmake`) runs the same
 `lupdate` as `update_translations`, on copies in the build directory, and never
-changes the committed catalogs. CI runs it on Linux and Windows with Qt 6.12.0, the
-pinned version. Build `update_translations` and run this test with that Qt. The
-`lupdate` of Qt 6.10, which Ubuntu 26.04 ships, leaves out some translator comments
-that Qt 6.12 writes, so it would rewrite the translated catalogs and this test fails
-with it. CI's Ubuntu 26.04 job therefore leaves the test out. Run it alone with:
+changes the committed catalogs. CI runs it on Linux and Windows with Qt 6.12.0 and
+on Ubuntu 26.04 with its Qt 6.10. Run it alone with:
 
 ```bash
 ctest --test-dir build/linux-release -R i18n_catalogs --output-on-failure

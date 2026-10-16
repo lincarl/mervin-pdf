@@ -619,6 +619,7 @@ add_test(NAME i18n_catalogs
         "-DLCONVERT=$<TARGET_FILE:Qt6::lconvert>"
         "-DGENERATE_PROJECT=${Qt6LinguistTools_DIR}/GenerateLUpdateProject.cmake"
         "-DPROJECT_FILE=${_mervin_lupdate_project}.cmake"
+        "-DCATALOG_DIR=${CMAKE_SOURCE_DIR}/i18n"
         "-DSOURCE_LANGUAGE=${QT_I18N_SOURCE_LANGUAGE}"
         "-DLUPDATE_OPTIONS=${_mervin_lupdate_options}"
         "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/i18n_catalogs"

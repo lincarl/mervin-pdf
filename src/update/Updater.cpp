@@ -470,9 +470,10 @@ void Updater::download(const update::ReleaseAsset &asset, const QString &version
         },
         [this](const QString &error) {
             if (!error.isEmpty()) {
-                if (manual_)
+                if (manual_) {
                     //: %1 is the file error message.
                     warn(tr("Couldn't save the update.\n\n%1").arg(error));
+                }
                 endOperation();
                 return;
             }
@@ -600,9 +601,10 @@ void Updater::onDownloadFinished()
                 endOperation();
                 return;
             case Outcome::NetworkFailed:
-                if (manual_ && !canceled)
+                if (manual_ && !canceled) {
                     //: %1 is the network error message.
                     warn(tr("The update download failed.\n\n%1").arg(networkError));
+                }
                 endOperation();
                 return;
             case Outcome::BadHash:

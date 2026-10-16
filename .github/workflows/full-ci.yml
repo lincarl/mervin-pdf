@@ -270,11 +270,8 @@ jobs:
       - name: Build
         run: cmake --build build/ci --parallel 2
       - name: Test
-        # i18n_catalogs compares i18n/*.ts with lupdate's output. Qt 6.12, which
-        # maintains the catalogs, and Qt 6.10 write different output, so
-        # linux-tests and windows-tests run that test and this job leaves it out.
         run: |
-          ctest --test-dir build/ci --output-on-failure --output-junit results.xml -LE optional-corpus -E '^i18n_catalogs$' --parallel 2 --timeout 180
+          ctest --test-dir build/ci --output-on-failure --output-junit results.xml -LE optional-corpus --parallel 2 --timeout 180
           python3 scripts/check-test-results.py build/ci/results.xml
 
   windows-tests:
