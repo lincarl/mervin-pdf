@@ -203,7 +203,14 @@ the plural messages, and gives the real English forms:
 ```
 
 Fill both forms and mark the message finished whenever `update_translations` adds
-one. Until then English shows the `(s)` text, for example "1 page(s)".
+one. Until then English shows the `(s)` text, for example "1 page(s)". A singular
+form changes every word that agrees with the number, not only the noun, as in
+"%n file in %1 already exists. Replace it?".
+
+In other languages, a form can also cover numbers other than the one its English
+form names. Russian-style rules put 21 and 31 in the singular form, and Slovenian
+puts 101 there. Check that each form reads correctly for all its numbers, for
+example with a question that needs no pronoun, such as "Replace?".
 
 ## The i18n_catalogs test
 
@@ -259,7 +266,10 @@ no break opportunities. Polish the message box before measuring its font, then
 use `elidedLabelText` to shorten only the filename in the middle to a conservative
 share of the available screen width. Keep its bidirectional isolate and the full
 translated question. Check the real message box with an unbroken filename, since
-a wrapped-label check alone does not establish that the question fits.
+a wrapped-label check alone does not establish that the question fits. A folder in
+a message box, as in Split's replacement question, goes through `fitFileSentence`
+with the same half-screen width. It marks where the folder may wrap and shortens
+only a folder name that is still too wide.
 
 Run the translation and layout checks after building the test targets. For a
 local Linux run, set `mervin_build_dir` to your existing isolated build directory:
@@ -309,11 +319,11 @@ executable directly; without it the executable checks them all. Text with a fixe
 pixel font size in the stylesheet retains that size.
 
 The scenarios include both calibration modes, all Settings pages, long filenames,
-populated lists, document security states, print range validation and selected
-input, file and network errors. The slow load notice and the wait bar are checked at
-the main window's narrowest width, with a long folder and a file name that cannot
-wrap. The OCR language catalog uses a fake network reply so the test exercises the
-real dialog without external requests.
+populated lists, document security states, Split's replacement question and kept-file
+warning, print range validation and selected input, file and network errors. The slow
+load notice and the wait bar are checked at the main window's narrowest width, with a
+long folder and a file name that cannot wrap. The OCR language catalog uses a fake
+network reply so the test exercises the real dialog without external requests.
 `tst_text_fit` checks that the fitting helper accepts valid layouts and rejects
 deliberate clipping. Both tests run through CTest in GitHub Actions without AI.
 

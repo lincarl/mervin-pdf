@@ -20,6 +20,7 @@
 #include "ui/TabPage.h"
 #include "ui/TextLayout.h"
 #include "ui/ViewerWidget.h"
+#include "ui/WaitBar.h"
 
 #include <QAbstractButton>
 #include <QAction>
@@ -202,6 +203,43 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
         result.failure = PrintResult::Failure::End;
 }
 
+// The state of each output of a page tool, by path, as its job found it.
+using OutputStates = QHash<QString, mervin::DestinationConsent>;
+
+// `text` as a bidirectional isolate, so a path keeps its order in a right-to-left
+// sentence.
+QString isolated(const QString &text)
+{
+    return QChar(0x2068) + text + QChar(0x2069);
+}
+
+// The sentence `compose` makes of the file `name` in `folder` for `box`. QMessageBox
+// wraps a translated sentence but clips an unbroken name or folder piece, so the
+// folder wraps after its separators and a piece wider than half the screen is
+// shortened in the middle (see fitFileSentence).
+QString fileSentenceFor(QMessageBox &box, const mervin::FileSentence &compose,
+                        const QString &name, const QString &folder)
+{
+    box.ensurePolished();
+    return mervin::fitFileSentence(compose, name, QDir::toNativeSeparators(folder),
+                                   box.fontMetrics(),
+                                   qMax(1, box.screen()->availableGeometry().width() / 2));
+}
+
+// Says `compose` of the file `name` in `folder` in a box that blocks only `window`.
+void tellInWindow(QWidget *window, QMessageBox::Icon icon, const QString &title,
+                  const mervin::FileSentence &compose, const QString &name,
+                  const QString &folder)
+{
+    const QPointer<QMessageBox> box(new QMessageBox(icon, title, QString(), QMessageBox::Ok,
+                                                    window));
+    box->setTextFormat(Qt::PlainText);
+    box->setText(fileSentenceFor(*box, compose, name, folder));
+    box->setWindowModality(Qt::WindowModal);
+    box->exec();
+    delete box.data(); // a Quit in another window may already have deleted its parent
+}
+
 } // namespace
 
 struct MainWindow::PageToolResult
@@ -210,14 +248,20 @@ struct MainWindow::PageToolResult
     QString error;
     bool destinationOpen = false; // nothing written, as an output is open in a tab
     QStringList written;          // the files a split wrote
+    // Every output's state, absent ones included, when some outputs already exist
+    // and the run had no approval to replace them. Nothing was written.
+    OutputStates toApprove;
+    QString changed; // the output a split kept and stopped at, as it changed since the check
 };
 
 struct MainWindow::PageTool
 {
     QString title;       // of its messages, such as "Rotate Pages"
     QString destination; // the folder it writes to, which its tab's wait bar names
-    // On the job's thread, with the password to open the source with.
-    std::function<PageToolResult(const QString &password)> work;
+    // The outputs' states that the user approved replacing, empty before any approval.
+    OutputStates approved;
+    // On the job's thread, with the password to open the source with and `approved`.
+    std::function<PageToolResult(const QString &password, const OutputStates &approved)> work;
     // In the tab's window once the tool succeeded.
     std::function<void(MainWindow &window, TabPage &tab, const PageToolResult &result)> succeeded;
 };
@@ -228,7 +272,7 @@ void MainWindow::runPageTool(TabPage *tab, const std::shared_ptr<const PageTool>
     const auto result = std::make_shared<PageToolResult>();
     TabPage::Operation operation;
     operation.destination = tool->destination;
-    operation.work = [tool, password, result] { *result = tool->work(password); };
+    operation.work = [tool, password, result] { *result = tool->work(password, tool->approved); };
     operation.finished = [page = QPointer<TabPage>(tab), tool, password, asked, result] {
         if (page)
             deliverPageTool(page, tool, password, asked, result);
@@ -285,6 +329,66 @@ void MainWindow::finishPageTool(TabPage *tab, const std::shared_ptr<const PageTo
         delete prompt.data();
         if (accepted && page && page->isUsable())
             runPageTool(page, tool, supplied, true);
+        return;
+    }
+    // Outputs that exist and are not open in a tab. The tool wrote nothing yet.
+    if (!result.toApprove.isEmpty()) {
+        const int existing = int(std::count_if(result.toApprove.cbegin(), result.toApprove.cend(),
+            [](const mervin::DestinationConsent &state) { return state.exists; }));
+        if (hiddenToTray_) {
+            if (wm_) {
+                //: Tray message after Split found that some of the files it would write,
+                //: such as plan-002.pdf, already exist while its window was hidden in the
+                //: tray, so it could not ask whether to replace them. %n is the number of
+                //: those files, %1 the folder Split writes to. Split wrote no file.
+                wm_->notifyInTray(tool->title,
+                    tr("%n file(s) in %1 already exist. Split wrote nothing.", nullptr, existing)
+                        .arg(isolated(QDir::toNativeSeparators(tool->destination))));
+            }
+            return;
+        }
+        // Yes approves the states the job found. The next run replaces each file
+        // only if it is still in that state when its part commits.
+        auto approved = std::make_shared<PageTool>(*tool);
+        approved->approved = result.toApprove;
+        const QString retry = password;
+        const QPointer<MainWindow> self(this);
+        const QPointer<QMessageBox> question(new QMessageBox(QMessageBox::Question, tool->title,
+            QString(), QMessageBox::Yes | QMessageBox::No, this));
+        question->setObjectName(QStringLiteral("pageToolReplace"));
+        question->setTextFormat(Qt::PlainText);
+        question->setDefaultButton(QMessageBox::No);
+        question->setWindowModality(Qt::WindowModal);
+        question->setText(fileSentenceFor(*question,
+            [existing](const QString &, const QString &folder) {
+                //: Asked after Split found that some of the files it would write, such as
+                //: plan-002.pdf, already exist. %n is the number of those files, %1 the
+                //: folder Split writes to. Nothing has been replaced yet. Yes replaces
+                //: those files and writes the others; No writes no file.
+                return tr("%n file(s) in %1 already exist. Replace them?", nullptr, existing)
+                    .arg(folder);
+            }, {}, tool->destination));
+        const bool replace = question->exec() == QMessageBox::Yes;
+        delete question.data();
+        if (replace && self && page && page->isUsable() && !closeConfirmed_
+            && !(wm_ && wm_->isClosing()))
+            runPageTool(page, approved, retry, asked);
+        return;
+    }
+    if (!result.changed.isEmpty()) {
+        const QString name = QFileInfo(result.changed).fileName();
+        const mervin::FileSentence kept = [](const QString &shown, const QString &) {
+            //: Split checked each of its files before writing. %1 is the name of one that
+            //: another program changed, created or removed before Split replaced it.
+            //: Split left that file as it is and wrote none of the files after it. The
+            //: files with lower numbers that Split wrote before stay.
+            return tr("\"%1\" changed after Split checked it, so Split stopped without "
+                      "replacing it.").arg(shown);
+        };
+        if (!hiddenToTray_)
+            tellInWindow(this, QMessageBox::Warning, tool->title, kept, name, {});
+        else if (wm_)
+            wm_->notifyInTray(tool->title, kept(isolated(name), {}));
         return;
     }
     QString title = tr("Operation failed");
@@ -1378,9 +1482,10 @@ void MainWindow::rotatePagesOp()
     auto tool = std::make_shared<PageTool>();
     tool->title = tr("Rotate Pages");
     tool->destination = QFileInfo(out).absolutePath();
+    // The file picker asked before replacing the copy, so Rotate needs no approval.
     tool->work = [in = t->path(), out, pages, angle,
                   open = openFileKeys(wm_ ? wm_->openTabPaths() : tabPaths())](
-                     const QString &password) {
+                     const QString &password, const OutputStates &) {
         PageToolResult result;
         // Copy tools must not replace a file open in a tab.
         const QString key = mervin::fileKey(QFileInfo(out));
@@ -1610,7 +1715,8 @@ void MainWindow::finishPagesJob(TabPage *tab, const std::shared_ptr<PagesJob> &r
     runPagesJob(page, result, true);
 }
 
-// Captures split choices and reserves every output before writing any file.
+// Captures split choices. The job reserves every output and finds the existing ones,
+// which the window asks to replace, before it writes any file.
 void MainWindow::splitDocument()
 {
     const OperationScope operation(this);
@@ -1628,10 +1734,14 @@ void MainWindow::splitDocument()
     tool->destination = dir;
     tool->work = [in = t->path(), dir, base = QFileInfo(t->path()).completeBaseName(),
                   open = openFileKeys(wm_ ? wm_->openTabPaths() : tabPaths())](
-                     const QString &password) {
+                     const QString &password, const OutputStates &approved) {
         PageToolResult result;
-        // Copy tools must not replace a file open in a tab.
-        const auto mayWrite = [&result, &open, &dir](const QStringList &outputs) {
+        // Each output's state before the first write, which its commit must still find.
+        OutputStates checked;
+        // Copy tools must not replace a file open in a tab, and Split replaces no
+        // other file the user has not approved.
+        const auto mayWrite = [&result, &open, &dir, &approved, &checked](
+                                  const QStringList &outputs) {
             // Resolving an output's canonical path can wait on its drive too.
             if (!mervin::job::writing(dir)) {
                 result.error = mervin::job::notRunError();
@@ -1645,10 +1755,50 @@ void MainWindow::splitDocument()
             }
             if (!result.destinationOpen && !mervin::job::stopped())
                 result.destinationOpen = !mervin::job::reserveDestinations(keys);
-            return !result.destinationOpen;
+            if (result.destinationOpen)
+                return false;
+            // An approved output keeps the state the question showed, so a change
+            // since then shows at its commit, as in Merge. Others are read now, which
+            // also covers a source that gained pages since the question.
+            bool unapproved = false;
+            for (const QString &output : outputs) {
+                if (const auto state = approved.constFind(output); state != approved.cend()) {
+                    checked.insert(output, *state);
+                    continue;
+                }
+                QString error;
+                const auto state = mervin::DestinationConsent::read(output, &error);
+                if (!state) {
+                    result.error = QFileInfo(output).fileName() + QStringLiteral(": ") + error;
+                    return false;
+                }
+                unapproved = unapproved || state->exists;
+                checked.insert(output, *state);
+            }
+            if (unapproved)
+                result.toApprove = checked;
+            return !unapproved;
         };
-        result.status = PageOps::split(in, dir, base, password, &result.written, &result.error,
-                                       mayWrite);
+        // Runs under the output's destination lock, after its part is flushed.
+        const auto mayCommit = [&result, &checked](const QString &output) {
+            QString error;
+            const auto current = mervin::DestinationConsent::read(output, &error);
+            if (!current) {
+                result.error = QFileInfo(output).fileName() + QStringLiteral(": ") + error;
+                return false;
+            }
+            if (*current != checked.value(output)) {
+                result.changed = output;
+                return false;
+            }
+            return true;
+        };
+        QString splitError;
+        result.status = PageOps::split(in, dir, base, password, &result.written, &splitError,
+                                       mayWrite, mayCommit);
+        // A refused commit throws the generic step error. Keep the reason found here.
+        if (result.error.isEmpty() && result.changed.isEmpty())
+            result.error = splitError;
         return result;
     };
     tool->succeeded = [dir](MainWindow &window, TabPage &, const PageToolResult &result) {

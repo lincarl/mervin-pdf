@@ -7,6 +7,27 @@
         <source>Enter the document password:</source>
         <translation>Saisissez le mot de passe du document&#xa0;:</translation>
     </message>
+    <message numerus="yes">
+        <source>%n file(s) in %1 already exist. Split wrote nothing.</source>
+        <extracomment>Tray message after Split found that some of the files it would write, such as plan-002.pdf, already exist while its window was hidden in the tray, so it could not ask whether to replace them. %n is the number of those files, %1 the folder Split writes to. Split wrote no file.</extracomment>
+        <translation>
+            <numerusform>%n fichier dans %1 existe déjà. Rien n&apos;a été écrit.</numerusform>
+            <numerusform>%n fichiers dans %1 existent déjà. Rien n&apos;a été écrit.</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n file(s) in %1 already exist. Replace them?</source>
+        <extracomment>Asked after Split found that some of the files it would write, such as plan-002.pdf, already exist. %n is the number of those files, %1 the folder Split writes to. Nothing has been replaced yet. Yes replaces those files and writes the others; No writes no file.</extracomment>
+        <translation>
+            <numerusform>%n fichier dans %1 existe déjà. Voulez-vous le remplacer ?</numerusform>
+            <numerusform>%n fichiers dans %1 existent déjà. Voulez-vous les remplacer ?</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>&quot;%1&quot; changed after Split checked it, so Split stopped without replacing it.</source>
+        <extracomment>Split checked each of its files before writing. %1 is the name of one that another program changed, created or removed before Split replaced it. Split left that file as it is and wrote none of the files after it. The files with lower numbers that Split wrote before stay.</extracomment>
+        <translation>« %1 » a été modifié après la vérification, la séparation s&apos;est donc arrêtée sans le remplacer.</translation>
+    </message>
     <message>
         <source>Operation failed</source>
         <translation>Échec de l&apos;opération</translation>

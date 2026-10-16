@@ -7,6 +7,29 @@
         <source>Enter the document password:</source>
         <translation>Introduceți parola documentului:</translation>
     </message>
+    <message numerus="yes">
+        <source>%n file(s) in %1 already exist. Split wrote nothing.</source>
+        <extracomment>Tray message after Split found that some of the files it would write, such as plan-002.pdf, already exist while its window was hidden in the tray, so it could not ask whether to replace them. %n is the number of those files, %1 the folder Split writes to. Split wrote no file.</extracomment>
+        <translation>
+            <numerusform>%n fișier din %1 există deja. Nu s-a scris nimic.</numerusform>
+            <numerusform>%n fișiere din %1 există deja. Nu s-a scris nimic.</numerusform>
+            <numerusform>%n de fișiere din %1 există deja. Nu s-a scris nimic.</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n file(s) in %1 already exist. Replace them?</source>
+        <extracomment>Asked after Split found that some of the files it would write, such as plan-002.pdf, already exist. %n is the number of those files, %1 the folder Split writes to. Nothing has been replaced yet. Yes replaces those files and writes the others; No writes no file.</extracomment>
+        <translation>
+            <numerusform>%n fișier din %1 există deja. Vrei să îl înlocuiești?</numerusform>
+            <numerusform>%n fișiere din %1 există deja. Vrei să le înlocuiești?</numerusform>
+            <numerusform>%n de fișiere din %1 există deja. Vrei să le înlocuiești?</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>&quot;%1&quot; changed after Split checked it, so Split stopped without replacing it.</source>
+        <extracomment>Split checked each of its files before writing. %1 is the name of one that another program changed, created or removed before Split replaced it. Split left that file as it is and wrote none of the files after it. The files with lower numbers that Split wrote before stay.</extracomment>
+        <translation>„%1” s-a modificat după verificare, așa că împărțirea s-a oprit fără să îl înlocuiască.</translation>
+    </message>
     <message>
         <source>Operation failed</source>
         <translation>Operațiunea a eșuat</translation>

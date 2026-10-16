@@ -128,6 +128,20 @@ QStringList filesIn(const QString &folder)
     return QDir(folder).entryList(QDir::Files | QDir::Hidden | QDir::System, QDir::Name);
 }
 
+// Replaces the file at `path` with `bytes`, as another program saving it would.
+bool writeBytes(const QString &path, const QByteArray &bytes)
+{
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size();
+}
+
+// The contents of the file at `path`, or nothing when it cannot be read.
+QByteArray bytesOf(const QString &path)
+{
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+
 QString took(const char *what, const QElapsedTimer &timer)
 {
     return QStringLiteral("%1 took %2 ms").arg(QLatin1String(what)).arg(timer.elapsed());
@@ -162,6 +176,7 @@ public:
                 answeredModal_ = box;
                 told_ << box->windowTitle() + QStringLiteral(": ") + box->text();
                 toldIn_ << box->parentWidget();
+                toldDefaults_ << box->standardButton(box->defaultButton());
                 QAbstractButton *button = answers_.isEmpty() ? nullptr
                                                              : box->button(answers_.takeFirst());
                 if (!button) {
@@ -233,6 +248,7 @@ private slots:
         submittedFileDialog_.clear();
         told_.clear();
         toldIn_.clear();
+        toldDefaults_.clear();
         unexpected_.clear();
         dialogs_.start(10);
     }
@@ -1265,6 +1281,138 @@ private slots:
         QCOMPARE(file.readAll(), before);
     }
 
+    void splitAsksBeforeReplacingAFile_data()
+    {
+        QTest::addColumn<bool>("replace");
+        QTest::newRow("no") << false;
+        QTest::newRow("yes") << true;
+    }
+
+    // Split asks once, with No as the default, before it replaces a file that is not
+    // open in a tab. No keeps the file and writes no part. Yes writes every part.
+    void splitAsksBeforeReplacingAFile()
+    {
+        QFETCH(bool, replace);
+        QTemporaryDir files;
+        QVERIFY(QDir(files.path()).mkpath(QStringLiteral("out")));
+        const QString path = files.filePath(QStringLiteral("plan.pdf"));
+        const QString folder = files.filePath(QStringLiteral("out"));
+        const QString existing = QDir(folder).filePath(QStringLiteral("plan-002.pdf"));
+        const QByteArray before("Not a page of plan.pdf");
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        QVERIFY(writeBytes(existing, before));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(mervin::testing::openAndWait(window, path));
+        TabPage *tab = currentTab(window);
+        QVERIFY(tab);
+        QSignalSpy finished(tab, &TabPage::operationFinished);
+        answers_ << (replace ? QMessageBox::Yes : QMessageBox::No);
+        if (replace)
+            answers_ << QMessageBox::Ok; // "Wrote 4 files to:"
+        split(window, folder);
+        QTRY_COMPARE_WITH_TIMEOUT(finished.size(), replace ? 2 : 1, 10000);
+        QTRY_VERIFY(answers_.isEmpty());
+        QCOMPARE(told_.size(), replace ? 2 : 1);
+        QCOMPARE(withoutBreakMarks(told_.first()),
+                 QStringLiteral("Split Pages: 1 file(s) in %1 already exist. Replace them?")
+                     .arg(isolated(QDir::toNativeSeparators(folder))));
+        QCOMPARE(toldDefaults_.first(), QMessageBox::No);
+        if (!replace) {
+            QCOMPARE(filesIn(folder), QStringList{QStringLiteral("plan-002.pdf")});
+            QCOMPARE(bytesOf(existing), before);
+            return;
+        }
+        QCOMPARE(filesIn(folder),
+                 (QStringList{QStringLiteral("plan-001.pdf"), QStringLiteral("plan-002.pdf"),
+                              QStringLiteral("plan-003.pdf"), QStringLiteral("plan-004.pdf")}));
+        QVERIFY(bytesOf(existing).startsWith("%PDF-"));
+    }
+
+    void splitKeepsAFileThatChangesAfterTheQuestion_data()
+    {
+        QTest::addColumn<QString>("name"); // of the file another program saves meanwhile
+        QTest::newRow("changed") << QStringLiteral("plan-002.pdf");
+        QTest::newRow("appeared") << QStringLiteral("plan-003.pdf");
+    }
+
+    // Yes approves the files as the question found them. A file that another program
+    // changes or creates before its part commits stays, and Split writes no later part.
+    void splitKeepsAFileThatChangesAfterTheQuestion()
+    {
+        QFETCH(QString, name);
+        QTemporaryDir files;
+        QVERIFY(QDir(files.path()).mkpath(QStringLiteral("out")));
+        const QString path = files.filePath(QStringLiteral("plan.pdf"));
+        const QString folder = files.filePath(QStringLiteral("out"));
+        const QString existing = QDir(folder).filePath(QStringLiteral("plan-002.pdf"));
+        const QString saved = QDir(folder).filePath(name);
+        const QByteArray before("Not a page of plan.pdf");
+        const QByteArray after("Saved by another program");
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        QVERIFY(writeBytes(existing, before));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(mervin::testing::openAndWait(window, path));
+        TabPage *tab = currentTab(window);
+        QVERIFY(tab);
+        QSignalSpy finished(tab, &TabPage::operationFinished);
+        holdAt(job::Step::Commit, QDir(folder).filePath(QStringLiteral("plan-001.pdf")));
+        answers_ << QMessageBox::Yes << QMessageBox::Ok;
+        split(window, folder);
+        QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+        QVERIFY(writeBytes(saved, after));
+        job::testing::release();
+        QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 2, 10000);
+        QTRY_VERIFY(answers_.isEmpty());
+        QCOMPARE(told_.size(), 2);
+        QCOMPARE(withoutBreakMarks(told_.last()),
+                 QStringLiteral("Split Pages: \"%1\" changed after Split checked it, so Split "
+                                "stopped without replacing it.").arg(isolated(name)));
+        QCOMPARE(bytesOf(saved), after);
+        QStringList written{QStringLiteral("plan-001.pdf"), QStringLiteral("plan-002.pdf")};
+        if (saved != existing) {
+            written << name;
+            QVERIFY(bytesOf(existing).startsWith("%PDF-")); // approved and unchanged
+        }
+        QCOMPARE(filesIn(folder), written);
+        QVERIFY(bytesOf(QDir(folder).filePath(QStringLiteral("plan-001.pdf"))).startsWith("%PDF-"));
+    }
+
+    // A window in the tray cannot ask, so Split writes nothing over an existing file.
+    void splitInTheTrayReplacesNothing()
+    {
+        QTemporaryDir files;
+        QVERIFY(QDir(files.path()).mkpath(QStringLiteral("out")));
+        const QString path = files.filePath(QStringLiteral("plan.pdf"));
+        const QString folder = files.filePath(QStringLiteral("out"));
+        const QString existing = QDir(folder).filePath(QStringLiteral("plan-002.pdf"));
+        const QByteArray before("Not a page of plan.pdf");
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        QVERIFY(writeBytes(existing, before));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(mervin::testing::openAndWait(window, path));
+        TabPage *tab = currentTab(window);
+        QVERIFY(tab);
+        QSignalSpy finished(tab, &TabPage::operationFinished);
+        holdAt(job::Step::Reading, path);
+        split(window, folder);
+        QTRY_COMPARE(job::testing::held(), 1);
+        window.hideToTray();
+        QVERIFY(window.isInTray());
+        job::testing::release();
+        QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 10000);
+        QTest::qWait(200); // the window's queue runs its changes meanwhile
+        QVERIFY(told_.isEmpty());
+        QCOMPARE(filesIn(folder), QStringList{QStringLiteral("plan-002.pdf")});
+        QCOMPARE(bytesOf(existing), before);
+        window.restoreFromTray();
+    }
+
     // The dialog must survive owner destruction during its nested event loop.
     void destroyingWindowWhileExportExplanationIsOpen()
     {
@@ -1401,14 +1549,15 @@ private slots:
             if (step != job::Step::Writing || path != folder)
                 return false;
             ++writes;
-            return !splitPages || writes > 1; // Split's first report is its preflight
+            // Split reports the folder in the preflight of the run that asks to
+            // replace plan-002.pdf and again in the approved run's.
+            return !splitPages || writes > 2;
         });
+        answers_ << QMessageBox::Yes; // replace the existing output
         if (splitPages)
             split(window, folder);
-        else {
-            answers_ << QMessageBox::Yes;
+        else
             rotate(window, output);
-        }
         QTRY_COMPARE(job::testing::held(), 1);
         QVERIFY(window.openFile(output));
         auto *pending = currentTab(window);
@@ -1890,6 +2039,7 @@ private:
     QStringList files_;                          // for the file dialogs, in order
     QStringList told_;                           // every box shown, "title: text"
     QList<QPointer<QWidget>> toldIn_;            // the window of each box shown
+    QList<QMessageBox::StandardButton> toldDefaults_; // the default button of each box shown
     QStringList unexpected_;                     // dialogs nobody answered
 };
 

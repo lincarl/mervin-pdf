@@ -34,6 +34,7 @@
 #include "ui/Theme.h"
 #include "ui/ThemeTokens.h"
 #include "ui/ViewerWidget.h"
+#include "ui/WaitBar.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -254,6 +255,8 @@ private slots:
     void saveRecoveryWarning();
     void settings_data() { addLanguageMatrix(); }
     void settings();
+    void splitMessages_data() { addLanguageMatrix(); }
+    void splitMessages();
     void toolPanels_data() { addLanguageMatrix(); }
     void toolPanels();
     void waitBar_data() { addLanguageMatrix(); }
@@ -1197,6 +1200,34 @@ void TstTranslationLayout::security()
         qMax(1, replacement.screen()->availableGeometry().width() / 2)) + QChar(0x2069);
     replacement.setText(mervin::SecurityDialog::tr("\"%1\" already exists. Replace it?").arg(name));
     inspect(replacement, QStringLiteral("Security replacement with long filename"));
+}
+
+/// Checks Split's replacement question and kept-file warning with a long folder and name.
+void TstTranslationLayout::splitMessages()
+{
+    // MainWindow fits the folder and the name to half the screen like this.
+    const QString folder = QStringLiteral("/srv/nas/projects/")
+        + QStringLiteral("Construction").repeated(12) + QStringLiteral("/drawings/issued/split");
+    QMessageBox replacement(QMessageBox::Question, MainWindow::tr("Split Pages"), {},
+                            QMessageBox::Yes | QMessageBox::No);
+    replacement.setTextFormat(Qt::PlainText);
+    replacement.setDefaultButton(QMessageBox::No);
+    replacement.ensurePolished();
+    const int width = qMax(1, replacement.screen()->availableGeometry().width() / 2);
+    replacement.setText(mervin::fitFileSentence([](const QString &, const QString &shown) {
+        return MainWindow::tr("%n file(s) in %1 already exist. Replace them?", nullptr, 12)
+            .arg(shown);
+    }, {}, folder, replacement.fontMetrics(), width));
+    inspect(replacement, QStringLiteral("Split replacement with long folder"));
+    QMessageBox kept(QMessageBox::Warning, MainWindow::tr("Split Pages"), {}, QMessageBox::Ok);
+    kept.setTextFormat(Qt::PlainText);
+    kept.ensurePolished();
+    kept.setText(mervin::fitFileSentence([](const QString &shown, const QString &) {
+        return MainWindow::tr("\"%1\" changed after Split checked it, so Split stopped "
+                              "without replacing it.").arg(shown);
+    }, QStringLiteral("Revision").repeated(30) + QStringLiteral("-003.pdf"), {},
+        kept.fontMetrics(), width));
+    inspect(kept, QStringLiteral("Split kept a changed file with a long name"));
 }
 
 void TstTranslationLayout::settings()

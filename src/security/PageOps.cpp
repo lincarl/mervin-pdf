@@ -275,7 +275,8 @@ PageOps::Status PageOps::merge(const QStringList &inPaths, const QString &outPat
 
 PageOps::Status PageOps::split(const QString &inPath, const QString &outDir, const QString &baseName,
                                const QString &password, QStringList *outFiles, QString *error,
-                               const std::function<bool(const QStringList &)> &mayWrite)
+                               const std::function<bool(const QStringList &)> &mayWrite,
+                               const std::function<bool(const QString &)> &mayCommit)
 {
     QPDF q;
     const Status st = open(q, inPath, password, error);
@@ -303,7 +304,7 @@ PageOps::Status PageOps::split(const QString &inPath, const QString &outDir, con
             const QString &path = paths.at(i);
             // A stopped job throws here, before it takes the next file.
             AtomicPdfWriter output(out, path);
-            output.write();
+            output.write([&mayCommit, &path] { return !mayCommit || mayCommit(path); });
             if (outFiles)
                 outFiles->append(path);
         }

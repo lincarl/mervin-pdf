@@ -76,11 +76,16 @@ public:
     // produced paths are appended to `outFiles` if provided. `mayWrite`, when given,
     // gets every output path once the source is read, before the first write. When it
     // answers false, nothing is written and the split fails without an error, as the
-    // caller knows why. Inside a stopped job::Scope no further file is written.
+    // caller knows why. `mayCommit`, when given, gets each output path under that
+    // output's destination lock, after the part is flushed and before it replaces the
+    // file. When it answers false, that file and every later one stay as they are, the
+    // parts committed before stay, and the split fails. Inside a stopped job::Scope no
+    // further file is written.
     static Status split(const QString &inPath, const QString &outDir, const QString &baseName,
                         const QString &password = QString(), QStringList *outFiles = nullptr,
                         QString *error = nullptr,
-                        const std::function<bool(const QStringList &)> &mayWrite = {});
+                        const std::function<bool(const QStringList &)> &mayWrite = {},
+                        const std::function<bool(const QString &)> &mayCommit = {});
 };
 
 } // namespace mervin
