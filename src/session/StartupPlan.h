@@ -25,15 +25,18 @@ struct StagedOpen
 // Open command-line files first, then the restored active document, then remaining session
 // files in saved order. Exactly one becomes current: the last command-line file, otherwise the
 // saved active file or first restored file.
-// Callers filter missing sessionPaths. Paths shared with the command line open once but retain
-// their saved tab positions. sessionActive may be empty.
+// Callers filter missing sessionPaths. A path shared with the command line opens once, as a
+// command-line file, and stays where its batch opened it. The other saved tabs keep their
+// relative order around it (insertIndexForSaved). sessionActive may be empty.
 QList<StagedOpen> planStartupOpens(const QStringList &cliPaths,
                                    const QStringList &sessionPaths,
                                    const QString &sessionActive);
 
-// Place a restored tab after its live predecessors in savedOrder and before other tabs. Derive
-// from currentTabs on every open so failed, canceled and duplicate opens leave the remaining
-// order intact. Both lists use canonical paths; savedIndex < 0 returns -1 (append).
+// Place a restored tab right after the last tab in currentTabs that savedOrder lists before it,
+// or first when there is none. Saved tabs therefore keep their relative order wherever other
+// tabs sit, such as a command-line file or a tab the user moved. Derive from currentTabs on every
+// open so failed, canceled and duplicate opens leave the remaining order intact. Both lists use
+// canonical paths; savedIndex < 0 returns -1 (append).
 int insertIndexForSaved(const QStringList &currentTabs, const QStringList &savedOrder,
                         int savedIndex);
 

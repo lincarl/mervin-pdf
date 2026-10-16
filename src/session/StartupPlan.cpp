@@ -11,7 +11,7 @@ QList<StagedOpen> planStartupOpens(const QStringList &cliPaths, const QStringLis
     for (const QString &p : cliPaths) {
         StagedOpen o;
         o.path = p;
-        o.savedIndex = -1;    // not part of the session: appends, after the restored block
+        o.savedIndex = -1;    // appends, and stays where its batch opens it
         o.makeCurrent = true; // opened in order, so the last one ends up on screen
         batch.append(o);
     }
@@ -50,13 +50,15 @@ int insertIndexForSaved(const QStringList &currentTabs, const QStringList &saved
     if (savedIndex < 0)
         return -1; // append
 
-    int at = 0;
-    for (const QString &tab : currentTabs) {
-        const int pos = savedOrder.indexOf(tab);
+    // Find the last predecessor rather than count them. A count is an index only
+    // while every predecessor sits at the front, which a command-line tab or a
+    // moved tab breaks.
+    for (int i = int(currentTabs.size()) - 1; i >= 0; --i) {
+        const int pos = savedOrder.indexOf(currentTabs.at(i));
         if (pos >= 0 && pos < savedIndex)
-            ++at;
+            return i + 1;
     }
-    return at;
+    return 0;
 }
 
 } // namespace mervin

@@ -87,6 +87,7 @@ private slots:
     void partialUndoKeepsTheSurvivorsInOrder();
     void aMissingFileLeavesAGapNotAShuffle();
     void undoIntoAnotherWindowKeepsTheGroupTogether();
+    void reopenFollowsASiblingThatMoved();
 };
 
 void TstClosedTabStack::popsMostRecentFirst()
@@ -284,8 +285,9 @@ void TstClosedTabStack::undoIntoAnotherWindowKeepsTheGroupTogether()
 {
     // Closing a window and undoing it in a DIFFERENT window: the restored block
     // stays contiguous and in order rather than interleaving with the tabs that
-    // window already had (insertIndexForSaved counts only known siblings, which
-    // is the same rule the staged session restore follows).
+    // window already had (insertIndexForSaved places each tab right after the
+    // last known sibling saved before it, the same rule the staged session
+    // restore follows).
     const QStringList closedWindow{"A", "B", "C"};
     ClosedTabStack s;
     rememberBar(s, closedWindow, /*current=*/1);
@@ -294,6 +296,17 @@ void TstClosedTabStack::undoIntoAnotherWindowKeepsTheGroupTogether()
     QCOMPARE(got.indexOf(QStringLiteral("A")) + 1, got.indexOf(QStringLiteral("B")));
     QCOMPARE(got.indexOf(QStringLiteral("B")) + 1, got.indexOf(QStringLiteral("C")));
     QVERIFY(got.indexOf(QStringLiteral("C")) < got.indexOf(QStringLiteral("X")));
+}
+
+void TstClosedTabStack::reopenFollowsASiblingThatMoved()
+{
+    // B was closed from [A, B]. Then C opened and was dragged to the front. B
+    // comes back right after A, wherever A sits now, not at A's old index.
+    ClosedTab b = tab(QStringLiteral("B"), 1);
+    b.siblings = QStringList{"A", "B"};
+    ClosedTabStack s;
+    s.push(b);
+    QCOMPARE(replayReopen(s, {"C", "A"}, 1), (QStringList{"C", "A", "B"}));
 }
 
 QTEST_GUILESS_MAIN(TstClosedTabStack)

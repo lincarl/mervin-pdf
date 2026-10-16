@@ -356,9 +356,9 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
             if (!restore.contains(path))
                 restore.append(path);
 
-        // Keep command-line/session duplicates in the restore list: planStartupOpens opens them
-        // once while reserving their saved tab positions. The command-line files at the front of
-        // its plan are open already.
+        // Keep command-line/session duplicates in the restore list, so the restored tabs keep
+        // their saved order relative to them too. The command-line files at the front of the plan
+        // are open already and stay where their batch opened them.
         QList<mervin::StagedOpen> batch =
             mervin::planStartupOpens(paths, restore, wm.sessionActivePath()).mid(paths.size());
         for (auto &open : batch) {

@@ -315,6 +315,10 @@ create their placeholders at once. Staged batches finish when their shells are q
 so a command-line read that stopped answering cannot delay session restore. The
 development-only `--quit-after-startup` option separately waits for requested loads
 after both shell batches are queued, so startup timing still measures usable documents.
+The session's batch places each restored tab right after the last tab in the bar that
+the session saved before it, or first when there is none (`insertIndexForSaved`).
+Saved tabs therefore keep their relative order, and a command-line file that the
+session also lists stays where its own batch opened it.
 `WindowManager::restoreSession` has `FileProbe` check each saved path
 (`SessionStore::filesToCheck`) and waits, with the window live, until every check has
 answered or `kRestoreWaitMs` (1.5 s) has passed. `SessionStore::prepareRestore` then
@@ -326,7 +330,7 @@ volume, or its folder is missing, which can be a share mounted where the volume
 check does not look. A file whose check has not answered in time counts as away
 too. The file stays in `session.json` under `unavailable`, next to `open`, with the
 date it was first found missing. If its check answers later in the same run, a file
-that is there opens as an unloaded tab in its saved place, once the session's other
+that is there opens as an unloaded tab, placed the same way once the session's other
 tabs are in, without taking the view unless the window shows no document yet. One
 gone from its folder is dropped. The session is not saved from the start until its
 documents are queued (`WindowManager::holdSession`), so nothing the restore has not

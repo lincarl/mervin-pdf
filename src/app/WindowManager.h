@@ -219,8 +219,8 @@ public:
     // mount stay in the session unopened (see SessionStore::prepareRestore), judged
     // by the mount recorded for each file when there is one (SessionStore::mount),
     // and so do those whose check has not answered in time. One that answers later
-    // opens then, as an unloaded tab in its saved place, without taking the view
-    // unless the window shows no document yet.
+    // opens then, unloaded, right after the last tab in the bar saved before it, or
+    // first when none is, without taking the view unless the window shows no document yet.
     // updateSession() saves the current open set (union across live windows)
     // followed by those kept documents, and waits while the restore does. The
     // single UI process is the only writer.
