@@ -480,6 +480,24 @@ QString formProblem(const QString &path, int widgets, const QString &password = 
     return {};
 }
 
+// Rewrites `path` with `blob` as its /Mervin_Measurements: a string, or JSON for a stream.
+void setMeasurementBlob(const QString &path, const std::string &blob, bool stream)
+{
+    const QString copy = path + QStringLiteral(".tmp");
+    {
+        QPDF q; // closes the source before it is replaced, which Windows needs
+        const QByteArray name = path.toUtf8();
+        q.processFile(name.constData());
+        q.getRoot().replaceKey("/Mervin_Measurements",
+                               stream ? q.newStream(blob) : QPDFObjectHandle::newString(blob));
+        const QByteArray copyName = copy.toUtf8();
+        QPDFWriter writer(q, copyName.constData());
+        writer.write();
+    }
+    QFile::remove(path);
+    QFile::rename(copy, path);
+}
+
 // Build a valid PDF whose pages have the given MediaBox widths (all 792 tall).
 // Distinct widths make each page identifiable after a copy, which is the only
 // way to assert that pages came out in the right ORDER - makePdf's pages are all
@@ -570,6 +588,8 @@ private slots:
     void copiesKeepFormFields();
     void copiesLeaveOutFieldsOfOtherPages_data();
     void copiesLeaveOutFieldsOfOtherPages();
+    void mergeNamesInputWithBadMeasurements_data();
+    void mergeNamesInputWithBadMeasurements();
     void mergeConcatenates();
     void mergeHonoursPerFileRanges();
     void mergeRepeatsAPage();
@@ -1148,6 +1168,39 @@ void TstQpdf::copiesLeaveOutFieldsOfOtherPages()
     QVERIFY(pdfContains(parts.at(0), keptText));
     QVERIFY(!pdfContains(parts.at(2), kSecret));
     QVERIFY(!pdfContains(parts.at(2), keptText));
+}
+
+/// A string blob and a stream from a newer measurement format.
+void TstQpdf::mergeNamesInputWithBadMeasurements_data()
+{
+    QTest::addColumn<bool>("stream");
+    QTest::addColumn<QString>("blob");
+    QTest::addColumn<QString>("message");
+    QTest::newRow("string") << false << QStringLiteral("measurements")
+                            << QStringLiteral("Invalid measurement metadata.");
+    QTest::newRow("version 2") << true << QStringLiteral("{\"mervinMeasureVersion\":2}")
+                               << QStringLiteral("Unsupported measurement metadata.");
+}
+
+/// Checks that a merge input whose measurements cannot be read is named by its index.
+void TstQpdf::mergeNamesInputWithBadMeasurements()
+{
+    QFETCH(bool, stream);
+    QFETCH(QString, blob);
+    QFETCH(QString, message);
+    const QString good = in(QStringLiteral("mb_good.pdf"));
+    const QString bad = in(QStringLiteral("mb_bad.pdf"));
+    const QString out = in(QStringLiteral("mb_out.pdf"));
+    makePdf(good, 2);
+    makePdf(bad, 2);
+    setMeasurementBlob(bad, blob.toStdString(), stream);
+    QString err;
+    int failed = -1;
+    QCOMPARE(PageOps::merge({{good, {}, {}}, {bad, {}, {}}}, out, &err, &failed),
+             PageOps::Status::Failed);
+    QCOMPARE(failed, 1);
+    QCOMPARE(err, message);
+    QVERIFY(!QFileInfo::exists(out));
 }
 
 void TstQpdf::mergeConcatenates()

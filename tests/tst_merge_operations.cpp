@@ -52,6 +52,31 @@ bool writeBytes(const QString &path, const QByteArray &data)
     QFile file(path);
     return file.open(QIODevice::WriteOnly) && file.write(data) == data.size();
 }
+
+/// A three-page PDF whose measurement data is a string, which page operations cannot read.
+QByteArray unreadableMeasurementsPdf()
+{
+    const QList<QByteArray> objects{
+        "<< /Type /Catalog /Pages 2 0 R /Mervin_Measurements (damaged) >>",
+        "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>"};
+    QByteArray pdf = "%PDF-1.7\n";
+    QList<qsizetype> offsets;
+    for (qsizetype i = 0; i < objects.size(); ++i) {
+        offsets.append(pdf.size());
+        pdf += QByteArray::number(i + 1) + " 0 obj\n" + objects.at(i) + "\nendobj\n";
+    }
+    const qsizetype start = pdf.size();
+    const QByteArray count = QByteArray::number(objects.size() + 1);
+    pdf += "xref\n0 " + count + "\n0000000000 65535 f \n";
+    for (qsizetype offset : offsets)
+        pdf += QByteArray::number(offset).rightJustified(10, '0') + " 00000 n \n";
+    pdf += "trailer\n<< /Size " + count + " /Root 1 0 R >>\nstartxref\n"
+           + QByteArray::number(start) + "\n%%EOF\n";
+    return pdf;
+}
 } // namespace
 
 /// Exercises worker writes, recovery dialogs and result delivery through real controls.
@@ -270,6 +295,24 @@ private slots:
         QCOMPARE(reopenedSpec_, spec_);
         QCOMPARE(reopenedOutput_, QDir::toNativeSeparators(output_));
         QVERIFY(reopenedError_.contains(QStringLiteral("source.pdf")));
+        QVERIFY(!QFileInfo::exists(output_));
+    }
+
+    /// Checks that an input whose measurements cannot be read is named, not the output.
+    void unreadableMeasurementsNameTheirRow()
+    {
+        beforeMerge_ = [this] {
+            QVERIFY(QFile::remove(source_));
+            QVERIFY(writeBytes(source_, unreadableMeasurementsPdf()));
+        };
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        QVERIFY(testing::openAndWait(window, source_));
+        QVERIFY(QMetaObject::invokeMethod(&window, "mergeDocuments"));
+        QTRY_COMPARE_WITH_TIMEOUT(dialogsSeen_, 2, 10000);
+        QCOMPARE(reopenedSpec_, spec_);
+        QVERIFY2(reopenedError_.contains(QStringLiteral("source.pdf")), qPrintable(reopenedError_));
+        QVERIFY(!reopenedError_.contains(QStringLiteral("Could not write")));
         QVERIFY(!QFileInfo::exists(output_));
     }
 

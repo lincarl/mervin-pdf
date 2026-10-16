@@ -946,6 +946,11 @@ fields with null (`QPDF::replaceObject`), so links, named destinations and other
 references cannot keep their content in the output. A damaged outline or structure
 tree is left as it was.
 
+In `PageOps::merge`, an exception while an input is read, such as unreadable
+measurement data, sets `failedIndex` to that input. Extract maps index 0 to its
+unreadable-source failure. Errors after the inputs are read keep -1, which the
+dialogs report as a failed write.
+
 Rotate Pages, Split, accepted Merge plans and Security run as their tab's operation
 (`TabPage::startOperation`), so only that tab waits for the file. Page tool prompts
 and file dialogs run first, as before.
