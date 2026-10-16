@@ -59,7 +59,9 @@ The script verifies the official source archive, builds the libraries with the
 v143 toolset, and enables MuPDF's `FZ_HIDE_INTERNAL_JPEG` symbol prefix. MuPDF
 bundles IJG JPEG 10, while qpdf's libjpeg-turbo dependency uses the JPEG 6b ABI.
 Their identically named symbols cannot safely share one statically linked
-executable. The prefix keeps MuPDF's JPEG implementation separate.
+executable. The prefix keeps MuPDF's JPEG implementation separate. Linux builds
+do not use the prefix. They hide all of MuPDF's symbols instead, as described in
+[Linux development and verification](#linux-development-and-verification).
 
 Rebuild MuPDF when migrating from the dynamic-vcpkg build. The script refuses
 cached libraries from the older build configuration. Use a separate destination
@@ -195,9 +197,9 @@ appropriate signing or administrator approval process outside this build change.
 
 Run the existing tests against the rebuilt application libraries. The focused
 cases cover settings parsing and saving, qpdf operations, document output and
-rendering. The Windows-only `tst_qpdf::jpegDecodersCoexist` case generates a JPEG
-and exercises qpdf's decoder and MuPDF's renderer in one process to catch JPEG
-ABI collisions. CI runs the complete required suite:
+rendering. The `tst_qpdf::jpegDecodersCoexist` case, which Linux also runs,
+encodes a JPEG with Qt and decodes it with qpdf and MuPDF in one process to catch
+JPEG ABI collisions. CI runs the complete required suite:
 
 ```powershell
 ctest --test-dir build/x64-release --output-on-failure -R '^(tst_settings_store|tst_qpdf|tst_document|tst_document_output|tst_render_lifetime|tst_measure_export)$'
@@ -244,6 +246,20 @@ For memory and undefined-behavior checks, configure a separate Debug build with
 `-DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"` and
 `-DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"`. CI disables leak detection
 for the prebuilt Qt/dependency binaries; address and undefined-behavior checks remain enabled.
+
+MuPDF's archives bundle libjpeg, FreeType, zlib and Brotli. The system libqpdf,
+Qt and Qt's JPEG plugin load the system copies of these libraries.
+`cmake/FindMuPDF.cmake` links the archives with `-Wl,--exclude-libs`, which keeps
+all of MuPDF's symbols out of the executables' dynamic symbol tables. Without it,
+GNU ld exports MuPDF's definitions of the names those libraries use, the dynamic
+linker binds the libraries to MuPDF's copies, and colour printing writes empty
+page images. The `linux_symbol_exports` test runs `scripts/check-linux-exports.py`
+on the application and three test executables. The Linux release jobs build
+without tests and run the script on the application:
+
+```bash
+python3 scripts/check-linux-exports.py build/linux-release/MervinPDF
+```
 
 ## Qt modules for the UI translations
 

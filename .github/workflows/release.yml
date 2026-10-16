@@ -291,6 +291,11 @@ jobs:
             -DMUPDF_DIR="$MUPDF_DIR"
           cmake --build build
 
+      - name: Check exported symbols
+        # Exporting MuPDF's bundled libjpeg, FreeType, zlib or Brotli would make
+        # Qt's JPEG plugin, libqpdf and Qt's fonts call MuPDF's copies.
+        run: python3 scripts/check-linux-exports.py build/MervinPDF
+
       - name: Install into AppDir
         run: DESTDIR="$PWD/AppDir" cmake --install build
 
@@ -352,6 +357,11 @@ jobs:
             -DMUPDF_DIR="$MUPDF_DIR"
           cmake --build build
 
+      - name: Check exported symbols
+        # Exporting MuPDF's bundled libjpeg, FreeType, zlib or Brotli would make
+        # Qt's JPEG plugin, libqpdf and Qt's fonts call MuPDF's copies.
+        run: python3 scripts/check-linux-exports.py build/MervinPDF
+
       - name: Package .deb
         run: |
           cd build && cpack -G DEB
@@ -404,6 +414,11 @@ jobs:
             -DMERVIN_BUILD_TESTS=OFF \
             -DMUPDF_DIR="$MUPDF_DIR"
           cmake --build build
+
+      - name: Check exported symbols
+        # Exporting MuPDF's bundled libjpeg, FreeType, zlib or Brotli would make
+        # Qt's JPEG plugin, libqpdf and Qt's fonts call MuPDF's copies.
+        run: python3 scripts/check-linux-exports.py build/MervinPDF
 
       - name: Package .rpm
         run: |

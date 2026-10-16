@@ -11,7 +11,10 @@
 #
 # Bundled third-party is used (no USE_SYSTEM_LIBS), so the only build dependency
 # is a C/C++ toolchain (build-essential). The resulting archives are
-# self-contained; FindMuPDF links them with --start-group + m/pthread/dl.
+# self-contained; FindMuPDF links them with --start-group + m/pthread/dl and
+# --exclude-libs, which keeps the bundled codecs' symbols out of the executable's
+# exports so the system libqpdf and Qt keep their own libjpeg, FreeType, zlib and
+# Brotli.
 set -euo pipefail
 
 VERSION="1.28.5"

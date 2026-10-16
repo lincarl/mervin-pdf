@@ -21,8 +21,13 @@ MuPDF is built from source and linked statically. Windows also statically links
 qpdf, toml++ and their vcpkg library dependencies using `x64-windows-static-md`.
 Qt, its plugins and the Microsoft runtime remain dynamic. Linux uses its
 distribution's qpdf and toml++ packages without changing their linking
-configuration. The application is licensed under AGPL-3.0; dependency notices are
-maintained in [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md).
+configuration. MuPDF's archives bundle their own copies of libjpeg, FreeType, zlib
+and Brotli, libraries that qpdf and Qt also use. On Windows, MuPDF's build prefixes
+its JPEG symbols (`FZ_HIDE_INTERNAL_JPEG`). On Linux, `--exclude-libs` keeps every
+MuPDF archive symbol out of the executable's dynamic symbol table, so the shared
+system libraries and Qt's plugins keep using the system copies. The application is
+licensed under AGPL-3.0; dependency notices are maintained in
+[THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md).
 
 ## Source layout
 

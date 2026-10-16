@@ -166,6 +166,7 @@ jobs:
       - name: Test repository scripts
         run: |
           python3 -B scripts/test_reviewed_ci.py
+          python3 -B scripts/test_linux_exports.py
           python3 -B scripts/test_prepare_prerelease.py
           python3 -B scripts/test_release_versions.py
           python3 -B scripts/test_prune_releases.py
