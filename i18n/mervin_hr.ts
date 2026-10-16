@@ -4380,7 +4380,7 @@ Nova AppImage sprema se na:
     <name>mervin::measurementPages</name>
     <message>
         <source>Invalid measurement metadata.</source>
-        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged.</extracomment>
+        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or too large to read.</extracomment>
         <translation>Nevažeći metapodaci mjerenja.</translation>
     </message>
     <message>

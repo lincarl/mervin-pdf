@@ -4380,7 +4380,7 @@ Sábháiltear an AppImage nua ag:
     <name>mervin::measurementPages</name>
     <message>
         <source>Invalid measurement metadata.</source>
-        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged.</extracomment>
+        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or too large to read.</extracomment>
         <translation>Meiteashonraí tomhais neamhbhailí.</translation>
     </message>
     <message>

@@ -1,9 +1,9 @@
 #include "security/MeasureExport.h"
 #include "io/JobContext.h"
 #include "security/AtomicPdfWriter.h"
+#include "security/MeasurementPages.h"
 #include "security/QpdfSource.h"
 
-#include <qpdf/Buffer.hh>
 #include <qpdf/Constants.h>
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFExc.hh>
@@ -171,16 +171,13 @@ std::optional<QByteArray> MeasureExport::readMervinBlob(const QString &inPath,
         if (!root.hasKey("/Mervin_Measurements"))
             return std::nullopt;
         auto blob = root.getKey("/Mervin_Measurements");
-        if (blob.isStream()) {
-            auto buf = blob.getStreamData();
-            if (!buf)
-                return std::nullopt;
-            return QByteArray(reinterpret_cast<const char *>(buf->getBuffer()),
-                              static_cast<int>(buf->getSize()));
-        }
+        if (blob.isStream())
+            return measurementPages::decodeBlob(blob);
         if (blob.isString()) {
             const std::string sv = blob.getStringValue();
-            return QByteArray(sv.data(), static_cast<int>(sv.size()));
+            if (sv.size() > size_t(measurementPages::kMaxBlobBytes))
+                return std::nullopt;
+            return QByteArray(sv.data(), qsizetype(sv.size()));
         }
         return std::nullopt;
     } catch (const std::exception &) {

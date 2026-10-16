@@ -2,11 +2,16 @@
 #include "render/MeasureContent.h"
 #include "render/RenderEngine.h"
 #include "security/MeasureExport.h"
+#include "security/MeasurementPages.h"
+#include "security/PageOps.h"
 
 #include <qpdf/Buffer.hh>
+#include <qpdf/Pl_Buffer.hh>
+#include <qpdf/Pl_Flate.hh>
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFObjectHandle.hh>
 #include <qpdf/QPDFPageDocumentHelper.hh>
+#include <qpdf/QPDFPageObjectHelper.hh>
 #include <qpdf/QPDFWriter.hh>
 
 #include <QByteArray>
@@ -16,6 +21,7 @@
 #include <QTest>
 #include <QTranslator>
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -48,6 +54,40 @@ void makePdf(const QString &path, int n, int rotate = 0, double ox = 0.0, double
     w.write();
 }
 
+// Compresses `data` once with qpdf's Flate encoder.
+std::string deflate(const std::string &data)
+{
+    Pl_Buffer buffer("deflated");
+    Pl_Flate flate("deflate", &buffer, Pl_Flate::a_deflate);
+    flate.writeString(data);
+    flate.finish();
+    return buffer.getString();
+}
+
+// Writes a one-page PDF whose catalog holds `encoded` as /Mervin_Measurements, stored as
+// given under `filters` (null for none). `encrypt`, when given, sets the writer's
+// encryption with password bytes passed to qpdf unchanged.
+void makeBlobPdf(const QString &path, const std::string &encoded, QPDFObjectHandle filters,
+                 const std::function<void(QPDFWriter &)> &encrypt = {})
+{
+    QPDF q;
+    q.emptyPDF();
+    QPDFPageDocumentHelper(q).addPage(QPDFPageObjectHelper(q.makeIndirectObject(
+        QPDFObjectHandle::parse("<< /Type /Page /MediaBox [0 0 612 792] /Resources << >> >>"))), false);
+    if (!encoded.empty()) {
+        auto blob = q.newStream();
+        blob.replaceStreamData(encoded, filters, QPDFObjectHandle::newNull());
+        q.getRoot().replaceKey("/Mervin_Measurements", blob);
+    }
+    const QByteArray outputName = path.toUtf8();
+    QPDFWriter w(q, outputName.constData());
+    w.setStreamDataMode(qpdf_s_preserve);
+    w.setDecodeLevel(qpdf_dl_none);
+    if (encrypt)
+        encrypt(w);
+    w.write();
+}
+
 std::string pageContent(QPDFObjectHandle page)
 {
     std::string out;
@@ -76,6 +116,36 @@ Measurement distance(int page, QPointF a, QPointF b)
     m.kind = MeasureKind::Distance;
     m.pts = {a, b};
     return m;
+}
+
+// One distance on page 0.
+MeasureDoc oneDistance()
+{
+    MeasureDoc md;
+    md.measurements.push_back(distance(0, QPointF(5, 5), QPointF(55, 5)));
+    return md;
+}
+
+// Rows for a decoded blob exactly at the cap and one byte past it.
+void capRows()
+{
+    QTest::addColumn<qsizetype>("size");
+    QTest::addColumn<bool>("accepted");
+    QTest::newRow("at the cap") << measurementPages::kMaxBlobBytes << true;
+    QTest::newRow("one byte over") << measurementPages::kMaxBlobBytes + 1 << false;
+}
+
+// Writes a one-page PDF whose blob is valid measurement JSON padded with leading spaces
+// to `size` bytes, then compressed twice. It stays small on disk.
+void makeLargeBlobPdf(const QString &path, qsizetype size)
+{
+    const QByteArray json = serializeMeasurements(oneDistance());
+    const std::string data = std::string(size_t(size - json.size()), ' ') + json.toStdString();
+    auto filters = QPDFObjectHandle::newArray();
+    filters.appendItem(QPDFObjectHandle::newName("/FlateDecode"));
+    filters.appendItem(QPDFObjectHandle::newName("/FlateDecode"));
+    makeBlobPdf(path, deflate(deflate(data)), filters);
+    QVERIFY(QFileInfo(path).size() < 64 * 1024);
 }
 
 RenderMeasurement render(const Measurement &m, const QString &label)
@@ -117,6 +187,10 @@ private slots:
     void serializeParseRoundTrip();
     void overrideOnlyRoundTrip();
     void embedReadRoundTrip();
+    void blobReadStopsAtTheCap_data();
+    void blobReadStopsAtTheCap();
+    void pageOperationsStopAtTheCap_data();
+    void pageOperationsStopAtTheCap();
     void catalogGateMatchesBlobPresence();
     void embedKeyIsPrivateToCatalog();
     void valueLabelsWithoutScale();
@@ -210,6 +284,44 @@ void TstMeasureExport::embedReadRoundTrip()
 
     // A document without the key reads back as nullopt.
     QVERIFY(!MeasureExport::readMervinBlob(in).has_value());
+}
+
+void TstMeasureExport::blobReadStopsAtTheCap_data()
+{
+    capRows();
+}
+
+/// The viewer's reader returns a doubly compressed blob only up to the cap.
+void TstMeasureExport::blobReadStopsAtTheCap()
+{
+    QFETCH(qsizetype, size);
+    QFETCH(bool, accepted);
+    const QString in = p("cap-read.pdf");
+    makeLargeBlobPdf(in, size);
+    const auto blob = MeasureExport::readMervinBlob(in);
+    QCOMPARE(blob.has_value(), accepted);
+    if (accepted)
+        QCOMPARE(blob->size(), size);
+}
+
+void TstMeasureExport::pageOperationsStopAtTheCap_data()
+{
+    capRows();
+}
+
+/// Page operations refuse a blob past the cap as invalid metadata.
+void TstMeasureExport::pageOperationsStopAtTheCap()
+{
+    QFETCH(qsizetype, size);
+    QFETCH(bool, accepted);
+    const QString in = p("cap-rotate.pdf"), out = p("cap-rotated.pdf");
+    makeLargeBlobPdf(in, size);
+    QString err;
+    QCOMPARE(PageOps::rotatePages(in, out, {0}, 90, true, {}, &err),
+             accepted ? PageOps::Status::Ok : PageOps::Status::Failed);
+    if (!accepted)
+        QCOMPARE(err, QCoreApplication::translate("mervin::measurementPages",
+                                                  "Invalid measurement metadata."));
 }
 
 void TstMeasureExport::catalogGateMatchesBlobPresence()
