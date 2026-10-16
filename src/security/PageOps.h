@@ -46,7 +46,10 @@ public:
     static Status probe(const QString &path, int *count, const QString &password = QString(),
                         QString *error = nullptr, bool *encrypted = nullptr);
 
-    // Write a copy with the given pages removed.
+    // Write a copy with the given pages removed. The copy keeps the source's structure and
+    // encryption but leaves out what only the removed pages used: the pages, their
+    // annotations and form fields, and the outline items and structure elements that lead
+    // only to them. Other references to the pages become null.
     static Status deletePages(const QString &inPath, const QString &outPath,
                               const QList<int> &pages, const QString &password = QString(),
                               QString *error = nullptr);

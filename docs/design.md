@@ -920,6 +920,20 @@ that the result will not be encrypted. The window opens an Extract or Delete res
 or a one-file merge (`MergePlan::resultPassword`), with the password that read its
 source.
 
+Delete Pages removes pages from the source's own `QPDF` and writes it, so it keeps
+encryption, outlines and structure. `QPDFPageDocumentHelper::removePage` only takes a
+page out of `/Pages`, so `removeDeletedContent` then removes what only the deleted
+pages used. It removes the outline items that only go to a deleted page and have no
+items left below them, relinking their siblings and correcting `/Count`. It removes
+the structure elements whose content is only on deleted pages, with their `/ParentTree`
+and `/IDTree` entries, and the deleted pages' content items from the elements that
+stay. It removes the form fields whose widgets are all on deleted pages from `/Fields`,
+`/CO` and their parents' `/Kids`, and drops `/XFA` when it removes one. Finally it
+replaces the deleted pages, their annotations that no kept page lists and the removed
+fields with null (`QPDF::replaceObject`), so links, named destinations and other
+references cannot keep their content in the output. A damaged outline or structure
+tree is left as it was.
+
 Rotate Pages, Split, accepted Merge plans and Security run as their tab's operation
 (`TabPage::startOperation`), so only that tab waits for the file. Page tool prompts
 and file dialogs run first, as before.
@@ -1148,8 +1162,9 @@ the Output column and there are no moves. Nor is there a Remove button beside th
 rows, since each row's ✕ removes it. `ExtractPlan::cells()` returns every
 source page, unfolded, flagged `deleted`, and `deletePage()`/`keepPage()` turn a
 click on the strip into row edits, widening, joining or splitting ranges. The worker writes through
-`PageOps::deletePages`, which copies the whole document minus those pages, so the
-copy keeps the source's structure and encryption, and refuses to delete every page.
+`PageOps::deletePages`, which writes the source without those pages and without what
+only they used, so the copy keeps the source's structure and encryption, and refuses
+to delete every page.
 
 ## Save and print pipeline
 

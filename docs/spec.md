@@ -249,8 +249,12 @@ to a row or taking it out of the row that holds it. The result line names the pa
 that remain, for example "Result: 3 of 6 pages remain (1, 3-4)." Deleting every page
 is refused before anything is written, with the reason on the error line. The window
 writes a copy, by default `<name>-edited.pdf` beside the document, which keeps the
-document's structure and encryption; the original file is never changed. Extract and
-Delete share one remembered Open when done choice.
+document's structure and encryption; the original file is never changed. The copy
+does not contain the deleted pages' content, annotations or form fields, nor the
+bookmarks and tagged structure elements that lead only to them. Links and other
+references to a deleted page no longer go anywhere. A form that loses a field also
+loses its XFA data, which holds every field's value. Extract and Delete share one
+remembered Open when done choice.
 
 Extract and Delete check the source in the background before opening their dialog.
 Their write checks the chosen password and page count again. A changed count keeps

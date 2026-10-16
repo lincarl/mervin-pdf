@@ -5,7 +5,10 @@
 #include "security/PageOps.h"
 #include "security/QpdfService.h"
 
+#include <qpdf/Buffer.hh>
 #include <qpdf/QPDF.hh>
+#include <qpdf/QPDFNameTreeObjectHelper.hh>
+#include <qpdf/QPDFNumberTreeObjectHelper.hh>
 #include <qpdf/QPDFObjectHandle.hh>
 #include <qpdf/QPDFPageDocumentHelper.hh>
 #include <qpdf/QPDFPageObjectHelper.hh>
@@ -18,11 +21,373 @@
 #include <QTest>
 
 #include <cctype>
+#include <map>
+#include <set>
+#include <string>
+#include <vector>
 
 using mervin::PageOps;
 using mervin::QpdfService;
 
 namespace {
+
+// Text that only page 2 of the delete fixtures carries, in its content and in whatever
+// refers to it.
+const std::string kSecret = "PAGE2SECRET";
+
+QPDFObjectHandle parse(const std::string &text)
+{
+    return QPDFObjectHandle::parse(text);
+}
+
+// What refers to page 2 of a delete fixture from outside the page tree. Each case on its
+// own kept page 2's content in a Delete Pages copy before the cleanup.
+enum class Reference {
+    Outline,         // a bookmark to page 2 whose title names the secret
+    NamedOutline,    // the same through a GoTo action and a named destination
+    NestedOutline,   // such a bookmark below one that stays, and one to page 2 above one that stays
+    Link,            // a link on page 1 to page 2
+    Reply,           // a reply on page 1 to a note on page 2
+    Field,           // a text field whose only widget is on page 2
+    CalculatedField, // a parent field in /CO whose only widget is on page 2
+    ChildField,      // a child field on page 2 beside a child field on page 1
+    SharedField,     // one field with widgets on pages 1 and 2
+    Xfa,             // a field on page 2 of a form that also carries XFA data
+    Structure,       // a figure element on page 2 with alternate text
+    NestedStructure, // a section only on page 2, and a paragraph across pages 2 and 3
+    TaggedWidget,    // an /OBJR structure element for the page 2 widget of a tagged form
+};
+
+// A page that shows `text` in two marked-content sequences, MCID 0 and 1.
+QPDFObjectHandle textPage(QPDF &q, const std::string &text, int width = 612)
+{
+    QPDFObjectHandle page = parse("<< /Type /Page /Resources << /Font << /F1 << /Type /Font "
+                                  "/Subtype /Type1 /BaseFont /Helvetica >> >> >> >>");
+    page.replaceKey("/MediaBox", parse("[0 0 " + std::to_string(width) + " 792]"));
+    page.replaceKey("/Contents",
+                    q.newStream("/P <</MCID 0>> BDC BT /F1 12 Tf 72 700 Td (" + text
+                                + ") Tj ET EMC /P <</MCID 1>> BDC BT /F1 12 Tf 72 680 Td ("
+                                + text + " again) Tj ET EMC"));
+    return q.makeIndirectObject(page);
+}
+
+// A normal appearance that shows `text`.
+QPDFObjectHandle appearance(QPDF &q, const std::string &text)
+{
+    QPDFObjectHandle stream = q.newStream("BT /F1 12 Tf 2 10 Td (" + text + ") Tj ET");
+    stream.getDict().replaceKey("/Type", QPDFObjectHandle::newName("/XObject"));
+    stream.getDict().replaceKey("/Subtype", QPDFObjectHandle::newName("/Form"));
+    stream.getDict().replaceKey("/BBox", parse("[0 0 228 30]"));
+    QPDFObjectHandle ap = QPDFObjectHandle::newDictionary();
+    ap.replaceKey("/N", stream);
+    return ap;
+}
+
+// Adds `annot` to the page's /Annots and points its /P at the page.
+void annotate(QPDFObjectHandle page, QPDFObjectHandle annot)
+{
+    QPDFObjectHandle annots = page.getKey("/Annots");
+    if (!annots.isArray())
+        annots = page.replaceKeyAndGetNew("/Annots", QPDFObjectHandle::newArray());
+    annots.appendItem(annot);
+    annot.replaceKey("/P", page);
+}
+
+// A widget on `page` with the given extra keys, listed in its /Annots.
+QPDFObjectHandle widget(QPDF &q, QPDFObjectHandle page, const std::string &keys = {})
+{
+    QPDFObjectHandle annot = q.makeIndirectObject(
+        parse("<< /Type /Annot /Subtype /Widget /Rect [72 600 300 630] /F 4 " + keys + " >>"));
+    annotate(page, annot);
+    return annot;
+}
+
+// Makes `kids` the field children of `parent`.
+void adopt(QPDFObjectHandle parent, const std::vector<QPDFObjectHandle> &kids)
+{
+    parent.replaceKey("/Kids", QPDFObjectHandle::newArray(kids));
+    for (QPDFObjectHandle kid : kids)
+        kid.replaceKey("/Parent", parent);
+}
+
+// Installs an AcroForm with `fields` that needs appearances, and returns it.
+QPDFObjectHandle installForm(QPDF &q, const std::vector<QPDFObjectHandle> &fields)
+{
+    QPDFObjectHandle form = q.makeIndirectObject(
+        parse("<< /NeedAppearances true /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv << /Type "
+              "/Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>"));
+    form.replaceKey("/Fields", QPDFObjectHandle::newArray(fields));
+    q.getRoot().replaceKey("/AcroForm", form);
+    return form;
+}
+
+// [page /Fit]
+QPDFObjectHandle fit(QPDFObjectHandle page)
+{
+    QPDFObjectHandle dest = QPDFObjectHandle::newArray();
+    dest.appendItem(page);
+    dest.appendItem(QPDFObjectHandle::newName("/Fit"));
+    return dest;
+}
+
+// An outline item with `title` that goes to `page`.
+QPDFObjectHandle bookmark(QPDF &q, const std::string &title, QPDFObjectHandle page)
+{
+    QPDFObjectHandle item = q.makeIndirectObject(QPDFObjectHandle::newDictionary());
+    item.replaceKey("/Title", QPDFObjectHandle::newString(title));
+    item.replaceKey("/Dest", fit(page));
+    return item;
+}
+
+// Links `items` below `parent`, open, with /Parent, /Prev, /Next and /Count. Link children
+// before their parents, as a parent's /Count includes theirs.
+void outline(QPDFObjectHandle parent, const std::vector<QPDFObjectHandle> &items)
+{
+    int count = 0;
+    for (size_t i = 0; i < items.size(); ++i) {
+        QPDFObjectHandle item = items[i];
+        item.replaceKey("/Parent", parent);
+        if (i > 0)
+            item.replaceKey("/Prev", items[i - 1]);
+        if (i + 1 < items.size())
+            item.replaceKey("/Next", items[i + 1]);
+        QPDFObjectHandle below = item.getKey("/Count");
+        count += 1 + (below.isInteger() ? std::max(0, below.getIntValueAsInt()) : 0);
+    }
+    parent.replaceKey("/First", items.front());
+    parent.replaceKey("/Last", items.back());
+    parent.replaceKey("/Count", QPDFObjectHandle::newInteger(count));
+}
+
+// A structure element of type `type` below `parent`.
+QPDFObjectHandle element(QPDF &q, const std::string &type, QPDFObjectHandle parent,
+                         const std::string &keys = {})
+{
+    QPDFObjectHandle elem = q.makeIndirectObject(parse("<< /Type /StructElem " + keys + " >>"));
+    elem.replaceKey("/S", QPDFObjectHandle::newName(type));
+    elem.replaceKey("/P", parent);
+    return elem;
+}
+
+// Builds three text pages, where only page 2 shows kSecret, and refers to page 2 as
+// `reference` says. Pages 1 and 3 show "page one" and "page three".
+void makeReferencedPdf(const QString &path, Reference reference)
+{
+    QPDF q;
+    q.emptyPDF();
+    QPDFPageDocumentHelper dh(q);
+    std::vector<QPDFObjectHandle> pages{textPage(q, "page one"), textPage(q, kSecret),
+                                        textPage(q, "page three")};
+    for (size_t i = 0; i < pages.size(); ++i) {
+        pages[i].replaceKey("/StructParents", QPDFObjectHandle::newInteger(int(i)));
+        dh.addPage(QPDFPageObjectHelper(pages[i]), false);
+    }
+    QPDFObjectHandle root = q.getRoot();
+    QPDFObjectHandle outlines = q.makeIndirectObject(parse("<< /Type /Outlines >>"));
+    // The tagged cases share a Document element with one element per page, each marking
+    // both of its page's sequences, and a ParentTree for them.
+    QPDFObjectHandle tree = q.makeIndirectObject(parse("<< /Type /StructTreeRoot >>"));
+    QPDFObjectHandle document = element(q, "/Document", tree);
+    std::vector<QPDFObjectHandle> perPage;
+    for (size_t i = 0; i < pages.size(); ++i) {
+        perPage.push_back(element(q, i == 1 ? "/Figure" : "/P", document, "/K [0 1]"));
+        perPage.back().replaceKey("/Pg", pages[i]);
+    }
+    std::map<int, QPDFObjectHandle> parents;
+    for (int i = 0; i < 3; ++i)
+        parents[i] = QPDFObjectHandle::newArray({perPage[i], perPage[i]});
+    std::vector<QPDFObjectHandle> documentKids = perPage;
+    bool tagged = false;
+
+    switch (reference) {
+    case Reference::Outline:
+        outline(outlines, {bookmark(q, "Page one", pages[0]),
+                           bookmark(q, kSecret + " bookmark", pages[1])});
+        root.replaceKey("/Outlines", outlines);
+        break;
+    case Reference::NamedOutline: {
+        root.replaceKey("/Names", parse("<< /Dests << /Names [(chapter) null] >> >>"));
+        root.getKey("/Names").getKey("/Dests").getKey("/Names").setArrayItem(1, fit(pages[1]));
+        QPDFObjectHandle named = bookmark(q, kSecret + " bookmark", pages[1]);
+        named.removeKey("/Dest");
+        named.replaceKey("/A", parse("<< /S /GoTo /D (chapter) >>"));
+        outline(outlines, {bookmark(q, "Page one", pages[0]), named});
+        root.replaceKey("/Outlines", outlines);
+        break;
+    }
+    case Reference::NestedOutline: {
+        QPDFObjectHandle chapter = bookmark(q, "Chapter", pages[1]);
+        QPDFObjectHandle section = bookmark(q, "Section", pages[0]);
+        outline(chapter, {bookmark(q, "Kept child", pages[0])});
+        outline(section, {bookmark(q, kSecret + " child", pages[1])});
+        outline(outlines, {chapter, section});
+        root.replaceKey("/Outlines", outlines);
+        break;
+    }
+    case Reference::Link: {
+        QPDFObjectHandle link = q.makeIndirectObject(
+            parse("<< /Type /Annot /Subtype /Link /Rect [72 600 300 630] /Border [0 0 0] >>"));
+        link.replaceKey("/Dest", fit(pages[1]));
+        annotate(pages[0], link);
+        break;
+    }
+    case Reference::Reply: {
+        QPDFObjectHandle note = q.makeIndirectObject(
+            parse("<< /Type /Annot /Subtype /Text /Rect [72 600 92 620] >>"));
+        note.replaceKey("/Contents", QPDFObjectHandle::newString(kSecret + " note"));
+        annotate(pages[1], note);
+        QPDFObjectHandle reply = q.makeIndirectObject(
+            parse("<< /Type /Annot /Subtype /Text /Rect [72 600 92 620] /Contents (Reply) >>"));
+        reply.replaceKey("/IRT", note);
+        annotate(pages[0], reply);
+        break;
+    }
+    case Reference::Field:
+        installForm(q, {widget(q, pages[1], "/FT /Tx /T (secret) /V (" + kSecret + ")")});
+        break;
+    case Reference::CalculatedField: {
+        QPDFObjectHandle first = widget(q, pages[0], "/FT /Tx /T (first) /V (one)");
+        QPDFObjectHandle total = q.makeIndirectObject(parse("<< /FT /Tx /T (total) >>"));
+        total.replaceKey("/V", QPDFObjectHandle::newString(kSecret));
+        adopt(total, {widget(q, pages[1])});
+        installForm(q, {first, total}).replaceKey("/CO", QPDFObjectHandle::newArray({first, total}));
+        break;
+    }
+    case Reference::ChildField: {
+        QPDFObjectHandle address = q.makeIndirectObject(parse("<< /T (address) >>"));
+        QPDFObjectHandle street =
+            q.makeIndirectObject(parse("<< /FT /Tx /T (street) /V (kept street) >>"));
+        QPDFObjectHandle secret = q.makeIndirectObject(parse("<< /FT /Tx /T (secret) >>"));
+        secret.replaceKey("/V", QPDFObjectHandle::newString(kSecret));
+        adopt(street, {widget(q, pages[0])});
+        adopt(secret, {widget(q, pages[1])});
+        adopt(address, {street, secret});
+        installForm(q, {address});
+        break;
+    }
+    case Reference::SharedField: {
+        QPDFObjectHandle shared =
+            q.makeIndirectObject(parse("<< /FT /Tx /T (shared) /V (shared value) >>"));
+        QPDFObjectHandle first = widget(q, pages[0]);
+        first.replaceKey("/AP", appearance(q, "shared value"));
+        QPDFObjectHandle second = widget(q, pages[1]);
+        second.replaceKey("/AP", appearance(q, kSecret));
+        adopt(shared, {first, second});
+        installForm(q, {shared});
+        break;
+    }
+    case Reference::Xfa:
+        installForm(q, {widget(q, pages[0], "/FT /Tx /T (first) /V (one)"),
+                        widget(q, pages[1], "/FT /Tx /T (secret) /V (two)")})
+            .replaceKey("/XFA", q.newStream("<xdp><datasets>" + kSecret + "</datasets></xdp>"));
+        break;
+    case Reference::Structure:
+        perPage[1].replaceKey("/Alt", QPDFObjectHandle::newString(kSecret + " figure"));
+        tagged = true;
+        break;
+    case Reference::NestedStructure: {
+        // The section's figure marks page 2's first sequence; the paragraph marks the
+        // second sequence of pages 2 and 3.
+        QPDFObjectHandle section = element(q, "/Sect", document, "/ID (section-id)");
+        section.replaceKey("/T", QPDFObjectHandle::newString(kSecret + " section"));
+        QPDFObjectHandle figure = element(q, "/Figure", section, "/K 0 /Alt (figure)");
+        figure.replaceKey("/Pg", pages[1]);
+        section.replaceKey("/K", figure);
+        QPDFObjectHandle across = element(q, "/P", document);
+        across.replaceKey("/K", QPDFObjectHandle::newArray(
+            {parse("<< /Type /MCR /MCID 1 >>"), parse("<< /Type /MCR /MCID 1 >>")}));
+        across.getKey("/K").getArrayItem(0).replaceKey("/Pg", pages[1]);
+        across.getKey("/K").getArrayItem(1).replaceKey("/Pg", pages[2]);
+        perPage[2].replaceKey("/K", QPDFObjectHandle::newInteger(0));
+        documentKids = {perPage[0], section, across, perPage[2]};
+        parents[1] = QPDFObjectHandle::newArray({figure, across});
+        parents[2] = QPDFObjectHandle::newArray({perPage[2], across});
+        tree.replaceKey("/IDTree", parse("<< /Names [(section-id) null] >>"));
+        tree.getKey("/IDTree").getKey("/Names").setArrayItem(1, section);
+        tagged = true;
+        break;
+    }
+    case Reference::TaggedWidget: {
+        QPDFObjectHandle field = widget(q, pages[1], "/FT /Tx /T (secret) /StructParent 3");
+        field.replaceKey("/V", QPDFObjectHandle::newString(kSecret));
+        field.replaceKey("/AP", appearance(q, kSecret));
+        installForm(q, {field});
+        QPDFObjectHandle form = element(q, "/Form", document);
+        form.replaceKey("/Pg", pages[1]);
+        form.replaceKey("/K", parse("<< /Type /OBJR >>"));
+        form.getKey("/K").replaceKey("/Obj", field);
+        documentKids = {perPage[0], perPage[1], form, perPage[2]};
+        parents[3] = form;
+        tagged = true;
+        break;
+    }
+    }
+
+    if (tagged) {
+        document.replaceKey("/K", QPDFObjectHandle::newArray(documentKids));
+        tree.replaceKey("/K", document);
+        QPDFObjectHandle nums = QPDFObjectHandle::newArray();
+        for (const auto &[key, value] : parents) {
+            nums.appendItem(QPDFObjectHandle::newInteger(key));
+            nums.appendItem(value);
+        }
+        QPDFObjectHandle parentTree = QPDFObjectHandle::newDictionary();
+        parentTree.replaceKey("/Nums", nums);
+        tree.replaceKey("/ParentTree", q.makeIndirectObject(parentTree));
+        tree.replaceKey("/ParentTreeNextKey", QPDFObjectHandle::newInteger(4));
+        root.replaceKey("/StructTreeRoot", tree);
+        root.replaceKey("/MarkInfo", parse("<< /Marked true >>"));
+    }
+    const QByteArray outputName = path.toUtf8();
+    QPDFWriter writer(q, outputName.constData());
+    writer.write();
+}
+
+// Whether `object`, its direct parts or its decoded stream data contain `needle`.
+bool holds(QPDFObjectHandle object, const std::string &needle)
+{
+    if (object.isString())
+        return object.getStringValue().find(needle) != std::string::npos;
+    if (object.isName())
+        return object.getName().find(needle) != std::string::npos;
+    if (object.isArray()) {
+        for (QPDFObjectHandle item : object.aitems())
+            if (!item.isIndirect() && holds(item, needle))
+                return true;
+        return false;
+    }
+    if (object.isStream()) {
+        std::shared_ptr<Buffer> data;
+        try {
+            data = object.getStreamData(qpdf_dl_all);
+        } catch (const std::exception &) {
+            data = object.getRawStreamData();
+        }
+        const std::string bytes(reinterpret_cast<const char *>(data->getBuffer()),
+                                data->getSize());
+        return bytes.find(needle) != std::string::npos || holds(object.getDict(), needle);
+    }
+    if (object.isDictionary()) {
+        for (const auto &[key, value] : object.ditems())
+            if (key.find(needle) != std::string::npos || (!value.isIndirect() && holds(value, needle)))
+                return true;
+    }
+    return false;
+}
+
+// Whether any object of `path` holds `needle` in a string, a name or decoded stream data.
+// This looks at every object the file has, reachable or not.
+bool pdfContains(const QString &path, const std::string &needle, const QString &password = {})
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    const QByteArray pw = password.toUtf8();
+    q.processFile(name.constData(), password.isEmpty() ? nullptr : pw.constData());
+    for (QPDFObjectHandle object : q.getAllObjects())
+        if (holds(object, needle))
+            return true;
+    return false;
+}
 
 // Build a valid PDF whose pages have the given MediaBox widths (all 792 tall).
 // Distinct widths make each page identifiable after a copy, which is the only
@@ -108,6 +473,9 @@ private slots:
     void userPasswordRequiredToOpen();
     void permissionsRoundTrip();
     void deletePagesReducesCount();
+    void deleteLeavesOutDeletedContent_data();
+    void deleteLeavesOutDeletedContent();
+    void deleteKeepsEncryptionWithoutDeletedContent();
     void mergeConcatenates();
     void mergeHonoursPerFileRanges();
     void mergeRepeatsAPage();
@@ -455,6 +823,156 @@ void TstQpdf::deletePagesReducesCount()
     makePdf(src, 5);
     QCOMPARE(PageOps::deletePages(src, out, {1, 3}), PageOps::Status::Ok);
     QCOMPARE(PageOps::pageCount(out), 3);
+}
+
+/// One row per way a document can refer to the page that Delete Pages removes.
+void TstQpdf::deleteLeavesOutDeletedContent_data()
+{
+    QTest::addColumn<int>("reference");
+    QTest::newRow("bookmark") << int(Reference::Outline);
+    QTest::newRow("named bookmark") << int(Reference::NamedOutline);
+    QTest::newRow("nested bookmarks") << int(Reference::NestedOutline);
+    QTest::newRow("link") << int(Reference::Link);
+    QTest::newRow("reply") << int(Reference::Reply);
+    QTest::newRow("field") << int(Reference::Field);
+    QTest::newRow("calculated parent field") << int(Reference::CalculatedField);
+    QTest::newRow("child field") << int(Reference::ChildField);
+    QTest::newRow("shared field") << int(Reference::SharedField);
+    QTest::newRow("xfa") << int(Reference::Xfa);
+    QTest::newRow("structure element") << int(Reference::Structure);
+    QTest::newRow("nested structure") << int(Reference::NestedStructure);
+    QTest::newRow("tagged widget") << int(Reference::TaggedWidget);
+}
+
+/// Checks that no object of a Delete Pages copy holds the deleted page's content, or what
+/// only refers to that page, while the rest of the document stays.
+void TstQpdf::deleteLeavesOutDeletedContent()
+{
+    QFETCH(int, reference);
+    const auto ref = Reference(reference);
+    const QString src = in(QStringLiteral("ref_src_%1.pdf").arg(reference));
+    const QString out = in(QStringLiteral("ref_out_%1.pdf").arg(reference));
+    makeReferencedPdf(src, ref);
+    QVERIFY(pdfContains(src, kSecret)); // the scan finds what it looks for
+    QCOMPARE(PageOps::deletePages(src, out, {1}), PageOps::Status::Ok);
+    QCOMPARE(PageOps::pageCount(out), 2);
+    QVERIFY(!pdfContains(out, kSecret));
+    QVERIFY(pdfContains(out, "page one"));
+    QVERIFY(pdfContains(out, "page three"));
+
+    QPDF q;
+    const QByteArray name = out.toUtf8();
+    q.processFile(name.constData());
+    QPDFObjectHandle root = q.getRoot();
+    std::vector<QPDFObjectHandle> pages = q.getAllPages();
+    QPDFObjectHandle form = root.getKey("/AcroForm");
+    QPDFObjectHandle fields = form.isDictionary() ? form.getKey("/Fields") : QPDFObjectHandle::newArray();
+    QPDFObjectHandle outlines = root.getKey("/Outlines");
+    QPDFObjectHandle tree = root.getKey("/StructTreeRoot");
+    const auto parentKeys = [&tree, &q] {
+        QList<long long> keys;
+        for (const auto &entry : QPDFNumberTreeObjectHelper(tree.getKey("/ParentTree"), q).getAsMap())
+            keys << entry.first;
+        return keys;
+    };
+    const auto documentKids = [&tree] {
+        return tree.getKey("/K").getKey("/K").getArrayNItems();
+    };
+    switch (ref) {
+    case Reference::Outline:
+    case Reference::NamedOutline:
+        QCOMPARE(outlines.getKey("/Count").getIntValue(), 1LL);
+        QCOMPARE(outlines.getKey("/First").getObjGen(), outlines.getKey("/Last").getObjGen());
+        QVERIFY(!outlines.getKey("/First").hasKey("/Next"));
+        break;
+    case Reference::NestedOutline: {
+        // The chapter stays for its child, the section loses its only child.
+        QCOMPARE(outlines.getKey("/Count").getIntValue(), 3LL);
+        QPDFObjectHandle chapter = outlines.getKey("/First");
+        QPDFObjectHandle section = outlines.getKey("/Last");
+        QCOMPARE(QString::fromStdString(chapter.getKey("/First").getKey("/Title").getUTF8Value()),
+                 QStringLiteral("Kept child"));
+        QCOMPARE(QString::fromStdString(section.getKey("/Title").getUTF8Value()), QStringLiteral("Section"));
+        QVERIFY(!section.hasKey("/First") && !section.hasKey("/Last") && !section.hasKey("/Count"));
+        QCOMPARE(section.getKey("/Prev").getObjGen(), chapter.getObjGen());
+        break;
+    }
+    case Reference::Link:
+    case Reference::Reply:
+        QCOMPARE(pages.at(0).getKey("/Annots").getArrayNItems(), 1);
+        break;
+    case Reference::Field:
+    case Reference::TaggedWidget:
+        QCOMPARE(fields.getArrayNItems(), 0);
+        break;
+    case Reference::CalculatedField:
+        QCOMPARE(fields.getArrayNItems(), 1);
+        QCOMPARE(form.getKey("/CO").getArrayNItems(), 1);
+        QCOMPARE(form.getKey("/CO").getArrayItem(0).getObjGen(), fields.getArrayItem(0).getObjGen());
+        break;
+    case Reference::ChildField: {
+        QCOMPARE(fields.getArrayNItems(), 1);
+        QPDFObjectHandle kids = fields.getArrayItem(0).getKey("/Kids");
+        QCOMPARE(kids.getArrayNItems(), 1);
+        QCOMPARE(QString::fromStdString(kids.getArrayItem(0).getKey("/T").getUTF8Value()),
+                 QStringLiteral("street"));
+        QVERIFY(pdfContains(out, "kept street"));
+        break;
+    }
+    case Reference::SharedField: {
+        // The field and its page 1 widget stay, without the widget of page 2.
+        QCOMPARE(fields.getArrayNItems(), 1);
+        QPDFObjectHandle kids = fields.getArrayItem(0).getKey("/Kids");
+        QCOMPARE(kids.getArrayNItems(), 1);
+        QCOMPARE(kids.getArrayItem(0).getKey("/P").getObjGen(), pages.at(0).getObjGen());
+        QVERIFY(pdfContains(out, "shared value"));
+        break;
+    }
+    case Reference::Xfa:
+        QCOMPARE(fields.getArrayNItems(), 1);
+        QVERIFY(!form.hasKey("/XFA"));
+        break;
+    case Reference::Structure:
+        QCOMPARE(documentKids(), 2);
+        QCOMPARE(parentKeys(), QList<long long>({0, 2}));
+        break;
+    case Reference::NestedStructure: {
+        // The section goes with its figure; the paragraph keeps its page 3 part.
+        QCOMPARE(documentKids(), 3);
+        QPDFObjectHandle across = tree.getKey("/K").getKey("/K").getArrayItem(1);
+        QCOMPARE(across.getKey("/K").getArrayNItems(), 1);
+        QCOMPARE(across.getKey("/K").getArrayItem(0).getKey("/Pg").getObjGen(),
+                 pages.at(1).getObjGen());
+        QCOMPARE(parentKeys(), QList<long long>({0, 2}));
+        QVERIFY(QPDFNameTreeObjectHelper(tree.getKey("/IDTree"), q).getAsMap().empty());
+        break;
+    }
+    }
+    if (ref == Reference::TaggedWidget) {
+        QCOMPARE(documentKids(), 2);
+        QCOMPARE(parentKeys(), QList<long long>({0, 2}));
+    }
+}
+
+/// Checks that an encrypted source gives an encrypted copy without the deleted content.
+void TstQpdf::deleteKeepsEncryptionWithoutDeletedContent()
+{
+    const QString src = in(QStringLiteral("ref_enc_src.pdf"));
+    const QString enc = in(QStringLiteral("ref_enc.pdf"));
+    const QString out = in(QStringLiteral("ref_enc_out.pdf"));
+    makeReferencedPdf(src, Reference::SharedField);
+    QpdfService svc;
+    QCOMPARE(svc.encrypt(src, enc, QString(), QStringLiteral("secret"), QString(),
+                         QpdfService::Algorithm::AES256, {}, nullptr),
+             QpdfService::Status::Ok);
+    QVERIFY(pdfContains(enc, kSecret, QStringLiteral("secret")));
+    QCOMPARE(PageOps::deletePages(enc, out, {1}, QStringLiteral("secret")), PageOps::Status::Ok);
+    QpdfService::Info info;
+    QCOMPARE(svc.readInfo(out, QString(), info, nullptr), QpdfService::Status::NeedsPassword);
+    QCOMPARE(svc.readInfo(out, QStringLiteral("secret"), info, nullptr), QpdfService::Status::Ok);
+    QVERIFY(info.encrypted);
+    QVERIFY(!pdfContains(out, kSecret, QStringLiteral("secret")));
+    QVERIFY(pdfContains(out, "shared value", QStringLiteral("secret")));
 }
 
 void TstQpdf::mergeConcatenates()
