@@ -1,27 +1,67 @@
 #include "security/MeasurementPages.h"
 
 #include <QCoreApplication>
-#include <qpdf/Buffer.hh>
+#include <qpdf/Constants.h>
+#include <qpdf/Pipeline.hh>
 #include <qpdf/QPDF.hh>
+#include <exception>
 #include <stdexcept>
 #include <unordered_map>
 
 namespace mervin::measurementPages {
+namespace {
+// Collects decoded bytes and throws once they would pass kMaxBlobBytes. qpdf catches
+// the exception and stops decoding.
+class CappedSink final : public Pipeline
+{
+public:
+    explicit CappedSink(QByteArray &bytes) : Pipeline("measurement blob", nullptr), bytes_(bytes) {}
+
+    void write(unsigned char const *data, size_t length) override
+    {
+        if (length > size_t(kMaxBlobBytes - bytes_.size()))
+            throw std::length_error("measurement blob exceeds its size limit");
+        bytes_.append(reinterpret_cast<const char *>(data), qsizetype(length));
+    }
+
+    void finish() override {}
+
+private:
+    QByteArray &bytes_;
+};
+} // namespace
+
+std::optional<QByteArray> decodeBlob(QPDFObjectHandle &stream)
+{
+    QByteArray bytes;
+    CappedSink sink(bytes);
+    bool decoded = false;
+    try {
+        // qpdf prints no warning, since the caller reports a failure as missing or
+        // invalid metadata.
+        if (!stream.pipeStreamData(&sink, &decoded, 0, qpdf_dl_generalized, true) || !decoded)
+            return std::nullopt;
+    } catch (const std::exception &) {
+        return std::nullopt;
+    }
+    return bytes;
+}
+
 MeasureDoc read(QPDF &pdf)
 {
     MeasureDoc data;
     auto stream = pdf.getRoot().getKey("/Mervin_Measurements");
     if (stream.isNull())
         return data;
+    const auto bytes = stream.isStream() ? decodeBlob(stream) : std::nullopt;
     // Page operations show these to the user.
-    if (!stream.isStream()) {
-        //: Page operation error. The measurements Mervin saved in this PDF are damaged.
+    if (!bytes) {
+        //: Page operation error. The measurements Mervin saved in this PDF are damaged
+        //: or too large to read.
         throw std::runtime_error(QCoreApplication::translate(
             "mervin::measurementPages", "Invalid measurement metadata.").toStdString());
     }
-    auto bytes = stream.getStreamData();
-    if (!parseMeasurements(QByteArray(reinterpret_cast<const char *>(bytes->getBuffer()),
-                                      bytes->getSize()), &data) || data.version != 1) {
+    if (!parseMeasurements(*bytes, &data) || data.version != 1) {
         //: Page operation error. The measurements Mervin saved in this PDF are damaged or
         //: come from a newer version.
         throw std::runtime_error(QCoreApplication::translate(

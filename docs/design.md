@@ -1294,7 +1294,12 @@ editors and offers Save, Discard, or Cancel for unsaved changes.
 Page deletion, extraction, merge, split, and rotation preserve editable measurement
 metadata. Page numbers follow output order (including duplicates); rotation transforms
 points and swaps anisotropic manual scales on quarter turns. Merged documents use the
-display defaults of the first contributing measurement set.
+display defaults of the first contributing measurement set. Both readers of
+`/Mervin_Measurements`, `MeasureExport::readMervinBlob` for an opening document and
+`measurementPages::read` for page operations, decode it through
+`measurementPages::decodeBlob`. Its sink stops qpdf once the data passes 16 MiB, since
+qpdf sets no limit on Flate output by default. A larger blob opens as no measurements and
+fails page operations with Invalid measurement metadata.
 
 `AtomicPdfWriter` streams all qpdf output through `QSaveFile`, including page,
 security and measurement operations. A failed write discards its temporary file;

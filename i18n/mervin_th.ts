@@ -4337,7 +4337,7 @@ AppImageใหม่ถูกบันทึกไว้ที่:
     <name>mervin::measurementPages</name>
     <message>
         <source>Invalid measurement metadata.</source>
-        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged.</extracomment>
+        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or too large to read.</extracomment>
         <translation>ข้อมูลเมตาการวัดไม่ถูกต้อง</translation>
     </message>
     <message>

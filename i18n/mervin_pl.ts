@@ -4381,7 +4381,7 @@ Nowy obraz aplikacji zostanie zapisany pod adresem:
     <name>mervin::measurementPages</name>
     <message>
         <source>Invalid measurement metadata.</source>
-        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged.</extracomment>
+        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or too large to read.</extracomment>
         <translation>Nieprawidłowe metadane pomiaru.</translation>
     </message>
     <message>

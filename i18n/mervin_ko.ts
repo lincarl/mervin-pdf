@@ -4337,7 +4337,7 @@ The new AppImage is saved at:
     <name>mervin::measurementPages</name>
     <message>
         <source>Invalid measurement metadata.</source>
-        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged.</extracomment>
+        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or too large to read.</extracomment>
         <translation>측정 메타데이터가 잘못되었습니다.</translation>
     </message>
     <message>
