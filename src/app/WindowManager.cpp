@@ -942,11 +942,12 @@ void WindowManager::serveReopen()
                 press.done(Reopen::Failed);
             continue;
         }
-        // Where it belongs in the bar as it stands NOW: after whichever of the tabs
-        // it was closed alongside are already back, and before everything else.
-        // Re-derived rather than replayed (see ClosedTab), which is what makes
-        // undoing a whole window's worth of closes rebuild the original order
-        // however many presses in, and in whatever order the entries come back.
+        // Its place is in the bar as it stands NOW, right after the last tab in the
+        // bar that sat before it when it was closed, wherever that tab sits now, or
+        // first when none is back. Re-derived rather than replayed (see ClosedTab),
+        // which is what makes undoing a whole window's worth of closes rebuild the
+        // original order however many presses in, and in whatever order the entries
+        // come back.
         const int at = insertIndexForSaved(w->tabPaths(), t.siblings, t.index);
         const bool ok = w->openFile(t.path, /*allowDuplicate=*/false, at,
                                     /*makeCurrent=*/true);

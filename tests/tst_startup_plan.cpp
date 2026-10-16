@@ -26,6 +26,7 @@ private slots:
     void staleActivePathIsIgnored();
     void commandLineFileKeepsTheViewDuringRestore();
     void commandLineFileFromTheSessionKeepsItsSavedSlot();
+    void commandLineBatchLeavesTheSessionInOrder();
     void documentThatFailsToOpenLeavesTheRestInOrder();
     void insertIndexIsRelativeToTheLiveTabBar();
     void emptyInputsPlanNothing();
@@ -49,10 +50,10 @@ struct Replay
 //     cancelled its password prompt), and
 //   - the first tab in a window always takes the view, since a window with no
 //     tabs is showing the Recent page.
+// `r` is the bar the plan opens into, empty by default.
 Replay applyPlan(const QList<StagedOpen> &plan, const QStringList &savedOrder,
-                 const QStringList &failing = {})
+                 const QStringList &failing = {}, Replay r = {})
 {
-    Replay r;
     for (const StagedOpen &o : plan) {
         if (r.tabs.contains(o.path)) {
             if (o.makeCurrent)
@@ -67,6 +68,21 @@ Replay applyPlan(const QList<StagedOpen> &plan, const QStringList &savedOrder,
             r.current = o.path;
     }
     return r;
+}
+
+// Replay a launch in the two batches main.cpp opens. The command-line files go
+// first, planned without the session, into the empty window. The session follows
+// without them, placed against `saved`, and opens in the background once the
+// window has tabs.
+Replay applyStartup(const QStringList &cliPaths, const QStringList &saved, const QString &active)
+{
+    const Replay files = applyPlan(planStartupOpens(cliPaths, {}, {}), {});
+    QList<StagedOpen> session = planStartupOpens(cliPaths, saved, active).mid(cliPaths.size());
+    if (!files.tabs.isEmpty()) {
+        for (StagedOpen &o : session)
+            o.makeCurrent = false;
+    }
+    return applyPlan(session, saved, {}, files);
 }
 
 int currentCount(const QList<StagedOpen> &plan)
@@ -207,8 +223,53 @@ void TstStartupPlan::commandLineFileFromTheSessionKeepsItsSavedSlot()
             QCOMPARE(r.current, cli);
             // And it is opened first, not after the rest of the session.
             QCOMPARE(plan.at(0).path, cli);
+            // The same in the two batches main.cpp opens.
+            const Replay launch = applyStartup({cli}, saved, active);
+            QCOMPARE(launch.tabs, saved);
+            QCOMPARE(launch.current, cli);
         }
     }
+}
+
+void TstStartupPlan::commandLineBatchLeavesTheSessionInOrder()
+{
+    // A launch opens its command-line files before it reads the session, so a
+    // file that the session also lists is open already when the session comes.
+    // The saved tabs keep their relative order around it, and the command-line
+    // file stays where its batch opened it.
+    const QString a = QStringLiteral("A.pdf"), b = QStringLiteral("B.pdf"),
+                  c = QStringLiteral("C.pdf"), x = QStringLiteral("X.pdf");
+    const QStringList saved = {a, b, c};
+    for (const QString &active : saved) {
+        const Replay xb = applyStartup({x, b}, saved, active);
+        QVERIFY2(xb.tabs == QStringList({a, x, b, c}),
+                 qPrintable(QStringLiteral("cli=X,B active=%1 gave %2")
+                                .arg(active, xb.tabs.join(QLatin1Char(',')))));
+        QCOMPARE(xb.current, b);
+
+        const Replay xa = applyStartup({x, a}, saved, active);
+        QVERIFY2(xa.tabs == QStringList({x, a, b, c}),
+                 qPrintable(QStringLiteral("cli=X,A active=%1 gave %2")
+                                .arg(active, xa.tabs.join(QLatin1Char(',')))));
+        QCOMPARE(xa.current, a);
+
+        // A file the session does not list stays behind the restored tabs.
+        const Replay xOnly = applyStartup({x}, saved, active);
+        QCOMPARE(xOnly.tabs, QStringList({a, b, c, x}));
+        QCOMPARE(xOnly.current, x);
+
+        // Without command-line files the session takes the view as saved.
+        const Replay none = applyStartup({}, saved, active);
+        QCOMPARE(none.tabs, saved);
+        QCOMPARE(none.current, active);
+    }
+
+    // Command-line files in another order than saved. C and D follow A, the last
+    // tab in the bar saved before them, not B, the one saved nearest before them.
+    const QString d = QStringLiteral("D.pdf");
+    const Replay ba = applyStartup({b, a}, {a, b, c, d}, d);
+    QCOMPARE(ba.tabs, QStringList({b, a, c, d}));
+    QCOMPARE(ba.current, a);
 }
 
 void TstStartupPlan::documentThatFailsToOpenLeavesTheRestInOrder()
@@ -252,12 +313,18 @@ void TstStartupPlan::insertIndexIsRelativeToTheLiveTabBar()
     QCOMPARE(insertIndexForSaved({QStringLiteral("A.pdf")}, saved, -1), -1);
     // Empty bar -> front, whatever the saved position.
     QCOMPARE(insertIndexForSaved({}, saved, 2), 0);
-    // Only documents from the session that precede it are counted; a
-    // command-line-only tab is not, so restored tabs land ahead of it.
+    // Right after the last tab in the bar that the session saved before it, or
+    // first when none is open. A command-line-only tab never counts, so a restored
+    // tab with no saved predecessor open lands ahead of it.
     QCOMPARE(insertIndexForSaved({QStringLiteral("X.pdf")}, saved, 0), 0);
     QCOMPARE(insertIndexForSaved({QStringLiteral("A.pdf"), QStringLiteral("X.pdf")}, saved, 1), 1);
     QCOMPARE(insertIndexForSaved({QStringLiteral("C.pdf")}, saved, 1), 0);
     QCOMPARE(insertIndexForSaved({QStringLiteral("A.pdf"), QStringLiteral("C.pdf")}, saved, 1), 1);
+    // The predecessor is found wherever it sits, here after a tab moved ahead of it.
+    QCOMPARE(insertIndexForSaved({QStringLiteral("C.pdf"), QStringLiteral("A.pdf")},
+                                 {QStringLiteral("A.pdf"), QStringLiteral("B.pdf")}, 1), 2);
+    // The last of them in the bar, not the one saved nearest before it.
+    QCOMPARE(insertIndexForSaved({QStringLiteral("B.pdf"), QStringLiteral("A.pdf")}, saved, 2), 2);
 }
 
 void TstStartupPlan::emptyInputsPlanNothing()
