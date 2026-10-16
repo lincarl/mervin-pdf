@@ -228,6 +228,55 @@ jobs:
           ctest --test-dir build/ci --output-on-failure --output-junit results.xml -LE optional-corpus --parallel 2 --timeout 180
           python3 scripts/check-test-results.py build/ci/results.xml
 
+  # The Linux release packages build on Ubuntu 26.04 against its Qt and qpdf
+  # (release.yml). linux-tests uses aqt's Qt, whose JPEG plugin has its own
+  # libjpeg, and Ubuntu 24.04's qpdf 11, the oldest qpdf the build supports.
+  # This job tests the packages' toolchain, where Qt's JPEG plugin and libqpdf
+  # load the system libjpeg.
+  linux-system-qt-tests:
+    if: inputs.msix_artifact_run == '' && (!inputs.reviewed_pr || github.run_attempt == 1)
+    runs-on: ubuntu-26.04
+    env:
+      QT_QPA_PLATFORM: offscreen
+      MERVIN_TEST_FONT: ${{ github.workspace }}/build/test-fonts/NotoSansCJKsc-Regular.otf
+      MERVIN_TEST_TESSDATA_DIR: ${{ github.workspace }}/build/test-tessdata
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+      - name: Install build dependencies
+        # The appimage job's packages in release.yml. qt6-base-dev includes Qt Test.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build curl ca-certificates file wget \
+            qt6-base-dev qt6-base-dev-tools qt6-svg-dev qt6-svg-plugins \
+            qt6-tools-dev qt6-translations-l10n \
+            libqpdf-dev libtomlplusplus-dev \
+            libgl1-mesa-dev libxkbcommon-dev libxcb-cursor0
+      - name: Cache MuPDF
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~/src/mupdf-1.28.5-source
+          key: mupdf-1.28.5-ubuntu2604-tests-v1
+      - name: Build MuPDF
+        run: echo "MUPDF_DIR=$(scripts/build-mupdf-linux.sh)" >> "$GITHUB_ENV"
+      - name: Configure
+        run: |
+          python3 scripts/fetch-test-font.py build/test-fonts
+          python3 scripts/fetch-test-tessdata.py build/test-tessdata
+          cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMERVIN_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build/ci --parallel 2
+      - name: Test
+        # i18n_catalogs compares i18n/*.ts with lupdate's output. Qt 6.12, which
+        # maintains the catalogs, and Qt 6.10 write different output, so
+        # linux-tests and windows-tests run that test and this job leaves it out.
+        run: |
+          ctest --test-dir build/ci --output-on-failure --output-junit results.xml -LE optional-corpus -E '^i18n_catalogs$' --parallel 2 --timeout 180
+          python3 scripts/check-test-results.py build/ci/results.xml
+
   windows-tests:
     if: inputs.msix_artifact_run == '' && (!inputs.reviewed_pr || github.run_attempt == 1)
     runs-on: windows-2022

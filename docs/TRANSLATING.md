@@ -220,7 +220,11 @@ replacement question.
 
 The `i18n_catalogs` CTest test (`cmake/CheckTranslations.cmake`) runs the same
 `lupdate` as `update_translations`, on copies in the build directory, and never
-changes the committed catalogs. CI runs it on Linux and Windows. Run it alone with:
+changes the committed catalogs. CI runs it on Linux and Windows with Qt 6.12.0, the
+pinned version. Build `update_translations` and run this test with that Qt. The
+`lupdate` of Qt 6.10, which Ubuntu 26.04 ships, leaves out some translator comments
+that Qt 6.12 writes, so it would rewrite the translated catalogs and this test fails
+with it. CI's Ubuntu 26.04 job therefore leaves the test out. Run it alone with:
 
 ```bash
 ctest --test-dir build/linux-release -R i18n_catalogs --output-on-failure

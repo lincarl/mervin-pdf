@@ -261,6 +261,13 @@ without tests and run the script on the application:
 python3 scripts/check-linux-exports.py build/linux-release/MervinPDF
 ```
 
+CI's `linux-tests` jobs build with Qt 6.12.0 from aqtinstall on Ubuntu 24.04, whose
+qpdf 11 is the oldest version the build supports. aqt's JPEG plugin contains its
+own libjpeg. The `linux-system-qt-tests` job builds on Ubuntu 26.04 with the
+distribution's Qt 6.10 and qpdf 12, as the release packages do, and runs the same
+tests except `i18n_catalogs`. That test needs the Qt 6.12 `lupdate` that maintains
+the catalogs (see [TRANSLATING.md](TRANSLATING.md#the-i18n_catalogs-test)).
+
 ## Qt modules for the UI translations
 
 The build embeds the UI catalogs in `i18n/`, Qt's own catalogs and the standard

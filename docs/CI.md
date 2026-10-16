@@ -51,11 +51,13 @@ inside the reusable workflow. PR builds can restore existing dependency caches
 but cannot save caches that a later main or release build might consume.
 
 The required `reviewed-ci` commit status appears on the PR head, with a link to
-the dispatched run. It succeeds only after repository checks, both Linux test
-configurations, Windows tests and MSI verification, and Windows MSIX verification
-all finish successfully. A skipped or deferred build never creates a successful
-status. Cancellation or a failed reporting job leaves a failure through the
-separate lifecycle workflow.
+the dispatched run. It succeeds only after repository checks, all three Linux test
+jobs, Windows tests and MSI verification, and Windows MSIX verification all finish
+successfully. Two Linux jobs build release and sanitizer configurations on Ubuntu
+24.04 with aqt's Qt and qpdf 11. The third builds on Ubuntu 26.04 with the
+distribution's Qt and qpdf, the toolchain of the Linux release packages. A skipped
+or deferred build never creates a successful status. Cancellation or a failed
+reporting job leaves a failure through the separate lifecycle workflow.
 
 Requests for one PR run serially. An existing attempt is reused unless a new
 dispatch explicitly sets `retry=true`. Overlapping requests are deduplicated,

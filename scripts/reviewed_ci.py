@@ -23,7 +23,7 @@ RUN_TITLE = re.compile(r"reviewed-ci PR #([1-9][0-9]*) @ ([0-9a-f]{40})")
 ACTIVE_STATES = {"queued", "in_progress", "waiting", "pending", "requested"}
 REQUIRED_JOBS = {
     "repository-checks", "linux-tests (release)", "linux-tests (sanitize)",
-    "windows-tests", "windows-msix-tests",
+    "linux-system-qt-tests", "windows-tests", "windows-msix-tests",
 }
 
 
