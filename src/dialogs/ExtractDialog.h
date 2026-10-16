@@ -29,7 +29,7 @@ class SaveCheck;
 // with MergeDialog. In Delete mode (Document > Delete Pages) the same window lists the pages
 // to leave out of a copy. The rows have no order, the strip shows every page and a click
 // deletes or keeps one, and the copy is written with PageOps::deletePages, which keeps the
-// source's structure and encryption.
+// source's structure and encryption but not the deleted pages' content or form fields.
 class ExtractDialog : public QDialog
 {
     Q_OBJECT

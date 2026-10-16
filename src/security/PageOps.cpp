@@ -7,6 +7,9 @@
 #include <stdexcept>
 
 #include <qpdf/QPDF.hh>
+#include <qpdf/QPDFNameTreeObjectHelper.hh>
+#include <qpdf/QPDFNumberTreeObjectHelper.hh>
+#include <qpdf/QPDFOutlineDocumentHelper.hh>
 #include <qpdf/QPDFPageDocumentHelper.hh>
 #include <qpdf/QPDFPageObjectHelper.hh>
 
@@ -20,6 +23,474 @@
 #include <vector>
 
 namespace mervin {
+
+namespace {
+
+using ObjectSet = std::set<QPDFObjGen>;
+
+// How deep the cleanup below follows form fields, outline items and structure elements.
+// qpdf's own form traversal stops at the same depth.
+constexpr int kMaxDepth = 100;
+
+/// Adds the indirect annotations that `page` lists in /Annots to `into`.
+void addAnnotations(QPDFObjectHandle page, ObjectSet &into)
+{
+    QPDFObjectHandle annots = page.getKey("/Annots");
+    if (!annots.isArray())
+        return;
+    for (QPDFObjectHandle annot : annots.aitems())
+        if (annot.isIndirect())
+            into.insert(annot.getObjGen());
+}
+
+/// Removes the form fields whose widgets a page operation does not keep. A field stays
+/// when it, or a field or widget below it, is a widget in `kept`. With `dropped`, as for
+/// Delete Pages, a field also stays when nothing below it is in `dropped`, so fields that
+/// no page shows remain. A field that goes leaves its parent's /Kids, and its own subtree
+/// goes with it.
+class FieldPruner
+{
+public:
+    FieldPruner(const ObjectSet &kept, const ObjectSet *dropped) : kept_(kept), dropped_(dropped) {}
+
+    /// Prunes the fields below `field` and returns whether `field` stays.
+    bool prune(QPDFObjectHandle field) { return visit(field, 0).stays; }
+
+    /// Removes the entries of `fields`, an array such as /Fields or /CO, that do not stay.
+    void pruneArray(QPDFObjectHandle fields)
+    {
+        if (!fields.isArray())
+            return;
+        for (int i = 0; i < fields.getArrayNItems();)
+            if (prune(fields.getArrayItem(i)))
+                ++i;
+            else
+                fields.eraseItem(i);
+    }
+
+    /// The fields that went. Their descendants that hold no widget of `dropped` are not
+    /// listed, as nothing shows them.
+    const ObjectSet &removed() const { return removed_; }
+
+private:
+    struct Verdict
+    {
+        bool kept = false;    // a widget in `kept` is at or below the field
+        bool dropped = false; // a widget in `dropped` is at or below the field
+        bool stays = true;
+    };
+
+    Verdict visit(QPDFObjectHandle field, int depth)
+    {
+        // qpdf ignores direct and non-dictionary entries in the field tree as well.
+        if (!field.isIndirect() || !field.isDictionary())
+            return {};
+        const QPDFObjGen id = field.getObjGen();
+        if (const auto it = seen_.find(id); it != seen_.end())
+            return it->second; // a field reached twice, or a loop back to one in progress
+        seen_[id] = {};
+        Verdict verdict;
+        verdict.kept = kept_.count(id) > 0;
+        verdict.dropped = dropped_ && dropped_->count(id) > 0;
+        QPDFObjectHandle kids = field.getKey("/Kids");
+        if (kids.isArray() && depth < kMaxDepth) {
+            for (int i = 0; i < kids.getArrayNItems();) {
+                const Verdict kid = visit(kids.getArrayItem(i), depth + 1);
+                verdict.kept |= kid.kept;
+                verdict.dropped |= kid.dropped;
+                if (kid.stays)
+                    ++i;
+                else
+                    kids.eraseItem(i);
+            }
+        }
+        verdict.stays = verdict.kept || (dropped_ && !verdict.dropped);
+        if (!verdict.stays)
+            removed_.insert(id);
+        seen_[id] = verdict;
+        return verdict;
+    }
+
+    const ObjectSet &kept_;
+    const ObjectSet *dropped_;
+    std::map<QPDFObjGen, Verdict> seen_;
+    ObjectSet removed_;
+};
+
+/// The objects of a Delete Pages source, collected before the pages go.
+struct Removal
+{
+    ObjectSet pages;           // the deleted pages
+    ObjectSet annotations;     // the indirect annotations that only deleted pages list
+    ObjectSet keptAnnotations; // the indirect annotations that kept pages list
+    std::set<long long> parentKeys; // ParentTree keys that only those pages and annotations use
+};
+
+/// Whether outline `item` does nothing but go to one of `pages`. A named destination is
+/// looked up through `names`.
+bool leadsOnlyTo(QPDFObjectHandle item, QPDFOutlineDocumentHelper &names, const ObjectSet &pages)
+{
+    QPDFObjectHandle dest = item.getKey("/Dest");
+    QPDFObjectHandle action = item.getKey("/A");
+    if (action.isDictionary()) {
+        if (!action.getKey("/S").isNameAndEquals("/GoTo") || action.hasKey("/Next"))
+            return false;
+        if (dest.isNull())
+            dest = action.getKey("/D");
+    }
+    if (dest.isName() || dest.isString())
+        dest = names.resolveNamedDest(dest);
+    if (dest.isDictionary())
+        dest = dest.getKey("/D");
+    if (!dest.isArray() || dest.getArrayNItems() == 0)
+        return false;
+    QPDFObjectHandle page = dest.getArrayItem(0);
+    return page.isIndirect() && pages.count(page.getObjGen()) > 0;
+}
+
+/// Adds to `doomed` the outline items below `parent` that only go to a deleted page and
+/// keep no items below them. Returns whether any item below `parent` stays.
+bool findDeadOutlines(QPDFObjectHandle parent, QPDFOutlineDocumentHelper &names,
+                      const ObjectSet &pages, ObjectSet &seen, ObjectSet &doomed, int depth)
+{
+    bool stays = false;
+    for (QPDFObjectHandle item = parent.getKey("/First");
+         item.isIndirect() && item.isDictionary() && seen.insert(item.getObjGen()).second;
+         item = item.getKey("/Next")) {
+        const bool kids = depth < kMaxDepth
+            ? findDeadOutlines(item, names, pages, seen, doomed, depth + 1)
+            : item.hasKey("/First");
+        if (!kids && leadsOnlyTo(item, names, pages))
+            doomed.insert(item.getObjGen());
+        else
+            stays = true;
+    }
+    return stays;
+}
+
+/// Unlinks the doomed items below `parent`, links the rest again and recounts /Count
+/// where anything below changed. Returns whether anything below `parent` changed.
+bool unlinkOutlines(QPDFObjectHandle parent, const ObjectSet &doomed, ObjectSet &seen, int depth)
+{
+    std::vector<QPDFObjectHandle> kept;
+    bool changed = false;
+    for (QPDFObjectHandle item = parent.getKey("/First");
+         item.isIndirect() && item.isDictionary() && seen.insert(item.getObjGen()).second;
+         item = item.getKey("/Next")) {
+        if (doomed.count(item.getObjGen())) {
+            changed = true;
+            continue;
+        }
+        if (depth < kMaxDepth && unlinkOutlines(item, doomed, seen, depth + 1))
+            changed = true;
+        kept.push_back(item);
+    }
+    if (!changed)
+        return false;
+    if (kept.empty()) {
+        for (const char *key : {"/First", "/Last", "/Count"})
+            parent.removeKey(key);
+        return true;
+    }
+    parent.replaceKey("/First", kept.front());
+    parent.replaceKey("/Last", kept.back());
+    long long visible = 0; // the items shown below `parent` while it is open
+    for (size_t i = 0; i < kept.size(); ++i) {
+        if (i > 0)
+            kept[i].replaceKey("/Prev", kept[i - 1]);
+        else
+            kept[i].removeKey("/Prev");
+        if (i + 1 < kept.size())
+            kept[i].replaceKey("/Next", kept[i + 1]);
+        else
+            kept[i].removeKey("/Next");
+        QPDFObjectHandle count = kept[i].getKey("/Count");
+        visible += 1 + (count.isInteger() ? std::max(0LL, count.getIntValue()) : 0);
+    }
+    // The outline root counts every open item. An item counts its open descendants,
+    // negative while it is closed, and an item without /Count stays without it.
+    QPDFObjectHandle count = parent.getKey("/Count");
+    if (depth == 0 || (count.isInteger() && count.getIntValue() > 0))
+        parent.replaceKey("/Count", QPDFObjectHandle::newInteger(visible));
+    else if (count.isInteger() && count.getIntValue() < 0)
+        parent.replaceKey("/Count", QPDFObjectHandle::newInteger(-visible));
+    return true;
+}
+
+/// Removes the outline items that go only to a deleted page and have no items left below
+/// them, as their titles can describe the page. A damaged outline stays as it was.
+void pruneOutlines(QPDF &q, const ObjectSet &pages)
+{
+    QPDFObjectHandle outlines = q.getRoot().getKey("/Outlines");
+    if (!outlines.isDictionary())
+        return;
+    ObjectSet doomed;
+    try {
+        QPDFOutlineDocumentHelper names(q);
+        ObjectSet seen;
+        findDeadOutlines(outlines, names, pages, seen, doomed, 0);
+    } catch (const std::exception &) {
+        return;
+    }
+    ObjectSet seen;
+    if (!doomed.empty())
+        unlinkOutlines(outlines, doomed, seen, 0);
+}
+
+/// Finds the structure elements that mark content only on deleted pages. read() only
+/// looks, so a damaged structure tree can be left as it was; apply() then removes those
+/// elements with their /ParentTree and /IDTree entries, and takes the deleted pages'
+/// content items out of the elements that stay.
+class StructurePruner
+{
+public:
+    StructurePruner(QPDF &q, const Removal &removal) : q_(q), removal_(removal) {}
+
+    void read(QPDFObjectHandle root)
+    {
+        forEachKid(root, QPDFObjectHandle::newNull(), [this](QPDFObjectHandle kid,
+                                                             QPDFObjectHandle page) {
+            classify(kid, page, 0);
+        });
+        QPDFObjectHandle parents = root.getKey("/ParentTree");
+        if (parents.isDictionary())
+            for (const auto &[key, value] : QPDFNumberTreeObjectHelper(parents, q_).getAsMap())
+                if (removal_.parentKeys.count(key) || isDoomed(value))
+                    parentKeys_.push_back(key);
+        QPDFObjectHandle ids = root.getKey("/IDTree");
+        if (ids.isDictionary())
+            for (const auto &[key, value] : QPDFNameTreeObjectHelper(ids, q_).getAsMap())
+                if (isDoomed(value))
+                    ids_.push_back(key);
+    }
+
+    void apply(QPDFObjectHandle root)
+    {
+        if (!parentKeys_.empty()) {
+            QPDFNumberTreeObjectHelper parents(root.getKey("/ParentTree"), q_);
+            for (long long key : parentKeys_)
+                parents.remove(key);
+        }
+        if (!ids_.empty()) {
+            QPDFNameTreeObjectHelper ids(root.getKey("/IDTree"), q_);
+            for (const std::string &key : ids_)
+                ids.remove(key);
+        }
+        ObjectSet trimmed;
+        trim(root, QPDFObjectHandle::newNull(), trimmed, 0);
+        for (const QPDFObjGen &id : doomed_)
+            q_.replaceObject(id, QPDFObjectHandle::newNull());
+    }
+
+private:
+    enum Place { None = 0, Kept = 1, Deleted = 2 };
+
+    // Calls `visit` with each item of `parent`'s /K and the page an MCID there is on.
+    template <typename Visit>
+    static void forEachKid(QPDFObjectHandle parent, QPDFObjectHandle page, Visit visit)
+    {
+        QPDFObjectHandle own = parent.getKey("/Pg");
+        if (!own.isNull())
+            page = own;
+        QPDFObjectHandle kids = parent.getKey("/K");
+        if (kids.isArray()) {
+            for (QPDFObjectHandle kid : kids.aitems())
+                visit(kid, page);
+        } else if (!kids.isNull()) {
+            visit(kids, page);
+        }
+    }
+
+    // A dictionary in /K is an element unless it refers to marked content or an object.
+    static bool isElement(QPDFObjectHandle kid)
+    {
+        return kid.isDictionary() && !kid.hasKey("/MCID") && !kid.hasKey("/Obj")
+            && !kid.getKey("/Type").isNameAndEquals("/MCR")
+            && !kid.getKey("/Type").isNameAndEquals("/OBJR");
+    }
+
+    // Kept for any page that is not a deleted one, so unplaced content stays.
+    int placeOf(QPDFObjectHandle page) const
+    {
+        return page.isIndirect() && removal_.pages.count(page.getObjGen()) ? Deleted : Kept;
+    }
+
+    // Where content item `kid` (an MCID, a marked-content or an object reference) is.
+    int placeOfContent(QPDFObjectHandle kid, QPDFObjectHandle page) const
+    {
+        if (kid.isInteger())
+            return placeOf(page);
+        QPDFObjectHandle own = kid.getKey("/Pg");
+        if (!own.isNull())
+            page = own;
+        QPDFObjectHandle object = kid.getKey("/Obj");
+        if (object.isIndirect()) {
+            if (removal_.keptAnnotations.count(object.getObjGen()))
+                return Kept;
+            if (removal_.annotations.count(object.getObjGen()))
+                return Deleted;
+        }
+        return placeOf(page);
+    }
+
+    // Where the element and its descendants have content. An element without content
+    // items of its own counts as being on its page, if it has one.
+    int classify(QPDFObjectHandle elem, QPDFObjectHandle page, int depth)
+    {
+        if (!isElement(elem))
+            return None;
+        if (depth > kMaxDepth)
+            throw std::runtime_error("structure tree too deep");
+        const bool indirect = elem.isIndirect();
+        if (indirect) {
+            if (const auto it = places_.find(elem.getObjGen()); it != places_.end())
+                return it->second;
+            places_[elem.getObjGen()] = None; // a loop back to it adds nothing
+        }
+        int place = None;
+        bool content = false;
+        QPDFObjectHandle own = elem.getKey("/Pg");
+        forEachKid(elem, page, [&](QPDFObjectHandle kid, QPDFObjectHandle kidPage) {
+            if (isElement(kid)) {
+                place |= classify(kid, kidPage, depth + 1);
+            } else if (kid.isInteger() || kid.isDictionary()) {
+                content = true;
+                place |= placeOfContent(kid, kidPage);
+            }
+        });
+        if (!content) {
+            QPDFObjectHandle at = own.isNull() ? page : own;
+            if (at.isIndirect() && removal_.pages.count(at.getObjGen()))
+                place |= Deleted;
+        }
+        if (indirect) {
+            places_[elem.getObjGen()] = place;
+            if (place == Deleted)
+                doomed_.insert(elem.getObjGen());
+        }
+        return place;
+    }
+
+    bool isDoomed(QPDFObjectHandle value) const
+    {
+        return value.isIndirect() && doomed_.count(value.getObjGen());
+    }
+
+    // Removes doomed elements, and content on deleted pages, from the /K of `parent` and
+    // of the elements below it that stay. The kids of `parent` are at `depth`, which is
+    // the depth read() gave them.
+    void trim(QPDFObjectHandle parent, QPDFObjectHandle page, ObjectSet &trimmed, int depth)
+    {
+        if (parent.isIndirect() && !trimmed.insert(parent.getObjGen()).second)
+            return;
+        QPDFObjectHandle own = parent.getKey("/Pg");
+        if (!own.isNull())
+            page = own;
+        const auto gone = [&](QPDFObjectHandle kid) {
+            if (isElement(kid)) {
+                // read() went through the same elements at the same depth, so classify()
+                // does not throw.
+                if (kid.isIndirect() ? isDoomed(kid) : classify(kid, page, depth) == Deleted)
+                    return true;
+                if (depth < kMaxDepth)
+                    trim(kid, page, trimmed, depth + 1);
+                return false;
+            }
+            return (kid.isInteger() || kid.isDictionary())
+                && placeOfContent(kid, page) == Deleted;
+        };
+        QPDFObjectHandle kids = parent.getKey("/K");
+        if (kids.isArray()) {
+            for (int i = 0; i < kids.getArrayNItems();)
+                if (gone(kids.getArrayItem(i)))
+                    kids.eraseItem(i);
+                else
+                    ++i;
+        } else if (!kids.isNull() && gone(kids)) {
+            parent.removeKey("/K");
+        }
+    }
+
+    QPDF &q_;
+    const Removal &removal_;
+    std::map<QPDFObjGen, int> places_;
+    ObjectSet doomed_; // indirect elements with content only on deleted pages
+    std::vector<long long> parentKeys_;
+    std::vector<std::string> ids_;
+};
+
+/// Removes the structure elements that mark content only on deleted pages, as their /Alt
+/// or /ActualText can describe the page. A damaged structure tree stays as it was.
+void pruneStructure(QPDF &q, const Removal &removal)
+{
+    QPDFObjectHandle root = q.getRoot().getKey("/StructTreeRoot");
+    if (!root.isDictionary())
+        return;
+    StructurePruner pruner(q, removal);
+    try {
+        pruner.read(root);
+    } catch (const std::exception &) {
+        return;
+    }
+    pruner.apply(root);
+}
+
+/// Removes the form fields that only deleted pages show, from /Fields, /CO and their
+/// parents' /Kids, and returns them. Removing a field also drops /XFA, whose data holds
+/// every field's value and would no longer match the form.
+ObjectSet pruneDeletedFields(QPDF &q, const Removal &removal)
+{
+    QPDFObjectHandle form = q.getRoot().getKey("/AcroForm");
+    if (!form.isDictionary())
+        return {};
+    FieldPruner pruner(removal.keptAnnotations, &removal.annotations);
+    pruner.pruneArray(form.getKey("/Fields"));
+    pruner.pruneArray(form.getKey("/CO"));
+    if (!pruner.removed().empty())
+        form.removeKey("/XFA");
+    return pruner.removed();
+}
+
+/// Leaves out of `q` what only the deleted pages of `pages` used, after
+/// QPDFPageDocumentHelper::removePage took them out of the page tree, which is all it
+/// does. The pages, the annotations that no kept page lists and the form fields that only
+/// deleted pages show become null, so outlines, links, structure and other references
+/// cannot keep their content. Outline items and structure elements that lead only to
+/// deleted pages go as well.
+void removeDeletedContent(QPDF &q, const std::vector<QPDFPageObjectHelper> &pages,
+                          const std::set<int> &drop)
+{
+    Removal removal;
+    std::set<long long> keptKeys; // ParentTree keys that kept pages or their annotations use
+    for (int i = 0; i < static_cast<int>(pages.size()); ++i) {
+        QPDFObjectHandle page = pages[static_cast<size_t>(i)].getObjectHandle();
+        const bool deleted = drop.count(i) > 0;
+        if (deleted)
+            removal.pages.insert(page.getObjGen());
+        addAnnotations(page, deleted ? removal.annotations : removal.keptAnnotations);
+        std::set<long long> &keys = deleted ? removal.parentKeys : keptKeys;
+        if (page.getKey("/StructParents").isInteger())
+            keys.insert(page.getKey("/StructParents").getIntValue());
+        QPDFObjectHandle annots = page.getKey("/Annots");
+        if (annots.isArray())
+            for (QPDFObjectHandle annot : annots.aitems())
+                if (annot.isDictionary() && annot.getKey("/StructParent").isInteger())
+                    keys.insert(annot.getKey("/StructParent").getIntValue());
+    }
+    for (const QPDFObjGen &id : removal.keptAnnotations)
+        removal.annotations.erase(id);
+    for (long long key : keptKeys)
+        removal.parentKeys.erase(key);
+    pruneOutlines(q, removal.pages);
+    pruneStructure(q, removal);
+    const ObjectSet fields = pruneDeletedFields(q, removal);
+    const ObjectSet *gone[] = {&removal.pages, &removal.annotations, &fields};
+    for (const ObjectSet *objects : gone)
+        for (const QPDFObjGen &id : *objects)
+            q.replaceObject(id, QPDFObjectHandle::newNull());
+}
+
+} // namespace
 
 int PageOps::pageCount(const QString &path, const QString &password)
 {
@@ -100,6 +571,7 @@ PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPa
                 dh.removePage(all[static_cast<size_t>(i)]);
             else
                 kept.append(i);
+        removeDeletedContent(q, all, drop);
         MeasureDoc mapped;
         measurementPages::append(mapped, measurementPages::read(q), kept, 0);
         measurementPages::write(q, mapped);
