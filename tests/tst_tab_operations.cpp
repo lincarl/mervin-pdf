@@ -1332,16 +1332,26 @@ private slots:
 
     void splitKeepsAFileThatChangesAfterTheQuestion_data()
     {
-        QTest::addColumn<QString>("name"); // of the file another program saves meanwhile
-        QTest::newRow("changed") << QStringLiteral("plan-002.pdf");
-        QTest::newRow("appeared") << QStringLiteral("plan-003.pdf");
+        QTest::addColumn<QString>("name"); // of the file another program changes meanwhile
+        QTest::addColumn<bool>("remove");  // removes it instead of saving new bytes
+        // Changes it while the approved run waits before it checks any file, instead
+        // of while plan-001.pdf commits.
+        QTest::addColumn<bool>("beforeCheck");
+        QTest::newRow("changed") << QStringLiteral("plan-002.pdf") << false << false;
+        QTest::newRow("appeared") << QStringLiteral("plan-003.pdf") << false << false;
+        QTest::newRow("removed") << QStringLiteral("plan-002.pdf") << true << false;
+        QTest::newRow("changed before the check")
+            << QStringLiteral("plan-002.pdf") << false << true;
     }
 
     // Yes approves the files as the question found them. A file that another program
-    // changes or creates before its part commits stays, and Split writes no later part.
+    // changes, creates or removes after the question stays as it is, including before
+    // the approved run starts, and Split writes no later part.
     void splitKeepsAFileThatChangesAfterTheQuestion()
     {
         QFETCH(QString, name);
+        QFETCH(bool, remove);
+        QFETCH(bool, beforeCheck);
         QTemporaryDir files;
         QVERIFY(QDir(files.path()).mkpath(QStringLiteral("out")));
         const QString path = files.filePath(QStringLiteral("plan.pdf"));
@@ -1359,11 +1369,20 @@ private slots:
         TabPage *tab = currentTab(window);
         QVERIFY(tab);
         QSignalSpy finished(tab, &TabPage::operationFinished);
-        holdAt(job::Step::Commit, QDir(folder).filePath(QStringLiteral("plan-001.pdf")));
+        if (beforeCheck) {
+            // Each run reports the folder once before it checks the files, so the
+            // second report is the approved run's.
+            job::testing::holdWhen([folder, reports = 0](job::Step step,
+                                                         const QString &where) mutable {
+                return step == job::Step::Writing && where == folder && ++reports == 2;
+            });
+        } else {
+            holdAt(job::Step::Commit, QDir(folder).filePath(QStringLiteral("plan-001.pdf")));
+        }
         answers_ << QMessageBox::Yes << QMessageBox::Ok;
         split(window, folder);
         QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
-        QVERIFY(writeBytes(saved, after));
+        QVERIFY(remove ? QFile::remove(saved) : writeBytes(saved, after));
         job::testing::release();
         QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 2, 10000);
         QTRY_VERIFY(answers_.isEmpty());
@@ -1371,12 +1390,18 @@ private slots:
         QCOMPARE(withoutBreakMarks(told_.last()),
                  QStringLiteral("Split Pages: \"%1\" changed after Split checked it, so Split "
                                 "stopped without replacing it.").arg(isolated(name)));
-        QCOMPARE(bytesOf(saved), after);
-        QStringList written{QStringLiteral("plan-001.pdf"), QStringLiteral("plan-002.pdf")};
+        QStringList written{QStringLiteral("plan-001.pdf")};
         if (saved != existing) {
-            written << name;
+            written << QStringLiteral("plan-002.pdf");
             QVERIFY(bytesOf(existing).startsWith("%PDF-")); // approved and unchanged
         }
+        if (remove) {
+            QVERIFY(!QFileInfo::exists(saved));
+        } else {
+            written << name;
+            QCOMPARE(bytesOf(saved), after);
+        }
+        written.sort();
         QCOMPARE(filesIn(folder), written);
         QVERIFY(bytesOf(QDir(folder).filePath(QStringLiteral("plan-001.pdf"))).startsWith("%PDF-"));
     }
@@ -1411,6 +1436,35 @@ private slots:
         QCOMPARE(filesIn(folder), QStringList{QStringLiteral("plan-002.pdf")});
         QCOMPARE(bytesOf(existing), before);
         window.restoreFromTray();
+    }
+
+    // Split checks every file before it writes the first. One it cannot check, here a
+    // folder named like a part, fails the split with its name and the reason, and
+    // Split writes no part.
+    void splitThatCannotCheckAFileWritesNothing()
+    {
+        QTemporaryDir files;
+        QVERIFY(QDir(files.path()).mkpath(QStringLiteral("out/plan-002.pdf")));
+        const QString path = files.filePath(QStringLiteral("plan.pdf"));
+        const QString folder = files.filePath(QStringLiteral("out"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(mervin::testing::openAndWait(window, path));
+        TabPage *tab = currentTab(window);
+        QVERIFY(tab);
+        QSignalSpy finished(tab, &TabPage::operationFinished);
+        answers_ << QMessageBox::Ok;
+        split(window, folder);
+        QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 10000);
+        QTRY_VERIFY(answers_.isEmpty());
+        QCOMPARE(told_.size(), 1);
+        QVERIFY2(told_.first().startsWith(QStringLiteral(
+                     "Operation failed: The operation failed.\n\nplan-002.pdf: ")),
+                 qPrintable(told_.first()));
+        QVERIFY(filesIn(folder).isEmpty()); // plan-001.pdf was not written either
+        QVERIFY(QFileInfo(QDir(folder).filePath(QStringLiteral("plan-002.pdf"))).isDir());
     }
 
     // The dialog must survive owner destruction during its nested event loop.
