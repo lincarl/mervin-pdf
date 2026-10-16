@@ -93,6 +93,23 @@ PageOps::Status PageOps::probe(const QString &path, int *count, const QString &p
     }
 }
 
+namespace {
+
+/// Sets the source's /Length to the key length qpdf opened it with, in memory only.
+/// qpdf's writer takes the key length from /Length when it keeps or copies encryption,
+/// and V4 and V5 files may omit it. Call it before writing an output encrypted like
+/// `source`. Does nothing for an unencrypted source.
+void setKeyLength(QPDF &source)
+{
+    if (!source.isEncrypted())
+        return;
+    source.getTrailer().getKey("/Encrypt").replaceKey(
+        "/Length", QPDFObjectHandle::newInteger(
+                       static_cast<long long>(source.getEncryptionKey().size()) * 8));
+}
+
+} // namespace
+
 PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPath,
                                      const QList<int> &pages, const QString &password,
                                      QString *error)
@@ -119,6 +136,7 @@ PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPa
         MeasureDoc mapped;
         measurementPages::append(mapped, measurementPages::read(q), kept, 0);
         measurementPages::write(q, mapped);
+        setKeyLength(q);
         AtomicPdfWriter output(q, outPath);
         output.write();
         return Status::Ok;
@@ -182,6 +200,7 @@ PageOps::Status PageOps::rotatePages(const QString &inPath, const QString &outPa
                         std::swap(scale.mmPerPointX, scale.mmPerPointY);
         }
         measurementPages::write(q, data);
+        setKeyLength(q);
         AtomicPdfWriter output(q, outPath);
         output.write();
         return Status::Ok;
@@ -200,11 +219,7 @@ void copyEncryption(AtomicPdfWriter &output, QPDF &source)
 {
     if (!source.isEncrypted())
         return;
-    // qpdf copies the key length from /Length, which V4 and V5 files may omit. This
-    // sets the length qpdf read the source with, in memory only.
-    source.getTrailer().getKey("/Encrypt").replaceKey(
-        "/Length", QPDFObjectHandle::newInteger(
-                       static_cast<long long>(source.getEncryptionKey().size()) * 8));
+    setKeyLength(source);
     output.options().copyEncryptionParameters(source);
 }
 

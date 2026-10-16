@@ -70,6 +70,27 @@ QList<int> widthsOf(const QString &path)
     return out;
 }
 
+// Removes /Length from the Encrypt dictionary of a file qpdf encrypted, as some
+// writers do. The PDF specification makes it optional unless V is 2 or 3. Blanking
+// the entry with spaces keeps every cross-reference offset valid.
+bool omitKeyLength(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadWrite))
+        return false;
+    QByteArray data = file.readAll();
+    const QByteArray key("/Standard /Length ");
+    const qsizetype at = data.indexOf(key);
+    if (at < 0)
+        return false;
+    qsizetype end = at + key.size();
+    while (end < data.size() && std::isdigit(static_cast<unsigned char>(data.at(end))))
+        ++end;
+    const qsizetype from = at + qsizetype(sizeof("/Standard ") - 1);
+    data.replace(from, end - from, QByteArray(end - from, ' '));
+    return file.seek(0) && file.write(data) == data.size() && file.flush();
+}
+
 } // namespace
 
 class TstQpdf : public QObject
@@ -106,6 +127,8 @@ private slots:
     void mergeOfSeveralFilesIsNotEncrypted();
     void splitWritesOnePerPage();
     void rotateKeepsCount();
+    void rotateAndDeleteKeepEncryptionWithoutKeyLength_data();
+    void rotateAndDeleteKeepEncryptionWithoutKeyLength();
     void openEncryptedNeedsPassword();
 
 private:
@@ -625,22 +648,7 @@ void TstQpdf::singleSourceCopiesKeepItsEncryption()
         label = source.algorithm;
     }
     if (withoutLength) {
-        // The PDF specification makes /Length optional unless V is 2 or 3. Blanking it
-        // with spaces keeps every cross-reference offset valid.
-        QFile file(enc);
-        QVERIFY(file.open(QIODevice::ReadWrite));
-        QByteArray data = file.readAll();
-        const QByteArray key("/Standard /Length ");
-        const qsizetype at = data.indexOf(key);
-        QVERIFY(at >= 0);
-        qsizetype end = at + key.size();
-        while (end < data.size() && std::isdigit(static_cast<unsigned char>(data.at(end))))
-            ++end;
-        const qsizetype from = at + qsizetype(sizeof("/Standard ") - 1);
-        data.replace(from, end - from, QByteArray(end - from, ' '));
-        QVERIFY(file.seek(0));
-        QCOMPARE(file.write(data), data.size());
-        file.close();
+        QVERIFY(omitKeyLength(enc));
         int pages = 0;
         QCOMPARE(PageOps::probe(enc, &pages, QStringLiteral("secret")), PageOps::Status::Ok);
     }
@@ -754,6 +762,77 @@ void TstQpdf::rotateKeepsCount()
     makePdf(src, 3);
     QCOMPARE(PageOps::rotatePages(src, out, {0, 2}, 90, true), PageOps::Status::Ok);
     QCOMPARE(PageOps::pageCount(out), 3);
+}
+
+/// Covers V4 files with AES and with RC4, which Mervin writes with /Length.
+void TstQpdf::rotateAndDeleteKeepEncryptionWithoutKeyLength_data()
+{
+    QTest::addColumn<QpdfService::Algorithm>("algorithm");
+    QTest::newRow("AES-128") << QpdfService::Algorithm::AES128;
+    QTest::newRow("RC4-128") << QpdfService::Algorithm::RC4_128;
+}
+
+/// Rotate and Delete rewrite a V4 file without /Length, still encrypted with its passwords.
+void TstQpdf::rotateAndDeleteKeepEncryptionWithoutKeyLength()
+{
+    QFETCH(QpdfService::Algorithm, algorithm);
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    const QString src = files.filePath(QStringLiteral("src.pdf"));
+    const QString enc = files.filePath(QStringLiteral("enc.pdf"));
+    const QString rotated = files.filePath(QStringLiteral("rotated.pdf"));
+    const QString deleted = files.filePath(QStringLiteral("deleted.pdf"));
+    makePdfSized(src, {100, 200, 300});
+    QpdfService svc;
+    QCOMPARE(svc.encrypt(src, enc, QString(), QStringLiteral("secret"), QStringLiteral("owner"),
+                         algorithm, {}, nullptr),
+             QpdfService::Status::Ok);
+    QVERIFY(omitKeyLength(enc));
+
+    QString err;
+    QCOMPARE(PageOps::rotatePages(enc, rotated, {1}, 90, true, QStringLiteral("secret"), &err),
+             PageOps::Status::Ok);
+    QCOMPARE(PageOps::deletePages(enc, deleted, {1}, QStringLiteral("secret"), &err),
+             PageOps::Status::Ok);
+
+    // Each output with its page widths, as MuPDF shows them, and rotations, in order.
+    struct Output
+    {
+        QString path;
+        QList<int> widths;
+        QList<int> rotations;
+    };
+    const QList<Output> outputs{{rotated, {100, 792, 300}, {0, 90, 0}},
+                                {deleted, {100, 300}, {0, 0}}};
+    for (const auto &[path, widths, rotations] : outputs) {
+        int pages = -1;
+        QCOMPARE(PageOps::probe(path, &pages), PageOps::Status::NeedsPassword);
+        QCOMPARE(PageOps::probe(path, &pages, QStringLiteral("owner")), PageOps::Status::Ok);
+        QCOMPARE(PageOps::probe(path, &pages, QStringLiteral("secret")), PageOps::Status::Ok);
+        QCOMPARE(pages, int(widths.size()));
+        QpdfService::Info info;
+        QCOMPARE(svc.readInfo(path, QStringLiteral("secret"), info, &err), QpdfService::Status::Ok);
+        QVERIFY(info.encrypted);
+        // qpdf writes every V4 file with AES.
+        QCOMPARE(info.algorithm, QStringLiteral("AES-128"));
+        QCOMPARE(info.keyLengthBits, 128);
+        QCOMPARE(info.revision, 4);
+        mervin::RenderEngine engine;
+        const auto doc = engine.openDocument(path, QStringLiteral("secret"), &err);
+        QVERIFY2(doc, qPrintable(err));
+        QList<int> shown;
+        for (int i = 0; i < doc->pageCount(); ++i)
+            shown << qRound(doc->pageSize(i).width());
+        QCOMPARE(shown, widths);
+        QPDF pdf;
+        pdf.processFile(path.toUtf8().constData(), "secret");
+        QList<int> turned;
+        for (auto &page : QPDFPageDocumentHelper(pdf).getAllPages()) {
+            const auto rotate = page.getAttribute("/Rotate", false);
+            turned << (rotate.isInteger() ? int(rotate.getIntValue()) : 0);
+        }
+        QCOMPARE(turned, rotations);
+    }
 }
 
 void TstQpdf::openEncryptedNeedsPassword()
