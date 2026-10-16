@@ -207,9 +207,10 @@ public:
     void applyRecentSettings(int visibleCount, int retention, bool keepMissing);
 
     // With that setting off, forget entries whose file is gone while its drive,
-    // share or mount is attached (FileFacts::removed, given the mount recorded when
-    // the file was opened). fileProbe() checks the disk. A no-op while the setting
-    // is on.
+    // share or mount is attached (FileFacts::removed, given the mount recorded for
+    // the file). fileProbe() checks the disk. A no-op while the setting is on.
+    // Its checks, as any other, record the mount of a file found there whose entry
+    // has none (RecentStore::setMissingMounts).
     void pruneMissingRecent();
 
     // Crash recovery / session restore (M11). restoreSession() loads the saved
@@ -332,6 +333,10 @@ private:
     // Forget the recent entries the checks found gone, all in one save.
     void dropRecent(const QString &path);
     void dropFoundRecent();
+    // Record the mounts the checks found for recent entries that have none, all
+    // in one save (RecentStore::setMissingMounts).
+    void recordMount(const QString &path, const QString &mount);
+    void recordFoundMounts();
 
     MainWindow *activeOrNewWindow();
     MainWindow *emptyWindow() const; // a document-less window, or nullptr
@@ -423,6 +428,7 @@ private:
     QPointer<MainWindow> restoreWindow_; // where late documents open
     QStringList lateWaiting_;           // late documents waiting for the session's tabs
     QStringList recentDue_;             // found by pruneWanted_ and clearWanted_
+    QHash<QString, QString> mountsDue_; // path -> mount, found there by any check
     // Ctrl+Shift+T presses waiting for an answer, oldest first.
     struct ReopenPress
     {

@@ -128,6 +128,30 @@ bool RecentStore::setMount(const QString &path, const QString &mount)
     return false;
 }
 
+bool RecentStore::setMissingMounts(const QHash<QString, QString> &mounts)
+{
+    QHash<QString, QString> byKey;
+    byKey.reserve(mounts.size());
+    for (auto it = mounts.cbegin(); it != mounts.cend(); ++it) {
+        if (!it.key().isEmpty() && !it.value().isEmpty())
+            byKey.insert(normalizePathKey(it.key()), it.value());
+    }
+    if (byKey.isEmpty())
+        return false;
+
+    bool changed = false;
+    for (RecentEntry &e : entries_) {
+        if (!e.mount.isEmpty())
+            continue;
+        const auto found = byKey.constFind(normalizePathKey(e.path));
+        if (found == byKey.cend())
+            continue;
+        e.mount = *found;
+        changed = true;
+    }
+    return changed;
+}
+
 namespace {
 
 #ifdef Q_OS_WIN

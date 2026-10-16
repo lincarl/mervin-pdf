@@ -51,9 +51,13 @@ The Recent screen provides:
 - recovery choices for files that were moved or deleted. By default they drop out
   of the list automatically. With Keep removed files in list on, they stay listed
   until cleared. Entries on a detached drive, an offline network share or another
-  unmounted volume are never dropped automatically. On Linux the exceptions are a
-  file last opened by an older version on a volume mounted by hand outside the
-  system's mount configuration, and a file whose folder now holds another volume; and
+  unmounted volume are never dropped automatically. On Linux there are two
+  exceptions. One is a volume mounted outside `/etc/fstab` and automount, and
+  outside `/media`, `/run/media`, `/mnt` and `/net`, for example by hand, by
+  pam_mount or with sshfs in the home folder. While it is unmounted, its files are
+  dropped if its mount folder is removed on unmount, or if an older version last
+  opened the file and Mervin has not seen it on disk since the update. The other
+  is a file whose folder now holds another volume; and
 - file and folder actions such as copying paths or opening the containing folder.
 
 A new tab shows Loading immediately. If its drive does not answer for 2 seconds,

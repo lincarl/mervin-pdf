@@ -17,7 +17,8 @@ struct RecentEntry
     bool favorite = false; // user-starred; persisted as "f" in recent.json
     // The mount point of the file system the file was on when last opened while it
     // was there, such as "/", "/home" or "/home/ann/nas" (RecentStore::mountOf).
-    // Linux only, "" when not known. Persisted as "m".
+    // An entry an older version wrote gets it from the first check that finds the
+    // file there. Linux only, "" when not known. Persisted as "m".
     QString mount;
 };
 

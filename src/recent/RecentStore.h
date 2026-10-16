@@ -2,6 +2,7 @@
 
 #include "recent/RecentEntry.h"
 
+#include <QHash>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -37,6 +38,11 @@ public:
     // Record `mount` (mountOf) for the entry of `path`, a file just found on disk.
     // Returns true if the entry exists and its mount changed.
     bool setMount(const QString &path, const QString &mount);
+    // Record the mounts in `mounts`, by path, found for files on disk, for the
+    // entries that have none, such as those an older version wrote. A recorded
+    // mount is kept. One pass over the list for any number of paths. Returns true
+    // if an entry changed.
+    bool setMissingMounts(const QHash<QString, QString> &mounts);
 
     // The checks below touch the disk and can stall on an unreachable drive. Only
     // threads other than the UI thread call them (see FileProbe).
@@ -56,10 +62,14 @@ public:
     //   path, or when the path is under /media, /run/media, /mnt or /net with no
     //   volume mounted below that folder (mounts::holdingMount). Symbolic links
     //   are not followed, so pass a canonical path as Recent and the session do.
-    //   With `mount`, the mount point the file was opened from (RecentEntry::mount),
-    //   the volume is also away while another file system holds the path and that
-    //   folder still exists. This covers a share mounted by hand outside fstab. A
-    //   recorded mount never makes a volume attached that the rules above call away.
+    //   With `mount`, the mount point recorded while the file was there
+    //   (RecentEntry::mount), the volume is also away while another file system
+    //   holds the path and that folder still exists. This covers a share mounted
+    //   outside fstab, by hand, by pam_mount or with sshfs. Without a recorded
+    //   mount, or once its folder is gone, the rules above decide alone, so such a
+    //   share outside /media, /run/media, /mnt and /net counts as attached while it
+    //   is unmounted. A recorded mount never makes a volume attached that the rules
+    //   above call away.
     // On an offline share the check can stall for seconds.
     static bool isVolumeAttached(const QString &path, const QString &mount = QString());
     // The mount point of the file system that holds `path` now, from the kernel's

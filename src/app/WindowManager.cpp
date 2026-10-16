@@ -468,6 +468,22 @@ void WindowManager::dropFoundRecent()
         appfiles::write(viewStateFile_, viewState_.toJson());
 }
 
+void WindowManager::recordMount(const QString &path, const QString &mount)
+{
+    if (mountsDue_.isEmpty())
+        QTimer::singleShot(0, this, &WindowManager::recordFoundMounts);
+    mountsDue_.insert(path, mount);
+}
+
+void WindowManager::recordFoundMounts()
+{
+    if (!recent_.setMissingMounts(std::exchange(mountsDue_, {})))
+        return;
+    appfiles::write(recentFile_, recent_.toJson());
+    // The panels ask for checks with the mount they were given.
+    emit recentListChanged(recent_.entries());
+}
+
 void WindowManager::setFavorite(const QString &canonicalPath, bool favorite)
 {
     if (canonicalPath.isEmpty())
@@ -511,7 +527,7 @@ void WindowManager::pruneMissingRecent()
 {
     if (keepMissingRecent_ || recent_.count() == 0)
         return;
-    // Each path with the mount recorded when it was opened.
+    // Each path with the mount recorded for it.
     QList<FileCheck> files;
     files.reserve(recent_.count());
     for (const RecentEntry &e : recent_.entries()) {
@@ -536,6 +552,10 @@ void WindowManager::onFileChecked(const FileCheck &file, const FileFacts &facts)
             session_.setMount(path, facts.mount);
             updateSession();
         }
+    } else if (facts.exists && file.mount.isEmpty() && !facts.mount.isEmpty()) {
+        // An entry an older version wrote has no mount. Any check that finds its
+        // file there, such as for the Recent page, records the one it is on.
+        recordMount(path, facts.mount);
     }
     if (pruneWanted_.remove(key) && !keepMissingRecent_ && facts.removed())
         dropRecent(path);

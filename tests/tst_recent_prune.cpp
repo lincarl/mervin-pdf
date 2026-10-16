@@ -108,6 +108,30 @@ private slots:
 #endif
     }
 
+    // Entries an older version wrote have no recorded mount. A check that finds
+    // the file there, here the prune pass of the Recent page, records the mount it
+    // is on and saves it, so a share mounted outside fstab is recognised once it
+    // goes away. A file that is not there gets none.
+    void recordsTheMountOfAFileFoundThere()
+    {
+        WindowManager wm;
+        QCOMPARE(entry(wm, kept_).mount, QString());
+        wm.refreshRecent();
+        QTRY_COMPARE(wm.recentEntries().size(), 2);
+        const QString mount = RecentStore::mountOf(kept_);
+#ifndef Q_OS_WIN
+        QVERIFY(!mount.isEmpty());
+#endif
+        QTRY_COMPARE(entry(wm, kept_).mount, mount);
+        QCOMPARE(entry(wm, away_).mount, QString());
+
+        QVERIFY(mervin::appfiles::flush(10000));
+        RecentStore onDisk;
+        QVERIFY(onDisk.load(RecentStore::defaultFile()));
+        QCOMPARE(onDisk.recordedMount(kept_), mount);
+        QCOMPARE(onDisk.recordedMount(away_), QString());
+    }
+
     void keepsEverythingWhileTheSettingIsOn()
     {
         Settings s = Settings::load();
@@ -139,6 +163,15 @@ private slots:
     }
 
 private:
+    // The entry for `path` in `wm`'s Recent list, or an empty one.
+    static RecentEntry entry(const WindowManager &wm, const QString &path)
+    {
+        for (const RecentEntry &e : wm.recentEntries())
+            if (e.path == path)
+                return e;
+        return {};
+    }
+
     std::unique_ptr<QTemporaryDir> profile_;
     QString kept_, gone_, goneFolder_, away_;
 };

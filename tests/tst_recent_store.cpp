@@ -24,6 +24,7 @@ private slots:
     void removeDeletesEntry();
     void removeEntriesRemovesOnlyThoseListed();
     void setMountRecordsTheCurrentMount();
+    void setMissingMountsFillsOnlyEmptyMounts();
     void removedFromDiskNeedsAnAttachedVolume();
     void recordedMountJudgesTheVolume();
     void emptyPathIgnored();
@@ -139,6 +140,30 @@ void TstRecentStore::setMountRecordsTheCurrentMount()
     QCOMPARE(s.recordedMount(QStringLiteral("/home/ann/nas/a.pdf")), QStringLiteral("/"));
     QVERIFY(!s.setMount(QStringLiteral("/home/ann/other.pdf"), QStringLiteral("/")));
     QCOMPARE(s.count(), 1);
+}
+
+// Checks of listed files fill in the mount of entries an older version wrote.
+// They never replace a recorded one; only an open does (add, setMount).
+void TstRecentStore::setMissingMountsFillsOnlyEmptyMounts()
+{
+    RecentStore s;
+    s.add(QStringLiteral("/home/ann/nas/old.pdf"), 100);
+    s.add(QStringLiteral("/home/ann/nas/new.pdf"), 200, 0, QStringLiteral("/home/ann/nas"));
+    s.add(QStringLiteral("/home/ann/notes.pdf"), 300);
+
+    QVERIFY(!s.setMissingMounts({}));
+    QVERIFY(!s.setMissingMounts({{QStringLiteral("/home/ann/nas/old.pdf"), QString()}}));
+    QVERIFY(!s.setMissingMounts({{QStringLiteral("/home/ann/nas/new.pdf"), QStringLiteral("/")},
+                                 {QStringLiteral("/home/ann/gone.pdf"), QStringLiteral("/")}}));
+    QCOMPARE(s.recordedMount(QStringLiteral("/home/ann/nas/new.pdf")), QStringLiteral("/home/ann/nas"));
+    QCOMPARE(s.count(), 3);
+
+    QVERIFY(s.setMissingMounts({{QStringLiteral("/home/ann/nas/./old.pdf"), QStringLiteral("/home/ann/nas")},
+                                {QStringLiteral("/home/ann/nas/new.pdf"), QStringLiteral("/")}}));
+    QCOMPARE(s.recordedMount(QStringLiteral("/home/ann/nas/old.pdf")), QStringLiteral("/home/ann/nas"));
+    QCOMPARE(s.recordedMount(QStringLiteral("/home/ann/nas/new.pdf")), QStringLiteral("/home/ann/nas"));
+    QCOMPARE(s.recordedMount(QStringLiteral("/home/ann/notes.pdf")), QString());
+    QVERIFY(!s.setMissingMounts({{QStringLiteral("/home/ann/nas/old.pdf"), QStringLiteral("/")}}));
 }
 
 // Automatic pruning forgets a file that was deleted or moved, including with its

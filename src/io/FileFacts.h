@@ -5,7 +5,7 @@
 
 namespace mervin {
 
-// A file for FileProbe to check, with the mount recorded when it was opened
+// A file for FileProbe to check, with the mount recorded for it
 // (RecentEntry::mount), which RecentStore::isVolumeAttached takes into account.
 struct FileCheck
 {
