@@ -784,6 +784,7 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
 {
     if (failedIndex)
         *failedIndex = -1;
+    int reading = -1; // the input being read, which an exception names in failedIndex
     try {
         QPDF out;
         out.emptyPDF();
@@ -801,6 +802,7 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
         int outputPage = 0;
 
         for (int i = 0; i < inputs.size(); ++i) {
+            reading = i;
             const MergeInput &in = inputs.at(i);
             auto it = opened.find(in.path);
             if (it == opened.end()) {
@@ -842,6 +844,7 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
                                      selected, outputPage);
             outputPage += selected.size();
         }
+        reading = -1;
         forms.finish();
         measurementPages::write(out, mergedMeasurements);
 
@@ -854,6 +857,8 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
     } catch (const std::exception &e) {
         if (error)
             *error = QString::fromUtf8(e.what());
+        if (failedIndex)
+            *failedIndex = reading;
         return Status::Failed;
     }
 }

@@ -74,10 +74,12 @@ public:
 
     // Concatenate selected pages in input order (one input performs extraction). Reject invalid
     // page indices to avoid silently shortening output. Form fields come along with their
-    // pages, without the fields and values of pages left out. On failure, failedIndex
-    // identifies the unreadable input, or -1 for errors such as output writes. Optional
-    // mayCommit runs under the output lock after flushing and before commit admission. The
-    // output is encrypted like its source when every input names the same path.
+    // pages, without the fields and values of pages left out. On failure, failedIndex names
+    // the input that could not be opened or read, including a missing page and measurement
+    // data it cannot read, or is -1 for errors while building or writing the output. qpdf
+    // reads most stream data while writing, so a damaged stream in an input also gives -1.
+    // Optional mayCommit runs under the output lock after flushing and before commit admission.
+    // The output is encrypted like its source when every input names the same path.
     // Combined measurements past kMaxMeasurementBlobBytes fail with
     // measurementsTooLargeError() and failedIndex -1, before anything is written.
     static Status merge(const QList<MergeInput> &inputs, const QString &outPath,

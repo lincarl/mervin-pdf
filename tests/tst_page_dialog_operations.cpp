@@ -90,6 +90,33 @@ void hold(job::Step step, const QString &path)
         return reported == step && where == path;
     });
 }
+
+/// Writes a three-page PDF whose measurement data is a string. The viewer and the page
+/// count accept it, but page operations cannot read it.
+bool writeUnreadableMeasurementsPdf(const QString &path)
+{
+    const QList<QByteArray> objects{
+        "<< /Type /Catalog /Pages 2 0 R /Mervin_Measurements (damaged) >>",
+        "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>"};
+    QByteArray pdf = "%PDF-1.7\n";
+    QList<qsizetype> offsets;
+    for (qsizetype i = 0; i < objects.size(); ++i) {
+        offsets.append(pdf.size());
+        pdf += QByteArray::number(i + 1) + " 0 obj\n" + objects.at(i) + "\nendobj\n";
+    }
+    const qsizetype start = pdf.size();
+    const QByteArray count = QByteArray::number(objects.size() + 1);
+    pdf += "xref\n0 " + count + "\n0000000000 65535 f \n";
+    for (qsizetype offset : offsets)
+        pdf += QByteArray::number(offset).rightJustified(10, '0') + " 00000 n \n";
+    pdf += "trailer\n<< /Size " + count + " /Root 1 0 R >>\nstartxref\n"
+           + QByteArray::number(start) + "\n%%EOF\n";
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly) && file.write(pdf) == pdf.size();
+}
 } // namespace
 
 /// Checks page-tool worker ownership, retained choices and result delivery.
@@ -250,6 +277,28 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(&window, "extractPagesOp"));
         QTRY_COMPARE(shown_, 2);
         QVERIFY(current(window)->isUsable());
+        QVERIFY(!QFileInfo::exists(out));
+    }
+
+    /// Reports a source that Extract cannot read as unreadable, not as a failed write.
+    void unreadableSourceIsNotAWriteFailure()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("measured.pdf"));
+        const QString out = files.filePath(QStringLiteral("chosen.pdf"));
+        QVERIFY(writeUnreadableMeasurementsPdf(path));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showWindow(window);
+        QVERIFY(testing::openAndWait(window, path));
+        choices_ << [out](ExtractDialog &dialog) { choose(dialog, out); };
+        choices_ << [](ExtractDialog &dialog) {
+            QCOMPARE(error(dialog), QStringLiteral("This PDF cannot be read for extraction."));
+            QVERIFY(!dialog.findChild<QPushButton *>(QStringLiteral("extractAccept"))->isEnabled());
+            dialog.reject();
+        };
+        QVERIFY(QMetaObject::invokeMethod(&window, "extractPagesOp"));
+        QTRY_COMPARE(shown_, 2);
         QVERIFY(!QFileInfo::exists(out));
     }
 
