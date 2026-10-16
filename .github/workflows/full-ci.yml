@@ -228,11 +228,12 @@ jobs:
           ctest --test-dir build/ci --output-on-failure --output-junit results.xml -LE optional-corpus --parallel 2 --timeout 180
           python3 scripts/check-test-results.py build/ci/results.xml
 
-  # The Linux release packages build on Ubuntu 26.04 against its Qt and qpdf
+  # The AppImage and .deb build on Ubuntu 26.04 against its Qt and qpdf
   # (release.yml). linux-tests uses aqt's Qt, whose JPEG plugin has its own
   # libjpeg, and Ubuntu 24.04's qpdf 11, the oldest qpdf the build supports.
-  # This job tests the packages' toolchain, where Qt's JPEG plugin and libqpdf
-  # load the system libjpeg.
+  # This job tests the AppImage and .deb toolchain, where Qt's JPEG plugin and
+  # libqpdf load the system libjpeg. The .rpm builds on Fedora 44 and gets only
+  # the exported-symbol check in release.yml.
   linux-system-qt-tests:
     if: inputs.msix_artifact_run == '' && (!inputs.reviewed_pr || github.run_attempt == 1)
     runs-on: ubuntu-26.04

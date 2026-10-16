@@ -264,8 +264,9 @@ python3 scripts/check-linux-exports.py build/linux-release/MervinPDF
 CI's `linux-tests` jobs build with Qt 6.12.0 from aqtinstall on Ubuntu 24.04, whose
 qpdf 11 is the oldest version the build supports. aqt's JPEG plugin contains its
 own libjpeg. The `linux-system-qt-tests` job builds on Ubuntu 26.04 with the
-distribution's Qt 6.10 and qpdf 12, as the release packages do, and runs the same
-tests.
+distribution's Qt 6.10 and qpdf 12, as the AppImage and .deb do, and runs the same
+tests. The .rpm builds on Fedora 44 against Fedora's Qt, qpdf and libjpeg-turbo,
+and only the release job's exported-symbol check covers it.
 
 ## Qt modules for the UI translations
 

@@ -55,9 +55,10 @@ the dispatched run. It succeeds only after repository checks, all three Linux te
 jobs, Windows tests and MSI verification, and Windows MSIX verification all finish
 successfully. Two Linux jobs build release and sanitizer configurations on Ubuntu
 24.04 with aqt's Qt and qpdf 11. The third builds on Ubuntu 26.04 with the
-distribution's Qt and qpdf, the toolchain of the Linux release packages. A skipped
-or deferred build never creates a successful status. Cancellation or a failed
-reporting job leaves a failure through the separate lifecycle workflow.
+distribution's Qt and qpdf, the toolchain of the AppImage and .deb. The Fedora .rpm
+gets only the exported-symbol check in the release workflow. A skipped or deferred
+build never creates a successful status. Cancellation or a failed reporting job
+leaves a failure through the separate lifecycle workflow.
 
 Requests for one PR run serially. An existing attempt is reused unless a new
 dispatch explicitly sets `retry=true`. Overlapping requests are deduplicated,
