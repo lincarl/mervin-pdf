@@ -179,6 +179,8 @@ add_library(mervin_core STATIC
     src/recent/RecentStore.h
     src/recent/ViewStateStore.cpp
     src/recent/ViewStateStore.h
+    src/ipc/Handoff.cpp
+    src/ipc/Handoff.h
     src/ipc/Message.cpp
     src/ipc/Message.h
     src/ipc/PipeName.cpp
@@ -226,7 +228,8 @@ target_link_libraries(mervin_core
 # (DesktopIntegration.cpp). Both define mervin::PlatformIntegration.
 if(WIN32)
     target_sources(mervin_core PRIVATE src/platform/win/WindowsIntegration.cpp)
-    target_link_libraries(mervin_core PRIVATE shlwapi)
+    # advapi32 reads the single-instance pipe server's token (ipc/Handoff.cpp).
+    target_link_libraries(mervin_core PRIVATE shlwapi advapi32)
 else()
     target_sources(mervin_core PRIVATE src/platform/linux/DesktopIntegration.cpp)
 endif()

@@ -70,11 +70,12 @@ void surfaceWindow(MainWindow *w)
 
 } // namespace
 
-WindowManager::WindowManager()
+WindowManager::WindowManager(bool ownsStores)
     : engine_(std::make_unique<RenderEngine>())
     , recentFile_(RecentStore::defaultFile())
     , viewStateFile_(ViewStateStore::defaultFile())
     , sessionFile_(SessionStore::defaultFile())
+    , ownsStores_(ownsStores)
 {
 #ifdef Q_OS_WIN
     qApp->installNativeEventFilter(this);
@@ -347,27 +348,38 @@ void WindowManager::adoptInstanceServer(std::unique_ptr<ipc::SingleInstanceServe
     instanceServer_ = std::move(server);
     if (!instanceServer_)
         return;
-    connect(instanceServer_.get(), &ipc::SingleInstanceServer::messageReceived, this,
-            &WindowManager::onInstanceMessage);
+    connect(instanceServer_.get(), &ipc::SingleInstanceServer::opensReceived, this,
+            &WindowManager::takeInstanceOpens);
+    // Launches acknowledged during startup wait in the server. They open once the
+    // event loop runs, after the first window and the startup batches are queued.
+    QMetaObject::invokeMethod(this, &WindowManager::takeInstanceOpens, Qt::QueuedConnection);
 }
 
-void WindowManager::onInstanceMessage(QLocalSocket *socket, const ipc::Message &msg)
+void WindowManager::takeInstanceOpens()
 {
-    if (msg.cmd != ipc::Message::Cmd::Open)
-        return; // tolerate any other command a future/older client might send
+    if (!instanceServer_)
+        return;
+    // The server thread has acknowledged these already. Each open runs on a fresh
+    // event-loop turn, as earlier ones can run nested password or error dialogs.
+    // Empty paths means "bring the app up" - openPaths surfaces a window; otherwise
+    // files open per behaviour.
+    for (const ipc::Message &msg : instanceServer_->takeOpens())
+        QMetaObject::invokeMethod(
+            this,
+            [this, paths = msg.paths, behavior = msg.behavior] { openPaths(paths, behavior); },
+            Qt::QueuedConnection);
+}
 
-    // Acknowledge before opening: nested password/error dialogs can block indefinitely and
-    // would make the sender launch another primary. Never access the socket afterward; nested
-    // loops may destroy it.
-    ipc::SingleInstanceServer::send(socket, ipc::Message::ack(QStringLiteral("open")));
+void WindowManager::endHandoffs()
+{
+    if (instanceServer_)
+        instanceServer_->stopListening();
+}
 
-    // Defer the (possibly modal) open to a fresh event-loop turn so it does not
-    // run nested inside this socket-read handler. Empty paths means "bring the
-    // app up" - openPaths surfaces a window; otherwise files open per behaviour.
-    const QStringList paths = msg.paths;
-    const QString behavior = msg.behavior;
-    QMetaObject::invokeMethod(
-        this, [this, paths, behavior] { openPaths(paths, behavior); }, Qt::QueuedConnection);
+void WindowManager::writeStore(const QString &file, const QByteArray &data) const
+{
+    if (ownsStores_)
+        appfiles::write(file, data);
 }
 
 void WindowManager::recordOpen(const QString &canonicalPath, bool restoreViewState, int pageCount)
@@ -382,7 +394,7 @@ void WindowManager::recordOpen(const QString &canonicalPath, bool restoreViewSta
     // The session keeps it too, for when Recent no longer lists the file.
     session_.setMount(canonicalPath, mount);
     if (recent_.add(canonicalPath, QDateTime::currentMSecsSinceEpoch(), pageCount, mount)) {
-        appfiles::write(recentFile_, recent_.toJson());
+        writeStore(recentFile_, recent_.toJson());
         emit recentListChanged(recent_.entries());
     }
     mountWanted_.insert(FileProbe::keyOf({canonicalPath, mount}));
@@ -419,7 +431,7 @@ void WindowManager::saveViewStates(const QList<QPair<QString, ViewState>> &state
         if (!path.isEmpty())
             viewState_.put(path, state, now);
     if (!states.isEmpty())
-        appfiles::write(viewStateFile_, viewState_.toJson());
+        writeStore(viewStateFile_, viewState_.toJson());
 }
 
 void WindowManager::removeRecent(const QString &canonicalPath)
@@ -430,11 +442,11 @@ void WindowManager::removeRecent(const QString &canonicalPath)
     const bool removedState = viewState_.remove(canonicalPath); // drop its resume state too
     if (removedRecent) {
         keepFavouriteViewStates();
-        appfiles::write(recentFile_, recent_.toJson());
+        writeStore(recentFile_, recent_.toJson());
         emit recentListChanged(recent_.entries());
     }
     if (removedState)
-        appfiles::write(viewStateFile_, viewState_.toJson());
+        writeStore(viewStateFile_, viewState_.toJson());
 }
 
 void WindowManager::clearMissingRecent(const QStringList &paths)
@@ -465,14 +477,14 @@ void WindowManager::dropFoundRecent()
         return;
 
     keepFavouriteViewStates();
-    appfiles::write(recentFile_, recent_.toJson());
+    writeStore(recentFile_, recent_.toJson());
     emit recentListChanged(recent_.entries());
 
     bool removedState = false;
     for (const QString &path : removed)
         removedState = viewState_.remove(path) || removedState;
     if (removedState)
-        appfiles::write(viewStateFile_, viewState_.toJson());
+        writeStore(viewStateFile_, viewState_.toJson());
 }
 
 void WindowManager::recordMount(const QString &path, const QString &mount)
@@ -490,7 +502,7 @@ void WindowManager::recordFoundMounts()
     mountSaveTimer_->stop();
     if (!recent_.setMissingMounts(std::exchange(mountsDue_, {})))
         return;
-    appfiles::write(recentFile_, recent_.toJson());
+    writeStore(recentFile_, recent_.toJson());
     // The panels ask for checks with the mount they were given.
     emit recentListChanged(recent_.entries());
 }
@@ -501,7 +513,7 @@ void WindowManager::setFavorite(const QString &canonicalPath, bool favorite)
         return;
     if (recent_.setFavorite(canonicalPath, favorite)) {
         keepFavouriteViewStates();
-        appfiles::write(recentFile_, recent_.toJson());
+        writeStore(recentFile_, recent_.toJson());
         emit recentListChanged(recent_.entries());
     }
 }
@@ -534,11 +546,11 @@ void WindowManager::applyRecentSettings(int visibleCount, int retention, bool ke
     viewState_.setRetention(retention);
     // setRetention trims in memory only; persist now rather than on the next open.
     if (recent_.count() != recentBefore) {
-        appfiles::write(recentFile_, recent_.toJson());
+        writeStore(recentFile_, recent_.toJson());
         emit recentListChanged(recent_.entries());
     }
     if (viewState_.count() != statesBefore)
-        appfiles::write(viewStateFile_, viewState_.toJson());
+        writeStore(viewStateFile_, viewState_.toJson());
     keepMissingRecent_ = keepMissing;
     emit recentVisibleCountChanged(visibleCount);
     pruneMissingRecent();
@@ -565,7 +577,7 @@ void WindowManager::onFileChecked(const FileCheck &file, const FileFacts &facts)
     const QString &path = file.path;
     if (mountWanted_.remove(key) && facts.exists) {
         if (recent_.setMount(path, facts.mount)) {
-            appfiles::write(recentFile_, recent_.toJson());
+            writeStore(recentFile_, recent_.toJson());
             // The panels ask for checks with the mount they were given.
             emit recentListChanged(recent_.entries());
         }
@@ -815,7 +827,7 @@ void WindowManager::updateSession()
         }
     }
     session_.setActivePath(all.contains(activePath) ? activePath : QString());
-    appfiles::write(sessionFile_, session_.toJson());
+    writeStore(sessionFile_, session_.toJson());
 }
 
 void WindowManager::openStaged(const QList<StagedOpen> &batch, const QStringList &savedOrder,
@@ -1042,6 +1054,7 @@ WindowManager::~WindowManager()
         qApp->removeNativeEventFilter(this);
 #endif
     shuttingDown_ = true;
+    endHandoffs();
     if (activityTimer_)
         activityTimer_->stop();
     if (tray_)
@@ -1058,7 +1071,7 @@ WindowManager::~WindowManager()
     for (MainWindow *w : copy)
         delete w;
     // The next copy reads the settings, Recent and the session once it gets the
-    // single-instance pipe, which instanceServer_ holds until after this body. A
+    // single-instance lock, which instanceServer_ holds until after this body. A
     // tab's recovery copy is removed once its document has closed on a background
     // thread, so those closes come first, and the updater's state, as a pending
     // update it put back, comes last, all within the same time.
@@ -1069,7 +1082,7 @@ WindowManager::~WindowManager()
     // Mounts found within the last kMountSaveMs are saved with the rest. The
     // windows are gone, so nothing is announced.
     if (recent_.setMissingMounts(std::exchange(mountsDue_, {})))
-        appfiles::write(recentFile_, recent_.toJson());
+        writeStore(recentFile_, recent_.toJson());
     QElapsedTimer exitWait;
     exitWait.start();
     const auto left = [&exitWait] {
@@ -1116,6 +1129,7 @@ void WindowManager::onWindowDestroyed(MainWindow *w)
         // Last window gone: stop the render workers, then quit the process. This
         // window's Documents, deleted right after this destroyed() handler, close
         // on background threads.
+        endHandoffs();
         if (engine_)
             engine_->shutdown();
         QCoreApplication::quit();

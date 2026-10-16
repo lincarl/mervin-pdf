@@ -1,23 +1,93 @@
 #include "config/ConfigPaths.h"
+#include "ipc/Handoff.h"
 #include "ipc/Message.h"
 #include "ipc/PipeName.h"
 #include "ipc/SingleInstanceServer.h"
 
+#include <QCoreApplication>
+#include <QDir>
+#include <QElapsedTimer>
+#include <QEventLoop>
+#include <QFile>
+#include <QLocalServer>
 #include <QLocalSocket>
-#include <QSignalSpy>
+#include <QLockFile>
 #include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QThread>
 
+#include <atomic>
+#include <memory>
+#include <optional>
+
+#ifdef Q_OS_UNIX
+#  include <sys/socket.h>
+#  include <sys/stat.h>
+#  include <sys/un.h>
+#  include <unistd.h>
+#endif
+
+using mervin::ipc::Handoff;
+using mervin::ipc::Launch;
 using mervin::ipc::Message;
 using mervin::ipc::SingleInstanceServer;
+using Start = SingleInstanceServer::Start;
 
 // A unique-ish name so the test never collides with a real running host.
 static const QString kTestPipe = QStringLiteral("MervinPDF-unittest-si");
 
 namespace {
 bool packaged = false;
+
+// Where a client finds the test group's server.
+QString testEndpoint()
+{
+    return mervin::ipc::instancePaths(kTestPipe).server;
 }
+
+// Every open `server` acknowledged within `ms`, after the event loop has run.
+QList<Message> opensWithin(SingleInstanceServer &server, int ms)
+{
+    QList<Message> opens;
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < ms) {
+        QCoreApplication::processEvents();
+        opens += server.takeOpens();
+        QThread::msleep(10);
+    }
+    return opens;
+}
+
+#ifdef Q_OS_UNIX
+// Sets an environment variable for the rest of the scope.
+class EnvOverride
+{
+public:
+    EnvOverride(const char *name, const QByteArray &value)
+        : name_(name)
+        , previous_(qEnvironmentVariableIsSet(name) ? std::optional(qgetenv(name)) : std::nullopt)
+    {
+        if (value.isNull())
+            qunsetenv(name);
+        else
+            qputenv(name, value);
+    }
+    ~EnvOverride()
+    {
+        if (previous_)
+            qputenv(name_, *previous_);
+        else
+            qunsetenv(name_);
+    }
+
+private:
+    const char *name_;
+    std::optional<QByteArray> previous_;
+};
+#endif
+} // namespace
 
 // Substitute process identity so the real lock and IPC implementation can be
 // exercised for both installation types on each test platform.
@@ -30,11 +100,51 @@ class TstSingleInstance : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase();
+    void cleanupTestCase();
     void secondListenFails();
     void relistenAfterClose();
     void twoClientsDeliverMessages();
     void storeAndMsiHostsStaySeparate();
+    void acksWhileMainThreadBlocked_data();
+    void acksWhileMainThreadBlocked();
+    void stoppedServerKeepsLockWithoutAck();
+    void closedWithoutAckIsNoPrimary();
+    void launchDeliversToRunningPrimary();
+    void launchWaitsForQuittingPrimary();
+    void busyPrimaryGetsOpenOnce();
+#ifdef Q_OS_UNIX
+    void filesLiveInRuntimeDir();
+    void noRuntimeDirUsesPrivateCacheFolder();
+    void socketPathTooLongFails();
+    void peerCheck_data();
+    void peerCheck();
+    void deletedLockKeepsLivePrimary();
+    void deadSocketIsReplaced();
+#endif
+
+private:
+#ifdef Q_OS_UNIX
+    // Keeps the tests out of the user's real runtime directory.
+    QTemporaryDir runtime_;
+    std::optional<EnvOverride> runtimeEnv_;
+#endif
 };
+
+void TstSingleInstance::initTestCase()
+{
+#ifdef Q_OS_UNIX
+    QVERIFY(runtime_.isValid());
+    runtimeEnv_.emplace("XDG_RUNTIME_DIR", QFile::encodeName(runtime_.path()));
+#endif
+}
+
+void TstSingleInstance::cleanupTestCase()
+{
+#ifdef Q_OS_UNIX
+    runtimeEnv_.reset();
+#endif
+}
 
 void TstSingleInstance::storeAndMsiHostsStaySeparate()
 {
@@ -49,36 +159,34 @@ void TstSingleInstance::storeAndMsiHostsStaySeparate()
 
     const QString msiName = mervin::ipc::hostPipeName();
     SingleInstanceServer msi;
-    QVERIFY(msi.start());
+    QCOMPARE(msi.start(), Start::Started);
     packaged = true;
     const QString storeName = mervin::ipc::hostPipeName();
     QVERIFY(storeName != msiName);
     SingleInstanceServer store;
-    QVERIFY(store.start());
+    QCOMPARE(store.start(), Start::Started);
     SingleInstanceServer duplicateStore;
-    QVERIFY(!duplicateStore.start());
+    QCOMPARE(duplicateStore.start(), Start::Running);
 
-    QSignalSpy msiMessages(&msi, &SingleInstanceServer::messageReceived);
-    QSignalSpy storeMessages(&store, &SingleInstanceServer::messageReceived);
-    QLocalSocket client;
-    client.connectToServer(storeName);
-    QVERIFY(client.waitForConnected(1000));
-    client.write(Message::open({QStringLiteral("store.pdf")}, QStringLiteral("new-tab")).encode());
-    client.flush();
-    QTRY_COMPARE(storeMessages.size(), 1);
-    QCOMPARE(msiMessages.size(), 0);
+    QCOMPARE(mervin::ipc::handOff(mervin::ipc::instancePaths().server,
+                                  Message::open({QStringLiteral("store.pdf")},
+                                                QStringLiteral("new-tab")),
+                                  QDeadlineTimer(1000)),
+             Handoff::Delivered);
+    QCOMPARE(store.takeOpens().size(), 1);
+    QCOMPARE(msi.takeOpens().size(), 0);
 }
 
 void TstSingleInstance::secondListenFails()
 {
     SingleInstanceServer s1;
-    QVERIFY(s1.start(kTestPipe));
+    QCOMPARE(s1.start(kTestPipe), Start::Started);
     QVERIFY(s1.isListening());
 
     // A second server on the same name must be rejected - the single-instance
-    // guarantee (AddressInUseError under the hood).
+    // guarantee. It reports the live holder, so the launch hands off.
     SingleInstanceServer s2;
-    QVERIFY(!s2.start(kTestPipe));
+    QCOMPARE(s2.start(kTestPipe), Start::Running);
     QVERIFY(!s2.isListening());
 }
 
@@ -86,51 +194,406 @@ void TstSingleInstance::relistenAfterClose()
 {
     {
         SingleInstanceServer s1;
-        QVERIFY(s1.start(kTestPipe));
+        QCOMPARE(s1.start(kTestPipe), Start::Started);
     } // s1 destroyed -> pipe released
 
     // No stale-pipe block: a fresh server can immediately take the name.
     SingleInstanceServer s2;
-    QVERIFY(s2.start(kTestPipe));
+    QCOMPARE(s2.start(kTestPipe), Start::Started);
     QVERIFY(s2.isListening());
 }
 
 void TstSingleInstance::twoClientsDeliverMessages()
 {
     SingleInstanceServer server;
-    QVERIFY(server.start(kTestPipe));
-
-    QList<Message> received;
-    connect(&server, &SingleInstanceServer::messageReceived, this,
-            [&](QLocalSocket *, const Message &m) { received.append(m); });
+    QCOMPARE(server.start(kTestPipe), Start::Started);
 
     QLocalSocket a;
-    a.connectToServer(kTestPipe);
+    a.connectToServer(testEndpoint());
     QVERIFY(a.waitForConnected(1000));
     a.write(Message::open({QStringLiteral("y.pdf")}, QStringLiteral("new-window")).encode());
     a.flush();
 
     QLocalSocket b;
-    b.connectToServer(kTestPipe);
+    b.connectToServer(testEndpoint());
     QVERIFY(b.waitForConnected(1000));
     b.write(Message::open({QStringLiteral("x.pdf")}, QStringLiteral("new-tab")).encode());
     b.flush();
 
-    // Delivery is awaited via the event loop (QTRY), not waitForBytesWritten,
-    // which can false-negative on Windows when the write already flushed.
-    QTRY_COMPARE(received.size(), 2);
+    // Each client gets its acknowledgement from the server thread.
+    for (QLocalSocket *client : {&a, &b}) {
+        mervin::ipc::MessageDecoder decoder;
+        bool acked = false;
+        while (!acked && client->waitForReadyRead(1000))
+            for (const Message &m : decoder.feed(client->readAll()))
+                acked = acked || m.cmd == Message::Cmd::Ack;
+        QVERIFY(acked);
+    }
 
     // Order across two sockets isn't guaranteed; assert by content.
+    const QList<Message> received = server.takeOpens();
+    QCOMPARE(received.size(), 2);
     bool sawY = false, sawX = false;
     for (const Message &m : received) {
-        if (m.cmd == Message::Cmd::Open && m.paths == QStringList{QStringLiteral("y.pdf")})
-            sawY = true;
-        if (m.cmd == Message::Cmd::Open && m.paths == QStringList{QStringLiteral("x.pdf")})
-            sawX = true;
+        if (m.paths == QStringList{QStringLiteral("y.pdf")})
+            sawY = m.behavior == QLatin1String("new-window");
+        if (m.paths == QStringList{QStringLiteral("x.pdf")})
+            sawX = m.behavior == QLatin1String("new-tab");
     }
     QVERIFY(sawY);
     QVERIFY(sawX);
 }
+
+void TstSingleInstance::acksWhileMainThreadBlocked_data()
+{
+    QTest::addColumn<bool>("lateReceiver");
+    QTest::newRow("receiver connected first") << false;
+    QTest::newRow("receiver connects after the frame") << true;
+}
+
+// The GUI thread can be busy for seconds, as in a settings save on a profile folder that
+// stopped answering. The launch must still get its acknowledgement at once, and the open
+// must reach the GUI thread exactly once when it resumes.
+void TstSingleInstance::acksWhileMainThreadBlocked()
+{
+    QFETCH(bool, lateReceiver);
+    SingleInstanceServer server;
+    QCOMPARE(server.start(kTestPipe), Start::Started);
+
+    QList<Message> received;
+    const auto take = [&] { received += server.takeOpens(); };
+    QMetaObject::Connection receiver;
+    if (!lateReceiver)
+        receiver = connect(&server, &SingleInstanceServer::opensReceived, this, take);
+
+    std::optional<Handoff> result;
+    qint64 elapsed = -1;
+    const std::unique_ptr<QThread> launch(QThread::create([&] {
+        QElapsedTimer timer;
+        timer.start();
+        result = mervin::ipc::handOff(testEndpoint(),
+                                      Message::open({QStringLiteral("busy.pdf")}),
+                                      QDeadlineTimer(1000));
+        elapsed = timer.elapsed();
+    }));
+    launch->start();
+    QThread::sleep(3); // this thread runs no events meanwhile
+    QVERIFY(launch->wait(5000));
+    QCOMPARE(result, std::optional(Handoff::Delivered));
+    QVERIFY2(elapsed < 1000, qPrintable(QString::number(elapsed)));
+
+    if (lateReceiver) {
+        // The notification has gone out with nobody listening; the open waits.
+        QCoreApplication::processEvents();
+        receiver = connect(&server, &SingleInstanceServer::opensReceived, this, take);
+        take();
+    }
+    QTRY_COMPARE(received.size(), 1);
+    QCOMPARE(received.first().paths, QStringList{QStringLiteral("busy.pdf")});
+    QTest::qWait(200);
+    QCOMPARE(received.size(), 1);
+    disconnect(receiver);
+}
+
+// A quitting primary closes its endpoint and keeps the lock through its exit wait.
+void TstSingleInstance::stoppedServerKeepsLockWithoutAck()
+{
+    auto s1 = std::make_unique<SingleInstanceServer>();
+    QCOMPARE(s1->start(kTestPipe), Start::Started);
+
+    // A connection made before the stop closes without an acknowledgement.
+    QLocalSocket early;
+    QByteArray answer;
+    connect(&early, &QLocalSocket::readyRead, this, [&] { answer += early.readAll(); });
+    early.connectToServer(testEndpoint());
+    QVERIFY(early.waitForConnected(1000));
+    s1->stopListening();
+    QVERIFY(!s1->isListening());
+    early.write(Message::open({QStringLiteral("early.pdf")}).encode());
+    early.flush();
+    QTRY_VERIFY(early.state() != QLocalSocket::ConnectedState);
+    QVERIFY(answer.isEmpty());
+
+    QCOMPARE(mervin::ipc::handOff(testEndpoint(), Message::open({QStringLiteral("late.pdf")}),
+                                  QDeadlineTimer(500)),
+             Handoff::NoPrimary);
+    QCOMPARE(opensWithin(*s1, 100).size(), 0);
+
+    SingleInstanceServer s2;
+    QCOMPARE(s2.start(kTestPipe), Start::Running);
+    s1.reset();
+    QCOMPARE(s2.start(kTestPipe), Start::Started);
+}
+
+// A server that reads the open and closes the connection without an acknowledgement did
+// not take it, so the launch may offer it again rather than wait for the deadline.
+void TstSingleInstance::closedWithoutAckIsNoPrimary()
+{
+    const QString endpoint = testEndpoint();
+    QLocalServer::removeServer(endpoint);
+    std::atomic<bool> listening = false;
+    std::atomic<int> received = 0;
+    const std::unique_ptr<QThread> server(QThread::create([&] {
+        QLocalServer refusing;
+        connect(&refusing, &QLocalServer::newConnection, &refusing, [&] {
+            while (QLocalSocket *socket = refusing.nextPendingConnection()) {
+                if (socket->waitForReadyRead(1000))
+                    received += int(socket->readAll().count('\n'));
+                socket->abort();
+                socket->deleteLater();
+            }
+        });
+        listening = refusing.listen(endpoint);
+        QEventLoop().exec();
+    }));
+    server->start();
+    QTRY_VERIFY(listening);
+
+    QElapsedTimer timer;
+    timer.start();
+    QCOMPARE(mervin::ipc::handOff(endpoint, Message::open({QStringLiteral("x.pdf")}),
+                                  QDeadlineTimer(3000)),
+             Handoff::NoPrimary);
+    QVERIFY2(timer.elapsed() < 2000, qPrintable(QString::number(timer.elapsed())));
+    QCOMPARE(received.load(), 1);
+    server->quit();
+    QVERIFY(server->wait(5000));
+}
+
+void TstSingleInstance::launchDeliversToRunningPrimary()
+{
+    SingleInstanceServer primary;
+    QCOMPARE(primary.start(kTestPipe), Start::Started);
+
+    // This thread is blocked in the launch, as the primary's GUI thread can be.
+    SingleInstanceServer launch;
+    const Message open = Message::open({QStringLiteral("a.pdf")}, QStringLiteral("new-tab"));
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, open, 1000, kTestPipe), Launch::Delivered);
+    QVERIFY(!launch.isListening());
+    const QList<Message> opens = primary.takeOpens();
+    QCOMPARE(opens.size(), 1);
+    QCOMPARE(opens.first().paths, open.paths);
+    QCOMPARE(opens.first().behavior, open.behavior);
+}
+
+// A launch during a primary's exit wait waits for the lock and becomes the next
+// primary, instead of opening a second window beside it.
+void TstSingleInstance::launchWaitsForQuittingPrimary()
+{
+    auto quitting = std::make_unique<SingleInstanceServer>();
+    QCOMPARE(quitting->start(kTestPipe), Start::Started);
+    quitting->stopListening();
+
+    std::optional<Launch> result;
+    qint64 elapsed = -1;
+    const std::unique_ptr<QThread> launch(QThread::create([&] {
+        SingleInstanceServer next;
+        QElapsedTimer timer;
+        timer.start();
+        result = mervin::ipc::claimOrHandOff(next, Message::open({QStringLiteral("b.pdf")}),
+                                             5000, kTestPipe);
+        elapsed = timer.elapsed();
+    }));
+    launch->start();
+    QThread::msleep(1000);
+    quitting.reset(); // the exit wait is over
+    QVERIFY(launch->wait(10000));
+    QCOMPARE(result, std::optional(Launch::Primary));
+    QVERIFY2(elapsed >= 900 && elapsed < 5000, qPrintable(QString::number(elapsed)));
+}
+
+// A primary that took the connection but never answers gets the open once, however
+// long the launch waits, and the launch then opens standalone.
+void TstSingleInstance::busyPrimaryGetsOpenOnce()
+{
+    const mervin::ipc::InstancePaths paths = mervin::ipc::instancePaths(kTestPipe);
+    QLockFile lock(paths.lockFile);
+    QVERIFY(lock.tryLock(0));
+    QLocalServer::removeServer(paths.server);
+    QLocalServer silent;
+    QVERIFY(silent.listen(paths.server));
+
+    SingleInstanceServer launch;
+    QElapsedTimer timer;
+    timer.start();
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, Message::open({QStringLiteral("c.pdf")}), 1500,
+                                         kTestPipe),
+             Launch::Standalone);
+    QVERIFY(timer.elapsed() >= 1400);
+
+    // This thread ran no events, so the server accepts the connections only now, one
+    // per event. Every connection the launch made counts, not only the first.
+    QTRY_VERIFY(silent.hasPendingConnections());
+    QTest::qWait(200);
+    QList<QLocalSocket *> sockets;
+    while (QLocalSocket *socket = silent.nextPendingConnection())
+        sockets.append(socket);
+    QByteArray frames;
+    for (QLocalSocket *socket : std::as_const(sockets)) {
+        socket->waitForReadyRead(100);
+        frames += socket->readAll();
+    }
+    QCOMPARE(sockets.size(), 1);
+    QCOMPARE(frames.count('\n'), 1);
+}
+
+#ifdef Q_OS_UNIX
+void TstSingleInstance::filesLiveInRuntimeDir()
+{
+    QTemporaryDir runtime;
+    QVERIFY(runtime.isValid());
+    const EnvOverride env("XDG_RUNTIME_DIR", QFile::encodeName(runtime.path()));
+    // The group name comes from the uid, not from $USER.
+    const QString name = mervin::ipc::hostPipeName();
+    {
+        const EnvOverride user("USER", "someone-else");
+        const EnvOverride userName("USERNAME", "someone-else");
+        QCOMPARE(mervin::ipc::hostPipeName(), name);
+    }
+
+    SingleInstanceServer s;
+    QCOMPARE(s.start(kTestPipe), Start::Started);
+    const QString lock = QDir(runtime.path()).filePath(kTestPipe + QStringLiteral(".lock"));
+    const QString socket = QDir(runtime.path()).filePath(kTestPipe);
+    QCOMPARE(mervin::ipc::instancePaths(kTestPipe).lockFile, lock);
+    QCOMPARE(mervin::ipc::instancePaths(kTestPipe).server, socket);
+    QVERIFY(QFile::exists(lock));
+    QVERIFY(QFile::exists(socket));
+    QVERIFY(!QFile::exists(QDir(QDir::tempPath()).filePath(kTestPipe + QStringLiteral(".lock"))));
+    QVERIFY(!QFile::exists(QDir(QDir::tempPath()).filePath(kTestPipe)));
+
+    // Sticky, so a cleaner that follows the XDG spec leaves them alone.
+    for (const QString &path : {lock, socket}) {
+        struct stat st{};
+        QCOMPARE(::stat(QFile::encodeName(path).constData(), &st), 0);
+        QVERIFY2(st.st_mode & S_ISVTX, qPrintable(path));
+    }
+}
+
+void TstSingleInstance::noRuntimeDirUsesPrivateCacheFolder()
+{
+    QTemporaryDir cache;
+    QVERIFY(cache.isValid());
+    const EnvOverride runtime("XDG_RUNTIME_DIR", QByteArray());
+    const EnvOverride cacheHome("XDG_CACHE_HOME", QFile::encodeName(cache.path()));
+    const QString dir = QDir(cache.path()).filePath(QStringLiteral("mervin-pdf/run"));
+
+    {
+        SingleInstanceServer s;
+        QCOMPARE(s.start(kTestPipe), Start::Started);
+        QVERIFY(QFile::exists(QDir(dir).filePath(kTestPipe + QStringLiteral(".lock"))));
+        QVERIFY(QFile::exists(QDir(dir).filePath(kTestPipe)));
+        struct stat st{};
+        QCOMPARE(::stat(QFile::encodeName(dir).constData(), &st), 0);
+        QCOMPARE(st.st_mode & 07777, mode_t(S_IRWXU));
+    }
+
+    // A folder that is not this user's own directory is not used.
+    QVERIFY(QDir(dir).removeRecursively());
+    QTemporaryDir elsewhere;
+    QVERIFY(QFile::link(elsewhere.path(), dir));
+    QCOMPARE(mervin::ipc::instancePaths(kTestPipe).lockFile, QString());
+    SingleInstanceServer s;
+    QCOMPARE(s.start(kTestPipe), Start::Failed);
+    QVERIFY(QDir(elsewhere.path()).isEmpty());
+}
+
+void TstSingleInstance::socketPathTooLongFails()
+{
+    QTemporaryDir runtime;
+    QVERIFY(runtime.isValid());
+    const QString deep = runtime.path() + QStringLiteral("/") + QString(110, QLatin1Char('d'));
+    QVERIFY(QDir().mkpath(deep));
+    QVERIFY(QFile::setPermissions(deep, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    const EnvOverride env("XDG_RUNTIME_DIR", QFile::encodeName(deep));
+
+    SingleInstanceServer s;
+    QCOMPARE(s.start(kTestPipe), Start::Failed);
+    QVERIFY(!s.isListening());
+    QVERIFY(!QFile::exists(QDir(deep).filePath(kTestPipe + QStringLiteral(".lock"))));
+
+    // Waiting would not help, so the launch opens standalone at once.
+    QElapsedTimer timer;
+    timer.start();
+    QCOMPARE(mervin::ipc::claimOrHandOff(s, Message::open({}), 5000, kTestPipe),
+             Launch::Standalone);
+    QVERIFY(timer.elapsed() < 1000);
+}
+
+void TstSingleInstance::peerCheck_data()
+{
+    QTest::addColumn<uint>("peerUidOffset");
+    QTest::addColumn<bool>("accepted");
+    QTest::newRow("same uid") << 0u << true;
+    QTest::newRow("another uid") << 1u << false;
+}
+
+// The launch reads the listening process's uid from the kernel and sends no path to
+// another user's process.
+void TstSingleInstance::peerCheck()
+{
+    QFETCH(uint, peerUidOffset);
+    QFETCH(bool, accepted);
+    SingleInstanceServer server;
+    QCOMPARE(server.start(kTestPipe), Start::Started);
+
+    QLocalSocket probe;
+    probe.connectToServer(testEndpoint());
+    QVERIFY(probe.waitForConnected(1000));
+    QCOMPARE(mervin::ipc::peerUid(probe), std::optional(uint(::getuid())));
+
+    const auto check = [peerUidOffset](const QLocalSocket &socket) {
+        return mervin::ipc::peerIsCurrentUser(socket, [peerUidOffset](const QLocalSocket &s) {
+            const std::optional<uint> uid = mervin::ipc::peerUid(s);
+            return uid ? std::optional(*uid + peerUidOffset) : uid;
+        });
+    };
+    const Handoff result = mervin::ipc::handOff(
+        testEndpoint(), Message::open({QStringLiteral("/home/a/private.pdf")}),
+        QDeadlineTimer(500), check);
+    QCOMPARE(result, accepted ? Handoff::Delivered : Handoff::NoPrimary);
+    QCOMPARE(opensWithin(server, 100).size(), accepted ? 1 : 0);
+}
+
+// MPDF-20: a cleaner that removes a live primary's lock file must not let the next
+// launch take over its socket.
+void TstSingleInstance::deletedLockKeepsLivePrimary()
+{
+    SingleInstanceServer s1;
+    QCOMPARE(s1.start(kTestPipe), Start::Started);
+    QVERIFY(QFile::remove(mervin::ipc::instancePaths(kTestPipe).lockFile));
+
+    SingleInstanceServer s2;
+    QCOMPARE(s2.start(kTestPipe), Start::Running);
+    QVERIFY(!s2.isListening());
+    QCOMPARE(mervin::ipc::handOff(testEndpoint(), Message::open({QStringLiteral("a.pdf")}),
+                                  QDeadlineTimer(1000)),
+             Handoff::Delivered);
+    QCOMPARE(s1.takeOpens().size(), 1);
+}
+
+// A socket file nothing listens on, as a crashed primary leaves, is replaced.
+void TstSingleInstance::deadSocketIsReplaced()
+{
+    const QByteArray path = QFile::encodeName(testEndpoint());
+    QFile::remove(QString::fromLocal8Bit(path));
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    QVERIFY(fd >= 0);
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    QVERIFY(size_t(path.size()) < sizeof(addr.sun_path));
+    ::memcpy(addr.sun_path, path.constData(), path.size() + 1);
+    QCOMPARE(::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof addr), 0);
+    ::close(fd);
+    QVERIFY(QFile::exists(QString::fromLocal8Bit(path)));
+
+    SingleInstanceServer s;
+    QCOMPARE(s.start(kTestPipe), Start::Started);
+    QCOMPARE(mervin::ipc::handOff(testEndpoint(), Message::open({QStringLiteral("a.pdf")}),
+                                  QDeadlineTimer(1000)),
+             Handoff::Delivered);
+}
+#endif
 
 QTEST_GUILESS_MAIN(TstSingleInstance)
 #include "tst_single_instance.moc"

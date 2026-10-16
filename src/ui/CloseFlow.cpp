@@ -589,6 +589,7 @@ void CloseFlow::finish()
     if (global(intent) && manager) {
         manager->updateSession();
         manager->sessionFinal_ = true;
+        manager->endHandoffs();
         if (intent == Intent::Restart)
             relaunch::request();
         for (const QPointer<MainWindow> &window : targets)
@@ -721,6 +722,7 @@ bool CloseFlow::tryCloseForUpdate(WindowManager *manager)
     manager->quitting_ = true;
     manager->updateSession();
     manager->sessionFinal_ = true;
+    manager->endHandoffs();
     for (const QPointer<MainWindow> &window : targets)
         if (window)
             window->closeForQuit();

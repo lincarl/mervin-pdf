@@ -5,8 +5,8 @@
 // Restarting Mervin from inside, for a change that only takes effect at startup
 // (the UI language). The running copy closes its windows as Quit does, and
 // main() starts the new copy after runUi() has returned, when this process no
-// longer holds the single-instance pipe. Otherwise the new copy would hand its
-// launch to this one while it shuts down.
+// longer holds the single-instance lock, so the new copy becomes the primary at
+// once instead of waiting for this one to exit.
 namespace mervin::relaunch {
 
 // Ask main() to start a new copy once this one has shut down.

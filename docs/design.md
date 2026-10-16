@@ -43,7 +43,7 @@ src/
   dialogs/       application dialogs
   extract/       extract-plan model
   i18n/          UI language list, OS language matching, and catalog loading
-  ipc/           process lock, local socket, and message framing
+  ipc/           process lock, local socket, launch handoff, and message framing
   merge/         merge-plan model
   net/           safe URL request and download helpers
   ocr/           language-model discovery and validation
@@ -306,14 +306,53 @@ arrived meanwhile remain open.
 
 ## Startup and single-instance behavior
 
-The first process acquires a per-user `QLockFile` and starts a `QLocalServer`.
-Subsequent launches send newline-delimited JSON containing file paths and open
-behavior, wait for an acknowledgement, and exit. The primary process acknowledges
-before opening files so a password or error dialog cannot make the sender time out.
+The first process acquires a per-user `QLockFile` and starts a `QLocalServer`
+(`ipc::SingleInstanceServer`). `ipc::instancePaths()` builds both names. On Linux
+the lock file and the socket are in `$XDG_RUNTIME_DIR`, which only the user can
+open and which /tmp cleaners do not reach, and the group name hashes the uid instead
+of `$USER`. The socket is an absolute path, and both files have the sticky bit,
+which keeps them from the age-based cleanup that the XDG base directory spec allows
+there. Without a runtime directory that Qt accepts, they are in `mervin-pdf/run`
+with mode 0700 in the user's cache folder (`~/.cache` by default), never in /tmp.
+On Windows the lock is in the per-user %TEMP% and the endpoint is a named pipe. A
+Store copy and each `--profile` directory form groups of their own.
 
-If the primary process disappears during handoff, the new process retries ownership
-and can fall back to a standalone window. Session restoration creates the tab list
-but opens only the selected document. Other restored tabs load when selected.
+Subsequent launches send newline-delimited JSON containing file paths and open
+behavior, wait for an acknowledgement, and exit. A launch first checks that the
+process at the other end runs as the same user and sends nothing otherwise. Linux
+compares the uid from `SO_PEERCRED`, and Windows compares the user SID of the pipe
+server's process token, as the pipe namespace is shared by the whole machine. The
+server runs its socket work on its own thread. It acknowledges each Open as soon as
+it decodes the frame and keeps the Open until the GUI thread takes it, so a primary
+that is still starting, or whose GUI thread waits for a profile folder that stopped
+answering, answers within milliseconds. The first-run window and then
+`WindowManager` take the waiting Opens, and each opens on a later event-loop turn,
+so a password or error dialog cannot make the sender time out.
+
+`ipc::claimOrHandOff()` makes the launch decision. `start()` tells a lock held by a
+live process apart from a lock or endpoint that cannot be made. While a live process
+holds the lock without answering, a launch tries to start and to hand off again for
+up to `ipc::kLaunchWaitMs` (10 s, the five-second exit wait plus a margin). An Open
+that a primary has taken over a connection without acknowledging it is never sent
+again. Once a quit is final, the primary closes its endpoint and keeps the lock
+until its exit wait is over, so a launch during that wait becomes the next primary
+and reads the last writes. On Linux `start()` connects to the socket before it
+removes it, so a lock file that something deleted while its primary runs does not
+make the next launch a second primary. The server closes its socket before it
+releases the lock.
+
+If no primary answers in that time, as when the lock holder is stopped, or the lock
+or endpoint cannot be made, the launch opens its files in a standalone process. It
+shows no first-run window, restores no session, adopts no recovery copies, writes
+none of `recent.json`, `viewstate.json` and `session.json`, and has no updater. Its
+windows still save settings, such as their geometry. A primary that was only
+stopped reads the Open it was sent once it runs again and shows those files too. On
+Linux, copies built before these locations moved use names in /tmp, so a launch of
+a newer copy while an older one runs starts a second primary until the older one
+exits.
+
+Session restoration creates the tab list but opens only the selected document. Other
+restored tabs load when selected.
 
 The first window is shown before any document is checked, and command-line files
 create their placeholders at once. Staged batches finish when their shells are queued,
@@ -366,13 +405,15 @@ copies, exports, printing, original replacement and reopening do not start a gra
 period by themselves.
 
 The callback closes snapshot admission and polls memory state without processing
-GUI events, showing dialogs or accessing files. It uses a 3900 ms monotonic budget,
-leaving 100 ms within the four-second limit for returning. This bounds Mervin's
-wait, but an OS scheduling delay can still postpone the callback's return. It
-allows session end when snapshots settle or the deadline expires. Edits without a
-committed recovery manifest can be lost. Repeated queries reuse the answer. A native
-WM_ENDSESSION filter resets admission after cancellation and retains it after
-successful end.
+GUI events, showing dialogs or accessing files. The single-instance server keeps
+acknowledging launches on its own thread meanwhile. Their files wait with the other
+accepted opens and open after a cancellation, and are lost if the session ends. It
+uses a 3900 ms monotonic budget, leaving 100 ms within the four-second limit for
+returning. This bounds Mervin's wait, but an OS scheduling delay can still postpone
+the callback's return. It allows session end when snapshots settle or the deadline
+expires. Edits without a committed recovery manifest can be lost. Repeated queries
+reuse the answer. A native WM_ENDSESSION filter resets admission after cancellation
+and retains it after successful end.
 Queued tab changes and dialogs wait for that outcome too. Cancellation posts their
 resumption for the next GUI turn, after Qt has restored Windows input handling.
 The successful session path skips the normal five-second close/write budget,
@@ -444,8 +485,8 @@ widgets set their text once, when they are built. It takes `--language <id>` for
 that run, otherwise the `ui_language` setting; an unknown ID shows English. While
 `ui_language` is empty, the first-run window (`FirstRunDialog`) asks for the
 language before the first main window. As the only window open, it follows a
-change at once through `LanguageChange`, and it acknowledges launches that arrive
-meanwhile and opens their files with the first main window.
+change at once through `LanguageChange`, and it opens the files of launches that the
+server acknowledges meanwhile with the first main window.
 
 The first-run window also offers **Download OCR**, checked by default. Continue
 saves the display language before scheduling one background download attempt for
@@ -1197,7 +1238,7 @@ has not started and that nobody waits for. Closing a tab removes its recovery fi
 the same way, the copy only once its document has closed on a background thread, and
 tabs restored lazily adopt the recovery manifests startup found. Ordinary quitting waits up
 to 5 s in all for those closes and then the writes before `WindowManager` lets go of
-the single-instance pipe, so the next copy reads them. With a profile folder that
+the single-instance lock, so the next copy reads them. With a profile folder that
 stopped answering, the last writes land when it answers again or never, the process
 says so on stderr, and a restart asked for (a new UI language) is skipped, as the
 new copy would read the files without them. The Settings window and
