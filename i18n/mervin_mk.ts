@@ -11,18 +11,18 @@
         <source>%n file(s) in %1 already exist. Split wrote nothing.</source>
         <extracomment>Tray message after Split found that some of the files it would write, such as plan-002.pdf, already exist while its window was hidden in the tray, so it could not ask whether to replace them. %n is the number of those files, %1 the folder Split writes to. Split wrote no file.</extracomment>
         <translation>
-            <numerusform>%n датотека во папката %1 веќе постои. Ништо не е запишано.</numerusform>
-            <numerusform>%n датотеки во папката %1 веќе постојат. Ништо не е запишано.</numerusform>
-            <numerusform>%n датотеки во папката %1 веќе постојат. Ништо не е запишано.</numerusform>
+            <numerusform>Датотеки што веќе постојат во папката %1: %n. Ништо не е запишано.</numerusform>
+            <numerusform>Датотеки што веќе постојат во папката %1: %n. Ништо не е запишано.</numerusform>
+            <numerusform>Датотеки што веќе постојат во папката %1: %n. Ништо не е запишано.</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>%n file(s) in %1 already exist. Replace them?</source>
         <extracomment>Asked after Split found that some of the files it would write, such as plan-002.pdf, already exist. %n is the number of those files, %1 the folder Split writes to. Nothing has been replaced yet. Yes replaces those files and writes the others; No writes no file.</extracomment>
         <translation>
-            <numerusform>%n датотека во папката %1 веќе постои. Дали да се замени?</numerusform>
-            <numerusform>%n датотеки во папката %1 веќе постојат. Дали да се заменат?</numerusform>
-            <numerusform>%n датотеки во папката %1 веќе постојат. Дали да се заменат?</numerusform>
+            <numerusform>Датотеки што веќе постојат во папката %1: %n. Дали да се заменат?</numerusform>
+            <numerusform>Датотеки што веќе постојат во папката %1: %n. Дали да се заменат?</numerusform>
+            <numerusform>Датотеки што веќе постојат во папката %1: %n. Дали да се заменат?</numerusform>
         </translation>
     </message>
     <message>

@@ -209,8 +209,12 @@ form changes every word that agrees with the number, not only the noun, as in
 
 In other languages, a form can also cover numbers other than the one its English
 form names. Russian-style rules put 21 and 31 in the singular form, and Slovenian
-puts 101 there. Check that each form reads correctly for all its numbers, for
-example with a question that needs no pronoun, such as "Replace?".
+puts 101 there. Qt's Macedonian rule puts every number that ends in 1 in the first
+form, 11 and 111 included, so that form needs wording that suits singular and plural
+counts alike. Check that each form reads correctly for all its numbers. A question
+that needs no pronoun, such as "Replace?", helps, and so does a count after a plural
+noun phrase, as the Arabic, Irish, Maltese and Macedonian catalogs word Split's
+replacement question.
 
 ## The i18n_catalogs test
 
