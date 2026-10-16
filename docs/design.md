@@ -1229,8 +1229,10 @@ record under `update/` and the downloads in `updates/` itself. A copy still resu
 and cleans up such a record and such files when the file name is its kind's package
 (`update::isPackageFileName`), leaves other kinds' alone, and uses the shared check
 date until it has its own. Before installing, the updater hashes the file again and
-discards it if the SHA-256 no longer matches; a record from an older version has no
-hash and is not checked again. `Updater::install` also refuses a file whose name is
+discards it if the SHA-256 no longer matches. The check that found that download then
+does not count. `update/<kind>/checkDue` makes the next start check again, and the
+next completed check clears it. A record from an older version has no hash and is not
+checked again. `Updater::install` also refuses a file whose name is
 not this kind's package. At each start, also with automatic updates off, an installed
 copy deletes its kind's downloads that are no longer newer than itself. A response
 to the release check that is not a JSON object with a string `tag_name`, such as a

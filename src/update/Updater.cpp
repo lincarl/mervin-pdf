@@ -80,6 +80,9 @@ constexpr QLatin1StringView kLastCheck("lastCheckUtc");
 constexpr QLatin1StringView kPendingVersion("pendingVersion");
 constexpr QLatin1StringView kPendingFile("pendingFile");
 constexpr QLatin1StringView kPendingSha256("pendingSha256");
+// Set when a download fails its check before installing. The check that found
+// that download then does not count, so the next start checks again.
+constexpr QLatin1StringView kCheckDue("checkDue");
 
 // The state that versions before this shared between all kinds, and that older
 // copies still use.
@@ -123,8 +126,8 @@ struct Pending
     }
 };
 
-// This kind's pending update: its own record, or else the one an older version
-// recorded in the shared keys if that file is this kind's package.
+// This kind's pending update. That is its own record, or else the one an older
+// version recorded in the shared keys if that file is this kind's package.
 Pending loadPending(update::PackageKind kind)
 {
     const QSettings st;
@@ -168,7 +171,7 @@ void putBackPending(update::PackageKind kind, const QString &version, const QStr
     onDiskThread([=] { savePending(kind, version, file, sha256); });
 }
 
-// This kind's downloads: its own folder in the updates folder.
+// The folder in the updates folder that holds this kind's downloads.
 QString downloadsDir(update::PackageKind kind)
 {
     return QDir(ConfigPaths::updatesDir()).filePath(update::packageKindName(kind));
@@ -208,11 +211,11 @@ QString openPart(const QString &path)
     return {};
 }
 
-// Deletes this kind's downloads except `keep` (interrupted .part files,
-// superseded or already installed downloads): everything in its folder, and its
-// packages that older versions saved in the updates folder itself. Other kinds'
-// downloads stay. An installer that is still running stays locked on Windows and
-// goes on a later start.
+// Deletes this kind's downloads except `keep`, such as interrupted .part files
+// and superseded or already installed downloads. That is everything in its
+// folder, and its packages that older versions saved in the updates folder
+// itself. Other kinds' downloads stay. An installer that is still running stays
+// locked on Windows and goes on a later start.
 void removeDownloadsExcept(update::PackageKind kind, const QString &keep)
 {
     closePart(); // an open file cannot be deleted on Windows
@@ -397,8 +400,9 @@ QDateTime Updater::lastCheck()
 }
 
 // This kind's next automatic check is 30 days away. A definite answer or a
-// Windows installer handoff resets the interval. A network error or an answer
-// that cannot be read leaves the check due so the next start retries.
+// Windows installer handoff resets the interval, and clears kCheckDue. A network
+// error or an answer that cannot be read leaves the check due so the next start
+// retries.
 void Updater::markChecked()
 {
     const QDateTime now = QDateTime::currentDateTimeUtc();
@@ -407,6 +411,7 @@ void Updater::markChecked()
     onDiskThread([kind = kind_, now] {
         QSettings st;
         st.setValue(stateKey(kind, kLastCheck), now);
+        st.remove(stateKey(kind, kCheckDue));
         st.remove(QStringLiteral("update/startsSinceCheck"));
     });
     emit checked(now);
@@ -427,24 +432,32 @@ void Updater::onStartup()
     }
 
     busy_ = true;
+    struct Start
+    {
+        bool resume; // a pending update of this kind is kept
+        QDateTime lastCheck;
+        bool checkDue; // see kCheckDue
+    };
     onDisk(
         [kind = kind_] {
             const bool resume = tidyDownloads(kind);
-            return std::pair(resume, readLastCheck(kind));
+            const bool checkDue = QSettings().value(stateKey(kind, kCheckDue)).toBool();
+            return Start{resume, readLastCheck(kind), checkDue};
         },
-        [this](const std::pair<bool, QDateTime> &start) {
+        [this](const Start &start) {
             busy_ = false;
             if (!lastCheckKnown_) {
-                lastCheck_ = start.second;
+                lastCheck_ = start.lastCheck;
                 lastCheckKnown_ = true;
                 emit lastCheckChanged(lastCheck_);
             }
             // Check for Updates pressed meanwhile made this operation manual.
-            if (start.first) {
+            if (start.resume) {
                 installWhenIdle();
                 return;
             }
-            if (manual_ || update::automaticCheckDue(lastCheck_, QDateTime::currentDateTimeUtc()))
+            if (manual_ || start.checkDue
+                || update::automaticCheckDue(lastCheck_, QDateTime::currentDateTimeUtc()))
                 check(manual_);
         });
 }
@@ -783,9 +796,10 @@ void Updater::pollInstall()
             const Pending pending = loadPending(kind);
             if (!pending.usable())
                 return Ready{};
-            // Hashed again: the file can have changed since it was downloaded.
+            // Hashed again, as the file can have changed since it was downloaded.
             if (!pending.sha256.isEmpty() && fileSha256(pending.file) != pending.sha256) {
                 discardDownloads(kind);
+                QSettings().setValue(stateKey(kind, kCheckDue), true);
                 return Ready{{}, true};
             }
             return Ready{pending};
@@ -816,7 +830,7 @@ bool Updater::shouldWaitForDialogs() const
 
 void Updater::install(const QString &file, const QString &version, const QString &sha256)
 {
-    // The last guard: whatever the record says, never install another kind's
+    // The last guard. Whatever the record says, never install another kind's
     // package, such as a .deb copied over this AppImage.
     if (!isPackageOf(kind_, file)) {
         endOperation();

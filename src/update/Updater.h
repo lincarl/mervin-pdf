@@ -30,7 +30,8 @@ namespace mervin {
 // background thread, in order, as the profile can be on a share that stopped
 // answering; each step goes on when its disk work answers. Each package kind
 // keeps its own check date, pending update and downloads, so copies of different
-// kinds run by one user never install or delete each other's packages.
+// kinds run by one user never install or delete each other's packages. Until a
+// kind has saved its own check date, it uses the one older versions shared.
 class Updater : public QObject
 {
     Q_OBJECT
@@ -41,9 +42,12 @@ public:
 
     static Updater *instance(); // nullptr when none exists
 
-    // This package kind's last definite check or Windows installer handoff (UTC);
-    // invalid if never, or until it has been read at start (see lastCheckChanged).
-    // A failed check, or an answer that cannot be read, leaves the previous date.
+    // This package kind's last definite check or Windows installer handoff (UTC).
+    // Until this kind has saved one, the date older versions shared for all kinds
+    // (update/lastCheckUtc), which a Store copy, never checking itself, keeps.
+    // Invalid if neither exists, or until it has been read at start (see
+    // lastCheckChanged). A failed check, or an answer that cannot be read, leaves
+    // the previous date.
     static QDateTime lastCheck();
 
     // Whether this copy can download and install updates itself. Portable and dev

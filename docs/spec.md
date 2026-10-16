@@ -384,7 +384,9 @@ Network access follows an explicit action or the automatic update setting:
   Successful manual checks also reset the interval. Failed scheduled checks retry
   on the next start after network or download transfer errors, or when the update
   server's answer cannot be read, as when a network filter returns its own page.
-  A manual check then says that it could not check. Handing off to the
+  A manual check then says that it could not check. A downloaded update that no
+  longer matches its checksum when it is about to install is deleted, and the next
+  start checks again. Handing off to the
   Windows installer also resets the interval, so an unsuccessful installation
   cannot cause an immediate install and restart loop. An installed copy
   downloads the new release in the same package format it was installed from

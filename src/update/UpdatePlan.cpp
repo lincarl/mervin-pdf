@@ -91,7 +91,7 @@ bool isPackageFileName(PackageKind kind, const QString &fileName)
 
 ReleaseResponse parseRelease(const QByteArray &json)
 {
-    // Not an object, or an object without a string tag_name: not a release answer.
+    // Anything but an object with a string tag_name is not a release answer.
     const QJsonObject root = QJsonDocument::fromJson(json).object();
     const QJsonValue tag = root.value(QStringLiteral("tag_name"));
     if (!tag.isString())

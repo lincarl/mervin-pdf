@@ -238,8 +238,8 @@ bool replaceAppImage(const QString &file, QString *)
         QThread::msleep(10);
     return appImageReplaced;
 }
-// No pkexec: the updater hands the package to the desktop's installer instead,
-// which a test that installs a .deb records with a file URL handler.
+// Without pkexec the updater hands the package to the desktop's installer, which
+// a test that installs a .deb records with a file URL handler.
 QStringList packageInstallCommand(PackageKind, const QString &file)
 {
     const QMutexLocker lock(&installStubsLock);
@@ -283,6 +283,10 @@ private slots:
     void alteredDownloadIsNotInstalled();
     void checkDatesArePerKind_data();
     void checkDatesArePerKind();
+    void legacyDownloadsOfThisKindGo_data();
+    void legacyDownloadsOfThisKindGo();
+    void installRefusesAnotherKindsPackage_data();
+    void installRefusesAnotherKindsPackage();
     void msixDelegatesToStore_data();
     void msixDelegatesToStore();
     void recordStoreUrl(const QUrl &url);
@@ -311,8 +315,9 @@ private:
     // Records a verified download of `version` for `kind`, and a check just now.
     static bool savePending(PackageKind kind = installedKind,
                             const QString &version = kVersion);
-    // Records kVersion's `kind` package as versions before the per-kind state did.
-    static bool saveLegacyPending(PackageKind kind);
+    // Records kVersion's `kind` package as versions before the per-kind state did,
+    // as a download of `version`.
+    static bool saveLegacyPending(PackageKind kind, const QString &version = kVersion);
     ReleaseNetworkAccessManager *useLocalNetwork(Updater &updater);
 
     QTemporaryDir profile_;
@@ -814,14 +819,14 @@ bool TestUpdater::savePending(PackageKind kind, const QString &version)
     return true;
 }
 
-bool TestUpdater::saveLegacyPending(PackageKind kind)
+bool TestUpdater::saveLegacyPending(PackageKind kind, const QString &version)
 {
     // Older versions kept their downloads in the updates folder itself.
     const QString file = QDir(ConfigPaths::updatesDir()).filePath(assetName(kind));
     if (!writeDownload(file))
         return false;
     QSettings st;
-    st.setValue(kLegacyPendingVersion, kVersion);
+    st.setValue(kLegacyPendingVersion, version);
     st.setValue(kLegacyPendingFile, file);
     return true;
 }
@@ -898,7 +903,7 @@ void TestUpdater::msixDelegatesToStore()
 void TestUpdater::startupRespectsSetting_data()
 {
     QTest::addColumn<bool>("enabled");
-    QTest::addColumn<QString>("pendingVersion"); // empty: nothing downloaded
+    QTest::addColumn<QString>("pendingVersion"); // empty when nothing was downloaded
     const QString installed = QStringLiteral(MERVIN_VERSION_STRING); // this copy's own
     QTest::newRow("disabled-no-pending") << false << QString();
     QTest::newRow("disabled-pending") << false << kVersion;
@@ -951,7 +956,7 @@ void TestUpdater::pendingUpdateOfThisKindOnly_data()
     QTest::newRow("deb from an older version, start") << appImage << deb << true << false;
     QTest::newRow("deb, Check for Updates") << appImage << deb << false << true;
     QTest::newRow("deb from an older version, Check for Updates") << appImage << deb << true << true;
-    // The reverse: the .deb install finds the AppImage's download.
+    // The reverse, where the .deb install finds the AppImage's download.
     QTest::newRow("deb copy, own, start") << deb << deb << false << false;
     QTest::newRow("deb copy, AppImage, start") << deb << appImage << false << false;
     QTest::newRow("deb copy, AppImage from an older version, start")
@@ -1024,7 +1029,7 @@ void TestUpdater::alteredDownloadIsNotInstalled_data()
 }
 
 // The download is hashed again before it installs. One changed on disk since it
-// was verified is discarded, and a manual check says so.
+// was verified is discarded, a manual check says so, and the next start checks.
 void TestUpdater::alteredDownloadIsNotInstalled()
 {
     QFETCH(bool, manual);
@@ -1035,29 +1040,49 @@ void TestUpdater::alteredDownloadIsNotInstalled()
         QVERIFY(download.open(QIODevice::WriteOnly));
         QVERIFY(download.write("changed after it was verified") > 0);
     }
-    Updater updater;
-    updater.setCloseWindowsHandler([] { return true; });
-    auto *network = useLocalNetwork(updater);
-    network->hasUpdate = true;
-    PromptObserver observer;
-    if (manual)
-        updater.checkNow(); // the same version is out, so it reuses the download
-    else
-        updater.onStartup();
-    QTRY_VERIFY(!updater.busy_);
+    {
+        Updater updater;
+        updater.setCloseWindowsHandler([] { return true; });
+        auto *network = useLocalNetwork(updater);
+        network->hasUpdate = true;
+        PromptObserver observer;
+        if (manual)
+            updater.checkNow(); // the same version is out, so it reuses the download
+        else
+            updater.onStartup();
+        QTRY_VERIFY(!updater.busy_);
+        QVERIFY(settled());
+        QCoreApplication::processEvents();
+        QVERIFY(installerFiles.isEmpty());
+        QCOMPARE(network->requests, manual ? 1 : 0);
+        QVERIFY(!QFile::exists(downloadedPath()));
+        QVERIFY(!QSettings().contains(stateKey(u"pendingFile")));
+        if (manual) {
+            QCOMPARE(observer.messages,
+                     QStringList{QStringLiteral(
+                         "The downloaded update failed its integrity check and was discarded.")});
+        } else {
+            QVERIFY(observer.messages.isEmpty());
+        }
+    }
+
+    // The check that found the discarded download does not count, so the next
+    // start checks again, while Settings still shows when this copy last checked.
+    const QDateTime checked = QSettings().value(stateKey(u"lastCheckUtc")).toDateTime();
+    QVERIFY(!update::automaticCheckDue(checked, QDateTime::currentDateTimeUtc()));
+    QVERIFY(setAutoUpdate(true));
+    Updater next;
+    auto *network = useLocalNetwork(next);
+    QSignalSpy checks(&next, &Updater::checked);
     QVERIFY(settled());
     QCoreApplication::processEvents();
-    QVERIFY(installerFiles.isEmpty());
-    QCOMPARE(network->requests, manual ? 1 : 0);
-    QVERIFY(!QFile::exists(downloadedPath()));
-    QVERIFY(!QSettings().contains(stateKey(u"pendingFile")));
-    if (manual) {
-        QCOMPARE(observer.messages,
-                 QStringList{QStringLiteral(
-                     "The downloaded update failed its integrity check and was discarded.")});
-    } else {
-        QVERIFY(observer.messages.isEmpty());
-    }
+    QCOMPARE(Updater::lastCheck(), checked);
+    next.onStartup();
+    QTRY_VERIFY(!next.busy_);
+    QVERIFY(settled());
+    QCOMPARE(network->requests, 1);
+    QCOMPARE(checks.count(), 1);
+    QVERIFY(!QSettings().contains(stateKey(u"checkDue"))); // that check reset the interval
 }
 
 void TestUpdater::checkDatesArePerKind_data()
@@ -1103,6 +1128,92 @@ void TestUpdater::checkDatesArePerKind()
     QVERIFY(settled());
     QCOMPARE(network->requests, appImageChecks ? 1 : 0);
     QCOMPARE(QSettings().contains(stateKey(u"lastCheckUtc")), appImageChecks);
+}
+
+void TestUpdater::legacyDownloadsOfThisKindGo_data()
+{
+    QTest::addColumn<bool>("enabled"); // automatic updates
+    QTest::newRow("automatic updates on") << true;
+    QTest::newRow("automatic updates off") << false;
+}
+
+// An older version kept its record in the shared keys and its downloads in the
+// updates folder itself. Once that update is installed, this kind's file, its
+// unfinished download and the record go at the next start. Another kind's
+// package in the same folder stays.
+void TestUpdater::legacyDownloadsOfThisKindGo()
+{
+    QFETCH(bool, enabled);
+    installedKind = PackageKind::AppImage;
+    QVERIFY(setAutoUpdate(enabled));
+    QVERIFY(saveLegacyPending(PackageKind::AppImage, QStringLiteral(MERVIN_VERSION_STRING)));
+    QSettings().setValue(stateKey(u"lastCheckUtc"), QDateTime::currentDateTimeUtc());
+    const QDir updates(ConfigPaths::updatesDir());
+    const QString own = updates.filePath(assetName(PackageKind::AppImage));
+    const QString part = updates.filePath(
+        QStringLiteral("MervinPDF-9999.123.457-x86_64.AppImage.part")); // an interrupted download
+    const QString other = updates.filePath(assetName(PackageKind::Deb));
+    {
+        QFile file(part);
+        QVERIFY(file.open(QIODevice::WriteOnly) && file.write("partial") > 0);
+    }
+    {
+        QFile file(other);
+        QVERIFY(file.open(QIODevice::WriteOnly) && file.write(kDownload) == kDownload.size());
+    }
+
+    Updater updater;
+    auto *network = useLocalNetwork(updater);
+    PromptObserver observer;
+    updater.onStartup();
+    QTRY_VERIFY(!updater.busy_);
+    QVERIFY(settled());
+
+    QVERIFY(!QFile::exists(own));
+    QVERIFY(!QFile::exists(part));
+    QVERIFY(QFile::exists(other));
+    QVERIFY(!QSettings().contains(kLegacyPendingVersion));
+    QVERIFY(!QSettings().contains(kLegacyPendingFile));
+    QCOMPARE(network->requests, 0);
+    QVERIFY(appImageReplacements.isEmpty());
+    QVERIFY(observer.messages.isEmpty());
+}
+
+void TestUpdater::installRefusesAnotherKindsPackage_data()
+{
+    QTest::addColumn<PackageKind>("copyKind");
+    QTest::addColumn<PackageKind>("fileKind");
+    QTest::newRow("AppImage copy, .deb") << PackageKind::AppImage << PackageKind::Deb;
+    QTest::newRow(".deb copy, AppImage") << PackageKind::Deb << PackageKind::AppImage;
+}
+
+// The last guard. Whatever file reaches install(), another kind's package is not
+// installed, opened or reported.
+void TestUpdater::installRefusesAnotherKindsPackage()
+{
+    QFETCH(PackageKind, copyKind);
+    QFETCH(PackageKind, fileKind);
+    installedKind = copyKind;
+    appImageReplaced = true;
+    QVERIFY(savePending(fileKind));
+    Updater updater;
+    updater.setCloseWindowsHandler([] { return false; });
+    QDesktopServices::setUrlHandler(QStringLiteral("file"), this, "recordOpenedFile");
+    PromptObserver observer;
+    QVERIFY(settled());
+    updater.busy_ = true;
+    updater.installing_ = true;
+    updater.install(downloadedPath(fileKind), kVersion, kDownloadSha256);
+    QTRY_VERIFY(!updater.busy_);
+    QVERIFY(settled());
+    QCoreApplication::processEvents();
+    QVERIFY(!updater.busy_);
+    QVERIFY(!updater.installing_);
+    QVERIFY(appImageReplacements.isEmpty());
+    QVERIFY(packageInstalls.isEmpty());
+    QVERIFY(openedFiles_.isEmpty());
+    QVERIFY(observer.messages.isEmpty());
+    QVERIFY(QFile::exists(downloadedPath(fileKind)));
 }
 
 void TestUpdater::releaseInstallsWithoutConfirmation_data()
