@@ -17,7 +17,7 @@ namespace mervin {
 // is confined to the .cpp. Reuses QpdfService::Status (NeedsPassword when the
 // source is user-password encrypted and no password is supplied). Each source
 // reports job::reading() when it opens and again when qpdf reads it while writing
-// (processReportedFile), and each output goes through AtomicPdfWriter, so inside a
+// (openQpdf), and each output goes through AtomicPdfWriter, so inside a
 // job::Scope a stopped operation opens and replaces nothing more. A split stopped
 // part way keeps the files it wrote before.
 //

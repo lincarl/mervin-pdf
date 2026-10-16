@@ -281,7 +281,19 @@ window says "The merged file will not be encrypted."
 Mervin can also inspect PDF encryption, remove encryption or owner restrictions,
 and create encrypted copies using AES-256, AES-128, or legacy RC4-128. Permission
 flags are shown and can be written to encrypted files, but the viewer treats them as
-advisory and does not disable reading, copying, or printing because of them.
+advisory and does not disable reading, copying, or printing because of them. The
+Security panel shows printing limited to low resolution as Low resolution only and
+modifying limited to page assembly as Page assembly only.
+
+An empty owner password becomes the open password while every permission is allowed.
+When a permission is not allowed, an empty owner password becomes a random password
+that nobody is told, so the open password cannot lift the restriction in other PDF
+readers. Strip Owner Restrictions still removes it with the open password. Security
+refuses an owner password equal to the open password while a permission is not
+allowed, before it asks where to save. AES-128 and RC4-128 store passwords in
+PDFDocEncoding, as the PDF format requires, so a password with other characters,
+such as Chinese, fails with a request to choose AES-256. AES-256 accepts any
+character.
 
 Saving supports these workflows:
 

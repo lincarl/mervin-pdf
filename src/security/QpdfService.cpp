@@ -1,51 +1,32 @@
 #include "security/QpdfService.h"
-#include "io/JobContext.h"
 #include "security/AtomicPdfWriter.h"
 #include "security/QpdfSource.h"
 
 #include <qpdf/Constants.h>
 #include <qpdf/QPDF.hh>
-#include <qpdf/QPDFExc.hh>
+#include <qpdf/QUtil.hh>
 
+#include <QByteArray>
+#include <QRandomGenerator>
+
+#include <array>
 #include <exception>
+#include <memory>
 #include <string>
 
 namespace mervin {
 
 namespace {
 
-std::string u8(const QString &s)
+// 32 random bytes as 64 hex digits, for an owner password nobody is told. R4 uses the
+// first 32 bytes of a password, which still hold 128 random bits.
+std::string randomOwnerPassword()
 {
-    const QByteArray b = s.toUtf8();
-    return std::string(b.constData(), static_cast<size_t>(b.size()));
-}
-
-// Open a source file, mapping qpdf's password error to NeedsPassword.
-QpdfService::Status open(QPDF &q, const QString &path, const QString &password, QString *error)
-{
-    if (!job::reading(path)) {
-        if (error)
-            *error = job::notRunError();
-        return QpdfService::Status::Failed;
-    }
-    try {
-        const std::string pw = u8(password);
-        processReportedFile(q, path, password.isEmpty() ? nullptr : pw.c_str());
-        return QpdfService::Status::Ok;
-    } catch (const QPDFExc &e) {
-        if (e.getErrorCode() == qpdf_e_password) {
-            if (error)
-                *error = QpdfService::tr("A password is required to open this document.");
-            return QpdfService::Status::NeedsPassword;
-        }
-        if (error)
-            *error = QString::fromUtf8(e.what());
-        return QpdfService::Status::Failed;
-    } catch (const std::exception &e) {
-        if (error)
-            *error = QString::fromUtf8(e.what());
-        return QpdfService::Status::Failed;
-    }
+    std::array<quint32, 8> words;
+    QRandomGenerator::system()->fillRange(words.data(), qsizetype(words.size()));
+    return QByteArray(reinterpret_cast<const char *>(words.data()), sizeof words)
+        .toHex()
+        .toStdString();
 }
 
 QString methodName(QPDF::encryption_method_e m)
@@ -72,10 +53,11 @@ QString methodName(QPDF::encryption_method_e m)
 QpdfService::Status QpdfService::readInfo(const QString &path, const QString &password, Info &out,
                                           QString *error)
 {
-    QPDF q;
-    const Status st = open(q, path, password, error);
+    std::unique_ptr<QPDF> source;
+    const Status st = openQpdf(path, password, source, error);
     if (st != Status::Ok)
         return st;
+    QPDF &q = *source;
 
     try {
         out = Info{};
@@ -86,16 +68,23 @@ QpdfService::Status QpdfService::readInfo(const QString &path, const QString &pa
         }
 
         int R = 0, P = 0, V = 0;
-        QPDF::encryption_method_e sm = QPDF::e_none, strm = QPDF::e_none, fm = QPDF::e_none;
-        q.isEncrypted(R, P, V, sm, strm, fm);
+        QPDF::encryption_method_e streams = QPDF::e_none, strings = QPDF::e_none,
+                                  files = QPDF::e_none;
+        q.isEncrypted(R, P, V, streams, strings, files);
         out.revision = R;
-        out.algorithm = methodName(fm);
+        // qpdf reads the methods only for V4 and V5. V1 and V2 always use RC4.
+        out.algorithm = methodName(V < 4 ? QPDF::e_rc4 : streams);
         out.keyLengthBits = static_cast<int>(q.getEncryptionKey().size()) * 8;
 
-        out.permissions.canPrint = q.allowPrintLowRes();
+        // qpdf reads the flags whichever password matched. High-resolution printing
+        // needs bit 12 from R3 on. Bit 4 permits every modification, page assembly
+        // included, and from R3 on bit 11 permits page assembly alone.
+        out.permissions.canPrint = q.allowPrintHighRes();
         out.permissions.canCopy = q.allowExtractAll();
-        out.permissions.canModify = q.allowModifyOther() || q.allowModifyAssembly();
+        out.permissions.canModify = q.allowModifyOther();
         out.permissions.canAnnotate = q.allowModifyAnnotation();
+        out.lowResolutionPrintOnly = !out.permissions.canPrint && q.allowPrintLowRes();
+        out.pageAssemblyOnly = !out.permissions.canModify && q.allowModifyAssembly();
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)
@@ -109,13 +98,13 @@ QpdfService::Status QpdfService::decrypt(const QString &inPath, const QString &o
                                          const QString &password, QString *error,
                                          const std::function<bool()> &mayCommit)
 {
-    QPDF q;
-    const Status st = open(q, inPath, password, error);
+    std::unique_ptr<QPDF> source;
+    const Status st = openQpdf(inPath, password, source, error);
     if (st != Status::Ok)
         return st;
 
     try {
-        AtomicPdfWriter output(q, outPath);
+        AtomicPdfWriter output(*source, outPath);
         output.options().setPreserveEncryption(false); // drop encryption AND all owner restrictions
         output.write(mayCommit);
         return Status::Ok;
@@ -133,14 +122,42 @@ QpdfService::Status QpdfService::encrypt(const QString &inPath, const QString &o
                                          const Permissions &perms, QString *error,
                                          const std::function<bool()> &mayCommit)
 {
-    QPDF q;
-    const Status st = open(q, inPath, currentPassword, error);
+    std::string user = userPassword.toStdString();
+    std::string owner = ownerPassword.toStdString();
+    // Owner rights ignore the permission flags. Restrictions without an owner password
+    // get one that nobody knows, so the open password cannot lift them. With everything
+    // allowed the open password stays the owner password, so other programs still let
+    // its holder change the security settings.
+    if (owner.empty())
+        owner = perms.allowsEverything() ? user : randomOwnerPassword();
+    // R4 keys use PDFDocEncoding and R6 keys UTF-8, which QString gives. qpdf takes the
+    // bytes as given.
+    if (algo != Algorithm::AES256) {
+        std::string pdfDocUser, pdfDocOwner;
+        if (!QUtil::utf8_to_pdf_doc(user, pdfDocUser)
+            || !QUtil::utf8_to_pdf_doc(owner, pdfDocOwner)) {
+            if (error) {
+                //: Reason shown after "The operation failed." when encrypting. AES-128 and
+                //: RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western
+                //: European letters such as é and ü, and common symbols, but not, for example,
+                //: Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every
+                //: character. Keep the algorithm names as they are.
+                *error = tr("A password contains characters that AES-128 and RC4-128 cannot "
+                            "use. Choose AES-256.");
+            }
+            return Status::Failed;
+        }
+        user = std::move(pdfDocUser);
+        owner = std::move(pdfDocOwner);
+    }
+
+    std::unique_ptr<QPDF> source;
+    const Status st = openQpdf(inPath, currentPassword, source, error);
     if (st != Status::Ok)
         return st;
+    QPDF &q = *source;
 
     try {
-        const std::string user = u8(userPassword);
-        const std::string owner = u8(ownerPassword.isEmpty() ? userPassword : ownerPassword);
         const qpdf_r3_print_e print = perms.canPrint ? qpdf_r3p_full : qpdf_r3p_none;
         const bool accessibility = true; // never block accessibility
         const bool extract = perms.canCopy;

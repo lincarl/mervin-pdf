@@ -1026,6 +1026,26 @@ The window does not refresh consent while that question is open. Open-tab checks
 reject known protected outputs before asking, and every actual write still checks
 the source identity and reserves the destination.
 
+qpdf uses password bytes as given. Every qpdf source in `QpdfService`, `PageOps` and
+`MeasureExport` opens through `openQpdf` (`security/QpdfSource`), which tries the
+password as UTF-8 and, after a password error, once more in PDFDocEncoding on a fresh
+`QPDF`. AES-256 (R6) keys use UTF-8. R2 to R4 keys use PDFDocEncoding, which MuPDF
+also sends. The UTF-8 attempt keeps AES-128 and RC4-128 files readable that earlier
+versions of Mervin keyed with UTF-8, though MuPDF still rejects those when the password
+has characters beyond ASCII. `QpdfService::encrypt` converts both AES-128 and RC4-128
+passwords to PDFDocEncoding and fails before it reads the source when one has no
+PDFDocEncoding form. Without an owner password, it uses the open password when every
+permission is allowed and 32 random bytes in hex otherwise, because owner rights
+ignore the permission flags. `SecurityDialog` refuses an owner password that equals
+the open password while a permission is restricted, in a line below the owner field.
+Its minimum follows its layout (`followLayoutMinimum`), so the dialog grows for that
+line, and spare height gathers above Close, so the fields stay in place when the line
+goes away. `readInfo` names RC4 for V1 and V2
+files, for which qpdf reports no method, and the stream method for V4 and V5. It
+counts printing as allowed only with high-resolution printing (bit 12 from R3) and
+modifying only with bit 4, and reports low-resolution printing and page assembly
+alone (bit 11) as limited states.
+
 Both encryption and decryption compare the approved snapshot again after flushing
 the temporary output, under `AtomicPdfWriter`'s destination lock and before commit
 admission. A changed or unreadable destination is preserved and reopens the retained
