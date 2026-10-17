@@ -683,7 +683,8 @@ private:
 /// transformAnnotations first copies each field tree whole with copyForeignObject, then
 /// copies that copy field by field. Actions of the copied annotations, such as a reset
 /// button's /Fields, still name the first copy, so copyBatch points them at the second, and
-/// finish() empties what is left of the first copies.
+/// finish() empties what is left of the first copies. finish() also nulls the annotations of
+/// left-out pages that a copied annotation names, such as the note that a reply answers.
 class FormCopy
 {
 public:
@@ -734,6 +735,7 @@ public:
         for (const QPDFObjGen &id : pruner.removed())
             if (!used.count(id))
                 out_.replaceObject(id, QPDFObjectHandle::newNull());
+        removeLeftOutAnnotations(widgets, used);
     }
 
 private:
@@ -757,6 +759,35 @@ private:
                 used->insert(top.getObjGen());
         }
         pruner.prune(top);
+    }
+
+    // addPage copies what a page refers to, so a reply's /IRT brings along the note it answers
+    // from a page that the output leaves out, with the note's popup. Such annotations, which
+    // no output page lists and whose /P is not an output page, become null, as Delete Pages
+    // nulls the annotations of deleted pages. The reply then answers nothing. A popup goes
+    // or stays with the annotation in its /Parent. `listed` holds the annotations that output
+    // pages list, and `used` the fields that their widgets name.
+    void removeLeftOutAnnotations(const ObjectSet &listed, const ObjectSet &used)
+    {
+        ObjectSet pages;
+        for (QPDFObjectHandle page : out_.getAllPages())
+            pages.insert(page.getObjGen());
+        const auto keep = [&](QPDFObjectHandle annot) {
+            if (annot.isIndirect() && (listed.count(annot.getObjGen()) || used.count(annot.getObjGen())))
+                return true;
+            QPDFObjectHandle page = annot.getKey("/P");
+            return page.isIndirect() && pages.count(page.getObjGen()) > 0;
+        };
+        for (QPDFObjectHandle object : out_.getAllObjects()) {
+            if (!object.isDictionary() || !object.getKey("/Subtype").isName()
+                || !object.getKey("/Rect").isArray())
+                continue; // not an annotation
+            QPDFObjectHandle owner = object.getKey("/Subtype").isNameAndEquals("/Popup")
+                ? object.getKey("/Parent")
+                : object;
+            if (!keep(object) && !(owner.isDictionary() && keep(owner)))
+                out_.replaceObject(object.getObjGen(), QPDFObjectHandle::newNull());
+        }
     }
 
     // The top of the field tree that `node` belongs to.
@@ -868,23 +899,37 @@ private:
             holder.replaceKey("/AA", result);
     }
 
-    // Points the actions of `made`, the copies of the source annotations in `annots`, and of
-    // their fields at the copied fields instead of the first copies of the field trees.
+    // Points the references of `made`, the copies of the source annotations in `annots`, at
+    // the copies instead of the first copies: the field references in the actions of the
+    // annotations and their fields, and the annotations in /IRT, /Popup and a popup's /Parent.
     void retarget(QPDFObjectHandle annots, const std::vector<QPDFObjectHandle> &made)
     {
         Copies copies;
         for (int i = 0; i < annots.getArrayNItems(); ++i) {
             QPDFObjectHandle annot = annots.getArrayItem(i);
+            if (!annot.isIndirect())
+                continue;
             // transformAnnotations copied each indirect annotation with copyForeignObject,
             // which returns that copy again.
-            if (annot.isIndirect())
-                mapTree(fieldTop(out_.copyForeignObject(annot)),
-                        fieldTop(made[static_cast<size_t>(i)]), copies, 0);
+            QPDFObjectHandle first = out_.copyForeignObject(annot);
+            QPDFObjectHandle copy = made[static_cast<size_t>(i)];
+            if (copy.getKey("/Subtype").isNameAndEquals("/Widget"))
+                mapTree(fieldTop(first), fieldTop(copy), copies, 0);
+            else
+                mapTree(first, copy, copies, 0);
         }
         if (copies.empty())
             return;
-        for (QPDFObjectHandle annot : made)
+        for (QPDFObjectHandle annot : made) {
             mapActions(annot, copies);
+            const bool popup = annot.getKey("/Subtype").isNameAndEquals("/Popup");
+            for (const char *key : {"/IRT", "/Popup", "/Parent"}) {
+                QPDFObjectHandle target = annot.getKey(key);
+                if ((popup || std::string(key) != "/Parent") && target.isIndirect())
+                    if (const auto it = copies.find(target.getObjGen()); it != copies.end())
+                        annot.replaceKey(key, it->second);
+            }
+        }
         for (auto &[first, copy] : copies)
             mapActions(copy, copies);
     }

@@ -222,7 +222,8 @@ and Stop waiting as other page tools. None saves over a file open in a tab or ov
 input document. Failure reopens the chosen ranges, order and output with its reason.
 
 Extract, Split and Merge copy only the images and fonts that the copied pages draw, also
-when the source's pages share them.
+when the source's pages share them. A copied comment that replies to a comment on a page
+they do not copy stays, as a comment of its own, as in Delete Pages.
 
 Extract, Split and Merge keep the form fields of the pages they copy, so the new file
 can be filled in, and leave out the fields and values of pages they do not copy. A
@@ -274,7 +275,8 @@ writes a copy, by default `<name>-edited.pdf` beside the document, which keeps t
 document's structure and encryption; the original file is never changed. The copy
 does not contain the deleted pages' content, images, annotations or form fields, nor
 the bookmarks, destination names and tagged structure elements that lead only to them. Links and other
-references to a deleted page no longer go anywhere. A form that loses a field also
+references to a deleted page no longer go anywhere. A comment that replies to a comment
+on a deleted page stays, as a comment of its own. A form that loses a field also
 loses its XFA data, which holds every field's value. Extract and Delete share one
 remembered Open when done choice.
 
