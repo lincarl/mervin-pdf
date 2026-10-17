@@ -55,7 +55,7 @@ public:
     // Drops a kept document, as one found gone from its folder after startup.
     void forgetUnavailable(const QString &path);
 
-    // The mount point a document was opened from (RecentEntry::mount). The session
+    // The mount point recorded for a document (RecentEntry::mount). The session
     // keeps its own copy, so a share that is away is still told from a deleted file
     // after Recent trims or clears the document. Kept while the document is open or
     // kept, and saved with it in "mounts". Older versions ignore it. An empty mount

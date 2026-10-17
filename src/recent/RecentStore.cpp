@@ -128,6 +128,30 @@ bool RecentStore::setMount(const QString &path, const QString &mount)
     return false;
 }
 
+bool RecentStore::setMissingMounts(const QHash<QString, QString> &mounts)
+{
+    QHash<QString, QString> byKey;
+    byKey.reserve(mounts.size());
+    for (auto it = mounts.cbegin(); it != mounts.cend(); ++it) {
+        if (!it.key().isEmpty() && !it.value().isEmpty())
+            byKey.insert(normalizePathKey(it.key()), it.value());
+    }
+    if (byKey.isEmpty())
+        return false;
+
+    bool changed = false;
+    for (RecentEntry &e : entries_) {
+        if (!e.mount.isEmpty())
+            continue;
+        const auto found = byKey.constFind(normalizePathKey(e.path));
+        if (found == byKey.cend())
+            continue;
+        e.mount = *found;
+        changed = true;
+    }
+    return changed;
+}
+
 namespace {
 
 #ifdef Q_OS_WIN
@@ -192,7 +216,7 @@ bool answers(const QString &folder)
 #endif
 
 // Whether the volume holding `absPath` is attached, given the mount recorded
-// when the file was opened, if any (see isVolumeAttached).
+// for the file, if any (see isVolumeAttached).
 bool volumeAttached(const QString &absPath, const QString &mount)
 {
 #ifdef Q_OS_WIN
@@ -213,7 +237,7 @@ bool volumeAttached(const QString &absPath, const QString &mount)
     const QList<mounts::Mount> mounted = mountedNow();
     // A share mounted by hand outside fstab leaves an empty folder once it is
     // unmounted, which the mount list cannot tell from a folder whose file was
-    // deleted. While the folder the file was opened from is still there and
+    // deleted. While the recorded mount's folder is still there and
     // another file system holds the path, the volume is away. Otherwise the mount
     // list decides, so a recorded mount never makes a volume look attached. That
     // covers a folder that went with its volume, as udisks and per-login mounts
@@ -284,8 +308,14 @@ void RecentStore::clear()
 
 void RecentStore::trim()
 {
-    if (retention_ > 0 && entries_.size() > retention_)
-        entries_.erase(entries_.begin() + retention_, entries_.end());
+    if (retention_ <= 0)
+        return;
+    // Newest first, so the entries past the first `retention_` others are the
+    // oldest. Favourites never count.
+    int others = 0;
+    entries_.removeIf([this, &others](const RecentEntry &e) {
+        return !e.favorite && ++others > retention_;
+    });
 }
 
 bool RecentStore::load(const QString &file)

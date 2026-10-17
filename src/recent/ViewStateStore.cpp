@@ -22,6 +22,13 @@ void ViewStateStore::setRetention(int retention)
     prune();
 }
 
+void ViewStateStore::setKept(const QStringList &paths)
+{
+    kept_.clear();
+    for (const QString &path : paths)
+        kept_.insert(normalizePathKey(path));
+}
+
 void ViewStateStore::put(const QString &path, const ViewState &state, qint64 whenMs)
 {
     if (path.isEmpty())
@@ -52,12 +59,17 @@ void ViewStateStore::prune()
 {
     if (retention_ <= 0)
         return;
-    // Evict the least-recently-updated entries until within the cap. Puts are
-    // infrequent (a tab close), so a linear min-scan per eviction is fine.
-    while (states_.size() > retention_) {
-        auto victim = states_.begin();
+    // Evict the least-recently-updated entries that are not kept until those fit
+    // the cap. Puts are infrequent (a tab close), so a linear min-scan per
+    // eviction is fine.
+    qsizetype counted = 0;
+    for (auto it = states_.cbegin(); it != states_.cend(); ++it)
+        if (!kept_.contains(it.key()))
+            ++counted;
+    for (; counted > retention_; --counted) {
+        auto victim = states_.end();
         for (auto it = states_.begin(); it != states_.end(); ++it)
-            if (it->updated < victim->updated)
+            if (!kept_.contains(it.key()) && (victim == states_.end() || it->updated < victim->updated))
                 victim = it;
         states_.erase(victim);
     }

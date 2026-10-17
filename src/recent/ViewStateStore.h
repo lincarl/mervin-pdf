@@ -3,7 +3,9 @@
 #include "recent/ViewState.h"
 
 #include <QHash>
+#include <QSet>
 #include <QString>
+#include <QStringList>
 
 #include <optional>
 
@@ -13,14 +15,20 @@ namespace mervin {
 // normalized path. Owned by the primary (single-instance) UI process - the sole
 // writer - and JSON-persisted alongside the recent list. Capped to the same
 // retention as the recent history, evicting the least-recently-updated entries
-// so it never grows unbounded for files long gone from history.
+// so it never grows unbounded for files long gone from history. Kept paths
+// (setKept), the Recent favourites, are never evicted and do not count against
+// the cap, as in RecentStore.
 class ViewStateStore
 {
 public:
     explicit ViewStateStore(int retention = 500);
 
-    void setRetention(int retention); // re-prunes immediately if lowered
+    void setRetention(int retention); // re-trims immediately
     int retention() const { return retention_; }
+
+    // Replace the kept paths. A path no longer kept counts again from the next
+    // prune, by put(), setRetention() or load(), so unmarking evicts nothing now.
+    void setKept(const QStringList &paths);
 
     // Record/replace the view state for `path`, stamped with `whenMs` for LRU
     // eviction. No-op for an empty path.
@@ -51,6 +59,7 @@ private:
     void prune();
 
     QHash<QString, Record> states_; // key == normalizePathKey(path)
+    QSet<QString> kept_;            // setKept() paths, by normalizePathKey
     int retention_;
 };
 

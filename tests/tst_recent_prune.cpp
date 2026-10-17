@@ -7,6 +7,7 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -108,6 +109,165 @@ private slots:
 #endif
     }
 
+    // Entries an older version wrote have no recorded mount. A check that finds
+    // the file there, here the prune pass of the Recent page, records the mount it
+    // is on and saves it, so a share mounted outside fstab is recognised once it
+    // goes away. A file that is not there gets none.
+    void recordsTheMountOfAFileFoundThere()
+    {
+        WindowManager wm;
+        QCOMPARE(entry(wm, kept_).mount, QString());
+        wm.refreshRecent();
+        QTRY_COMPARE(wm.recentEntries().size(), 2);
+        const QString mount = RecentStore::mountOf(kept_);
+#ifndef Q_OS_WIN
+        QVERIFY(!mount.isEmpty());
+#endif
+        QTRY_COMPARE(entry(wm, kept_).mount, mount);
+        QCOMPARE(entry(wm, away_).mount, QString());
+
+        QVERIFY(mervin::appfiles::flush(10000));
+        RecentStore onDisk;
+        QVERIFY(onDisk.load(RecentStore::defaultFile()));
+        QCOMPARE(onDisk.recordedMount(kept_), mount);
+        QCOMPARE(onDisk.recordedMount(away_), QString());
+    }
+
+    // The Recent page checks its rows itself, also with Keep removed files in list
+    // on, when nothing is pruned. Such a check records the mount too, and saves it
+    // without a prune pass to end.
+    void recordsTheMountFromAnyCheck()
+    {
+        Settings s = Settings::load();
+        s.recentKeepMissing = true;
+        QVERIFY(s.save());
+        WindowManager wm;
+        QCOMPARE(entry(wm, kept_).mount, QString());
+        wm.fileProbe()->check({{kept_, QString()}}); // as RecentFilesPanel asks
+        const QString mount = RecentStore::mountOf(kept_);
+#ifndef Q_OS_WIN
+        QVERIFY(!mount.isEmpty());
+#endif
+        QTRY_COMPARE(entry(wm, kept_).mount, mount);
+
+        QVERIFY(mervin::appfiles::flush(10000));
+        RecentStore onDisk;
+        QVERIFY(onDisk.load(RecentStore::defaultFile()));
+        QCOMPARE(onDisk.recordedMount(kept_), mount);
+    }
+
+    // A mount found just before quitting is saved on the way out, not lost with
+    // the timer that would have saved it, or the next start could drop the entry
+    // while its share is away.
+    void savesFoundMountsOnQuit()
+    {
+        Settings s = Settings::load();
+        s.recentKeepMissing = true; // no prune pass that would save at its end
+        QVERIFY(s.save());
+        {
+            WindowManager wm;
+            QSignalSpy checked(wm.fileProbe(), &FileProbe::checked);
+            wm.fileProbe()->check({{kept_, QString()}});
+            QVERIFY(checked.wait(10000));
+            // Found, and waiting for the save that kMountSaveMs delays.
+            QCOMPARE(entry(wm, kept_).mount, QString());
+        }
+        QVERIFY(mervin::appfiles::flush(10000));
+        RecentStore onDisk;
+        QVERIFY(onDisk.load(RecentStore::defaultFile()));
+        QCOMPARE(onDisk.recordedMount(kept_), RecentStore::mountOf(kept_));
+    }
+
+    // A pass over many entries an older version wrote records every mount, but
+    // saves recent.json and announces the list together, not once per answer,
+    // since each announcement rebuilds every Recent page. The probe answers one
+    // file at a time, so a pass that takes long saves at most once per
+    // kMountSaveMs before it ends. Windows records no mounts, so there it checks
+    // nothing, as CI refuses skipped tests.
+    void savesTheMountsOfAPassTogether()
+    {
+#ifndef Q_OS_WIN
+        constexpr int kEntries = 400;
+        const QDir root(profile_->path());
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        RecentStore recent;
+        for (int i = 0; i < kEntries; ++i) {
+            const QString path = root.filePath(QStringLiteral("docs/old-%1.pdf").arg(i));
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.close();
+            recent.add(path, now - 1000 - i);
+        }
+        QVERIFY(recent.save(RecentStore::defaultFile()));
+
+        WindowManager wm;
+        QSignalSpy announced(&wm, &WindowManager::recentListChanged);
+        QElapsedTimer pass;
+        pass.start();
+        wm.refreshRecent(); // announces the list once before it prunes
+        const auto recorded = [&wm] {
+            int n = 0;
+            for (const RecentEntry &e : wm.recentEntries())
+                n += e.mount.isEmpty() ? 0 : 1;
+            return n;
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(recorded(), kEntries, 20000);
+        const qint64 saves = announced.count() - 1;
+        const qint64 allowed = 1 + pass.elapsed() / WindowManager::kMountSaveMs;
+        QVERIFY2(saves >= 1 && saves <= allowed,
+                 qPrintable(QStringLiteral("%1 saves in %2 ms").arg(saves).arg(pass.elapsed())));
+#endif
+    }
+
+    // Favourites never age out of Recent, and their view state stays with them,
+    // also when the history is read again with the lower retention.
+    void lowerRetentionKeepsFavourites()
+    {
+        // Saved views, oldest first: away_, gone_, kept_.
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        ViewStateStore states;
+        states.put(away_, ViewState{}, now - 30);
+        states.put(gone_, ViewState{}, now - 20);
+        states.put(kept_, ViewState{}, now - 10);
+        QVERIFY(states.save(ViewStateStore::defaultFile()));
+
+        {
+            WindowManager wm;
+            wm.setFavorite(away_, true); // the oldest entry
+            wm.applyRecentSettings(7, 1, true);
+            QCOMPARE(wm.recentEntries().size(), 2);
+            QCOMPARE(wm.recentEntries().at(0).path, kept_);
+            QCOMPARE(wm.recentEntries().at(1).path, away_);
+
+            QVERIFY(mervin::appfiles::flush(10000));
+            RecentStore onDisk;
+            QVERIFY(onDisk.load(RecentStore::defaultFile()));
+            QCOMPARE(onDisk.count(), 2);
+            QVERIFY(onDisk.entries().at(1).favorite);
+            ViewStateStore statesOnDisk;
+            QVERIFY(statesOnDisk.load(ViewStateStore::defaultFile()));
+            QCOMPARE(statesOnDisk.count(), 2);
+            QVERIFY(statesOnDisk.get(kept_));
+            QVERIFY(statesOnDisk.get(away_));
+        }
+
+        Settings s = Settings::load();
+        s.recentRetention = 1;
+        QVERIFY(s.save());
+        WindowManager wm;
+        QCOMPARE(wm.recentEntries().size(), 2);
+        // A newer view state for another file takes the one place from kept_'s,
+        // not from the favourite's.
+        wm.saveViewState(gone_, ViewState{});
+        QVERIFY(mervin::appfiles::flush(10000));
+        ViewStateStore statesOnDisk;
+        QVERIFY(statesOnDisk.load(ViewStateStore::defaultFile()));
+        QCOMPARE(statesOnDisk.count(), 2);
+        QVERIFY(statesOnDisk.get(gone_));
+        QVERIFY(!statesOnDisk.get(kept_));
+        QVERIFY(statesOnDisk.get(away_));
+    }
+
     void keepsEverythingWhileTheSettingIsOn()
     {
         Settings s = Settings::load();
@@ -139,6 +299,15 @@ private slots:
     }
 
 private:
+    // The entry for `path` in `wm`'s Recent list, or an empty one.
+    static RecentEntry entry(const WindowManager &wm, const QString &path)
+    {
+        for (const RecentEntry &e : wm.recentEntries())
+            if (e.path == path)
+                return e;
+        return {};
+    }
+
     std::unique_ptr<QTemporaryDir> profile_;
     QString kept_, gone_, goneFolder_, away_;
 };

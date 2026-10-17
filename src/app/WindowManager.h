@@ -179,7 +179,7 @@ public:
     // Record that a file was opened (push to recent history). When
     // restoreViewState is true (a freshly opened tab), the file's saved view
     // state (if any) is applied to the matching tab immediately. The entry keeps
-    // the mount it was opened from until a check on a background thread finds the
+    // the mount recorded for it until a check on a background thread finds the
     // file and records the mount it is on now.
     void recordOpen(const QString &canonicalPath, bool restoreViewState, int pageCount = 0);
 
@@ -194,7 +194,8 @@ public:
     // check on a background thread finds them.
     void clearMissingRecent(const QStringList &paths);
 
-    // Set or clear the favourite flag on a recent entry.
+    // Set or clear the favourite flag on a recent entry. A favourite never ages
+    // out of Recent, and neither does its view state.
     void setFavorite(const QString &canonicalPath, bool favorite);
 
     // Re-broadcast the current recent list to every panel, then prune it (see
@@ -207,10 +208,15 @@ public:
     void applyRecentSettings(int visibleCount, int retention, bool keepMissing);
 
     // With that setting off, forget entries whose file is gone while its drive,
-    // share or mount is attached (FileFacts::removed, given the mount recorded when
-    // the file was opened). fileProbe() checks the disk. A no-op while the setting
-    // is on.
+    // share or mount is attached (FileFacts::removed, given the mount recorded for
+    // the file). fileProbe() checks the disk. A no-op while the setting is on.
+    // Its checks, as any other, record the mount of a file found there whose entry
+    // has none (RecentStore::setMissingMounts).
     void pruneMissingRecent();
+    // Mounts found that way are saved, and the list announced, together when the
+    // prune pass that found them ends, and otherwise at most this long after the
+    // first was found. Later finds do not delay the save, and a quit saves them.
+    static constexpr int kMountSaveMs = 500;
 
     // Crash recovery / session restore (M11). restoreSession() loads the saved
     // session, has fileProbe() check its documents and calls `done` with the ones
@@ -239,8 +245,8 @@ public:
 
     // Close the unloaded tabs whose file is gone: deleted, moved or renamed from a
     // folder that is still there, while its drive, share or mount is attached
-    // (RecentStore::isRemovedFromDisk, given the mount recorded when the file was
-    // opened). That is the rule session restore uses to drop a document. Other tabs
+    // (RecentStore::isRemovedFromDisk, given the mount recorded for the file). That
+    // is the rule session restore uses to drop a document. Other tabs
     // stay. A loaded tab still shows its document, a tab with unsaved edits reloads
     // from its recovery copy, and a tab whose folder or volume is away keeps Retry. Windows in the tray
     // keep their tabs until they are shown again. The disk is checked on a worker
@@ -332,13 +338,20 @@ private:
     // Forget the recent entries the checks found gone, all in one save.
     void dropRecent(const QString &path);
     void dropFoundRecent();
+    // Collect the mounts that checks found for recent entries that have none, and
+    // save them together (RecentStore::setMissingMounts, kMountSaveMs).
+    void recordMount(const QString &path, const QString &mount);
+    void recordFoundMounts();
+    // Give viewState_ the favourites, whose view state never ages out
+    // (ViewStateStore::setKept). Run after anything that changes them.
+    void keepFavouriteViewStates();
 
     MainWindow *activeOrNewWindow();
     MainWindow *emptyWindow() const; // a document-less window, or nullptr
     // The windows hidden in the tray, in the order they were hidden.
     QList<MainWindow *> trayWindows() const;
     void applyViewStateIfStored(const QString &canonicalPath);
-    // The mount a document was opened from: the session's copy, else Recent's.
+    // The mount recorded for a document, from the session's copy, else Recent's.
     QString recordedMount(const QString &canonicalPath) const;
     // Close the tabs of files a closeRemovedTabs scan has just found gone, each as
     // soon as it is found. A window that has to keep a tab for now
@@ -423,6 +436,8 @@ private:
     QPointer<MainWindow> restoreWindow_; // where late documents open
     QStringList lateWaiting_;           // late documents waiting for the session's tabs
     QStringList recentDue_;             // found by pruneWanted_ and clearWanted_
+    QHash<QString, QString> mountsDue_; // path -> mount, found there by any check
+    QTimer *mountSaveTimer_ = nullptr;  // saves mountsDue_ kMountSaveMs after the first
     // Ctrl+Shift+T presses waiting for an answer, oldest first.
     struct ReopenPress
     {

@@ -2,6 +2,7 @@
 
 #include "recent/RecentEntry.h"
 
+#include <QHash>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -10,20 +11,22 @@ namespace mervin {
 
 // JSON recent history, newest first, with a bounded retention count. The primary UI process is
 // the sole writer. PathKey normalizes matching while original spelling is retained for display.
+// The retention counts only entries that are not favourites, as the Recent page's shown count
+// does. Favourites never age out. Past the retention, the oldest other entries go.
 class RecentStore
 {
 public:
     explicit RecentStore(int retention = 500);
 
-    void setRetention(int retention); // re-trims immediately if lowered
+    void setRetention(int retention); // re-trims immediately
     int retention() const { return retention_; }
 
     // Move `path` to the front, stamped with `whenMs`, deduping any prior entry
-    // for the same file (normalized match). `mount` is the file system the file
-    // is on now (mountOf), kept as RecentEntry::mount. A `pageCount` of 0 means
-    // unknown, as for a tab restored without loading its document, and keeps the
-    // count stored for the file. No-op for an empty path. Returns true if the list
-    // changed.
+    // for the same file (normalized match), and trim to the retention. `mount` is
+    // the file system the file is on now (mountOf), kept as RecentEntry::mount. A
+    // `pageCount` of 0 means unknown, as for a tab restored without loading its
+    // document, and keeps the count stored for the file. No-op for an empty path.
+    // Returns true if the list changed.
     bool add(const QString &path, qint64 whenMs, int pageCount = 0,
              const QString &mount = QString());
 
@@ -37,6 +40,11 @@ public:
     // Record `mount` (mountOf) for the entry of `path`, a file just found on disk.
     // Returns true if the entry exists and its mount changed.
     bool setMount(const QString &path, const QString &mount);
+    // Record the mounts in `mounts`, by path, found for files on disk, for the
+    // entries that have none, such as those an older version wrote. A recorded
+    // mount is kept. One pass over the list for any number of paths. Returns true
+    // if an entry changed.
+    bool setMissingMounts(const QHash<QString, QString> &mounts);
 
     // The checks below touch the disk and can stall on an unreachable drive. Only
     // threads other than the UI thread call them (see FileProbe).
@@ -56,10 +64,14 @@ public:
     //   path, or when the path is under /media, /run/media, /mnt or /net with no
     //   volume mounted below that folder (mounts::holdingMount). Symbolic links
     //   are not followed, so pass a canonical path as Recent and the session do.
-    //   With `mount`, the mount point the file was opened from (RecentEntry::mount),
-    //   the volume is also away while another file system holds the path and that
-    //   folder still exists. This covers a share mounted by hand outside fstab. A
-    //   recorded mount never makes a volume attached that the rules above call away.
+    //   With `mount`, the mount point recorded while the file was there
+    //   (RecentEntry::mount), the volume is also away while another file system
+    //   holds the path and that folder still exists. This covers a share mounted
+    //   outside fstab, by hand, by pam_mount or with sshfs. Without a recorded
+    //   mount, or once its folder is gone, the rules above decide alone, so such a
+    //   share outside /media, /run/media, /mnt and /net counts as attached while it
+    //   is unmounted. A recorded mount never makes a volume attached that the rules
+    //   above call away.
     // On an offline share the check can stall for seconds.
     static bool isVolumeAttached(const QString &path, const QString &mount = QString());
     // The mount point of the file system that holds `path` now, from the kernel's

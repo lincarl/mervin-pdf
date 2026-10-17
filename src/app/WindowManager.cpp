@@ -109,9 +109,14 @@ WindowManager::WindowManager()
     recent_.setRetention(s.recentRetention);
     viewState_.setRetention(s.recentRetention);
     recent_.load(recentFile_);       // missing file -> empty store (normal)
+    keepFavouriteViewStates();       // before the load trims the view states
     viewState_.load(viewStateFile_);
     keepMissingRecent_ = s.recentKeepMissing;
     connect(&probe_, &FileProbe::checked, this, &WindowManager::onFileChecked);
+    mountSaveTimer_ = new QTimer(this);
+    mountSaveTimer_->setSingleShot(true);
+    mountSaveTimer_->setInterval(kMountSaveMs);
+    connect(mountSaveTimer_, &QTimer::timeout, this, &WindowManager::recordFoundMounts);
 
     activityClock_.start();
     trayMenu_ = std::make_unique<QMenu>();
@@ -369,7 +374,7 @@ void WindowManager::recordOpen(const QString &canonicalPath, bool restoreViewSta
 {
     if (canonicalPath.isEmpty())
         return;
-    // The mount the file was opened from, until the check below finds the file and
+    // The mount recorded for the file, until the check below finds the file and
     // the mount it is on now. A file that is not there, such as a crash recovery
     // tab opened lazily or a tab focused again after its share went away, keeps
     // it, since recording then would store the file system below the empty folder.
@@ -424,6 +429,7 @@ void WindowManager::removeRecent(const QString &canonicalPath)
     const bool removedRecent = recent_.remove(canonicalPath);
     const bool removedState = viewState_.remove(canonicalPath); // drop its resume state too
     if (removedRecent) {
+        keepFavouriteViewStates();
         appfiles::write(recentFile_, recent_.toJson());
         emit recentListChanged(recent_.entries());
     }
@@ -458,6 +464,7 @@ void WindowManager::dropFoundRecent()
     if (removed.isEmpty())
         return;
 
+    keepFavouriteViewStates();
     appfiles::write(recentFile_, recent_.toJson());
     emit recentListChanged(recent_.entries());
 
@@ -468,14 +475,44 @@ void WindowManager::dropFoundRecent()
         appfiles::write(viewStateFile_, viewState_.toJson());
 }
 
+void WindowManager::recordMount(const QString &path, const QString &mount)
+{
+    mountsDue_.insert(path, mount);
+    // The probe answers one file at a time, so saving on the next turn of the
+    // event loop would save, and rebuild every Recent page, nearly once per answer.
+    // The timer is not restarted, so a slow pass still saves every kMountSaveMs.
+    if (!mountSaveTimer_->isActive())
+        mountSaveTimer_->start();
+}
+
+void WindowManager::recordFoundMounts()
+{
+    mountSaveTimer_->stop();
+    if (!recent_.setMissingMounts(std::exchange(mountsDue_, {})))
+        return;
+    appfiles::write(recentFile_, recent_.toJson());
+    // The panels ask for checks with the mount they were given.
+    emit recentListChanged(recent_.entries());
+}
+
 void WindowManager::setFavorite(const QString &canonicalPath, bool favorite)
 {
     if (canonicalPath.isEmpty())
         return;
     if (recent_.setFavorite(canonicalPath, favorite)) {
+        keepFavouriteViewStates();
         appfiles::write(recentFile_, recent_.toJson());
         emit recentListChanged(recent_.entries());
     }
+}
+
+void WindowManager::keepFavouriteViewStates()
+{
+    QStringList favourites;
+    for (const RecentEntry &e : recent_.entries())
+        if (e.favorite)
+            favourites.append(e.path);
+    viewState_.setKept(favourites);
 }
 
 void WindowManager::refreshRecent()
@@ -511,7 +548,7 @@ void WindowManager::pruneMissingRecent()
 {
     if (keepMissingRecent_ || recent_.count() == 0)
         return;
-    // Each path with the mount recorded when it was opened.
+    // Each path with the mount recorded for it.
     QList<FileCheck> files;
     files.reserve(recent_.count());
     for (const RecentEntry &e : recent_.entries()) {
@@ -536,9 +573,18 @@ void WindowManager::onFileChecked(const FileCheck &file, const FileFacts &facts)
             session_.setMount(path, facts.mount);
             updateSession();
         }
+    } else if (facts.exists && file.mount.isEmpty() && !facts.mount.isEmpty()) {
+        // An entry an older version wrote has no mount. Any check that finds its
+        // file there, such as for the Recent page, records the one it is on.
+        recordMount(path, facts.mount);
     }
-    if (pruneWanted_.remove(key) && !keepMissingRecent_ && facts.removed())
-        dropRecent(path);
+    if (pruneWanted_.remove(key)) {
+        if (!keepMissingRecent_ && facts.removed())
+            dropRecent(path);
+        // The pass has its last answer, so the mounts it found need not wait.
+        if (pruneWanted_.isEmpty() && !mountsDue_.isEmpty())
+            recordFoundMounts();
+    }
     if (clearWanted_.remove(key) && !facts.exists)
         dropRecent(path);
     if (restoreLate_.remove(key))
@@ -557,8 +603,8 @@ void WindowManager::closeRemovedTabs()
         tabScanPending_ = true;
         return;
     }
-    // Each unloaded tab's file, once per canonical path, with the mount it was
-    // opened from. Tabs with unsaved edits reload from their recovery copy.
+    // Each unloaded tab's file, once per canonical path, with the mount recorded
+    // for it. Tabs with unsaved edits reload from their recovery copy.
     struct File
     {
         QString path;
@@ -1020,6 +1066,10 @@ WindowManager::~WindowManager()
     // updater must not add the ordinary five-second exit budget to logoff.
     if (sessionend::active())
         return;
+    // Mounts found within the last kMountSaveMs are saved with the rest. The
+    // windows are gone, so nothing is announced.
+    if (recent_.setMissingMounts(std::exchange(mountsDue_, {})))
+        appfiles::write(recentFile_, recent_.toJson());
     QElapsedTimer exitWait;
     exitWait.start();
     const auto left = [&exitWait] {

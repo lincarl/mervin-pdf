@@ -1142,6 +1142,13 @@ Every save writes all known keys and drops keys this version does not read. A de
 that should also reach existing profiles therefore needs a new key, as `auto_update`
 and `recent_keep_removed` have.
 Closing a window batches view-state updates into one write.
+Recent history kept (`recent_retention`) caps both stores. `RecentStore` keeps that
+many of the newest entries that are not favourites, plus every favourite.
+`ViewStateStore` keeps that many of the most recently updated view states of files
+that are not favourites, plus every favourite's, which `WindowManager` marks
+(`ViewStateStore::setKept`). A starred file therefore never loses its place or its
+view to age. An entry that loses its star, and its view state, count again from
+the next trim.
 When the Recent setting to keep deleted or moved files is off, `WindowManager` has
 `FileProbe` check the recent paths whenever the list is shown and drops entries
 whose file is gone while its volume is attached (`FileFacts::removed`), together
@@ -1180,19 +1187,30 @@ as a crash recovery tab opened lazily, keeps the mount recorded before. For an e
 with a recorded mount, the volume is also away while another file system holds the
 path and that folder still exists. A recorded mount never makes a volume attached
 that the mount list calls away. A folder that went with its volume, as udisks and
-per-login mounts such as KDE's kio-fuse leave it, falls back to the mount list. Only
-the folder is recorded, so another volume mounted on the same folder counts as the
-file's volume, unless that folder is `/media`, `/run/media`, `/mnt` or `/net` itself.
+per-login mounts such as KDE's kio-fuse leave it, falls back to the mount list.
+Outside `/media`, `/run/media`, `/mnt` and `/net` that finds the file deleted, so
+pruning drops it. Only the folder is recorded, so another volume mounted on the
+same folder counts as the file's volume, unless that folder is `/media`,
+`/run/media`, `/mnt` or `/net` itself.
 `recordOpen` keeps the recorded mount at first and has `FileProbe` check the file;
-the mount it is on now replaces it once the check finds the file there.
+the mount it is on now replaces it once the check finds the file there. An entry
+without a recorded mount, such as one an older version wrote, gets the mount from
+the first check of any kind that finds its file there, such as the Recent page's
+own checks or a prune pass. `WindowManager::onFileChecked` collects those mounts.
+It saves `recent.json` and announces the list once when the prune pass that found
+them has its last answer, and otherwise `kMountSaveMs` (half a second) after the
+first one, on a timer that later finds do not restart. `FileProbe` answers one file
+at a time, so a pass on a slow share saves at most twice a second rather than once
+per file. An ordinary quit saves the mounts still waiting, before the final write
+of the app's files. Such a check never replaces a recorded mount.
 `recordOpen` gives the mount to the session too, which saves it for each open or kept
 document in `"mounts"` of `session.json`. Restore therefore still has it after Recent
 trims or clears the file. For a session saved before that field existed, restore
-takes the mount from Recent and keeps it from then on. A missing file under a folder that was a mount point when the
-file was opened, and is no longer used as one, stays listed as away until it is
-cleared by hand or opened again. An entry from an older version has no recorded
-mount, so on a share mounted by hand it is not recognised once the share is
-unmounted.
+takes the mount from Recent and keeps it from then on. A missing file under a
+folder that is its recorded mount point, and is no longer used as one, stays listed
+as away until it is cleared by hand or opened again. An entry from an older version
+has no recorded mount until a check finds its file. Until then, a share mounted
+outside fstab that holds the file is not recognised while it is unmounted.
 
 `SettingsDialog` edits a copy of the settings. It emits a request for a manual update
 check, and on Apply, or OK with changes pending, a request to apply the edited copy;
