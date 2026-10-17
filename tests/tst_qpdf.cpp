@@ -65,6 +65,8 @@ enum class Reference {
     TaggedWidget,    // an /OBJR structure element for the page 2 widget of a tagged form
     ResetButton,     // a reset button on page 1 that names a field with a child on each page
     ChildFieldNoForm, // ChildField in a file without /AcroForm, as Extract wrote before forms
+    SharedResources, // one /Resources for all pages, with the image that only page 2 draws
+    InheritedResources, // the same /Resources on /Pages instead of on the pages
 };
 
 // A page that shows `text` in two marked-content sequences, MCID 0 and 1.
@@ -342,6 +344,35 @@ void makeReferencedPdf(const QString &path, Reference reference)
         reset.replaceKey("/A", parse("<< /S /ResetForm /Fields [] >>"));
         reset.getKey("/A").getKey("/Fields").appendItem(form1);
         installForm(q, {form1, reset});
+        break;
+    }
+    case Reference::SharedResources:
+    case Reference::InheritedResources: {
+        // Each page draws its own image, and only page 2's image data is the secret.
+        QPDFObjectHandle images = QPDFObjectHandle::newDictionary();
+        const std::string data[] = {"IMAGEONE", kSecret, "IMAGETHREE"};
+        for (size_t i = 0; i < pages.size(); ++i) {
+            QPDFObjectHandle image = q.newStream(data[i]);
+            image.replaceDict(parse("<< /Type /XObject /Subtype /Image /Height 1 /ColorSpace "
+                                    "/DeviceGray /BitsPerComponent 8 >>"));
+            image.getDict().replaceKey("/Width", QPDFObjectHandle::newInteger(int(data[i].size())));
+            const std::string name = "/Im" + std::to_string(i + 1);
+            images.replaceKey(name, image);
+            QPDFObjectHandle draw = q.newStream("q 200 0 0 20 72 400 cm " + name + " Do Q");
+            pages[i].replaceKey("/Contents",
+                                QPDFObjectHandle::newArray({pages[i].getKey("/Contents"), draw}));
+        }
+        QPDFObjectHandle resources = pages[0].getKey("/Resources").shallowCopy();
+        resources.replaceKey("/XObject", images);
+        resources = q.makeIndirectObject(resources);
+        for (QPDFObjectHandle page : pages) {
+            if (reference == Reference::SharedResources)
+                page.replaceKey("/Resources", resources);
+            else
+                page.removeKey("/Resources");
+        }
+        if (reference == Reference::InheritedResources)
+            root.getKey("/Pages").replaceKey("/Resources", resources);
         break;
     }
     case Reference::ChildFieldNoForm: {
@@ -706,6 +737,8 @@ private slots:
     void copiesLeaveOutFieldsOfOtherPages_data();
     void copiesLeaveOutFieldsOfOtherPages();
     void copiesKeepAFieldThatCopiedPagesShare();
+    void copiesLeaveOutResourcesOfOtherPages_data();
+    void copiesLeaveOutResourcesOfOtherPages();
     void mergeNamesInputWithBadMeasurements_data();
     void mergeNamesInputWithBadMeasurements();
     void mergeConcatenates();
@@ -1365,6 +1398,8 @@ void TstQpdf::deleteLeavesOutDeletedContent_data()
     QTest::newRow("nested structure") << int(Reference::NestedStructure);
     QTest::newRow("tagged widget") << int(Reference::TaggedWidget);
     QTest::newRow("reset button") << int(Reference::ResetButton);
+    QTest::newRow("shared resources") << int(Reference::SharedResources);
+    QTest::newRow("inherited resources") << int(Reference::InheritedResources);
 }
 
 /// Checks that no object of a Delete Pages copy holds the deleted page's content, or what
@@ -1476,6 +1511,16 @@ void TstQpdf::deleteLeavesOutDeletedContent()
         QCOMPARE(fields.getArrayItem(0).getKey("/Kids").getArrayNItems(), 1);
         QCOMPARE(fields.getArrayItem(1).getKey("/A").getKey("/Fields").getArrayItem(0).getObjGen(),
                  fields.getArrayItem(0).getObjGen());
+        break;
+    }
+    case Reference::SharedResources:
+    case Reference::InheritedResources: {
+        // Page 1 keeps its own image, without the images of the other pages.
+        QPDFObjectHandle images =
+            QPDFPageObjectHelper(pages.at(0)).getAttribute("/Resources", false).getKey("/XObject");
+        QVERIFY(images.hasKey("/Im1"));
+        QVERIFY(!images.hasKey("/Im2"));
+        QVERIFY(pdfContains(out, "IMAGETHREE"));
         break;
     }
     case Reference::ChildFieldNoForm:
@@ -1624,6 +1669,46 @@ void TstQpdf::copiesKeepAFieldThatCopiedPagesShare()
     auto doc = engine.openDocument(out, QString(), &err, nullptr);
     QVERIFY2(doc, qPrintable(err));
     QVERIFY(doc->hasForm());
+}
+
+/// Sources whose pages share one resources dictionary, directly or through /Pages.
+void TstQpdf::copiesLeaveOutResourcesOfOtherPages_data()
+{
+    QTest::addColumn<int>("reference");
+    QTest::newRow("shared resources") << int(Reference::SharedResources);
+    QTest::newRow("inherited resources") << int(Reference::InheritedResources);
+}
+
+/// Checks that Extract, Merge and Split copy only the images that the copied pages draw.
+void TstQpdf::copiesLeaveOutResourcesOfOtherPages()
+{
+    QFETCH(int, reference);
+    const QString src = in(QStringLiteral("res_src_%1.pdf").arg(reference));
+    const QString out = in(QStringLiteral("res_out_%1.pdf").arg(reference));
+    makeReferencedPdf(src, Reference(reference));
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0}, {}}}, out), PageOps::Status::Ok);
+    QVERIFY(!pdfContains(out, kSecret));
+    QVERIFY(pdfContains(out, "IMAGEONE"));
+    QVERIFY(!pdfContains(out, "IMAGETHREE"));
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {2, 0}, {}}, {src, {0}, {}}}, out),
+             PageOps::Status::Ok);
+    QCOMPARE(PageOps::pageCount(out), 3);
+    QVERIFY(!pdfContains(out, kSecret));
+    QVERIFY(pdfContains(out, "IMAGEONE"));
+    QVERIFY(pdfContains(out, "IMAGETHREE"));
+
+    QStringList parts;
+    QCOMPARE(PageOps::split(src, dir_.path(), QStringLiteral("res-%1").arg(reference), QString(),
+                            &parts),
+             PageOps::Status::Ok);
+    QCOMPARE(parts.size(), 3);
+    QVERIFY(!pdfContains(parts.at(0), kSecret));
+    QVERIFY(!pdfContains(parts.at(0), "IMAGETHREE"));
+    QVERIFY(pdfContains(parts.at(1), kSecret));
+    QVERIFY(!pdfContains(parts.at(2), kSecret));
+    QVERIFY(pdfContains(parts.at(2), "IMAGETHREE"));
 }
 
 /// A string blob and a stream from a newer measurement format.

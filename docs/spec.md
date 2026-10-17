@@ -221,6 +221,9 @@ close with their selected plan and write in the launching tab, with the same wai
 and Stop waiting as other page tools. None saves over a file open in a tab or over an
 input document. Failure reopens the chosen ranges, order and output with its reason.
 
+Extract, Split and Merge copy only the images and fonts that the copied pages draw, also
+when the source's pages share them.
+
 Extract, Split and Merge keep the form fields of the pages they copy, so the new file
 can be filled in, and leave out the fields and values of pages they do not copy. A
 field shown on several of the copied pages stays one field. A repeated page gets fields
@@ -269,8 +272,8 @@ that remain, for example "Result: 3 of 6 pages remain (1, 3-4)." Deleting every 
 is refused before anything is written, with the reason on the error line. The window
 writes a copy, by default `<name>-edited.pdf` beside the document, which keeps the
 document's structure and encryption; the original file is never changed. The copy
-does not contain the deleted pages' content, annotations or form fields, nor the
-bookmarks and tagged structure elements that lead only to them. Links and other
+does not contain the deleted pages' content, images, annotations or form fields, nor
+the bookmarks and tagged structure elements that lead only to them. Links and other
 references to a deleted page no longer go anywhere. A form that loses a field also
 loses its XFA data, which holds every field's value. Extract and Delete share one
 remembered Open when done choice.
