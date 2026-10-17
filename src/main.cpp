@@ -1,9 +1,5 @@
 #include <QApplication>
-#include <QDir>
-#include <QElapsedTimer>
 #include <QFileInfo>
-#include <QLocalSocket>
-#include <QLockFile>
 #include <QPointer>
 #include <QLocale>
 #include <QSettings>
@@ -18,8 +14,8 @@
 #include "i18n/UiLanguage.h"
 #include "io/AppFiles.h"
 #include "io/Background.h"
+#include "ipc/Handoff.h"
 #include "ipc/Message.h"
-#include "ipc/PipeName.h"
 #include "ipc/SingleInstanceServer.h"
 #include "ocr/OcrLanguageMapping.h"
 #include "ocr/OcrProvisioner.h"
@@ -53,7 +49,6 @@
 #endif
 
 using mervin::ipc::Message;
-using mervin::ipc::MessageDecoder;
 using mervin::ipc::SingleInstanceServer;
 
 namespace {
@@ -119,62 +114,6 @@ QStringList toAbsolute(const QStringList &paths)
     return out;
 }
 
-// Secondary launch: hand the files to the already-running primary instance and
-// confirm receipt via its ack (a bare flush only proves our buffer drained, and
-// on Windows can false-negative when the write already flushed). Returns true
-// only once acked; false means the primary is unreachable and the caller should
-// try to become the primary itself.
-bool handOffToPrimary(const QStringList &paths, const QString &behavior)
-{
-    QLocalSocket sock;
-    bool connected = false;
-    // The primary holds the lock but may have only just acquired it and not be
-    // accepting yet - retry briefly (~1s ceiling).
-    for (int i = 0; i < 20 && !connected; ++i) {
-        sock.connectToServer(mervin::ipc::hostPipeName());
-        connected = sock.waitForConnected(50);
-        if (!connected)
-            sock.abort();
-    }
-    if (!connected)
-        return false;
-
-#ifdef Q_OS_WIN
-    // Pass this launch's foreground rights to the primary before IPC delivery, allowing it to
-    // restore/activate the target window. QLockFile supplies the primary PID.
-    {
-        qint64 pid = 0;
-        QString host, appName;
-        QLockFile lock(QDir(QDir::tempPath())
-                           .filePath(mervin::ipc::hostPipeName() + QStringLiteral(".lock")));
-        if (lock.getLockInfo(&pid, &host, &appName) && pid > 0)
-            AllowSetForegroundWindow(static_cast<DWORD>(pid));
-        else
-            AllowSetForegroundWindow(ASFW_ANY);
-    }
-#endif
-
-    sock.write(Message::open(paths, behavior).encode());
-    sock.flush();
-
-    MessageDecoder decoder;
-    QElapsedTimer timer;
-    timer.start();
-    while (timer.elapsed() < 1000) {
-        const int remaining = static_cast<int>(1000 - timer.elapsed());
-        if (remaining <= 0 || !sock.waitForReadyRead(remaining))
-            break;
-        bool overflow = false;
-        const auto msgs = decoder.feed(sock.readAll(), &overflow);
-        for (const Message &m : msgs)
-            if (m.cmd == Message::Cmd::Ack)
-                return true;
-        if (overflow)
-            break;
-    }
-    return false; // no ack - treat as unreachable and try to become primary
-}
-
 struct FirstRunChoices
 {
     bool makeDefaultApp = false;
@@ -184,10 +123,12 @@ struct FirstRunChoices
 // Install the UI language before any window exists: windows set their text once, when they
 // are built. The first start, before a language is stored, shows the first-run window, which
 // also offers OCR downloads and, on Windows, the default PDF viewer registration.
-// Launches that arrive while the window is open are acknowledged and their files
-// added to `paths`, so they open with the first window instead of starting a second process.
+// The server acknowledges launches that arrive while the window is open, and their files
+// are added to `paths`, so they open with the first window instead of starting a second
+// process. A copy that does not own the user's state (see runUi) shows no first-run
+// window, which belongs to the copy that holds the lock.
 FirstRunChoices startUiLanguage(const CliOptions &cli, SingleInstanceServer *server,
-                               QStringList &paths)
+                               bool ownsState, QStringList &paths)
 {
     namespace i18n = mervin::i18n;
     const QStringList available = i18n::availableLanguages();
@@ -201,7 +142,8 @@ FirstRunChoices startUiLanguage(const CliOptions &cli, SingleInstanceServer *ser
     }
     mervin::Settings settings = mervin::Settings::load();
     // Timing runs never stop for input, and a build without translations has nothing to offer.
-    if (!settings.uiLanguage.isEmpty() || cli.quitAfterStartup || available.size() < 2) {
+    if (!settings.uiLanguage.isEmpty() || cli.quitAfterStartup || available.size() < 2
+        || !ownsState) {
         i18n::apply(settings.uiLanguage);
         return {};
     }
@@ -219,18 +161,20 @@ FirstRunChoices startUiLanguage(const CliOptions &cli, SingleInstanceServer *ser
         && !mervin::PlatformIntegration::isDefaultPdfHandler();
 #endif
     mervin::FirstRunDialog dialog(offerDefaultApp);
+    // Opens wait in the server until taken, including those from before this window.
+    const auto takeOpens = [server, &paths, &dialog] {
+        const QList<Message> opens = server->takeOpens();
+        for (const Message &msg : opens)
+            paths.append(msg.paths);
+        if (!opens.isEmpty()) {
+            dialog.raise();
+            dialog.activateWindow();
+        }
+    };
     QMetaObject::Connection gate;
     if (server) {
-        gate = QObject::connect(
-            server, &SingleInstanceServer::messageReceived, &dialog,
-            [&paths, &dialog](QLocalSocket *socket, const Message &msg) {
-                if (msg.cmd != Message::Cmd::Open)
-                    return;
-                SingleInstanceServer::send(socket, Message::ack(QStringLiteral("open")));
-                paths.append(msg.paths);
-                dialog.raise();
-                dialog.activateWindow();
-            });
+        gate = QObject::connect(server, &SingleInstanceServer::opensReceived, &dialog, takeOpens);
+        takeOpens();
     }
     // Closing the window keeps the language it shows.
     const bool accepted = dialog.exec() == QDialog::Accepted;
@@ -275,16 +219,20 @@ void attachParentConsole()
 }
 #endif
 
-// Primary instance: own the renderer + windows, accept opens from later
-// launches (if given the instance server), restore the previous session, and
-// open the initial files.
+// Own the renderer + windows, accept opens from later launches through `server`,
+// restore the previous session, and open the initial files. Without `server` later
+// launches cannot reach this copy. Without `ownsState` it is a standalone copy beside
+// a live copy that holds the lock but did not take its files. It opens the initial
+// files only, and leaves the first-run window, the session, the recovery copies, the
+// shared stores and updates to that copy. A copy that could not make the lock or
+// endpoint at all owns its state, as nothing else does.
 int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
-          std::unique_ptr<SingleInstanceServer> server)
+          std::unique_ptr<SingleInstanceServer> server, bool ownsState)
 {
     app.setQuitOnLastWindowClosed(false); // WindowManager drives process exit
     QStringList paths = cliPaths;
-    const FirstRunChoices firstRun = startUiLanguage(cli, server.get(), paths);
-    mervin::WindowManager wm;
+    const FirstRunChoices firstRun = startUiLanguage(cli, server.get(), ownsState, paths);
+    mervin::WindowManager wm(ownsState);
     if (server)
         wm.adoptInstanceServer(std::move(server));
 
@@ -300,9 +248,10 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
 
     // Recover unsaved work even if the original moved or ordinary session restore is off.
     // Passwords are deliberately absent from these manifests and are requested on selection.
-    const QStringList recovery = mervin::TabPage::recoverablePaths();
+    const QStringList recovery = ownsState ? mervin::TabPage::recoverablePaths() : QStringList();
     const QList<mervin::TabPage::RecoverableDocument> recoverable =
-        mervin::TabPage::recoverableDocuments();
+        ownsState ? mervin::TabPage::recoverableDocuments()
+                  : QList<mervin::TabPage::RecoverableDocument>();
     // The path a command-line file with a recovery copy opens under, lazily so the copy
     // is used, or "" when it has none.
     const auto recoveredPath = [&recoverable](const QString &path) {
@@ -396,7 +345,7 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
         startup->restore = restore;
         openSession();
     };
-    if (mervin::Settings::load().restoreSession)
+    if (ownsState && mervin::Settings::load().restoreSession)
         wm.restoreSession(restored);
     else
         restored({});
@@ -411,13 +360,17 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
     }
 
     // Start asynchronous update handling after first paint in the primary process; skip startup
-    // timing runs. Settings changes cancel background work through WindowManager.
-    mervin::Updater updater;
-    updater.setCloseWindowsHandler([&wm] { return wm.tryCloseAllForUpdate(); });
-    QObject::connect(&wm, &mervin::WindowManager::autoUpdateChanged, &updater,
-                     &mervin::Updater::onAutoUpdateChanged);
-    if (!cli.quitAfterStartup)
-        QTimer::singleShot(2500, &updater, &mervin::Updater::onStartup);
+    // timing runs. Settings changes cancel background work through WindowManager. Without an
+    // Updater, Settings offers no update check.
+    std::optional<mervin::Updater> updater;
+    if (ownsState) {
+        updater.emplace();
+        updater->setCloseWindowsHandler([&wm] { return wm.tryCloseAllForUpdate(); });
+        QObject::connect(&wm, &mervin::WindowManager::autoUpdateChanged, &*updater,
+                         &mervin::Updater::onAutoUpdateChanged);
+        if (!cli.quitAfterStartup)
+            QTimer::singleShot(2500, &*updater, &mervin::Updater::onStartup);
+    }
 
     const int code = app.exec();
     // Nothing that is torn down from here on hears from background work again.
@@ -467,25 +420,34 @@ int main(int argc, char *argv[])
     const QString behavior = mervin::Settings::load().openBehavior;
 
     // A restart asked for while running (a new UI language) starts the new copy here,
-    // after runUi has released the single-instance pipe.
+    // after runUi has released the single-instance lock.
     const auto finish = [&app](int code) {
         // Session end already used its bounded grace. Do not restart or spend
         // another exit budget waiting for stuck work or static destructors.
         if (mervin::sessionend::active())
             std::_Exit(code);
         // The settings, Recent and the session are written on a background thread.
-        // WindowManager waited for them before it let go of the single-instance pipe,
+        // WindowManager waited for them before it let go of the single-instance lock,
         // so a restarted copy reads them. Writes still queued are stuck on a profile
         // folder that stopped answering. They land if it answers again, or never. A
         // restarted copy would read the files without them, and they could land over
-        // its own writes, so it is not started.
-        if (!mervin::appfiles::flush(0)) {
+        // its own writes, so it is not started. Launches this copy acknowledged and
+        // did not open still get a copy, as the user asked for those files. WindowManager
+        // then kept the single-instance lock, which this process never releases, so that
+        // copy waits up to ipc::kLaunchWaitMs for this process to end. A write stuck in a
+        // request the system cannot abort keeps it alive, and the copy then runs
+        // standalone. The carried launches stay in the carry file for the next primary.
+        const bool saved = mervin::appfiles::flush(0);
+        if (!saved) {
             std::fprintf(stderr, "MervinPDF: could not finish saving settings\n");
-            if (mervin::relaunch::requested())
+            if (mervin::relaunch::carrying())
+                std::fprintf(stderr, "MervinPDF: starting a copy anyway, for the files "
+                                     "opened during the quit\n");
+            else if (mervin::relaunch::requested())
                 std::fprintf(stderr, "MervinPDF: not restarting\n");
-        } else if (mervin::relaunch::requested() && !mervin::relaunch::start()) {
-            std::fprintf(stderr, "MervinPDF: could not restart\n");
         }
+        if (!mervin::relaunch::startIfDue(saved))
+            std::fprintf(stderr, "MervinPDF: could not start the next copy\n");
         app.reset();
         // Background work told to stop gets a moment. Work still running then is
         // stuck on a drive that stopped answering and holds its threads, and static
@@ -503,17 +465,27 @@ int main(int argc, char *argv[])
     // Single-instance: the first launch owns the pipe and becomes the primary UI
     // process; later launches hand their files to it and exit. A primary hidden in the
     // tray remains available for those opens. Explicit Quit ends that same process.
+    // A launch during a primary's exit wait waits for it and then becomes the primary.
     auto server = std::make_unique<SingleInstanceServer>();
-    for (int attempt = 0; attempt < 2; ++attempt) {
-        if (server->start())
-            return finish(runUi(*app, cli, paths, std::move(server))); // we are the primary
-        if (handOffToPrimary(paths, behavior))
-            return 0; // delivered to the running instance
-        // The primary released the pipe between our failed start and the connect
-        // (it was shutting down) - loop once to try taking over ourselves.
+    switch (mervin::ipc::claimOrHandOff(*server, Message::open(paths, behavior),
+                                        mervin::ipc::kLaunchWaitMs)) {
+    case mervin::ipc::Launch::Primary:
+        return finish(runUi(*app, cli, paths, std::move(server), true));
+    case mervin::ipc::Launch::Delivered:
+        return 0;
+    case mervin::ipc::Launch::Standalone:
+        // A live copy holds the lock but does not answer, as a stopped process does.
+        // Open the files anyway, without touching what belongs to that copy.
+        std::fprintf(stderr, "MervinPDF: the running copy does not answer; opening the files "
+                             "without the session, Recent updates or update checks\n");
+        return finish(runUi(*app, cli, paths, nullptr, false));
+    case mervin::ipc::Launch::Uncoordinated:
+        break;
     }
 
-    // Could not coordinate (extremely unlikely). Open standalone so the user
-    // still gets their file; this launch simply isn't the single-instance owner.
-    return finish(runUi(*app, cli, paths, nullptr));
+    // The lock or endpoint cannot be made and nothing answered, so no copy owns the
+    // user's state. This one runs in full, but later launches cannot reach it.
+    std::fprintf(stderr, "MervinPDF: cannot set up the single-instance lock; this copy "
+                         "runs on its own\n");
+    return finish(runUi(*app, cli, paths, nullptr, true));
 }

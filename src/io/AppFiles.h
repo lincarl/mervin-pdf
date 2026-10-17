@@ -42,7 +42,7 @@ void removeRecovery(const QString &path);
 bool flush(int ms);
 
 // How long quitting waits for the writes, before WindowManager lets go of the
-// single-instance pipe and the next copy reads them.
+// single-instance lock and the next copy reads them.
 constexpr int kExitWaitMs = 5000;
 
 // For tests only: hold() keeps the writer from starting its next job until it is

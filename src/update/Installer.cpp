@@ -1,5 +1,7 @@
 #include "update/Installer.h"
 
+#include "app/Relaunch.h"
+
 #include "config/ConfigPaths.h"
 #include "platform/PlatformIntegration.h"
 
@@ -97,7 +99,12 @@ bool startWindowsInstaller(const QString &file)
         QStringLiteral("/d /s /c \"start \"\" /wait \"%1\" /i \"%2\" /passive /norestart & %3\"")
             .arg(QDir::toNativeSeparators(system.filePath(QStringLiteral("msiexec.exe"))),
                  installer, relaunch));
-    return cmd.startDetached();
+    if (!cmd.startDetached())
+        return false; // startIfDue then starts a copy for the launches this one carries
+    // The copy the installer starts afterwards opens the launches this one carries,
+    // from the carry file this process writes before it exits.
+    relaunch::nextCopyStarted();
+    return true;
 #else
     Q_UNUSED(file);
 #endif
@@ -163,17 +170,19 @@ QStringList packageInstallCommand(PackageKind kind, const QString &file)
     return {};
 }
 
-bool relaunchAfterExit(const QString &exe)
+bool relaunchAfterExit(const QString &exe, const QStringList &paths)
 {
 #ifdef Q_OS_LINUX
     QProcess sh;
     sh.setProgram(QStringLiteral("/bin/sh"));
+    // The program, its arguments and any carried paths reach the script as positional
+    // parameters. They must stay in the quoted "$@", so the shell never parses them.
     sh.setArguments(QStringList{QStringLiteral("-c"),
                                 QStringLiteral("pid=$1; shift; while kill -0 \"$pid\" 2>/dev/null; do "
                                                "sleep 0.2; done; exec \"$@\""),
                                 QStringLiteral("sh"),
                                 QString::number(QCoreApplication::applicationPid()), exe}
-                    + relaunchArguments());
+                    + relaunchArguments() + paths);
     // Leaving an AppImage: drop what its runtime exported into the mount that
     // vanishes with this process. The new image's runtime sets its own.
     if (const QString appDir = qEnvironmentVariable("APPDIR"); !appDir.isEmpty()) {
@@ -183,9 +192,13 @@ bool relaunchAfterExit(const QString &exe)
                 env.remove(key);
         sh.setProcessEnvironment(env);
     }
-    return sh.startDetached();
+    if (!sh.startDetached())
+        return false;
+    relaunch::nextCopyStarted(); // it opens the launches this one carries
+    return true;
 #else
     Q_UNUSED(exe);
+    Q_UNUSED(paths);
     return false;
 #endif
 }

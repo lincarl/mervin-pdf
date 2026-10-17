@@ -43,7 +43,7 @@ src/
   dialogs/       application dialogs
   extract/       extract-plan model
   i18n/          UI language list, OS language matching, and catalog loading
-  ipc/           process lock, local socket, and message framing
+  ipc/           process lock, local socket, launch handoff, and message framing
   merge/         merge-plan model
   net/           safe URL request and download helpers
   ocr/           language-model discovery and validation
@@ -306,14 +306,169 @@ arrived meanwhile remain open.
 
 ## Startup and single-instance behavior
 
-The first process acquires a per-user `QLockFile` and starts a `QLocalServer`.
-Subsequent launches send newline-delimited JSON containing file paths and open
-behavior, wait for an acknowledgement, and exit. The primary process acknowledges
-before opening files so a password or error dialog cannot make the sender time out.
+The first process acquires a per-user `QLockFile` and starts a `QLocalServer`
+(`ipc::SingleInstanceServer`). `ipc::instancePaths()` builds both names. On Linux
+and other Unix systems the folder for the lock file and the socket comes from what
+is on disk, not from the environment, so that a launch from the desktop session and
+one from ssh, cron or `sudo -u`, with or without `$XDG_RUNTIME_DIR`, take the same
+lock. It is `/run/user/<uid>`, as systemd-logind makes it, if that is this user's
+own 0700 folder and not a link. That folder is per user and /tmp cleaners do not
+reach it. The group name hashes the uid instead of `$USER`. The socket is an
+absolute path, and both files have the sticky bit, which keeps them from the
+age-based cleanup that the XDG base directory spec allows in a runtime folder.
+Without such a folder, or where the socket path is longer than Qt takes there, the
+lock goes with the files it guards. It is in `instance-<host>` in the profile folder
+that holds `config.toml`, `recent.json`, `viewstate.json` and `session.json`
+(`ConfigPaths::configDir()`), for the default profile as for a `--profile` folder.
+Launches that use the same profile folder take the same lock, whatever their
+`$XDG_CACHE_HOME`, `$HOME` or `$TMPDIR`, and launches with different profile folders
+share none of those files. Mervin makes the instance folder with mode 0700 and
+leaves the profile folder's own mode as it is. One that already exists is used only
+if it is this user's own 0700 folder and not a link. The host part keeps machines
+that share a profile folder apart, as a lock that another machine holds never goes
+stale. Qt needs a socket path to fit into the 108 bytes of `sockaddr_un` with two
+bytes to spare on Linux, one for the terminating zero and one for abstract names, so
+the longest path it takes is 106 bytes. Where the profile folder makes the path
+longer, or where listening there fails because its file system holds no sockets, as
+sshfs, vboxsf and some CIFS mounts, the lock and the carry file stay in the instance
+folder and the socket goes to `mervin-pdf-<uid>` in /tmp, which is fixed, unlike
+`$TMPDIR`. Anyone can create names in /tmp, so Mervin uses that folder only if it
+created it or it already is this user's folder, not a link, with mode 0700. The
+primary records where it listens in `<group>.endpoint` in the instance folder
+(`ipc::recordEndpoint()`), so a launch that reaches the profile folder through
+another path, as through a link, still finds it. If no folder takes the socket, or
+listening fails in /tmp as well, the primary keeps the lock and listens nowhere, so
+later launches open their files standalone, as beside a primary that does not
+answer. Without a usable instance folder there is no lock, and each launch runs on
+its own. Two launches of one profile that spell its folder differently, as a
+relative and an absolute `--profile` path, still form different groups, as the group
+name hashes the path as given. On Windows the lock stays in the per-user %TEMP%,
+where released copies keep it too, so that an older and a newer copy still meet
+after an upgrade. Two launches there with different values of `%TEMP%` take
+different locks. The endpoint is a named pipe. A Store copy and each `--profile`
+directory form groups of their own.
 
-If the primary process disappears during handoff, the new process retries ownership
-and can fall back to a standalone window. Session restoration creates the tab list
-but opens only the selected document. Other restored tabs load when selected.
+Subsequent launches send newline-delimited JSON containing file paths and open
+behavior, wait for an acknowledgement, and exit. A launch first checks that the
+process at the other end runs as the same user and sends nothing otherwise. Linux
+compares the uid from `SO_PEERCRED`, and Windows compares the user SID of the pipe
+server's process token, as the pipe namespace is shared by the whole machine. The
+server runs its socket work on its own thread. It acknowledges each Open as soon as
+it decodes the frame and keeps the Open until the GUI thread takes it, so a primary
+that is still starting, or whose GUI thread waits for a profile folder or a dialog,
+answers within milliseconds. The first-run window adds the files of waiting Opens to
+those of the first window. `WindowManager` then takes them and opens each on a later
+event-loop turn, as an earlier Open can show a nested password or error dialog.
+
+`ipc::claimOrHandOff()` makes the launch decision. `start()` tells a lock held by a
+live process apart from a lock that cannot be made. While a live process
+holds the lock without answering, a launch tries to start and to hand off again for
+up to `ipc::kLaunchWaitMs` (10 s, the five-second exit wait plus a margin). An Open
+that a primary has taken over a connection without acknowledging it is never sent
+again. A launch that gives up closes its connection, and a server that reads an Open
+only after that drops it, so a primary that was stopped does not show the files of a
+launch that opened them itself. On Linux the frame waits in the socket and the
+server sees the end of the connection behind it. Qt's Windows pipes have no buffer,
+so the launch's write is still pending when it closes, and closing cancels it. The
+gap left is a launch whose deadline passes between the server's check and its
+acknowledgement, which is a matter of microseconds. Once a quit is final, the
+primary closes its endpoint and keeps the lock until its exit wait is over, so a
+launch during that wait becomes the next primary and reads the last writes. If
+writes of its own are still in flight when that wait ends, as on a profile folder
+that stopped answering, the process never releases the lock
+(`SingleInstanceServer::keepLockUntilExit()`). The next copy then waits while the
+process lives, and takes the lock as stale once it has ended. QLockFile counts a
+lock as stale when the process it names has ended or runs another program. On
+Windows the open handle also keeps another process from deleting the file until
+then. That copy can be the one `relaunch::startIfDue()` starts at once on Windows.
+After the exit wait the process only tears down the application and gives
+background work 200 ms before it ends, so the copy normally waits well under
+`ipc::kLaunchWaitMs`. A write stuck in a request the system cannot abort, as on a
+FUSE or network folder that stopped answering, keeps the process from ending until
+the request returns. A launch then waits `ipc::kLaunchWaitMs` and opens its files
+standalone. On Windows the copy `startIfDue()` started does the same, and the
+carried launches stay in the carry file for the next primary within
+`relaunch::kCarriedMaxAgeMs`. On Linux that copy starts only after the process has
+ended. While
+Quit or a language restart is in progress, or an update asks about unsaved edits
+before it closes the windows, `WindowManager` holds the Opens that arrive. If that
+is cancelled, they open then. Closing the last window does not hold them, so an Open
+that arrives during its prompt opens in that window. Opens the server acknowledged
+before a quit became final and that did not open go to `relaunch::carry()`. Before
+the process lets go of the lock, `~WindowManager` writes them to `<group>.carried`
+next to the lock, as UTF-8 JSON with mode 0600 (`relaunch::writeCarried()`), after
+any a previous primary left there. Whichever copy next becomes the primary reads and
+removes that file when it takes over its server, under its lock, and opens those
+files. It also takes the carry files in the group's other folders whose lock no
+live process holds, as a primary that ran in another folder leaves them (see
+below). That is the copy `relaunch::startIfDue()` starts once the process has quit,
+which is also the copy of a language restart, the copy an update starts, or a copy
+the user starts first. No path goes on a command line or into the environment,
+unless the carry file cannot be written. The launches then stay with `relaunch`,
+and the copy that `startIfDue()` starts gets their files as arguments. They are
+absolute paths, so the copy cannot read one as an option. On Windows QProcess builds
+the command line itself and no cmd runs. On Linux the helper shell that waits for
+this process gets them as positional parameters and passes them on with a quoted
+`"$@"`, so it never parses them. A copy an update started before that write failed
+cannot get them, so they are logged instead. A file older than 10 minutes
+(`relaunch::kCarriedMaxAgeMs`), as one left by a copy that crashed, is removed
+unread, as is one dated more than a minute ahead (`relaunch::kCarriedMaxAheadMs`),
+which allows for a clock set back a little between the two copies. The age bound
+leaves time for an installer between the two copies. At session end nothing is
+written or started, so those files are lost with the session. On Linux `start()`
+connects to the socket before it removes it, so a lock file that something deleted
+while its primary runs does not make the next launch a second primary. The server
+closes its socket before it releases the lock. QLockFile cannot tell whether a lock
+file without content is stale, as a process leaves one that ended between making and
+writing it, so `start()` removes such a file once it is 2 s old and tries again. On
+Unix it does the same for any lock without a live holder. QLockFile does not let it
+remove a file that a live process holds.
+
+If a live process holds the lock but no primary takes the Open in that time, as
+when the lock holder is stopped, the launch opens its files in a standalone process.
+It shows no first-run window, restores no session, adopts no recovery copies, writes
+none of `recent.json`, `viewstate.json` and `session.json`, and has no updater, as
+those belong to the lock holder. Its windows still save settings, such as their
+geometry. If the lock or endpoint cannot be made and nothing answers, nothing owns
+that state, so the launch runs the full UI without a server. There is then no
+single-instance coordination. Each later launch does the same, and those copies
+share the stores, last writer wins.
+
+While nothing holds this group's lock, `claimOrHandOff()` first looks for a primary
+elsewhere. One of this version can listen in another of the folders above, as when
+`/run/user/<uid>` appeared with a desktop login after it started from ssh.
+`ipc::otherInstancePaths()` lists the group's paths in those folders that already
+are this user's private folders, and creates nothing. A copy that holds the lock in
+one of them and does not answer there is starting or in its exit wait. The launch
+waits for it as for a holder of this group's lock, within the same
+`ipc::kLaunchWaitMs`, and hands off once it answers. On Linux, copies built before
+these locations moved listen in the temp folder, under a group name hashed from
+`$USERNAME` or `$USER` (`ipc::legacyEndpoint()`). That is upgrade support, to be
+removed once such copies are no longer expected. Each is offered the Open in the
+same protocol, after the same check that the process runs as this user. The lock
+check (`ipc::lockHeldByLiveProcess()`) only reads the lock file, so it never makes a
+lock another launch could see. Only this user's processes write locks in these
+folders, so it counts a lock as held only while the process the file names lives and
+this user can signal it. A lock does not count if its process ID now belongs to
+another user, root or the kernel, if it comes from another machine ID or an earlier
+boot, or, on Linux, if that ID now runs another program of this user. A process of
+this user whose program cannot be read still counts, as one whose last thread waits
+in a stuck file system call after the rest of it ended. A file without content
+counts as held for 2 s while its maker writes it. A copy of this version that holds
+the lock gets the launch with the whole wait, and the other folders and an older
+copy are not asked. If one of them takes the Open, the launch exits. If it takes the
+connection but does not answer within the wait, it keeps the Open, so the launch
+opens the files in a standalone process, as beside a primary of this version that
+does not answer. An older copy, which has no rule to drop such an Open, shows the
+files as well once it runs again. If nothing answers, the process is another user's,
+or it closes the connection without an acknowledgement, as a quitting copy does, the
+launch goes on as above. The reverse case cannot be fixed in the older code. An
+older copy launched while a newer one runs starts a second primary until one of them
+exits. Windows kept its pipe and lock names, so older and newer copies find each
+other there in both directions.
+
+Session restoration creates the tab list but opens only the selected document. Other
+restored tabs load when selected.
 
 The first window is shown before any document is checked, and command-line files
 create their placeholders at once. Staged batches finish when their shells are queued,
@@ -368,11 +523,13 @@ period by themselves.
 The callback closes snapshot admission and polls memory state without processing
 GUI events, showing dialogs or accessing files. It uses a 3900 ms monotonic budget,
 leaving 100 ms within the four-second limit for returning. This bounds Mervin's
-wait, but an OS scheduling delay can still postpone the callback's return. It
-allows session end when snapshots settle or the deadline expires. Edits without a
-committed recovery manifest can be lost. Repeated queries reuse the answer. A native
-WM_ENDSESSION filter resets admission after cancellation and retains it after
-successful end.
+wait, but an OS scheduling delay can still postpone the callback's return. The
+callback allows session end when snapshots settle or the deadline expires. Edits
+without a committed recovery manifest can be lost. Repeated queries reuse the
+answer. The single-instance server keeps acknowledging launches on its own thread
+meanwhile. Their files wait with the other accepted opens and open after a
+cancellation, and are lost if the session ends. A native WM_ENDSESSION filter resets
+admission after cancellation and retains it after successful end.
 Queued tab changes and dialogs wait for that outcome too. Cancellation posts their
 resumption for the next GUI turn, after Qt has restored Windows input handling.
 The successful session path skips the normal five-second close/write budget,
@@ -444,20 +601,21 @@ widgets set their text once, when they are built. It takes `--language <id>` for
 that run, otherwise the `ui_language` setting; an unknown ID shows English. While
 `ui_language` is empty, the first-run window (`FirstRunDialog`) asks for the
 language before the first main window. As the only window open, it follows a
-change at once through `LanguageChange`, and it acknowledges launches that arrive
-meanwhile and opens their files with the first main window.
+change at once through `LanguageChange`, and it opens the files of launches that the
+server acknowledges meanwhile with the first main window.
 
 The first-run window also offers **Download OCR**, checked by default. Continue
 saves the display language before scheduling one background download attempt for
 each matching OCR model. This first-run choice takes effect without a restart.
 Closing the first-run window keeps the display language but skips the downloads.
 
-The other windows never retranslate. When Settings picks a different language,
-OK or Apply saves it and `WindowManager::restart()` closes every window as Quit
-does, so unsaved documents still prompt and cancelling one cancels the restart.
-`relaunch` then starts the new copy from `main()` once the single-instance server
-is gone. On Linux it waits until this process has exited. From an AppImage it starts
-the AppImage file, and a `--profile` run keeps its profile.
+The other windows never retranslate. When Settings picks a different language, OK or
+Apply saves it and `WindowManager::restart()` closes every window as Quit does, so
+unsaved documents still prompt and cancelling one cancels the restart. `relaunch`
+then starts the new copy from `main()` once the single-instance server is gone. That
+copy also opens any launches carried (see above). On Linux it waits until this
+process has exited. From an AppImage it starts the AppImage file, and a `--profile`
+run keeps its profile.
 
 `i18n::suggestedLanguage()` pre-selects the first-run language. It walks
 `QLocale::uiLanguages()` in order and takes the first catalog with the same
@@ -1197,7 +1355,7 @@ has not started and that nobody waits for. Closing a tab removes its recovery fi
 the same way, the copy only once its document has closed on a background thread, and
 tabs restored lazily adopt the recovery manifests startup found. Ordinary quitting waits up
 to 5 s in all for those closes and then the writes before `WindowManager` lets go of
-the single-instance pipe, so the next copy reads them. With a profile folder that
+the single-instance lock, so the next copy reads them. With a profile folder that
 stopped answering, the last writes land when it answers again or never, the process
 says so on stderr, and a restart asked for (a new UI language) is skipped, as the
 new copy would read the files without them. The Settings window and

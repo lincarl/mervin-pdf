@@ -37,11 +37,21 @@ This document describes the application's current user-facing behavior. See
 ## Windows, sessions, and recent files
 
 Mervin uses one process per user. Starting it again forwards files to the running
-process. Close to tray is enabled by default. Closing a window hides that window
-and keeps its tabs available from the tray. **Quit Mervin** in the tray menu exits
-the application and offers Save, Discard, or Cancel for unsaved edits. If Close to
-tray is off or the system tray is unavailable, windows close normally and closing
-the last window exits. Mervin does not install a login service.
+process, also while that process is busy. A start while Mervin is quitting is held.
+If the quit is cancelled, the running process opens its files. If the quit goes ahead,
+the next copy opens them once the old process has exited, except when the quit is part
+of signing out or shutting down. If the running process does not answer for 10
+seconds, the files open in a separate process that leaves the session, Recent and
+updates to the running one, and the running process does not open them when it
+answers again. If an older version still running after an upgrade on Linux does not
+answer, the files open in a separate process as well, and the older version opens
+them again once it answers. If Mervin cannot set up its per-user lock, each start
+runs on its own with the session, Recent and updates, and starting it again opens
+another process. Close to tray is enabled by default. Closing a window hides that
+window and keeps its tabs available from the tray. **Quit Mervin** in the tray menu
+exits the application and offers Save, Discard, or Cancel for unsaved edits. If
+Close to tray is off or the system tray is unavailable, windows close normally and
+closing the last window exits. Mervin does not install a login service.
 
 The Recent screen provides:
 

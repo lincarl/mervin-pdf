@@ -15,8 +15,9 @@ namespace mervin::update {
 PackageKind installedPackageKind();
 
 // Launch the MSI detached; the caller must then quit to release binaries. Show
-// installation progress and relaunch on any outcome, preserving --profile.
-// Return false if launch fails.
+// installation progress and relaunch on any outcome, preserving --profile. The copy it
+// starts opens the launches this one carries (relaunch::carry). Return false if launch
+// fails.
 bool startWindowsInstaller(const QString &file);
 
 // AppImage: moves a copy of `file` over the running image ($APPIMAGE). The
@@ -33,10 +34,10 @@ QStringList packageInstallCommand(PackageKind kind, const QString &file);
 // (dev and test runs) returns to its profile rather than the user's real state.
 QStringList relaunchArguments();
 
-// Linux: starts `exe` (keeping --profile) as soon as this process has exited,
-// so the new copy becomes the single-instance primary instead of handing its
-// launch to this one while it shuts down. False if the helper shell could not
-// be started.
-bool relaunchAfterExit(const QString &exe);
+// Linux: starts `exe` (keeping --profile) with `paths` as soon as this process has
+// exited, so the new copy becomes the single-instance primary instead of handing its
+// launch to this one while it shuts down. It also opens the launches this copy carries
+// (relaunch::carry). False if the helper shell could not be started.
+bool relaunchAfterExit(const QString &exe, const QStringList &paths = {});
 
 } // namespace mervin::update

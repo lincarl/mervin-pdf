@@ -29,7 +29,6 @@
 #include <memory>
 
 class MainWindow;
-class QLocalSocket;
 class QSystemTrayIcon;
 class QMenu;
 class QTimer;
@@ -53,7 +52,10 @@ class WindowManager : public QObject, public QAbstractNativeEventFilter
 
 public:
     // Initializes shared services and Windows session hooks before creating any window.
-    WindowManager();
+    // Without `ownsStores` (a standalone copy beside a live copy that holds the lock but
+    // did not take its files) it reads Recent and the view states but writes neither of
+    // them nor the session.
+    explicit WindowManager(bool ownsStores = true);
     // Releases windows and skips the ordinary close and write budget during session end.
     ~WindowManager() override;
 
@@ -64,8 +66,8 @@ public:
     RenderEngine *engine() const { return engine_.get(); }
 
     // Take ownership of the single-instance server (already listening) so opens
-    // from later launches are delivered to this process's windows. Call once,
-    // on the primary instance only.
+    // from later launches are delivered to this process's windows, including those
+    // the server acknowledged before this call. Call once, on the primary instance only.
     void adoptInstanceServer(std::unique_ptr<ipc::SingleInstanceServer> server);
 
     // Create and show a new empty window (returns it, never null).
@@ -305,11 +307,24 @@ protected:
     bool nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result) override;
 
 private slots:
-    // An open delivered by a later launch over the single-instance pipe.
-    void onInstanceMessage(QLocalSocket *socket, const mervin::ipc::Message &msg);
+    // Takes the launches the single-instance server has acknowledged, to open them.
+    void takeInstanceOpens();
+    // Opens the oldest launch taken and not opened yet, unless a quit or an update's
+    // close is in progress.
+    void openNextInstanceOpen();
+    // Opens the launches a cancelled quit or update held.
+    void resumeInstanceOpens();
 
 private:
     friend class CloseFlow;
+    // Stops acknowledging launches once this process is quitting, so they wait for
+    // it to exit instead of handing it files it would not show. The lock stays until
+    // the exit wait is over, so the next copy reads the last writes. Launches it
+    // acknowledged before and did not open yet go to relaunch::carry, so the copy
+    // started next opens them.
+    void endHandoffs();
+    // Queues a write of one of the stores. A standalone copy writes none.
+    void writeStore(const QString &file, const QByteArray &data) const;
     void onWindowDestroyed(MainWindow *window);
     void stagedStep(); // opens one document of stagedQueue_, then re-arms itself
     // Coalesce staged turns, including a wake after a canceled session request.
@@ -384,6 +399,9 @@ private:
     QString recentFile_;        // persisted path for recent_
     QString viewStateFile_;     // persisted path for viewState_
     QString sessionFile_;       // persisted path for session_
+    bool ownsStores_ = true;    // false in a standalone copy, which writes none of them
+    QList<ipc::Message> instanceOpens_; // launches acknowledged and not opened yet
+    bool holdingOpens_ = false; // an update asks about unsaved edits; instanceOpens_ waits
     QList<MainWindow *> windows_;
     QList<QPointer<CloseFlow>> closeFlows_;
     QList<StagedOpen> stagedQueue_;      // documents still to open, front first

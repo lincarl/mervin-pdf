@@ -57,8 +57,10 @@ CloseFlow::~CloseFlow()
 {
     clearWait();
     releaseClaims();
-    if (!ended_ && global(intent_) && manager_ && manager_->closeFlows_.contains(this))
+    if (!ended_ && global(intent_) && manager_ && manager_->closeFlows_.contains(this)) {
         manager_->quitting_ = false;
+        manager_->resumeInstanceOpens();
+    }
 }
 
 bool CloseFlow::eventFilter(QObject *watched, QEvent *event)
@@ -572,8 +574,10 @@ void CloseFlow::cancel()
     ended_ = true;
     clearWait();
     releaseClaims();
-    if (global(intent_) && manager_)
+    if (global(intent_) && manager_) {
         manager_->quitting_ = false;
+        manager_->resumeInstanceOpens();
+    }
     deleteLater();
 }
 
@@ -589,6 +593,7 @@ void CloseFlow::finish()
     if (global(intent) && manager) {
         manager->updateSession();
         manager->sessionFinal_ = true;
+        manager->endHandoffs();
         if (intent == Intent::Restart)
             relaunch::request();
         for (const QPointer<MainWindow> &window : targets)
@@ -615,6 +620,15 @@ bool CloseFlow::tryCloseForUpdate(WindowManager *manager)
     };
     if (pending())
         return false;
+    // Launches that arrive while this asks about unsaved edits wait, as the update would
+    // close their windows again. If it does not go ahead, they open.
+    manager->holdingOpens_ = true;
+    const auto releaseOpens = qScopeGuard([liveManager] {
+        if (!liveManager)
+            return;
+        liveManager->holdingOpens_ = false;
+        liveManager->resumeInstanceOpens();
+    });
     QList<Entry> decisions;
     QList<QPointer<TabPage>> saves;
     // A Save already chosen stays requested even if a later answer or a newly
@@ -721,6 +735,7 @@ bool CloseFlow::tryCloseForUpdate(WindowManager *manager)
     manager->quitting_ = true;
     manager->updateSession();
     manager->sessionFinal_ = true;
+    manager->endHandoffs();
     for (const QPointer<MainWindow> &window : targets)
         if (window)
             window->closeForQuit();

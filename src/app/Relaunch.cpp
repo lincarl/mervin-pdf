@@ -5,7 +5,17 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QDateTime>
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QProcess>
+#include <QSaveFile>
+
+#include <cstdio>
+#include <utility>
 
 #ifdef Q_OS_WIN
 #  define WIN32_LEAN_AND_MEAN
@@ -17,6 +27,40 @@ namespace mervin::relaunch {
 
 namespace {
 bool g_requested = false;
+bool g_due = false;            // a copy should start for carried launches
+QList<ipc::Message> g_carried; // not in a carry file yet
+std::function<bool(const QStringList &)> g_starter;
+
+// The launches in a carry file, oldest first: {"written": msecs since the epoch,
+// "launches": [Open messages]}. Empty when the file is missing or unreadable, or dated
+// outside the bounds (see takeCarried).
+QList<ipc::Message> readCarried(const QString &file)
+{
+    QFile in(file);
+    if (!in.open(QIODevice::ReadOnly))
+        return {};
+    const QJsonObject root = QJsonDocument::fromJson(in.readAll()).object();
+    const qint64 written = qint64(root.value(QStringLiteral("written")).toDouble());
+    const qint64 age = QDateTime::currentMSecsSinceEpoch() - written;
+    if (age < -kCarriedMaxAheadMs || age > kCarriedMaxAgeMs)
+        return {};
+    QList<ipc::Message> launches;
+    for (const QJsonValue &value : root.value(QStringLiteral("launches")).toArray()) {
+        const ipc::Message open = ipc::Message::fromJson(value.toObject());
+        if (open.cmd == ipc::Message::Cmd::Open)
+            launches.append(open);
+    }
+    return launches;
+}
+
+// The files of the carried launches that no carry file holds.
+QStringList unwrittenPaths()
+{
+    QStringList paths;
+    for (const ipc::Message &open : std::as_const(g_carried))
+        paths += open.paths;
+    return paths;
+}
 } // namespace
 
 void request()
@@ -38,18 +82,93 @@ QString program(const QString &appImage, const QString &appDir, const QString &a
     return applicationFile;
 }
 
-bool start()
+void carry(const ipc::Message &open)
+{
+    g_due = true;
+    g_carried.append(open);
+}
+
+bool carrying()
+{
+    return g_due;
+}
+
+void nextCopyStarted()
+{
+    g_due = false;
+}
+
+bool writeCarried(const QString &file)
+{
+    if (g_carried.isEmpty())
+        return true;
+    if (file.isEmpty())
+        return false;
+    // Launches carried by a primary whose next copy has not started yet go first.
+    QJsonArray launches;
+    for (const ipc::Message &open : readCarried(file) + g_carried)
+        launches.append(open.toJson());
+    QJsonObject root;
+    root.insert(QStringLiteral("written"), double(QDateTime::currentMSecsSinceEpoch()));
+    root.insert(QStringLiteral("launches"), launches);
+    QSaveFile out(file);
+    if (!out.open(QIODevice::WriteOnly))
+        return false;
+    // The folder is this user's own already. The file's mode says so as well, from before
+    // it takes its name.
+    out.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    if (out.write(QJsonDocument(root).toJson(QJsonDocument::Compact)) < 0 || !out.commit())
+        return false;
+    // Only now does the file hold them. Until then they stay for startIfDue.
+    g_carried.clear();
+    return true;
+}
+
+QList<ipc::Message> takeCarried(const QString &file)
+{
+    if (file.isEmpty() || !QFile::exists(file))
+        return {};
+    const QList<ipc::Message> launches = readCarried(file);
+    QFile::remove(file);
+    return launches;
+}
+
+bool startIfDue(bool restart)
+{
+    // Carried launches that no carry file holds, because writing it failed.
+    const QStringList paths = unwrittenPaths();
+    g_carried.clear();
+    if (!(restart && g_requested) && !g_due) {
+        // An update started the next copy before the carry file failed.
+        for (const QString &path : paths)
+            std::fprintf(stderr, "MervinPDF: could not pass on %s\n",
+                         qUtf8Printable(QDir::toNativeSeparators(path)));
+        return true;
+    }
+    g_due = false;
+    if (!paths.isEmpty())
+        std::fprintf(stderr, "MervinPDF: passing the files opened during the quit to the "
+                             "next copy as arguments\n");
+    return g_starter ? g_starter(paths) : start(paths);
+}
+
+void setStarterForTests(std::function<bool(const QStringList &paths)> starter)
+{
+    g_starter = std::move(starter);
+}
+
+bool start(const QStringList &paths)
 {
     const QString exe = program(qEnvironmentVariable("APPIMAGE"), qEnvironmentVariable("APPDIR"),
                                 QCoreApplication::applicationFilePath());
 #ifdef Q_OS_WIN
     // The new copy's window may take the foreground; this process can still grant that.
     AllowSetForegroundWindow(ASFW_ANY);
-    return QProcess::startDetached(exe, update::relaunchArguments());
+    return QProcess::startDetached(exe, update::relaunchArguments() + paths);
 #elif defined(Q_OS_LINUX)
-    return update::relaunchAfterExit(exe);
+    return update::relaunchAfterExit(exe, paths);
 #else
-    return QProcess::startDetached(exe, update::relaunchArguments());
+    return QProcess::startDetached(exe, update::relaunchArguments() + paths);
 #endif
 }
 
