@@ -49,6 +49,33 @@ QRect matchingBounds(const QImage &image, bool paper)
     return bounds;
 }
 
+// Where the preview should draw the fixture's red region, the left 75 x 160 points of a
+// page, for a page whose top-left corner is at `origin` on the sheet, in points, and
+// that prints at `scale` times its size. `paper` is the sheet's bounds in the preview.
+QRectF expectedRed(const QRect &paper, const QPageLayout &layout, const QPointF &origin,
+                   double scale)
+{
+    const double perPoint = paper.width() / layout.fullRect(QPageLayout::Point).width();
+    return {QPointF(paper.topLeft()) + origin * perPoint, QSizeF(75, 160) * scale * perPoint};
+}
+
+// Whether the preview draws the red region within two pixels of `expected` on every
+// edge. Wait for the whole rectangle, never one edge or one dimension of it. A later
+// render of an unchanged placement can move one edge by a pixel, and the dialog can
+// apply several changed settings in one refresh. `found` describes the bounds drawn.
+bool redPlacedAt(PrintPreviewWidget *preview, const QRectF &expected, QString *found)
+{
+    const QRect bounds = matchingBounds(preview->grab().toImage(), false);
+    *found = QStringLiteral("red drawn at %1,%2 %3 x %4, expected %5,%6 %7 x %8")
+                 .arg(bounds.left()).arg(bounds.top()).arg(bounds.width()).arg(bounds.height())
+                 .arg(expected.left(), 0, 'f', 1).arg(expected.top(), 0, 'f', 1)
+                 .arg(expected.width(), 0, 'f', 1).arg(expected.height(), 0, 'f', 1);
+    return !bounds.isEmpty() && std::abs(bounds.left() - expected.left()) <= 2
+           && std::abs(bounds.top() - expected.top()) <= 2
+           && std::abs(bounds.left() + bounds.width() - expected.right()) <= 2
+           && std::abs(bounds.top() + bounds.height() - expected.bottom()) <= 2;
+}
+
 // Writes a one-page PDF with a complete cross-reference table and returns its path.
 QString writePagePdf(const QTemporaryDir &dir, const QString &name, const QByteArray &page,
                      const QByteArray &content)
@@ -164,24 +191,31 @@ void TstPrintDialog::defaultsAndLiveSettings()
     colour->setCurrentIndex(0);
 
     QTRY_VERIFY(centreColour(preview).red() > 180);
-    const int fitWidth = matchingBounds(preview->grab().toImage(), false).width();
+
+    // Each placement is checked against where the settings put the 100 x 160 pt page.
+    const QPageLayout layout = printer.pageLayout();
+    const QRectF printable = layout.paintRect(QPageLayout::Point);
+    const QRect paper = matchingBounds(preview->grab().toImage(), true);
+    QVERIFY(!paper.isEmpty());
+    const double fit = std::min(printable.width() / 100, printable.height() / 160);
+    const auto centred = [&printable](double scale) {
+        return printable.center() - QPointF(50, 80) * scale;
+    };
+    QString found;
+    QTRY_VERIFY2(redPlacedAt(preview, expectedRed(paper, layout, centred(fit), fit), &found),
+                 qPrintable(found));
     scale->setCurrentIndex(1);
-    QTRY_VERIFY(matchingBounds(preview->grab().toImage(), false).width() < fitWidth);
-    const QRect centered = matchingBounds(preview->grab().toImage(), false);
-    QVERIFY(!centered.isEmpty());
+    QTRY_VERIFY2(redPlacedAt(preview, expectedRed(paper, layout, centred(1), 1), &found),
+                 qPrintable(found));
+    // Top left moves both edges and keeps the size.
     alignment->setCurrentIndex(3);
-    QTRY_VERIFY(matchingBounds(preview->grab().toImage(), false).left() < centered.left());
-    const QRect topLeft = matchingBounds(preview->grab().toImage(), false);
-    QVERIFY(topLeft.left() < centered.left());
-    QVERIFY(topLeft.top() < centered.top());
-    QVERIFY(std::abs(topLeft.width() - centered.width()) <= 1);
-    QVERIFY(std::abs(topLeft.height() - centered.height()) <= 1);
+    QTRY_VERIFY2(redPlacedAt(preview, expectedRed(paper, layout, printable.topLeft(), 1), &found),
+                 qPrintable(found));
     scale->setCurrentIndex(2);
     percent->setValue(50);
-    QTRY_VERIFY(matchingBounds(preview->grab().toImage(), false).width() < topLeft.width());
-    const QRect smaller = matchingBounds(preview->grab().toImage(), false);
-    QVERIFY(std::abs(smaller.width() * 2 - topLeft.width()) <= 2);
-    QVERIFY(std::abs(smaller.height() * 2 - topLeft.height()) <= 2);
+    QTRY_VERIFY2(
+        redPlacedAt(preview, expectedRed(paper, layout, printable.topLeft(), 0.5), &found),
+        qPrintable(found));
 }
 
 void TstPrintDialog::customOrderValidationAndStaleResults()
@@ -268,13 +302,13 @@ void TstPrintDialog::sheetAlwaysFitsAfterResizeAndOrientation()
     QVERIFY(enlarged.height() > portrait.height());
     QVERIFY(preview->rect().contains(enlarged));
     landscape->setChecked(true);
-    QCoreApplication::processEvents();
-    QTRY_VERIFY(matchingBounds(preview->grab().toImage(), true).width()
-                > matchingBounds(preview->grab().toImage(), true).height());
-    const QRect rotated = matchingBounds(preview->grab().toImage(), true);
-    QVERIFY(rotated.width() > rotated.height());
-    QVERIFY(std::abs(double(rotated.width()) / rotated.height() - 297.0 / 210.0) < 0.01);
-    QVERIFY(preview->rect().contains(rotated));
+    // Wait for the whole landscape sheet, not only a sheet wider than it is tall.
+    const auto landscapeSheet = [preview] {
+        const QRect sheet = matchingBounds(preview->grab().toImage(), true);
+        return !sheet.isEmpty() && preview->rect().contains(sheet)
+               && std::abs(double(sheet.width()) / sheet.height() - 297.0 / 210.0) < 0.01;
+    };
+    QTRY_VERIFY(landscapeSheet());
 
     // Viewer rotation changes the content too. The source's 75 × 160 red region
     // becomes 160 × 75 after a quarter turn, independently of paper orientation.
