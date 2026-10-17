@@ -9,11 +9,10 @@ class QPDF;
 class QPDFObjectHandle;
 
 namespace mervin::measurementPages {
-// The most decoded bytes a /Mervin_Measurements blob may hold. Mervin's JSON stays far
-// smaller, and the limit keeps a small, highly compressed stream from filling memory.
-inline constexpr qsizetype kMaxBlobBytes = 16 * 1024 * 1024;
-// Decodes the blob `stream` and stops once it passes kMaxBlobBytes. nullopt when qpdf
-// cannot decode it or it is larger.
+// Decodes the blob `stream` with qpdf. nullopt when the stream has a filter other than up
+// to kMaxMeasurementBlobFilters /FlateDecode, has filter parameters (/DecodeParms or the
+// /DP and /F abbreviations MuPDF reads), decodes to more than kMaxMeasurementBlobBytes,
+// or qpdf cannot decode it.
 std::optional<QByteArray> decodeBlob(QPDFObjectHandle &stream);
 MeasureDoc read(QPDF &pdf);
 void write(QPDF &pdf, const MeasureDoc &data);

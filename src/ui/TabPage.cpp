@@ -742,12 +742,10 @@ std::shared_ptr<TabPage::OpenResult> TabPage::readDocument(DocumentOpener &opene
     if (!result->document)
         return result;
     result->document->hasForm(); // cache the answer before the viewer installs it
-    if (result->document->hasMervinMeasurements()) {
-        if (auto blob = MeasureExport::readMervinBlob(path, password)) {
-            MeasureDoc measurements;
-            if (parseMeasurements(*blob, &measurements))
-                result->measurements = std::move(measurements);
-        }
+    if (const auto blob = result->document->mervinMeasurements()) {
+        MeasureDoc measurements;
+        if (parseMeasurements(*blob, &measurements))
+            result->measurements = std::move(measurements);
     }
     return result;
 }

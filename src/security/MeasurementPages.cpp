@@ -10,8 +10,8 @@
 
 namespace mervin::measurementPages {
 namespace {
-// Collects decoded bytes and throws once they would pass kMaxBlobBytes. qpdf catches
-// the exception and stops decoding.
+// Collects decoded bytes and throws once they would pass kMaxMeasurementBlobBytes. qpdf
+// catches the exception and stops decoding.
 class CappedSink final : public Pipeline
 {
 public:
@@ -19,7 +19,7 @@ public:
 
     void write(unsigned char const *data, size_t length) override
     {
-        if (length > size_t(kMaxBlobBytes - bytes_.size()))
+        if (length > size_t(kMaxMeasurementBlobBytes - bytes_.size()))
             throw std::length_error("measurement blob exceeds its size limit");
         bytes_.append(reinterpret_cast<const char *>(data), qsizetype(length));
     }
@@ -29,10 +29,37 @@ public:
 private:
     QByteArray &bytes_;
 };
+
+// Whether the blob `dict` names only the encoding Mervin writes. The parameter keys
+// include the abbreviations MuPDF reads, so the viewer and page operations accept the
+// same blobs.
+bool plainFlate(QPDFObjectHandle dict)
+{
+    for (const char *key : {"/DecodeParms", "/DP", "/F"}) {
+        if (!dict.getKey(key).isNull())
+            return false;
+    }
+    QPDFObjectHandle filter = dict.getKey("/Filter");
+    if (filter.isNull())
+        return true;
+    if (filter.isName())
+        return filter.getName() == "/FlateDecode";
+    if (!filter.isArray() || filter.getArrayNItems() > kMaxMeasurementBlobFilters)
+        return false;
+    for (int i = 0; i < filter.getArrayNItems(); ++i) {
+        const QPDFObjectHandle item = filter.getArrayItem(i);
+        if (!item.isName() || item.getName() != "/FlateDecode")
+            return false;
+    }
+    return true;
+}
 } // namespace
 
 std::optional<QByteArray> decodeBlob(QPDFObjectHandle &stream)
 {
+    // qpdf builds a filter's buffers from its parameters before any data reaches the sink.
+    if (!plainFlate(stream.getDict()))
+        return std::nullopt;
     QByteArray bytes;
     CappedSink sink(bytes);
     bool decoded = false;

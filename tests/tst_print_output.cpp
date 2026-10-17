@@ -979,7 +979,7 @@ void TstPrintOutput::measuredPreparationRunsInBackground()
     QVERIFY(dialogs.messages.isEmpty());
     auto document = engine.openDocument(output);
     QVERIFY(document);
-    QVERIFY(!document->hasMervinMeasurements());
+    QVERIFY(!document->mervinMeasurements());
     const QImage image = document->renderPage(0, 1, 0);
     QVERIFY(!image.isNull());
     QVERIFY(darkInkOnRedPage(image) > 100);
@@ -1124,7 +1124,7 @@ void TstPrintOutput::queuedDeliverySurvivesOldOwnerDestruction()
         auto document = manager.engine()->openDocument(output);
         QVERIFY(document);
         QCOMPARE(document->pageCount(), 1);
-        QVERIFY(!document->hasMervinMeasurements());
+        QVERIFY(!document->mervinMeasurements());
         QVERIFY(darkInkOnRedPage(document->renderPage(0, 1, 0)) > 100);
     } else {
         QTRY_COMPARE_WITH_TIMEOUT(dialogs.messages,
