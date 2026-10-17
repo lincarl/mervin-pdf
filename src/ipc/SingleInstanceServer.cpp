@@ -210,6 +210,7 @@ SingleInstanceServer::Start SingleInstanceServer::start(const QString &serverNam
 #ifdef Q_OS_UNIX
         keepFromCleanup(paths.server);
 #endif
+        carriedFile_ = paths.carriedFile;
         return Start::Started;
     }
 

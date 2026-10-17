@@ -60,12 +60,13 @@ enum class Launch {
 };
 
 // Starts `server` for the group `name` (hostPipeName() when empty), or hands `open`
-// to that group's primary. On Linux, while no copy of this version holds the lock, it
-// first offers `open` to a copy of this user from before the lock and socket moved, if
-// one runs (see legacyEndpoint). While a live process holds the lock, as a starting or
-// quitting primary does, it tries both again until `waitMs` has passed. An open that a primary accepted over a connection is not written
-// again. If that primary reads it only after this launch gave up, it drops it, because
-// the launch then opens the files itself.
+// to that group's primary. On Unix, while nothing holds the lock, it first offers `open`
+// to a primary of this user in another folder (see otherEndpoints), and on Linux to a
+// copy from before the lock and socket moved (see legacyEndpoint). While a live process
+// holds the lock, as a starting or quitting primary does, it tries again until `waitMs`
+// has passed. An open that a primary accepted over a connection is not written again.
+// If that primary reads it only after this launch gave up, it drops it, because the
+// launch then opens the files itself.
 Launch claimOrHandOff(SingleInstanceServer &server, const Message &open, int waitMs,
                       const QString &name = QString(), const UserLookup &lookup = peerUser);
 

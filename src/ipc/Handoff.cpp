@@ -3,8 +3,10 @@
 #include "ipc/PipeName.h"
 #include "ipc/SingleInstanceServer.h"
 
+#include <QFileInfo>
 #include <QLocalSocket>
 #include <QLockFile>
+#include <QSysInfo>
 #include <QThread>
 
 #include <algorithm>
@@ -20,6 +22,9 @@
 #  include <sys/socket.h>
 #  include <sys/types.h>
 #  include <unistd.h>
+
+#  include <cerrno>
+#  include <csignal>
 #endif
 
 namespace mervin::ipc {
@@ -39,18 +44,22 @@ int msLeft(const QDeadlineTimer &deadline)
     return int(std::max<qint64>(0, deadline.remainingTime()));
 }
 
-#ifdef Q_OS_LINUX
-// Whether a live process holds the lock file `path`. Uses a lock object of its own, so a
-// lock that this process holds counts as held too.
+#ifdef Q_OS_UNIX
+// Whether a live process holds the lock file `path`. Only reads the file, so no other
+// launch can see a lock this check made. A file that is still being written, or that
+// names another host, counts as held.
 bool heldByLiveProcess(const QString &path)
 {
-    QLockFile lock(path);
-    lock.setStaleLockTime(0);
-    if (lock.tryLock(0)) {
-        lock.unlock();
+    if (!QFileInfo::exists(path))
         return false;
-    }
-    return lock.error() == QLockFile::LockFailedError;
+    qint64 pid = 0;
+    QString host;
+    QString app;
+    if (!QLockFile(path).getLockInfo(&pid, &host, &app) || pid <= 0)
+        return true;
+    if (!host.isEmpty() && host != QSysInfo::machineHostName())
+        return true;
+    return ::kill(pid_t(pid), 0) == 0 || errno == EPERM;
 }
 #endif
 
@@ -196,21 +205,28 @@ Launch claimOrHandOff(SingleInstanceServer &server, const Message &open, int wai
 {
     const QDeadlineTimer deadline(waitMs);
     const InstancePaths paths = instancePaths(name);
-#ifdef Q_OS_LINUX
-    // Upgrade support, removed with legacyEndpoint(). A copy from before the lock and
-    // socket left the temp folder does not see this group's lock. Only while no copy of
-    // this version holds that lock, the files go to such a copy if one of this user runs.
-    // One that takes the open but does not answer in time keeps it, so this launch opens
-    // the files standalone, as beside a primary of this version that does not answer.
-    // One that closes the connection, as when it is quitting, is passed over.
+#ifdef Q_OS_UNIX
+    // While nothing holds this group's lock, a primary may still run elsewhere. One of
+    // this version can have chosen another folder, as when the folders available changed
+    // since it started. One from before the lock and socket left the temp folder does not
+    // see this lock at all (Linux only, upgrade support removed with legacyEndpoint()).
+    // A primary there that takes the open but does not answer in time keeps it, so this
+    // launch opens the files standalone. One that closes the connection, as when it is
+    // quitting, is passed over.
     if (paths.lockFile.isEmpty() || !heldByLiveProcess(paths.lockFile)) {
-        switch (handOff(legacyEndpoint(name), open, deadline, lookup)) {
-        case Handoff::Delivered:
-            return Launch::Delivered;
-        case Handoff::Busy:
-            return Launch::Standalone;
-        case Handoff::NoPrimary:
-            break;
+        QStringList elsewhere = otherEndpoints(name);
+#  ifdef Q_OS_LINUX
+        elsewhere.append(legacyEndpoint(name));
+#  endif
+        for (const QString &other : std::as_const(elsewhere)) {
+            switch (handOff(other, open, deadline, lookup)) {
+            case Handoff::Delivered:
+                return Launch::Delivered;
+            case Handoff::Busy:
+                return Launch::Standalone;
+            case Handoff::NoPrimary:
+                break;
+            }
         }
     }
 #endif

@@ -94,10 +94,22 @@ bool socketFits(const QString &dir, const QString &group)
         <= qsizetype(sizeof(sockaddr_un::sun_path));
 }
 
+// The folder that holds the users' runtime folders, as systemd-logind makes them.
+QString g_userRuntimeRoot = QStringLiteral("/run/user");
+
+// This user's runtime folder from the file system, when it is this user's own 0700 folder
+// and not a link, else empty. Unlike $XDG_RUNTIME_DIR it is the same for every launch of
+// this user, from a desktop session, ssh, cron or `sudo -u`.
+QString userRuntimeDir()
+{
+    const QString dir = QDir(g_userRuntimeRoot).filePath(QString::number(uint(::geteuid())));
+    return isPrivateDir(dir, uint(::geteuid())) ? dir : QString();
+}
+
 // $XDG_RUNTIME_DIR when Qt accepts it, which it does only if it belongs to this user
 // with mode 0700, else empty. For anything else Qt answers with a folder in /tmp,
 // which is not used.
-QString runtimeDir()
+QString runtimeDirFromEnvironment()
 {
     const QString xdg = qEnvironmentVariable("XDG_RUNTIME_DIR");
     if (!xdg.startsWith(QLatin1Char('/')))
@@ -141,14 +153,19 @@ bool makePrivateDir(const QString &dir)
     return isPrivateDir(dir, uint(::geteuid()));
 }
 
+// This user's folder in the temp folder.
+QString tempDirPath()
+{
+    return QDir(QDir::tempPath()).filePath(QStringLiteral("mervin-pdf-%1").arg(uint(::geteuid())));
+}
+
 // This user's folder in the temp folder, for when the cache folder cannot hold the
 // socket, as when a deep home folder makes its path too long. Anyone can create names
 // in the temp folder, so a folder that is not already private to this user is refused,
 // not repaired.
 QString tempDir()
 {
-    const QString dir =
-        QDir(QDir::tempPath()).filePath(QStringLiteral("mervin-pdf-%1").arg(uint(::geteuid())));
+    const QString dir = tempDirPath();
     const QByteArray native = QFile::encodeName(dir);
     // A folder this call created is this user's, whatever the umask made of its mode.
     if (::mkdir(native.constData(), S_IRWXU) == 0)
@@ -168,20 +185,50 @@ InstancePaths instancePaths(const QString &name)
 {
     const QString group = name.isEmpty() ? hostPipeName() : name;
 #ifdef Q_OS_UNIX
-    QString dir = runtimeDir();
+    // Chosen from what is on disk, not from the environment, so that every launch of
+    // this user and group on this host takes the same lock.
+    QString dir = userRuntimeDir();
     if (dir.isEmpty() || !socketFits(dir, group)) {
         const QString cache = cacheDir();
         dir = socketFits(cache, group) && makePrivateDir(cache) ? cache : tempDir();
     }
     if (dir.isEmpty() || !socketFits(dir, group))
         return {};
-    return {QDir(dir).filePath(group + QStringLiteral(".lock")), QDir(dir).filePath(group)};
+    const QDir folder(dir);
+    return {folder.filePath(group + QStringLiteral(".lock")), folder.filePath(group),
+            folder.filePath(group + QStringLiteral(".carried"))};
 #else
     // The lock is in the per-user %TEMP%. The pipe namespace is shared by the machine,
     // so a launch checks whose process answers (see peerIsCurrentUser).
-    return {QDir(QDir::tempPath()).filePath(group + QStringLiteral(".lock")), group};
+    const QDir folder(QDir::tempPath());
+    return {folder.filePath(group + QStringLiteral(".lock")), group,
+            folder.filePath(group + QStringLiteral(".carried"))};
 #endif
 }
+
+#ifdef Q_OS_UNIX
+QStringList otherEndpoints(const QString &name)
+{
+    const QString group = name.isEmpty() ? hostPipeName() : name;
+    const QString own = instancePaths(name).server;
+    QStringList endpoints;
+    // Only folders that are this user's already. Nothing is created here.
+    for (const QString &dir : {userRuntimeDir(), runtimeDirFromEnvironment(), cacheDir(),
+                               tempDirPath()}) {
+        if (dir.isEmpty() || !isPrivateDir(dir, uint(::geteuid())) || !socketFits(dir, group))
+            continue;
+        const QString endpoint = QDir(dir).filePath(group);
+        if (endpoint != own && !endpoints.contains(endpoint))
+            endpoints.append(endpoint);
+    }
+    return endpoints;
+}
+
+void setUserRuntimeRootForTests(const QString &root)
+{
+    g_userRuntimeRoot = root.isEmpty() ? QStringLiteral("/run/user") : root;
+}
+#endif
 
 #ifdef Q_OS_LINUX
 QString legacyEndpoint(const QString &name)

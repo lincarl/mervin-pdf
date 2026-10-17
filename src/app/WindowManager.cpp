@@ -34,6 +34,7 @@
 #include <QWindow>
 
 #include <algorithm>
+#include <cstdio>
 #include <optional>
 #include <utility>
 
@@ -350,6 +351,13 @@ void WindowManager::adoptInstanceServer(std::unique_ptr<ipc::SingleInstanceServe
         return;
     connect(instanceServer_.get(), &ipc::SingleInstanceServer::opensReceived, this,
             &WindowManager::takeInstanceOpens);
+    // Launches a primary acknowledged and did not open before it quit go first. This copy
+    // holds the lock now, as the file requires.
+    const QList<ipc::Message> carried = relaunch::takeCarried(instanceServer_->carriedFile());
+    instanceOpens_ += carried;
+    for (qsizetype i = 0; i < carried.size(); ++i)
+        QMetaObject::invokeMethod(this, &WindowManager::openNextInstanceOpen,
+                                  Qt::QueuedConnection);
     // Launches acknowledged during startup wait in the server. They open once the
     // event loop runs, after the first window and the startup batches are queued.
     QMetaObject::invokeMethod(this, &WindowManager::takeInstanceOpens, Qt::QueuedConnection);
@@ -370,10 +378,11 @@ void WindowManager::takeInstanceOpens()
 
 void WindowManager::openNextInstanceOpen()
 {
-    // A quit holds them, as its windows would close them again. If it becomes final,
-    // endHandoffs hands them to the next copy, and if it is cancelled,
-    // resumeInstanceOpens opens them here.
-    if (shuttingDown_ || sessionFinal_ || quitting_ || instanceOpens_.isEmpty())
+    // A quit, or an update that asks about unsaved edits, holds them, as its windows
+    // would close them again. If it becomes final, endHandoffs hands them to the next
+    // copy, and if it is cancelled, resumeInstanceOpens opens them here.
+    if (shuttingDown_ || sessionFinal_ || quitting_ || holdingOpens_
+        || instanceOpens_.isEmpty())
         return;
     // Empty paths means "bring the app up" - openPaths surfaces a window; otherwise
     // files open per behaviour.
@@ -398,7 +407,7 @@ void WindowManager::endHandoffs()
     const QList<ipc::Message> left =
         std::exchange(instanceOpens_, {}) + instanceServer_->takeOpens();
     for (const ipc::Message &open : left)
-        relaunch::carry(open.paths);
+        relaunch::carry(open);
 }
 
 void WindowManager::writeStore(const QString &file, const QByteArray &data) const
@@ -1116,6 +1125,10 @@ WindowManager::~WindowManager()
     Document::waitForCloses(appfiles::kExitWaitMs);
     appfiles::flush(left());
     Updater::waitForDisk(left());
+    // The launches carried go to the next primary while this process still holds the
+    // lock, which instanceServer_ lets go of after this body.
+    if (instanceServer_ && !relaunch::writeCarried(instanceServer_->carriedFile()))
+        std::fprintf(stderr, "MervinPDF: could not pass on the files opened during the quit\n");
 }
 
 MainWindow *WindowManager::createWindow()

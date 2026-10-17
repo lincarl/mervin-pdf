@@ -309,9 +309,10 @@ protected:
 private slots:
     // Takes the launches the single-instance server has acknowledged, to open them.
     void takeInstanceOpens();
-    // Opens the oldest launch taken and not opened yet, unless a quit is in progress.
+    // Opens the oldest launch taken and not opened yet, unless a quit or an update's
+    // close is in progress.
     void openNextInstanceOpen();
-    // Opens the launches a cancelled quit held.
+    // Opens the launches a cancelled quit or update held.
     void resumeInstanceOpens();
 
 private:
@@ -400,6 +401,7 @@ private:
     QString sessionFile_;       // persisted path for session_
     bool ownsStores_ = true;    // false in a standalone copy, which writes none of them
     QList<ipc::Message> instanceOpens_; // launches acknowledged and not opened yet
+    bool holdingOpens_ = false; // an update asks about unsaved edits; instanceOpens_ waits
     QList<MainWindow *> windows_;
     QList<QPointer<CloseFlow>> closeFlows_;
     QList<StagedOpen> stagedQueue_;      // documents still to open, front first

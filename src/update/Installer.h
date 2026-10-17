@@ -15,8 +15,9 @@ namespace mervin::update {
 PackageKind installedPackageKind();
 
 // Launch the MSI detached; the caller must then quit to release binaries. Show
-// installation progress and relaunch on any outcome, preserving --profile and passing
-// on the launches this copy carries (relaunch::carry). Return false if launch fails.
+// installation progress and relaunch on any outcome, preserving --profile. The copy it
+// starts opens the launches this one carries (relaunch::carry). Return false if launch
+// fails.
 bool startWindowsInstaller(const QString &file);
 
 // AppImage: moves a copy of `file` over the running image ($APPIMAGE). The

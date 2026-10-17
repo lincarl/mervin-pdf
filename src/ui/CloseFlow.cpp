@@ -620,6 +620,15 @@ bool CloseFlow::tryCloseForUpdate(WindowManager *manager)
     };
     if (pending())
         return false;
+    // Launches that arrive while this asks about unsaved edits wait, as the update would
+    // close their windows again. If it does not go ahead, they open.
+    manager->holdingOpens_ = true;
+    const auto releaseOpens = qScopeGuard([liveManager] {
+        if (!liveManager)
+            return;
+        liveManager->holdingOpens_ = false;
+        liveManager->resumeInstanceOpens();
+    });
     QList<Entry> decisions;
     QList<QPointer<TabPage>> saves;
     // A Save already chosen stays requested even if a later answer or a newly

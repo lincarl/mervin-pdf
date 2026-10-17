@@ -416,9 +416,7 @@ int main(int argc, char *argv[])
                            mervin::ConfigPaths::configDir());
     }
 
-    // A copy that quit before it opened launches it had acknowledged started this one
-    // to open them (relaunch::carry).
-    const QStringList paths = toAbsolute(cli.paths) + mervin::relaunch::takePassed();
+    const QStringList paths = toAbsolute(cli.paths);
     const QString behavior = mervin::Settings::load().openBehavior;
 
     // A restart asked for while running (a new UI language) starts the new copy here,
@@ -434,11 +432,14 @@ int main(int argc, char *argv[])
         // folder that stopped answering. They land if it answers again, or never. A
         // restarted copy would read the files without them, and they could land over
         // its own writes, so it is not started. Launches this copy acknowledged and
-        // did not open still get their copy, as the user asked for those files.
+        // did not open still get a copy, as the user asked for those files.
         const bool saved = mervin::appfiles::flush(0);
         if (!saved) {
             std::fprintf(stderr, "MervinPDF: could not finish saving settings\n");
-            if (mervin::relaunch::requested())
+            if (mervin::relaunch::carrying())
+                std::fprintf(stderr, "MervinPDF: starting a copy anyway, for the files "
+                                     "opened during the quit\n");
+            else if (mervin::relaunch::requested())
                 std::fprintf(stderr, "MervinPDF: not restarting\n");
         }
         if (!mervin::relaunch::startIfDue(saved))

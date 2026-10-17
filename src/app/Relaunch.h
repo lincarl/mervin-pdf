@@ -1,7 +1,9 @@
 #pragma once
 
+#include "ipc/Message.h"
+
+#include <QList>
 #include <QString>
-#include <QStringList>
 
 #include <functional>
 
@@ -28,22 +30,38 @@ QString program(const QString &appImage, const QString &appDir, const QString &a
 // server is gone. False if it could not be started.
 bool start();
 
-// Adds the files of a launch that this copy acknowledged but will not open, because it
-// quits first. The next copy opens them (see startIfDue and passCarried). Even a launch
-// without files asks for a next copy, as it asks for a window.
-void carry(const QStringList &paths);
+// Adds a launch that this copy acknowledged but will not open, because it quits first.
+// WindowManager writes the launches carried to the carry file (writeCarried) before it
+// lets go of the single-instance lock, and the copy that next becomes the primary opens
+// them (takeCarried). Even a launch without files asks for a next copy, as it asks for a
+// window.
+void carry(const ipc::Message &open);
+
+// Whether a copy should start to open the carried launches.
 bool carrying();
 
-// Hands the carried files to every process this one starts from now on, through the
-// environment, and forgets them. Whatever starts the next copy calls this first.
-void passCarried();
+// Records that whatever started the next copy, as an update does, so startIfDue need not
+// start one for the carried launches.
+void nextCopyStarted();
 
-// In the next copy, the files the previous copy passed on. Removes them from the
-// environment, so they reach no process this copy starts.
-QStringList takePassed();
+// Writes the carried launches to `file`, after those a previous primary left there, as
+// UTF-8 JSON readable only by this user, and forgets them. Call it while this process
+// holds the lock that guards `file`. False if they could not be written.
+bool writeCarried(const QString &file);
+
+// How old a carry file may be when the next primary finds it. Long enough for an
+// installer to run between the two copies, short enough that a file left by a copy that
+// crashed does not open files days later.
+constexpr qint64 kCarriedMaxAgeMs = 10 * 60 * 1000;
+
+// Reads and removes the launches a previous primary left in `file`. Call it while
+// holding the lock that guards `file`. Empty if there are none, or if the file is older
+// than kCarriedMaxAgeMs or cannot be read.
+QList<ipc::Message> takeCarried(const QString &file);
 
 // Starts the next copy if one is due. It is due if a restart was asked for and `restart`
-// allows it, or if launches are carried. False if a copy was due and did not start.
+// allows it, or if launches are carried and no copy was started for them yet. False if a
+// copy was due and did not start.
 bool startIfDue(bool restart);
 
 // For tests only. Replaces start() in startIfDue with `starter`, or restores it when

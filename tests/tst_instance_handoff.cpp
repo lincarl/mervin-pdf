@@ -22,6 +22,9 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLocalSocket>
 #include <QMessageBox>
 #include <QPointer>
@@ -37,6 +40,10 @@
 #include <atomic>
 #include <memory>
 #include <optional>
+
+#ifdef Q_OS_UNIX
+#  include <unistd.h>
+#endif
 
 using namespace mervin;
 using ipc::Handoff;
@@ -106,6 +113,10 @@ private slots:
     void launchBeforeFinalQuitGoesToNextCopy_data();
     void launchBeforeFinalQuitGoesToNextCopy();
     void quitWithNothingQueuedStartsNoCopy();
+    void carryFileKeepsEveryPath();
+    void primaryOpensCarriedLaunches();
+    void staleCarryFileIsIgnored();
+    void cancelledQuitOpensHeldLaunch_data();
     void cancelledQuitOpensHeldLaunch();
 
 private:
@@ -121,8 +132,13 @@ void TstInstanceHandoff::initTestCase()
 {
     QVERIFY(runtime_.isValid());
 #ifdef Q_OS_UNIX
-    // Keeps the lock and socket out of the user's runtime folder.
-    qputenv("XDG_RUNTIME_DIR", QFile::encodeName(runtime_.path()));
+    // Keeps the lock, socket and carry file out of the user's runtime folder, using a
+    // folder of its own in place of /run/user/<uid>.
+    const QString dir = QDir(runtime_.path()).filePath(QString::number(uint(::geteuid())));
+    QVERIFY(QDir().mkpath(dir));
+    QVERIFY(QFile::setPermissions(dir, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    ipc::setUserRuntimeRootForTests(runtime_.path());
+    qunsetenv("XDG_RUNTIME_DIR");
 #endif
 }
 
@@ -143,8 +159,9 @@ void TstInstanceHandoff::init()
 void TstInstanceHandoff::cleanup()
 {
     // Nothing a test carried reaches the next one.
-    relaunch::passCarried();
-    relaunch::takePassed();
+    relaunch::writeCarried(QDir(profile_->path()).filePath(QStringLiteral("left.carried")));
+    relaunch::nextCopyStarted();
+    QFile::remove(ipc::instancePaths(kGroup).carriedFile);
     appfiles::testing::hold(false);
     QVERIFY(background::settle(10000));
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
@@ -364,10 +381,8 @@ void TstInstanceHandoff::launchBeforeFinalQuitGoesToNextCopy()
 {
     QFETCH(int, path);
     int starts = 0;
-    QStringList passed;
     relaunch::setStarterForTests([&] {
         ++starts;
-        passed = relaunch::takePassed();
         return true;
     });
     const auto restore = qScopeGuard([] { relaunch::setStarterForTests({}); });
@@ -396,15 +411,26 @@ void TstInstanceHandoff::launchBeforeFinalQuitGoesToNextCopy()
         QVERIFY(!shows(*manager, pdf_));
         manager.reset();
     }
+    // Written next to the lock before this copy let go of it.
+    const QString carried = ipc::instancePaths(kGroup).carriedFile;
+    QVERIFY(QFile::exists(carried));
     QVERIFY(relaunch::carrying());
     QCOMPARE(starts, 0);
 
     // As main() does once runUi has returned.
     QVERIFY(relaunch::startIfDue(true));
     QCOMPARE(starts, 1);
-    QCOMPARE(passed, QStringList{pdf_});
     QVERIFY(!relaunch::carrying());
-    QVERIFY(relaunch::takePassed().isEmpty()); // gone from the environment
+
+    // The copy that becomes the primary next opens the file and removes the carry file.
+    std::unique_ptr<SingleInstanceServer> next = startedServer();
+    QVERIFY(next);
+    WindowManager nextManager;
+    nextManager.adoptInstanceServer(std::move(next));
+    QTRY_VERIFY_WITH_TIMEOUT(shows(nextManager, pdf_), 10000);
+    QVERIFY(!QFile::exists(carried));
+    nextManager.quitAll();
+    QTRY_VERIFY_WITH_TIMEOUT(nextManager.openTabPaths().isEmpty(), 10000);
 }
 
 // Without a launch waiting, a quit starts no copy.
@@ -426,14 +452,120 @@ void TstInstanceHandoff::quitWithNothingQueuedStartsNoCopy()
         QTRY_VERIFY_WITH_TIMEOUT(!window, 10000);
     }
     QVERIFY(!relaunch::carrying());
+    QVERIFY(!QFile::exists(ipc::instancePaths(kGroup).carriedFile));
     QVERIFY(relaunch::startIfDue(true));
     QCOMPARE(starts, 0);
 }
 
-// A quit that asks about unsaved edits holds a launch that arrives meanwhile, as the quit
-// would close it again. Cancelling the quit opens it.
+// The carry file keeps any path, in any number, as UTF-8 JSON that only this user can read,
+// and adds to launches a previous primary left there.
+void TstInstanceHandoff::carryFileKeepsEveryPath()
+{
+    const QString file = QDir(profile_->path()).filePath(QStringLiteral("group.carried"));
+    QVERIFY(relaunch::writeCarried(file)); // nothing carried, nothing written
+    QVERIFY(!QFile::exists(file));
+
+    QStringList many;
+    for (int i = 0; i < 3000; ++i)
+        many.append(QStringLiteral("/srv/scans/2026/%1/scan %2.pdf").arg(i % 37).arg(i));
+    const QList<Message> first = {
+        Message::open({QStringLiteral(u"/home/a/Pr\u00fcfung \u8cc7\u6599.pdf"),
+                       QStringLiteral("C:\\a&b\\100%, \"x\".pdf")},
+                      QStringLiteral("new-window")),
+        Message::open(many, QStringLiteral("new-tab")),
+    };
+    for (const Message &open : first)
+        relaunch::carry(open);
+    QVERIFY(relaunch::writeCarried(file));
+#ifdef Q_OS_UNIX
+    QCOMPARE(QFile::permissions(file) & (QFileDevice::ReadGroup | QFileDevice::ReadOther
+                                         | QFileDevice::WriteGroup | QFileDevice::WriteOther),
+             QFileDevice::Permissions());
+#endif
+    relaunch::carry(Message::open({})); // a launch without files, after the others
+    QVERIFY(relaunch::writeCarried(file));
+
+    const QList<Message> read = relaunch::takeCarried(file);
+    QCOMPARE(read.size(), 3);
+    for (int i = 0; i < 2; ++i) {
+        QCOMPARE(read.at(i).paths, first.at(i).paths);
+        QCOMPARE(read.at(i).behavior, first.at(i).behavior);
+    }
+    QVERIFY(read.at(2).paths.isEmpty());
+    QVERIFY(!QFile::exists(file));
+    QVERIFY(relaunch::takeCarried(file).isEmpty());
+
+    // A copy that whatever started it will open them is not started again.
+    QVERIFY(relaunch::carrying());
+    relaunch::nextCopyStarted();
+    int starts = 0;
+    relaunch::setStarterForTests([&] {
+        ++starts;
+        return true;
+    });
+    const auto restore = qScopeGuard([] { relaunch::setStarterForTests({}); });
+    QVERIFY(relaunch::startIfDue(true));
+    QCOMPARE(starts, 0);
+}
+
+// The primary takes the launches the previous one left in the carry file when it takes over
+// the server, opens them and removes the file.
+void TstInstanceHandoff::primaryOpensCarriedLaunches()
+{
+    const QString named =
+        QDir(profile_->path()).filePath(QStringLiteral(u"Pr\u00fcfung \u8cc7\u6599.pdf"));
+    QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), named));
+    const QString carried = ipc::instancePaths(kGroup).carriedFile;
+    relaunch::carry(Message::open({named, pdf_}, QStringLiteral("new-tab")));
+    QVERIFY(relaunch::writeCarried(carried));
+    relaunch::nextCopyStarted();
+
+    std::unique_ptr<SingleInstanceServer> server = startedServer();
+    QVERIFY(server);
+    WindowManager manager;
+    manager.adoptInstanceServer(std::move(server));
+    QTRY_VERIFY_WITH_TIMEOUT(shows(manager, named) && shows(manager, pdf_), 10000);
+    QVERIFY(!QFile::exists(carried));
+    manager.quitAll();
+    QTRY_VERIFY_WITH_TIMEOUT(manager.openTabPaths().isEmpty(), 10000);
+}
+
+// A carry file older than kCarriedMaxAgeMs, as one a copy that crashed left behind, opens
+// nothing and goes.
+void TstInstanceHandoff::staleCarryFileIsIgnored()
+{
+    const QString carried = ipc::instancePaths(kGroup).carriedFile;
+    QJsonObject root;
+    root.insert(QStringLiteral("written"),
+                double(QDateTime::currentMSecsSinceEpoch() - relaunch::kCarriedMaxAgeMs - 1000));
+    root.insert(QStringLiteral("launches"),
+                QJsonArray{Message::open({pdf_}, QStringLiteral("new-tab")).toJson()});
+    QFile file(carried);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.write(QJsonDocument(root).toJson()) > 0);
+    file.close();
+
+    std::unique_ptr<SingleInstanceServer> server = startedServer();
+    QVERIFY(server);
+    WindowManager manager;
+    manager.adoptInstanceServer(std::move(server));
+    QTest::qWait(300);
+    QVERIFY(!shows(manager, pdf_));
+    QVERIFY(!QFile::exists(carried));
+}
+
+void TstInstanceHandoff::cancelledQuitOpensHeldLaunch_data()
+{
+    QTest::addColumn<bool>("update");
+    QTest::newRow("Quit") << false;
+    QTest::newRow("close for an update") << true;
+}
+
+// A quit, or an update's close, that asks about unsaved edits holds a launch that arrives
+// meanwhile, as it would close it again. Cancelling opens it.
 void TstInstanceHandoff::cancelledQuitOpensHeldLaunch()
 {
+    QFETCH(bool, update);
     std::unique_ptr<SingleInstanceServer> server = startedServer();
     QVERIFY(server);
     WindowManager manager;
@@ -467,7 +599,10 @@ void TstInstanceHandoff::cancelledQuitOpensHeldLaunch()
         box->button(QMessageBox::Cancel)->click();
     });
     dialogs.start(5);
-    manager.quitAll();
+    if (update)
+        QVERIFY(!manager.tryCloseAllForUpdate());
+    else
+        manager.quitAll();
     QTRY_VERIFY_WITH_TIMEOUT(shownWhileAsking.has_value(), 10000);
     dialogs.stop();
     QCOMPARE(offered, std::optional(Handoff::Delivered));

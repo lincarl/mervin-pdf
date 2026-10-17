@@ -81,8 +81,6 @@ bool startWindowsInstaller(const QString &file)
 #ifdef Q_OS_WIN
     if (PlatformIntegration::hasPackageIdentity())
         return false;
-    // The copy the installer starts afterwards opens the launches this one carries.
-    relaunch::passCarried();
     const QString installer = QDir::toNativeSeparators(file);
     const QString workDir = QFileInfo(file).absolutePath(); // not wherever Mervin was started
     // cmd's /s strips just the outer quotes, leaving every quoted path intact.
@@ -101,7 +99,12 @@ bool startWindowsInstaller(const QString &file)
         QStringLiteral("/d /s /c \"start \"\" /wait \"%1\" /i \"%2\" /passive /norestart & %3\"")
             .arg(QDir::toNativeSeparators(system.filePath(QStringLiteral("msiexec.exe"))),
                  installer, relaunch));
-    return cmd.startDetached();
+    if (!cmd.startDetached())
+        return false; // startIfDue then starts a copy for the launches this one carries
+    // The copy the installer starts afterwards opens the launches this one carries,
+    // from the carry file this process writes before it exits.
+    relaunch::nextCopyStarted();
+    return true;
 #else
     Q_UNUSED(file);
 #endif
@@ -170,7 +173,6 @@ QStringList packageInstallCommand(PackageKind kind, const QString &file)
 bool relaunchAfterExit(const QString &exe)
 {
 #ifdef Q_OS_LINUX
-    relaunch::passCarried(); // the new copy opens the launches this one carries
     QProcess sh;
     sh.setProgram(QStringLiteral("/bin/sh"));
     sh.setArguments(QStringList{QStringLiteral("-c"),
@@ -188,7 +190,10 @@ bool relaunchAfterExit(const QString &exe)
                 env.remove(key);
         sh.setProcessEnvironment(env);
     }
-    return sh.startDetached();
+    if (!sh.startDetached())
+        return false;
+    relaunch::nextCopyStarted(); // it opens the launches this one carries
+    return true;
 #else
     Q_UNUSED(exe);
     return false;

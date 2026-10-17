@@ -44,6 +44,10 @@ public:
 
     bool isListening() const;
 
+    // The file where a quitting primary of this group leaves the launches it carries
+    // (relaunch::carry), next to the lock. Empty until start() returned Started.
+    QString carriedFile() const { return carriedFile_; }
+
     // Closes the endpoint and keeps the lock, for a primary that is quitting. Later
     // launches get no acknowledgement and wait until the lock is free. Opens
     // acknowledged before remain for takeOpens().
@@ -70,6 +74,7 @@ private:
     void queueOpen(const Message &open);
 
     std::unique_ptr<QLockFile> lock_; // single-instance guard
+    QString carriedFile_;
     std::unique_ptr<QThread> thread_; // runs the Listener while listening
     Listener *listener_ = nullptr;    // lives on thread_, which deletes it
     QMutex opensMutex_;
