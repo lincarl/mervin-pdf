@@ -226,7 +226,9 @@ can be filled in, and leave out the fields and values of pages they do not copy.
 field shown on several of the copied pages stays one field. A repeated page gets fields
 of its own, and a copied field whose name the new file already has is renamed, for
 example to `name+1`, so the copies of a repeated page and fields of the same name in
-merged files fill in separately.
+merged files fill in separately. A button that resets or submits copied fields acts on
+the copies in the new file. The new file does not keep the form's calculation order or
+XFA data, so calculated fields no longer update in viewers that use them.
 
 Merge opens at once and reads each input's page count in the background. Pending
 rows show Reading and keep Merge disabled. The footer names the first row and file
