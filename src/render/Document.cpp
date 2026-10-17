@@ -1068,13 +1068,9 @@ std::optional<QByteArray> Document::mervinMeasurements() const
         pdf_obj *root = pdoc ? pdf_dict_get(ctx_, pdf_trailer(ctx_, pdoc), PDF_NAME(Root)) : nullptr;
         pdf_obj *blob = pdf_dict_gets(ctx_, root, "Mervin_Measurements");
         present = blob && !pdf_is_null(ctx_, blob);
-        if (pdf_is_string(ctx_, blob)) {
-            if (pdf_to_str_len(ctx_, blob) <= limit) {
-                data = fz_new_buffer_from_copied_data(
-                    ctx_, reinterpret_cast<const unsigned char *>(pdf_to_str_buf(ctx_, blob)),
-                    pdf_to_str_len(ctx_, blob));
-            }
-        } else if (pdf_is_stream(ctx_, blob) && plainFlateBlob(ctx_, blob)) {
+        // Mervin writes only streams. Any other object, such as a string, is refused as
+        // page operations refuse it, so both readers see the same blobs.
+        if (pdf_is_stream(ctx_, blob) && plainFlateBlob(ctx_, blob)) {
             // Empty Flate blocks decode to nothing, so the encoded data is counted first,
             // without keeping it, and a blob past kMaxMeasurementBlobRawBytes is refused.
             constexpr size_t rawLimit = size_t(kMaxMeasurementBlobRawBytes);

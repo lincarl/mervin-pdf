@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -268,6 +269,7 @@ private slots:
     void damagedFlateGivesNoData_data();
     void damagedFlateGivesNoData();
     void storedFlateAtTheCapReads();
+    void stringBlobGivesNoData();
     void mergeRefusesMeasurementsPastTheCap_data();
     void mergeRefusesMeasurementsPastTheCap();
     void saveRefusesMeasurementsPastTheCap();
@@ -587,6 +589,51 @@ void TstMeasureExport::storedFlateAtTheCapReads()
     QVERIFY(opened.has_value());
     QCOMPARE(opened->size(), kMaxMeasurementBlobBytes);
     QVERIFY(!document->measurementsUnreadable());
+}
+
+/// A blob stored as a PDF string, which no Mervin release writes, gives no data in either
+/// reader, so the viewer and page operations agree. Copies keep it as the same string.
+void TstMeasureExport::stringBlobGivesNoData()
+{
+    const QByteArray json = serializeMeasurements(oneDistance());
+    const QString in = p("string.pdf"), out = p("string-rotated.pdf"), kept = p("string-kept.pdf"),
+                  exported = p("string-exported.pdf");
+    {
+        QPDF q;
+        q.emptyPDF();
+        QPDFPageDocumentHelper(q).addPage(QPDFPageObjectHelper(q.makeIndirectObject(
+            QPDFObjectHandle::parse("<< /Type /Page /MediaBox [0 0 612 792] /Resources << >> >>"))),
+                                          false);
+        q.getRoot().replaceKey("/Mervin_Measurements",
+                               QPDFObjectHandle::newString(json.toStdString()));
+        const QByteArray name = in.toUtf8();
+        QPDFWriter w(q, name.constData());
+        w.write();
+    }
+    const auto storedString = [](const QString &path) -> std::optional<QByteArray> {
+        QPDF q;
+        q.processFile(path.toUtf8().constData());
+        QPDFObjectHandle blob = q.getRoot().getKey("/Mervin_Measurements");
+        if (!blob.isString())
+            return std::nullopt;
+        return QByteArray::fromStdString(blob.getStringValue());
+    };
+    QCOMPARE(storedString(in), std::optional<QByteArray>(json));
+
+    QVERIFY(!MeasureExport::readMervinBlob(in).has_value());
+    RenderEngine engine;
+    const auto document = engine.openDocument(in);
+    QVERIFY(document);
+    QVERIFY(!document->mervinMeasurements().has_value());
+    QVERIFY(document->measurementsUnreadable()); // saves keep it, and measuring is off
+    QString err;
+    QCOMPARE(PageOps::rotatePages(in, out, {0}, 90, true, {}, &err), PageOps::Status::Failed);
+    QCOMPARE(err, QCoreApplication::translate("mervin::measurementPages",
+                                              "Invalid measurement metadata."));
+    QCOMPARE(MeasureExport::keepMervin(in, kept, {}, &err), MeasureExport::Status::Ok);
+    QCOMPARE(storedString(kept), std::optional<QByteArray>(json));
+    QCOMPARE(MeasureExport::flatten(in, exported, {}, {}, &err, true), MeasureExport::Status::Ok);
+    QCOMPARE(storedString(exported), std::optional<QByteArray>(json));
 }
 
 void TstMeasureExport::mergeRefusesMeasurementsPastTheCap_data()
