@@ -308,20 +308,22 @@ arrived meanwhile remain open.
 
 The first process acquires a per-user `QLockFile` and starts a `QLocalServer`
 (`ipc::SingleInstanceServer`). `ipc::instancePaths()` builds both names. On Linux
-the lock file and the socket are in `$XDG_RUNTIME_DIR`, which only the user can
-open and which /tmp cleaners do not reach, and the group name hashes the uid instead
-of `$USER`. The socket is an absolute path, and both files have the sticky bit,
-which keeps them from the age-based cleanup that the XDG base directory spec allows
-there. Without a runtime directory that Qt accepts, or where the socket path would
-not fit into the 108 bytes of `sockaddr_un`, they are in `mervin-pdf/run-<host>` in
-the user's cache folder (`~/.cache` by default), made mode 0700. The host part keeps
-machines that share a home folder apart, as a lock that another machine holds never
-goes stale. If that path is too long too, or the folder cannot be made private, they
-are in `mervin-pdf-<uid>` in the temp folder. Anyone can create names there, so
-Mervin uses that folder only if it created it or it already is this user's folder,
-not a link, with mode 0700. With no usable folder there is no lock. On Windows the
-lock is in the per-user %TEMP% and the endpoint is a named pipe. A Store copy and
-each `--profile` directory form groups of their own.
+the lock file and the socket are in `$XDG_RUNTIME_DIR`, which only the user can open
+and which /tmp cleaners do not reach, and the group name hashes the uid instead of
+`$USER`. The socket is an absolute path, and both files have the sticky bit, which
+keeps them from the age-based cleanup that the XDG base directory spec allows there.
+Without a runtime directory that Qt accepts, or where the socket path is longer than
+Qt takes, they are in `mervin-pdf/run-<host>` in the user's cache folder (`~/.cache`
+by default), made mode 0700. Qt needs the path to fit into the 108 bytes of
+`sockaddr_un` with two bytes to spare on Linux, one for the terminating zero and one
+for abstract names, so the longest path it takes there is 106 bytes. The host part
+keeps machines that share a home folder apart, as a lock that another machine holds
+never goes stale. If that path is too long too, or the folder cannot be made
+private, they are in `mervin-pdf-<uid>` in the temp folder. Anyone can create names
+there, so Mervin uses that folder only if it created it or it already is this user's
+folder, not a link, with mode 0700. With no usable folder there is no lock. On
+Windows the lock is in the per-user %TEMP% and the endpoint is a named pipe. A Store
+copy and each `--profile` directory form groups of their own.
 
 Subsequent launches send newline-delimited JSON containing file paths and open
 behavior, wait for an acknowledgement, and exit. A launch first checks that the

@@ -40,12 +40,20 @@ QString userToken()
 }
 
 #ifdef Q_OS_UNIX
-// Whether the socket path of `group` in `dir`, with its terminating zero, fits into
-// sockaddr_un.
+// The bytes of sockaddr_un that QLocalServer and QLocalSocket keep free behind a socket
+// path. One is for the terminating zero, and Linux, which has abstract socket names,
+// needs one more. Qt refuses a longer path in listen and connect.
+#  ifdef Q_OS_LINUX
+constexpr qsizetype kQtSpareBytes = 2;
+#  else
+constexpr qsizetype kQtSpareBytes = 1;
+#  endif
+
+// Whether Qt takes the socket path of `group` in `dir`.
 bool socketFits(const QString &dir, const QString &group)
 {
-    return QFile::encodeName(QDir(dir).filePath(group)).size()
-        < qsizetype(sizeof(sockaddr_un::sun_path));
+    return QFile::encodeName(QDir(dir).filePath(group)).size() + kQtSpareBytes
+        <= qsizetype(sizeof(sockaddr_un::sun_path));
 }
 
 // $XDG_RUNTIME_DIR when Qt accepts it, which it does only if it belongs to this user

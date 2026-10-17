@@ -17,7 +17,7 @@ struct InstancePaths
 
 // The lock file and endpoint of the group `name`, hostPipeName() when empty. On Unix
 // both are in the first of these folders that only this user can open and whose socket
-// path fits into sockaddr_un, and `server` is an absolute socket path:
+// path Qt takes, and `server` is an absolute socket path:
 // - $XDG_RUNTIME_DIR, if Qt accepts it
 // - mervin-pdf/run-<host> in the cache folder, made private, one per machine so that a
 //   home folder on a network share does not mix machines
