@@ -325,7 +325,10 @@ share a home folder apart, as a lock that another machine holds never goes stale
 that path is too long too, or the folder cannot be made private, they are in
 `mervin-pdf-<uid>` in the temp folder. Anyone can create names there, so Mervin uses
 that folder only if it created it or it already is this user's folder, not a link,
-with mode 0700. With no usable folder there is no lock. On Windows the lock is in
+with mode 0700. The cache and temp folders come from `$XDG_CACHE_HOME`, `$HOME` and
+`$TMPDIR`. So on a system without `/run/user/<uid>`, two launches of one profile with
+different values of those take different locks, and both can own the profile's
+files. With no usable folder there is no lock. On Windows the lock is in
 the per-user %TEMP% and the endpoint is a named pipe. A Store copy and each
 `--profile` directory form groups of their own.
 
