@@ -263,7 +263,7 @@ is refused before anything is written, with the reason on the error line. The wi
 writes a copy, by default `<name>-edited.pdf` beside the document, which keeps the
 document's structure and encryption; the original file is never changed. The copy
 does not contain the deleted pages' content, images, annotations or form fields, nor
-the bookmarks and tagged structure elements that lead only to them. Links and other
+the bookmarks, destination names and tagged structure elements that lead only to them. Links and other
 references to a deleted page no longer go anywhere. A form that loses a field also
 loses its XFA data, which holds every field's value. Extract and Delete share one
 remembered Open when done choice.
