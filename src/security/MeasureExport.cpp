@@ -163,14 +163,9 @@ std::optional<QByteArray> MeasureExport::readMervinBlob(const QString &inPath,
         if (!root.hasKey("/Mervin_Measurements"))
             return std::nullopt;
         auto blob = root.getKey("/Mervin_Measurements");
+        // Mervin writes only streams, so a string or any other object gives no data.
         if (blob.isStream())
             return measurementPages::decodeBlob(blob);
-        if (blob.isString()) {
-            const std::string sv = blob.getStringValue();
-            if (sv.size() > size_t(kMaxMeasurementBlobBytes))
-                return std::nullopt;
-            return QByteArray(sv.data(), qsizetype(sv.size()));
-        }
         return std::nullopt;
     } catch (const std::exception &) {
         return std::nullopt;

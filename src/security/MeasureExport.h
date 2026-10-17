@@ -34,13 +34,15 @@ public:
 
     // Writes a copy that keeps the source's /Mervin_Measurements blob byte for byte, for a
     // document whose blob Mervin could not read (Document::measurementsUnreadable). qpdf
-    // copies the blob's stream data without decoding it, whatever its size or filters.
+    // copies the blob's stream data without decoding it, whatever its size or filters, and
+    // writes a blob of another kind, such as a string, with the same value.
     static Status keepMervin(const QString &inPath, const QString &outPath,
                              const QString &password = QString(), QString *error = nullptr);
 
     // The Mervin-only measurement blob embedded by embedMervin, read with qpdf, or nullopt
-    // when absent / unreadable / password-protected / larger than kMaxMeasurementBlobBytes /
-    // encoded other than Mervin writes it (measurementPages::decodeBlob). Opens its own QPDF
+    // when absent / not a stream / unreadable / password-protected / larger than
+    // kMaxMeasurementBlobBytes / encoded other than Mervin writes it
+    // (measurementPages::decodeBlob). Opens its own QPDF
     // on the path, so it is independent of any live MuPDF handle. The viewer reads the blob
     // through Document::mervinMeasurements instead; tests use this to check written files.
     static std::optional<QByteArray> readMervinBlob(const QString &inPath,
