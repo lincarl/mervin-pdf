@@ -46,8 +46,9 @@ private:
     /// Displays the supplied security facts or escaped information read error.
     void showInfo(const QpdfService::Info &info, const QString &error);
     /// Chooses an output and accepts an encryption request without writing a file.
-    /// Refuses below the owner field, before the picker, an owner password equal to
-    /// the open password while a permission is restricted.
+    /// Refuses below the owner field, before the picker, an owner password keyed with the
+    /// same bytes as the open password (QpdfService::keyBytes) while a permission is
+    /// restricted.
     void doEncrypt();
     /// Confirms restriction removal when needed and accepts a decrypted-copy request.
     void doDecrypt(bool stripRestrictions); // false = remove password, true = strip

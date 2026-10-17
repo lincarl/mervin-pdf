@@ -1032,16 +1032,19 @@ password as UTF-8 and, after a password error, once more in PDFDocEncoding on a 
 `QPDF`. AES-256 (R6) keys use UTF-8. R2 to R4 keys use PDFDocEncoding, which MuPDF
 also sends. The UTF-8 attempt keeps AES-128 and RC4-128 files readable that earlier
 versions of Mervin keyed with UTF-8, though MuPDF still rejects those when the password
-has characters beyond ASCII. `QpdfService::encrypt` converts both AES-128 and RC4-128
-passwords to PDFDocEncoding and fails before it reads the source when one has no
+has characters beyond ASCII. `QpdfService::keyBytes` gives the bytes each algorithm keys
+a file with: the first 32 bytes of the PDFDocEncoding form for AES-128 and RC4-128, and
+the first 127 bytes of UTF-8 for AES-256, as qpdf and MuPDF cut them. `encrypt` passes
+those bytes to qpdf and fails before it reads the source when a password has no
 PDFDocEncoding form. Without an owner password, it uses the open password when every
 permission is allowed and 32 random bytes in hex otherwise, because owner rights
-ignore the permission flags. `SecurityDialog` refuses an owner password that equals
-the open password while a permission is restricted, in a line below the owner field.
+ignore the permission flags. `SecurityDialog` compares the two passwords' key bytes and
+refuses equal ones while a permission is restricted, in a line below the owner field.
 Its minimum follows its layout (`followLayoutMinimum`), so the dialog grows for that
 line, and spare height gathers above Close, so the fields stay in place when the line
-goes away. `readInfo` names RC4 for V1 and V2
-files, for which qpdf reports no method, and the stream method for V4 and V5. It
+goes away. `readInfo` names RC4 for V1 and V2 files, for which qpdf reports no method.
+For V4 and V5 it names the first method in use, in stream, string and attachment
+order, so a file that encrypts only attachments reads as their method. It
 counts printing as allowed only with high-resolution printing (bit 12 from R3) and
 modifying only with bit 4, and reports low-resolution printing and page assembly
 alone (bit 11) as limited states.

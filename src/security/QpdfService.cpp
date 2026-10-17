@@ -20,13 +20,12 @@ namespace {
 
 // 32 random bytes as 64 hex digits, for an owner password nobody is told. R4 uses the
 // first 32 bytes of a password, which still hold 128 random bits.
-std::string randomOwnerPassword()
+QString randomOwnerPassword()
 {
     std::array<quint32, 8> words;
     QRandomGenerator::system()->fillRange(words.data(), qsizetype(words.size()));
-    return QByteArray(reinterpret_cast<const char *>(words.data()), sizeof words)
-        .toHex()
-        .toStdString();
+    return QString::fromLatin1(
+        QByteArray(reinterpret_cast<const char *>(words.data()), sizeof words).toHex());
 }
 
 QString methodName(QPDF::encryption_method_e m)
@@ -72,8 +71,16 @@ QpdfService::Status QpdfService::readInfo(const QString &path, const QString &pa
                                   files = QPDF::e_none;
         q.isEncrypted(R, P, V, streams, strings, files);
         out.revision = R;
-        // qpdf reads the methods only for V4 and V5. V1 and V2 always use RC4.
-        out.algorithm = methodName(V < 4 ? QPDF::e_rc4 : streams);
+        // qpdf reads the methods only for V4 and V5. V1 and V2 always use RC4. A V4 or V5
+        // file names the first method in use, so a file that encrypts only attachments,
+        // as Acrobat can, reads as its attachment method.
+        QPDF::encryption_method_e method = QPDF::e_rc4;
+        if (V >= 4) {
+            method = streams != QPDF::e_none ? streams
+                     : strings != QPDF::e_none ? strings
+                                               : files;
+        }
+        out.algorithm = methodName(method);
         out.keyLengthBits = static_cast<int>(q.getEncryptionKey().size()) * 8;
 
         // qpdf reads the flags whichever password matched. High-resolution printing
@@ -91,6 +98,19 @@ QpdfService::Status QpdfService::readInfo(const QString &path, const QString &pa
             *error = QString::fromUtf8(e.what());
         return Status::Failed;
     }
+}
+
+std::optional<QByteArray> QpdfService::keyBytes(const QString &password, Algorithm algorithm)
+{
+    // qpdf and MuPDF use at most this many bytes of a password.
+    constexpr qsizetype r4Bytes = 32, r6Bytes = 127;
+    const QByteArray utf8 = password.toUtf8();
+    if (algorithm == Algorithm::AES256)
+        return utf8.left(r6Bytes);
+    std::string pdfDoc;
+    if (!QUtil::utf8_to_pdf_doc(utf8.toStdString(), pdfDoc))
+        return std::nullopt;
+    return QByteArray::fromStdString(pdfDoc).left(r4Bytes);
 }
 
 /// Writes an unencrypted copy after any destination validator approves publication.
@@ -122,34 +142,30 @@ QpdfService::Status QpdfService::encrypt(const QString &inPath, const QString &o
                                          const Permissions &perms, QString *error,
                                          const std::function<bool()> &mayCommit)
 {
-    std::string user = userPassword.toStdString();
-    std::string owner = ownerPassword.toStdString();
     // Owner rights ignore the permission flags. Restrictions without an owner password
     // get one that nobody knows, so the open password cannot lift them. With everything
     // allowed the open password stays the owner password, so other programs still let
     // its holder change the security settings.
-    if (owner.empty())
-        owner = perms.allowsEverything() ? user : randomOwnerPassword();
-    // R4 keys use PDFDocEncoding and R6 keys UTF-8, which QString gives. qpdf takes the
-    // bytes as given.
-    if (algo != Algorithm::AES256) {
-        std::string pdfDocUser, pdfDocOwner;
-        if (!QUtil::utf8_to_pdf_doc(user, pdfDocUser)
-            || !QUtil::utf8_to_pdf_doc(owner, pdfDocOwner)) {
-            if (error) {
-                //: Reason shown after "The operation failed." when encrypting. AES-128 and
-                //: RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western
-                //: European letters such as é and ü, and common symbols, but not, for example,
-                //: Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every
-                //: character. Keep the algorithm names as they are.
-                *error = tr("A password contains characters that AES-128 and RC4-128 cannot "
-                            "use. Choose AES-256.");
-            }
-            return Status::Failed;
+    QString owner = ownerPassword;
+    if (owner.isEmpty())
+        owner = perms.allowsEverything() ? userPassword : randomOwnerPassword();
+    // qpdf takes password bytes as given, so it gets the form the algorithm's readers use.
+    const std::optional<QByteArray> userKey = keyBytes(userPassword, algo);
+    const std::optional<QByteArray> ownerKey = keyBytes(owner, algo);
+    if (!userKey || !ownerKey) {
+        if (error) {
+            //: Reason shown after "The operation failed." when encrypting. AES-128 and
+            //: RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western
+            //: European letters such as é and ü, and common symbols, but not, for example,
+            //: Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every
+            //: character. Keep the algorithm names as they are.
+            *error = tr("A password contains characters that AES-128 and RC4-128 cannot "
+                        "use. Choose AES-256.");
         }
-        user = std::move(pdfDocUser);
-        owner = std::move(pdfDocOwner);
+        return Status::Failed;
     }
+    const std::string userBytes = userKey->toStdString();
+    const std::string ownerBytes = ownerKey->toStdString();
 
     std::unique_ptr<QPDF> source;
     const Status st = openQpdf(inPath, currentPassword, source, error);
@@ -170,17 +186,17 @@ QpdfService::Status QpdfService::encrypt(const QString &inPath, const QString &o
         auto &writer = output.options();
         switch (algo) {
         case Algorithm::AES256:
-            writer.setR6EncryptionParameters(user.c_str(), owner.c_str(), accessibility, extract,
+            writer.setR6EncryptionParameters(userBytes.c_str(), ownerBytes.c_str(), accessibility, extract,
                                         assemble, annotateForm, formFill, modifyOther, print,
                                         /*encrypt_metadata_aes=*/true);
             break;
         case Algorithm::AES128:
-            writer.setR4EncryptionParametersInsecure(user.c_str(), owner.c_str(), accessibility, extract,
+            writer.setR4EncryptionParametersInsecure(userBytes.c_str(), ownerBytes.c_str(), accessibility, extract,
                                                 assemble, annotateForm, formFill, modifyOther, print,
                                                 /*encrypt_metadata=*/true, /*use_aes=*/true);
             break;
         case Algorithm::RC4_128:
-            writer.setR4EncryptionParametersInsecure(user.c_str(), owner.c_str(), accessibility, extract,
+            writer.setR4EncryptionParametersInsecure(userBytes.c_str(), ownerBytes.c_str(), accessibility, extract,
                                                 assemble, annotateForm, formFill, modifyOther, print,
                                                 /*encrypt_metadata=*/true, /*use_aes=*/false);
             break;
