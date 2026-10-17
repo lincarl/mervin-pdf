@@ -282,7 +282,21 @@ Print prepares measured previews and prints pages in background tab jobs. The
 printer wait bar names the printer, while file output writes a private PDF before
 replacing the chosen destination. Printing to the source or another open tab is
 refused. Stop before the file replacement keeps its previous bytes. Printer errors
-include a failure to finish submitting the job.
+include a failure to finish submitting the job. A job sent to a printer cannot be
+cancelled, so after Stop or an error the printer still prints the sheets drawn so far.
+After Stop, the job finishes the part of the page it is rendering, then stops using
+the document, and the tab stays covered until then. A sheet whose printed area holds
+more than about 16 million raster pixels, such as an A4 or Letter page at High
+quality on a printer of 600 dpi or more, prints in several horizontal parts. Printing
+renders at the lower of the quality and the printer's resolution. Stop or an error
+partway through such a page leaves that sheet partly printed, and the printed part
+can be blank if the page has no ink there. Stop never starts a sheet without
+drawing on it.
+
+Print renders each page at the selected quality for its size on paper, and only the
+part that lands on the sheet. Black and white renders without antialiasing, so lines
+thinner than a printed dot still print one dot wide. A page whose raster would be
+too large reports that it could not be rendered, in the preview and when printing.
 
 Save as copy and Export run in the tab's background job. Their wait bar offers Stop
 waiting after two seconds without progress, and other tabs and windows stay usable.

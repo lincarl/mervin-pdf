@@ -11,6 +11,11 @@ namespace mervin {
 
 class Document;
 
+// MuPDF's rasteriser clamps every edge to this many device pixels from the device
+// origin (BBOX_MIN and BBOX_MAX in its draw-imp.h). On a larger page raster, shapes
+// that reach beyond it vanish or bend, so print rasters stay within it.
+constexpr int kMaxDevicePixel = 1 << 20;
+
 // Light preserves authored pixels; Inverted applies the viewer colour negative; Comfort applies
 // the worker colour-aware dark transform (see ComfortTransform).
 enum class PageTheme { Light, Inverted, Comfort };
@@ -32,6 +37,9 @@ struct RenderRequest
     // Comfort is applied in the worker; Light/Inverted render identically here
     // (the viewer inverts on receipt), so only Comfort changes the output.
     PageTheme theme = PageTheme::Light;
+    // False renders hard edges and draws every stroke at least one pixel wide, as
+    // black and white printing does before its colour threshold.
+    bool antialias = true;
 };
 
 // The result of a render, posted to the UI thread and emitted there as resultReady.

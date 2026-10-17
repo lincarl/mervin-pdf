@@ -38,7 +38,10 @@ PrintPreviewWidget::PrintPreviewWidget(RenderEngine *engine, Document *document,
     connect(engine_, &RenderEngine::resultReady, this, [this](const RenderResult &result) {
         if (result.requester != requester_ || result.epoch != generation_ || result.pageNo != page_)
             return;
+        // Only the latest request can match the generation, so it describes the image.
         image_ = result.image;
+        imageScale_ = result.scale;
+        imageOrigin_ = requestedSource_.topLeft();
         message_ = result.ok && !image_.isNull() ? QString() : tr("Could not render this page.");
         update();
         emit previewReady();
@@ -62,7 +65,7 @@ void PrintPreviewWidget::setPage(int zeroBasedPage, const QPageLayout &layout,
     if (newPage) {
         engine_->cancelRequests(requester_);
         ++generation_;
-        image_ = {};
+        image_ = converted_ = prepared_ = {};
         requestedScale_ = 0;
         message_ = tr("Loading preview…");
     }
@@ -84,7 +87,7 @@ void PrintPreviewWidget::clear(const QString &message)
     engine_->cancelRequests(requester_);
     ++generation_;
     page_ = -1;
-    image_ = {};
+    image_ = converted_ = prepared_ = {};
     requestedScale_ = 0;
     message_ = message;
     update();
@@ -106,37 +109,79 @@ void PrintPreviewWidget::requestImage()
         return;
     const QRectF sheet = sheetRect();
     const QRectF paper = layout_.fullRect(QPageLayout::Point);
-    const QRectF destination = printing::destinationRect(
-        pagePoints_, layout_.paintRect(QPageLayout::Point), settings_);
-    if (sheet.isEmpty() || destination.isEmpty())
+    if (sheet.isEmpty() || paper.isEmpty())
         return;
 
-    // Colour previews need only screen detail. Monochrome must threshold a
-    // higher-resolution source before fitting it, otherwise thin lines and
-    // small text turn white solely because their screen pixels are antialiased.
-    // Bound either raster so huge drawings cannot exhaust memory in preview.
-    const double screenScale = sheet.width() / paper.width() * devicePixelRatioF()
-                               * destination.width() / pagePoints_.width();
+    // Colour previews need only screen detail. Black and white renders like printing,
+    // at the print quality on paper and without antialiasing, before its threshold.
+    // Thresholding screen-sized pixels would turn thin lines and small text white.
+    // Like printing, the raster covers only the part of the page on the sheet.
     const bool monochrome = settings_.colourMode == printing::ColourMode::BlackAndWhite;
-    const double qualityScale = std::max(1, settings_.qualityDpi) / 72.0;
-    const double scale = std::min({monochrome ? qualityScale : screenScale, qualityScale,
-                                  (monochrome ? 4096.0 : 2048.0)
-                                      / std::max(pagePoints_.width(), pagePoints_.height())});
-    if (scale <= 0 || !std::isfinite(scale))
+    const double qualityDpi = std::max(1, settings_.qualityDpi);
+    const double screenDpi = 72.0 * sheet.width() / paper.width() * devicePixelRatioF();
+    const double dpi = monochrome ? qualityDpi : std::min(screenDpi, qualityDpi);
+    const QRectF printable = layout_.paintRect(QPageLayout::Point);
+    // Bound either raster so huge sheets cannot exhaust memory in preview. The bound
+    // applies to the visible part, which the plan then rounds out to whole pixels.
+    const QSizeF visible =
+        (printing::destinationRect(pagePoints_, printable, settings_) & printable).size();
+    const double limit = monochrome ? 4096.0 : 2048.0;
+    const double longest = std::max(visible.width(), visible.height()) * dpi / 72.0;
+    const printing::RasterPlan plan = printing::rasterPlan(
+        pagePoints_, printable, settings_, longest > limit ? dpi * limit / longest : dpi);
+    // Printing plans at the print quality, as printPages does, and refuses a page whose
+    // raster would be too large there. The preview says so too, even when its own
+    // smaller raster would render.
+    const double printDpi = std::max(72, settings_.qualityDpi);
+    if (plan.isEmpty()
+        || printing::rasterPlan(pagePoints_, printable, settings_, printDpi).isEmpty()) {
+        engine_->cancelRequests(requester_);
+        ++generation_;
+        requestedScale_ = 0;
+        requestedSource_ = {};
+        message_ = tr("Could not render this page.");
+        update();
+        emit previewReady();
         return;
-    if (qFuzzyCompare(scale, requestedScale_))
+    }
+    if (qFuzzyCompare(plan.scale, requestedScale_) && plan.source == requestedSource_
+        && monochrome == requestedMonochrome_)
         return;
 
     engine_->cancelRequests(requester_);
-    requestedScale_ = scale;
+    requestedScale_ = plan.scale;
+    requestedSource_ = plan.source;
+    requestedMonochrome_ = monochrome;
     RenderRequest request;
     request.document = document_;
     request.requester = requester_;
     request.pageNo = page_;
     request.rotation = rotation_;
-    request.scale = scale;
+    request.scale = plan.scale;
+    request.clip = plan.source;
+    // Black and white thresholds colours without antialiasing, as printing does.
+    request.antialias = !monochrome;
     request.epoch = ++generation_;
     engine_->submit(request);
+}
+
+const QImage &PrintPreviewWidget::preparedImage(const QSize &deviceSize)
+{
+    // Exposes and resizes repaint often. Convert only for a new render or colour
+    // mode, and reduce only for a new conversion or device size.
+    if (convertedKey_ != image_.cacheKey() || convertedMode_ != settings_.colourMode) {
+        converted_ = printing::convertColour(image_, settings_.colourMode);
+        convertedKey_ = image_.cacheKey();
+        convertedMode_ = settings_.colourMode;
+        ++conversions_;
+    }
+    if (preparedKey_ != converted_.cacheKey() || preparedSize_ != deviceSize) {
+        prepared_ = printing::reduceToDevice(converted_, deviceSize);
+        preparedKey_ = converted_.cacheKey();
+        preparedSize_ = deviceSize;
+        ++reductions_;
+    }
+    return prepared_;
 }
 
 void PrintPreviewWidget::paintEvent(QPaintEvent *)
@@ -159,7 +204,13 @@ void PrintPreviewWidget::paintEvent(QPaintEvent *)
     const double scale = sheet.width() / layout_.fullRect(QPageLayout::Point).width();
     painter.scale(scale, scale);
     const QRectF printable = layout_.paintRect(QPageLayout::Point);
-    printing::paintPage(painter, image_, pagePoints_, printable, settings_, true);
+    // An image from earlier settings keeps its page area until its replacement arrives.
+    const QRectF target = printing::rasterTarget(
+        printing::destinationRect(pagePoints_, printable, settings_), pagePoints_, imageScale_,
+        QRect(imageOrigin_, image_.size()));
+    const QSize deviceSize = painter.deviceTransform().mapRect(target).size().toSize();
+    printing::drawImage(painter, preparedImage(deviceSize), target, printable,
+                        settings_.colourMode, true);
     QPen marginPen(QColor(160, 164, 170), 1, Qt::DashLine);
     marginPen.setCosmetic(true);
     painter.setPen(marginPen);

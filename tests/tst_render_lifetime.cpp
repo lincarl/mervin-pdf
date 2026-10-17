@@ -406,6 +406,67 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(renderedPages(results, 1).size(), held->pageCount(), 10000);
     }
 
+    // The black and white print preview renders without antialiasing on the shared
+    // workers. Each worker must return to antialiased rendering for later requests.
+    void antialiasingReturnsAfterHardRenders()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QByteArray content = "0 G 1 w 10 10 m 90 60 l S";
+        const QString path = writePdf(dir, QStringLiteral("line.pdf"), {
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R >>",
+            "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content
+                + "\nendstream",
+        });
+        QVERIFY(!path.isEmpty());
+        RenderEngine engine;
+        auto doc = engine.openDocument(path);
+        QVERIFY(doc);
+        QSignalSpy results(&engine, &RenderEngine::resultReady);
+        // Distinct requesters, so no request replaces another on the same page.
+        const auto render = [&](quint64 first, int count, bool antialias) {
+            for (int index = 0; index < count; ++index) {
+                RenderRequest request;
+                request.document = doc.get();
+                request.requester = first + index;
+                request.antialias = antialias;
+                engine.submit(request);
+            }
+        };
+        const auto images = [&](quint64 first, int count) {
+            QList<QImage> found;
+            for (const auto &args : results) {
+                const auto result = args[0].value<RenderResult>();
+                if (result.ok && result.requester >= first && result.requester < first + count)
+                    found.append(result.image);
+            }
+            return found;
+        };
+        const auto grays = [](const QImage &image) {
+            int count = 0;
+            for (int y = 0; y < image.height(); ++y)
+                for (int x = 0; x < image.width(); ++x)
+                    count += qGray(image.pixel(x, y)) % 255 != 0;
+            return count;
+        };
+
+        render(1, 1, true);
+        QTRY_COMPARE_WITH_TIMEOUT(images(1, 1).size(), 1, 5000);
+        const QImage smooth = images(1, 1).front();
+        QVERIFY(grays(smooth) > 0);
+        // More requests than workers, so every worker draws without antialiasing.
+        render(100, 16, false);
+        QTRY_COMPARE_WITH_TIMEOUT(images(100, 16).size(), 16, 10000);
+        for (const QImage &image : images(100, 16))
+            QCOMPARE(grays(image), 0);
+        render(200, 16, true);
+        QTRY_COMPARE_WITH_TIMEOUT(images(200, 16).size(), 16, 10000);
+        for (const QImage &image : images(200, 16))
+            QCOMPARE(image, smooth);
+    }
+
     // A query that slips through on the screen thread while a job holds the
     // document returns its empty value at once instead of waiting for the job.
     // Without the check each call waits for the job's access lock, about 3 s.

@@ -118,80 +118,128 @@ struct PrintResult
     int page = 0;
 };
 
-// Paints on the worker that owns `printer`. Each page releases live document access
-// before painting or entering the printer system.
+// The most raster pixels one printed band holds. While Qt's PDF engine, which Print to
+// file and CUPS printers use, draws a band, it holds about 8 bytes a pixel: the render
+// (RGB888, or Grayscale8 once converted), the engine's ARGB32 copy, and its samples or
+// soft mask. 2^24 pixels keep that near 135 MB on any sheet and quality, while a Letter
+// or A4 sheet at 300 dpi (8.4 and 8.7 million pixels) still prints as one image. Qt's
+// Windows engine keeps a sheet's images until the sheet ends, so there the budget bounds
+// only the render and its conversion. Every band runs the page again, so a smaller
+// budget costs time for little memory.
+constexpr qint64 kPrintBandPixels = qint64(1) << 24;
+
+// Paints on the worker that owns `printer`. A page renders at renderDpi on paper,
+// whatever its scale, and only its part inside the printable area, in bands of whole
+// raster rows (printing::rasterPlan and rasterBands). Each band holds live document
+// access only while it renders, then converts its colour mode and draws. A sheet, and
+// the job with the first one, starts only after its first band converted, and that band
+// is drawn even when Stop arrives while the printer starts the sheet, so no sheet starts
+// without being drawn on. A band rendering when Stop arrives finishes (renderPage has no
+// cookie), then document access ends and no further band renders. Stop or a failure
+// between the bands of a page printed in several bands therefore leaves that sheet
+// partly drawn. Qt's print engines cannot cancel a job (QPrinter::abort does nothing in
+// the PDF, CUPS and Windows engines), so when Stop or a failure returns early, the
+// painter's destructor still ends the job and a printer receives the sheets drawn so
+// far. Print to file discards its staged PDF instead.
 void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetime> &lifetime,
                 const QList<int> &pages, int rotation, const mervin::printing::Settings &settings,
                 const QString &printerName, bool liveDocument, PrintResult &result)
 {
+    namespace printing = mervin::printing;
     if (!mervin::job::printing(printerName)) {
         result.failure = PrintResult::Failure::Start;
         return;
     }
-    QPainter painter;
-    if (!painter.begin(&printer)) {
-        result.failure = PrintResult::Failure::Start;
-        return;
-    }
-    // Error paths and Stop abort instead of submitting a partial print job. The
-    // painter still closes its engine while the QPrinter remains alive here.
-    const auto abort = qScopeGuard([&] {
-        if (painter.isActive())
-            printer.abort();
-    });
     const int resolution = printer.resolution();
     const int renderDpi = qMin(resolution, qMax(72, settings.qualityDpi));
     const QRectF printable = printer.pageLayout().paintRect(QPageLayout::Point);
-    bool first = true;
+    // Black and white thresholds colours. Antialiasing would turn strokes thinner
+    // than a raster pixel into light grays that the threshold drops.
+    const bool antialias = settings.colourMode != printing::ColourMode::BlackAndWhite;
+    // Runs `use` under a short document hold, which ends before any painting or
+    // printer call. Does nothing once the job stopped or the document closed.
+    const auto withDocument = [&](const auto &use) {
+        if (liveDocument && !mervin::job::beginHolding())
+            return;
+        const auto release = qScopeGuard([liveDocument] {
+            if (liveDocument)
+                mervin::job::endHolding();
+        });
+        const Document::Hold hold(lifetime, mervin::job::stopped);
+        if (hold.document())
+            use(*hold.document());
+    };
+    QPainter painter;
     for (int page : pages) {
         if (mervin::job::stopped())
             return;
-        QImage image;
         QSizeF pagePoints;
-        {
-            if (liveDocument && !mervin::job::beginHolding())
-                return;
-            const auto release = qScopeGuard([liveDocument] {
-                if (liveDocument)
-                    mervin::job::endHolding();
-            });
-            const Document::Hold hold(lifetime, mervin::job::stopped);
-            Document *document = hold.document();
-            if (!document) {
-                result.failure = PrintResult::Failure::Render;
-                result.page = page;
-                return;
-            }
-            image = document->renderPage(page - 1, renderDpi / 72.0, rotation);
-            pagePoints = document->pageSize(page - 1);
-        }
-        if (mervin::job::stopped())
-            return;
-        if (image.isNull()) {
+        printing::RasterPlan plan;
+        QList<QRect> bands;
+        QImage band;
+        // Each band but the last also renders the next band's first row, which that
+        // band then draws over. Qt's Windows print engine truncates an image's top and
+        // height to whole device pixels, so abutting bands could leave a blank row.
+        const auto clip = [&bands](qsizetype index) {
+            return index + 1 < bands.size() ? bands.at(index).adjusted(0, 0, 0, 1)
+                                            : bands.at(index);
+        };
+        withDocument([&](const Document &document) {
+            pagePoints = document.pageSize(page - 1);
+            if (rotation == 90 || rotation == 270)
+                pagePoints.transpose();
+            plan = printing::rasterPlan(pagePoints, printable, settings, renderDpi);
+            bands = printing::rasterBands(plan.source, kPrintBandPixels);
+            if (!bands.isEmpty())
+                band = document.renderPage(page - 1, plan.scale, rotation, clip(0), antialias);
+        });
+        if (bands.isEmpty() && !mervin::job::stopped()) {
             result.failure = PrintResult::Failure::Render;
             result.page = page;
             return;
         }
-        if (!mervin::job::printing(printerName)) {
-            result.failure = PrintResult::Failure::NextPage;
-            return;
+        for (qsizetype index = 0; index < bands.size(); ++index) {
+            if (index > 0) {
+                withDocument([&](const Document &document) {
+                    band = document.renderPage(page - 1, plan.scale, rotation, clip(index),
+                                               antialias);
+                });
+            }
+            if (mervin::job::stopped())
+                return;
+            const QImage prepared = printing::convertColour(band, settings.colourMode);
+            band = {};
+            if (prepared.isNull()) {
+                result.failure = PrintResult::Failure::Render;
+                result.page = page;
+                return;
+            }
+            if (index == 0) {
+                if (!mervin::job::printing(printerName)) {
+                    result.failure = PrintResult::Failure::NextPage;
+                    return;
+                }
+                if (!painter.isActive()) {
+                    if (!painter.begin(&printer)) {
+                        result.failure = PrintResult::Failure::Start;
+                        return;
+                    }
+                } else if (!printer.newPage()) {
+                    result.failure = PrintResult::Failure::NextPage;
+                    return;
+                }
+            }
+            const QRectF target = printing::rasterTarget(
+                plan.destination, pagePoints, plan.scale,
+                QRect(clip(index).topLeft(), prepared.size()));
+            painter.save();
+            painter.scale(resolution / 72.0, resolution / 72.0);
+            if (!printer.fullPage())
+                painter.translate(-printable.topLeft());
+            printing::drawImage(painter, prepared, target, printable, settings.colourMode);
+            painter.restore();
+            mervin::job::progressed();
         }
-        if (!first && !printer.newPage()) {
-            result.failure = PrintResult::Failure::NextPage;
-            return;
-        }
-        if (mervin::job::stopped())
-            return;
-        first = false;
-        if (rotation == 90 || rotation == 270)
-            pagePoints.transpose();
-        painter.save();
-        painter.scale(resolution / 72.0, resolution / 72.0);
-        if (!printer.fullPage())
-            painter.translate(-printable.topLeft());
-        mervin::printing::paintPage(painter, image, pagePoints, printable, settings);
-        painter.restore();
-        mervin::job::progressed();
     }
     if (!mervin::job::beginPrintingCommit(printerName)) {
         result.failure = PrintResult::Failure::End;
