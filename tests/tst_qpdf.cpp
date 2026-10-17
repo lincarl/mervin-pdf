@@ -67,6 +67,7 @@ enum class Reference {
     ChildFieldNoForm, // ChildField in a file without /AcroForm, as Extract wrote before forms
     SharedResources, // one /Resources for all pages, with the image that only page 2 draws
     InheritedResources, // the same /Resources on /Pages instead of on the pages
+    OwnResources,    // a /Resources of its own on each page, each listing every page's image
     DirectOutline,   // a bookmark to page 2, then a direct one to page 1, then one to page 3
     ClosedOutline,   // closed bookmarks with children on pages 1 and 2, and only on page 2
     SharedWidget,    // a field whose one widget pages 1 and 2 both list
@@ -371,7 +372,8 @@ void makeReferencedPdf(const QString &path, Reference reference)
         break;
     }
     case Reference::SharedResources:
-    case Reference::InheritedResources: {
+    case Reference::InheritedResources:
+    case Reference::OwnResources: {
         // Each page draws its own image, and only page 2's image data is the secret.
         QPDFObjectHandle images = QPDFObjectHandle::newDictionary();
         const std::string data[] = {"IMAGEONE", kSecret, "IMAGETHREE"};
@@ -392,6 +394,8 @@ void makeReferencedPdf(const QString &path, Reference reference)
         for (QPDFObjectHandle page : pages) {
             if (reference == Reference::SharedResources)
                 page.replaceKey("/Resources", resources);
+            else if (reference == Reference::OwnResources)
+                page.replaceKey("/Resources", resources.shallowCopy()); // direct, as copies
             else
                 page.removeKey("/Resources");
         }
@@ -1500,6 +1504,7 @@ void TstQpdf::deleteLeavesOutDeletedContent_data()
     QTest::newRow("reset button") << int(Reference::ResetButton);
     QTest::newRow("shared resources") << int(Reference::SharedResources);
     QTest::newRow("inherited resources") << int(Reference::InheritedResources);
+    QTest::newRow("own resources") << int(Reference::OwnResources);
     QTest::newRow("direct bookmark") << int(Reference::DirectOutline);
     QTest::newRow("closed bookmarks") << int(Reference::ClosedOutline);
     QTest::newRow("widget on two pages") << int(Reference::SharedWidget);
@@ -1666,7 +1671,8 @@ void TstQpdf::deleteLeavesOutDeletedContent()
         break;
     }
     case Reference::SharedResources:
-    case Reference::InheritedResources: {
+    case Reference::InheritedResources:
+    case Reference::OwnResources: {
         // Page 1 keeps its own image, without the images of the other pages.
         QPDFObjectHandle images =
             QPDFPageObjectHelper(pages.at(0)).getAttribute("/Resources", false).getKey("/XObject");
@@ -1823,12 +1829,14 @@ void TstQpdf::copiesKeepAFieldThatCopiedPagesShare()
     QVERIFY(doc->hasForm());
 }
 
-/// Sources whose pages share one resources dictionary, directly or through /Pages.
+/// Sources whose pages list each other's images: through one resources dictionary, directly
+/// or through /Pages, or through dictionaries of their own that list the same images.
 void TstQpdf::copiesLeaveOutResourcesOfOtherPages_data()
 {
     QTest::addColumn<int>("reference");
     QTest::newRow("shared resources") << int(Reference::SharedResources);
     QTest::newRow("inherited resources") << int(Reference::InheritedResources);
+    QTest::newRow("own resources") << int(Reference::OwnResources);
 }
 
 /// Checks that Extract, Merge and Split copy only the images that the copied pages draw.

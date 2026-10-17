@@ -516,15 +516,20 @@ ObjectSet pruneDeletedFields(QPDF &q, const Removal &removal)
     return pruner.removed();
 }
 
-/// Whether pages of `q` share a resources dictionary or an /XObject dictionary, or inherit
-/// resources from a /Pages node. Such files often list resources that a page does not use,
-/// so only then is it worth reading every page's content to find them. This is the test
-/// that qpdf's own page selection makes (QPDFJob::shouldRemoveUnreferencedResources). Call
-/// it before addPage or removePage, which move inherited resources onto the pages.
+/// Whether pages of `q` can list images and fonts that other pages draw: they share a
+/// resources dictionary or an /XObject dictionary, inherit resources from a /Pages node, or
+/// list one indirect XObject or font in resources dictionaries of their own. Only then is it
+/// worth reading every page's content to find what a page lists but does not use. The first
+/// three cases are the test of qpdf's own page selection
+/// (QPDFJob::shouldRemoveUnreferencedResources). The last one adds files whose pages each
+/// carry a copy of one dictionary that lists every page's images, and files that share a
+/// font or a logo, which costs a content read per page. The walk visits each page, form
+/// XObject and resource entry once. Call it before addPage or removePage, which move
+/// inherited resources onto the pages.
 bool sharesResources(QPDF &q)
 {
     try {
-        ObjectSet nodes, resources;
+        ObjectSet nodes, resources, values;
         std::vector<QPDFObjectHandle> queue{q.getRoot().getKey("/Pages")};
         while (!queue.empty()) {
             QPDFObjectHandle node = queue.back();
@@ -551,10 +556,21 @@ bool sharesResources(QPDF &q)
             QPDFObjectHandle xobjects = own.getKey("/XObject");
             if (xobjects.isIndirect() && !resources.insert(xobjects.getObjGen()).second)
                 return true;
-            if (xobjects.isDictionary())
-                for (auto item : xobjects.ditems())
+            ObjectSet listed; // the indirect XObjects and fonts that this page or form lists
+            for (const char *type : {"/XObject", "/Font"}) {
+                QPDFObjectHandle dict = own.getKey(type);
+                if (!dict.isDictionary())
+                    continue;
+                for (auto item : dict.ditems()) {
+                    if (item.second.isIndirect())
+                        listed.insert(item.second.getObjGen());
                     if (item.second.isFormXObject())
                         queue.push_back(item.second);
+                }
+            }
+            for (const QPDFObjGen &id : listed)
+                if (!values.insert(id).second)
+                    return true;
         }
     } catch (const std::exception &) {
         // A page tree that qpdf cannot walk keeps its resources.

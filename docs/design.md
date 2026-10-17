@@ -978,9 +978,13 @@ null, so it answers nothing. A damaged outline or structure
 tree is left as it was.
 
 Pages can share one resources dictionary, or inherit it from `/Pages`, and then list the
-images and fonts of every page. `sharesResources` makes the test of qpdf's own page
-selection (`QPDFJob::shouldRemoveUnreferencedResources`): a shared resources or `/XObject`
-dictionary, or resources on a `/Pages` node. Only then does `trimResources` call
+images and fonts of every page. Some writers also give each page its own copy of such a
+dictionary. `sharesResources` makes the test of qpdf's own page selection
+(`QPDFJob::shouldRemoveUnreferencedResources`), a shared resources or `/XObject`
+dictionary or resources on a `/Pages` node, and adds one case: an indirect XObject or font
+that the resources of more than one page or form XObject list. That also holds for files
+that share a font or a logo, where it costs one content read per copied or kept page, and
+the walk itself visits each page and resource entry once. Only then does `trimResources` call
 `QPDFPageObjectHelper::removeUnreferencedResources`, which reads the page's content and
 gives the page its own resources without the ones it does not use. Delete Pages trims
 the kept pages after the cleanup, and `ResourceTrim` trims each source page before
