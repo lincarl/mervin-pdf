@@ -334,14 +334,19 @@ bool unlinkOutlines(QPDFObjectHandle parent, const ObjectSet &doomed, ObjectSet 
     return true;
 }
 
-/// Makes the direct items below `parent` indirect, so that the walks above tell items apart
-/// by object number, and cuts what those walks would not check. ISO 32000 wants indirect
-/// items, but viewers follow a direct /Next as well. A chain that comes back to an item
-/// already seen, as in a loop, ends before it, and an item at the depth limit loses the
-/// items below it. Recounts /Count above a cut, and returns whether anything below `parent`
-/// was cut.
+/// Makes the direct items below `parent` indirect, as `parent` must be, so that the walks
+/// above tell items apart by object number, and cuts what those walks would not check.
+/// ISO 32000 wants indirect items, but viewers follow a direct /Next as well. A chain that
+/// comes back to an item already seen, as in a loop, ends before it, and an item at the depth
+/// limit loses the items below it. /Last, /Prev and /Parent that name something outside the
+/// chain are set to the item the chain reached, so they cannot keep a bookmark of a deleted
+/// page in the file. Recounts /Count where the items below changed, and returns whether
+/// anything below `parent` changed.
 bool makeOutlineIndirect(QPDF &q, QPDFObjectHandle parent, ObjectSet &seen, int depth)
 {
+    const auto same = [](QPDFObjectHandle a, QPDFObjectHandle b) {
+        return a.isIndirect() && b.isIndirect() && a.getObjGen() == b.getObjGen();
+    };
     QPDFObjectHandle holder = parent;
     const char *link = "/First";
     std::vector<QPDFObjectHandle> items;
@@ -357,6 +362,14 @@ bool makeOutlineIndirect(QPDF &q, QPDFObjectHandle parent, ObjectSet &seen, int 
             cut = true;
             break;
         }
+        if (item.hasKey("/Parent") && !same(item.getKey("/Parent"), parent))
+            item.replaceKey("/Parent", parent);
+        if (item.hasKey("/Prev") && (items.empty() || !same(item.getKey("/Prev"), items.back()))) {
+            if (items.empty())
+                item.removeKey("/Prev");
+            else
+                item.replaceKey("/Prev", items.back());
+        }
         if (depth < kMaxDepth) {
             cut |= makeOutlineIndirect(q, item, seen, depth + 1);
         } else if (item.hasKey("/First") || item.hasKey("/Last")) {
@@ -368,26 +381,33 @@ bool makeOutlineIndirect(QPDF &q, QPDFObjectHandle parent, ObjectSet &seen, int 
         holder = item;
         link = "/Next";
     }
-    if (cut) {
-        if (items.empty()) {
+    if (items.empty()) {
+        if (cut || parent.hasKey("/First") || parent.hasKey("/Last")) {
             for (const char *key : {"/First", "/Last", "/Count"})
                 parent.removeKey(key);
-        } else {
-            parent.replaceKey("/Last", items.back());
-            recountOutline(parent, items, depth);
+            cut = true;
         }
+    } else if (cut || !same(parent.getKey("/Last"), items.back())) {
+        parent.replaceKey("/Last", items.back());
+        recountOutline(parent, items, depth);
+        cut = true;
     }
     return cut;
 }
 
 /// Removes the outline items that go only to a deleted page and have no items left below
 /// them, as their titles can describe the page. makeOutlineIndirect cuts loops and items
-/// deeper than the walks go first. An outline that qpdf cannot read stays as it was.
+/// deeper than the walks go, and repairs links that lead outside the outline, first. An
+/// outline that qpdf cannot read stays as it was.
 void pruneOutlines(QPDF &q, const ObjectSet &pages)
 {
     QPDFObjectHandle outlines = q.getRoot().getKey("/Outlines");
     if (!outlines.isDictionary())
         return;
+    if (!outlines.isIndirect()) { // as ISO 32000 wants, so its items' /Parent can name it
+        outlines = q.makeIndirectObject(outlines);
+        q.getRoot().replaceKey("/Outlines", outlines);
+    }
     ObjectSet doomed;
     try {
         ObjectSet seen;

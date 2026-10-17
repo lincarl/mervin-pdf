@@ -76,6 +76,8 @@ enum class Reference {
     DeepField,       // a field with a widget on page 2, 104 levels below its top
     DeepFieldNoForm, // DeepField in a file without /AcroForm
     UnlistedField,   // a field of page 1 whose /Parent's /Kids does not list it, above a field on page 2
+    StrayOutline,    // outline links that lead to bookmarks of page 2 outside the outline
+    StrayChildOutline, // a bookmark whose /Last, without a /First, names one of page 2
 };
 
 // A page that shows `text` in two marked-content sequences, MCID 0 and 1.
@@ -622,6 +624,27 @@ void makeReferencedPdf(const QString &path, Reference reference)
         adopt(address, {street});
         hidden.replaceKey("/Parent", address);
         installForm(q, {address});
+        break;
+    }
+    case Reference::StrayOutline:
+    case Reference::StrayChildOutline: {
+        // "Page one" is the only item that the outline's /First and /Next reach. In
+        // StrayOutline, the outline's /Last, which /Count counts, and the item's /Prev and
+        // /Parent name bookmarks to page 2 that no chain reaches, as a damaged file can. In
+        // StrayChildOutline, the item's /Last does, without a /First, and the catalog holds a
+        // direct copy of the outline dictionary, which ISO 32000 does not allow.
+        QPDFObjectHandle kept = bookmark(q, "Page one", pages[0]);
+        outline(outlines, {kept});
+        if (reference == Reference::StrayOutline) {
+            outlines.replaceKey("/Last", bookmark(q, kSecret + " last", pages[1]));
+            outlines.replaceKey("/Count", QPDFObjectHandle::newInteger(2));
+            kept.replaceKey("/Prev", bookmark(q, kSecret + " previous", pages[1]));
+            kept.replaceKey("/Parent", bookmark(q, kSecret + " parent", pages[1]));
+        } else {
+            kept.replaceKey("/Last", bookmark(q, kSecret + " child", pages[1]));
+        }
+        root.replaceKey("/Outlines",
+                        reference == Reference::StrayOutline ? outlines : outlines.shallowCopy());
         break;
     }
     case Reference::ResetByName: {
@@ -1474,6 +1497,8 @@ void TstQpdf::deleteLeavesOutDeletedContent_data()
     QTest::newRow("field deeper than 100 levels") << int(Reference::DeepField);
     QTest::newRow("child field without a form") << int(Reference::ChildFieldNoForm);
     QTest::newRow("field that its parent does not list") << int(Reference::UnlistedField);
+    QTest::newRow("bookmark links outside the outline") << int(Reference::StrayOutline);
+    QTest::newRow("bookmark /Last without /First") << int(Reference::StrayChildOutline);
 }
 
 /// Checks that no object of a Delete Pages copy holds the deleted page's content, or what
@@ -1565,6 +1590,19 @@ void TstQpdf::deleteLeavesOutDeletedContent()
         QVERIFY(pdfContains(out, "kept before"));
         QVERIFY(pdfContains(out, "kept after"));
         break;
+    case Reference::StrayOutline:
+    case Reference::StrayChildOutline: {
+        // The links that led outside the outline now stay inside it, and the outline
+        // dictionary is indirect, so the item's /Parent can name it.
+        QVERIFY(outlines.isIndirect());
+        QPDFObjectHandle first = outlines.getKey("/First");
+        QCOMPARE(QString::fromStdString(first.getKey("/Title").getUTF8Value()), QStringLiteral("Page one"));
+        QCOMPARE(outlines.getKey("/Count").getIntValue(), 1LL);
+        QCOMPARE(outlines.getKey("/Last").getObjGen(), first.getObjGen());
+        QVERIFY(!first.hasKey("/Prev") && !first.hasKey("/Last"));
+        QCOMPARE(first.getKey("/Parent").getObjGen(), outlines.getObjGen());
+        break;
+    }
     case Reference::UnlistedField: {
         // "street" stays below "address", and "hidden" keeps only its page 1 widget.
         QCOMPARE(fields.getArrayNItems(), 1);
