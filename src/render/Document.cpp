@@ -1032,6 +1032,12 @@ bool plainFlateBlob(fz_context *ctx, pdf_obj *stream)
     return pdf_is_null(ctx, filter) || pdf_name_eq(ctx, filter, PDF_NAME(FlateDecode));
 }
 
+// Records that MuPDF warned while the measurement blob was read.
+void noteBlobWarning(void *warned, const char *)
+{
+    *static_cast<bool *>(warned) = true;
+}
+
 } // namespace
 
 std::optional<QByteArray> Document::mervinMeasurements() const
@@ -1044,9 +1050,19 @@ std::optional<QByteArray> Document::mervinMeasurements() const
     fz_stream *stream = nullptr;
     fz_buffer *data = nullptr;
     bool present = false;
+    bool warned = false;
     fz_var(stream);
     fz_var(data);
     fz_var(present);
+    fz_var(warned);
+    // MuPDF ends a Flate stream with a bad checksum or missing data with only a warning
+    // and returns what it decoded, so a warning during this read counts as a failure, as
+    // in measurementPages::decodeBlob. Flushing first keeps an earlier warning out, and lets
+    // a repeat of it reach the callback instead of only being counted.
+    fz_flush_warnings(ctx_);
+    void *previousUser = nullptr;
+    fz_warning_cb *previous = fz_warning_callback(ctx_, &previousUser);
+    fz_set_warning_callback(ctx_, noteBlobWarning, &warned);
     fz_try(ctx_) {
         pdf_document *pdoc = pdf_specifics(ctx_, doc_);
         pdf_obj *root = pdoc ? pdf_dict_get(ctx_, pdf_trailer(ctx_, pdoc), PDF_NAME(Root)) : nullptr;
@@ -1080,9 +1096,15 @@ std::optional<QByteArray> Document::mervinMeasurements() const
         }
     }
     fz_always(ctx_) {
-        fz_drop_stream(ctx_, stream);
+        fz_drop_stream(ctx_, stream); // closing the Flate filter can warn too
+        fz_flush_warnings(ctx_);
+        fz_set_warning_callback(ctx_, previous, previousUser);
     }
     fz_catch(ctx_) {
+        fz_drop_buffer(ctx_, data);
+        data = nullptr;
+    }
+    if (warned) {
         fz_drop_buffer(ctx_, data);
         data = nullptr;
     }

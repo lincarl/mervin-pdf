@@ -237,6 +237,8 @@ private slots:
     void pageOperationsStopAtTheCap();
     void foreignEncodingsGiveNoData_data();
     void foreignEncodingsGiveNoData();
+    void damagedFlateGivesNoData_data();
+    void damagedFlateGivesNoData();
     void mergeRefusesMeasurementsPastTheCap_data();
     void mergeRefusesMeasurementsPastTheCap();
     void saveRefusesMeasurementsPastTheCap();
@@ -482,6 +484,43 @@ void TstMeasureExport::foreignEncodingsGiveNoData()
     QString err;
     QCOMPARE(PageOps::rotatePages(in, out, {0}, 90, true, {}, &err),
              accepted ? PageOps::Status::Ok : PageOps::Status::Failed);
+}
+
+void TstMeasureExport::damagedFlateGivesNoData_data()
+{
+    QTest::addColumn<QString>("damage");
+    QTest::newRow("corrupted Adler-32") << QStringLiteral("checksum");
+    // The data is complete, so both libraries could return it with only a warning.
+    QTest::newRow("missing Adler-32") << QStringLiteral("trailer");
+    QTest::newRow("truncated in the data") << QStringLiteral("data");
+}
+
+/// A damaged Flate blob gives no data in either reader. MuPDF and qpdf both decode such a
+/// stream with only a warning, so a reader that ignored warnings would show partial or
+/// unverified measurements that the other reader rejects.
+void TstMeasureExport::damagedFlateGivesNoData()
+{
+    QFETCH(QString, damage);
+    std::string encoded = deflate(serializeMeasurements(oneDistance()).toStdString());
+    if (damage == QLatin1String("checksum"))
+        encoded.back() = char(encoded.back() ^ 0xFF); // the last byte of the Adler-32
+    else if (damage == QLatin1String("trailer"))
+        encoded.resize(encoded.size() - 4);
+    else
+        encoded.resize(encoded.size() / 2);
+    const QString in = p("damaged.pdf"), out = p("damaged-rotated.pdf");
+    makeBlobPdf(in, encoded, QPDFObjectHandle::newName("/FlateDecode"));
+
+    QVERIFY(!MeasureExport::readMervinBlob(in).has_value());
+    RenderEngine engine;
+    const auto document = engine.openDocument(in);
+    QVERIFY(document);
+    QVERIFY(!document->mervinMeasurements().has_value());
+    QVERIFY(document->measurementsUnreadable()); // saves keep it, and measuring is off
+    QString err;
+    QCOMPARE(PageOps::rotatePages(in, out, {0}, 90, true, {}, &err), PageOps::Status::Failed);
+    QCOMPARE(err, QCoreApplication::translate("mervin::measurementPages",
+                                              "Invalid measurement metadata."));
 }
 
 void TstMeasureExport::mergeRefusesMeasurementsPastTheCap_data()
