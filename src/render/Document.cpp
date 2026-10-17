@@ -1075,12 +1075,27 @@ std::optional<QByteArray> Document::mervinMeasurements() const
                     pdf_to_str_len(ctx_, blob));
             }
         } else if (pdf_is_stream(ctx_, blob) && plainFlateBlob(ctx_, blob)) {
-            // MuPDF decodes as it reads, so the read ends as soon as the data passes the limit.
-            stream = pdf_open_stream(ctx_, blob);
-            data = fz_new_buffer(ctx_, 4096);
-            size_t total = 0;
+            // Empty Flate blocks decode to nothing, so the encoded data is counted first,
+            // without keeping it, and a blob past kMaxMeasurementBlobRawBytes is refused.
+            constexpr size_t rawLimit = size_t(kMaxMeasurementBlobRawBytes);
             unsigned char chunk[16 * 1024];
-            for (;;) {
+            stream = pdf_open_raw_stream(ctx_, blob);
+            size_t raw = 0;
+            while (raw <= rawLimit) {
+                const size_t count = fz_read(ctx_, stream, chunk, sizeof chunk);
+                if (!count)
+                    break;
+                raw += count;
+            }
+            fz_drop_stream(ctx_, stream);
+            stream = nullptr;
+            // MuPDF decodes as it reads, so the read ends as soon as the data passes the limit.
+            if (raw <= rawLimit) {
+                stream = pdf_open_stream(ctx_, blob);
+                data = fz_new_buffer(ctx_, 4096);
+            }
+            size_t total = 0;
+            while (stream) {
                 const size_t count = fz_read(ctx_, stream, chunk, sizeof chunk);
                 // MuPDF can turn a decoding error into the end of the stream.
                 if (stream->error || count > limit - total) {

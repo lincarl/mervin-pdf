@@ -63,6 +63,11 @@ bool parseMeasurements(const QByteArray &json, MeasureDoc *out);
 // filter's parameters can make it allocate memory up front and chained Flate stages can
 // spend time without passing this limit. They stop once the decoded data passes it.
 inline constexpr qsizetype kMaxMeasurementBlobBytes = 16 * 1024 * 1024;
+// The most encoded bytes such a blob may hold. zlib, which writes Mervin's blob, adds at
+// most about 5 KiB to 16 MiB of input (its deflateBound), so 64 KiB more fits every blob
+// Mervin writes within the decoded limit. A stream padded with empty Flate blocks, which
+// decode to nothing, is refused without reading it in full.
+inline constexpr qsizetype kMaxMeasurementBlobRawBytes = kMaxMeasurementBlobBytes + 64 * 1024;
 
 // A measurement paired with everything the PDF emitter needs: its page-point
 // geometry, the page transform that lands it in PDF user space, and the

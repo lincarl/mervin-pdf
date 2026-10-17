@@ -1332,14 +1332,19 @@ predictor's `/Columns`, size its buffers before any data is read, and chained Fl
 stages can keep a core busy for a long time without producing output. Both also refuse
 `/F` and `/DP`, MuPDF's abbreviations for `/Filter` and `/DecodeParms`, which qpdf
 ignores. Both stop once the decoded data passes 16 MiB (`kMaxMeasurementBlobBytes`),
-since neither library limits Flate output by default. Both also treat a warning during
+since neither library limits Flate output by default. Empty Flate blocks decode to
+nothing, so a stream can hold far more encoded data than it decodes to. Before decoding,
+both readers count the encoded bytes in a pass that keeps none of them, and refuse a
+blob with more than 16 MiB and 64 KiB (`kMaxMeasurementBlobRawBytes`), which leaves room
+for Flate's own overhead. The pass counts the bytes each library reads rather than
+trusting `/Length`, and stops just past the limit. Both also treat a warning during
 the decode as a failure, because MuPDF and qpdf return what they could decode from a
 Flate stream with a bad checksum or missing data and only warn. The MuPDF reader flushes
 pending warnings and sets a warning callback on the document's own `fz_context` for the
 read, then restores the previous one. The qpdf reader compares the owning QPDF's
 `numWarnings()` before and after. qpdf accepts a wrong Flate checksum without any
-warning, as other readers do, so the qpdf reader also compares the stream's last four
-raw bytes with the Adler-32 of the decoded data. A refused blob opens as no
+warning, as other readers do, so the qpdf reader keeps the last four encoded bytes from
+the counting pass and compares them with the Adler-32 of the decoded data. A refused blob opens as no
 measurements and fails page operations with Invalid measurement metadata. The open-time
 reader also accepts a blob stored as a string up to the same limit, which page
 operations refuse as invalid; Mervin never writes one. Every write of the blob goes
