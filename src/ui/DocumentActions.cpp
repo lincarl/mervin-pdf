@@ -1676,10 +1676,9 @@ void MainWindow::finishPagesJob(TabPage *tab, const std::shared_ptr<PagesJob> &r
         if (!result->source.probe.password.isEmpty())
             page->setPassword(result->source.probe.password);
         statusBar()->showMessage(mervin::ExtractPlan::doneText(result->output), 5000);
+        // Both modes keep the source's encryption, so the password that read it opens the copy.
         if (result->choices->openWhenDone && !hiddenToTray_)
-            openFile(result->output.path, false, -1, true,
-                result->output.mode == mervin::ExtractPlan::Mode::Delete
-                    ? result->source.probe.password : QString());
+            openFile(result->output.path, false, -1, true, result->source.probe.password);
         return;
     }
     if (hiddenToTray_) {
@@ -1988,7 +1987,7 @@ void MainWindow::deliverMergeDialog(TabPage *tab, const std::shared_ptr<MergeReq
         }
         if (result->status == PageOps::Status::Ok) {
             if (!current->hiddenToTray_)
-                current->offerToOpen(request->output);
+                current->offerToOpen(request->output, request->plan.resultPassword());
         } else {
             current->showMergeDialog(page, request, result);
         }

@@ -725,6 +725,25 @@ encryption.
 `QpdfService` inspects and changes encryption and permission settings. These services
 write new files and do not share live MuPDF document handles with the viewer.
 
+Rotate and Delete write the source document again, and qpdf keeps its encryption.
+Extract, Split and Merge build each output from `emptyPDF()`, which has none, so
+`PageOps` gives the writer the source's encryption
+(`QPDFWriter::copyEncryptionParameters`) when every output page comes from one opened
+source. That covers every Extract and Split output, and a merge whose rows all name
+one path. The copy keeps the source's password and permission entries and its first
+/ID, on which R2-R4 keys depend, so the same passwords open it and its flags stay.
+qpdf writes every V4 copy with AES, so a V4 RC4 source, which Mervin's RC4-128 option
+writes, gives an AES-128 copy, as it does for Rotate and Delete. A revision 3 RC4
+source keeps RC4. When qpdf keeps or copies encryption, it takes the key length from
+/Length, which V4 and V5 files may omit. Before Rotate, Delete and each encrypted
+copy, `setKeyLength` in PageOps.cpp therefore sets that entry, in memory, to the
+length qpdf read the source with. A merge of several files writes no encryption.
+`PageOps::probe` reports whether a file is encrypted, including a file with only an
+owner password, and `MergePlan::losesEncryption` tells the Merge dialog when to say
+that the result will not be encrypted. The window opens an Extract or Delete result,
+or a one-file merge (`MergePlan::resultPassword`), with the password that read its
+source.
+
 Rotate Pages, Split, accepted Merge plans and Security run as their tab's operation
 (`TabPage::startOperation`), so only that tab waits for the file. Page tool prompts
 and file dialogs run first, as before.

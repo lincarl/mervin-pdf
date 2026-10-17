@@ -2637,6 +2637,11 @@ Deschideți Setările sistemului dvs. → Aplicații implicite (sau faceți clic
         <translation>Îndepărtați</translation>
     </message>
     <message>
+        <source>The merged file will not be encrypted.</source>
+        <extracomment>Shown below the merge result when the files include an encrypted one, with an open password or only permission restrictions, and more than one file is merged. The new PDF then has no password and no permission restrictions.</extracomment>
+        <translation>Fișierul îmbinat nu va fi criptat.</translation>
+    </message>
+    <message>
         <source>Save as:</source>
         <translation>Salvați ca:</translation>
     </message>

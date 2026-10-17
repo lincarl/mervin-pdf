@@ -249,11 +249,20 @@ and measurements are not included; their window says so when the open document h
 any, including edits kept while the document was unloaded. The
 password typed to open an encrypted document is remembered for that tab, in memory
 only, and reused by Extract, Delete, the other page operations, Save edits, Security
-and Merge PDFs, so they do not ask again. Opening a copy written by Rotate, Delete,
-Save as copy or Export with measurements, which keeps that encryption, reuses it too.
-If it no longer opens the file, Extract and Delete ask inside their window, Merge PDFs
-marks the document Locked, and the other operations prompt. Other encrypted files
-cannot be added to a merge plan.
+and Merge PDFs, so they do not ask again. Rotate, Delete, Extract and Split write
+copies that keep the document's encryption, with the same passwords and permission
+flags, and so does Merge PDFs when every row comes from the same file. A copy of a
+document encrypted with Mervin's RC4-128 option uses AES-128 instead. When Mervin
+opens such a copy after writing it, or a copy written by Save as copy or Export with
+measurements, which keep that encryption too, it reuses the password. If the
+remembered password no longer opens the file, Extract and Delete ask inside their
+window, Merge PDFs marks the document Locked, and the other operations prompt.
+
+Merge PDFs reads added files without a password, so a file that needs an open
+password is marked Locked and cannot be merged. A file with only an owner password
+opens without one and can be merged. A merge of several files is not encrypted and
+drops the files' permission restrictions. When one of its files is encrypted, the
+window says "The merged file will not be encrypted."
 
 Mervin can also inspect PDF encryption, remove encryption or owner restrictions,
 and create encrypted copies using AES-256, AES-128, or legacy RC4-128. Permission

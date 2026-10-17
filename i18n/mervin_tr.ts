@@ -2617,6 +2617,11 @@ Sisteminizin Ayarlar → Varsayılan Uygulamalar&apos;ı açın (veya bir PDF&ap
         <translation>Kaldır</translation>
     </message>
     <message>
+        <source>The merged file will not be encrypted.</source>
+        <extracomment>Shown below the merge result when the files include an encrypted one, with an open password or only permission restrictions, and more than one file is merged. The new PDF then has no password and no permission restrictions.</extracomment>
+        <translation>Birleştirilen dosya şifrelenmeyecek.</translation>
+    </message>
+    <message>
         <source>Save as:</source>
         <translation>Farklı kaydet:</translation>
     </message>

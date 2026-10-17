@@ -2617,6 +2617,11 @@ Buka Pengaturan sistem Anda → Aplikasi Default (atau klik kanan PDF → Buka D
         <translation>Hapus</translation>
     </message>
     <message>
+        <source>The merged file will not be encrypted.</source>
+        <extracomment>Shown below the merge result when the files include an encrypted one, with an open password or only permission restrictions, and more than one file is merged. The new PDF then has no password and no permission restrictions.</extracomment>
+        <translation>Berkas yang digabungkan tidak akan dienkripsi.</translation>
+    </message>
+    <message>
         <source>Save as:</source>
         <translation>Simpan sebagai:</translation>
     </message>

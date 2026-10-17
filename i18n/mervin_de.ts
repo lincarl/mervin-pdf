@@ -2627,6 +2627,11 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>Entfernen</translation>
     </message>
     <message>
+        <source>The merged file will not be encrypted.</source>
+        <extracomment>Shown below the merge result when the files include an encrypted one, with an open password or only permission restrictions, and more than one file is merged. The new PDF then has no password and no permission restrictions.</extracomment>
+        <translation>Die zusammengeführte Datei wird nicht verschlüsselt.</translation>
+    </message>
+    <message>
         <source>Save as:</source>
         <translation>Speichern unter:</translation>
     </message>

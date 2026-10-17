@@ -1083,6 +1083,15 @@ void TstTranslationLayout::merge()
     dialog.addPaths({plain_});
     QTRY_VERIFY(!dialog.reading());
     inspect(dialog, QStringLiteral("Merge populated documents"));
+    {
+        // An encrypted document merged with another file shows the encryption note.
+        mervin::MergeDialog mixed(encrypted_, 12, QStringLiteral("secret"));
+        mixed.addPaths({plain_});
+        QTRY_VERIFY(!mixed.reading());
+        inspect(mixed, QStringLiteral("Merge encrypted and plain documents"));
+        const auto *note = mixed.findChild<QLabel *>(QStringLiteral("mergeEncryptionNote"));
+        QVERIFY(note && note->isVisible());
+    }
     for (const auto conflict : {mervin::MergeDialog::Conflict::Changed,
                                 mervin::MergeDialog::Conflict::CheckFailed}) {
         const QString output = profile_.filePath(QStringLiteral("merge-consent-output.pdf"));

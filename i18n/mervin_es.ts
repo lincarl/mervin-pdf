@@ -2627,6 +2627,11 @@ Abra la Configuración de su sistema → Aplicaciones predeterminadas (o haga cl
         <translation>Eliminar</translation>
     </message>
     <message>
+        <source>The merged file will not be encrypted.</source>
+        <extracomment>Shown below the merge result when the files include an encrypted one, with an open password or only permission restrictions, and more than one file is merged. The new PDF then has no password and no permission restrictions.</extracomment>
+        <translation>El archivo combinado no estará cifrado.</translation>
+    </message>
+    <message>
         <source>Save as:</source>
         <translation>Guardar como:</translation>
     </message>

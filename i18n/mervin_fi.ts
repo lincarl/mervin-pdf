@@ -2627,6 +2627,11 @@ Avaa järjestelmäsi Asetukset → Oletussovellukset (tai napsauta PDF-tiedostoa
         <translation>Poista</translation>
     </message>
     <message>
+        <source>The merged file will not be encrypted.</source>
+        <extracomment>Shown below the merge result when the files include an encrypted one, with an open password or only permission restrictions, and more than one file is merged. The new PDF then has no password and no permission restrictions.</extracomment>
+        <translation>Yhdistettyä tiedostoa ei salata.</translation>
+    </message>
+    <message>
         <source>Save as:</source>
         <translation>Tallenna nimellä:</translation>
     </message>

@@ -2627,6 +2627,11 @@ Open de instellingen van uw systeem → Standaardtoepassingen (of klik met de re
         <translation>Verwijderen</translation>
     </message>
     <message>
+        <source>The merged file will not be encrypted.</source>
+        <extracomment>Shown below the merge result when the files include an encrypted one, with an open password or only permission restrictions, and more than one file is merged. The new PDF then has no password and no permission restrictions.</extracomment>
+        <translation>Het samengevoegde bestand wordt niet gecodeerd.</translation>
+    </message>
+    <message>
         <source>Save as:</source>
         <translation>Opslaan als:</translation>
     </message>

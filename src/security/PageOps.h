@@ -20,6 +20,12 @@ namespace mervin {
 // (processReportedFile), and each output goes through AtomicPdfWriter, so inside a
 // job::Scope a stopped operation opens and replaces nothing more. A split stopped
 // part way keeps the files it wrote before.
+//
+// Every output keeps the source's encryption, its passwords and permission flags,
+// when all its pages come from one source: Rotate, Delete, Extract, each Split part,
+// and a merge whose inputs all name one path. A merge of several files is not
+// encrypted. qpdf writes V4 copies with AES, so a V4 RC4 source, such as Mervin's
+// RC4-128 option writes, gives AES-128.
 class PageOps
 {
     Q_DECLARE_TR_FUNCTIONS(mervin::PageOps)
@@ -34,9 +40,11 @@ public:
     // from "this file is missing or damaged" - which pageCount()'s single -1
     // cannot express. *count is written only on Ok. Reading with the same library
     // that will do the writing is deliberate: whatever this accepts, merge() can
-    // then actually read.
+    // then actually read. *encrypted, also written only on Ok, says whether the file
+    // is encrypted, which includes a file with only an owner password that opens
+    // without one.
     static Status probe(const QString &path, int *count, const QString &password = QString(),
-                        QString *error = nullptr);
+                        QString *error = nullptr, bool *encrypted = nullptr);
 
     // Write a copy with the given pages removed.
     static Status deletePages(const QString &inPath, const QString &outPath,
@@ -64,7 +72,8 @@ public:
     // Concatenate selected pages in input order (one input performs extraction). Reject invalid
     // page indices to avoid silently shortening output. On failure, failedIndex identifies the
     // unreadable input, or -1 for errors such as output writes. Optional mayCommit
-    // runs under the output lock after flushing and before commit admission.
+    // runs under the output lock after flushing and before commit admission. The
+    // output is encrypted like its source when every input names the same path.
     static Status merge(const QList<MergeInput> &inputs, const QString &outPath,
                         QString *error = nullptr, int *failedIndex = nullptr,
                         const std::function<bool()> &mayCommit = {});

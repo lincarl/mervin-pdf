@@ -89,6 +89,7 @@ private slots:
     void seededPlainDocumentIsReadyToMerge();
     void seededEncryptedDocumentIsBlockedUpFront();
     void seededEncryptedDocumentOpensWithTheTabPassword();
+    void mixedPlanSaysTheResultIsNotEncrypted();
     void focusingARowEditorMakesThatRowCurrent();
     void outputFieldCanBeEmptied();
     void badRangeBlocksTheMerge();
@@ -246,6 +247,55 @@ void TstMergeDialog::seededEncryptedDocumentOpensWithTheTabPassword()
     QCOMPARE(d.inputs().size(), 1);
     QCOMPARE(d.inputs().at(0).pages.size(), 6);
     QCOMPARE(d.inputs().at(0).password, QStringLiteral("secret"));
+}
+
+/// Says when an encrypted row joins another file, as only a merge of one file keeps encryption.
+void TstMergeDialog::mixedPlanSaysTheResultIsNotEncrypted()
+{
+    const QString notice = QStringLiteral("The merged file will not be encrypted.");
+    const auto note = [](MergeDialog &d) {
+        const auto *label = d.findChild<QLabel *>(QStringLiteral("mergeEncryptionNote"));
+        return label && label->isVisible() ? label->text() : QString();
+    };
+    const auto click = [](MergeDialog &d, const QString &text) {
+        for (auto *button : d.findChildren<QPushButton *>())
+            if (button->text() == text)
+                button->click();
+    };
+
+    MergeDialog d(encrypted_, 6, QStringLiteral("secret"));
+    prepare(d);
+    QCOMPARE(note(d), QString());
+    list(d)->setCurrentRow(0);
+    click(d, QStringLiteral("Duplicate")); // the same file twice keeps its encryption
+    QCOMPARE(list(d)->count(), 2);
+    QCOMPARE(note(d), QString());
+    d.addPaths({plain_});
+    settle(&d);
+    QCOMPARE(note(d), notice);
+    QVERIFY(mergeBtn(d)->isEnabled());
+    list(d)->setCurrentRow(2);
+    click(d, QStringLiteral("Remove"));
+    QCOMPARE(list(d)->count(), 2);
+    QCOMPARE(note(d), QString());
+
+    // A file with only an owner password opens without one, and loses its restrictions.
+    const QString restricted = dir_.filePath(QStringLiteral("restricted.pdf"));
+    QpdfService::Permissions permissions;
+    permissions.canPrint = false;
+    QCOMPARE(QpdfService().encrypt(plain_, restricted, QString(), QString(),
+                                   QStringLiteral("owner"), QpdfService::Algorithm::AES256,
+                                   permissions, nullptr),
+             QpdfService::Status::Ok);
+    MergeDialog plain(plain_, 6);
+    prepare(plain);
+    plain.addPaths({plain_});
+    settle(&plain);
+    QCOMPARE(note(plain), QString());
+    plain.addPaths({restricted});
+    settle(&plain);
+    QCOMPARE(note(plain), notice);
+    QVERIFY(mergeBtn(plain)->isEnabled());
 }
 
 /// Checks that a settled range editor selects the row its toolbar actions affect.

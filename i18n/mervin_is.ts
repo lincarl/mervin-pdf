@@ -2627,6 +2627,11 @@ Opnaðu stillingar kerfisins þíns → Sjálfgefin forrit (eða hægrismelltu �
         <translation>Fjarlægja</translation>
     </message>
     <message>
+        <source>The merged file will not be encrypted.</source>
+        <extracomment>Shown below the merge result when the files include an encrypted one, with an open password or only permission restrictions, and more than one file is merged. The new PDF then has no password and no permission restrictions.</extracomment>
+        <translation>Sameinaða skráin verður ekki dulkóðuð.</translation>
+    </message>
+    <message>
         <source>Save as:</source>
         <translation>Vista sem:</translation>
     </message>

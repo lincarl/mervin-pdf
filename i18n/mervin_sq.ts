@@ -2627,6 +2627,11 @@ Hapni Cilësimet e sistemit tuaj → Aplikacionet e parazgjedhura (ose kliko me 
         <translation>Hiq</translation>
     </message>
     <message>
+        <source>The merged file will not be encrypted.</source>
+        <extracomment>Shown below the merge result when the files include an encrypted one, with an open password or only permission restrictions, and more than one file is merged. The new PDF then has no password and no permission restrictions.</extracomment>
+        <translation>Skedari i bashkuar nuk do të jetë i koduar.</translation>
+    </message>
+    <message>
         <source>Save as:</source>
         <translation>Ruaj si:</translation>
     </message>

@@ -74,7 +74,7 @@ int PageOps::pageCount(const QString &path, const QString &password)
 }
 
 PageOps::Status PageOps::probe(const QString &path, int *count, const QString &password,
-                               QString *error)
+                               QString *error, bool *encrypted)
 {
     QPDF q;
     const Status st = open(q, path, password, error);
@@ -83,6 +83,8 @@ PageOps::Status PageOps::probe(const QString &path, int *count, const QString &p
     try {
         if (count)
             *count = static_cast<int>(QPDFPageDocumentHelper(q).getAllPages().size());
+        if (encrypted)
+            *encrypted = q.isEncrypted();
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)
@@ -90,6 +92,23 @@ PageOps::Status PageOps::probe(const QString &path, int *count, const QString &p
         return Status::Failed;
     }
 }
+
+namespace {
+
+/// Sets the source's /Length to the key length qpdf opened it with, in memory only.
+/// qpdf's writer takes the key length from /Length when it keeps or copies encryption,
+/// and V4 and V5 files may omit it. Call it before writing an output encrypted like
+/// `source`. Does nothing for an unencrypted source.
+void setKeyLength(QPDF &source)
+{
+    if (!source.isEncrypted())
+        return;
+    source.getTrailer().getKey("/Encrypt").replaceKey(
+        "/Length", QPDFObjectHandle::newInteger(
+                       static_cast<long long>(source.getEncryptionKey().size()) * 8));
+}
+
+} // namespace
 
 PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPath,
                                      const QList<int> &pages, const QString &password,
@@ -117,6 +136,7 @@ PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPa
         MeasureDoc mapped;
         measurementPages::append(mapped, measurementPages::read(q), kept, 0);
         measurementPages::write(q, mapped);
+        setKeyLength(q);
         AtomicPdfWriter output(q, outPath);
         output.write();
         return Status::Ok;
@@ -180,6 +200,7 @@ PageOps::Status PageOps::rotatePages(const QString &inPath, const QString &outPa
                         std::swap(scale.mmPerPointX, scale.mmPerPointY);
         }
         measurementPages::write(q, data);
+        setKeyLength(q);
         AtomicPdfWriter output(q, outPath);
         output.write();
         return Status::Ok;
@@ -189,6 +210,20 @@ PageOps::Status PageOps::rotatePages(const QString &inPath, const QString &outPa
         return Status::Failed;
     }
 }
+
+namespace {
+
+/// Encrypts `output` like `source`, with the same passwords and permission flags.
+/// Leaves it unencrypted when the source is.
+void copyEncryption(AtomicPdfWriter &output, QPDF &source)
+{
+    if (!source.isEncrypted())
+        return;
+    setKeyLength(source);
+    output.options().copyEncryptionParameters(source);
+}
+
+} // namespace
 
 /// Combines the selected pages and validates optional destination consent before publication.
 PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &outPath,
@@ -255,6 +290,9 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
         measurementPages::write(out, mergedMeasurements);
 
         AtomicPdfWriter output(out, outPath);
+        // Pages of one file keep its encryption. A merge of several files has none.
+        if (sources.size() == 1)
+            copyEncryption(output, *sources.front());
         output.write(mayCommit);
         return Status::Ok;
     } catch (const std::exception &e) {
@@ -304,6 +342,7 @@ PageOps::Status PageOps::split(const QString &inPath, const QString &outDir, con
             const QString &path = paths.at(i);
             // A stopped job throws here, before it takes the next file.
             AtomicPdfWriter output(out, path);
+            copyEncryption(output, q);
             output.write([&mayCommit, &path] { return !mayCommit || mayCommit(path); });
             if (outFiles)
                 outFiles->append(path);

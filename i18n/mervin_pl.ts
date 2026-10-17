@@ -2637,6 +2637,11 @@ Otwórz Ustawienia systemu → Aplikacje domyślne (lub kliknij plik PDF prawym 
         <translation>Usuń</translation>
     </message>
     <message>
+        <source>The merged file will not be encrypted.</source>
+        <extracomment>Shown below the merge result when the files include an encrypted one, with an open password or only permission restrictions, and more than one file is merged. The new PDF then has no password and no permission restrictions.</extracomment>
+        <translation>Scalony plik nie będzie zaszyfrowany.</translation>
+    </message>
+    <message>
         <source>Save as:</source>
         <translation>Zapisz jako:</translation>
     </message>
