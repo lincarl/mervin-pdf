@@ -7,6 +7,7 @@
 #include <QThread>
 
 #include <algorithm>
+#include <atomic>
 
 #ifdef Q_OS_WIN
 #  define WIN32_LEAN_AND_MEAN
@@ -61,7 +62,7 @@ QByteArray tokenUser(HANDLE process)
 } // namespace
 
 #ifdef Q_OS_UNIX
-std::optional<uint> peerUid(const QLocalSocket &socket)
+std::optional<QByteArray> peerUser(const QLocalSocket &socket)
 {
     const int fd = int(socket.socketDescriptor());
     if (fd < 0)
@@ -71,48 +72,64 @@ std::optional<uint> peerUid(const QLocalSocket &socket)
     socklen_t size = sizeof(cred);
     if (::getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &size) != 0 || size != sizeof(cred))
         return std::nullopt;
-    return uint(cred.uid);
+    return QByteArray::number(uint(cred.uid));
 #  else
     uid_t uid = 0;
     gid_t gid = 0;
     if (::getpeereid(fd, &uid, &gid) != 0)
         return std::nullopt;
-    return uint(uid);
+    return QByteArray::number(uint(uid));
 #  endif
 }
 
-bool peerIsCurrentUser(const QLocalSocket &socket, const UidLookup &lookup)
+QByteArray currentUser()
 {
-    const std::optional<uint> uid = lookup(socket);
-    return uid && *uid == uint(::getuid());
+    return QByteArray::number(uint(::getuid()));
 }
 #else
-bool peerIsCurrentUser(const QLocalSocket &socket)
+std::optional<QByteArray> peerUser(const QLocalSocket &socket)
 {
     // The pipe namespace is shared by every session on the machine, so the name alone
     // does not tell whose process created it.
     ULONG pid = 0;
     if (!GetNamedPipeServerProcessId(reinterpret_cast<HANDLE>(socket.socketDescriptor()), &pid))
-        return false;
+        return std::nullopt;
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     if (!process)
-        return false;
-    const QByteArray peer = tokenUser(process);
+        return std::nullopt;
+    const QByteArray sid = tokenUser(process);
     CloseHandle(process);
-    return !peer.isEmpty() && peer == tokenUser(GetCurrentProcess());
+    if (sid.isEmpty())
+        return std::nullopt;
+    return sid;
+}
+
+QByteArray currentUser()
+{
+    return tokenUser(GetCurrentProcess());
 }
 #endif
 
+bool peerIsCurrentUser(const QLocalSocket &socket, const UserLookup &lookup)
+{
+    const std::optional<QByteArray> peer = lookup(socket);
+    return peer && !peer->isEmpty() && *peer == currentUser();
+}
+
 Handoff handOff(const QString &server, const Message &open, QDeadlineTimer deadline,
-                const PeerCheck &check)
+                const UserLookup &lookup)
 {
     QLocalSocket sock;
     sock.connectToServer(server);
     if (!sock.waitForConnected(std::min(kConnectMs, msLeft(deadline))))
         return Handoff::NoPrimary;
-    if (!(check ? check(sock) : peerIsCurrentUser(sock))) {
-        qWarning("MervinPDF: the process at '%s' belongs to another user; not sending it files.",
-                 qUtf8Printable(server));
+    if (!peerIsCurrentUser(sock, lookup)) {
+        // Once per process, as a launch tries again while it waits.
+        static std::atomic<bool> warned = false;
+        if (!warned.exchange(true))
+            qWarning("MervinPDF: the process at '%s' belongs to another user; not sending it "
+                     "files.",
+                     qUtf8Printable(server));
         return Handoff::NoPrimary;
     }
 
@@ -145,17 +162,21 @@ Handoff handOff(const QString &server, const Message &open, QDeadlineTimer deadl
         if (overflow)
             return Handoff::Busy;
     }
-    // An acknowledgement that arrived with the end of the connection is still buffered.
-    // Only read when there is something, as Unix closes the inner socket on that end.
+    // One last look for an acknowledgement that came in as the deadline passed. Once
+    // this launch closes, a primary that reads the open later drops it.
+    if (sock.state() == QLocalSocket::ConnectedState)
+        sock.waitForReadyRead(0);
+    // Only read when there is something, as Unix closes the inner socket once the
+    // connection has ended.
     if (sock.bytesAvailable() > 0 && acknowledged())
         return Handoff::Delivered;
-    // A primary that closes the connection without an acknowledgement did not take the
-    // open: it stopped answering because it is quitting.
+    // A primary closes a connection without an acknowledgement only while it quits, and
+    // then it did not take the open.
     return sock.state() == QLocalSocket::ConnectedState ? Handoff::Busy : Handoff::NoPrimary;
 }
 
 Launch claimOrHandOff(SingleInstanceServer &server, const Message &open, int waitMs,
-                      const QString &name, const PeerCheck &check)
+                      const QString &name, const UserLookup &lookup)
 {
     const QDeadlineTimer deadline(waitMs);
     const QString endpoint = instancePaths(name).server;
@@ -165,7 +186,8 @@ Launch claimOrHandOff(SingleInstanceServer &server, const Message &open, int wai
             return Launch::Primary;
         // A failed start does not get better by waiting, but a primary may still answer.
         const bool lockHeld = started == SingleInstanceServer::Start::Running;
-        switch (endpoint.isEmpty() ? Handoff::NoPrimary : handOff(endpoint, open, deadline, check)) {
+        switch (endpoint.isEmpty() ? Handoff::NoPrimary
+                                   : handOff(endpoint, open, deadline, lookup)) {
         case Handoff::Delivered:
             return Launch::Delivered;
         case Handoff::Busy:
@@ -173,8 +195,11 @@ Launch claimOrHandOff(SingleInstanceServer &server, const Message &open, int wai
         case Handoff::NoPrimary:
             break;
         }
+        // Without a lock holder nothing owns the session and the shared files.
+        if (!lockHeld)
+            return Launch::Uncoordinated;
         // The lock holder is starting, or quitting and waiting for its last writes.
-        if (!lockHeld || deadline.hasExpired())
+        if (deadline.hasExpired())
             return Launch::Standalone;
         QThread::msleep(kRetryMs);
     }

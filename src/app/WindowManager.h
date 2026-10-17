@@ -51,8 +51,9 @@ class WindowManager : public QObject, public QAbstractNativeEventFilter
 
 public:
     // Initializes shared services and Windows session hooks before creating any window.
-    // Without `ownsStores` (a standalone copy beside a primary that did not answer) it
-    // reads Recent and the view states but writes neither of them nor the session.
+    // Without `ownsStores` (a standalone copy beside a live copy that holds the lock but
+    // did not take its files) it reads Recent and the view states but writes neither of
+    // them nor the session.
     explicit WindowManager(bool ownsStores = true);
     // Releases windows and skips the ordinary close and write budget during session end.
     ~WindowManager() override;

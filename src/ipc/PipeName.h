@@ -16,11 +16,21 @@ struct InstancePaths
 };
 
 // The lock file and endpoint of the group `name`, hostPipeName() when empty. On Unix
-// both are in $XDG_RUNTIME_DIR, which only this user can open, and `server` is an
-// absolute socket path. Without a usable runtime directory they are in a private
-// folder in the cache directory, never in /tmp, and both are empty when that folder
-// cannot be made private. On Windows the lock is in %TEMP% and `server` is the pipe
-// name.
+// both are in the first of these folders that only this user can open and whose socket
+// path fits into sockaddr_un, and `server` is an absolute socket path:
+// - $XDG_RUNTIME_DIR, if Qt accepts it
+// - mervin-pdf/run-<host> in the cache folder, made private, one per machine so that a
+//   home folder on a network share does not mix machines
+// - mervin-pdf-<uid> in the temp folder, which must already be this user's 0700 folder
+//   or be made one
+// Both are empty when none of them qualifies. On Windows the lock is in %TEMP% and
+// `server` is the pipe name.
 InstancePaths instancePaths(const QString &name = QString());
+
+#ifdef Q_OS_UNIX
+// Whether `dir` is a folder, not a link, that `uid` owns and that only its owner can
+// open (mode 0700). Public for tests.
+bool isPrivateDir(const QString &dir, uint uid);
+#endif
 
 } // namespace mervin::ipc

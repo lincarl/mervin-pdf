@@ -3,6 +3,7 @@
 #include "io/AppFiles.h"
 #include "ipc/Message.h"
 
+#include <QByteArray>
 #include <QDeadlineTimer>
 #include <QString>
 
@@ -21,23 +22,20 @@ class SingleInstanceServer;
 // its teardown.
 constexpr int kLaunchWaitMs = appfiles::kExitWaitMs + 5000;
 
-// Whether the process at the other end of a connected socket runs as this user.
-using PeerCheck = std::function<bool(const QLocalSocket &)>;
+// Who runs the process at the other end of a connected local socket. On Unix this is
+// the uid the kernel recorded when that process listened, on Windows the user SID in
+// the pipe server process's token. Empty when the system does not say.
+std::optional<QByteArray> peerUser(const QLocalSocket &socket);
 
-#ifdef Q_OS_UNIX
-// The uid of the process at the other end of a connected local socket, as the kernel
-// recorded it when that process listened. Empty when the kernel does not say.
-std::optional<uint> peerUid(const QLocalSocket &socket);
+// The same identity for this process.
+QByteArray currentUser();
 
-// Looks up a peer's uid. Tests replace peerUid with one that names another user.
-using UidLookup = std::function<std::optional<uint>(const QLocalSocket &)>;
+// Finds who runs a socket's peer. Tests replace peerUser with one that names another
+// user, so they run the same check as a real launch.
+using UserLookup = std::function<std::optional<QByteArray>(const QLocalSocket &)>;
 
-// True when `lookup` gives this process's uid for the peer.
-bool peerIsCurrentUser(const QLocalSocket &socket, const UidLookup &lookup = peerUid);
-#else
-// True when the pipe server's process token has this process's user SID.
-bool peerIsCurrentUser(const QLocalSocket &socket);
-#endif
+// True when `lookup` names this process's user for the peer.
+bool peerIsCurrentUser(const QLocalSocket &socket, const UserLookup &lookup = peerUser);
 
 // How offering an open to the running primary ended.
 enum class Handoff {
@@ -49,24 +47,25 @@ enum class Handoff {
 
 // Offers `open` over one connection to the endpoint `server` and waits until
 // `deadline` for its acknowledgement. It writes the open at most once, and nothing
-// unless `check` (peerIsCurrentUser when empty) accepts the peer. `deadline` must
-// not be forever.
+// unless `lookup` names this user for the peer. `deadline` must not be forever.
 Handoff handOff(const QString &server, const Message &open, QDeadlineTimer deadline,
-                const PeerCheck &check = {});
+                const UserLookup &lookup = peerUser);
 
 // What a launch does after trying to reach its single-instance group.
 enum class Launch {
-    Primary,    // `server` started; this process is the primary
-    Delivered,  // the running primary took the open
-    Standalone, // no primary could be reached in time
+    Primary,       // `server` started; this process is the primary
+    Delivered,     // the running primary took the open
+    Standalone,    // a live process holds the lock but did not take the open in time
+    Uncoordinated, // no lock or endpoint could be made and no primary answered
 };
 
 // Starts `server` for the group `name` (hostPipeName() when empty), or hands `open`
 // to that group's primary. While a live process holds the lock, as a starting or
 // quitting primary does, it tries both again until `waitMs` has passed. An open that
-// a primary has without acknowledging it is not sent again, as that primary may still
-// show it.
+// a primary accepted over a connection is not written again. If that primary reads it
+// only after this launch gave up, it drops it, because the launch then opens the files
+// itself.
 Launch claimOrHandOff(SingleInstanceServer &server, const Message &open, int waitMs,
-                      const QString &name = QString(), const PeerCheck &check = {});
+                      const QString &name = QString(), const UserLookup &lookup = peerUser);
 
 } // namespace mervin::ipc

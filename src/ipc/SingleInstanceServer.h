@@ -6,6 +6,7 @@
 #include <QMutex>
 #include <QObject>
 
+#include <functional>
 #include <memory>
 
 class QLockFile;
@@ -48,8 +49,14 @@ public:
     // acknowledged before remain for takeOpens().
     void stopListening();
 
-    // The opens acknowledged so far and not taken yet, oldest first.
+    // The opens acknowledged so far and not taken yet, oldest first. An Open from a
+    // launch that closed its connection before the server read it is dropped instead,
+    // as that launch opened its files in a copy of its own.
     QList<Message> takeOpens();
+
+    // For tests only: runs `work` on the server thread, which handles no connection
+    // until it returns. Does nothing unless the server is listening.
+    void runOnServerThreadForTests(std::function<void()> work);
 
 signals:
     // Opens are waiting for takeOpens(). Emitted on this object's thread. A receiver
@@ -64,6 +71,7 @@ private:
 
     std::unique_ptr<QLockFile> lock_; // single-instance guard
     std::unique_ptr<QThread> thread_; // runs the Listener while listening
+    Listener *listener_ = nullptr;    // lives on thread_, which deletes it
     QMutex opensMutex_;
     QList<Message> opens_; // guarded by opensMutex_
 };

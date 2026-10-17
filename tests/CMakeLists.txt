@@ -527,6 +527,15 @@ add_test(NAME tst_close_flow COMMAND tst_close_flow)
 set_tests_properties(tst_close_flow PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+qt_add_executable(tst_instance_handoff tst_instance_handoff.cpp)
+target_link_libraries(tst_instance_handoff PRIVATE mervin_app Qt6::Test)
+set_target_properties(tst_instance_handoff PROPERTIES WIN32_EXECUTABLE OFF)
+target_compile_definitions(tst_instance_handoff PRIVATE
+    MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
+add_test(NAME tst_instance_handoff COMMAND tst_instance_handoff)
+set_tests_properties(tst_instance_handoff PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 qt_add_executable(tst_close_restart tst_close_restart.cpp)
 target_link_libraries(tst_close_restart PRIVATE mervin_app Qt6::Test)
 set_target_properties(tst_close_restart PROPERTIES WIN32_EXECUTABLE OFF)

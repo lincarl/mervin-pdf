@@ -312,10 +312,16 @@ the lock file and the socket are in `$XDG_RUNTIME_DIR`, which only the user can
 open and which /tmp cleaners do not reach, and the group name hashes the uid instead
 of `$USER`. The socket is an absolute path, and both files have the sticky bit,
 which keeps them from the age-based cleanup that the XDG base directory spec allows
-there. Without a runtime directory that Qt accepts, they are in `mervin-pdf/run`
-with mode 0700 in the user's cache folder (`~/.cache` by default), never in /tmp.
-On Windows the lock is in the per-user %TEMP% and the endpoint is a named pipe. A
-Store copy and each `--profile` directory form groups of their own.
+there. Without a runtime directory that Qt accepts, or where the socket path would
+not fit into the 108 bytes of `sockaddr_un`, they are in `mervin-pdf/run-<host>` in
+the user's cache folder (`~/.cache` by default), made mode 0700. The host part keeps
+machines that share a home folder apart, as a lock that another machine holds never
+goes stale. If that path is too long too, or the folder cannot be made private, they
+are in `mervin-pdf-<uid>` in the temp folder. Anyone can create names there, so
+Mervin uses that folder only if it created it or it already is this user's folder,
+not a link, with mode 0700. With no usable folder there is no lock. On Windows the
+lock is in the per-user %TEMP% and the endpoint is a named pipe. A Store copy and
+each `--profile` directory form groups of their own.
 
 Subsequent launches send newline-delimited JSON containing file paths and open
 behavior, wait for an acknowledgement, and exit. A launch first checks that the
@@ -324,32 +330,40 @@ compares the uid from `SO_PEERCRED`, and Windows compares the user SID of the pi
 server's process token, as the pipe namespace is shared by the whole machine. The
 server runs its socket work on its own thread. It acknowledges each Open as soon as
 it decodes the frame and keeps the Open until the GUI thread takes it, so a primary
-that is still starting, or whose GUI thread waits for a profile folder that stopped
-answering, answers within milliseconds. The first-run window and then
-`WindowManager` take the waiting Opens, and each opens on a later event-loop turn,
-so a password or error dialog cannot make the sender time out.
+that is still starting, or whose GUI thread waits for a profile folder or a dialog,
+answers within milliseconds. The first-run window adds the files of waiting Opens to
+those of the first window. `WindowManager` then takes them and opens each on a later
+event-loop turn, as an earlier Open can show a nested password or error dialog.
 
 `ipc::claimOrHandOff()` makes the launch decision. `start()` tells a lock held by a
 live process apart from a lock or endpoint that cannot be made. While a live process
 holds the lock without answering, a launch tries to start and to hand off again for
 up to `ipc::kLaunchWaitMs` (10 s, the five-second exit wait plus a margin). An Open
 that a primary has taken over a connection without acknowledging it is never sent
-again. Once a quit is final, the primary closes its endpoint and keeps the lock
-until its exit wait is over, so a launch during that wait becomes the next primary
-and reads the last writes. On Linux `start()` connects to the socket before it
-removes it, so a lock file that something deleted while its primary runs does not
-make the next launch a second primary. The server closes its socket before it
-releases the lock.
+again. A launch that gives up closes its connection, and a server that reads an Open
+only after that drops it, so a primary that was stopped does not show the files of a
+launch that opened them itself. On Linux the frame waits in the socket and the
+server sees the end of the connection behind it. Qt's Windows pipes have no buffer,
+so the launch's write is still pending when it closes, and closing cancels it. The
+gap left is a launch whose deadline passes between the server's check and its
+acknowledgement, which is a matter of microseconds. Once a quit is final, the
+primary closes its endpoint and keeps the lock until its exit wait is over, so a
+launch during that wait becomes the next primary and reads the last writes. On Linux
+`start()` connects to the socket before it removes it, so a lock file that something
+deleted while its primary runs does not make the next launch a second primary. The
+server closes its socket before it releases the lock.
 
-If no primary answers in that time, as when the lock holder is stopped, or the lock
-or endpoint cannot be made, the launch opens its files in a standalone process. It
-shows no first-run window, restores no session, adopts no recovery copies, writes
-none of `recent.json`, `viewstate.json` and `session.json`, and has no updater. Its
-windows still save settings, such as their geometry. A primary that was only
-stopped reads the Open it was sent once it runs again and shows those files too. On
-Linux, copies built before these locations moved use names in /tmp, so a launch of
-a newer copy while an older one runs starts a second primary until the older one
-exits.
+If a live process holds the lock but no primary takes the Open in that time, as
+when the lock holder is stopped, the launch opens its files in a standalone process.
+It shows no first-run window, restores no session, adopts no recovery copies, writes
+none of `recent.json`, `viewstate.json` and `session.json`, and has no updater, as
+those belong to the lock holder. Its windows still save settings, such as their
+geometry. If the lock or endpoint cannot be made and nothing answers, nothing owns
+that state, so the launch runs the full UI without a server. There is then no
+single-instance coordination. Each later launch does the same, and those copies
+share the stores, last writer wins. On Linux, copies built before these locations
+moved use names in /tmp, so a launch of a newer copy while an older one runs starts
+a second primary until the older one exits.
 
 Session restoration creates the tab list but opens only the selected document. Other
 restored tabs load when selected.
@@ -405,15 +419,15 @@ copies, exports, printing, original replacement and reopening do not start a gra
 period by themselves.
 
 The callback closes snapshot admission and polls memory state without processing
-GUI events, showing dialogs or accessing files. The single-instance server keeps
-acknowledging launches on its own thread meanwhile. Their files wait with the other
-accepted opens and open after a cancellation, and are lost if the session ends. It
-uses a 3900 ms monotonic budget, leaving 100 ms within the four-second limit for
-returning. This bounds Mervin's wait, but an OS scheduling delay can still postpone
-the callback's return. It allows session end when snapshots settle or the deadline
-expires. Edits without a committed recovery manifest can be lost. Repeated queries
-reuse the answer. A native WM_ENDSESSION filter resets admission after cancellation
-and retains it after successful end.
+GUI events, showing dialogs or accessing files. It uses a 3900 ms monotonic budget,
+leaving 100 ms within the four-second limit for returning. This bounds Mervin's
+wait, but an OS scheduling delay can still postpone the callback's return. The
+callback allows session end when snapshots settle or the deadline expires. Edits
+without a committed recovery manifest can be lost. Repeated queries reuse the
+answer. The single-instance server keeps acknowledging launches on its own thread
+meanwhile. Their files wait with the other accepted opens and open after a
+cancellation, and are lost if the session ends. A native WM_ENDSESSION filter resets
+admission after cancellation and retains it after successful end.
 Queued tab changes and dialogs wait for that outcome too. Cancellation posts their
 resumption for the next GUI turn, after Qt has restored Windows input handling.
 The successful session path skips the normal five-second close/write budget,

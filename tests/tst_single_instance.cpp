@@ -13,6 +13,7 @@
 #include <QLocalSocket>
 #include <QLockFile>
 #include <QScopeGuard>
+#include <QSemaphore>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QThread>
@@ -113,12 +114,14 @@ private slots:
     void launchDeliversToRunningPrimary();
     void launchWaitsForQuittingPrimary();
     void busyPrimaryGetsOpenOnce();
+    void launchThatGaveUpIsNotOpened();
+    void peerCheck_data();
+    void peerCheck();
 #ifdef Q_OS_UNIX
     void filesLiveInRuntimeDir();
     void noRuntimeDirUsesPrivateCacheFolder();
-    void socketPathTooLongFails();
-    void peerCheck_data();
-    void peerCheck();
+    void tooLongPathFallsBack();
+    void tempFolderMustBePrivate();
     void deletedLockKeepsLivePrimary();
     void deadSocketIsReplaced();
 #endif
@@ -384,7 +387,9 @@ void TstSingleInstance::launchWaitsForQuittingPrimary()
     QCOMPARE(quitting->start(kTestPipe), Start::Started);
     quitting->stopListening();
 
+    std::atomic<bool> released = false;
     std::optional<Launch> result;
+    bool afterRelease = false;
     qint64 elapsed = -1;
     const std::unique_ptr<QThread> launch(QThread::create([&] {
         SingleInstanceServer next;
@@ -392,15 +397,56 @@ void TstSingleInstance::launchWaitsForQuittingPrimary()
         timer.start();
         result = mervin::ipc::claimOrHandOff(next, Message::open({QStringLiteral("b.pdf")}),
                                              5000, kTestPipe);
+        afterRelease = released;
         elapsed = timer.elapsed();
     }));
     launch->start();
     QThread::msleep(1000);
+    released = true;
     quitting.reset(); // the exit wait is over
     QVERIFY(launch->wait(10000));
     QCOMPARE(result, std::optional(Launch::Primary));
-    QVERIFY2(elapsed >= 900 && elapsed < 5000, qPrintable(QString::number(elapsed)));
+    QVERIFY2(afterRelease, "became the primary while the old one still held the lock");
+    QVERIFY2(elapsed < 5000, qPrintable(QString::number(elapsed)));
 }
+
+namespace {
+// A server on its own thread that accepts connections and counts the frames they bring,
+// but never acknowledges one, as a primary does whose GUI and server threads both hang.
+class SilentPeer
+{
+public:
+    explicit SilentPeer(const QString &endpoint)
+        : thread_(QThread::create([this, endpoint] {
+            QLocalServer server;
+            QObject::connect(&server, &QLocalServer::newConnection, &server, [&] {
+                while (QLocalSocket *socket = server.nextPendingConnection()) {
+                    ++connections;
+                    QObject::connect(socket, &QLocalSocket::readyRead, socket, [this, socket] {
+                        frames += int(socket->readAll().count('\n'));
+                    });
+                }
+            });
+            listening = server.listen(endpoint);
+            QEventLoop().exec();
+        }))
+    {
+        thread_->start();
+    }
+    ~SilentPeer()
+    {
+        thread_->quit();
+        thread_->wait();
+    }
+
+    std::atomic<bool> listening = false;
+    std::atomic<int> connections = 0;
+    std::atomic<int> frames = 0;
+
+private:
+    std::unique_ptr<QThread> thread_;
+};
+} // namespace
 
 // A primary that took the connection but never answers gets the open once, however
 // long the launch waits, and the launch then opens standalone.
@@ -410,8 +456,8 @@ void TstSingleInstance::busyPrimaryGetsOpenOnce()
     QLockFile lock(paths.lockFile);
     QVERIFY(lock.tryLock(0));
     QLocalServer::removeServer(paths.server);
-    QLocalServer silent;
-    QVERIFY(silent.listen(paths.server));
+    SilentPeer silent(paths.server);
+    QTRY_VERIFY(silent.listening);
 
     SingleInstanceServer launch;
     QElapsedTimer timer;
@@ -421,28 +467,110 @@ void TstSingleInstance::busyPrimaryGetsOpenOnce()
              Launch::Standalone);
     QVERIFY(timer.elapsed() >= 1400);
 
-    // This thread ran no events, so the server accepts the connections only now, one
-    // per event. Every connection the launch made counts, not only the first.
-    QTRY_VERIFY(silent.hasPendingConnections());
+    // Every connection the launch made counts, not only the first.
+    QTRY_COMPARE(silent.frames.load(), 1);
     QTest::qWait(200);
-    QList<QLocalSocket *> sockets;
-    while (QLocalSocket *socket = silent.nextPendingConnection())
-        sockets.append(socket);
-    QByteArray frames;
-    for (QLocalSocket *socket : std::as_const(sockets)) {
-        socket->waitForReadyRead(100);
-        frames += socket->readAll();
-    }
-    QCOMPARE(sockets.size(), 1);
-    QCOMPARE(frames.count('\n'), 1);
+    QCOMPARE(silent.connections.load(), 1);
+    QCOMPARE(silent.frames.load(), 1);
+}
+
+// A launch that gave up waiting opened its files in a copy of its own, so a primary that
+// reads its open only afterwards must not open the files as well.
+void TstSingleInstance::launchThatGaveUpIsNotOpened()
+{
+    SingleInstanceServer server;
+    QCOMPARE(server.start(kTestPipe), Start::Started);
+
+    // The server thread hangs, as in a stopped process.
+    QSemaphore held;
+    QSemaphore release;
+    server.runOnServerThreadForTests([&] {
+        held.release();
+        release.acquire();
+    });
+    QVERIFY(held.tryAcquire(1, 5000));
+    const Handoff gaveUp = mervin::ipc::handOff(
+        testEndpoint(), Message::open({QStringLiteral("gave-up.pdf")}), QDeadlineTimer(500));
+    release.release();
+    QCOMPARE(gaveUp, Handoff::Busy);
+    QCOMPARE(opensWithin(server, 500).size(), 0);
+
+    // A launch that still waits is served as before.
+    QCOMPARE(mervin::ipc::handOff(testEndpoint(), Message::open({QStringLiteral("waits.pdf")}),
+                                  QDeadlineTimer(2000)),
+             Handoff::Delivered);
+    const QList<Message> opens = opensWithin(server, 100);
+    QCOMPARE(opens.size(), 1);
+    QCOMPARE(opens.first().paths, QStringList{QStringLiteral("waits.pdf")});
+}
+
+void TstSingleInstance::peerCheck_data()
+{
+    QTest::addColumn<bool>("otherUser");
+    QTest::newRow("same user") << false;
+    QTest::newRow("another user") << true;
+}
+
+// A launch checks who runs the listening process, through the same lookup a real launch
+// uses, and sends no path to another user's process.
+void TstSingleInstance::peerCheck()
+{
+    QFETCH(bool, otherUser);
+    SingleInstanceServer server;
+    QCOMPARE(server.start(kTestPipe), Start::Started);
+
+    QLocalSocket probe;
+    probe.connectToServer(testEndpoint());
+    QVERIFY(probe.waitForConnected(1000));
+    QCOMPARE(mervin::ipc::peerUser(probe), std::optional(mervin::ipc::currentUser()));
+#ifdef Q_OS_UNIX
+    QCOMPARE(mervin::ipc::currentUser(), QByteArray::number(uint(::getuid())));
+#endif
+    probe.abort();
+
+    // Another user's process as the kernel would report it.
+    const mervin::ipc::UserLookup other = [](const QLocalSocket &s) {
+        const std::optional<QByteArray> user = mervin::ipc::peerUser(s);
+        return user ? std::optional(*user + QByteArray("-other")) : user;
+    };
+    const Message open = Message::open({QStringLiteral("/home/a/private.pdf")});
+    const Handoff result = otherUser
+        ? mervin::ipc::handOff(testEndpoint(), open, QDeadlineTimer(500), other)
+        : mervin::ipc::handOff(testEndpoint(), open, QDeadlineTimer(500));
+    QCOMPARE(result, otherUser ? Handoff::NoPrimary : Handoff::Delivered);
+    QCOMPARE(opensWithin(server, 100).size(), otherUser ? 0 : 1);
+    if (!otherUser)
+        return;
+
+    // A whole launch never hands its files to that process. The lock is held, so it
+    // keeps trying, then opens standalone.
+    SingleInstanceServer launch;
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, open, 600, kTestPipe, other), Launch::Standalone);
+    QCOMPARE(opensWithin(server, 200).size(), 0);
 }
 
 #ifdef Q_OS_UNIX
+namespace {
+// Whether `dir` is this user's folder with mode 0700.
+bool ownPrivateDir(const QString &dir)
+{
+    return mervin::ipc::isPrivateDir(dir, uint(::geteuid()));
+}
+
+// The temp-folder fallback for this user.
+QString tempFallback(const QString &tmp)
+{
+    return QDir(tmp).filePath(QStringLiteral("mervin-pdf-%1").arg(uint(::geteuid())));
+}
+} // namespace
+
 void TstSingleInstance::filesLiveInRuntimeDir()
 {
     QTemporaryDir runtime;
-    QVERIFY(runtime.isValid());
+    QTemporaryDir tmp;
+    QVERIFY(runtime.isValid() && tmp.isValid());
     const EnvOverride env("XDG_RUNTIME_DIR", QFile::encodeName(runtime.path()));
+    const EnvOverride tmpEnv("TMPDIR", QFile::encodeName(tmp.path()));
     // The group name comes from the uid, not from $USER.
     const QString name = mervin::ipc::hostPipeName();
     {
@@ -459,8 +587,9 @@ void TstSingleInstance::filesLiveInRuntimeDir()
     QCOMPARE(mervin::ipc::instancePaths(kTestPipe).server, socket);
     QVERIFY(QFile::exists(lock));
     QVERIFY(QFile::exists(socket));
-    QVERIFY(!QFile::exists(QDir(QDir::tempPath()).filePath(kTestPipe + QStringLiteral(".lock"))));
-    QVERIFY(!QFile::exists(QDir(QDir::tempPath()).filePath(kTestPipe)));
+    // Nothing goes to the temp folder.
+    QVERIFY(QDir(tmp.path()).isEmpty(QDir::AllEntries | QDir::Hidden | QDir::System |
+                                     QDir::NoDotAndDotDot));
 
     // Sticky, so a cleaner that follows the XDG spec leaves them alone.
     for (const QString &path : {lock, socket}) {
@@ -473,86 +602,120 @@ void TstSingleInstance::filesLiveInRuntimeDir()
 void TstSingleInstance::noRuntimeDirUsesPrivateCacheFolder()
 {
     QTemporaryDir cache;
-    QVERIFY(cache.isValid());
+    QTemporaryDir tmp;
+    QVERIFY(cache.isValid() && tmp.isValid());
     const EnvOverride runtime("XDG_RUNTIME_DIR", QByteArray());
     const EnvOverride cacheHome("XDG_CACHE_HOME", QFile::encodeName(cache.path()));
-    const QString dir = QDir(cache.path()).filePath(QStringLiteral("mervin-pdf/run"));
+    const EnvOverride tmpEnv("TMPDIR", QFile::encodeName(tmp.path()));
+    const QDir mervinCache(QDir(cache.path()).filePath(QStringLiteral("mervin-pdf")));
 
+    QString dir;
     {
         SingleInstanceServer s;
         QCOMPARE(s.start(kTestPipe), Start::Started);
+        // One folder per machine, as machines can share a home folder.
+        const QStringList folders = mervinCache.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+        QCOMPARE(folders.size(), 1);
+        QVERIFY2(folders.first().startsWith(QStringLiteral("run-")) && folders.first().size() == 12,
+                 qPrintable(folders.first()));
+        dir = mervinCache.filePath(folders.first());
+        QCOMPARE(mervin::ipc::instancePaths(kTestPipe).lockFile,
+                 QDir(dir).filePath(kTestPipe + QStringLiteral(".lock")));
         QVERIFY(QFile::exists(QDir(dir).filePath(kTestPipe + QStringLiteral(".lock"))));
         QVERIFY(QFile::exists(QDir(dir).filePath(kTestPipe)));
-        struct stat st{};
-        QCOMPARE(::stat(QFile::encodeName(dir).constData(), &st), 0);
-        QCOMPARE(st.st_mode & 07777, mode_t(S_IRWXU));
+        QVERIFY(ownPrivateDir(dir));
     }
 
-    // A folder that is not this user's own directory is not used.
+    // A folder there that is not this user's own directory is not used. The lock goes to
+    // this user's private folder in the temp folder instead.
     QVERIFY(QDir(dir).removeRecursively());
     QTemporaryDir elsewhere;
     QVERIFY(QFile::link(elsewhere.path(), dir));
-    QCOMPARE(mervin::ipc::instancePaths(kTestPipe).lockFile, QString());
+    QCOMPARE(mervin::ipc::instancePaths(kTestPipe).lockFile,
+             QDir(tempFallback(tmp.path())).filePath(kTestPipe + QStringLiteral(".lock")));
     SingleInstanceServer s;
-    QCOMPARE(s.start(kTestPipe), Start::Failed);
+    QCOMPARE(s.start(kTestPipe), Start::Started);
     QVERIFY(QDir(elsewhere.path()).isEmpty());
+    QVERIFY(ownPrivateDir(tempFallback(tmp.path())));
 }
 
-void TstSingleInstance::socketPathTooLongFails()
+void TstSingleInstance::tooLongPathFallsBack()
 {
-    QTemporaryDir runtime;
-    QVERIFY(runtime.isValid());
-    const QString deep = runtime.path() + QStringLiteral("/") + QString(110, QLatin1Char('d'));
+    QTemporaryDir root;
+    QTemporaryDir tmp;
+    QVERIFY(root.isValid() && tmp.isValid());
+    const QString deep = root.path() + QStringLiteral("/") + QString(110, QLatin1Char('d'));
     QVERIFY(QDir().mkpath(deep));
     QVERIFY(QFile::setPermissions(deep, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
-    const EnvOverride env("XDG_RUNTIME_DIR", QFile::encodeName(deep));
+    const QString shortCache = root.filePath(QStringLiteral("c"));
+    const EnvOverride tmpEnv("TMPDIR", QFile::encodeName(tmp.path()));
+    const QString lockName = kTestPipe + QStringLiteral(".lock");
+
+    {
+        // A runtime folder too deep for a socket path gives way to the cache folder.
+        const EnvOverride runtime("XDG_RUNTIME_DIR", QFile::encodeName(deep));
+        const EnvOverride cache("XDG_CACHE_HOME", QFile::encodeName(shortCache));
+        const QString lock = mervin::ipc::instancePaths(kTestPipe).lockFile;
+        QVERIFY2(lock.startsWith(shortCache + QStringLiteral("/mervin-pdf/run-")), qPrintable(lock));
+        SingleInstanceServer s;
+        QCOMPARE(s.start(kTestPipe), Start::Started);
+    }
+    {
+        // A cache folder too deep as well gives way to the private temp folder.
+        const EnvOverride runtime("XDG_RUNTIME_DIR", QByteArray());
+        const EnvOverride cache("XDG_CACHE_HOME", QFile::encodeName(deep));
+        QCOMPARE(mervin::ipc::instancePaths(kTestPipe).lockFile,
+                 QDir(tempFallback(tmp.path())).filePath(lockName));
+        SingleInstanceServer s;
+        QCOMPARE(s.start(kTestPipe), Start::Started);
+        QVERIFY(QFile::exists(QDir(tempFallback(tmp.path())).filePath(kTestPipe)));
+        QVERIFY(ownPrivateDir(tempFallback(tmp.path())));
+    }
+}
+
+// The temp folder is shared by every user, so its fallback folder must already be this
+// user's own 0700 folder. Anything else is refused, not repaired, and without any usable
+// folder a launch runs on its own at once.
+void TstSingleInstance::tempFolderMustBePrivate()
+{
+    QTemporaryDir root;
+    QTemporaryDir tmp;
+    QVERIFY(root.isValid() && tmp.isValid());
+    const QString deep = root.path() + QStringLiteral("/") + QString(110, QLatin1Char('d'));
+    QVERIFY(QDir().mkpath(deep));
+    const EnvOverride runtime("XDG_RUNTIME_DIR", QByteArray());
+    const EnvOverride cache("XDG_CACHE_HOME", QFile::encodeName(deep));
+    const EnvOverride tmpEnv("TMPDIR", QFile::encodeName(tmp.path()));
+    const QString fallback = tempFallback(tmp.path());
+
+    // Another user's folder.
+    QVERIFY(QDir().mkdir(fallback));
+    QVERIFY(QFile::setPermissions(fallback, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    QVERIFY(ownPrivateDir(fallback));
+    QVERIFY(!mervin::ipc::isPrivateDir(fallback, uint(::geteuid()) + 1));
+
+    // A folder that others could open.
+    QVERIFY(QFile::setPermissions(fallback, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner
+                                                | QFile::ReadOther | QFile::ExeOther));
+    QCOMPARE(mervin::ipc::instancePaths(kTestPipe).lockFile, QString());
+    QVERIFY(!ownPrivateDir(fallback));
+
+    // A link to a private folder.
+    QVERIFY(QDir(fallback).removeRecursively());
+    QTemporaryDir target;
+    QVERIFY(QFile::link(target.path(), fallback));
+    QVERIFY(QFile::setPermissions(target.path(),
+                                  QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    QCOMPARE(mervin::ipc::instancePaths(kTestPipe).lockFile, QString());
 
     SingleInstanceServer s;
     QCOMPARE(s.start(kTestPipe), Start::Failed);
-    QVERIFY(!s.isListening());
-    QVERIFY(!QFile::exists(QDir(deep).filePath(kTestPipe + QStringLiteral(".lock"))));
-
-    // Waiting would not help, so the launch opens standalone at once.
+    QVERIFY(QDir(target.path()).isEmpty());
     QElapsedTimer timer;
     timer.start();
     QCOMPARE(mervin::ipc::claimOrHandOff(s, Message::open({}), 5000, kTestPipe),
-             Launch::Standalone);
+             Launch::Uncoordinated);
     QVERIFY(timer.elapsed() < 1000);
-}
-
-void TstSingleInstance::peerCheck_data()
-{
-    QTest::addColumn<uint>("peerUidOffset");
-    QTest::addColumn<bool>("accepted");
-    QTest::newRow("same uid") << 0u << true;
-    QTest::newRow("another uid") << 1u << false;
-}
-
-// The launch reads the listening process's uid from the kernel and sends no path to
-// another user's process.
-void TstSingleInstance::peerCheck()
-{
-    QFETCH(uint, peerUidOffset);
-    QFETCH(bool, accepted);
-    SingleInstanceServer server;
-    QCOMPARE(server.start(kTestPipe), Start::Started);
-
-    QLocalSocket probe;
-    probe.connectToServer(testEndpoint());
-    QVERIFY(probe.waitForConnected(1000));
-    QCOMPARE(mervin::ipc::peerUid(probe), std::optional(uint(::getuid())));
-
-    const auto check = [peerUidOffset](const QLocalSocket &socket) {
-        return mervin::ipc::peerIsCurrentUser(socket, [peerUidOffset](const QLocalSocket &s) {
-            const std::optional<uint> uid = mervin::ipc::peerUid(s);
-            return uid ? std::optional(*uid + peerUidOffset) : uid;
-        });
-    };
-    const Handoff result = mervin::ipc::handOff(
-        testEndpoint(), Message::open({QStringLiteral("/home/a/private.pdf")}),
-        QDeadlineTimer(500), check);
-    QCOMPARE(result, accepted ? Handoff::Delivered : Handoff::NoPrimary);
-    QCOMPARE(opensWithin(server, 100).size(), accepted ? 1 : 0);
 }
 
 // MPDF-20: a cleaner that removes a live primary's lock file must not let the next

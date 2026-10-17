@@ -13,8 +13,10 @@
 #include <utility>
 
 #ifdef Q_OS_UNIX
+#  include <sys/socket.h>
 #  include <sys/stat.h>
-#  include <sys/un.h>
+
+#  include <cerrno>
 #endif
 
 namespace mervin::ipc {
@@ -45,6 +47,30 @@ bool answers(const QString &server)
     return live;
 }
 #endif
+
+// Whether the launch at the other end has closed its connection, as one does that
+// stopped waiting for its acknowledgement and opened its files in a copy of its own.
+// On Unix the kernel keeps the frame of a launch that is gone, so this looks for the
+// end of the stream behind it. Qt's Windows pipes have no buffer, so a launch's write
+// stays pending until the server reads it, and closing the launch cancels it.
+bool senderLeft(const QLocalSocket &socket)
+{
+    if (socket.state() != QLocalSocket::ConnectedState)
+        return true;
+#ifdef Q_OS_UNIX
+    const int fd = int(socket.socketDescriptor());
+    if (fd < 0)
+        return true;
+    char next = 0;
+    ssize_t peeked = 0;
+    do
+        peeked = ::recv(fd, &next, 1, MSG_PEEK | MSG_DONTWAIT);
+    while (peeked < 0 && errno == EINTR);
+    return peeked == 0; // a launch still waiting gives EAGAIN
+#else
+    return false;
+#endif
+}
 
 } // namespace
 
@@ -93,19 +119,19 @@ private:
             socket->abort();
             return;
         }
-        bool queued = false;
-        for (const Message &m : msgs) {
-            if (m.cmd != Message::Cmd::Open)
-                continue; // tolerate any other command a future/older client might send
-            // Queued first, so an acknowledged open is always there for the GUI thread.
-            // It acknowledges before opening anything: nested password or error dialogs
-            // can block the GUI thread indefinitely and would make the sender wait.
-            owner_->queueOpen(m);
-            socket->write(Message::ack(QStringLiteral("open")).encode());
-            queued = true;
-        }
-        if (!queued)
+        QList<Message> opens;
+        for (const Message &m : msgs)
+            if (m.cmd == Message::Cmd::Open) // tolerate other commands from other versions
+                opens.append(m);
+        if (opens.isEmpty() || senderLeft(*socket))
             return;
+        for (const Message &open : std::as_const(opens)) {
+            // Queued first, so an acknowledged open is always there for the GUI thread.
+            // The acknowledgement goes out before anything opens, because nested password
+            // or error dialogs can block the GUI thread indefinitely.
+            owner_->queueOpen(open);
+            socket->write(Message::ack(QStringLiteral("open")).encode());
+        }
         socket->flush();
         QMetaObject::invokeMethod(owner_, &SingleInstanceServer::opensReceived,
                                   Qt::QueuedConnection);
@@ -153,12 +179,6 @@ SingleInstanceServer::Start SingleInstanceServer::start(const QString &serverNam
 
 #ifdef Q_OS_UNIX
     keepFromCleanup(paths.lockFile);
-    // The path and its terminating zero must fit into sockaddr_un.
-    if (QFile::encodeName(paths.server).size() >= qsizetype(sizeof(sockaddr_un::sun_path))) {
-        qWarning("MervinPDF: the socket path '%s' is too long.", qUtf8Printable(paths.server));
-        lock_.reset();
-        return Start::Failed;
-    }
     // A live primary keeps its lock, so tryLock succeeds beside one only if something
     // deleted that primary's lock file. Its socket must stay, and this launch hands off.
     if (answers(paths.server)) {
@@ -179,6 +199,7 @@ SingleInstanceServer::Start SingleInstanceServer::start(const QString &serverNam
     connect(thread.get(), &QThread::finished, listener, &QObject::deleteLater);
     thread->start();
     thread_ = std::move(thread);
+    listener_ = listener;
 
     bool listening = false;
     QString error;
@@ -211,9 +232,16 @@ void SingleInstanceServer::stopListening()
     // Ends the server thread after the event it is handling. A frame read by then has
     // been queued and acknowledged; a connection still open closes without an
     // acknowledgement, and its launch tries again.
+    listener_ = nullptr;
     thread_->quit();
     thread_->wait();
     thread_.reset();
+}
+
+void SingleInstanceServer::runOnServerThreadForTests(std::function<void()> work)
+{
+    if (listener_)
+        QMetaObject::invokeMethod(listener_, std::move(work), Qt::QueuedConnection);
 }
 
 QList<Message> SingleInstanceServer::takeOpens()

@@ -9,8 +9,10 @@
 #ifdef Q_OS_UNIX
 #  include <QFile>
 #  include <QStandardPaths>
+#  include <QSysInfo>
 
 #  include <sys/stat.h>
+#  include <sys/un.h>
 #  include <unistd.h>
 #endif
 
@@ -38,8 +40,48 @@ QString userToken()
 }
 
 #ifdef Q_OS_UNIX
-// Makes `dir` a folder that only this user can open, as $XDG_RUNTIME_DIR is. False
-// when it is something else, such as a link or another user's folder.
+// Whether the socket path of `group` in `dir`, with its terminating zero, fits into
+// sockaddr_un.
+bool socketFits(const QString &dir, const QString &group)
+{
+    return QFile::encodeName(QDir(dir).filePath(group)).size()
+        < qsizetype(sizeof(sockaddr_un::sun_path));
+}
+
+// $XDG_RUNTIME_DIR when Qt accepts it, which it does only if it belongs to this user
+// with mode 0700, else empty. For anything else Qt answers with a folder in /tmp,
+// which is not used.
+QString runtimeDir()
+{
+    const QString xdg = qEnvironmentVariable("XDG_RUNTIME_DIR");
+    if (!xdg.startsWith(QLatin1Char('/')))
+        return {};
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    return dir == xdg ? dir : QString();
+}
+
+// A short token for this machine. QLockFile names the host of a lock the same way.
+QString hostToken()
+{
+    QByteArray id = QSysInfo::machineUniqueId();
+    if (id.isEmpty())
+        id = QSysInfo::machineHostName().toUtf8();
+    const QByteArray digest = QCryptographicHash::hash(id, QCryptographicHash::Sha1).toHex();
+    return QString::fromLatin1(digest.left(8));
+}
+
+// This machine's folder in the cache directory. Several machines can share a home
+// folder, and another machine's lock never goes stale here.
+QString cacheDir()
+{
+    QString cache = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation);
+    if (cache.isEmpty())
+        cache = QDir::homePath() + QStringLiteral("/.cache");
+    return QDir(cache).filePath(QStringLiteral("mervin-pdf/run-") + hostToken());
+}
+
+// Makes `dir`, which lies in this user's own home, a folder that only this user can
+// open. False when it is something else, such as a link or another user's folder.
 bool makePrivateDir(const QString &dir)
 {
     if (!QDir().mkpath(dir))
@@ -48,26 +90,24 @@ bool makePrivateDir(const QString &dir)
     struct stat st{};
     if (::lstat(native.constData(), &st) != 0 || !S_ISDIR(st.st_mode) || st.st_uid != ::geteuid())
         return false;
-    return (st.st_mode & 07777) == S_IRWXU || ::chmod(native.constData(), S_IRWXU) == 0;
+    if ((st.st_mode & 07777) != S_IRWXU && ::chmod(native.constData(), S_IRWXU) != 0)
+        return false;
+    return isPrivateDir(dir, uint(::geteuid()));
 }
 
-// The per-user folder for the lock and the socket. Other users cannot open it, and
-// /tmp cleaners do not reach it.
-QString runtimeDir()
+// This user's folder in the temp folder, for when the cache folder cannot hold the
+// socket, as when a deep home folder makes its path too long. Anyone can create names
+// in the temp folder, so a folder that is not already private to this user is refused,
+// not repaired.
+QString tempDir()
 {
-    // Qt accepts $XDG_RUNTIME_DIR only if it belongs to this user with mode 0700.
-    // Otherwise Qt answers with a folder in /tmp, which is not used.
-    const QString xdg = qEnvironmentVariable("XDG_RUNTIME_DIR");
-    if (xdg.startsWith(QLatin1Char('/'))) {
-        const QString dir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
-        if (dir == xdg)
-            return dir;
-    }
-    QString cache = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation);
-    if (cache.isEmpty())
-        cache = QDir::homePath() + QStringLiteral("/.cache");
-    const QString dir = QDir(cache).filePath(QStringLiteral("mervin-pdf/run"));
-    return makePrivateDir(dir) ? dir : QString();
+    const QString dir =
+        QDir(QDir::tempPath()).filePath(QStringLiteral("mervin-pdf-%1").arg(uint(::geteuid())));
+    const QByteArray native = QFile::encodeName(dir);
+    // A folder this call created is this user's, whatever the umask made of its mode.
+    if (::mkdir(native.constData(), S_IRWXU) == 0)
+        ::chmod(native.constData(), S_IRWXU);
+    return isPrivateDir(dir, uint(::geteuid())) ? dir : QString();
 }
 #endif
 
@@ -102,8 +142,12 @@ InstancePaths instancePaths(const QString &name)
 {
     const QString group = name.isEmpty() ? hostPipeName() : name;
 #ifdef Q_OS_UNIX
-    const QString dir = runtimeDir();
-    if (dir.isEmpty())
+    QString dir = runtimeDir();
+    if (dir.isEmpty() || !socketFits(dir, group)) {
+        const QString cache = cacheDir();
+        dir = socketFits(cache, group) && makePrivateDir(cache) ? cache : tempDir();
+    }
+    if (dir.isEmpty() || !socketFits(dir, group))
         return {};
     return {QDir(dir).filePath(group + QStringLiteral(".lock")), QDir(dir).filePath(group)};
 #else
@@ -112,5 +156,14 @@ InstancePaths instancePaths(const QString &name)
     return {QDir(QDir::tempPath()).filePath(group + QStringLiteral(".lock")), group};
 #endif
 }
+
+#ifdef Q_OS_UNIX
+bool isPrivateDir(const QString &dir, uint uid)
+{
+    struct stat st{};
+    return ::lstat(QFile::encodeName(dir).constData(), &st) == 0 && S_ISDIR(st.st_mode)
+        && st.st_uid == uid && (st.st_mode & 07777) == S_IRWXU;
+}
+#endif
 
 } // namespace mervin::ipc
