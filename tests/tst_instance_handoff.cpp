@@ -139,8 +139,10 @@ private:
     std::unique_ptr<SingleInstanceServer> startedServer();
 
 #ifdef Q_OS_UNIX
-    // Stand in for /run/user and the cache folder, so that nothing reaches the user's own.
+    // Stand in for /run/user, /tmp and the cache folder, so that nothing reaches the
+    // user's own. Each test has a profile folder of its own (init).
     QTemporaryDir runtime_{kShortTemp};
+    QTemporaryDir sockets_{kShortTemp};
     QTemporaryDir cache_{kShortTemp};
     std::optional<QByteArray> cacheHome_; // the suite's XDG_CACHE_HOME, if it had one
 #endif
@@ -151,18 +153,24 @@ private:
 void TstInstanceHandoff::initTestCase()
 {
 #ifdef Q_OS_UNIX
-    QVERIFY(runtime_.isValid() && cache_.isValid());
+    QVERIFY(runtime_.isValid() && sockets_.isValid() && cache_.isValid());
     // Keeps the lock, socket and carry file out of the user's runtime folder, using a
-    // folder of its own in place of /run/user/<uid>, and any fallback out of the user's
-    // cache folder.
+    // folder of its own in place of /run/user/<uid>, a socket fallback out of /tmp, and
+    // anything the code under test caches out of the user's cache folder.
     const QString dir = QDir(runtime_.path()).filePath(QString::number(uint(::geteuid())));
     QVERIFY(QDir().mkpath(dir));
     QVERIFY(QFile::setPermissions(dir, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
     ipc::setUserRuntimeRootForTests(runtime_.path());
+    ipc::setSocketRootForTests(sockets_.path());
     if (qEnvironmentVariableIsSet("XDG_CACHE_HOME"))
         cacheHome_ = qgetenv("XDG_CACHE_HOME");
     qputenv("XDG_CACHE_HOME", QFile::encodeName(cache_.path()));
+    // Checked with a profile folder of the suite's own, so that no fallback reaches the
+    // user's profile either.
+    const QTemporaryDir profile(kShortTemp);
+    ConfigPaths::setOverrideDir(profile.path());
     const QString lockFile = ipc::instancePaths(kGroup).lockFile;
+    ConfigPaths::setOverrideDir({});
     QVERIFY2(lockFile.startsWith(dir + QLatin1Char('/')),
              qPrintable(QStringLiteral("the lock is at %1, outside the suite's folder")
                             .arg(lockFile)));
@@ -173,6 +181,7 @@ void TstInstanceHandoff::cleanupTestCase()
 {
 #ifdef Q_OS_UNIX
     ipc::setUserRuntimeRootForTests({});
+    ipc::setSocketRootForTests({});
     if (cacheHome_)
         qputenv("XDG_CACHE_HOME", *cacheHome_);
     else
@@ -661,41 +670,41 @@ void TstInstanceHandoff::carryFileInAnotherFolder_data()
     QTest::newRow("a live process holds its lock") << true;
 }
 
-// A primary that ran in another folder, as one does that started before /run/user/<uid>
-// appeared, left its carry file there. The next primary takes it over, unless a live
-// process holds that folder's lock.
+// A primary that ran in another folder, as one does that started in the profile's instance
+// folder before /run/user/<uid> appeared, left its carry file there. The next primary
+// takes it over, unless a live process holds that folder's lock.
 void TstInstanceHandoff::carryFileInAnotherFolder()
 {
     QFETCH(bool, held);
-    ipc::InstancePaths cache;
+    ipc::InstancePaths other;
     {
         ipc::setUserRuntimeRootForTests(runtime_.path() + QStringLiteral("/none"));
         const auto restoreRoot =
             qScopeGuard([&] { ipc::setUserRuntimeRootForTests(runtime_.path()); });
-        cache = ipc::instancePaths(kGroup);
+        other = ipc::instancePaths(kGroup);
     }
-    QVERIFY(cache.carriedFile.startsWith(cache_.path() + QLatin1Char('/')));
+    QVERIFY(other.carriedFile.startsWith(profile_->path() + QStringLiteral("/instance-")));
     relaunch::carry(Message::open({pdf_}, QStringLiteral("new-tab")));
-    QVERIFY(relaunch::writeCarried(cache.carriedFile));
+    QVERIFY(relaunch::writeCarried(other.carriedFile));
     relaunch::nextCopyStarted();
-    const auto removeFile = qScopeGuard([&] { QFile::remove(cache.carriedFile); });
-    QLockFile holder(cache.lockFile);
+    const auto removeFile = qScopeGuard([&] { QFile::remove(other.carriedFile); });
+    QLockFile holder(other.lockFile);
     if (held)
         QVERIFY(holder.tryLock(0));
 
     std::unique_ptr<SingleInstanceServer> server = startedServer();
     QVERIFY(server);
-    QVERIFY(server->carriedFile() != cache.carriedFile);
+    QVERIFY(server->carriedFile() != other.carriedFile);
     WindowManager manager;
     manager.adoptInstanceServer(std::move(server));
     if (held) {
         QTest::qWait(300);
         QVERIFY(!shows(manager, pdf_));
-        QVERIFY(QFile::exists(cache.carriedFile));
+        QVERIFY(QFile::exists(other.carriedFile));
         return;
     }
     QTRY_VERIFY_WITH_TIMEOUT(shows(manager, pdf_), 10000);
-    QVERIFY(!QFile::exists(cache.carriedFile));
+    QVERIFY(!QFile::exists(other.carriedFile));
     manager.quitAll();
     QTRY_VERIFY_WITH_TIMEOUT(manager.openTabPaths().isEmpty(), 10000);
 }

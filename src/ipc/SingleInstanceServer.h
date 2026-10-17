@@ -28,9 +28,9 @@ class SingleInstanceServer : public QObject
 public:
     // How start() ended.
     enum class Start {
-        Started, // listening; this process is the primary
+        Started, // this process is the primary; it listens unless no endpoint could be made
         Running, // a live process holds the lock, or a server answers at the endpoint
-        Failed,  // the lock file or the endpoint could not be made; waiting will not help
+        Failed,  // the lock file could not be made; waiting will not help
     };
 
     explicit SingleInstanceServer(QObject *parent = nullptr);

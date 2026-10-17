@@ -180,7 +180,7 @@ SingleInstanceServer::~SingleInstanceServer()
 
 SingleInstanceServer::Start SingleInstanceServer::start(const QString &serverName)
 {
-    if (thread_)
+    if (thread_ || lock_)
         return Start::Started;
     const InstancePaths paths = instancePaths(serverName);
     if (paths.lockFile.isEmpty()) {
@@ -209,14 +209,28 @@ SingleInstanceServer::Start SingleInstanceServer::start(const QString &serverNam
     keepFromCleanup(paths.lockFile);
     // A live primary keeps its lock, so tryLock succeeds beside one only if something
     // deleted that primary's lock file. Its socket must stay, and this launch hands off.
-    if (answers(paths.server)) {
+    if (const QString live = endpointOf(paths); !live.isEmpty() && answers(live)) {
         lock_.reset();
         return Start::Running;
     }
     // A crashed primary can leave a socket file that nothing listens on. On Windows the
     // pipe vanishes with the owning process.
-    QLocalServer::removeServer(paths.server);
+    if (!paths.server.isEmpty())
+        QLocalServer::removeServer(paths.server);
 #endif
+    name_ = serverName;
+    carriedFile_ = paths.carriedFile;
+    // Without an endpoint the lock still keeps the profile's files to this copy. Later
+    // launches wait for it as for a primary that does not answer, and then open their
+    // files on their own.
+    InstancePaths unreachable = paths;
+    unreachable.server.clear();
+    if (paths.server.isEmpty()) {
+        qWarning("MervinPDF: no folder takes the single-instance socket; later launches "
+                 "open their files on their own.");
+        recordEndpoint(unreachable);
+        return Start::Started;
+    }
 
     auto thread = std::make_unique<QThread>();
     thread->setObjectName(QStringLiteral("SingleInstanceServer"));
@@ -238,16 +252,16 @@ SingleInstanceServer::Start SingleInstanceServer::start(const QString &serverNam
 #ifdef Q_OS_UNIX
         keepFromCleanup(paths.server);
 #endif
-        name_ = serverName;
-        carriedFile_ = paths.carriedFile;
+        recordEndpoint(paths);
         return Start::Started;
     }
 
-    qWarning("MervinPDF: failed to listen on '%s': %s", qUtf8Printable(paths.server),
-             qUtf8Printable(error));
+    qWarning("MervinPDF: failed to listen on '%s': %s; later launches open their files on "
+             "their own.",
+             qUtf8Printable(paths.server), qUtf8Printable(error));
     stopListening();
-    lock_.reset();
-    return Start::Failed;
+    recordEndpoint(unreachable);
+    return Start::Started;
 }
 
 QStringList SingleInstanceServer::carriedFiles() const

@@ -12,24 +12,36 @@ QString hostPipeName();
 // Where a single-instance group keeps its lock file and listens.
 struct InstancePaths
 {
-    QString lockFile;    // for QLockFile
-    QString server;      // for QLocalServer::listen and QLocalSocket::connectToServer
-    QString carriedFile; // launches a quitting primary hands to the next one
+    QString lockFile;     // for QLockFile
+    QString server;       // for QLocalServer::listen and QLocalSocket::connectToServer
+    QString carriedFile;  // launches a quitting primary hands to the next one
+    QString endpointFile; // where the primary records `server`, if anywhere (see endpointOf)
 };
 
-// The lock file and endpoint of the group `name`, hostPipeName() when empty. On Unix
-// they are in the first of these folders that only this user can open and whose socket
-// path Qt takes, and `server` is an absolute socket path:
+// The lock file and endpoint of the group `name`, hostPipeName() when empty. On Unix the
+// lock is in the first of these folders, and `server` is an absolute socket path:
 // - /run/user/<uid>, as systemd-logind makes it, if it is this user's 0700 folder and
-//   not a link. It does not depend on $XDG_RUNTIME_DIR, which a launch from ssh, cron
-//   or `sudo -u` may not have.
-// - mervin-pdf/run-<host> in the cache folder, made private, one per machine so that a
-//   home folder on a network share does not mix machines
-// - mervin-pdf-<uid> in the temp folder, which must already be this user's 0700 folder
-//   or be made one
-// All are empty when none of them qualifies. On Windows the lock is in %TEMP% and
+//   not a link, and Qt takes the socket path there. It does not depend on
+//   $XDG_RUNTIME_DIR, which a launch from ssh, cron or `sudo -u` may not have.
+// - instance-<host> in the profile folder (ConfigPaths::configDir()), which holds the
+//   files the lock guards. It is made with mode 0700 if missing, and refused if it is
+//   not this user's 0700 folder or is a link. The profile folder's own mode is left as
+//   it is. The host part keeps machines that share the profile folder apart. Where Qt
+//   does not take the socket path there, the socket goes to mervin-pdf-<uid> in /tmp,
+//   on the same terms. With no usable folder for it, `server` is empty, and the lock
+//   alone keeps the profile's files to one copy.
+// All are empty when no folder takes the lock. On Windows the lock is in %TEMP% and
 // `server` is the pipe name.
 InstancePaths instancePaths(const QString &name = QString());
+
+// Where the primary of `paths` listens: the path it recorded in `paths.endpointFile`, or
+// else `paths.server`. Launches that reach the same profile folder through different
+// paths can compute different sockets, so they read the primary's own record.
+QString endpointOf(const InstancePaths &paths);
+
+// Records `paths.server` in `paths.endpointFile`, for the primary that listens there, or
+// removes the record when it listens nowhere. Does nothing without an endpoint file.
+void recordEndpoint(const InstancePaths &paths);
 
 #ifdef Q_OS_LINUX
 // Upgrade support for copies built before the lock and socket left the temp folder, which
@@ -46,10 +58,10 @@ QString legacyEndpoint(const QString &name = QString());
 bool lockLeftUnwritten(const QString &lockFile);
 
 #ifdef Q_OS_UNIX
-// The lock files, endpoints and carry files of the group `name` in the other folders that
-// instancePaths() can choose, for when the folders available changed while a primary ran.
-// Only folders that already are this user's private folders count, and nothing is created
-// in them. The launch's own folder, which instancePaths() makes, is left out.
+// The paths of the group `name` in the other folder that instancePaths() can choose, for
+// when /run/user/<uid> appeared or went away while a primary ran. Only folders that
+// already are this user's private folders count, and nothing is created in them. The
+// launch's own folder, which instancePaths() makes, is left out.
 QList<InstancePaths> otherInstancePaths(const QString &name = QString());
 
 // Whether a live process holds the lock file `lockFile`, which lies in one of this user's
@@ -65,6 +77,10 @@ bool lockHeldByLiveProcess(const QString &lockFile);
 // For tests only. Replaces /run/user as the folder that holds the users' runtime folders,
 // or restores it when `root` is empty.
 void setUserRuntimeRootForTests(const QString &root);
+
+// For tests only. Replaces /tmp as the folder that holds this user's socket folder, or
+// restores it when `root` is empty.
+void setSocketRootForTests(const QString &root);
 
 // Whether `dir` is a folder, not a link, that `uid` owns and that only its owner can
 // open (mode 0700). Public for tests.

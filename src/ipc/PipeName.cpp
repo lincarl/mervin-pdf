@@ -6,15 +6,14 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QLockFile>
+#include <QSaveFile>
 
 #ifdef Q_OS_UNIX
-#  include <QFile>
-#  include <QStandardPaths>
 #  include <QSysInfo>
 
-#  include <algorithm>
 #  include <csignal>
 
 #  include <sys/stat.h>
@@ -106,6 +105,10 @@ bool socketFits(const QString &dir, const QString &group)
 // The folder that holds the users' runtime folders, as systemd-logind makes them.
 QString g_userRuntimeRoot = QStringLiteral("/run/user");
 
+// The folder that holds this user's socket folder when the profile folder makes the
+// socket path too long. Fixed, unlike $TMPDIR, so that every launch finds the same one.
+QString g_socketRoot = QStringLiteral("/tmp");
+
 // This user's runtime folder from the file system, when it is this user's own 0700 folder
 // and not a link, else empty. Unlike $XDG_RUNTIME_DIR it is the same for every launch of
 // this user, from a desktop session, ssh, cron or `sudo -u`.
@@ -125,29 +128,30 @@ QString hostToken()
     return QString::fromLatin1(digest.left(8));
 }
 
-// This machine's folder in the cache directory. Several machines can share a home
-// folder, and another machine's lock never goes stale here. Only computes the path.
-QString cacheDir()
+// This machine's folder in the profile folder, for the lock of the files there. Only
+// computes the path.
+QString profileInstanceDirPath()
 {
-    QString cache = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation);
-    if (cache.isEmpty())
-        cache = QDir::homePath() + QStringLiteral("/.cache");
-    return QDir(cache).filePath(QStringLiteral("mervin-pdf/run-") + hostToken());
+    return QDir(ConfigPaths::configDirPath()).filePath(QStringLiteral("instance-") + hostToken());
 }
 
-// Makes `dir`, which lies in this user's own home, a folder that only this user can
-// open. False when it is something else, such as a link or another user's folder.
-bool makePrivateDir(const QString &dir)
+// This user's folder in the socket root, for a socket the profile folder cannot hold.
+// Only computes the path.
+QString socketDirPath()
 {
-    if (!QDir().mkpath(dir))
-        return false;
+    return QDir(g_socketRoot).filePath(QStringLiteral("mervin-pdf-%1").arg(uint(::geteuid())));
+}
+
+// Makes `dir` if it is missing, and returns it if it is this user's own 0700 folder and
+// not a link, else empty. A folder this call made is this user's, whatever the umask made
+// of its mode. One that already exists is refused if it is anything else, not repaired.
+// The folder that holds `dir` is left as it is.
+QString ownPrivateDir(const QString &dir)
+{
     const QByteArray native = QFile::encodeName(dir);
-    struct stat st{};
-    if (::lstat(native.constData(), &st) != 0 || !S_ISDIR(st.st_mode) || st.st_uid != ::geteuid())
-        return false;
-    if ((st.st_mode & 07777) != S_IRWXU && ::chmod(native.constData(), S_IRWXU) != 0)
-        return false;
-    return isPrivateDir(dir, uint(::geteuid()));
+    if (::mkdir(native.constData(), S_IRWXU) == 0)
+        ::chmod(native.constData(), S_IRWXU);
+    return isPrivateDir(dir, uint(::geteuid())) ? dir : QString();
 }
 
 // The lock file, endpoint and carry file of `group` in `dir`.
@@ -155,27 +159,25 @@ InstancePaths pathsIn(const QString &dir, const QString &group)
 {
     const QDir folder(dir);
     return {folder.filePath(group + QStringLiteral(".lock")), folder.filePath(group),
-            folder.filePath(group + QStringLiteral(".carried"))};
+            folder.filePath(group + QStringLiteral(".carried")), QString()};
 }
 
-// This user's folder in the temp folder.
-QString tempDirPath()
+// The paths of `group` in the profile's instance folder `dir`. The socket goes there if Qt
+// takes its path, else to this user's socket folder, which is made only if `make` is
+// true. Without a usable socket folder `server` is empty. The primary records where it
+// listens in the endpoint file.
+InstancePaths instanceFolderPaths(const QString &dir, const QString &group, bool make)
 {
-    return QDir(QDir::tempPath()).filePath(QStringLiteral("mervin-pdf-%1").arg(uint(::geteuid())));
-}
-
-// This user's folder in the temp folder, for when the cache folder cannot hold the
-// socket, as when a deep home folder makes its path too long. Anyone can create names
-// in the temp folder, so a folder that is not already private to this user is refused,
-// not repaired.
-QString tempDir()
-{
-    const QString dir = tempDirPath();
-    const QByteArray native = QFile::encodeName(dir);
-    // A folder this call created is this user's, whatever the umask made of its mode.
-    if (::mkdir(native.constData(), S_IRWXU) == 0)
-        ::chmod(native.constData(), S_IRWXU);
-    return isPrivateDir(dir, uint(::geteuid())) ? dir : QString();
+    InstancePaths paths = pathsIn(dir, group);
+    paths.endpointFile = QDir(dir).filePath(group + QStringLiteral(".endpoint"));
+    if (!socketFits(dir, group)) {
+        const QString socketDir = socketDirPath();
+        const bool usable =
+            make ? !ownPrivateDir(socketDir).isEmpty() : isPrivateDir(socketDir, uint(::geteuid()));
+        paths.server =
+            usable && socketFits(socketDir, group) ? QDir(socketDir).filePath(group) : QString();
+    }
+    return paths;
 }
 #endif
 
@@ -192,38 +194,69 @@ InstancePaths instancePaths(const QString &name)
 #ifdef Q_OS_UNIX
     // Chosen from what is on disk, not from the environment, so that every launch of
     // this user and group on this host takes the same lock.
-    QString dir = userRuntimeDir();
-    if (dir.isEmpty() || !socketFits(dir, group)) {
-        const QString cache = cacheDir();
-        dir = socketFits(cache, group) && makePrivateDir(cache) ? cache : tempDir();
-    }
-    if (dir.isEmpty() || !socketFits(dir, group))
+    const QString runtime = userRuntimeDir();
+    if (!runtime.isEmpty() && socketFits(runtime, group))
+        return pathsIn(runtime, group);
+    // Without it, the lock goes with the files it guards. Launches that use the same
+    // profile folder take the same lock, whatever their environment.
+    ConfigPaths::configDir(); // makes the profile folder if it is missing
+    const QString instance = ownPrivateDir(profileInstanceDirPath());
+    if (instance.isEmpty())
         return {};
-    return pathsIn(dir, group);
+    return instanceFolderPaths(instance, group, true);
 #else
     // The lock is in the per-user %TEMP%. The pipe namespace is shared by the machine,
     // so a launch checks whose process answers (see peerIsCurrentUser).
     const QDir folder(QDir::tempPath());
     return {folder.filePath(group + QStringLiteral(".lock")), group,
-            folder.filePath(group + QStringLiteral(".carried"))};
+            folder.filePath(group + QStringLiteral(".carried")), QString()};
 #endif
+}
+
+QString endpointOf(const InstancePaths &paths)
+{
+    if (paths.endpointFile.isEmpty())
+        return paths.server;
+    QFile file(paths.endpointFile);
+    if (!file.open(QIODevice::ReadOnly))
+        return paths.server;
+    const QString recorded = QString::fromUtf8(file.read(4096)).trimmed();
+    return QDir::isAbsolutePath(recorded) ? recorded : paths.server;
+}
+
+void recordEndpoint(const InstancePaths &paths)
+{
+    if (paths.endpointFile.isEmpty())
+        return;
+    if (paths.server.isEmpty()) {
+        QFile::remove(paths.endpointFile);
+        return;
+    }
+    QSaveFile out(paths.endpointFile);
+    if (!out.open(QIODevice::WriteOnly))
+        return;
+    out.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    out.write(paths.server.toUtf8());
+    out.commit();
 }
 
 #ifdef Q_OS_UNIX
 QList<InstancePaths> otherInstancePaths(const QString &name)
 {
     const QString group = name.isEmpty() ? hostPipeName() : name;
-    const QString own = instancePaths(name).server;
+    const QString own = instancePaths(name).lockFile;
     QList<InstancePaths> others;
     // Each folder is only checked with lstat. Nothing is created in any of them.
-    for (const QString &dir : {userRuntimeDir(), cacheDir(), tempDirPath()}) {
-        if (dir.isEmpty() || !isPrivateDir(dir, uint(::geteuid())) || !socketFits(dir, group))
-            continue;
-        const InstancePaths paths = pathsIn(dir, group);
-        if (paths.server != own
-            && std::none_of(others.cbegin(), others.cend(), [&](const InstancePaths &other) {
-                   return other.server == paths.server;
-               }))
+    const QString runtime = userRuntimeDir();
+    if (!runtime.isEmpty() && socketFits(runtime, group)) {
+        const InstancePaths paths = pathsIn(runtime, group);
+        if (paths.lockFile != own)
+            others.append(paths);
+    }
+    const QString instance = profileInstanceDirPath();
+    if (isPrivateDir(instance, uint(::geteuid()))) {
+        const InstancePaths paths = instanceFolderPaths(instance, group, false);
+        if (paths.lockFile != own)
             others.append(paths);
     }
     return others;
@@ -272,6 +305,11 @@ bool lockHeldByLiveProcess(const QString &lockFile)
 void setUserRuntimeRootForTests(const QString &root)
 {
     g_userRuntimeRoot = root.isEmpty() ? QStringLiteral("/run/user") : root;
+}
+
+void setSocketRootForTests(const QString &root)
+{
+    g_socketRoot = root.isEmpty() ? QStringLiteral("/tmp") : root;
 }
 #endif
 

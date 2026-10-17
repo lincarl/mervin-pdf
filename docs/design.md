@@ -316,20 +316,34 @@ own 0700 folder and not a link. That folder is per user and /tmp cleaners do not
 reach it. The group name hashes the uid instead of `$USER`. The socket is an
 absolute path, and both files have the sticky bit, which keeps them from the
 age-based cleanup that the XDG base directory spec allows in a runtime folder.
-Without such a folder, or where the socket path is longer than Qt takes, they are in
-`mervin-pdf/run-<host>` in the user's cache folder (`~/.cache` by default), made
-mode 0700. Qt needs the path to fit into the 108 bytes of `sockaddr_un` with two
+Without such a folder, or where the socket path is longer than Qt takes there, the
+lock goes with the files it guards. It is in `instance-<host>` in the profile folder
+that holds `config.toml`, `recent.json`, `viewstate.json` and `session.json`
+(`ConfigPaths::configDir()`), for the default profile as for a `--profile` folder.
+Launches that use the same profile folder take the same lock, whatever their
+`$XDG_CACHE_HOME`, `$HOME` or `$TMPDIR`, and launches with different profile folders
+share none of those files. Mervin makes the instance folder with mode 0700 and
+leaves the profile folder's own mode as it is. One that already exists is used only
+if it is this user's own 0700 folder and not a link. The host part keeps machines
+that share a profile folder apart, as a lock that another machine holds never goes
+stale. Qt needs a socket path to fit into the 108 bytes of `sockaddr_un` with two
 bytes to spare on Linux, one for the terminating zero and one for abstract names, so
-the longest path it takes there is 106 bytes. The host part keeps machines that
-share a home folder apart, as a lock that another machine holds never goes stale. If
-that path is too long too, or the folder cannot be made private, they are in
-`mervin-pdf-<uid>` in the temp folder. Anyone can create names there, so Mervin uses
-that folder only if it created it or it already is this user's folder, not a link,
-with mode 0700. The cache and temp folders come from `$XDG_CACHE_HOME`, `$HOME` and
-`$TMPDIR`. So on a system without `/run/user/<uid>`, two launches of one profile with
-different values of those take different locks, and both can own the profile's
-files. With no usable folder there is no lock. On Windows the lock is in
-the per-user %TEMP% and the endpoint is a named pipe. A Store copy and each
+the longest path it takes is 106 bytes. Where the profile folder makes the path
+longer, the lock and the carry file stay in the instance folder and the socket goes
+to `mervin-pdf-<uid>` in /tmp, which is fixed, unlike `$TMPDIR`. Anyone can create
+names in /tmp, so Mervin uses that folder only if it created it or it already is
+this user's folder, not a link, with mode 0700. The primary records where it listens
+in `<group>.endpoint` in the instance folder (`ipc::recordEndpoint()`), so a launch
+that reaches the profile folder through another path, as through a link, still finds
+it. If no folder takes the socket, or listening fails, the primary keeps the lock
+and listens nowhere, so later launches open their files standalone, as beside a
+primary that does not answer. Without a usable instance folder there is no lock, and
+each launch runs on its own. Two launches of one profile that spell its folder
+differently, as a relative and an absolute `--profile` path, still form different
+groups, as the group name hashes the path as given. On Windows the lock stays in the
+per-user %TEMP%, where released copies keep it too, so that an older and a newer
+copy still meet after an upgrade. Two launches there with different values of
+`%TEMP%` take different locks. The endpoint is a named pipe. A Store copy and each
 `--profile` directory form groups of their own.
 
 Subsequent launches send newline-delimited JSON containing file paths and open
@@ -345,7 +359,7 @@ those of the first window. `WindowManager` then takes them and opens each on a l
 event-loop turn, as an earlier Open can show a nested password or error dialog.
 
 `ipc::claimOrHandOff()` makes the launch decision. `start()` tells a lock held by a
-live process apart from a lock or endpoint that cannot be made. While a live process
+live process apart from a lock that cannot be made. While a live process
 holds the lock without answering, a launch tries to start and to hand off again for
 up to `ipc::kLaunchWaitMs` (10 s, the five-second exit wait plus a margin). An Open
 that a primary has taken over a connection without acknowledging it is never sent

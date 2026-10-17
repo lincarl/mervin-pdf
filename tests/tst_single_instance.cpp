@@ -140,10 +140,15 @@ private slots:
     void lockCheckOnlyReadsTheLockFile();
     void lockHolder_data();
     void lockHolder();
-    void noRuntimeDirUsesPrivateCacheFolder();
+    void noRuntimeDirUsesProfileInstanceFolder();
+    void launchesWithDifferentCacheAndTempShareOnePrimary();
+    void instanceFolderMustBePrivate_data();
+    void instanceFolderMustBePrivate();
     void tooLongPathFallsBack_data();
     void tooLongPathFallsBack();
-    void tempFolderMustBePrivate();
+    void socketFolderMustBePrivate_data();
+    void socketFolderMustBePrivate();
+    void launchFindsPrimaryThroughAnotherPath();
     void deletedLockKeepsLivePrimary();
     void deadSocketIsReplaced();
 #endif
@@ -159,13 +164,16 @@ private slots:
 
 private:
 #ifdef Q_OS_UNIX
-    // Keeps the tests out of the user's real runtime and cache folders, and out of the
-    // temp folder, where builds from before the move listen under the same group names.
-    // Short paths of their own keep every socket path within Qt's limit, whatever the
-    // temp folder the suite runs with.
+    // Keeps the tests out of the user's real runtime folder, profile and cache folder, out
+    // of /tmp, and out of the temp folder, where builds from before the move listen under
+    // the same group names. Short paths of their own keep every socket path within Qt's
+    // limit, whatever the temp folder the suite runs with.
     QTemporaryDir runtimeRoot_{kShortTemp};
     QTemporaryDir tmp_{kShortTemp};
     QTemporaryDir cache_{kShortTemp};
+    QTemporaryDir profile_{kShortTemp};
+    QTemporaryDir socketRoot_{kShortTemp};
+    QString previousProfile_;
     std::optional<EnvOverride> runtimeEnv_;
     std::optional<EnvOverride> tmpEnv_;
     std::optional<EnvOverride> cacheEnv_;
@@ -197,18 +205,54 @@ public:
     }
     ~RuntimeRootOverride() { mervin::ipc::setUserRuntimeRootForTests(g_runtimeRoot); }
 };
+
+// Leaves no usable /run/user/<uid> for the rest of the scope.
+class NoRuntimeDir : public RuntimeRootOverride
+{
+public:
+    NoRuntimeDir()
+        : RuntimeRootOverride(g_runtimeRoot + QStringLiteral("/none"))
+    {
+    }
+};
+
+// Uses `dir` as the profile folder for the rest of the scope.
+class ProfileOverride
+{
+public:
+    explicit ProfileOverride(const QString &dir)
+        : previous_(mervin::ConfigPaths::overrideDir())
+    {
+        mervin::ConfigPaths::setOverrideDir(dir);
+    }
+    ~ProfileOverride() { mervin::ConfigPaths::setOverrideDir(previous_); }
+
+private:
+    QString previous_;
+};
+
+// The instance folders in the profile folder `profile`.
+QStringList instanceFolders(const QString &profile)
+{
+    return QDir(profile).entryList({QStringLiteral("instance-*")},
+                                   QDir::Dirs | QDir::Hidden | QDir::System);
+}
 } // namespace
 #endif
 
 void TstSingleInstance::initTestCase()
 {
 #ifdef Q_OS_UNIX
-    QVERIFY(runtimeRoot_.isValid() && tmp_.isValid() && cache_.isValid());
+    QVERIFY(runtimeRoot_.isValid() && tmp_.isValid() && cache_.isValid() && profile_.isValid()
+            && socketRoot_.isValid());
     g_runtimeRoot = runtimeRoot_.path();
     const QString runtimeDir = makeUserRuntimeDir(g_runtimeRoot);
     QVERIFY(!runtimeDir.isEmpty());
     mervin::ipc::setUserRuntimeRootForTests(g_runtimeRoot);
-    // Nothing reads it any more, which the tests that set it show.
+    mervin::ipc::setSocketRootForTests(socketRoot_.path());
+    previousProfile_ = mervin::ConfigPaths::overrideDir();
+    mervin::ConfigPaths::setOverrideDir(profile_.path());
+    // Nothing reads these for the lock any more, which the tests that set them show.
     runtimeEnv_.emplace("XDG_RUNTIME_DIR", QByteArray());
     tmpEnv_.emplace("TMPDIR", QFile::encodeName(tmp_.path()));
     cacheEnv_.emplace("XDG_CACHE_HOME", QFile::encodeName(cache_.path()));
@@ -226,6 +270,8 @@ void TstSingleInstance::cleanupTestCase()
     cacheEnv_.reset();
     tmpEnv_.reset();
     runtimeEnv_.reset();
+    mervin::ConfigPaths::setOverrideDir(previousProfile_);
+    mervin::ipc::setSocketRootForTests({});
     mervin::ipc::setUserRuntimeRootForTests({});
 #endif
 }
@@ -690,10 +736,17 @@ constexpr int kSocketPathLimit = int(sizeof(sockaddr_un::sun_path)) - 2;
 constexpr int kSocketPathLimit = int(sizeof(sockaddr_un::sun_path)) - 1;
 #  endif
 
-// The temp-folder fallback for this user.
-QString tempFallback(const QString &tmp)
+// This user's socket folder in the socket root `root`.
+QString socketFolder(const QString &root)
 {
-    return QDir(tmp).filePath(QStringLiteral("mervin-pdf-%1").arg(uint(::geteuid())));
+    return QDir(root).filePath(QStringLiteral("mervin-pdf-%1").arg(uint(::geteuid())));
+}
+
+// The mode bits of `path`, without following a link.
+uint modeOf(const QString &path)
+{
+    struct stat st{};
+    return ::lstat(QFile::encodeName(path).constData(), &st) == 0 ? uint(st.st_mode & 07777) : 0;
 }
 } // namespace
 
@@ -773,17 +826,17 @@ void TstSingleInstance::launchesWithAndWithoutXdgRuntimeDirShareOnePrimary()
 }
 
 // The folders available can change while a primary runs, as when /run/user/<uid> appears
-// with a desktop login after the primary started from ssh. A launch that would choose
-// another folder still finds that primary and hands off to it.
+// with a desktop login after the primary started from ssh, in the profile's instance
+// folder. A launch that would choose /run/user/<uid> still finds that primary and hands
+// off to it.
 void TstSingleInstance::primaryInAnotherFolderIsFound()
 {
-    QTemporaryDir cache(kShortTemp);
-    QVERIFY(cache.isValid());
-    const EnvOverride cacheHome("XDG_CACHE_HOME", QFile::encodeName(cache.path()));
     SingleInstanceServer primary;
     {
-        const RuntimeRootOverride noRuntimeDir(cache.path() + QStringLiteral("/no-runtime"));
+        const NoRuntimeDir noRuntimeDir;
         QCOMPARE(primary.start(kTestPipe), Start::Started);
+        QVERIFY(mervin::ipc::instancePaths(kTestPipe).lockFile.startsWith(
+            profile_.path() + QStringLiteral("/instance-")));
     }
     QVERIFY(mervin::ipc::instancePaths(kTestPipe).server.startsWith(g_runtimeRoot));
 
@@ -811,15 +864,12 @@ void TstSingleInstance::launchWaitsForQuittingPrimaryInAnotherFolder()
 {
     QFETCH(QString, other);
     const bool released = other == QLatin1String("exits");
-    QTemporaryDir cache(kShortTemp);
-    QVERIFY(cache.isValid());
-    const EnvOverride cacheHome("XDG_CACHE_HOME", QFile::encodeName(cache.path()));
     QString otherLock;
     {
-        const RuntimeRootOverride noRuntimeDir(cache.path() + QStringLiteral("/no-runtime"));
+        const NoRuntimeDir noRuntimeDir;
         otherLock = mervin::ipc::instancePaths(kTestPipe).lockFile;
     }
-    QVERIFY(otherLock.startsWith(cache.path() + QLatin1Char('/')));
+    QVERIFY(otherLock.startsWith(profile_.path() + QStringLiteral("/instance-")));
     QLockFile quitting(otherLock);
     if (other == QLatin1String("leftover")) {
         if (QCoreApplication::applicationPid() == 1)
@@ -881,12 +931,9 @@ void TstSingleInstance::launchWaitsForQuittingPrimaryInAnotherFolder()
 // replace.
 void TstSingleInstance::lockCheckOnlyReadsTheLockFile()
 {
-    QTemporaryDir cache(kShortTemp);
-    QVERIFY(cache.isValid());
-    const EnvOverride cacheHome("XDG_CACHE_HOME", QFile::encodeName(cache.path()));
     SingleInstanceServer primary;
     {
-        const RuntimeRootOverride noRuntimeDir(cache.path() + QStringLiteral("/no-runtime"));
+        const NoRuntimeDir noRuntimeDir;
         QCOMPARE(primary.start(kTestPipe), Start::Started);
     }
 
@@ -995,89 +1042,174 @@ void TstSingleInstance::lockHolder()
     QCOMPARE(QFile::exists(lockFile), holder != QLatin1String("none")); // made or removed none
 }
 
-void TstSingleInstance::noRuntimeDirUsesPrivateCacheFolder()
+// Without /run/user/<uid> the lock, the socket and the carry file are in a folder of
+// this machine's own in the profile folder, made with mode 0700. The profile folder's own
+// mode stays as it is, and nothing goes to the cache or temp folder.
+void TstSingleInstance::noRuntimeDirUsesProfileInstanceFolder()
 {
+    QTemporaryDir profile(kShortTemp);
     QTemporaryDir cache(kShortTemp);
     QTemporaryDir tmp(kShortTemp);
-    QVERIFY(cache.isValid() && tmp.isValid());
-    const int cacheSocket = int(cache.path().size())
-        + int(QStringLiteral("/mervin-pdf/run-").size()) + 8 + 1 + int(kTestPipe.size());
-    QVERIFY2(cacheSocket <= kSocketPathLimit,
-             qPrintable(QStringLiteral("the cache folder %1 is too deep for this test")
-                            .arg(cache.path())));
-    const RuntimeRootOverride noRuntimeDir(cache.path() + QStringLiteral("/no-runtime"));
+    QVERIFY(profile.isValid() && cache.isValid() && tmp.isValid());
+    QVERIFY(QFile::setPermissions(profile.path(), QFile::ReadOwner | QFile::WriteOwner
+                                                      | QFile::ExeOwner | QFile::ReadOther
+                                                      | QFile::ExeOther));
+    const uint profileMode = modeOf(profile.path());
+    const ProfileOverride profileOverride(profile.path());
+    const NoRuntimeDir noRuntimeDir;
     const EnvOverride cacheHome("XDG_CACHE_HOME", QFile::encodeName(cache.path()));
     const EnvOverride tmpEnv("TMPDIR", QFile::encodeName(tmp.path()));
-    const QDir mervinCache(QDir(cache.path()).filePath(QStringLiteral("mervin-pdf")));
 
-    QString dir;
-    {
-        SingleInstanceServer s;
-        QCOMPARE(s.start(kTestPipe), Start::Started);
-        // One folder per machine, as machines can share a home folder.
-        const QStringList folders = mervinCache.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-        QCOMPARE(folders.size(), 1);
-        QVERIFY2(folders.first().startsWith(QStringLiteral("run-")) && folders.first().size() == 12,
-                 qPrintable(folders.first()));
-        dir = mervinCache.filePath(folders.first());
-        QCOMPARE(mervin::ipc::instancePaths(kTestPipe).lockFile,
-                 QDir(dir).filePath(kTestPipe + QStringLiteral(".lock")));
-        QVERIFY(QFile::exists(QDir(dir).filePath(kTestPipe + QStringLiteral(".lock"))));
-        QVERIFY(QFile::exists(QDir(dir).filePath(kTestPipe)));
-        QVERIFY(ownPrivateDir(dir));
-    }
-
-    // A folder there that is not this user's own directory is not used. The lock goes to
-    // this user's private folder in the temp folder instead.
-    QVERIFY(QDir(dir).removeRecursively());
-    QTemporaryDir elsewhere;
-    QVERIFY(QFile::link(elsewhere.path(), dir));
-    QCOMPARE(mervin::ipc::instancePaths(kTestPipe).lockFile,
-             QDir(tempFallback(tmp.path())).filePath(kTestPipe + QStringLiteral(".lock")));
     SingleInstanceServer s;
     QCOMPARE(s.start(kTestPipe), Start::Started);
-    QVERIFY(QDir(elsewhere.path()).isEmpty());
-    QVERIFY(ownPrivateDir(tempFallback(tmp.path())));
+    // One folder per machine, as machines can share a profile folder.
+    const QStringList folders = instanceFolders(profile.path());
+    QCOMPARE(folders.size(), 1);
+    QVERIFY2(folders.first().size() == int(QStringLiteral("instance-").size()) + 8,
+             qPrintable(folders.first()));
+    const QDir dir(QDir(profile.path()).filePath(folders.first()));
+    const mervin::ipc::InstancePaths paths = mervin::ipc::instancePaths(kTestPipe);
+    QCOMPARE(paths.lockFile, dir.filePath(kTestPipe + QStringLiteral(".lock")));
+    QCOMPARE(paths.server, dir.filePath(kTestPipe));
+    QCOMPARE(paths.carriedFile, dir.filePath(kTestPipe + QStringLiteral(".carried")));
+    QVERIFY(QFile::exists(paths.lockFile));
+    QVERIFY(QFile::exists(paths.server));
+    QCOMPARE(mervin::ipc::endpointOf(paths), paths.server);
+    QVERIFY(ownPrivateDir(dir.path()));
+    QCOMPARE(modeOf(profile.path()), profileMode);
+    for (const QString &other : {cache.path(), tmp.path(), socketRoot_.path()})
+        QVERIFY2(QDir(other).isEmpty(QDir::AllEntries | QDir::Hidden | QDir::System
+                                     | QDir::NoDotAndDotDot),
+                 qPrintable(other));
+
+    SingleInstanceServer launch;
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, Message::open({QStringLiteral("p.pdf")}), 1000,
+                                         kTestPipe),
+             Launch::Delivered);
+    QCOMPARE(s.takeOpens().size(), 1);
+}
+
+// Without /run/user/<uid>, launches of one profile take the same lock whatever their
+// $XDG_CACHE_HOME and $TMPDIR, as the lock lies with the profile's files, so one of them
+// ends up the primary.
+void TstSingleInstance::launchesWithDifferentCacheAndTempShareOnePrimary()
+{
+    QTemporaryDir profile(kShortTemp);
+    QTemporaryDir cacheA(kShortTemp);
+    QTemporaryDir cacheB(kShortTemp);
+    QTemporaryDir tmpA(kShortTemp);
+    QTemporaryDir tmpB(kShortTemp);
+    QVERIFY(profile.isValid() && cacheA.isValid() && cacheB.isValid() && tmpA.isValid()
+            && tmpB.isValid());
+    const QString previous = mervin::ConfigPaths::overrideDir();
+    const auto restore = qScopeGuard([&] { mervin::ConfigPaths::setOverrideDir(previous); });
+    mervin::ConfigPaths::setOverrideDir(profile.path());
+    const RuntimeRootOverride noRuntimeDir(profile.path() + QStringLiteral("/no-runtime"));
+
+    SingleInstanceServer primary;
+    {
+        const EnvOverride cache("XDG_CACHE_HOME", QFile::encodeName(cacheA.path()));
+        const EnvOverride tmp("TMPDIR", QFile::encodeName(tmpA.path()));
+        QCOMPARE(primary.start(kTestPipe), Start::Started);
+    }
+    const EnvOverride cache("XDG_CACHE_HOME", QFile::encodeName(cacheB.path()));
+    const EnvOverride tmp("TMPDIR", QFile::encodeName(tmpB.path()));
+    SingleInstanceServer launch;
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, Message::open({QStringLiteral("e.pdf")}), 1000,
+                                         kTestPipe),
+             Launch::Delivered);
+    QCOMPARE(primary.takeOpens().size(), 1);
+}
+
+void TstSingleInstance::instanceFolderMustBePrivate_data()
+{
+    QTest::addColumn<QString>("kind");
+    QTest::newRow("open to others") << QStringLiteral("open");
+    QTest::newRow("a link to a private folder") << QStringLiteral("link");
+}
+
+// An instance folder that already exists and is not this user's own 0700 folder, or is a
+// link, is refused, not repaired. Without a folder for the lock, a launch runs on its own
+// at once, and nothing goes where a link points.
+void TstSingleInstance::instanceFolderMustBePrivate()
+{
+    QFETCH(QString, kind);
+    QTemporaryDir profile(kShortTemp);
+    QTemporaryDir target(kShortTemp);
+    QVERIFY(profile.isValid() && target.isValid());
+    const ProfileOverride profileOverride(profile.path());
+    const NoRuntimeDir noRuntimeDir;
+    QString dir;
+    {
+        SingleInstanceServer first;
+        QCOMPARE(first.start(kTestPipe), Start::Started);
+        QCOMPARE(instanceFolders(profile.path()).size(), 1);
+        dir = QDir(profile.path()).filePath(instanceFolders(profile.path()).first());
+    }
+    // Another user's folder does not count either.
+    QVERIFY(ownPrivateDir(dir));
+    QVERIFY(!mervin::ipc::isPrivateDir(dir, uint(::geteuid()) + 1));
+
+    if (kind == QLatin1String("open")) {
+        QVERIFY(QFile::setPermissions(dir, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner
+                                               | QFile::ReadOther | QFile::ExeOther));
+    } else {
+        QVERIFY(QDir(dir).removeRecursively());
+        QVERIFY(QFile::link(target.path(), dir));
+    }
+    QCOMPARE(mervin::ipc::instancePaths(kTestPipe).lockFile, QString());
+    SingleInstanceServer s;
+    QCOMPARE(s.start(kTestPipe), Start::Failed);
+    QElapsedTimer timer;
+    timer.start();
+    QCOMPARE(mervin::ipc::claimOrHandOff(s, Message::open({}), 5000, kTestPipe),
+             Launch::Uncoordinated);
+    QVERIFY(timer.elapsed() < 1000);
+    QVERIFY(QDir(target.path()).isEmpty());
+    if (kind == QLatin1String("open"))
+        QVERIFY(!ownPrivateDir(dir));
 }
 
 void TstSingleInstance::tooLongPathFallsBack_data()
 {
     QTest::addColumn<QString>("folder");   // the folder whose socket path is sized
     QTest::addColumn<int>("over");         // bytes over the longest socket path Qt takes
-    QTest::addColumn<QString>("expected"); // the folder that gets the lock
+    QTest::addColumn<QString>("expected"); // where the lock and the socket go
     QTest::newRow("runtime folder far too deep") << QStringLiteral("runtime") << 100
-                                                 << QStringLiteral("cache");
+                                                 << QStringLiteral("instance");
     QTest::newRow("runtime socket path one byte too long")
-        << QStringLiteral("runtime") << 1 << QStringLiteral("cache");
+        << QStringLiteral("runtime") << 1 << QStringLiteral("instance");
     QTest::newRow("runtime socket path at the limit")
         << QStringLiteral("runtime") << 0 << QStringLiteral("runtime");
-    QTest::newRow("cache folder far too deep") << QStringLiteral("cache") << 100
-                                               << QStringLiteral("temp");
-    QTest::newRow("cache socket path one byte too long")
-        << QStringLiteral("cache") << 1 << QStringLiteral("temp");
-    QTest::newRow("cache socket path at the limit")
-        << QStringLiteral("cache") << 0 << QStringLiteral("cache");
+    QTest::newRow("profile folder far too deep") << QStringLiteral("instance") << 100
+                                                 << QStringLiteral("socket folder");
+    QTest::newRow("instance socket path one byte too long")
+        << QStringLiteral("instance") << 1 << QStringLiteral("socket folder");
+    QTest::newRow("instance socket path at the limit")
+        << QStringLiteral("instance") << 0 << QStringLiteral("instance");
 }
 
-// A folder whose socket path Qt would refuse gives way to the next one. Qt keeps a byte of
-// sockaddr_un for the terminating zero, and on Linux one more for abstract names.
+// A folder whose socket path Qt would refuse gives way. Without /run/user/<uid> the lock
+// goes to the profile's instance folder. If the socket path is too long there, the lock
+// stays and the socket goes to this user's folder in /tmp, which the primary records for
+// launches. Qt keeps a byte of sockaddr_un for the terminating zero, and on Linux one more
+// for abstract names.
 void TstSingleInstance::tooLongPathFallsBack()
 {
     QFETCH(QString, folder);
     QFETCH(int, over);
     QFETCH(QString, expected);
     QTemporaryDir root(kShortTemp);
-    QTemporaryDir tmp(kShortTemp);
-    QVERIFY(root.isValid() && tmp.isValid());
+    QVERIFY(root.isValid());
     const int limit = kSocketPathLimit;
     const QString uid = QString::number(uint(::geteuid()));
     const int runtimeSuffix = 1 + int(uid.size()) + 1 + int(kTestPipe.size());
-    const int cacheSuffix = int(QStringLiteral("/mervin-pdf/run-").size()) + 8 + 1
+    const int instanceSuffix = int(QStringLiteral("/instance-").size()) + 8 + 1
         + int(kTestPipe.size());
     // The name of a folder in `root` whose socket path, after `suffix` more bytes, is
     // `over` bytes over the limit.
     const int name = limit + over
-        - (folder == QLatin1String("runtime") ? runtimeSuffix : cacheSuffix)
+        - (folder == QLatin1String("runtime") ? runtimeSuffix : instanceSuffix)
         - int(root.path().size()) - 1;
     QVERIFY2(name > 0, qPrintable(QStringLiteral("%1 is too deep for this test").arg(root.path())));
     const QString sized = root.path() + QLatin1Char('/') + QString(name, QLatin1Char('x'));
@@ -1087,77 +1219,128 @@ void TstSingleInstance::tooLongPathFallsBack()
     const QString runtimeDir =
         folder == QLatin1String("runtime") ? makeUserRuntimeDir(runtimeRoot) : QString();
     QVERIFY(folder != QLatin1String("runtime") || !runtimeDir.isEmpty());
-    const QString cacheDir =
-        folder == QLatin1String("cache") ? sized : root.filePath(QStringLiteral("c"));
+    const QString profile =
+        folder == QLatin1String("instance") ? sized : root.filePath(QStringLiteral("p"));
     const RuntimeRootOverride rootOverride(runtimeRoot);
-    const EnvOverride cache("XDG_CACHE_HOME", QFile::encodeName(cacheDir));
-    const EnvOverride tmpEnv("TMPDIR", QFile::encodeName(tmp.path()));
+    const ProfileOverride profileOverride(profile);
 
     const mervin::ipc::InstancePaths paths = mervin::ipc::instancePaths(kTestPipe);
-    if (expected == QLatin1String("runtime"))
+    if (expected == QLatin1String("runtime")) {
         QCOMPARE(paths.server, QDir(runtimeDir).filePath(kTestPipe));
-    else if (expected == QLatin1String("cache"))
-        QVERIFY2(paths.server.startsWith(cacheDir + QStringLiteral("/mervin-pdf/run-")),
-                 qPrintable(paths.server));
-    else
-        QCOMPARE(paths.server, QDir(tempFallback(tmp.path())).filePath(kTestPipe));
+        QCOMPARE(paths.lockFile, QDir(runtimeDir).filePath(kTestPipe + QStringLiteral(".lock")));
+    } else {
+        QVERIFY2(paths.lockFile.startsWith(profile + QStringLiteral("/instance-")),
+                 qPrintable(paths.lockFile));
+        if (expected == QLatin1String("instance"))
+            QCOMPARE(QFileInfo(paths.server).path(), QFileInfo(paths.lockFile).path());
+        else
+            QCOMPARE(paths.server, QDir(socketFolder(socketRoot_.path())).filePath(kTestPipe));
+    }
     if (over == 0)
         QCOMPARE(QFile::encodeName(paths.server).size(), qsizetype(limit));
 
-    // Qt listens there, and a launch reaches it.
+    // Qt listens there, and a launch reaches it, through the primary's record when the
+    // socket is not next to the lock.
     SingleInstanceServer s;
     QCOMPARE(s.start(kTestPipe), Start::Started);
-    QCOMPARE(mervin::ipc::handOff(paths.server, Message::open({QStringLiteral("a.pdf")}),
-                                  QDeadlineTimer(1000)),
-             Handoff::Delivered);
-    if (expected == QLatin1String("temp"))
-        QVERIFY(ownPrivateDir(tempFallback(tmp.path())));
+    QCOMPARE(mervin::ipc::endpointOf(paths), paths.server);
+    SingleInstanceServer launch;
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, Message::open({QStringLiteral("a.pdf")}), 1000,
+                                         kTestPipe),
+             Launch::Delivered);
+    QCOMPARE(s.takeOpens().size(), 1);
+    if (expected == QLatin1String("socket folder"))
+        QVERIFY(ownPrivateDir(socketFolder(socketRoot_.path())));
 }
 
-// The temp folder is shared by every user, so its fallback folder must already be this
-// user's own 0700 folder. Anything else is refused, not repaired, and without any usable
-// folder a launch runs on its own at once.
-void TstSingleInstance::tempFolderMustBePrivate()
+void TstSingleInstance::socketFolderMustBePrivate_data()
 {
-    QTemporaryDir root;
-    QTemporaryDir tmp;
-    QVERIFY(root.isValid() && tmp.isValid());
-    const QString deep = root.path() + QStringLiteral("/") + QString(110, QLatin1Char('d'));
+    QTest::addColumn<QString>("kind");
+    QTest::newRow("open to others") << QStringLiteral("open");
+    QTest::newRow("a link to a private folder") << QStringLiteral("link");
+}
+
+// /tmp is shared by every user, so the socket folder there must already be this user's
+// own 0700 folder or be made one. Anything else is refused, not repaired. The lock in the
+// profile's instance folder still keeps the profile's files to one copy, so a later launch
+// runs standalone, not as a second owner.
+void TstSingleInstance::socketFolderMustBePrivate()
+{
+    QFETCH(QString, kind);
+    QTemporaryDir root(kShortTemp);
+    QTemporaryDir socketRoot(kShortTemp);
+    QTemporaryDir target(kShortTemp);
+    QVERIFY(root.isValid() && socketRoot.isValid() && target.isValid());
+    const QString deep = root.path() + QLatin1Char('/') + QString(110, QLatin1Char('d'));
     QVERIFY(QDir().mkpath(deep));
-    const RuntimeRootOverride noRuntimeDir(root.path() + QStringLiteral("/no-runtime"));
-    const EnvOverride cache("XDG_CACHE_HOME", QFile::encodeName(deep));
-    const EnvOverride tmpEnv("TMPDIR", QFile::encodeName(tmp.path()));
-    const QString fallback = tempFallback(tmp.path());
+    const ProfileOverride profileOverride(deep);
+    const NoRuntimeDir noRuntimeDir;
+    mervin::ipc::setSocketRootForTests(socketRoot.path());
+    const auto restoreRoot =
+        qScopeGuard([&] { mervin::ipc::setSocketRootForTests(socketRoot_.path()); });
+    const QString fallback = socketFolder(socketRoot.path());
+    if (kind == QLatin1String("open")) {
+        QVERIFY(QDir().mkdir(fallback));
+        QVERIFY(QFile::setPermissions(fallback, QFile::ReadOwner | QFile::WriteOwner
+                                                    | QFile::ExeOwner | QFile::ReadOther
+                                                    | QFile::ExeOther));
+    } else {
+        QVERIFY(QFile::setPermissions(target.path(),
+                                      QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+        QVERIFY(QFile::link(target.path(), fallback));
+    }
 
-    // Another user's folder.
-    QVERIFY(QDir().mkdir(fallback));
-    QVERIFY(QFile::setPermissions(fallback,
-                                  QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
-    QVERIFY(ownPrivateDir(fallback));
-    QVERIFY(!mervin::ipc::isPrivateDir(fallback, uint(::geteuid()) + 1));
-
-    // A folder that others could open.
-    QVERIFY(QFile::setPermissions(fallback, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner
-                                                | QFile::ReadOther | QFile::ExeOther));
-    QCOMPARE(mervin::ipc::instancePaths(kTestPipe).lockFile, QString());
-    QVERIFY(!ownPrivateDir(fallback));
-
-    // A link to a private folder.
-    QVERIFY(QDir(fallback).removeRecursively());
-    QTemporaryDir target;
-    QVERIFY(QFile::link(target.path(), fallback));
-    QVERIFY(QFile::setPermissions(target.path(),
-                                  QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
-    QCOMPARE(mervin::ipc::instancePaths(kTestPipe).lockFile, QString());
-
-    SingleInstanceServer s;
-    QCOMPARE(s.start(kTestPipe), Start::Failed);
+    const mervin::ipc::InstancePaths paths = mervin::ipc::instancePaths(kTestPipe);
+    QVERIFY2(paths.lockFile.startsWith(deep + QStringLiteral("/instance-")),
+             qPrintable(paths.lockFile));
+    QCOMPARE(paths.server, QString());
+    SingleInstanceServer primary;
+    QCOMPARE(primary.start(kTestPipe), Start::Started);
+    QVERIFY(!primary.isListening());
+    QVERIFY(QFile::exists(paths.lockFile));
     QVERIFY(QDir(target.path()).isEmpty());
-    QElapsedTimer timer;
-    timer.start();
-    QCOMPARE(mervin::ipc::claimOrHandOff(s, Message::open({}), 5000, kTestPipe),
-             Launch::Uncoordinated);
-    QVERIFY(timer.elapsed() < 1000);
+    if (kind == QLatin1String("open"))
+        QVERIFY(!ownPrivateDir(fallback));
+
+    SingleInstanceServer launch;
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, Message::open({QStringLiteral("s.pdf")}), 600,
+                                         kTestPipe),
+             Launch::Standalone);
+    QVERIFY(!launch.isListening());
+}
+
+// Launches can reach one profile folder through different paths, as through a link, and
+// so compute different sockets when one path is too long for a socket. They take the same
+// lock, and a launch finds the primary through the endpoint it recorded.
+void TstSingleInstance::launchFindsPrimaryThroughAnotherPath()
+{
+    QTemporaryDir root(kShortTemp);
+    QVERIFY(root.isValid());
+    const QString profile = root.filePath(QStringLiteral("p"));
+    const QString link = root.path() + QLatin1Char('/') + QString(95, QLatin1Char('l'));
+    QVERIFY(QDir().mkpath(profile));
+    QVERIFY(QFile::link(profile, link));
+    const NoRuntimeDir noRuntimeDir;
+    SingleInstanceServer primary;
+    mervin::ipc::InstancePaths direct;
+    {
+        const ProfileOverride profileOverride(profile);
+        QCOMPARE(primary.start(kTestPipe), Start::Started);
+        direct = mervin::ipc::instancePaths(kTestPipe);
+    }
+    QCOMPARE(QFileInfo(direct.server).path(), QFileInfo(direct.lockFile).path());
+
+    const ProfileOverride profileOverride(link);
+    const mervin::ipc::InstancePaths linked = mervin::ipc::instancePaths(kTestPipe);
+    QCOMPARE(QFileInfo(linked.lockFile).canonicalFilePath(),
+             QFileInfo(direct.lockFile).canonicalFilePath());
+    QVERIFY(linked.server != direct.server);
+    QCOMPARE(mervin::ipc::endpointOf(linked), direct.server);
+    SingleInstanceServer launch;
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, Message::open({QStringLiteral("l.pdf")}), 1000,
+                                         kTestPipe),
+             Launch::Delivered);
+    QCOMPARE(primary.takeOpens().size(), 1);
 }
 
 // MPDF-20: a cleaner that removes a live primary's lock file must not let the next
@@ -1271,6 +1454,7 @@ private:
 // Older copies named the group from $USERNAME or $USER and listened in the temp folder.
 void TstSingleInstance::legacyNameMatchesOlderCopies()
 {
+    const ProfileOverride defaultProfile{QString()}; // the installed app's group
     const EnvOverride userName("USERNAME", QByteArray());
     const EnvOverride user("USER", "someone");
     const QByteArray digest =

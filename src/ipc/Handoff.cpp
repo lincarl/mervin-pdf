@@ -196,7 +196,8 @@ Launch claimOrHandOff(SingleInstanceServer &server, const Message &open, int wai
     if (ownLockFree()) {
         QStringList elsewhere;
         for (const InstancePaths &other : others)
-            elsewhere.append(other.server);
+            if (const QString endpoint = endpointOf(other); !endpoint.isEmpty())
+                elsewhere.append(endpoint);
 #  ifdef Q_OS_LINUX
         elsewhere.append(legacyEndpoint(name));
 #  endif
@@ -212,7 +213,6 @@ Launch claimOrHandOff(SingleInstanceServer &server, const Message &open, int wai
         }
     }
 #endif
-    const QString &endpoint = paths.server;
     for (;;) {
         bool otherHolder = false;
 #ifdef Q_OS_UNIX
@@ -223,7 +223,9 @@ Launch claimOrHandOff(SingleInstanceServer &server, const Message &open, int wai
             for (const InstancePaths &other : others) {
                 if (!lockHeldByLiveProcess(other.lockFile))
                     continue;
-                switch (handOff(other.server, open, deadline, lookup)) {
+                const QString endpoint = endpointOf(other);
+                switch (endpoint.isEmpty() ? Handoff::NoPrimary
+                                           : handOff(endpoint, open, deadline, lookup)) {
                 case Handoff::Delivered:
                     return Launch::Delivered;
                 case Handoff::Busy:
@@ -240,7 +242,9 @@ Launch claimOrHandOff(SingleInstanceServer &server, const Message &open, int wai
             if (started == SingleInstanceServer::Start::Started)
                 return Launch::Primary;
             // A failed start does not get better by waiting, but a primary may still answer.
+            // It records where it listens once it does, so this is read again each time.
             const bool lockHeld = started == SingleInstanceServer::Start::Running;
+            const QString endpoint = endpointOf(paths);
             switch (endpoint.isEmpty() ? Handoff::NoPrimary
                                        : handOff(endpoint, open, deadline, lookup)) {
             case Handoff::Delivered:
