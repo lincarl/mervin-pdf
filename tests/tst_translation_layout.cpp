@@ -748,10 +748,13 @@ void TstTranslationLayout::inspect(QWidget &widget, const QString &state, QWidge
 
 // Inspect the real message shown by an action, then dismiss it. The watchdog
 // also closes an unexpected modal dialog so CI reports a failure instead of
-// waiting indefinitely for a person to click a button.
+// waiting indefinitely for a person to click a button. Some messages come at the
+// end of a background job, such as a save that reopens the file three times, so
+// the wait allows for a slow runner. It ends as soon as the message shows.
 void TstTranslationLayout::inspectMessage(QWidget &parent, const QString &state,
                                          const std::function<void()> &action)
 {
+    constexpr qint64 kMessageWaitMs = 10000;
     bool sawMessage = false;
     bool timedOut = false;
     QElapsedTimer elapsed;
@@ -764,7 +767,7 @@ void TstTranslationLayout::inspectMessage(QWidget &parent, const QString &state,
             poll.stop();
             inspect(*box, state);
             box->accept();
-        } else if (elapsed.elapsed() > 2000) {
+        } else if (elapsed.elapsed() > kMessageWaitMs) {
             timedOut = true;
             if (modal)
                 modal->reject();
