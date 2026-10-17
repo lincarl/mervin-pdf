@@ -828,7 +828,8 @@ void TstQpdf::rotateAndDeleteKeepEncryptionWithoutKeyLength()
         pdf.processFile(path.toUtf8().constData(), "secret");
         QList<int> turned;
         for (auto &page : QPDFPageDocumentHelper(pdf).getAllPages()) {
-            const auto rotate = page.getAttribute("/Rotate", false);
+            // Not const: qpdf 11's QPDFObjectHandle accessors are not const.
+            auto rotate = page.getAttribute("/Rotate", false);
             turned << (rotate.isInteger() ? int(rotate.getIntValue()) : 0);
         }
         QCOMPARE(turned, rotations);
