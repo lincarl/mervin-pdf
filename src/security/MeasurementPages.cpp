@@ -30,6 +30,17 @@ private:
     QByteArray &bytes_;
 };
 
+// The Adler-32 checksum that ends a zlib stream, of the decoded `data`.
+quint32 adler32(const QByteArray &data)
+{
+    quint32 a = 1, b = 0;
+    for (const char c : data) {
+        a = (a + quint8(c)) % 65521;
+        b = (b + a) % 65521;
+    }
+    return (b << 16) | a;
+}
+
 // Whether the blob `dict` names only the encoding Mervin writes: no filter, or a single
 // /FlateDecode as a name or a one-element array, and no /DecodeParms. qpdf ignores /F and
 // /DP, MuPDF's abbreviations for /Filter and /DecodeParms, so they are refused too, and
@@ -55,11 +66,30 @@ std::optional<QByteArray> decodeBlob(QPDFObjectHandle &stream)
     QByteArray bytes;
     CappedSink sink(bytes);
     bool decoded = false;
+    // qpdf decodes a Flate stream with a bad checksum or missing data with only a warning
+    // from its filter, which it records on the owning QPDF. Such a warning counts as a
+    // failure, as in Document::mervinMeasurements, so both readers refuse the same blobs.
+    QPDF *owner = stream.getOwningQPDF();
+    const size_t warnings = owner ? owner->numWarnings() : 0;
     try {
-        // qpdf prints no warning, since the caller reports a failure as missing or
+        // qpdf adds no warning of its own, since the caller reports a failure as missing or
         // invalid metadata.
         if (!stream.pipeStreamData(&sink, &decoded, 0, qpdf_dl_generalized, true) || !decoded)
             return std::nullopt;
+        if (owner && owner->numWarnings() > warnings)
+            return std::nullopt;
+        // qpdf accepts a wrong Flate checksum without a warning, where MuPDF warns. Mervin's
+        // zlib stream ends with its checksum, so compare it here as well.
+        if (!stream.getDict().getKey("/Filter").isNull()) {
+            const auto raw = stream.getRawStreamData(); // decrypted, still Flate-encoded
+            if (raw->getSize() < 4)
+                return std::nullopt;
+            const unsigned char *end = raw->getBuffer() + raw->getSize();
+            const quint32 stored = quint32(end[-4]) << 24 | quint32(end[-3]) << 16
+                                   | quint32(end[-2]) << 8 | quint32(end[-1]);
+            if (stored != adler32(bytes))
+                return std::nullopt;
+        }
     } catch (const std::exception &) {
         return std::nullopt;
     }

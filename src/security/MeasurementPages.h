@@ -13,7 +13,7 @@ namespace mervin::measurementPages {
 // Decodes the blob `stream` with qpdf. nullopt when the stream has a filter other than a
 // single /FlateDecode, has /DecodeParms, has /F or /DP (MuPDF's abbreviations for /Filter
 // and /DecodeParms), decodes to more than kMaxMeasurementBlobBytes, or qpdf cannot decode
-// it.
+// it, warns while decoding it, as for missing data, or the Flate checksum does not match.
 std::optional<QByteArray> decodeBlob(QPDFObjectHandle &stream);
 MeasureDoc read(QPDF &pdf);
 // The translated reason store() and write() give for measurements whose blob would pass

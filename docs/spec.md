@@ -144,14 +144,17 @@ The measuring tool is intended for scaled plans, CAD exports, and maps.
 - Units, precision, and line width can be adjusted. Measurement vertices and value
   labels can be repositioned on the page.
 - Editable measurements and manual scales can be saved back into the PDF for use in
-  Mervin. Saved measurement data that decompresses to more than 16 MiB, or that is
-  stored other than plain or compressed once with Flate, or that Mervin cannot parse,
-  is not shown when the document opens, and the page tools report it as invalid.
-  Mervin never replaces such data. Saving edits, copies, flattened exports and the
-  recovery copy of an unloaded tab keep it as stored, and Measure says it is not
-  available for that file. Saving, copies and the page tools write nothing and say the
-  measurements are too large to save when they would store more than 16 MiB, as merging
-  files with many measurements can.
+  Mervin. Saved measurement data that decompresses to more than 16 MiB, that is stored
+  other than plain or compressed once with Flate, that is damaged, such as a Flate
+  stream with a bad checksum or missing data, or that Mervin cannot parse, is not shown
+  when the document opens, and the page tools report it as invalid. Mervin never
+  replaces such data. Saving edits, copies, flattened exports and the recovery copy of
+  an unloaded tab keep it as stored, and Measure says it is not available for that
+  file.
+- When the measurements to store would pass 16 MiB, as merging files with many
+  measurements can, Mervin says they are too large to save. Saving and copies then
+  fail before they write anything. A page tool fails at the output that would pass
+  the limit, so Split keeps the files it wrote before that one.
 - A flattened export writes ordinary PDF graphics that are visible in other PDF
   readers. Printing can include the same measurement graphics.
 
