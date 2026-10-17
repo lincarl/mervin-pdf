@@ -1344,6 +1344,20 @@ measurements of several files. The operation fails with "The measurements are to
 large to save." (`PageOps::measurementsTooLargeError`), which the Merge dialog shows in
 place of its write-failure summary.
 
+A document whose blob is present but unusable, because `mervinMeasurements` refused it
+or `TabPage::readDocument` could not parse it, records that on the `Document`
+(`measurementsUnreadable`). Its measurements would otherwise be lost silently, since the
+viewer starts with none and every save writes the viewer's measurements. Save with edits,
+the unload recovery copy and Save as copy then write through `MeasureExport::keepMervin`,
+and a flattened export, which may replace its source, keeps the blob too. Both mark the
+blob stream with qpdf's `setFilterOnWrite(false)`, so qpdf copies its stream data without
+decoding it, whatever its size. MuPDF's own rewrite in `savePdfTo` copies a filtered
+stream's raw bytes, so a Flate-encoded blob keeps its bytes exactly. An unfiltered blob
+gets MuPDF's usual Flate compression, with the same decoded bytes. The viewer refuses
+`setMeasureMode(true)`, calibration, Set Scale and a resumed measure state for such a
+document, and the Measure action says why, so no new measurements exist that a save would
+drop.
+
 Opening does not use qpdf, which inflates a whole object stream or cross-reference
 stream into memory when it resolves an object in it (qpdf 11.9.0 `QPDF.cc:1792`). MuPDF
 reads through those streams as it parses them. A crafted file of a few hundred

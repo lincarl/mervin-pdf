@@ -2858,6 +2858,26 @@ void MainWindow::toggleMeasure(bool on)
         return;
     }
     ViewerWidget *v = t->viewer();
+    if (on && v->document() && v->document()->measurementsUnreadable()) {
+        // Saves keep measurements Mervin could not read, so it offers no new ones.
+        if (measureAction_) {
+            QSignalBlocker block(measureAction_);
+            measureAction_->setChecked(false);
+        }
+        const QString title = tr("Measure");
+        //: Shown when the user chooses Measure on a PDF whose saved measurements Mervin
+        //: cannot read, because they are too large or stored in a form it does not
+        //: accept. Mervin keeps them unchanged when it saves, so it offers no measuring.
+        const QString text = tr("Mervin cannot read this file's measurements. Measuring is "
+                                "off so that they stay unchanged.");
+        const QPointer<QMessageBox> box(
+            new QMessageBox(QMessageBox::Information, title, text, QMessageBox::Ok, this));
+        box->setObjectName(QStringLiteral("measureUnreadable"));
+        box->setWindowModality(Qt::WindowModal); // other windows stay usable
+        box->exec();
+        delete box.data(); // a Quit in another window may already have deleted its parent
+        return;
+    }
     if (on)
         v->setOcrMode(false); // measure and OCR are mutually exclusive
     v->setMeasureMode(on);    // emits measureModeChanged -> panel show/hide + action sync

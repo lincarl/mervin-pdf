@@ -22,6 +22,15 @@ namespace mervin {
 
 namespace {
 
+// Makes the writer copy the stored /Mervin_Measurements stream data as it is. Otherwise qpdf
+// decodes and compresses it again, which changes its bytes and has no size limit.
+void keepStoredMeasurements(QPDF &q)
+{
+    QPDFObjectHandle blob = q.getRoot().getKey("/Mervin_Measurements");
+    if (blob.isStream())
+        blob.setFilterOnWrite(false);
+}
+
 // Copy the font dictionary before adding a private name: resources may be inherited/shared.
 std::string addHelvetica(QPDF &q, QPDFObjectHandle resources)
 {
@@ -44,7 +53,8 @@ std::string addHelvetica(QPDF &q, QPDFObjectHandle resources)
 
 MeasureExport::Status MeasureExport::flatten(const QString &inPath, const QString &outPath,
                                              const std::vector<RenderMeasurement> &marks,
-                                             const QString &password, QString *error)
+                                             const QString &password, QString *error,
+                                             bool keepStoredBlob)
 {
     std::unique_ptr<QPDF> source;
     const Status st = openQpdf(inPath, password, source, error);
@@ -86,8 +96,11 @@ MeasureExport::Status MeasureExport::flatten(const QString &inPath, const QStrin
         // Flattened marks are baked into the page content as plain vector graphics;
         // the editable Mervin blob (if the source carried one from "Save edits")
         // must not travel with the exported copy. Drop it so the export is a clean,
-        // measurements-burned-in PDF with no Mervin-private data.
-        if (q.getRoot().hasKey("/Mervin_Measurements"))
+        // measurements-burned-in PDF with no Mervin-private data. A blob Mervin could not
+        // read stays, because the export may replace the file it came from.
+        if (keepStoredBlob)
+            keepStoredMeasurements(q);
+        else if (q.getRoot().hasKey("/Mervin_Measurements"))
             q.getRoot().removeKey("/Mervin_Measurements");
         AtomicPdfWriter output(q, outPath);
         output.write();
@@ -111,6 +124,25 @@ MeasureExport::Status MeasureExport::embedMervin(const QString &inPath, const QS
     try {
         measurementPages::store(q, doc); // throws before anything is written when too large
         AtomicPdfWriter output(q, outPath);
+        output.write();
+        return Status::Ok;
+    } catch (const std::exception &e) {
+        if (error)
+            *error = QString::fromUtf8(e.what());
+        return Status::Failed;
+    }
+}
+
+MeasureExport::Status MeasureExport::keepMervin(const QString &inPath, const QString &outPath,
+                                                const QString &password, QString *error)
+{
+    std::unique_ptr<QPDF> source;
+    const Status st = openQpdf(inPath, password, source, error);
+    if (st != Status::Ok)
+        return st;
+    try {
+        keepStoredMeasurements(*source);
+        AtomicPdfWriter output(*source, outPath);
         output.write();
         return Status::Ok;
     } catch (const std::exception &e) {

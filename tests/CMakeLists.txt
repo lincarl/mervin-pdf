@@ -545,7 +545,8 @@ set_tests_properties(tst_close_restart PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 qt_add_executable(tst_save_edits tst_save_edits.cpp Stalls.h)
-target_link_libraries(tst_save_edits PRIVATE mervin_app Qt6::Test)
+# qpdf builds fixtures with a stored measurement blob and reads its raw bytes back.
+target_link_libraries(tst_save_edits PRIVATE mervin_app Qt6::Test qpdf::libqpdf)
 set_target_properties(tst_save_edits PROPERTIES WIN32_EXECUTABLE OFF)
 target_compile_definitions(tst_save_edits PRIVATE MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
 add_test(NAME tst_save_edits COMMAND tst_save_edits)

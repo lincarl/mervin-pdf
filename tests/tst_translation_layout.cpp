@@ -836,6 +836,12 @@ void TstTranslationLayout::calibration()
         inspect(dialog, mode == mervin::CalibrationDialog::Mode::Calibrate
                             ? QStringLiteral("Calibrate") : QStringLiteral("Set scale"));
     }
+    // Choosing Measure on a file whose saved measurements Mervin cannot read.
+    QMessageBox unreadable(QMessageBox::Information, MainWindow::tr("Measure"),
+        MainWindow::tr("Mervin cannot read this file's measurements. Measuring is off so that "
+                       "they stay unchanged."),
+        QMessageBox::Ok);
+    inspect(unreadable, QStringLiteral("Measure with unreadable measurements"));
 }
 
 void TstTranslationLayout::exportMeasurements()

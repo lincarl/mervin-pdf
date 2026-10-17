@@ -499,6 +499,11 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
         <translation>Rotera, ta bort, extrahera, dela upp eller sammanfoga sidor; dokumentsäkerhet</translation>
     </message>
     <message>
+        <source>Mervin cannot read this file&apos;s measurements. Measuring is off so that they stay unchanged.</source>
+        <extracomment>Shown when the user chooses Measure on a PDF whose saved measurements Mervin cannot read, because they are too large or stored in a form it does not accept. Mervin keeps them unchanged when it saves, so it offers no measuring.</extracomment>
+        <translation>Mervin kan inte läsa filens mätningar. Mätning är avstängd så att de förblir oförändrade.</translation>
+    </message>
+    <message>
         <source>Fit Page</source>
         <extracomment>Zoom choice: scale the page so the whole page fits the window.</extracomment>
         <translation>Hel sida</translation>

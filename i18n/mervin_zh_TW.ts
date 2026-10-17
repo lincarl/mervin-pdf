@@ -499,6 +499,11 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
         <translation>旋轉、刪除、擷取、分割或合併頁面，以及文件安全性</translation>
     </message>
     <message>
+        <source>Mervin cannot read this file&apos;s measurements. Measuring is off so that they stay unchanged.</source>
+        <extracomment>Shown when the user chooses Measure on a PDF whose saved measurements Mervin cannot read, because they are too large or stored in a form it does not accept. Mervin keeps them unchanged when it saves, so it offers no measuring.</extracomment>
+        <translation>Mervin 無法讀取此檔案的測量項目。測量功能已關閉，以讓這些測量項目保持不變。</translation>
+    </message>
+    <message>
         <source>Fit Page</source>
         <extracomment>Zoom choice: scale the page so the whole page fits the window.</extracomment>
         <translation>適合頁面</translation>

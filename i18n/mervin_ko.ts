@@ -495,6 +495,11 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
         <translation>페이지 회전, 삭제, 추출, 분할 또는 병합 문서 보안</translation>
     </message>
     <message>
+        <source>Mervin cannot read this file&apos;s measurements. Measuring is off so that they stay unchanged.</source>
+        <extracomment>Shown when the user chooses Measure on a PDF whose saved measurements Mervin cannot read, because they are too large or stored in a form it does not accept. Mervin keeps them unchanged when it saves, so it offers no measuring.</extracomment>
+        <translation>Mervin이 이 파일의 측정을 읽을 수 없습니다. 측정이 바뀌지 않도록 측정 기능이 꺼져 있습니다.</translation>
+    </message>
+    <message>
         <source>Fit Page</source>
         <extracomment>Zoom choice: scale the page so the whole page fits the window.</extracomment>
         <translation>페이지에 맞춤</translation>
