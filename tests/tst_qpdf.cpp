@@ -66,6 +66,7 @@ enum class Reference {
     SharedWidget,    // a field whose one widget pages 1 and 2 both list
     WidgetlessField, // a field that no page shows, beside a field on page 2
     ReplyInForm,     // Reply in a file with a form, so copies go through transformAnnotations
+    ResetByName,     // a reset button on page 1 that names its page's field by text
 };
 
 // A page that shows `text` in two marked-content sequences, MCID 0 and 1.
@@ -437,6 +438,15 @@ void makeReferencedPdf(const QString &path, Reference reference)
         installForm(q, {data, widget(q, pages[1], "/FT /Tx /T (secret) /V (" + kSecret + ")")});
         break;
     }
+    case Reference::ResetByName: {
+        // ISO 32000 lets /Fields and a hide action's /T name fields by text as well.
+        QPDFObjectHandle name = widget(q, pages[0], "/FT /Tx /T (name) /V (kept name)");
+        QPDFObjectHandle reset = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (reset)");
+        reset.replaceKey("/A", parse("<< /S /ResetForm /Fields [(name)] /Next << /S /Hide /T (name) "
+                                     "/H false >> >>"));
+        installForm(q, {name, reset});
+        break;
+    }
     case Reference::ChildFieldNoForm: {
         QPDFObjectHandle address = q.makeIndirectObject(parse("<< /T (address) >>"));
         QPDFObjectHandle street =
@@ -662,6 +672,32 @@ QString replyProblem(const QString &path, int index)
     return QStringLiteral("no reply");
 }
 
+// For each reset button of `path`, in page order, the first field that it names and the
+// field that the hide action in its /Next names, for example "name name".
+QStringList resetTargets(const QString &path)
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    q.processFile(name.constData());
+    QStringList targets;
+    for (QPDFObjectHandle page : q.getAllPages()) {
+        QPDFObjectHandle annots = page.getKey("/Annots");
+        if (!annots.isArray())
+            continue;
+        for (QPDFObjectHandle annot : annots.aitems()) {
+            QPDFObjectHandle action = annot.getKey("/A");
+            if (!action.isDictionary() || !action.getKey("/S").isNameAndEquals("/ResetForm"))
+                continue;
+            QPDFObjectHandle first = action.getKey("/Fields").getArrayItem(0);
+            QPDFObjectHandle hidden = action.getKey("/Next").getKey("/T");
+            targets << QStringLiteral("%1 %2").arg(
+                first.isString() ? QString::fromStdString(first.getUTF8Value()) : QStringLiteral("?"),
+                hidden.isString() ? QString::fromStdString(hidden.getUTF8Value()) : QStringLiteral("?"));
+        }
+    }
+    return targets;
+}
+
 // Rewrites `path` with `blob` as its /Mervin_Measurements, as a string or as the JSON of a
 // stream.
 void setMeasurementBlob(const QString &path, const std::string &blob, bool stream)
@@ -776,6 +812,7 @@ private slots:
     void copiesLeaveOutResourcesOfOtherPages();
     void copiesLeaveOutCommentsOfOtherPages_data();
     void copiesLeaveOutCommentsOfOtherPages();
+    void copiesPointButtonsAtRenamedFields();
     void mergeNamesInputWithBadMeasurements_data();
     void mergeNamesInputWithBadMeasurements();
     void deleteNamesSourceWithBadMeasurements_data();
@@ -1327,6 +1364,7 @@ void TstQpdf::deleteLeavesOutDeletedContent()
         break;
     }
     case Reference::ChildFieldNoForm:
+    case Reference::ResetByName:
         break;
     }
     if (ref == Reference::TaggedWidget) {
@@ -1561,6 +1599,31 @@ void TstQpdf::copiesLeaveOutCommentsOfOtherPages()
     QVERIFY(!pdfContains(parts.at(0), kSecret));
     QCOMPARE(replyProblem(parts.at(0), 0), QString());
     QVERIFY(pdfContains(parts.at(1), kSecret));
+}
+
+/// Checks that a copied button that names fields by text names the copies after a repeated
+/// page or a merged copy of the same form renames them.
+void TstQpdf::copiesPointButtonsAtRenamedFields()
+{
+    const QString src = in(QStringLiteral("byname_src.pdf"));
+    const QString again = in(QStringLiteral("byname_again.pdf"));
+    const QString out = in(QStringLiteral("byname_out.pdf"));
+    makeReferencedPdf(src, Reference::ResetByName);
+    makeReferencedPdf(again, Reference::ResetByName);
+    const QStringList renamed{QStringLiteral("name name"), QStringLiteral("name+1 name+1")};
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0, 0}, {}}}, out), PageOps::Status::Ok);
+    QCOMPARE(fieldPages(out), QStringList({QStringLiteral("name 1"), QStringLiteral("reset 1"),
+                                           QStringLiteral("name+1 2"), QStringLiteral("reset+1 2")}));
+    QCOMPARE(resetTargets(out), renamed);
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0}, {}}, {again, {0}, {}}}, out),
+             PageOps::Status::Ok);
+    QCOMPARE(resetTargets(out), renamed);
+
+    // Without a rename, the names stay.
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0}, {}}}, out), PageOps::Status::Ok);
+    QCOMPARE(resetTargets(out), QStringList({QStringLiteral("name name")}));
 }
 
 /// A string blob and a stream from a newer measurement format.

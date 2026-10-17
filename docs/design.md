@@ -943,7 +943,10 @@ a parent that a copied widget shares. The source helpers are built with the
 then copies that copy field by field, so the actions of the copied annotations, such as a
 reset button's `/Fields` or a hide action's `/T`, still name the first copy, with every
 page's values. `copyBatch` maps each node of the first copy to the node at the same place
-in the second and rewrites those references in `/A`, `/AA` and `/Next`. `finish` then
+in the second and rewrites those references in `/A`, `/AA` and `/Next`. A field can also
+be named by its fully qualified name as text, so `copyBatch` records the names of the
+copied fields before `addAndRenameFormFields` and afterwards rewrites the text names that
+the rename changed, such as `name` to `name+1` in the second copy of a page. `finish` then
 climbs `/Parent` from every widget in the output, listed on a page or not, prunes each
 field tree it reaches and replaces the fields that go with null, except those above a
 widget that a page lists. That also covers a source without `/AcroForm`, whose widgets

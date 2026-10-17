@@ -10,6 +10,7 @@
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFAcroFormDocumentHelper.hh>
 #include <qpdf/QPDFExc.hh>
+#include <qpdf/QPDFFormFieldObjectHelper.hh>
 #include <qpdf/QPDFMatrix.hh>
 #include <qpdf/QPDFNameTreeObjectHelper.hh>
 #include <qpdf/QPDFNumberTreeObjectHelper.hh>
@@ -791,8 +792,16 @@ public:
     }
 
 private:
-    /// Copies of field tree nodes, from a first copy to the copy that a page uses.
+    /// Copies of field tree nodes and annotations, from a first copy to the copy that a page
+    /// uses.
     using Copies = std::map<QPDFObjGen, QPDFObjectHandle>;
+
+    /// What the references in the copied actions of one pass point at instead.
+    struct Targets
+    {
+        Copies copies;
+        std::map<std::string, std::string> names; // fully qualified names that a rename changed
+    };
 
     // Prunes the field tree of `widget`, if it is a widget, and adds its fields to `used`.
     // Fields have no /Type, which keeps the climb out of anything else that a damaged
@@ -868,20 +877,26 @@ private:
                 mapTree(kids.getArrayItem(i), copiedKids.getArrayItem(i), copies, depth + 1);
     }
 
-    // `fields`, a field reference or an array of them, with the references in `copies`
-    // replaced. Returns `fields` itself when nothing changes, and a new object otherwise.
-    static QPDFObjectHandle mapFields(QPDFObjectHandle fields, const Copies &copies)
+    // `fields`, a field reference, a fully qualified field name or an array of them, with
+    // the references in `targets.copies` and the names in `targets.names` replaced. Returns
+    // `fields` itself when nothing changes, and a new object otherwise.
+    static QPDFObjectHandle mapFields(QPDFObjectHandle fields, const Targets &targets)
     {
         if (fields.isIndirect()) {
-            const auto it = copies.find(fields.getObjGen());
-            return it == copies.end() ? fields : it->second;
+            const auto it = targets.copies.find(fields.getObjGen());
+            return it == targets.copies.end() ? fields : it->second;
+        }
+        if (fields.isString()) {
+            const auto it = targets.names.find(fields.getUTF8Value());
+            return it == targets.names.end() ? fields
+                                             : QPDFObjectHandle::newUnicodeString(it->second);
         }
         if (!fields.isArray())
             return fields;
         std::vector<QPDFObjectHandle> items = fields.getArrayAsVector();
         bool changed = false;
         for (QPDFObjectHandle &item : items) {
-            QPDFObjectHandle mapped = mapFields(item, copies);
+            QPDFObjectHandle mapped = mapFields(item, targets);
             if (!mapped.isSameObjectAs(item)) {
                 item = mapped;
                 changed = true;
@@ -890,10 +905,10 @@ private:
         return changed ? QPDFObjectHandle::newArray(items) : fields;
     }
 
-    // `action` with the field references of its /Fields and /T, and of the actions in its
-    // /Next, mapped through `copies`. Returns `action` itself when nothing changes, and a
-    // new object otherwise, so an action that several annotations share stays as it was.
-    static QPDFObjectHandle mapAction(QPDFObjectHandle action, const Copies &copies, int depth)
+    // `action` with the fields of its /Fields and /T, and of the actions in its /Next, mapped
+    // through `targets`. Returns `action` itself when nothing changes, and a new object
+    // otherwise, so an action that several annotations share stays as it was.
+    static QPDFObjectHandle mapAction(QPDFObjectHandle action, const Targets &targets, int depth)
     {
         if (depth >= kMaxDepth)
             return action;
@@ -901,7 +916,7 @@ private:
             std::vector<QPDFObjectHandle> items = action.getArrayAsVector();
             bool changed = false;
             for (QPDFObjectHandle &item : items) {
-                QPDFObjectHandle mapped = mapAction(item, copies, depth + 1);
+                QPDFObjectHandle mapped = mapAction(item, targets, depth + 1);
                 if (!mapped.isSameObjectAs(item)) {
                     item = mapped;
                     changed = true;
@@ -921,18 +936,18 @@ private:
         };
         for (const char *key : {"/Fields", "/T"}) {
             QPDFObjectHandle value = action.getKey(key);
-            change(key, value, mapFields(value, copies));
+            change(key, value, mapFields(value, targets));
         }
         QPDFObjectHandle next = action.getKey("/Next");
-        change("/Next", next, mapAction(next, copies, depth + 1));
+        change("/Next", next, mapAction(next, targets, depth + 1));
         return result.isInitialized() ? result : action;
     }
 
-    // Maps the field references in the /A and /AA actions of `holder` through `copies`.
-    static void mapActions(QPDFObjectHandle holder, const Copies &copies)
+    // Maps the fields in the /A and /AA actions of `holder` through `targets`.
+    static void mapActions(QPDFObjectHandle holder, const Targets &targets)
     {
         QPDFObjectHandle action = holder.getKey("/A");
-        QPDFObjectHandle mapped = mapAction(action, copies, 0);
+        QPDFObjectHandle mapped = mapAction(action, targets, 0);
         if (!mapped.isSameObjectAs(action))
             holder.replaceKey("/A", mapped);
         QPDFObjectHandle triggers = holder.getKey("/AA");
@@ -940,7 +955,7 @@ private:
             return;
         QPDFObjectHandle result;
         for (const auto &[key, value] : triggers.ditems()) {
-            QPDFObjectHandle mappedValue = mapAction(value, copies, 0);
+            QPDFObjectHandle mappedValue = mapAction(value, targets, 0);
             if (mappedValue.isSameObjectAs(value))
                 continue;
             if (!result.isInitialized())
@@ -951,12 +966,55 @@ private:
             holder.replaceKey("/AA", result);
     }
 
-    // Points the references of `made`, the copies of the source annotations in `annots`, at
-    // the copies instead of the first copies: the field references in the actions of the
-    // annotations and their fields, and the annotations in /IRT, /Popup and a popup's /Parent.
-    void retarget(QPDFObjectHandle annots, const std::vector<QPDFObjectHandle> &made)
+    // The fields of the trees of `fields`, with their fully qualified names.
+    static std::vector<std::pair<QPDFObjectHandle, std::string>>
+    fieldNames(const std::vector<QPDFObjectHandle> &fields)
     {
-        Copies copies;
+        std::vector<std::pair<QPDFObjectHandle, std::string>> names;
+        ObjectSet seen;
+        std::vector<std::pair<QPDFObjectHandle, int>> queue;
+        for (QPDFObjectHandle field : fields)
+            queue.emplace_back(field, 0);
+        while (!queue.empty()) {
+            auto [node, depth] = queue.back();
+            queue.pop_back();
+            if (!node.isIndirect() || !node.isDictionary() || !seen.insert(node.getObjGen()).second)
+                continue;
+            if (node.hasKey("/T"))
+                names.emplace_back(node, QPDFFormFieldObjectHelper(node).getFullyQualifiedName());
+            QPDFObjectHandle kids = node.getKey("/Kids");
+            if (kids.isArray() && depth < kMaxDepth)
+                for (QPDFObjectHandle kid : kids.aitems())
+                    queue.emplace_back(kid, depth + 1);
+        }
+        return names;
+    }
+
+    // The fields of `before` that addAndRenameFormFields renamed, from the old fully
+    // qualified name to the new one.
+    static std::map<std::string, std::string>
+    renamed(const std::vector<std::pair<QPDFObjectHandle, std::string>> &before)
+    {
+        std::map<std::string, std::string> names;
+        for (const auto &[field, name] : before) {
+            QPDFObjectHandle node = field; // qpdf 11 reads through non-const handles
+            const std::string now = QPDFFormFieldObjectHelper(node).getFullyQualifiedName();
+            if (now != name)
+                names.emplace(name, now);
+        }
+        return names;
+    }
+
+    // Points the references of `made`, the copies of the source annotations in `annots`, at
+    // the copies instead of the first copies: the fields in the actions of the annotations and
+    // their fields, by reference or by a name in `names`, and the annotations in /IRT, /Popup
+    // and a popup's /Parent.
+    void retarget(QPDFObjectHandle annots, const std::vector<QPDFObjectHandle> &made,
+                  std::map<std::string, std::string> names)
+    {
+        Targets targets;
+        targets.names = std::move(names);
+        Copies &copies = targets.copies;
         for (int i = 0; i < annots.getArrayNItems(); ++i) {
             QPDFObjectHandle annot = annots.getArrayItem(i);
             if (!annot.isIndirect())
@@ -970,10 +1028,12 @@ private:
             else
                 mapTree(first, copy, copies, 0);
         }
-        if (copies.empty())
+        if (copies.empty() && targets.names.empty())
             return;
+        // Each annotation and field once, so a name is not mapped twice.
+        std::map<QPDFObjGen, QPDFObjectHandle> holders;
         for (QPDFObjectHandle annot : made) {
-            mapActions(annot, copies);
+            holders.emplace(annot.getObjGen(), annot);
             const bool popup = annot.getKey("/Subtype").isNameAndEquals("/Popup");
             for (const char *key : {"/IRT", "/Popup", "/Parent"}) {
                 QPDFObjectHandle target = annot.getKey(key);
@@ -983,7 +1043,9 @@ private:
             }
         }
         for (auto &[first, copy] : copies)
-            mapActions(copy, copies);
+            holders.emplace(copy.getObjGen(), copy);
+        for (auto &[id, holder] : holders)
+            mapActions(holder, targets);
     }
 
     /// A page that addPage copied into the output.
@@ -1049,12 +1111,6 @@ private:
                                        &from.getQPDF(), &from);
             if (made.size() != static_cast<size_t>(annots.getArrayNItems()))
                 throw std::runtime_error("qpdf left out annotations");
-            try {
-                retarget(annots, made);
-            } catch (const std::exception &) {
-                // A reference that is not pointed at the copy keeps naming the first copy,
-                // which finish() empties.
-            }
             auto next = made.cbegin();
             for (size_t i = 0; i < batch.size(); ++i) {
                 if (counts[i] == 0)
@@ -1064,7 +1120,19 @@ private:
                 next += counts[i];
                 pointAt(batch[i].to);
             }
+            std::vector<std::pair<QPDFObjectHandle, std::string>> names;
+            try {
+                names = fieldNames(fields);
+            } catch (const std::exception &) {
+                // Names in the actions keep naming the fields as before.
+            }
             form_.addAndRenameFormFields(fields);
+            try {
+                retarget(annots, made, renamed(names));
+            } catch (const std::exception &) {
+                // A reference that is not pointed at the copy keeps naming the first copy,
+                // which finish() empties.
+            }
             return true;
         } catch (const std::exception &) {
             for (size_t i = 0; i < batch.size(); ++i)
