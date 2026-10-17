@@ -7,6 +7,7 @@
 #include "io/JobContext.h"
 #include "render/AnnotModel.h"
 #include "render/Document.h"
+#include "render/MeasureContent.h"
 #include "render/RenderEngine.h"
 #include "recent/PathKey.h"
 #include "security/MeasureExport.h"
@@ -14,6 +15,12 @@
 #include "ui/MainWindow.h"
 #include "ui/ViewerWidget.h"
 #include "Stalls.h"
+
+#include <qpdf/QPDF.hh>
+#include <qpdf/QPDFObjectHandle.hh>
+#include <qpdf/QPDFPageDocumentHelper.hh>
+#include <qpdf/QPDFPageObjectHelper.hh>
+#include <qpdf/QPDFWriter.hh>
 
 #include <QDir>
 #include <QDialog>
@@ -63,6 +70,73 @@ struct Outcome {
     }
 };
 
+// Writes the fixture with `stored` as its /Mervin_Measurements stream, Flate-encoded bytes
+// kept exactly as given, as another program or a newer Mervin could write them. With
+// `asString` the blob is a PDF string holding `stored` instead.
+void writeStoredBlob(const QString &path, const QByteArray &stored, bool asString)
+{
+    QPDF pdf;
+    pdf.processFile(MERVIN_FIXTURE_PDF);
+    QPDFObjectHandle blob = QPDFObjectHandle::newString(stored.toStdString());
+    if (!asString) {
+        blob = pdf.newStream();
+        blob.replaceStreamData(stored.toStdString(), QPDFObjectHandle::newName("/FlateDecode"),
+                               QPDFObjectHandle::newNull());
+    }
+    pdf.getRoot().replaceKey("/Mervin_Measurements", blob);
+    const QByteArray name = path.toUtf8();
+    QPDFWriter writer(pdf, name.constData());
+    writer.setStreamDataMode(qpdf_s_preserve);
+    writer.setDecodeLevel(qpdf_dl_none);
+    writer.write();
+}
+
+// A file's stored blob and the number of annotations on page 1.
+struct StoredBlob {
+    QByteArray bytes; // raw stream data, or the string's value
+    bool isString = false;
+    int notes = 0;
+};
+
+StoredBlob storedBlobAndNotes(const QString &path)
+{
+    QPDF pdf;
+    pdf.processFile(path.toUtf8().constData());
+    QPDFObjectHandle blob = pdf.getRoot().getKey("/Mervin_Measurements");
+    StoredBlob out;
+    if (blob.isStream()) {
+        const auto buffer = blob.getRawStreamData();
+        out.bytes = QByteArray(reinterpret_cast<const char *>(buffer->getBuffer()),
+                               qsizetype(buffer->getSize()));
+    } else if (blob.isString()) {
+        out.bytes = QByteArray::fromStdString(blob.getStringValue());
+        out.isString = true;
+    }
+    QPDFObjectHandle annots =
+        QPDFPageDocumentHelper(pdf).getAllPages().front().getObjectHandle().getKey("/Annots");
+    out.notes = annots.isArray() ? annots.getArrayNItems() : 0;
+    return out;
+}
+
+// Blobs Mervin cannot read: one too large, one that is not measurement data, and valid
+// measurement JSON stored as a PDF string, which no Mervin release writes.
+void addUnreadableBlobRows()
+{
+    QTest::addColumn<QByteArray>("stored");
+    QTest::addColumn<bool>("asString");
+    QTest::newRow("larger than the read limit")
+        << qCompress(QByteArray(17 * 1024 * 1024, ' '), 9).mid(4) // zlib data after the size
+        << false;
+    QTest::newRow("not measurement data") << qCompress(QByteArray("not JSON"), 9).mid(4) << false;
+    MeasureDoc doc;
+    Measurement mark;
+    mark.page = 0;
+    mark.kind = MeasureKind::Distance;
+    mark.pts = {QPointF(5, 5), QPointF(55, 5)};
+    doc.measurements.push_back(mark);
+    QTest::newRow("stored as a string") << serializeMeasurements(doc) << true;
+}
+
 // Lists private recovery artifacts to detect files left after terminal cleanup.
 QStringList recoveryEntries()
 {
@@ -102,6 +176,66 @@ private slots:
         ConfigPaths::setOverrideDir({});
         TabPage::setSlowDelayForTesting(TabPage::kSlowMs);
         profile_.reset();
+    }
+
+    void unreadableMeasurementsSurviveSave_data() { addUnreadableBlobRows(); }
+
+    // Checks that Save with edits keeps a stored blob Mervin could not read byte for byte,
+    // or a string blob as the same string.
+    void unreadableMeasurementsSurviveSave()
+    {
+        QFETCH(QByteArray, stored);
+        QFETCH(bool, asString);
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("measured.pdf"));
+        writeStoredBlob(path, stored, asString);
+        const StoredBlob before = storedBlobAndNotes(path);
+        QCOMPARE(before.bytes, stored);
+        QCOMPARE(before.isString, asString);
+        RenderEngine engine;
+        TabPage tab(&engine);
+        QVERIFY(tab.open(path));
+        QVERIFY(edit(tab));
+        Outcome outcome;
+        tab.startSave(outcome.callbacks());
+        QTRY_VERIFY_WITH_TIMEOUT(outcome.completion.has_value(), 10000);
+        QCOMPARE(outcome.completion->result, TabPage::SaveResult::Saved);
+        const StoredBlob after = storedBlobAndNotes(path);
+        QVERIFY(after.notes > before.notes); // the note and its popup were saved
+        QCOMPARE(after.bytes, stored);
+        QCOMPARE(after.isString, asString);
+    }
+
+    void unreadableMeasurementsOfferNoMeasuring_data() { addUnreadableBlobRows(); }
+
+    // Checks that no tool path turns measuring on for a blob Mervin could not read, since
+    // Save would keep the stored blob and lose new measurements.
+    void unreadableMeasurementsOfferNoMeasuring()
+    {
+        QFETCH(QByteArray, stored);
+        QFETCH(bool, asString);
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("measured.pdf"));
+        writeStoredBlob(path, stored, asString);
+        RenderEngine engine;
+        TabPage tab(&engine);
+        QVERIFY(tab.open(path));
+        ViewerWidget *viewer = tab.viewer();
+        viewer->setMeasureMode(true);
+        QVERIFY(!viewer->measureToolEnabled());
+        auto state = viewer->captureResumeState();
+        state.measureEnabled = true;
+        state.tool = ViewerWidget::ToolMode::Measure;
+        viewer->restoreResumeState(state);
+        QVERIFY(!viewer->measureToolEnabled());
+        QVERIFY(!viewer->measureMode());
+        // A readable document still measures.
+        const QString plain = files.filePath(QStringLiteral("plain.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), plain));
+        TabPage other(&engine);
+        QVERIFY(other.open(plain));
+        other.viewer()->setMeasureMode(true);
+        QVERIFY(other.viewer()->measureToolEnabled());
     }
 
     // Checks durable recovery precedes original close and retains full viewer state.

@@ -495,6 +495,11 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
         <translation>페이지 회전, 삭제, 추출, 분할 또는 병합 문서 보안</translation>
     </message>
     <message>
+        <source>Mervin cannot read this file&apos;s measurements. Measuring is off so that they stay unchanged.</source>
+        <extracomment>Shown when the user chooses Measure on a PDF whose saved measurements Mervin cannot read, because they are too large or stored in a form it does not accept. Mervin keeps them unchanged when it saves, so it offers no measuring.</extracomment>
+        <translation>Mervin이 이 파일의 측정을 읽을 수 없습니다. 측정이 바뀌지 않도록 측정 기능이 꺼져 있습니다.</translation>
+    </message>
+    <message>
         <source>Fit Page</source>
         <extracomment>Zoom choice: scale the page so the whole page fits the window.</extracomment>
         <translation>페이지에 맞춤</translation>
@@ -2964,6 +2969,11 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <extracomment>Shown as the encryption algorithm when qpdf cannot identify it.</extracomment>
         <translation>알려지지 않은</translation>
     </message>
+    <message>
+        <source>A password contains characters that AES-128 and RC4-128 cannot use. Choose AES-256.</source>
+        <extracomment>Reason shown after &quot;The operation failed.&quot; when encrypting. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
+        <translation>암호에 AES-128 및 RC4-128에서 사용할 수 없는 문자가 있습니다. AES-256을 선택하세요.</translation>
+    </message>
 </context>
 <context>
     <name>mervin::RecentFilesPanel</name>
@@ -3245,8 +3255,13 @@ This file is no longer on disk.</source>
     </message>
     <message>
         <source>defaults to the open password</source>
-        <extracomment>Placeholder in the owner-password field. If empty, use the open password to protect the PDF permission settings. The user can enter a different one.</extracomment>
+        <extracomment>Placeholder in the owner-password field while every permission below is allowed. If empty, the open password also becomes the owner password. The user can enter a different one.</extracomment>
         <translation>비워 두면 문서 열기 암호 사용</translation>
+    </message>
+    <message>
+        <source>defaults to a random password</source>
+        <extracomment>Placeholder in the owner-password field while a permission below is not allowed. If empty, Mervin protects the permission settings with a random owner password that nobody is told. The user can enter one instead.</extracomment>
+        <translation>비워 두면 임의 암호 사용</translation>
     </message>
     <message>
         <source>AES-256 (recommended)</source>
@@ -3316,6 +3331,16 @@ This file is no longer on disk.</source>
         <translation>&lt;b&gt;보안 정보를 읽을 수 없습니다.&lt;/b&gt;&lt;br&gt;%1</translation>
     </message>
     <message>
+        <source>AES-256 uses only the first 127 bytes of a password. Make the two passwords differ within them.</source>
+        <extracomment>Shown below the owner-password field when it differs from the open password only after their first 127 bytes, while a permission is not allowed and AES-256 is chosen. Anyone with the open password could then lift the restrictions. A byte is a unit of stored text. Letters without accents, digits and common punctuation take one byte each, accented letters two, and most other scripts three or four. Keep the algorithm name and the number.</extracomment>
+        <translation>AES-256은 암호의 처음 127바이트만 사용합니다. 두 암호가 이 범위 안에서 서로 다르게 하세요.</translation>
+    </message>
+    <message>
+        <source>AES-128 and RC4-128 use only the first 32 characters of a password. Make the two passwords differ within them.</source>
+        <extracomment>Shown below the owner-password field when it differs from the open password only after their first 32 characters, while a permission is not allowed and AES-128 or RC4-128 is chosen. Anyone with the open password could then lift the restrictions. Keep the algorithm names and the number.</extracomment>
+        <translation>AES-128 및 RC4-128은 암호의 처음 32자만 사용합니다. 두 암호가 이 범위 안에서 서로 다르게 하세요.</translation>
+    </message>
+    <message>
         <source>A password is required.</source>
         <translation>비밀번호가 필요합니다.</translation>
     </message>
@@ -3334,8 +3359,18 @@ This file is no longer on disk.</source>
         <translation>이 문서는 &lt;b&gt;암호화되지 않았습니다&lt;/b&gt;.</translation>
     </message>
     <message>
+        <source>Low resolution only</source>
+        <extracomment>Printing state, fills %3 of the encryption summary. The PDF allows printing, but only in low resolution, possibly of degraded quality.</extracomment>
+        <translation>저해상도만</translation>
+    </message>
+    <message>
+        <source>Page assembly only</source>
+        <extracomment>Modifying state, fills %5 of the encryption summary. The PDF allows only page assembly, such as inserting, rotating or deleting pages, and no other changes to its content.</extracomment>
+        <translation>페이지 조합만</translation>
+    </message>
+    <message>
         <source>&lt;b&gt;Encrypted&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;Printing: %3 · Copying: %4 · Modifying: %5 · Annotating: %6&lt;br&gt;&lt;i&gt;Note: Mervin never enforces these permission flags.&lt;/i&gt;</source>
-        <extracomment>%1 is the encryption algorithm, such as AES-256. %2 is the key length in bits. %3 to %6 are Allowed or Not allowed.</extracomment>
+        <extracomment>%1 is the encryption algorithm, such as AES-256. %2 is the key length in bits. %3 is Allowed, Low resolution only or Not allowed. %5 is Allowed, Page assembly only or Not allowed. %4 and %6 are Allowed or Not allowed.</extracomment>
         <translation>&lt;b&gt;암호화됨&lt;/b&gt; · %1 (%2비트)&lt;br&gt;인쇄: %3 · 복사: %4 · 수정: %5 · 주석 달기: %6&lt;br&gt;&lt;i&gt;참고: Mervin은 이러한 권한 제한을 적용하지 않습니다.&lt;/i&gt;</translation>
     </message>
     <message>
@@ -3346,6 +3381,11 @@ This file is no longer on disk.</source>
         <source>PDF documents (*.pdf)</source>
         <extracomment>File type filter. Keep &quot;(*.pdf)&quot; as it is.</extracomment>
         <translation>PDF 문서 (*.pdf)</translation>
+    </message>
+    <message>
+        <source>Use a different owner password to restrict permissions.</source>
+        <extracomment>Shown below the owner-password field when it is the same as the open password while a permission is not allowed. Anyone with the open password could then lift the restrictions. An empty owner field is also accepted.</extracomment>
+        <translation>권한을 제한하려면 다른 권한 설정 암호를 사용하세요.</translation>
     </message>
     <message>
         <source>This writes a copy with all owner-password restrictions removed (printing, copying, and editing become permitted).
@@ -4337,13 +4377,18 @@ The new AppImage is saved at:
     <name>mervin::measurementPages</name>
     <message>
         <source>Invalid measurement metadata.</source>
-        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged.</extracomment>
+        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or too large to read.</extracomment>
         <translation>측정 메타데이터가 잘못되었습니다.</translation>
     </message>
     <message>
         <source>Unsupported measurement metadata.</source>
         <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or come from a newer version.</extracomment>
         <translation>지원하지 않는 측정 메타데이터입니다.</translation>
+    </message>
+    <message>
+        <source>The measurements are too large to save.</source>
+        <extracomment>Reason a save, copy or page operation fails without writing anything. The measurements Mervin would store in the PDF pass the 16 MiB it reads back, as can happen when merging files that carry many measurements.</extracomment>
+        <translation>측정 데이터가 너무 커서 저장할 수 없습니다.</translation>
     </message>
 </context>
 </TS>

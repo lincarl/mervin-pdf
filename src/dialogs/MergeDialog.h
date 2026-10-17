@@ -45,9 +45,12 @@ public:
     /// Stops outstanding probe requests without waiting for their workers.
     ~MergeDialog() override;
 
-    // Shared failure summary for a reopened plan and its tray notification.
+    // Shared failure summary for a reopened plan and its tray notification. `error` is the
+    // merge's own error. Its text replaces the summary only when it says the combined
+    // measurements were too large, which another name or a retry would not fix.
     static QString failureSummary(const MergePlan &plan, const QString &output,
-                                  int failedIndex, Conflict conflict);
+                                  int failedIndex, Conflict conflict,
+                                  const QString &error = QString());
 
     // Files open in the app's tabs. Merge cannot replace these destinations;
     // the error line explains the conflict before Merge is pressed.

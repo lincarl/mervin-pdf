@@ -17,7 +17,7 @@ namespace mervin {
 // is confined to the .cpp. Reuses QpdfService::Status (NeedsPassword when the
 // source is user-password encrypted and no password is supplied). Each source
 // reports job::reading() when it opens and again when qpdf reads it while writing
-// (processReportedFile), and each output goes through AtomicPdfWriter, so inside a
+// (openQpdf), and each output goes through AtomicPdfWriter, so inside a
 // job::Scope a stopped operation opens and replaces nothing more. A split stopped
 // part way keeps the files it wrote before.
 //
@@ -74,9 +74,15 @@ public:
     // unreadable input, or -1 for errors such as output writes. Optional mayCommit
     // runs under the output lock after flushing and before commit admission. The
     // output is encrypted like its source when every input names the same path.
+    // Combined measurements past kMaxMeasurementBlobBytes fail with
+    // measurementsTooLargeError() and failedIndex -1, before anything is written.
     static Status merge(const QList<MergeInput> &inputs, const QString &outPath,
                         QString *error = nullptr, int *failedIndex = nullptr,
                         const std::function<bool()> &mayCommit = {});
+
+    // The error every operation that writes measurements gives when they would pass
+    // kMaxMeasurementBlobBytes, which the readers refuse. Nothing was written.
+    static QString measurementsTooLargeError();
 
     // Concatenate all pages of `inPaths` (in order) into one document.
     static Status merge(const QStringList &inPaths, const QString &outPath, QString *error = nullptr);

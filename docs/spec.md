@@ -144,7 +144,17 @@ The measuring tool is intended for scaled plans, CAD exports, and maps.
 - Units, precision, and line width can be adjusted. Measurement vertices and value
   labels can be repositioned on the page.
 - Editable measurements and manual scales can be saved back into the PDF for use in
-  Mervin.
+  Mervin. Saved measurement data that decompresses to more than 16 MiB, that takes
+  more than 16 MiB plus 64 KiB in the file, that is not a PDF stream, plain or
+  compressed once with Flate, that is damaged, such as a Flate stream with a bad
+  checksum or missing data, or that Mervin cannot parse, is not shown when the
+  document opens, and the page tools report it as invalid. Mervin never replaces such
+  data. Saving edits, copies, flattened exports and the recovery copy of an unloaded
+  tab keep it as stored, and Measure says it is not available for that file.
+- When the measurements to store would pass 16 MiB, as merging files with many
+  measurements can, Mervin says they are too large to save. Saving and copies then
+  fail before they write anything. A page tool fails at the output that would pass
+  the limit, so Split keeps the files it wrote before that one.
 - A flattened export writes ordinary PDF graphics that are visible in other PDF
   readers. Printing can include the same measurement graphics.
 
@@ -280,7 +290,23 @@ window says "The merged file will not be encrypted."
 Mervin can also inspect PDF encryption, remove encryption or owner restrictions,
 and create encrypted copies using AES-256, AES-128, or legacy RC4-128. Permission
 flags are shown and can be written to encrypted files, but the viewer treats them as
-advisory and does not disable reading, copying, or printing because of them.
+advisory and does not disable reading, copying, or printing because of them. The
+Security panel shows printing limited to low resolution as Low resolution only and
+modifying limited to page assembly as Page assembly only.
+
+An empty owner password becomes the open password while every permission is allowed.
+When a permission is not allowed, an empty owner password becomes a random password
+that nobody is told, so the open password cannot lift the restriction in other PDF
+readers. Strip Owner Restrictions still removes it with the open password. Security
+refuses an owner password that matches the open password while a permission is not
+allowed, before it asks where to save. AES-128 and RC4-128 use only the first 32
+characters of a password and AES-256 the first 127 bytes, so longer passwords that
+agree that far also count as matching. For those, Security names the limit and asks
+for passwords that differ within it. AES-128 and RC4-128 store passwords in
+PDFDocEncoding, as the PDF format requires, so a password with other characters,
+such as Chinese, fails with a request to choose AES-256. That failure comes after
+choosing where to save, and the matching check above applies only to passwords the
+chosen algorithm can store. AES-256 accepts any character.
 
 Saving supports these workflows:
 

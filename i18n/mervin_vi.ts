@@ -495,6 +495,11 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
         <translation>Xoay, xóa, trích xuất, chia nhỏ hoặc hợp nhất các trang; bảo mật tài liệu</translation>
     </message>
     <message>
+        <source>Mervin cannot read this file&apos;s measurements. Measuring is off so that they stay unchanged.</source>
+        <extracomment>Shown when the user chooses Measure on a PDF whose saved measurements Mervin cannot read, because they are too large or stored in a form it does not accept. Mervin keeps them unchanged when it saves, so it offers no measuring.</extracomment>
+        <translation>Mervin không đọc được số đo của tệp này. Chức năng đo đã tắt để số đo được giữ nguyên.</translation>
+    </message>
+    <message>
         <source>Fit Page</source>
         <extracomment>Zoom choice: scale the page so the whole page fits the window.</extracomment>
         <translation>Vừa trang</translation>
@@ -2964,6 +2969,11 @@ Mở Cài đặt của hệ thống → Ứng dụng mặc định (hoặc nhấ
         <extracomment>Shown as the encryption algorithm when qpdf cannot identify it.</extracomment>
         <translation>Không rõ</translation>
     </message>
+    <message>
+        <source>A password contains characters that AES-128 and RC4-128 cannot use. Choose AES-256.</source>
+        <extracomment>Reason shown after &quot;The operation failed.&quot; when encrypting. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
+        <translation>Một mật khẩu có ký tự mà AES-128 và RC4-128 không dùng được. Hãy chọn AES-256.</translation>
+    </message>
 </context>
 <context>
     <name>mervin::RecentFilesPanel</name>
@@ -3245,8 +3255,13 @@ Tệp này không còn trên đĩa.</translation>
     </message>
     <message>
         <source>defaults to the open password</source>
-        <extracomment>Placeholder in the owner-password field. If empty, use the open password to protect the PDF permission settings. The user can enter a different one.</extracomment>
+        <extracomment>Placeholder in the owner-password field while every permission below is allowed. If empty, the open password also becomes the owner password. The user can enter a different one.</extracomment>
         <translation>mặc định dùng mật khẩu mở tài liệu</translation>
+    </message>
+    <message>
+        <source>defaults to a random password</source>
+        <extracomment>Placeholder in the owner-password field while a permission below is not allowed. If empty, Mervin protects the permission settings with a random owner password that nobody is told. The user can enter one instead.</extracomment>
+        <translation>mặc định dùng mật khẩu ngẫu nhiên</translation>
     </message>
     <message>
         <source>AES-256 (recommended)</source>
@@ -3316,6 +3331,16 @@ Tệp này không còn trên đĩa.</translation>
         <translation>&lt;b&gt;Không đọc được thông tin bảo mật.&lt;/b&gt;&lt;br&gt;%1</translation>
     </message>
     <message>
+        <source>AES-256 uses only the first 127 bytes of a password. Make the two passwords differ within them.</source>
+        <extracomment>Shown below the owner-password field when it differs from the open password only after their first 127 bytes, while a permission is not allowed and AES-256 is chosen. Anyone with the open password could then lift the restrictions. A byte is a unit of stored text. Letters without accents, digits and common punctuation take one byte each, accented letters two, and most other scripts three or four. Keep the algorithm name and the number.</extracomment>
+        <translation>AES-256 chỉ dùng 127 byte đầu của mật khẩu. Hãy làm cho hai mật khẩu khác nhau trong phạm vi đó.</translation>
+    </message>
+    <message>
+        <source>AES-128 and RC4-128 use only the first 32 characters of a password. Make the two passwords differ within them.</source>
+        <extracomment>Shown below the owner-password field when it differs from the open password only after their first 32 characters, while a permission is not allowed and AES-128 or RC4-128 is chosen. Anyone with the open password could then lift the restrictions. Keep the algorithm names and the number.</extracomment>
+        <translation>AES-128 và RC4-128 chỉ dùng 32 ký tự đầu của mật khẩu. Hãy làm cho hai mật khẩu khác nhau trong phạm vi đó.</translation>
+    </message>
+    <message>
         <source>A password is required.</source>
         <translation>Cần có mật khẩu.</translation>
     </message>
@@ -3334,8 +3359,18 @@ Tệp này không còn trên đĩa.</translation>
         <translation>Tài liệu này &lt;b&gt;không được mã hóa&lt;/b&gt;.</translation>
     </message>
     <message>
+        <source>Low resolution only</source>
+        <extracomment>Printing state, fills %3 of the encryption summary. The PDF allows printing, but only in low resolution, possibly of degraded quality.</extracomment>
+        <translation>Chỉ độ phân giải thấp</translation>
+    </message>
+    <message>
+        <source>Page assembly only</source>
+        <extracomment>Modifying state, fills %5 of the encryption summary. The PDF allows only page assembly, such as inserting, rotating or deleting pages, and no other changes to its content.</extracomment>
+        <translation>Chỉ lắp ráp trang</translation>
+    </message>
+    <message>
         <source>&lt;b&gt;Encrypted&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;Printing: %3 · Copying: %4 · Modifying: %5 · Annotating: %6&lt;br&gt;&lt;i&gt;Note: Mervin never enforces these permission flags.&lt;/i&gt;</source>
-        <extracomment>%1 is the encryption algorithm, such as AES-256. %2 is the key length in bits. %3 to %6 are Allowed or Not allowed.</extracomment>
+        <extracomment>%1 is the encryption algorithm, such as AES-256. %2 is the key length in bits. %3 is Allowed, Low resolution only or Not allowed. %5 is Allowed, Page assembly only or Not allowed. %4 and %6 are Allowed or Not allowed.</extracomment>
         <translation>&lt;b&gt;Đã mã hóa&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;In: %3 · Sao chép: %4 · Sửa đổi: %5 · Chú thích: %6&lt;br&gt;&lt;i&gt;Lưu ý: Mervin không bao giờ thực thi các cờ cấp phép này.&lt;/i&gt;</translation>
     </message>
     <message>
@@ -3346,6 +3381,11 @@ Tệp này không còn trên đĩa.</translation>
         <source>PDF documents (*.pdf)</source>
         <extracomment>File type filter. Keep &quot;(*.pdf)&quot; as it is.</extracomment>
         <translation>Tài liệu PDF (*.pdf)</translation>
+    </message>
+    <message>
+        <source>Use a different owner password to restrict permissions.</source>
+        <extracomment>Shown below the owner-password field when it is the same as the open password while a permission is not allowed. Anyone with the open password could then lift the restrictions. An empty owner field is also accepted.</extracomment>
+        <translation>Dùng mật khẩu quyền truy cập khác để hạn chế quyền.</translation>
     </message>
     <message>
         <source>This writes a copy with all owner-password restrictions removed (printing, copying, and editing become permitted).
@@ -4337,13 +4377,18 @@ AppImage mới được lưu tại:
     <name>mervin::measurementPages</name>
     <message>
         <source>Invalid measurement metadata.</source>
-        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged.</extracomment>
+        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or too large to read.</extracomment>
         <translation>Siêu dữ liệu đo lường không hợp lệ.</translation>
     </message>
     <message>
         <source>Unsupported measurement metadata.</source>
         <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or come from a newer version.</extracomment>
         <translation>Siêu dữ liệu đo lường không được hỗ trợ.</translation>
+    </message>
+    <message>
+        <source>The measurements are too large to save.</source>
+        <extracomment>Reason a save, copy or page operation fails without writing anything. The measurements Mervin would store in the PDF pass the 16 MiB it reads back, as can happen when merging files that carry many measurements.</extracomment>
+        <translation>Số đo quá lớn để lưu.</translation>
     </message>
 </context>
 </TS>

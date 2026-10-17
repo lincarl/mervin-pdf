@@ -1,9 +1,11 @@
 #pragma once
 
+#include <QByteArray>
 #include <QCoreApplication>
 #include <QString>
 
 #include <functional>
+#include <optional>
 
 namespace mervin {
 
@@ -41,6 +43,9 @@ public:
         bool canCopy = true;   // extract text / graphics
         bool canModify = true; // assemble + modify content
         bool canAnnotate = true;
+
+        /// Whether no flag restricts anything.
+        bool allowsEverything() const { return canPrint && canCopy && canModify && canAnnotate; }
     };
 
     struct Info
@@ -49,8 +54,18 @@ public:
         QString algorithm;     // "AES-256" | "AES-128" | "RC4", or a translated "None" | "Unknown"
         int keyLengthBits = 0; // 0 when not encrypted
         int revision = 0;      // R
-        Permissions permissions; // all true when not encrypted
+        // All true when not encrypted. canPrint and canModify are true only when the file
+        // allows every kind of printing or modification.
+        Permissions permissions;
+        bool lowResolutionPrintOnly = false; // printing allowed, at low resolution only
+        bool pageAssemblyOnly = false;       // only inserting, rotating or deleting pages allowed
     };
+
+    /// The password bytes a file encrypted with `algorithm` is keyed with: the first 32
+    /// bytes of the PDFDocEncoding form for AES-128 and RC4-128, and the first 127 bytes of
+    /// UTF-8 for AES-256. Passwords with the same bytes are the same password to every
+    /// reader. nullopt when PDFDocEncoding lacks a character of `password`.
+    static std::optional<QByteArray> keyBytes(const QString &password, Algorithm algorithm);
 
     // Read encryption / permission metadata. `password` may be empty.
     Status readInfo(const QString &path, const QString &password, Info &out, QString *error = nullptr);
@@ -64,9 +79,14 @@ public:
     // Write an encrypted copy. `currentPassword` opens the source (empty if the
     // source is unencrypted). `userPassword` is required to open the result
     // (may be empty for owner-only encryption); `ownerPassword` governs
-    // permission changes (defaults to userPassword if empty). Use for both "add
-    // password" (currentPassword empty) and "change password". Optional mayCommit
-    // validates the destination under its write lock before publication.
+    // permission changes. An empty `ownerPassword` becomes `userPassword` when
+    // `perms` allows everything, and otherwise a random password nobody is told,
+    // so the open password cannot lift the restrictions. decrypt() still removes
+    // them with the open password. Both passwords are keyed with keyBytes(), so
+    // AES-128 and RC4-128 use PDFDocEncoding and fail without writing when a character
+    // has no PDFDocEncoding form; AES-256 uses UTF-8. Use for both "add password" (currentPassword
+    // empty) and "change password". Optional mayCommit validates the destination
+    // under its write lock before publication.
     Status encrypt(const QString &inPath, const QString &outPath, const QString &currentPassword,
                    const QString &userPassword, const QString &ownerPassword, Algorithm algo,
                    const Permissions &perms, QString *error = nullptr,

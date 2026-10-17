@@ -58,9 +58,10 @@ permission involved and what an empty field means. Straightforward labels need
 no comment that merely repeats their text.
 
 ```cpp
-//: Placeholder in the owner-password field. If empty, use the open password
-//: to protect the PDF permission settings. The user can enter a different one.
-ownerEdit_->setPlaceholderText(tr("defaults to the open password"));
+//: Placeholder in the owner-password field while a permission below is not
+//: allowed. If empty, Mervin protects the permission settings with a random
+//: owner password that nobody is told. The user can enter one instead.
+const QString ownerIsRandom = tr("defaults to a random password");
 ```
 
 `lupdate` copies these comments into `<extracomment>`. Keep explanations specific
@@ -83,7 +84,7 @@ synonym still reads as a different concept next to the existing text.
 | English term | Meaning in Mervin |
 | --- | --- |
 | Open password | Password needed to open an encrypted PDF. An empty value means no open password is required. |
-| Owner password | Password guarding the PDF permission settings. An empty field uses the open password. It does not refer to an account owner. |
+| Owner password | Password guarding the PDF permission settings. An empty field uses the open password while every permission is allowed, and a random password nobody is told otherwise. It does not refer to an account owner. |
 | Permissions | PDF flags for printing, copying, modifying and annotating. Mervin does not enforce these flags. |
 | Measure | The measuring tool, which measures distances, paths, areas and angles on the page. Use the verb or the word for measuring, not a noun for a step, a unit, a size or an event. Each label may take its natural form, such as an imperative for the action and a verbal noun for the panel title. |
 | Scale | Drawing scale, such as 1:100, used to convert page distances to real distances. Distinguish it from the viewer's zoom level. |
@@ -353,6 +354,13 @@ such as a list gaining its scroll bar or a longer translated choice. Give the
 dialog's smallest comfortable size to `followLayoutMinimum()` in
 `src/dialogs/LayoutMinimum.h` instead of calling `setMinimumSize()`. Settings keeps a
 fixed minimum because its pages scroll.
+
+A message that appears in an open dialog, such as Security's refusal below the owner
+password, needs that minimum too, or Qt squeezes the message and the controls below
+it. Show the dialog in the layout scenario before the message appears, as the user
+sees it, because growing an open window takes a different path from sizing a new
+one. Put the spare height that remains after the message goes away where it does not
+move the field the user is correcting, for example in a stretch above the buttons.
 
 Wrapped labels need enough height at the dialog's minimum width, including after
 their text changes. Check sibling overlap as well as each label's own text area.

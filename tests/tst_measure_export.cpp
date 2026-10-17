@@ -2,20 +2,30 @@
 #include "render/MeasureContent.h"
 #include "render/RenderEngine.h"
 #include "security/MeasureExport.h"
+#include "security/MeasurementPages.h"
+#include "security/PageOps.h"
 
 #include <qpdf/Buffer.hh>
+#include <qpdf/Pl_Flate.hh>
+#include <qpdf/Pl_String.hh>
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFObjectHandle.hh>
 #include <qpdf/QPDFPageDocumentHelper.hh>
+#include <qpdf/QPDFPageObjectHelper.hh>
 #include <qpdf/QPDFWriter.hh>
 
 #include <QByteArray>
 #include <QCoreApplication>
+#include <QFile>
 #include <QFileInfo>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTranslator>
 
+#include <algorithm>
+#include <functional>
+#include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -48,6 +58,79 @@ void makePdf(const QString &path, int n, int rotate = 0, double ox = 0.0, double
     w.write();
 }
 
+// Compresses `data` once with qpdf's Flate encoder. Pl_String exists from qpdf 11.0.
+std::string deflate(const std::string &data)
+{
+    std::string out;
+    Pl_String sink("deflated", nullptr, out);
+    Pl_Flate flate("deflate", &sink, Pl_Flate::a_deflate);
+    flate.writeString(data);
+    flate.finish();
+    return out;
+}
+
+// Wraps `data` in a zlib stream of stored blocks, as zlib does with data it cannot
+// compress. This is about the largest encoding Flate gives for any data.
+std::string storedFlate(const std::string &data)
+{
+    std::string out("\x78\x01", 2);
+    size_t at = 0;
+    do {
+        const size_t n = std::min<size_t>(data.size() - at, 65535);
+        out += char(at + n == data.size() ? 1 : 0); // the last block is final
+        out += char(n & 0xFF);
+        out += char(n >> 8);
+        out += char(~n & 0xFF);
+        out += char(~n >> 8 & 0xFF);
+        out.append(data, at, n);
+        at += n;
+    } while (at < data.size());
+    quint32 a = 1, b = 0;
+    for (const unsigned char c : data) {
+        a = (a + c) % 65521;
+        b = (b + a) % 65521;
+    }
+    const quint32 sum = b << 16 | a;
+    for (int shift = 24; shift >= 0; shift -= 8)
+        out += char(sum >> shift & 0xFF);
+    return out;
+}
+
+// Writes a one-page PDF whose catalog holds `encoded` as /Mervin_Measurements, stored as
+// given under `filters` (null for none). `encrypt`, when given, sets the writer's
+// encryption with password bytes passed to qpdf unchanged. `extra` adds stream
+// dictionary entries, written in PDF syntax.
+void makeBlobPdf(const QString &path, const std::string &encoded, QPDFObjectHandle filters,
+                 const std::function<void(QPDFWriter &)> &encrypt = {},
+                 const std::map<std::string, std::string> &extra = {})
+{
+    QPDF q;
+    q.emptyPDF();
+    QPDFPageDocumentHelper(q).addPage(QPDFPageObjectHelper(q.makeIndirectObject(
+        QPDFObjectHandle::parse("<< /Type /Page /MediaBox [0 0 612 792] /Resources << >> >>"))), false);
+    if (!encoded.empty()) {
+        auto blob = q.newStream();
+        blob.replaceStreamData(encoded, filters, QPDFObjectHandle::newNull());
+        for (const auto &[key, value] : extra)
+            blob.getDict().replaceKey(key, QPDFObjectHandle::parse(value));
+        q.getRoot().replaceKey("/Mervin_Measurements", blob);
+    }
+    const QByteArray outputName = path.toUtf8();
+    QPDFWriter w(q, outputName.constData());
+    w.setStreamDataMode(qpdf_s_preserve);
+    w.setDecodeLevel(qpdf_dl_none);
+    if (encrypt)
+        encrypt(w);
+    w.write();
+}
+
+// R4 AES-128 keyed with the PDFDocEncoding bytes of "café", as the PDF format requires.
+void pdfDocCafe(QPDFWriter &w)
+{
+    w.setR4EncryptionParametersInsecure("caf\xE9", "caf\xE9", true, true, true, true, true, true,
+                                        qpdf_r3p_full, true, true);
+}
+
 std::string pageContent(QPDFObjectHandle page)
 {
     std::string out;
@@ -76,6 +159,64 @@ Measurement distance(int page, QPointF a, QPointF b)
     m.kind = MeasureKind::Distance;
     m.pts = {a, b};
     return m;
+}
+
+// Prefixes each 16-byte row of `data`, padded with leading spaces, with PNG filter
+// type 0, as /Predictor 12 /Columns 16 expects before Flate.
+std::string pngRows(const std::string &data)
+{
+    const std::string padded = std::string((16 - data.size() % 16) % 16, ' ') + data;
+    std::string rows;
+    for (size_t at = 0; at < padded.size(); at += 16)
+        rows += '\0' + padded.substr(at, 16);
+    return rows;
+}
+
+// One manual scale on page 0 whose label holds `labelLength` characters, a cheap way to
+// give the measurement blob a chosen size.
+MeasureDoc longLabel(qsizetype labelLength)
+{
+    MeasureDoc md;
+    PageScale scale;
+    scale.page = 0;
+    scale.mmPerPointX = scale.mmPerPointY = 1.0;
+    scale.label = QString(labelLength, QLatin1Char('x'));
+    md.pageScales.push_back(scale);
+    return md;
+}
+
+// The reason a write gives when the measurements would pass the read limit.
+QString tooLargeReason()
+{
+    return QCoreApplication::translate("mervin::measurementPages",
+                                       "The measurements are too large to save.");
+}
+
+// One distance on page 0.
+MeasureDoc oneDistance()
+{
+    MeasureDoc md;
+    md.measurements.push_back(distance(0, QPointF(5, 5), QPointF(55, 5)));
+    return md;
+}
+
+// Rows for a decoded blob exactly at the cap and one byte past it.
+void capRows()
+{
+    QTest::addColumn<qsizetype>("size");
+    QTest::addColumn<bool>("accepted");
+    QTest::newRow("at the cap") << kMaxMeasurementBlobBytes << true;
+    QTest::newRow("one byte over") << kMaxMeasurementBlobBytes + 1 << false;
+}
+
+// Writes a one-page PDF whose blob is valid measurement JSON padded with leading spaces
+// to `size` bytes, compressed once as Mervin writes it. It stays small on disk.
+void makeLargeBlobPdf(const QString &path, qsizetype size)
+{
+    const QByteArray json = serializeMeasurements(oneDistance());
+    const std::string data = std::string(size_t(size - json.size()), ' ') + json.toStdString();
+    makeBlobPdf(path, deflate(data), QPDFObjectHandle::newName("/FlateDecode"));
+    QVERIFY(QFileInfo(path).size() < 64 * 1024);
 }
 
 RenderMeasurement render(const Measurement &m, const QString &label)
@@ -117,7 +258,23 @@ private slots:
     void serializeParseRoundTrip();
     void overrideOnlyRoundTrip();
     void embedReadRoundTrip();
-    void catalogGateMatchesBlobPresence();
+    void pdfDocKeyedSourceReadsMeasurements();
+    void pdfDocKeyedSourceSavesMeasurements();
+    void blobReadStopsAtTheCap_data();
+    void blobReadStopsAtTheCap();
+    void pageOperationsStopAtTheCap_data();
+    void pageOperationsStopAtTheCap();
+    void foreignEncodingsGiveNoData_data();
+    void foreignEncodingsGiveNoData();
+    void damagedFlateGivesNoData_data();
+    void damagedFlateGivesNoData();
+    void storedFlateAtTheCapReads();
+    void stringBlobGivesNoData();
+    void mergeRefusesMeasurementsPastTheCap_data();
+    void mergeRefusesMeasurementsPastTheCap();
+    void saveRefusesMeasurementsPastTheCap();
+    void copiesKeepAnUnreadableBlobByteForByte();
+    void openReaderMatchesQpdf();
     void embedKeyIsPrivateToCatalog();
     void valueLabelsWithoutScale();
     void flattenAppendsContent();
@@ -212,13 +369,364 @@ void TstMeasureExport::embedReadRoundTrip()
     QVERIFY(!MeasureExport::readMervinBlob(in).has_value());
 }
 
-void TstMeasureExport::catalogGateMatchesBlobPresence()
+/// An R4 file keyed in PDFDocEncoding returns its measurements for the password as typed.
+void TstMeasureExport::pdfDocKeyedSourceReadsMeasurements()
 {
-    // TabPage::open only pays for the qpdf reopen readMervinBlob needs when
-    // Document::hasMervinMeasurements() says the catalog carries the blob - that
-    // reopen re-parses the whole file, and almost no file has the key. A false
-    // negative here would silently drop a document's saved measurements and
-    // calibration, so tie the MuPDF-side gate to what qpdf actually finds.
+    const QByteArray json = serializeMeasurements(oneDistance());
+    const QString stored = p("pd-stored.pdf");
+    makeBlobPdf(stored, json.toStdString(), QPDFObjectHandle::newNull(), pdfDocCafe);
+    const auto blob = MeasureExport::readMervinBlob(stored, QStringLiteral("café"));
+    QVERIFY(blob.has_value());
+    QCOMPARE(*blob, json);
+    // Opening reads the same blob through MuPDF, which decrypts it with the open document.
+    RenderEngine engine;
+    QString err;
+    const auto document = engine.openDocument(stored, QStringLiteral("café"), &err, nullptr);
+    QVERIFY2(document, qPrintable(err));
+    QVERIFY(document->mervinMeasurements() == blob);
+}
+
+/// Save edits stores measurements in an R4 file keyed in PDFDocEncoding.
+void TstMeasureExport::pdfDocKeyedSourceSavesMeasurements()
+{
+    const QString password = QStringLiteral("café");
+    const QString plain = p("pd-plain.pdf"), saved = p("pd-saved.pdf");
+    makeBlobPdf(plain, {}, QPDFObjectHandle::newNull(), pdfDocCafe);
+    QString err;
+    QCOMPARE(MeasureExport::embedMervin(plain, saved, oneDistance(), password, &err),
+             MeasureExport::Status::Ok);
+    const auto blob = MeasureExport::readMervinBlob(saved, password);
+    QVERIFY(blob.has_value());
+    MeasureDoc back;
+    QVERIFY(parseMeasurements(*blob, &back));
+    QCOMPARE(static_cast<int>(back.measurements.size()), 1);
+}
+
+void TstMeasureExport::blobReadStopsAtTheCap_data()
+{
+    capRows();
+}
+
+/// Both blob readers return a compressed blob only up to the cap.
+void TstMeasureExport::blobReadStopsAtTheCap()
+{
+    QFETCH(qsizetype, size);
+    QFETCH(bool, accepted);
+    const QString in = p("cap-read.pdf");
+    makeLargeBlobPdf(in, size);
+    const auto blob = MeasureExport::readMervinBlob(in);
+    QCOMPARE(blob.has_value(), accepted);
+    if (accepted)
+        QCOMPARE(blob->size(), size);
+    // Opening a document reads the blob through MuPDF.
+    RenderEngine engine;
+    const auto document = engine.openDocument(in);
+    QVERIFY(document);
+    const auto opened = document->mervinMeasurements();
+    QCOMPARE(opened.has_value(), accepted);
+    if (accepted)
+        QCOMPARE(opened->size(), size);
+}
+
+void TstMeasureExport::pageOperationsStopAtTheCap_data()
+{
+    capRows();
+}
+
+/// Page operations refuse a blob past the cap as invalid metadata.
+void TstMeasureExport::pageOperationsStopAtTheCap()
+{
+    QFETCH(qsizetype, size);
+    QFETCH(bool, accepted);
+    const QString in = p("cap-rotate.pdf"), out = p("cap-rotated.pdf");
+    makeLargeBlobPdf(in, size);
+    QString err;
+    QCOMPARE(PageOps::rotatePages(in, out, {0}, 90, true, {}, &err),
+             accepted ? PageOps::Status::Ok : PageOps::Status::Failed);
+    if (!accepted)
+        QCOMPARE(err, QCoreApplication::translate("mervin::measurementPages",
+                                                  "Invalid measurement metadata."));
+}
+
+void TstMeasureExport::foreignEncodingsGiveNoData_data()
+{
+    QTest::addColumn<QString>("filter");   // the /Filter value, in PDF syntax
+    QTest::addColumn<QString>("key");      // another stream dictionary key, if any
+    QTest::addColumn<QString>("value");    // its value
+    QTest::addColumn<int>("deflations");   // times the data is Flate-compressed
+    QTest::addColumn<bool>("png");         // rows prefixed for a PNG predictor
+    QTest::addColumn<bool>("hex");         // ASCIIHex-encoded
+    QTest::addColumn<bool>("accepted");
+    const QString flate = QStringLiteral("/FlateDecode");
+    const QString predictor = QStringLiteral("<< /Predictor 12 /Columns 16 >>");
+    // Mervin writes the blob with a single /FlateDecode.
+    QTest::newRow("plain") << QStringLiteral("null") << QString() << QString() << 0 << false
+                           << false << true;
+    QTest::newRow("Flate") << flate << QString() << QString() << 1 << false << false << true;
+    QTest::newRow("Flate in a one-element array")
+        << QStringLiteral("[/FlateDecode]") << QString() << QString() << 1 << false << false << true;
+    // Chained Flate stages can inflate data that the next stage consumes without output.
+    QTest::newRow("two Flate filters") << QStringLiteral("[/FlateDecode /FlateDecode]") << QString()
+                                       << QString() << 2 << false << false << false;
+    // qpdf sizes a predictor's row buffers from /Columns before any data arrives.
+    QTest::newRow("Flate with a PNG predictor")
+        << flate << QStringLiteral("/DecodeParms") << predictor << 1 << true << false << false;
+    QTest::newRow("predictor under the /DP abbreviation")
+        << flate << QStringLiteral("/DP") << predictor << 1 << true << false << false;
+    // MuPDF reads /F as /Filter when /Filter is absent, and qpdf ignores it, so only the
+    // refusal keeps the two readers in agreement.
+    QTest::newRow("Flate under the /F abbreviation")
+        << QStringLiteral("null") << QStringLiteral("/F") << flate << 1 << false << false << false;
+    QTest::newRow("hex filter") << QStringLiteral("/ASCIIHexDecode") << QString() << QString() << 0
+                                << false << true << false;
+}
+
+/// The blob's readers decode only the plain or single-Flate streams Mervin writes, before
+/// any filter can allocate memory from the stream's own parameters.
+void TstMeasureExport::foreignEncodingsGiveNoData()
+{
+    QFETCH(QString, filter);
+    QFETCH(QString, key);
+    QFETCH(QString, value);
+    QFETCH(int, deflations);
+    QFETCH(bool, png);
+    QFETCH(bool, hex);
+    QFETCH(bool, accepted);
+    const std::string json = serializeMeasurements(oneDistance()).toStdString();
+    std::string encoded = png ? pngRows(json) : json;
+    for (int i = 0; i < deflations; ++i)
+        encoded = deflate(encoded);
+    if (hex)
+        encoded = QByteArray::fromStdString(encoded).toHex().toStdString() + '>';
+    std::map<std::string, std::string> extra;
+    if (!key.isEmpty())
+        extra[key.toStdString()] = value.toStdString();
+    const QString in = p("foreign.pdf"), out = p("foreign-rotated.pdf");
+    makeBlobPdf(in, encoded, QPDFObjectHandle::parse(filter.toStdString()), {}, extra);
+
+    const auto blob = MeasureExport::readMervinBlob(in);
+    QCOMPARE(blob.has_value(), accepted);
+    if (accepted)
+        QCOMPARE(blob->trimmed(), QByteArray::fromStdString(json));
+    RenderEngine engine;
+    const auto document = engine.openDocument(in);
+    QVERIFY(document);
+    QVERIFY(document->mervinMeasurements() == blob);
+    QString err;
+    QCOMPARE(PageOps::rotatePages(in, out, {0}, 90, true, {}, &err),
+             accepted ? PageOps::Status::Ok : PageOps::Status::Failed);
+}
+
+void TstMeasureExport::damagedFlateGivesNoData_data()
+{
+    QTest::addColumn<QString>("damage");
+    QTest::newRow("corrupted Adler-32") << QStringLiteral("checksum");
+    // The data is complete, so both libraries could return it with only a warning.
+    QTest::newRow("missing Adler-32") << QStringLiteral("trailer");
+    QTest::newRow("truncated in the data") << QStringLiteral("data");
+    // Valid Flate data that is far larger encoded than decoded.
+    QTest::newRow("encoded far past the limit") << QStringLiteral("padding");
+}
+
+/// A damaged Flate blob gives no data in either reader. MuPDF and qpdf both decode such a
+/// stream with only a warning, so a reader that ignored warnings would show partial or
+/// unverified measurements that the other reader rejects. Neither reader reads more encoded
+/// data than the decoded limit allows either.
+void TstMeasureExport::damagedFlateGivesNoData()
+{
+    QFETCH(QString, damage);
+    std::string encoded = deflate(serializeMeasurements(oneDistance()).toStdString());
+    if (damage == QLatin1String("checksum"))
+        encoded.back() = char(encoded.back() ^ 0xFF); // the last byte of the Adler-32
+    else if (damage == QLatin1String("trailer"))
+        encoded.resize(encoded.size() - 4);
+    else if (damage == QLatin1String("data"))
+        encoded.resize(encoded.size() / 2);
+    else {
+        // Empty stored blocks between the zlib header and the data decode to nothing.
+        const std::string emptyBlock("\x00\x00\x00\xFF\xFF", 5);
+        const size_t blocks = size_t(kMaxMeasurementBlobBytes + 1024 * 1024) / emptyBlock.size();
+        std::string padded = encoded.substr(0, 2);
+        padded.reserve(padded.size() + blocks * emptyBlock.size() + encoded.size());
+        for (size_t i = 0; i < blocks; ++i)
+            padded += emptyBlock;
+        encoded = padded + encoded.substr(2);
+    }
+    const QString in = p("damaged.pdf"), out = p("damaged-rotated.pdf");
+    makeBlobPdf(in, encoded, QPDFObjectHandle::newName("/FlateDecode"));
+
+    QVERIFY(!MeasureExport::readMervinBlob(in).has_value());
+    RenderEngine engine;
+    const auto document = engine.openDocument(in);
+    QVERIFY(document);
+    QVERIFY(!document->mervinMeasurements().has_value());
+    QVERIFY(document->measurementsUnreadable()); // saves keep it, and measuring is off
+    QString err;
+    QCOMPARE(PageOps::rotatePages(in, out, {0}, 90, true, {}, &err), PageOps::Status::Failed);
+    QCOMPARE(err, QCoreApplication::translate("mervin::measurementPages",
+                                              "Invalid measurement metadata."));
+}
+
+/// Both readers accept a blob at the cap stored uncompressed inside Flate, so the encoded
+/// limit leaves room for Flate's own overhead.
+void TstMeasureExport::storedFlateAtTheCapReads()
+{
+    const QByteArray json = serializeMeasurements(oneDistance());
+    const std::string data =
+        std::string(size_t(kMaxMeasurementBlobBytes - json.size()), ' ') + json.toStdString();
+    const std::string encoded = storedFlate(data);
+    QVERIFY(encoded.size() > data.size());
+    const QString in = p("stored-cap.pdf");
+    makeBlobPdf(in, encoded, QPDFObjectHandle::newName("/FlateDecode"));
+
+    const auto blob = MeasureExport::readMervinBlob(in);
+    QVERIFY(blob.has_value());
+    QCOMPARE(blob->size(), kMaxMeasurementBlobBytes);
+    RenderEngine engine;
+    const auto document = engine.openDocument(in);
+    QVERIFY(document);
+    const auto opened = document->mervinMeasurements();
+    QVERIFY(opened.has_value());
+    QCOMPARE(opened->size(), kMaxMeasurementBlobBytes);
+    QVERIFY(!document->measurementsUnreadable());
+}
+
+/// A blob stored as a PDF string, which no Mervin release writes, gives no data in either
+/// reader, so the viewer and page operations agree. Copies keep it as the same string.
+void TstMeasureExport::stringBlobGivesNoData()
+{
+    const QByteArray json = serializeMeasurements(oneDistance());
+    const QString in = p("string.pdf"), out = p("string-rotated.pdf"), kept = p("string-kept.pdf"),
+                  exported = p("string-exported.pdf");
+    {
+        QPDF q;
+        q.emptyPDF();
+        QPDFPageDocumentHelper(q).addPage(QPDFPageObjectHelper(q.makeIndirectObject(
+            QPDFObjectHandle::parse("<< /Type /Page /MediaBox [0 0 612 792] /Resources << >> >>"))),
+                                          false);
+        q.getRoot().replaceKey("/Mervin_Measurements",
+                               QPDFObjectHandle::newString(json.toStdString()));
+        const QByteArray name = in.toUtf8();
+        QPDFWriter w(q, name.constData());
+        w.write();
+    }
+    const auto storedString = [](const QString &path) -> std::optional<QByteArray> {
+        QPDF q;
+        q.processFile(path.toUtf8().constData());
+        QPDFObjectHandle blob = q.getRoot().getKey("/Mervin_Measurements");
+        if (!blob.isString())
+            return std::nullopt;
+        return QByteArray::fromStdString(blob.getStringValue());
+    };
+    QCOMPARE(storedString(in), std::optional<QByteArray>(json));
+
+    QVERIFY(!MeasureExport::readMervinBlob(in).has_value());
+    RenderEngine engine;
+    const auto document = engine.openDocument(in);
+    QVERIFY(document);
+    QVERIFY(!document->mervinMeasurements().has_value());
+    QVERIFY(document->measurementsUnreadable()); // saves keep it, and measuring is off
+    QString err;
+    QCOMPARE(PageOps::rotatePages(in, out, {0}, 90, true, {}, &err), PageOps::Status::Failed);
+    QCOMPARE(err, QCoreApplication::translate("mervin::measurementPages",
+                                              "Invalid measurement metadata."));
+    QCOMPARE(MeasureExport::keepMervin(in, kept, {}, &err), MeasureExport::Status::Ok);
+    QCOMPARE(storedString(kept), std::optional<QByteArray>(json));
+    QCOMPARE(MeasureExport::flatten(in, exported, {}, {}, &err, true), MeasureExport::Status::Ok);
+    QCOMPARE(storedString(exported), std::optional<QByteArray>(json));
+}
+
+void TstMeasureExport::mergeRefusesMeasurementsPastTheCap_data()
+{
+    QTest::addColumn<qsizetype>("labelLength"); // per source
+    QTest::addColumn<bool>("accepted");
+    // Each source's blob stays below the cap, so both open with their measurements.
+    QTest::newRow("together past the cap") << kMaxMeasurementBlobBytes / 2 + 1024 << false;
+    QTest::newRow("together under the cap") << kMaxMeasurementBlobBytes / 2 - 64 * 1024 << true;
+}
+
+/// Merge writes no output whose measurements its readers would refuse, so they are never
+/// lost on the next open.
+void TstMeasureExport::mergeRefusesMeasurementsPastTheCap()
+{
+    QFETCH(qsizetype, labelLength);
+    QFETCH(bool, accepted);
+    const QString plain = p("cap-plain.pdf"), first = p("cap-first.pdf"),
+                  second = p("cap-second.pdf"), merged = p("cap-merged.pdf");
+    QFile::remove(merged);
+    makePdf(plain, 1);
+    QString err;
+    QCOMPARE(MeasureExport::embedMervin(plain, first, longLabel(labelLength), {}, &err),
+             MeasureExport::Status::Ok);
+    QCOMPARE(MeasureExport::embedMervin(plain, second, longLabel(labelLength), {}, &err),
+             MeasureExport::Status::Ok);
+    QVERIFY(MeasureExport::readMervinBlob(first).has_value());
+
+    const auto status = PageOps::merge({{first, {}, {}}, {second, {}, {}}}, merged, &err);
+    if (!accepted) {
+        QCOMPARE(status, PageOps::Status::Failed);
+        QCOMPARE(err, tooLargeReason());
+        QVERIFY(!QFileInfo::exists(merged));
+        return;
+    }
+    QCOMPARE(status, PageOps::Status::Ok);
+    RenderEngine engine;
+    const auto document = engine.openDocument(merged);
+    QVERIFY(document);
+    const auto blob = document->mervinMeasurements();
+    QVERIFY(blob.has_value());
+    MeasureDoc back;
+    QVERIFY(parseMeasurements(*blob, &back));
+    QCOMPARE(int(back.pageScales.size()), 2);
+    QCOMPARE(back.pageScales.back().page, 1);
+    QCOMPARE(back.pageScales.back().label.size(), labelLength);
+}
+
+/// Saving measurements that would pass the read limit fails before anything is written.
+void TstMeasureExport::saveRefusesMeasurementsPastTheCap()
+{
+    const QString plain = p("cap-save-plain.pdf"), saved = p("cap-save.pdf");
+    makePdf(plain, 1);
+    QString err;
+    QCOMPARE(MeasureExport::embedMervin(plain, saved, longLabel(kMaxMeasurementBlobBytes), {}, &err),
+             MeasureExport::Status::Failed);
+    QCOMPARE(err, tooLargeReason());
+    QVERIFY(!QFileInfo::exists(saved));
+}
+
+/// Save as copy and export keep a blob Mervin could not read exactly as stored.
+void TstMeasureExport::copiesKeepAnUnreadableBlobByteForByte()
+{
+    const std::string stored = deflate(std::string(size_t(kMaxMeasurementBlobBytes) + 1, ' '));
+    const QString in = p("unreadable.pdf"), kept = p("unreadable-kept.pdf"),
+                  exported = p("unreadable-exported.pdf"), clean = p("unreadable-clean.pdf");
+    makeBlobPdf(in, stored, QPDFObjectHandle::newName("/FlateDecode"));
+    const auto rawBlob = [](const QString &path) -> std::optional<std::string> {
+        QPDF q;
+        q.processFile(path.toUtf8().constData());
+        QPDFObjectHandle blob = q.getRoot().getKey("/Mervin_Measurements");
+        if (!blob.isStream())
+            return std::nullopt;
+        const auto buffer = blob.getRawStreamData();
+        return std::string(reinterpret_cast<const char *>(buffer->getBuffer()), buffer->getSize());
+    };
+    QCOMPARE(rawBlob(in), std::optional<std::string>(stored));
+    QString err;
+    QCOMPARE(MeasureExport::keepMervin(in, kept, {}, &err), MeasureExport::Status::Ok);
+    QCOMPARE(rawBlob(kept), std::optional<std::string>(stored));
+    QCOMPARE(MeasureExport::flatten(in, exported, {}, {}, &err, true), MeasureExport::Status::Ok);
+    QCOMPARE(rawBlob(exported), std::optional<std::string>(stored));
+    // A plain export still leaves Mervin's private data out.
+    QCOMPARE(MeasureExport::flatten(in, clean, {}, {}, &err), MeasureExport::Status::Ok);
+    QVERIFY(!rawBlob(clean).has_value());
+}
+
+void TstMeasureExport::openReaderMatchesQpdf()
+{
+    // Opening reads saved measurements through MuPDF (Document::mervinMeasurements),
+    // while page operations read them with qpdf. A disagreement here would silently drop
+    // a document's saved measurements and calibration when it opens, so tie the
+    // MuPDF reader to what qpdf actually finds.
     const QString plain = p("gate-plain.pdf"), embedded = p("gate-embed.pdf");
     makePdf(plain, 2);
     MeasureDoc md;
@@ -232,13 +740,13 @@ void TstMeasureExport::catalogGateMatchesBlobPresence()
     auto before = engine.openDocument(plain, QString(), &err, &needsPw);
     QVERIFY2(before != nullptr, qPrintable(err));
     QVERIFY(!MeasureExport::readMervinBlob(plain).has_value());
-    QVERIFY(!before->hasMervinMeasurements()); // no blob -> no second parse
+    QVERIFY(!before->mervinMeasurements());
 
     auto after = engine.openDocument(embedded, QString(), &err, &needsPw);
     QVERIFY2(after != nullptr, qPrintable(err));
-    QVERIFY(MeasureExport::readMervinBlob(embedded).has_value());
-    QVERIFY(after->hasMervinMeasurements()); // blob present -> gate opens
-    QVERIFY(after->hasMervinMeasurements()); // and the cached answer is stable
+    const auto stored = MeasureExport::readMervinBlob(embedded);
+    QVERIFY(stored.has_value());
+    QVERIFY(after->mervinMeasurements() == stored);
 }
 
 void TstMeasureExport::embedKeyIsPrivateToCatalog()
@@ -393,9 +901,9 @@ void TstMeasureExport::roundTripsThroughRealDrawing()
     auto edoc = engine.openDocument(emb, QString(), &err, &needsPw);
     QVERIFY2(edoc != nullptr, qPrintable(err));
     QCOMPARE(edoc->pageCount(), pages);
-    QVERIFY(edoc->hasMervinMeasurements()); // the open-time gate agrees on a real file
     auto blob = MeasureExport::readMervinBlob(emb);
     QVERIFY(blob.has_value());
+    QVERIFY(edoc->mervinMeasurements() == blob); // the open-time reader agrees on a real file
     MeasureDoc back;
     QVERIFY(parseMeasurements(*blob, &back));
     QCOMPARE(static_cast<int>(back.measurements.size()), 1);

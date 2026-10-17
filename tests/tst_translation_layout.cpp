@@ -46,8 +46,10 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileDialog>
 #include <QFontDatabase>
 #include <QFontMetrics>
+#include <QGroupBox>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -834,6 +836,12 @@ void TstTranslationLayout::calibration()
         inspect(dialog, mode == mervin::CalibrationDialog::Mode::Calibrate
                             ? QStringLiteral("Calibrate") : QStringLiteral("Set scale"));
     }
+    // Choosing Measure on a file whose saved measurements Mervin cannot read.
+    QMessageBox unreadable(QMessageBox::Information, MainWindow::tr("Measure"),
+        MainWindow::tr("Mervin cannot read this file's measurements. Measuring is off so that "
+                       "they stay unchanged."),
+        QMessageBox::Ok);
+    inspect(unreadable, QStringLiteral("Measure with unreadable measurements"));
 }
 
 void TstTranslationLayout::exportMeasurements()
@@ -1095,6 +1103,16 @@ void TstTranslationLayout::merge()
         const auto *note = mixed.findChild<QLabel *>(QStringLiteral("mergeEncryptionNote"));
         QVERIFY(note && note->isVisible());
     }
+    {
+        // Combined measurements too large to save replace the write summary.
+        const QString output = profile_.filePath(QStringLiteral("merge-measured-output.pdf"));
+        const QString tooLarge = mervin::PageOps::measurementsTooLargeError();
+        mervin::MergeDialog failed(dialog.plan(), output, tooLarge, -1);
+        auto *reason = failed.findChild<QLabel *>(QStringLiteral("mergeError"));
+        QVERIFY(reason);
+        QTRY_COMPARE(reason->text(), tooLarge);
+        inspect(failed, QStringLiteral("Merge measurements too large to save"));
+    }
     for (const auto conflict : {mervin::MergeDialog::Conflict::Changed,
                                 mervin::MergeDialog::Conflict::CheckFailed}) {
         const QString output = profile_.filePath(QStringLiteral("merge-consent-output.pdf"));
@@ -1196,6 +1214,86 @@ void TstTranslationLayout::security()
              mervin::QpdfService::Status::Ok);
     mervin::SecurityDialog protectedDocument(encrypted_, info);
     inspect(protectedDocument, QStringLiteral("Security restricted encrypted document"));
+    // The longest summary has both limited states beside two Not allowed.
+    mervin::QpdfService::Info limited;
+    limited.encrypted = true;
+    limited.algorithm = QStringLiteral("RC4");
+    limited.keyLengthBits = 128;
+    limited.revision = 3;
+    limited.permissions = {false, false, false, false};
+    limited.lowResolutionPrintOnly = limited.pageAssemblyOnly = true;
+    mervin::SecurityDialog limitedDocument(encrypted_, limited);
+    const QString summary = limitedDocument.findChild<QGroupBox *>()->findChild<QLabel *>()->text();
+    QVERIFY(summary.contains(mervin::SecurityDialog::tr("Low resolution only")));
+    QVERIFY(summary.contains(mervin::SecurityDialog::tr("Page assembly only")));
+    // A restriction below changes what an empty owner password becomes.
+    limitedDocument.findChild<QCheckBox *>(QStringLiteral("securityAllowCopy"))->setChecked(false);
+    QCOMPARE(limitedDocument.findChild<QLineEdit *>(QStringLiteral("securityOwnerPassword"))
+                 ->placeholderText(),
+             mervin::SecurityDialog::tr("defaults to a random password"));
+    inspect(limitedDocument, QStringLiteral("Security low-resolution and assembly-only permissions"));
+
+    // The inline refusal of an owner password that repeats the open password. It
+    // appears in an open dialog, which must grow to fit it.
+    mervin::SecurityDialog refusal(plain_, mervin::QpdfService::Info{});
+    refusal.setAttribute(Qt::WA_DontShowOnScreen);
+    refusal.show();
+    settle();
+    refusal.findChild<QLineEdit *>(QStringLiteral("securityUserPassword"))->setText(QStringLiteral("same"));
+    refusal.findChild<QLineEdit *>(QStringLiteral("securityOwnerPassword"))->setText(QStringLiteral("same"));
+    refusal.findChild<QCheckBox *>(QStringLiteral("securityAllowPrint"))->setChecked(false);
+    // A Save As picker here would mean the refusal failed. Close it rather than wait.
+    QTimer guard;
+    connect(&guard, &QTimer::timeout, &refusal, [] {
+        if (auto *picker = qobject_cast<QFileDialog *>(QApplication::activeModalWidget()))
+            picker->reject();
+    });
+    guard.start(50);
+    refusal.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
+    guard.stop();
+    auto *refused = refusal.findChild<QLabel *>(QStringLiteral("securityError"));
+    QVERIFY(refused && !refused->isHidden());
+    QCOMPARE(refused->text(),
+             mervin::SecurityDialog::tr("Use a different owner password to restrict permissions."));
+    inspect(refusal, QStringLiteral("Security refused owner password"));
+
+    // Different passwords that agree as far as the algorithm reads them are refused with a
+    // reason that names its limit.
+    const QString start32 = QStringLiteral("Northwind quarterly report 2026 ");
+    const QString start127 = QString(63, QChar(0xFC)) + QLatin1Char('a');
+    const struct
+    {
+        int algorithm; // index in the algorithm list
+        QString start;
+        QString reason;
+    } sharedStarts[] = {
+        {1, start32, mervin::SecurityDialog::tr("AES-128 and RC4-128 use only the first 32 characters "
+                                                "of a password. Make the two passwords differ within them.")},
+        {0, start127, mervin::SecurityDialog::tr("AES-256 uses only the first 127 bytes of a password. "
+                                                 "Make the two passwords differ within them.")}};
+    for (const auto &shared : sharedStarts) {
+        mervin::SecurityDialog sharedStart(plain_, mervin::QpdfService::Info{});
+        sharedStart.setAttribute(Qt::WA_DontShowOnScreen);
+        sharedStart.show();
+        settle();
+        sharedStart.findChild<QLineEdit *>(QStringLiteral("securityUserPassword"))
+            ->setText(shared.start + QStringLiteral("read"));
+        sharedStart.findChild<QLineEdit *>(QStringLiteral("securityOwnerPassword"))
+            ->setText(shared.start + QStringLiteral("admin"));
+        sharedStart.findChild<QComboBox *>(QStringLiteral("securityAlgorithm"))
+            ->setCurrentIndex(shared.algorithm);
+        sharedStart.findChild<QCheckBox *>(QStringLiteral("securityAllowPrint"))->setChecked(false);
+        guard.start(50);
+        sharedStart.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
+        guard.stop();
+        auto *startRefused = sharedStart.findChild<QLabel *>(QStringLiteral("securityError"));
+        QVERIFY(startRefused && !startRefused->isHidden());
+        QCOMPARE(startRefused->text(), shared.reason);
+        inspect(sharedStart, QStringLiteral("Security refused owner password with the same first %1")
+                                 .arg(shared.algorithm == 0 ? QStringLiteral("127 bytes")
+                                                            : QStringLiteral("32 characters")));
+    }
+
     mervin::SecurityDialog::Request choices;
     choices.output = QStringLiteral("/srv/nas/docs/chosen-encrypted-copy.pdf");
     choices.userPassword = QStringLiteral("chosen open password");
@@ -1208,7 +1306,10 @@ void TstTranslationLayout::security()
 
     const QStringList failures{
         mervin::SecurityDialog::tr("The destination changed. Try again to review it."),
-        mervin::SecurityDialog::tr("Could not check the destination. Try again or choose another name.")};
+        mervin::SecurityDialog::tr("Could not check the destination. Try again or choose another name."),
+        mervin::SecurityDialog::tr("The operation failed.\n\n%1")
+            .arg(mervin::QpdfService::tr("A password contains characters that AES-128 and "
+                                         "RC4-128 cannot use. Choose AES-256."))};
     for (int index = 0; index < failures.size(); ++index) {
         QMessageBox warning(QMessageBox::Warning,
             mervin::SecurityDialog::tr("Operation failed"), failures.at(index), QMessageBox::Ok);

@@ -1,12 +1,9 @@
 #include "security/MeasureExport.h"
-#include "io/JobContext.h"
 #include "security/AtomicPdfWriter.h"
+#include "security/MeasurementPages.h"
 #include "security/QpdfSource.h"
 
-#include <qpdf/Buffer.hh>
-#include <qpdf/Constants.h>
 #include <qpdf/QPDF.hh>
-#include <qpdf/QPDFExc.hh>
 #include <qpdf/QPDFObjectHandle.hh>
 #include <qpdf/QPDFPageDocumentHelper.hh>
 #include <qpdf/QPDFPageObjectHelper.hh>
@@ -17,6 +14,7 @@
 #include <exception>
 #include <initializer_list>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -24,42 +22,13 @@ namespace mervin {
 
 namespace {
 
-using Status = MeasureExport::Status;
-
-std::string u8(const QString &s)
+// Makes the writer copy the stored /Mervin_Measurements stream data as it is. Otherwise qpdf
+// decodes and compresses it again, which changes its bytes and has no size limit.
+void keepStoredMeasurements(QPDF &q)
 {
-    const QByteArray b = s.toUtf8();
-    return std::string(b.constData(), static_cast<size_t>(b.size()));
-}
-
-// Mirrors PageOps' open(): NeedsPassword when the source is user-encrypted and
-// no/incorrect password is supplied.
-Status openQpdf(QPDF &q, const QString &path, const QString &password, QString *error)
-{
-    if (!job::reading(path)) {
-        if (error)
-            *error = job::notRunError();
-        return Status::Failed;
-    }
-    try {
-        const std::string pw = u8(password);
-        processReportedFile(q, path, password.isEmpty() ? nullptr : pw.c_str());
-        return Status::Ok;
-    } catch (const QPDFExc &e) {
-        if (e.getErrorCode() == qpdf_e_password) {
-            // QpdfService's message, so translators see it once.
-            if (error)
-                *error = QpdfService::tr("A password is required to open this document.");
-            return Status::NeedsPassword;
-        }
-        if (error)
-            *error = QString::fromUtf8(e.what());
-        return Status::Failed;
-    } catch (const std::exception &e) {
-        if (error)
-            *error = QString::fromUtf8(e.what());
-        return Status::Failed;
-    }
+    QPDFObjectHandle blob = q.getRoot().getKey("/Mervin_Measurements");
+    if (blob.isStream())
+        blob.setFilterOnWrite(false);
 }
 
 // Copy the font dictionary before adding a private name: resources may be inherited/shared.
@@ -84,12 +53,14 @@ std::string addHelvetica(QPDF &q, QPDFObjectHandle resources)
 
 MeasureExport::Status MeasureExport::flatten(const QString &inPath, const QString &outPath,
                                              const std::vector<RenderMeasurement> &marks,
-                                             const QString &password, QString *error)
+                                             const QString &password, QString *error,
+                                             bool keepStoredBlob)
 {
-    QPDF q;
-    const Status st = openQpdf(q, inPath, password, error);
+    std::unique_ptr<QPDF> source;
+    const Status st = openQpdf(inPath, password, source, error);
     if (st != Status::Ok)
         return st;
+    QPDF &q = *source;
     try {
         QPDFPageDocumentHelper dh(q);
         auto pages = dh.getAllPages();
@@ -125,8 +96,11 @@ MeasureExport::Status MeasureExport::flatten(const QString &inPath, const QStrin
         // Flattened marks are baked into the page content as plain vector graphics;
         // the editable Mervin blob (if the source carried one from "Save edits")
         // must not travel with the exported copy. Drop it so the export is a clean,
-        // measurements-burned-in PDF with no Mervin-private data.
-        if (q.getRoot().hasKey("/Mervin_Measurements"))
+        // measurements-burned-in PDF with no Mervin-private data. A blob Mervin could not
+        // read stays, because the export may replace the file it came from.
+        if (keepStoredBlob)
+            keepStoredMeasurements(q);
+        else if (q.getRoot().hasKey("/Mervin_Measurements"))
             q.getRoot().removeKey("/Mervin_Measurements");
         AtomicPdfWriter output(q, outPath);
         output.write();
@@ -142,15 +116,33 @@ MeasureExport::Status MeasureExport::embedMervin(const QString &inPath, const QS
                                                  const MeasureDoc &doc, const QString &password,
                                                  QString *error)
 {
-    QPDF q;
-    const Status st = openQpdf(q, inPath, password, error);
+    std::unique_ptr<QPDF> source;
+    const Status st = openQpdf(inPath, password, source, error);
+    if (st != Status::Ok)
+        return st;
+    QPDF &q = *source;
+    try {
+        measurementPages::store(q, doc); // throws before anything is written when too large
+        AtomicPdfWriter output(q, outPath);
+        output.write();
+        return Status::Ok;
+    } catch (const std::exception &e) {
+        if (error)
+            *error = QString::fromUtf8(e.what());
+        return Status::Failed;
+    }
+}
+
+MeasureExport::Status MeasureExport::keepMervin(const QString &inPath, const QString &outPath,
+                                                const QString &password, QString *error)
+{
+    std::unique_ptr<QPDF> source;
+    const Status st = openQpdf(inPath, password, source, error);
     if (st != Status::Ok)
         return st;
     try {
-        const QByteArray json = serializeMeasurements(doc);
-        auto stream = q.newStream(std::string(json.constData(), static_cast<size_t>(json.size())));
-        q.getRoot().replaceKey("/Mervin_Measurements", stream);
-        AtomicPdfWriter output(q, outPath);
+        keepStoredMeasurements(*source);
+        AtomicPdfWriter output(*source, outPath);
         output.write();
         return Status::Ok;
     } catch (const std::exception &e) {
@@ -163,25 +155,17 @@ MeasureExport::Status MeasureExport::embedMervin(const QString &inPath, const QS
 std::optional<QByteArray> MeasureExport::readMervinBlob(const QString &inPath,
                                                         const QString &password)
 {
-    QPDF q;
-    if (openQpdf(q, inPath, password, nullptr) != Status::Ok)
+    std::unique_ptr<QPDF> source;
+    if (openQpdf(inPath, password, source, nullptr) != Status::Ok)
         return std::nullopt;
     try {
-        auto root = q.getRoot();
+        auto root = source->getRoot();
         if (!root.hasKey("/Mervin_Measurements"))
             return std::nullopt;
         auto blob = root.getKey("/Mervin_Measurements");
-        if (blob.isStream()) {
-            auto buf = blob.getStreamData();
-            if (!buf)
-                return std::nullopt;
-            return QByteArray(reinterpret_cast<const char *>(buf->getBuffer()),
-                              static_cast<int>(buf->getSize()));
-        }
-        if (blob.isString()) {
-            const std::string sv = blob.getStringValue();
-            return QByteArray(sv.data(), static_cast<int>(sv.size()));
-        }
+        // Mervin writes only streams, so a string or any other object gives no data.
+        if (blob.isStream())
+            return measurementPages::decodeBlob(blob);
         return std::nullopt;
     } catch (const std::exception &) {
         return std::nullopt;
