@@ -5,7 +5,12 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonValue>
 #include <QProcess>
+
+#include <utility>
 
 #ifdef Q_OS_WIN
 #  define WIN32_LEAN_AND_MEAN
@@ -17,6 +22,12 @@ namespace mervin::relaunch {
 
 namespace {
 bool g_requested = false;
+bool g_carrying = false;
+QStringList g_carried;
+std::function<bool()> g_starter;
+
+// Holds the carried files on their way to the next copy, as a JSON array of paths.
+constexpr char kPassedVariable[] = "MERVIN_PASSED_OPENS";
 } // namespace
 
 void request()
@@ -36,6 +47,52 @@ QString program(const QString &appImage, const QString &appDir, const QString &a
         && applicationFile.startsWith(QDir::cleanPath(appDir) + QLatin1Char('/')))
         return appImage;
     return applicationFile;
+}
+
+void carry(const QStringList &paths)
+{
+    g_carrying = true;
+    g_carried += paths;
+}
+
+bool carrying()
+{
+    return g_carrying;
+}
+
+void passCarried()
+{
+    if (!g_carrying)
+        return;
+    const QJsonDocument files(QJsonArray::fromStringList(std::exchange(g_carried, {})));
+    qputenv(kPassedVariable, files.toJson(QJsonDocument::Compact));
+    g_carrying = false;
+}
+
+QStringList takePassed()
+{
+    if (!qEnvironmentVariableIsSet(kPassedVariable))
+        return {};
+    const QJsonDocument files = QJsonDocument::fromJson(qgetenv(kPassedVariable));
+    qunsetenv(kPassedVariable);
+    QStringList paths;
+    for (const QJsonValue &file : files.array())
+        if (const QString path = file.toString(); !path.isEmpty())
+            paths.append(path);
+    return paths;
+}
+
+bool startIfDue(bool restart)
+{
+    if (!(restart && g_requested) && !g_carrying)
+        return true;
+    passCarried();
+    return g_starter ? g_starter() : start();
+}
+
+void setStarterForTests(std::function<bool()> starter)
+{
+    g_starter = std::move(starter);
 }
 
 bool start()

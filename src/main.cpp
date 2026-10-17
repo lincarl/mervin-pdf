@@ -416,7 +416,9 @@ int main(int argc, char *argv[])
                            mervin::ConfigPaths::configDir());
     }
 
-    const QStringList paths = toAbsolute(cli.paths);
+    // A copy that quit before it opened launches it had acknowledged started this one
+    // to open them (relaunch::carry).
+    const QStringList paths = toAbsolute(cli.paths) + mervin::relaunch::takePassed();
     const QString behavior = mervin::Settings::load().openBehavior;
 
     // A restart asked for while running (a new UI language) starts the new copy here,
@@ -431,14 +433,16 @@ int main(int argc, char *argv[])
         // so a restarted copy reads them. Writes still queued are stuck on a profile
         // folder that stopped answering. They land if it answers again, or never. A
         // restarted copy would read the files without them, and they could land over
-        // its own writes, so it is not started.
-        if (!mervin::appfiles::flush(0)) {
+        // its own writes, so it is not started. Launches this copy acknowledged and
+        // did not open still get their copy, as the user asked for those files.
+        const bool saved = mervin::appfiles::flush(0);
+        if (!saved) {
             std::fprintf(stderr, "MervinPDF: could not finish saving settings\n");
             if (mervin::relaunch::requested())
                 std::fprintf(stderr, "MervinPDF: not restarting\n");
-        } else if (mervin::relaunch::requested() && !mervin::relaunch::start()) {
-            std::fprintf(stderr, "MervinPDF: could not restart\n");
         }
+        if (!mervin::relaunch::startIfDue(saved))
+            std::fprintf(stderr, "MervinPDF: could not start the next copy\n");
         app.reset();
         // Background work told to stop gets a moment. Work still running then is
         // stuck on a drive that stopped answering and holds its threads, and static

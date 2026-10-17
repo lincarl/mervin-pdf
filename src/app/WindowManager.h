@@ -1,6 +1,7 @@
 #pragma once
 
 #include "io/FileProbe.h"
+#include "ipc/Message.h"
 #include "recent/RecentEntry.h"
 #include "recent/RecentStore.h"
 #include "recent/ViewState.h"
@@ -306,14 +307,20 @@ protected:
     bool nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result) override;
 
 private slots:
-    // Opens the files of the launches the single-instance server has acknowledged.
+    // Takes the launches the single-instance server has acknowledged, to open them.
     void takeInstanceOpens();
+    // Opens the oldest launch taken and not opened yet, unless a quit is in progress.
+    void openNextInstanceOpen();
+    // Opens the launches a cancelled quit held.
+    void resumeInstanceOpens();
 
 private:
     friend class CloseFlow;
     // Stops acknowledging launches once this process is quitting, so they wait for
     // it to exit instead of handing it files it would not show. The lock stays until
-    // the exit wait is over, so the next copy reads the last writes.
+    // the exit wait is over, so the next copy reads the last writes. Launches it
+    // acknowledged before and did not open yet go to relaunch::carry, so the copy
+    // started next opens them.
     void endHandoffs();
     // Queues a write of one of the stores. A standalone copy writes none.
     void writeStore(const QString &file, const QByteArray &data) const;
@@ -392,6 +399,7 @@ private:
     QString viewStateFile_;     // persisted path for viewState_
     QString sessionFile_;       // persisted path for session_
     bool ownsStores_ = true;    // false in a standalone copy, which writes none of them
+    QList<ipc::Message> instanceOpens_; // launches acknowledged and not opened yet
     QList<MainWindow *> windows_;
     QList<QPointer<CloseFlow>> closeFlows_;
     QList<StagedOpen> stagedQueue_;      // documents still to open, front first

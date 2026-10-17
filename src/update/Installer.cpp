@@ -1,5 +1,7 @@
 #include "update/Installer.h"
 
+#include "app/Relaunch.h"
+
 #include "config/ConfigPaths.h"
 #include "platform/PlatformIntegration.h"
 
@@ -79,6 +81,8 @@ bool startWindowsInstaller(const QString &file)
 #ifdef Q_OS_WIN
     if (PlatformIntegration::hasPackageIdentity())
         return false;
+    // The copy the installer starts afterwards opens the launches this one carries.
+    relaunch::passCarried();
     const QString installer = QDir::toNativeSeparators(file);
     const QString workDir = QFileInfo(file).absolutePath(); // not wherever Mervin was started
     // cmd's /s strips just the outer quotes, leaving every quoted path intact.
@@ -166,6 +170,7 @@ QStringList packageInstallCommand(PackageKind kind, const QString &file)
 bool relaunchAfterExit(const QString &exe)
 {
 #ifdef Q_OS_LINUX
+    relaunch::passCarried(); // the new copy opens the launches this one carries
     QProcess sh;
     sh.setProgram(QStringLiteral("/bin/sh"));
     sh.setArguments(QStringList{QStringLiteral("-c"),

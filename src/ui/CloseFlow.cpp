@@ -57,8 +57,10 @@ CloseFlow::~CloseFlow()
 {
     clearWait();
     releaseClaims();
-    if (!ended_ && global(intent_) && manager_ && manager_->closeFlows_.contains(this))
+    if (!ended_ && global(intent_) && manager_ && manager_->closeFlows_.contains(this)) {
         manager_->quitting_ = false;
+        manager_->resumeInstanceOpens();
+    }
 }
 
 bool CloseFlow::eventFilter(QObject *watched, QEvent *event)
@@ -572,8 +574,10 @@ void CloseFlow::cancel()
     ended_ = true;
     clearWait();
     releaseClaims();
-    if (global(intent_) && manager_)
+    if (global(intent_) && manager_) {
         manager_->quitting_ = false;
+        manager_->resumeInstanceOpens();
+    }
     deleteLater();
 }
 

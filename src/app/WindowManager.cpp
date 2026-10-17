@@ -361,19 +361,44 @@ void WindowManager::takeInstanceOpens()
         return;
     // The server thread has acknowledged these already. Each open runs on a fresh
     // event-loop turn, as earlier ones can run nested password or error dialogs.
+    const QList<ipc::Message> opens = instanceServer_->takeOpens();
+    instanceOpens_ += opens;
+    for (qsizetype i = 0; i < opens.size(); ++i)
+        QMetaObject::invokeMethod(this, &WindowManager::openNextInstanceOpen,
+                                  Qt::QueuedConnection);
+}
+
+void WindowManager::openNextInstanceOpen()
+{
+    // A quit holds them, as its windows would close them again. If it becomes final,
+    // endHandoffs hands them to the next copy, and if it is cancelled,
+    // resumeInstanceOpens opens them here.
+    if (shuttingDown_ || sessionFinal_ || quitting_ || instanceOpens_.isEmpty())
+        return;
     // Empty paths means "bring the app up" - openPaths surfaces a window; otherwise
     // files open per behaviour.
-    for (const ipc::Message &msg : instanceServer_->takeOpens())
-        QMetaObject::invokeMethod(
-            this,
-            [this, paths = msg.paths, behavior = msg.behavior] { openPaths(paths, behavior); },
-            Qt::QueuedConnection);
+    const ipc::Message open = instanceOpens_.takeFirst();
+    openPaths(open.paths, open.behavior);
+}
+
+void WindowManager::resumeInstanceOpens()
+{
+    for (qsizetype i = 0; i < instanceOpens_.size(); ++i)
+        QMetaObject::invokeMethod(this, &WindowManager::openNextInstanceOpen,
+                                  Qt::QueuedConnection);
 }
 
 void WindowManager::endHandoffs()
 {
-    if (instanceServer_)
-        instanceServer_->stopListening();
+    if (!instanceServer_)
+        return;
+    instanceServer_->stopListening();
+    // No launch gets an acknowledgement from now on. The launches acknowledged before
+    // and not opened yet are this process's to keep, and the next copy opens them.
+    const QList<ipc::Message> left =
+        std::exchange(instanceOpens_, {}) + instanceServer_->takeOpens();
+    for (const ipc::Message &open : left)
+        relaunch::carry(open.paths);
 }
 
 void WindowManager::writeStore(const QString &file, const QByteArray &data) const

@@ -1,3 +1,4 @@
+#include "app/Relaunch.h"
 #include "app/WindowManager.h"
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
@@ -9,8 +10,12 @@
 #include "ipc/SingleInstanceServer.h"
 #include "recent/PathKey.h"
 #include "recent/RecentStore.h"
+#include "render/AnnotModel.h"
 #include "render/Document.h"
 #include "ui/MainWindow.h"
+#include "ui/TabPage.h"
+#include "ui/ViewerWidget.h"
+#include "TestWaits.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -18,10 +23,15 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QLocalSocket>
+#include <QMessageBox>
 #include <QPointer>
+#include <QPushButton>
+#include <QScopeGuard>
 #include <QSignalSpy>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QTimer>
 #include <QtTest>
 
 #include <atomic>
@@ -91,8 +101,12 @@ private slots:
     void exitWaitKeepsLockWithoutEndpoint();
     void standaloneWritesNoStores_data();
     void standaloneWritesNoStores();
-    void standaloneSavesNoMountsOnQuit_data();
-    void standaloneSavesNoMountsOnQuit();
+    void standaloneSavesNoMounts_data();
+    void standaloneSavesNoMounts();
+    void launchBeforeFinalQuitGoesToNextCopy_data();
+    void launchBeforeFinalQuitGoesToNextCopy();
+    void quitWithNothingQueuedStartsNoCopy();
+    void cancelledQuitOpensHeldLaunch();
 
 private:
     // A started server for kGroup, or null after a failed check.
@@ -128,6 +142,9 @@ void TstInstanceHandoff::init()
 
 void TstInstanceHandoff::cleanup()
 {
+    // Nothing a test carried reaches the next one.
+    relaunch::passCarried();
+    relaunch::takePassed();
     appfiles::testing::hold(false);
     QVERIFY(background::settle(10000));
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
@@ -281,16 +298,23 @@ void TstInstanceHandoff::standaloneWritesNoStores()
     QTRY_VERIFY_WITH_TIMEOUT(!window, 10000);
 }
 
-void TstInstanceHandoff::standaloneSavesNoMountsOnQuit_data()
+void TstInstanceHandoff::standaloneSavesNoMounts_data()
 {
-    standaloneWritesNoStores_data();
+    QTest::addColumn<bool>("ownsStores");
+    QTest::addColumn<bool>("onQuit"); // saved on the way out, else by the batching timer
+    QTest::newRow("primary, by the timer") << true << false;
+    QTest::newRow("standalone, by the timer") << false << false;
+    QTest::newRow("primary, on quit") << true << true;
+    QTest::newRow("standalone, on quit") << false << true;
 }
 
-// Mounts found just before quitting are saved on the way out, but only by the copy that
-// owns Recent. A standalone copy leaves recent.json as the primary wrote it.
-void TstInstanceHandoff::standaloneSavesNoMountsOnQuit()
+// Mounts found for Recent entries are saved after kMountSaveMs, or on the way out, but
+// only by the copy that owns Recent. A standalone copy leaves recent.json as the primary
+// wrote it.
+void TstInstanceHandoff::standaloneSavesNoMounts()
 {
     QFETCH(bool, ownsStores);
+    QFETCH(bool, onQuit);
     Settings settings = Settings::load();
     settings.recentKeepMissing = true; // no prune pass that would save at its end
     QVERIFY(settings.save());
@@ -308,7 +332,10 @@ void TstInstanceHandoff::standaloneSavesNoMountsOnQuit()
         QSignalSpy checked(manager.fileProbe(), &FileProbe::checked);
         manager.fileProbe()->check({{path, QString()}});
         QVERIFY(checked.wait(10000));
-    } // found, and waiting for the save that kMountSaveMs delays
+        // Found, and waiting for the save that kMountSaveMs delays.
+        if (!onQuit)
+            QTest::qWait(WindowManager::kMountSaveMs + 300);
+    }
     QVERIFY(appfiles::flush(10000));
 
     QVERIFY(file.open(QIODevice::ReadOnly));
@@ -320,6 +347,134 @@ void TstInstanceHandoff::standaloneSavesNoMountsOnQuit()
     RecentStore onDisk;
     QVERIFY(onDisk.load(RecentStore::defaultFile()));
     QCOMPARE(onDisk.recordedMount(path), RecentStore::mountOf(path));
+}
+
+void TstInstanceHandoff::launchBeforeFinalQuitGoesToNextCopy_data()
+{
+    QTest::addColumn<int>("path");
+    QTest::newRow("Quit") << 0;
+    QTest::newRow("close for an update") << 1;
+    QTest::newRow("WindowManager destroyed") << 2;
+}
+
+// The server thread can acknowledge a launch just before a quit becomes final, before the
+// GUI thread got to the open. This copy then does not open it, and the copy it starts
+// after it exits gets the files.
+void TstInstanceHandoff::launchBeforeFinalQuitGoesToNextCopy()
+{
+    QFETCH(int, path);
+    int starts = 0;
+    QStringList passed;
+    relaunch::setStarterForTests([&] {
+        ++starts;
+        passed = relaunch::takePassed();
+        return true;
+    });
+    const auto restore = qScopeGuard([] { relaunch::setStarterForTests({}); });
+    std::unique_ptr<SingleInstanceServer> server = startedServer();
+    QVERIFY(server);
+    auto manager = std::make_unique<WindowManager>();
+    manager->adoptInstanceServer(std::move(server));
+    const QPointer<MainWindow> window = manager->createWindow();
+
+    // Acknowledged, while the GUI thread has not run since.
+    QCOMPARE(offer(pdf_), Handoff::Delivered);
+    switch (path) {
+    case 0:
+        manager->quitAll();
+        break;
+    case 1:
+        QVERIFY(manager->tryCloseAllForUpdate());
+        break;
+    case 2:
+        manager.reset();
+        break;
+    }
+    if (manager) {
+        QTRY_VERIFY_WITH_TIMEOUT(!window, 10000);
+        QTest::qWait(200);
+        QVERIFY(!shows(*manager, pdf_));
+        manager.reset();
+    }
+    QVERIFY(relaunch::carrying());
+    QCOMPARE(starts, 0);
+
+    // As main() does once runUi has returned.
+    QVERIFY(relaunch::startIfDue(true));
+    QCOMPARE(starts, 1);
+    QCOMPARE(passed, QStringList{pdf_});
+    QVERIFY(!relaunch::carrying());
+    QVERIFY(relaunch::takePassed().isEmpty()); // gone from the environment
+}
+
+// Without a launch waiting, a quit starts no copy.
+void TstInstanceHandoff::quitWithNothingQueuedStartsNoCopy()
+{
+    int starts = 0;
+    relaunch::setStarterForTests([&] {
+        ++starts;
+        return true;
+    });
+    const auto restore = qScopeGuard([] { relaunch::setStarterForTests({}); });
+    std::unique_ptr<SingleInstanceServer> server = startedServer();
+    QVERIFY(server);
+    {
+        WindowManager manager;
+        manager.adoptInstanceServer(std::move(server));
+        const QPointer<MainWindow> window = manager.createWindow();
+        manager.quitAll();
+        QTRY_VERIFY_WITH_TIMEOUT(!window, 10000);
+    }
+    QVERIFY(!relaunch::carrying());
+    QVERIFY(relaunch::startIfDue(true));
+    QCOMPARE(starts, 0);
+}
+
+// A quit that asks about unsaved edits holds a launch that arrives meanwhile, as the quit
+// would close it again. Cancelling the quit opens it.
+void TstInstanceHandoff::cancelledQuitOpensHeldLaunch()
+{
+    std::unique_ptr<SingleInstanceServer> server = startedServer();
+    QVERIFY(server);
+    WindowManager manager;
+    manager.adoptInstanceServer(std::move(server));
+    const QPointer<MainWindow> window = manager.createWindow();
+    QVERIFY(testing::openAndWait(*window, pdf_));
+    auto *tabs = window->findChild<QTabWidget *>();
+    const QPointer<TabPage> tab = qobject_cast<TabPage *>(tabs->currentWidget());
+    QVERIFY(tab);
+    QTRY_VERIFY(tab->isLoaded());
+    QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {},
+                                                     QStringLiteral("Unsaved")) >= 0);
+    const QString later = QDir(profile_->path()).filePath(QStringLiteral("later.pdf"));
+    QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), later));
+
+    std::optional<Handoff> offered;
+    std::optional<bool> shownWhileAsking;
+    int ticks = 0;
+    QTimer dialogs;
+    connect(&dialogs, &QTimer::timeout, this, [&] {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (!box || shownWhileAsking)
+            return;
+        if (!offered) {
+            offered = offer(later);
+            return;
+        }
+        if (++ticks < 20) // the open reaches this copy meanwhile
+            return;
+        shownWhileAsking = shows(manager, later);
+        box->button(QMessageBox::Cancel)->click();
+    });
+    dialogs.start(5);
+    manager.quitAll();
+    QTRY_VERIFY_WITH_TIMEOUT(shownWhileAsking.has_value(), 10000);
+    dialogs.stop();
+    QCOMPARE(offered, std::optional(Handoff::Delivered));
+    QCOMPARE(shownWhileAsking, std::optional(false));
+    QTRY_VERIFY_WITH_TIMEOUT(shows(manager, later), 10000);
+    QVERIFY(window);
+    QVERIFY(!relaunch::carrying());
 }
 
 QTEST_MAIN(TstInstanceHandoff)

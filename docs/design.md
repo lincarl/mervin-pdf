@@ -350,10 +350,17 @@ so the launch's write is still pending when it closes, and closing cancels it. T
 gap left is a launch whose deadline passes between the server's check and its
 acknowledgement, which is a matter of microseconds. Once a quit is final, the
 primary closes its endpoint and keeps the lock until its exit wait is over, so a
-launch during that wait becomes the next primary and reads the last writes. On Linux
-`start()` connects to the socket before it removes it, so a lock file that something
-deleted while its primary runs does not make the next launch a second primary. The
-server closes its socket before it releases the lock.
+launch during that wait becomes the next primary and reads the last writes. While a
+quit asks about unsaved edits, `WindowManager` holds the Opens that arrive. If the
+quit is cancelled, they open then. Opens the server acknowledged before the quit
+became final and that did not open go to `relaunch::carry()`. Once the process has
+quit, `relaunch::startIfDue()` starts a copy that opens their files, the same copy
+as a language restart, and an update passes them to the copy its installer starts.
+The files travel in the environment of that copy. At session end nothing is started,
+so those files are lost with the session. On Linux `start()` connects to the socket
+before it removes it, so a lock file that something deleted while its primary runs
+does not make the next launch a second primary. The server closes its socket before
+it releases the lock.
 
 If a live process holds the lock but no primary takes the Open in that time, as
 when the lock holder is stopped, the launch opens its files in a standalone process.
@@ -527,7 +534,8 @@ The other windows never retranslate. When Settings picks a different language,
 OK or Apply saves it and `WindowManager::restart()` closes every window as Quit
 does, so unsaved documents still prompt and cancelling one cancels the restart.
 `relaunch` then starts the new copy from `main()` once the single-instance server
-is gone. On Linux it waits until this process has exited. From an AppImage it starts
+is gone, with the files of any launches carried (see above). On Linux it waits until
+this process has exited. From an AppImage it starts
 the AppImage file, and a `--profile` run keeps its profile.
 
 `i18n::suggestedLanguage()` pre-selects the first-run language. It walks
