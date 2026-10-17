@@ -753,6 +753,7 @@ public:
             if (!used.count(id))
                 out_.replaceObject(id, QPDFObjectHandle::newNull());
         removeLeftOutAnnotations(widgets, used);
+        scopeFormActions();
     }
 
 private:
@@ -907,11 +908,13 @@ private:
         return result.isInitialized() ? result : action;
     }
 
-    // Maps the fields in the /A and /AA actions of `holder` through `targets`.
-    static void mapActions(QPDFObjectHandle holder, const Targets &targets)
+    // Replaces the /A action and each /AA action of `holder` with what `rewrite` makes of
+    // it, when that is a new object.
+    template <typename Rewrite>
+    static void rewriteActions(QPDFObjectHandle holder, Rewrite rewrite)
     {
         QPDFObjectHandle action = holder.getKey("/A");
-        QPDFObjectHandle mapped = mapAction(action, targets, 0);
+        QPDFObjectHandle mapped = rewrite(action);
         if (!mapped.isSameObjectAs(action))
             holder.replaceKey("/A", mapped);
         QPDFObjectHandle triggers = holder.getKey("/AA");
@@ -919,7 +922,7 @@ private:
             return;
         QPDFObjectHandle result;
         for (const auto &[key, value] : triggers.ditems()) {
-            QPDFObjectHandle mappedValue = mapAction(value, targets, 0);
+            QPDFObjectHandle mappedValue = rewrite(value);
             if (mappedValue.isSameObjectAs(value))
                 continue;
             if (!result.isInitialized())
@@ -928,6 +931,181 @@ private:
         }
         if (result.isInitialized())
             holder.replaceKey("/AA", result);
+    }
+
+    // Maps the fields in the /A and /AA actions of `holder` through `targets`.
+    static void mapActions(QPDFObjectHandle holder, const Targets &targets)
+    {
+        rewriteActions(holder, [&targets](QPDFObjectHandle action) {
+            return mapAction(action, targets, 0);
+        });
+    }
+
+    // A SubmitForm or ResetForm action without /Fields, or with the Exclude flag (bit 1 of
+    // /Flags), acts on every field of the document, or every field but the listed ones. In
+    // an output with pages from several files, which holds the fields of all of them, such an
+    // action copied from one file would send or clear the fields of the others. So each one
+    // becomes an explicit list of the fields copied from its own file, without the excluded
+    // ones and without the flag. The actions of the pages, their annotations and the fields
+    // above their widgets are covered, with their /AA and /Next. JavaScript actions cannot be
+    // limited this way.
+    void scopeFormActions()
+    {
+        std::map<QPDF *, std::vector<QPDFObjectHandle>> pagesOf;
+        ObjectSet seenPages;
+        for (const Copy &copy : copies_) {
+            QPDFObjectHandle page = copy.to;
+            if (seenPages.insert(page.getObjGen()).second)
+                pagesOf[copy.source].push_back(page);
+        }
+        if (pagesOf.size() < 2)
+            return;
+        for (auto &[source, pages] : pagesOf) {
+            std::vector<QPDFObjectHandle> tops, holders; // its top-level fields, what has actions
+            ObjectSet seen, seenTops;
+            const auto hold = [&holders, &seen](QPDFObjectHandle object) {
+                if (object.isIndirect() && seen.insert(object.getObjGen()).second)
+                    holders.push_back(object);
+            };
+            for (QPDFObjectHandle page : pages) {
+                hold(page);
+                QPDFObjectHandle annots = page.getKey("/Annots");
+                if (!annots.isArray())
+                    continue;
+                for (QPDFObjectHandle annot : annots.aitems()) {
+                    if (!annot.isDictionary())
+                        continue;
+                    hold(annot);
+                    if (!annot.getKey("/Subtype").isNameAndEquals("/Widget"))
+                        continue;
+                    QPDFObjectHandle node = annot;
+                    for (int depth = 0; depth < kMaxDepth; ++depth) {
+                        QPDFObjectHandle parent = node.getKey("/Parent");
+                        if (!parent.isDictionary() || parent.hasKey("/Type"))
+                            break;
+                        node = parent;
+                        hold(node);
+                    }
+                    if (node.isIndirect() && seenTops.insert(node.getObjGen()).second)
+                        tops.push_back(node);
+                }
+            }
+            for (QPDFObjectHandle holder : holders)
+                rewriteActions(holder, [&tops](QPDFObjectHandle action) {
+                    return scopeAction(action, tops, 0);
+                });
+        }
+    }
+
+    // `action`, and the actions in its /Next, with each SubmitForm or ResetForm that acts on
+    // every field, or every field but some, limited to the trees `tops`. Returns `action`
+    // itself when nothing changes, and a new object otherwise.
+    static QPDFObjectHandle scopeAction(QPDFObjectHandle action,
+                                        const std::vector<QPDFObjectHandle> &tops, int depth)
+    {
+        if (depth >= kMaxDepth)
+            return action;
+        if (action.isArray()) { // a /Next that lists several actions
+            std::vector<QPDFObjectHandle> items = action.getArrayAsVector();
+            bool changed = false;
+            for (QPDFObjectHandle &item : items) {
+                QPDFObjectHandle scoped = scopeAction(item, tops, depth + 1);
+                if (!scoped.isSameObjectAs(item)) {
+                    item = scoped;
+                    changed = true;
+                }
+            }
+            return changed ? QPDFObjectHandle::newArray(items) : action;
+        }
+        if (!action.isDictionary())
+            return action;
+        QPDFObjectHandle result;
+        const auto change = [&](const char *key, QPDFObjectHandle value) {
+            if (!result.isInitialized())
+                result = action.shallowCopy();
+            result.replaceKey(key, value);
+        };
+        QPDFObjectHandle type = action.getKey("/S");
+        if (type.isNameAndEquals("/SubmitForm") || type.isNameAndEquals("/ResetForm")) {
+            QPDFObjectHandle flags = action.getKey("/Flags");
+            const long long bits = flags.isInteger() ? flags.getIntValue() : 0;
+            QPDFObjectHandle fields = action.getKey("/Fields");
+            if (!fields.isArray()) {
+                change("/Fields", QPDFObjectHandle::newArray(tops));
+                if (bits & 1)
+                    change("/Flags", QPDFObjectHandle::newInteger(bits & ~1LL));
+            } else if (bits & 1) {
+                change("/Fields", QPDFObjectHandle::newArray(withoutExcluded(tops, fields)));
+                change("/Flags", QPDFObjectHandle::newInteger(bits & ~1LL));
+            }
+        }
+        QPDFObjectHandle next = action.getKey("/Next");
+        QPDFObjectHandle scopedNext = scopeAction(next, tops, depth + 1);
+        if (!scopedNext.isSameObjectAs(next))
+            change("/Next", scopedNext);
+        return result.isInitialized() ? result : action;
+    }
+
+    // The fields of the trees `tops` without the ones that `excluded` lists, by reference or
+    // fully qualified name, and their descendants. A field with no excluded field below it
+    // stands for its whole tree.
+    static std::vector<QPDFObjectHandle> withoutExcluded(const std::vector<QPDFObjectHandle> &tops,
+                                                         QPDFObjectHandle excluded)
+    {
+        ObjectSet ids;
+        std::set<std::string> names;
+        for (QPDFObjectHandle item : excluded.aitems()) {
+            if (item.isIndirect())
+                ids.insert(item.getObjGen());
+            else if (item.isString())
+                names.insert(item.getUTF8Value());
+        }
+        ObjectSet gone, above, seen; // excluded fields, the fields above them, visited ones
+        std::vector<std::pair<QPDFObjectHandle, int>> queue;
+        for (QPDFObjectHandle top : tops)
+            queue.emplace_back(top, 0);
+        while (!queue.empty()) {
+            auto [node, depth] = queue.back();
+            queue.pop_back();
+            if (!node.isIndirect() || !node.isDictionary() || !seen.insert(node.getObjGen()).second)
+                continue;
+            if (ids.count(node.getObjGen())
+                || (node.hasKey("/T")
+                    && names.count(QPDFFormFieldObjectHelper(node).getFullyQualifiedName()))) {
+                gone.insert(node.getObjGen());
+                QPDFObjectHandle parent = node.getKey("/Parent");
+                for (int up = 0; up < kMaxDepth && parent.isIndirect() && parent.isDictionary()
+                                 && !parent.hasKey("/Type");
+                     ++up, parent = parent.getKey("/Parent"))
+                    above.insert(parent.getObjGen());
+            }
+            QPDFObjectHandle kids = node.getKey("/Kids");
+            if (kids.isArray() && depth < kMaxDepth)
+                for (QPDFObjectHandle kid : kids.aitems())
+                    queue.emplace_back(kid, depth + 1);
+        }
+        std::vector<QPDFObjectHandle> result;
+        for (QPDFObjectHandle top : tops)
+            addUnexcluded(top, gone, above, result, 0);
+        return result;
+    }
+
+    // Adds `node` to `result` unless it is in `gone`, or its fields that are not in `gone`
+    // when one below it is (`above`).
+    static void addUnexcluded(QPDFObjectHandle node, const ObjectSet &gone, const ObjectSet &above,
+                              std::vector<QPDFObjectHandle> &result, int depth)
+    {
+        if (!node.isIndirect() || gone.count(node.getObjGen()))
+            return;
+        if (!above.count(node.getObjGen())) {
+            result.push_back(node);
+            return;
+        }
+        QPDFObjectHandle kids = node.getKey("/Kids");
+        if (kids.isArray() && depth < kMaxDepth)
+            for (QPDFObjectHandle kid : kids.aitems())
+                if (kid.hasKey("/T") || kid.hasKey("/Kids"))
+                    addUnexcluded(kid, gone, above, result, depth + 1);
     }
 
     // The fields of the trees of `fields`, with their fully qualified names.

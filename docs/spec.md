@@ -232,8 +232,11 @@ of its own, and a copied field whose name the new file already has is renamed, f
 example to `name+1`, so the copies of a repeated page and fields of the same name in
 merged files fill in separately. A button that resets, submits or hides copied fields
 acts on the copies in the new file, whether it names them by reference or by their
-names. The new file does not keep the form's calculation order or XFA data, so
-calculated fields no longer update in viewers that use them.
+names. When Merge combines several files, a copied button or action that submits or
+resets every field, or every field but some, acts only on the fields that came from its
+own file. Form scripts, which Mervin does not run, can still read every field of the
+merged file in viewers that run them. The new file does not keep the form's calculation
+order or XFA data, so calculated fields no longer update in viewers that use them.
 
 Merge opens at once and reads each input's page count in the background. Pending
 rows show Reading and keep Merge disabled. The footer names the first row and file

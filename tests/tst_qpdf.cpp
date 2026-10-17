@@ -8,6 +8,7 @@
 #include <qpdf/Buffer.hh>
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFNameTreeObjectHelper.hh>
+#include <qpdf/QPDFFormFieldObjectHelper.hh>
 #include <qpdf/QPDFNumberTreeObjectHelper.hh>
 #include <qpdf/QPDFObjectHandle.hh>
 #include <qpdf/QPDFPageDocumentHelper.hh>
@@ -74,6 +75,7 @@ enum class Reference {
     WidgetlessField, // a field that no page shows, beside a field on page 2
     ReplyInForm,     // Reply in a file with a form, so copies go through transformAnnotations
     ResetByName,     // a reset button on page 1 that names its page's field by text
+    SubmitButtons,   // buttons on page 1 that submit or reset every field, or all but some
 };
 
 // A page that shows `text` in two marked-content sequences, MCID 0 and 1.
@@ -446,6 +448,33 @@ void makeReferencedPdf(const QString &path, Reference reference)
         installForm(q, {data, widget(q, pages[1], "/FT /Tx /T (secret) /V (" + kSecret + ")")});
         break;
     }
+    case Reference::SubmitButtons: {
+        // Without /Fields, or with the Exclude flag (bit 1 of /Flags), an action acts on
+        // every field of the document, or on every field but the listed ones.
+        QPDFObjectHandle name = widget(q, pages[0], "/FT /Tx /T (name) /V (kept name)");
+        name.replaceKey("/AA", parse("<< /Bl << /S /ResetForm >> >>"));
+        QPDFObjectHandle other = widget(q, pages[0], "/FT /Tx /T (other) /V (kept other)");
+        QPDFObjectHandle submit = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (submit)");
+        submit.replaceKey("/A", parse("<< /S /SubmitForm /F (https://example.invalid/form) /Flags 4 "
+                                      "/Next << /S /ResetForm >> >>"));
+        QPDFObjectHandle except = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (except)");
+        except.replaceKey("/A", parse("<< /S /SubmitForm /F (https://example.invalid/form) "
+                                      "/Fields [(name)] /Flags 1 >>"));
+        QPDFObjectHandle none = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (none)");
+        none.replaceKey("/A", parse("<< /S /ResetForm /Fields [(name) (other) (submit) (except) "
+                                    "(none) (group) (exceptchild)] /Flags 1 >>"));
+        QPDFObjectHandle group = q.makeIndirectObject(parse("<< /FT /Tx /T (group) >>"));
+        QPDFObjectHandle a = q.makeIndirectObject(parse("<< /T (a) /V (kept a) >>"));
+        QPDFObjectHandle b = q.makeIndirectObject(parse("<< /T (b) /V (kept b) >>"));
+        adopt(a, {widget(q, pages[0])});
+        adopt(b, {widget(q, pages[0])});
+        adopt(group, {a, b});
+        QPDFObjectHandle exceptChild = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (exceptchild)");
+        exceptChild.replaceKey("/A", parse("<< /S /SubmitForm /F (https://example.invalid/form) "
+                                           "/Fields [(group.a)] /Flags 1 >>"));
+        installForm(q, {name, other, submit, except, none, group, exceptChild});
+        break;
+    }
     case Reference::ResetByName: {
         // ISO 32000 lets /Fields and a hide action's /T name fields by text as well.
         QPDFObjectHandle name = widget(q, pages[0], "/FT /Tx /T (name) /V (kept name)");
@@ -706,6 +735,35 @@ QStringList resetTargets(const QString &path)
     return targets;
 }
 
+// What the action under `keys` of top-level field `field` of `path` acts on: "all" without
+// /Fields, otherwise the fully qualified names that /Fields lists, after "but" when the
+// Exclude flag is set.
+QString actionScope(const QString &path, const std::string &field, const QStringList &keys)
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    q.processFile(name.constData());
+    for (QPDFObjectHandle top : q.getRoot().getKey("/AcroForm").getKey("/Fields").aitems()) {
+        if (!top.getKey("/T").isString() || top.getKey("/T").getUTF8Value() != field)
+            continue;
+        QPDFObjectHandle action = top;
+        for (const QString &key : keys)
+            action = action.getKey(key.toStdString());
+        QPDFObjectHandle fields = action.getKey("/Fields");
+        if (!fields.isArray())
+            return QStringLiteral("all");
+        QStringList names;
+        for (QPDFObjectHandle item : fields.aitems())
+            names << QString::fromStdString(item.isString()
+                                                ? item.getUTF8Value()
+                                                : QPDFFormFieldObjectHelper(item).getFullyQualifiedName());
+        QPDFObjectHandle flags = action.getKey("/Flags");
+        const bool exclude = flags.isInteger() && (flags.getIntValue() & 1);
+        return (exclude ? QStringLiteral("but ") : QString()) + names.join(u' ');
+    }
+    return QStringLiteral("no field");
+}
+
 // Rewrites `path` with `blob` as its /Mervin_Measurements, as a string or as the JSON of a
 // stream.
 void setMeasurementBlob(const QString &path, const std::string &blob, bool stream)
@@ -879,6 +937,8 @@ private slots:
     void copiesLeaveOutCommentsOfOtherPages_data();
     void copiesLeaveOutCommentsOfOtherPages();
     void copiesPointButtonsAtRenamedFields();
+    void copiesScopeDocumentWideFormActions_data();
+    void copiesScopeDocumentWideFormActions();
     void mergeNamesInputWithBadMeasurements_data();
     void mergeNamesInputWithBadMeasurements();
     void deleteNamesSourceWithBadMeasurements_data();
@@ -1721,6 +1781,7 @@ void TstQpdf::deleteLeavesOutDeletedContent()
     }
     case Reference::ChildFieldNoForm:
     case Reference::ResetByName:
+    case Reference::SubmitButtons:
         break;
     }
     if (ref == Reference::TaggedWidget) {
@@ -2017,6 +2078,51 @@ void TstQpdf::copiesPointButtonsAtRenamedFields()
     // Without a rename, the names stay.
     QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0}, {}}}, out), PageOps::Status::Ok);
     QCOMPARE(resetTargets(out), QStringList({QStringLiteral("name name")}));
+}
+
+/// Actions that act on every field, or every field but some, in a merge of two forms and in
+/// a copy of one.
+void TstQpdf::copiesScopeDocumentWideFormActions_data()
+{
+    const QString own = QStringLiteral("name other submit except none group exceptchild");
+    QTest::addColumn<bool>("merged");
+    QTest::addColumn<QString>("field");
+    QTest::addColumn<QStringList>("keys");
+    QTest::addColumn<QString>("scope");
+    QTest::newRow("merge, submit all") << true << "submit" << QStringList{"/A"} << own;
+    QTest::newRow("merge, then reset all") << true << "submit" << QStringList{"/A", "/Next"} << own;
+    QTest::newRow("merge, reset all on blur") << true << "name" << QStringList{"/AA", "/Bl"} << own;
+    QTest::newRow("merge, all but one") << true << "except" << QStringList{"/A"}
+                                        << QStringLiteral("other submit except none group exceptchild");
+    QTest::newRow("merge, all but a child") << true << "exceptchild" << QStringList{"/A"}
+                                            << QStringLiteral("name other submit except none group.b exceptchild");
+    QTest::newRow("merge, all but all") << true << "none" << QStringList{"/A"} << QString();
+    QTest::newRow("one file, submit all") << false << "submit" << QStringList{"/A"}
+                                          << QStringLiteral("all");
+    QTest::newRow("one file, all but one") << false << "except" << QStringList{"/A"}
+                                           << QStringLiteral("but name");
+}
+
+/// Checks that a merge limits a copied submit or reset action that acts on every field, or
+/// every field but some, to the fields of its own file, and that a copy of one file keeps it.
+void TstQpdf::copiesScopeDocumentWideFormActions()
+{
+    QFETCH(bool, merged);
+    QFETCH(QString, field);
+    QFETCH(QStringList, keys);
+    QFETCH(QString, scope);
+    const QString src = in(QStringLiteral("scope_src.pdf"));
+    const QString other = in(QStringLiteral("scope_other.pdf"));
+    const QString out = in(QStringLiteral("scope_out.pdf"));
+    makeReferencedPdf(src, Reference::SubmitButtons);
+    makeFormPdf(other, {300}, "field");
+    QList<PageOps::MergeInput> inputs{{src, {0}, {}}};
+    if (merged)
+        inputs.append({other, {}, {}});
+    QCOMPARE(PageOps::merge(inputs, out), PageOps::Status::Ok);
+    QCOMPARE(actionScope(out, field.toStdString(), keys), scope);
+    if (merged)
+        QVERIFY(fieldPages(out).contains(QStringLiteral("field1 2")));
 }
 
 /// A string blob and a stream from a newer measurement format.
