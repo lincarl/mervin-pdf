@@ -86,6 +86,8 @@ enum class Reference {
     StrayOutline,    // outline links that lead to bookmarks of page 2 outside the outline
     StrayChildOutline, // a bookmark whose /Last, without a /First, names one of page 2
     InheritingField, // a field of page 1 that inherits from a /Parent whose /Kids lists only page 2's field
+    TargetButtons,   // buttons on page 1 that hide, play or show targets named by text or reference
+    OtherTargets,    // the other input of the TargetButtons merges, with its own targets of those names
 };
 
 // A page that shows `text` in two marked-content sequences, MCID 0 and 1.
@@ -634,6 +636,73 @@ void makeReferencedPdf(const QString &path, Reference reference)
         installForm(q, {address});
         break;
     }
+    case Reference::TargetButtons:
+    case Reference::OtherTargets: {
+        // Page 1 has the fields "name" and "clip", a note and a movie and a screen annotation,
+        // and page 2, which the copies leave out, has their counterparts. The buttons name them
+        // by text or by reference, and name "elsewhere", which only OtherTargets has.
+        // OtherTargets also has a field "clip", which a merge renames, and a movie annotation
+        // "clip", whose title nothing renames.
+        const auto media = [&](QPDFObjectHandle page, const char *subtype, const std::string &title) {
+            QPDFObjectHandle annot =
+                q.makeIndirectObject(parse("<< /Type /Annot /Rect [320 600 420 650] >>"));
+            annot.replaceKey("/Subtype", QPDFObjectHandle::newName(subtype));
+            annot.replaceKey("/T", QPDFObjectHandle::newString(title));
+            annotate(page, annot);
+            return annot;
+        };
+        QPDFObjectHandle clipField = widget(q, pages[0], "/FT /Tx /T (clip) /V (clip value)");
+        if (reference == Reference::OtherTargets) {
+            media(pages[0], "/Movie", "elsewhere clip");
+            media(pages[0], "/Movie", "clip");
+            QPDFObjectHandle play = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (othermovie)");
+            play.replaceKey("/A", parse("<< /S /Movie /T (clip) >>"));
+            installForm(q, {widget(q, pages[0], "/FT /Tx /T (elsewhere) /V (other value)"), clipField, play});
+            break;
+        }
+        QPDFObjectHandle name = widget(q, pages[0], "/FT /Tx /T (name) /V (kept name)");
+        name.replaceKey("/AA", parse("<< /Fo << /S /Hide /T (elsewhere) >> >>"));
+        QPDFObjectHandle later = widget(q, pages[1], "/FT /Tx /T (later) /V (later value)");
+        QPDFObjectHandle note = q.makeIndirectObject(
+            parse("<< /Type /Annot /Subtype /Text /Rect [72 500 92 520] /Contents (note) >>"));
+        annotate(pages[0], note);
+        QPDFObjectHandle clip = media(pages[0], "/Movie", "clip");
+        QPDFObjectHandle laterClip = media(pages[1], "/Movie", "later clip");
+        QPDFObjectHandle screen = media(pages[0], "/Screen", "screen");
+        QPDFObjectHandle laterScreen = media(pages[1], "/Screen", "later screen");
+        std::vector<QPDFObjectHandle> fields{name, later, clipField};
+        const auto button = [&](const std::string &title, QPDFObjectHandle action) {
+            QPDFObjectHandle button = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (" + title + ")");
+            button.replaceKey("/A", action);
+            fields.push_back(button);
+        };
+        button("hidename", parse("<< /S /Hide /T (name) >>"));
+        QPDFObjectHandle hideLater = parse("<< /S /Hide >>");
+        hideLater.replaceKey("/T", later);
+        button("hidelater", hideLater);
+        button("hideelsewhere", parse("<< /S /Hide /T (elsewhere) /Next << /S /Hide /T (name) /H false >> >>"));
+        QPDFObjectHandle mixed = parse("<< /S /Hide /T [(name) (elsewhere) (later)] >>");
+        mixed.getKey("/T").appendItem(note);
+        mixed.getKey("/T").appendItem(later);
+        button("hidemixed", mixed);
+        button("movietitle", parse("<< /S /Movie /T (clip) >>"));
+        button("movieelsewhere", parse("<< /S /Movie /T (elsewhere clip) >>"));
+        button("movielatertitle", parse("<< /S /Movie /T (later clip) >>"));
+        QPDFObjectHandle movie = parse("<< /S /Movie >>");
+        movie.replaceKey("/Annotation", clip);
+        button("movieref", movie);
+        QPDFObjectHandle movieLater = parse("<< /S /Movie >>");
+        movieLater.replaceKey("/Annotation", laterClip);
+        button("movielater", movieLater);
+        QPDFObjectHandle show = parse("<< /S /Rendition /OP 0 >>");
+        show.replaceKey("/AN", screen);
+        button("rendition", show);
+        QPDFObjectHandle showLater = parse("<< /S /Rendition /OP 0 >>");
+        showLater.replaceKey("/AN", laterScreen);
+        button("renditionlater", showLater);
+        installForm(q, fields);
+        break;
+    }
     case Reference::InheritingField: {
         // "hidden", on page 1, names "address" as its /Parent and inherits its type and flags,
         // but address's /Kids lists only "secret", whose widget is on page 2, as a damaged
@@ -1041,6 +1110,66 @@ QString chainSummary(const QString &path, const std::string &field)
     return QStringLiteral("no field");
 }
 
+// The type of the action under `keys` of top-level field `field` of `path`, and the targets
+// that it names in /T, or for Movie, Rendition, GoTo3DView and RichMediaExecute in its
+// annotation entry, for example "Hide: name Text". Text shows as itself, a field as its fully
+// qualified name, and an annotation as its subtype, title and the page that its /P names,
+// after "unlisted" when no page lists it. Returns "no action" when there is none.
+QString actionTargets(const QString &path, const std::string &field, const QStringList &keys)
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    q.processFile(name.constData());
+    std::set<QPDFObjGen> listed;
+    std::map<QPDFObjGen, int> pageNumber;
+    for (QPDFObjectHandle page : q.getAllPages()) {
+        pageNumber.emplace(page.getObjGen(), int(pageNumber.size()) + 1);
+        QPDFObjectHandle annots = page.getKey("/Annots");
+        if (annots.isArray())
+            for (QPDFObjectHandle annot : annots.aitems())
+                listed.insert(annot.getObjGen());
+    }
+    for (QPDFObjectHandle top : q.getRoot().getKey("/AcroForm").getKey("/Fields").aitems()) {
+        if (!top.getKey("/T").isString() || top.getKey("/T").getUTF8Value() != field)
+            continue;
+        QPDFObjectHandle action = top;
+        for (const QString &key : keys)
+            action = action.isDictionary() ? action.getKey(key.toStdString())
+                                           : QPDFObjectHandle::newNull();
+        if (!action.isDictionary())
+            return QStringLiteral("no action");
+        const std::string type = action.getKey("/S").getName();
+        QPDFObjectHandle targets = action.getKey(type == "/Hide"        ? "/T"
+                                                 : type == "/Rendition" ? "/AN"
+                                                 : type == "/Movie" && action.hasKey("/Annotation")
+                                                     ? "/Annotation"
+                                                     : type == "/Movie" ? "/T"
+                                                                        : "/TA");
+        QStringList names;
+        for (QPDFObjectHandle item : targets.isArray() ? targets.getArrayAsVector()
+                                                       : std::vector<QPDFObjectHandle>{targets}) {
+            if (item.isString()) {
+                names << QString::fromStdString(item.getUTF8Value());
+            } else if (!item.isDictionary()) {
+                names << QStringLiteral("null");
+            } else if (item.getKey("/Subtype").isName()
+                       && !item.getKey("/Subtype").isNameAndEquals("/Widget")) {
+                QString text = QString::fromStdString(item.getKey("/Subtype").getName()).mid(1);
+                if (item.getKey("/T").isString())
+                    text += u' ' + QString::fromStdString(item.getKey("/T").getUTF8Value());
+                const auto page = pageNumber.find(item.getKey("/P").getObjGen());
+                text += page == pageNumber.end() ? QStringLiteral(" on ?")
+                                                 : QStringLiteral(" on %1").arg(page->second);
+                names << (listed.count(item.getObjGen()) ? text : QStringLiteral("unlisted ") + text);
+            } else {
+                names << QString::fromStdString(QPDFFormFieldObjectHelper(item).getFullyQualifiedName());
+            }
+        }
+        return QString::fromStdString(type).mid(1) + u": " + names.join(u' ');
+    }
+    return QStringLiteral("no field");
+}
+
 // Rewrites `path` with `blob` as its /Mervin_Measurements, as a string or as the JSON of a
 // stream.
 void setMeasurementBlob(const QString &path, const std::string &blob, bool stream)
@@ -1219,6 +1348,8 @@ private slots:
     void copiesCutLongAndLoopingActionChains_data();
     void copiesCutLongAndLoopingActionChains();
     void copiesScopeActionsAboveDeepWidgets();
+    void copiesKeepActionTargetsOfTheirOwnFile_data();
+    void copiesKeepActionTargetsOfTheirOwnFile();
     void mergeNamesInputWithBadMeasurements_data();
     void mergeNamesInputWithBadMeasurements();
     void deleteNamesSourceWithBadMeasurements_data();
@@ -2141,6 +2272,8 @@ void TstQpdf::deleteLeavesOutDeletedContent()
     case Reference::SubmitButtons:
     case Reference::ActionChains:
     case Reference::DeepFieldNoForm:
+    case Reference::TargetButtons:
+    case Reference::OtherTargets:
         break;
     }
     if (ref == Reference::TaggedWidget) {
@@ -2564,6 +2697,77 @@ void TstQpdf::copiesCutLongAndLoopingActionChains()
         QVERIFY(pdfContains(src, "deep-tail")); // the scan finds what it looks for
         QVERIFY(!pdfContains(out, "deep-tail"));
     }
+}
+
+/// Hide, Movie and Rendition actions whose targets belong to their own file, to the other
+/// file of a merge, to a page that the copy leaves out, or to no file.
+void TstQpdf::copiesKeepActionTargetsOfTheirOwnFile_data()
+{
+    QTest::addColumn<bool>("merged");
+    QTest::addColumn<QString>("field");
+    QTest::addColumn<QStringList>("keys");
+    QTest::addColumn<QString>("targets");
+    const QStringList a{QStringLiteral("/A")};
+    // "elsewhere" is a field of the other file only, so a merge must not hide it.
+    QTest::newRow("merge, hide a field of the other file") << true << "hideelsewhere" << a
+                                                           << QStringLiteral("Hide: name");
+    QTest::newRow("merge, hide one on focus") << true << "name" << QStringList{"/AA", "/Fo"}
+                                              << QStringLiteral("no action");
+    QTest::newRow("merge, hide own and other targets") << true << "hidemixed" << a
+                                                       << QStringLiteral("Hide: name Text on 1");
+    QTest::newRow("merge, hide a field left out") << true << "hidelater" << a << QStringLiteral("no action");
+    QTest::newRow("merge, movie title of the other file") << true << "movieelsewhere" << a
+                                                          << QStringLiteral("no action");
+    // Both files have a movie annotation "clip", so a merge names each one by reference.
+    QTest::newRow("merge, movie title that both files have") << true << "movietitle" << a
+                                                             << QStringLiteral("Movie: Movie clip on 1");
+    QTest::newRow("merge, the other file's movie title") << true << "othermovie" << a
+                                                         << QStringLiteral("Movie: Movie clip on 2");
+    QTest::newRow("merge, own movie") << true << "movieref" << a << QStringLiteral("Movie: Movie clip on 1");
+    QTest::newRow("merge, own screen") << true << "rendition" << a
+                                       << QStringLiteral("Rendition: Screen screen on 1");
+    QTest::newRow("merge, hide own field") << true << "hidename" << a << QStringLiteral("Hide: name");
+    // A single-file output drops only what it left out, and keeps a name that named nothing.
+    QTest::newRow("one file, hide own field") << false << "hidename" << a << QStringLiteral("Hide: name");
+    QTest::newRow("one file, hide a field no file has") << false << "hideelsewhere" << a
+                                                        << QStringLiteral("Hide: elsewhere");
+    QTest::newRow("one file, hide one on focus") << false << "name" << QStringList{"/AA", "/Fo"}
+                                                 << QStringLiteral("Hide: elsewhere");
+    QTest::newRow("one file, hide own and left-out targets") << false << "hidemixed" << a
+                                                             << QStringLiteral("Hide: name elsewhere Text on 1");
+    QTest::newRow("one file, hide a field left out") << false << "hidelater" << a
+                                                     << QStringLiteral("no action");
+    QTest::newRow("one file, own movie title") << false << "movietitle" << a << QStringLiteral("Movie: clip");
+    QTest::newRow("one file, movie title no file has") << false << "movieelsewhere" << a
+                                                       << QStringLiteral("Movie: elsewhere clip");
+    QTest::newRow("one file, movie title of a page left out") << false << "movielatertitle" << a
+                                                              << QStringLiteral("no action");
+    QTest::newRow("one file, movie of a page left out") << false << "movielater" << a
+                                                        << QStringLiteral("no action");
+    QTest::newRow("one file, screen of a page left out") << false << "renditionlater" << a
+                                                         << QStringLiteral("no action");
+}
+
+/// Checks that a copied Hide, Movie or Rendition action keeps only the targets of its own
+/// file, by text or by reference, and that it goes when none remains.
+void TstQpdf::copiesKeepActionTargetsOfTheirOwnFile()
+{
+    QFETCH(bool, merged);
+    QFETCH(QString, field);
+    QFETCH(QStringList, keys);
+    QFETCH(QString, targets);
+    const QString src = in(QStringLiteral("targets_src.pdf"));
+    const QString other = in(QStringLiteral("targets_other.pdf"));
+    const QString out = in(QStringLiteral("targets_out.pdf"));
+    makeReferencedPdf(src, Reference::TargetButtons);
+    makeReferencedPdf(other, Reference::OtherTargets);
+    QList<PageOps::MergeInput> inputs{{src, {0}, {}}};
+    if (merged)
+        inputs.append({other, {0}, {}});
+    QCOMPARE(PageOps::merge(inputs, out), PageOps::Status::Ok);
+    QCOMPARE(actionTargets(out, field.toStdString(), keys), targets);
+    if (merged)
+        QVERIFY(fieldPages(out).contains(QStringLiteral("elsewhere 2")));
 }
 
 /// Checks that a merge limits the document-wide actions of each field above a copied widget,

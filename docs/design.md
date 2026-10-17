@@ -974,7 +974,24 @@ action whose listed fields are all gone, or that would list no field, is removed
 of getting an empty `/Fields`. The actions in its `/Next` take its place, and a key whose
 only action goes is removed. An Exclude list whose fields are all gone excludes nothing.
 Repeated pages of one file and single-file outputs keep an action that names no fields as
-it was. JavaScript actions cannot be limited this way and stay.
+it was.
+
+Actions can also name their targets by text. A Hide action names fields by fully
+qualified name, or fields and annotations by reference, in `/T`. A Movie action names a
+movie annotation by reference in `/Annotation` or by title in `/T`, and Rendition,
+GoTo3DView and RichMediaExecute name an annotation by reference in `/AN` or `/TA`. In an
+output with pages from more than one file, a name could find a field or annotation of
+another file, so `scopeAction` keeps only the targets of the action's own file, which
+are its copied fields, by object and by name, and the annotations that its copied pages
+list. An action with no target left is removed like an emptied submit. A Movie title
+becomes a reference to the file's own movie annotation of that title, as nothing renames
+movie annotations. A single-file output drops only the targets it left out, and keeps a
+name that named nothing in the source. Before that, `mapAction` points these references
+at the copies that the pages list, as `transformAnnotations` copies each annotation
+twice, and it maps `/T` as field names only for Hide, since a Movie's `/T` is a title.
+JavaScript and ImportData actions cannot be limited this way and stay. ImportData fills
+the fields that an external FDF file names. GoToE, GoToR and Thread name pages by number
+or by reference, and SetOCGState names optional content groups, so they act on no field.
 
 Delete Pages removes pages from the source's own `QPDF` and writes it, so it keeps
 encryption, outlines and structure. `QPDFPageDocumentHelper::removePage` only takes a

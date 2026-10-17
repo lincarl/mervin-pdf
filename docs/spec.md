@@ -236,11 +236,14 @@ combines several files, a copied button or action that submits or resets every f
 every field but some, acts only on the fields that came from its own file, and one that
 would act on no field is left out. An empty list of fields counts as every field, as
 viewers read it so. A button that lists only fields the new file leaves out is left out
-too. In a damaged file, a chain of actions ends after 100 actions or where it comes back
-to an earlier one, and fields more than 100 levels below their top field are left out of
-the form. Form scripts, which Mervin does not run, can still read every field of the
-merged file in viewers that run them. The new file does not keep the form's calculation
-order or XFA data, so calculated fields no longer update in viewers that use them.
+too. A copied button that hides fields or comments, or plays a movie or media clip, acts
+only on those of its own file in a merged file, also when another file has one of the
+same name, and is left out when none remains. In a damaged file, a chain of actions ends
+after 100 actions or where it comes back to an earlier one, and fields more than 100
+levels below their top field are left out of the form. Form scripts, which Mervin does
+not run, can still read every field of the merged file in viewers that run them. The new
+file does not keep the form's calculation order or XFA data, so calculated fields no
+longer update in viewers that use them.
 
 Merge opens at once and reads each input's page count in the background. Pending
 rows show Reading and keep Merge disabled. The footer names the first row and file
