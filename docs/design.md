@@ -921,15 +921,20 @@ or a one-file merge (`MergePlan::resultPassword`), with the password that read i
 source.
 
 Extract, Split and Merge build each output from an empty PDF with
-`QPDFPageDocumentHelper::addPage`, which copies a page but not its form fields. After
-each page, `FormCopy` calls `QPDFAcroFormDocumentHelper::fixCopiedAnnotations`, as
-qpdf's own page selection does. It gives the page private annotations and adds their
-fields to the output's `/AcroForm`, renaming a field whose name is taken. `FormCopy`
-then points each annotation's `/P` at its new page, which qpdf releases before 12.3
-do not do. If the call throws, as qpdf before 12.4 can on damaged annotations, the page
-stays as `addPage` copied it. A copied field tree comes along whole, so before writing,
-`FormCopy::finish` removes the fields that have no widget on an output page, keeping a
-parent that a copied widget shares. The source helpers are built with the
+`QPDFPageDocumentHelper::addPage`, which copies a page but not its form fields.
+`FormCopy` records each copied page, and before writing, `FormCopy::finish` gives the
+pages private annotations and adds their fields to the output's `/AcroForm`, renaming a
+field whose name is taken. It calls `QPDFAcroFormDocumentHelper::transformAnnotations`,
+the function behind the `fixCopiedAnnotations` that qpdf's own page selection calls per
+page, once for all pages of a source. Each call copies the whole tree of every field it
+meets, so per page a 200-page form with one top-level field took minutes and gigabytes,
+and a field shown on two pages became two fields. A page copied again goes in a later
+pass and gets fields of its own. If a pass throws, as qpdf before 12.4 can on damaged
+annotations, its pages are copied one at a time with `fixCopiedAnnotations`, and a page
+that still fails stays as `addPage` copied it. `FormCopy` then points each annotation's
+`/P` at its new page, which qpdf releases before 12.3 do not do. A copied field tree
+comes along whole, so `finish` then removes the fields that have no widget on an output
+page, keeping a parent that a copied widget shares. The source helpers are built with the
 `QPDFAcroFormDocumentHelper` constructor, as `get` needs qpdf 12.3.
 
 Delete Pages removes pages from the source's own `QPDF` and writes it, so it keeps
