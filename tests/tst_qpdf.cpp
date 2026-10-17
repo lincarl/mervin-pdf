@@ -85,6 +85,7 @@ enum class Reference {
     UnlistedField,   // a field of page 1 whose /Parent's /Kids does not list it, above a field on page 2
     StrayOutline,    // outline links that lead to bookmarks of page 2 outside the outline
     StrayChildOutline, // a bookmark whose /Last, without a /First, names one of page 2
+    InheritingField, // a field of page 1 that inherits from a /Parent whose /Kids lists only page 2's field
 };
 
 // A page that shows `text` in two marked-content sequences, MCID 0 and 1.
@@ -633,6 +634,19 @@ void makeReferencedPdf(const QString &path, Reference reference)
         installForm(q, {address});
         break;
     }
+    case Reference::InheritingField: {
+        // "hidden", on page 1, names "address" as its /Parent and inherits its type and flags,
+        // but address's /Kids lists only "secret", whose widget is on page 2, as a damaged
+        // file can.
+        QPDFObjectHandle address = q.makeIndirectObject(parse("<< /FT /Tx /Ff 4096 /T (address) >>"));
+        QPDFObjectHandle secret = q.makeIndirectObject(parse("<< /T (secret) >>"));
+        secret.replaceKey("/V", QPDFObjectHandle::newString(kSecret));
+        adopt(secret, {widget(q, pages[1])});
+        adopt(address, {secret});
+        widget(q, pages[0], "/T (hidden) /V (kept hidden)").replaceKey("/Parent", address);
+        installForm(q, {address});
+        break;
+    }
     case Reference::StrayOutline:
     case Reference::StrayChildOutline: {
         // "Page one" is the only item that the outline's /First and /Next reach. In
@@ -856,6 +870,35 @@ QStringList fieldPages(const QString &path)
         lines << line;
     }
     return lines;
+}
+
+// The first reason the widget "hidden" of `path` no longer has the parent "address" that it
+// inherits its type and flags from (see Reference::InheritingField), or an empty string.
+QString inheritedFieldProblem(const QString &path)
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    q.processFile(name.constData());
+    for (QPDFObjectHandle page : q.getAllPages()) {
+        QPDFObjectHandle annots = page.getKey("/Annots");
+        if (!annots.isArray())
+            continue;
+        for (QPDFObjectHandle annot : annots.aitems()) {
+            if (!annot.getKey("/T").isString() || annot.getKey("/T").getUTF8Value() != "hidden")
+                continue;
+            if (!annot.getKey("/Parent").isDictionary())
+                return QStringLiteral("hidden lost its parent");
+            QPDFFormFieldObjectHelper field(annot);
+            if (field.getFullyQualifiedName() != "address.hidden")
+                return QStringLiteral("name ") + QString::fromStdString(field.getFullyQualifiedName());
+            if (field.getFieldType() != "/Tx")
+                return QStringLiteral("type ") + QString::fromStdString(field.getFieldType());
+            if (field.getFlags() != 4096)
+                return QStringLiteral("flags %1").arg(field.getFlags());
+            return {};
+        }
+    }
+    return QStringLiteral("no hidden widget");
 }
 
 // The first reason the comment "Reply" of page `index` of `path` is not a comment of its own
@@ -1854,6 +1897,7 @@ void TstQpdf::deleteLeavesOutDeletedContent_data()
     QTest::newRow("field that its parent does not list") << int(Reference::UnlistedField);
     QTest::newRow("bookmark links outside the outline") << int(Reference::StrayOutline);
     QTest::newRow("bookmark /Last without /First") << int(Reference::StrayChildOutline);
+    QTest::newRow("field that inherits from a parent of page 2") << int(Reference::InheritingField);
 }
 
 /// Checks that no object of a Delete Pages copy holds the deleted page's content, or what
@@ -1958,6 +2002,11 @@ void TstQpdf::deleteLeavesOutDeletedContent()
         QCOMPARE(first.getKey("/Parent").getObjGen(), outlines.getObjGen());
         break;
     }
+    case Reference::InheritingField:
+        // address goes from /Fields with secret, but hidden still inherits from it.
+        QCOMPARE(inheritedFieldProblem(out), QString());
+        QVERIFY(pdfContains(out, "kept hidden"));
+        break;
     case Reference::UnlistedField: {
         // "street" stays below "address", and "hidden" keeps only its page 1 widget.
         QCOMPARE(fields.getArrayNItems(), 1);
@@ -2197,6 +2246,8 @@ void TstQpdf::copiesLeaveOutFieldsOfOtherPages_data()
     // The widget of the field that address does not list is outside the form.
     QTest::newRow("field that its parent does not list") << int(Reference::UnlistedField)
                                                           << QStringLiteral("kept street") << 0;
+    QTest::newRow("field that inherits from a parent of page 2") << int(Reference::InheritingField)
+                                                                  << QStringLiteral("kept hidden") << 0;
 }
 
 /// Checks that Extract, Merge and Split copy no form data of pages they leave out, and keep
@@ -2227,9 +2278,15 @@ void TstQpdf::copiesLeaveOutFieldsOfOtherPages()
                  fields.getArrayItem(0).getObjGen());
     }
 
+    const bool inheriting = Reference(reference) == Reference::InheritingField;
+    if (inheriting)
+        QCOMPARE(inheritedFieldProblem(out), QString());
+
     QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {2, 0}, {}}}, out), PageOps::Status::Ok);
     QVERIFY(!pdfContains(out, kSecret));
     QVERIFY(pdfContains(out, keptText));
+    if (inheriting)
+        QCOMPARE(inheritedFieldProblem(out), QString());
 
     QStringList parts;
     QCOMPARE(PageOps::split(src, dir_.path(), QStringLiteral("other-%1").arg(reference), QString(),
@@ -2238,6 +2295,8 @@ void TstQpdf::copiesLeaveOutFieldsOfOtherPages()
     QCOMPARE(parts.size(), 3);
     QVERIFY(!pdfContains(parts.at(0), kSecret));
     QVERIFY(pdfContains(parts.at(0), keptText));
+    if (inheriting)
+        QCOMPARE(inheritedFieldProblem(parts.at(0)), QString());
     QVERIFY(!pdfContains(parts.at(2), kSecret));
     QVERIFY(!pdfContains(parts.at(2), keptText));
 }
