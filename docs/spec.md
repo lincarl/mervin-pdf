@@ -212,8 +212,8 @@ and Stop waiting as other page tools. None saves over a file open in a tab or ov
 input document. Failure reopens the chosen ranges, order and output with its reason.
 
 Extract, Split and Merge copy only the images and fonts that the copied pages draw, also
-when the source's pages share them. A copied comment that replies to a comment on a page
-they do not copy stays, as a comment of its own, as in Delete Pages.
+when the source's pages list each other's. A copied comment that replies to a comment on
+a page they do not copy stays, as a comment of its own, as in Delete Pages.
 
 Extract, Split and Merge keep the form fields of the pages they copy, so the new file
 can be filled in, and leave out the fields and values of pages they do not copy. A
