@@ -980,15 +980,19 @@ private:
         });
     }
 
-    // A SubmitForm or ResetForm action without /Fields, or with the Exclude flag (bit 1 of
-    // /Flags), acts on every field of the document, or every field but the listed ones. In
-    // an output with pages from several files, which holds the fields of all of them, such an
+    // A SubmitForm or ResetForm action without /Fields, with an empty /Fields, or with the
+    // Exclude flag (bit 1 of /Flags) acts on every field of the document, or every field but
+    // the listed ones, as viewers such as PDF.js read an empty list as every field. In an
+    // output with pages from several files, which holds the fields of all of them, such an
     // action copied from one file would send or clear the fields of the others. So each one
     // becomes an explicit list of the fields copied from its own file, without the excluded
     // ones and without the flag. One that would list no field goes, and the actions after it
-    // in its /Next take its place, as viewers such as PDF.js read an empty /Fields as every
-    // field. The actions of the pages, their annotations and the fields above their widgets
-    // are covered, with their /AA and /Next. JavaScript actions cannot be limited this way.
+    // in its /Next take its place. In every output, entries that name a field the copy left
+    // out are dropped, so an action whose listed fields are all left out goes too, and an
+    // Exclude list that names none of them then excludes nothing. No copied action ends
+    // with an empty /Fields unless its source had one and the output has one file. The
+    // actions of the pages, their annotations and the fields above their widgets are
+    // covered, with their /AA and /Next. JavaScript actions cannot be limited this way.
     void scopeFormActions()
     {
         std::map<QPDF *, std::vector<QPDFObjectHandle>> pagesOf;
@@ -998,8 +1002,7 @@ private:
             if (seenPages.insert(page.getObjGen()).second)
                 pagesOf[copy.source].push_back(page);
         }
-        if (pagesOf.size() < 2)
-            return;
+        const bool several = pagesOf.size() > 1;
         for (auto &[source, pages] : pagesOf) {
             std::vector<QPDFObjectHandle> tops, holders; // its top-level fields, what has actions
             ObjectSet seen, seenTops;
@@ -1030,20 +1033,56 @@ private:
                         tops.push_back(node);
                 }
             }
+            const OwnFields own(tops);
             for (QPDFObjectHandle holder : holders)
-                rewriteActions(holder, [&tops](QPDFObjectHandle action) {
-                    return scopeAction(action, tops, 0);
+                rewriteActions(holder, [&](QPDFObjectHandle action) {
+                    return scopeAction(action, tops, own, several, 0);
                 });
         }
     }
 
-    // `action`, and the actions in its /Next, with each SubmitForm or ResetForm that acts on
-    // every field, or every field but some, limited to the trees `tops`. Returns `action`
-    // itself when nothing changes, and a new object otherwise. An action that would list no
-    // field is left out, so the result can be its /Next: null when nothing follows, or an
-    // array of actions.
+    /// The fields of one file in an output, by object and by fully qualified name.
+    struct OwnFields
+    {
+        explicit OwnFields(const std::vector<QPDFObjectHandle> &tops)
+        {
+            std::vector<std::pair<QPDFObjectHandle, int>> queue;
+            for (QPDFObjectHandle top : tops)
+                queue.emplace_back(top, 0);
+            while (!queue.empty()) {
+                auto [node, depth] = queue.back();
+                queue.pop_back();
+                if (!node.isIndirect() || !node.isDictionary() || !ids.insert(node.getObjGen()).second)
+                    continue;
+                if (node.hasKey("/T"))
+                    names.insert(QPDFFormFieldObjectHelper(node).getFullyQualifiedName());
+                QPDFObjectHandle kids = node.getKey("/Kids");
+                if (kids.isArray() && depth < kMaxDepth)
+                    for (QPDFObjectHandle kid : kids.aitems())
+                        queue.emplace_back(kid, depth + 1);
+            }
+        }
+
+        /// Whether `entry` of a /Fields array names one of the fields.
+        bool has(QPDFObjectHandle entry) const
+        {
+            if (entry.isIndirect())
+                return ids.count(entry.getObjGen()) > 0;
+            return entry.isString() && names.count(entry.getUTF8Value()) > 0;
+        }
+
+        ObjectSet ids;
+        std::set<std::string> names;
+    };
+
+    // `action`, and the actions in its /Next, with each SubmitForm or ResetForm limited as
+    // scopeFormActions says, to the trees `tops` of one file whose fields are `own`, and
+    // `several` when the output has more than one file. Returns `action` itself when nothing
+    // changes, and a new object otherwise. An action that is left out gives way to its /Next,
+    // so the result can be null when nothing follows, or an array of actions.
     static QPDFObjectHandle scopeAction(QPDFObjectHandle action,
-                                        const std::vector<QPDFObjectHandle> &tops, int depth)
+                                        const std::vector<QPDFObjectHandle> &tops,
+                                        const OwnFields &own, bool several, int depth)
     {
         if (depth >= kMaxDepth)
             return action;
@@ -1051,7 +1090,7 @@ private:
             std::vector<QPDFObjectHandle> items;
             bool changed = false;
             for (QPDFObjectHandle item : action.aitems()) {
-                QPDFObjectHandle scoped = scopeAction(item, tops, depth + 1);
+                QPDFObjectHandle scoped = scopeAction(item, tops, own, several, depth + 1);
                 if (scoped.isSameObjectAs(item)) {
                     items.push_back(item);
                     continue;
@@ -1070,7 +1109,7 @@ private:
         if (!action.isDictionary())
             return action;
         QPDFObjectHandle next = action.getKey("/Next");
-        QPDFObjectHandle scopedNext = scopeAction(next, tops, depth + 1);
+        QPDFObjectHandle scopedNext = scopeAction(next, tops, own, several, depth + 1);
         QPDFObjectHandle result;
         const auto change = [&](const char *key, QPDFObjectHandle value) {
             if (!result.isInitialized())
@@ -1084,15 +1123,32 @@ private:
         if (type.isNameAndEquals("/SubmitForm") || type.isNameAndEquals("/ResetForm")) {
             QPDFObjectHandle flags = action.getKey("/Flags");
             const long long bits = flags.isInteger() ? flags.getIntValue() : 0;
+            const bool exclude = bits & 1;
             QPDFObjectHandle fields = action.getKey("/Fields");
-            if (!fields.isArray() || (bits & 1)) {
-                const std::vector<QPDFObjectHandle> own =
-                    fields.isArray() ? withoutExcluded(tops, fields) : tops;
-                if (own.empty())
+            const int listed = fields.isArray() ? fields.getArrayNItems() : 0;
+            std::vector<QPDFObjectHandle> kept; // the listed entries that name a field of `own`
+            for (int i = 0; i < listed; ++i)
+                if (own.has(fields.getArrayItem(i)))
+                    kept.push_back(fields.getArrayItem(i));
+            // Every field of the document: no list, an empty one, or an Exclude list whose
+            // fields the copy all left out.
+            const bool every = listed == 0 || (exclude && kept.empty());
+            if (listed > 0 && kept.empty() && !exclude)
+                return scopedNext; // its fields are all left out, so it acts on none
+            if (several && (every || exclude)) {
+                const std::vector<QPDFObjectHandle> list =
+                    every ? tops : withoutExcluded(tops, QPDFObjectHandle::newArray(kept));
+                if (list.empty())
                     return scopedNext; // what follows takes its place
-                change("/Fields", QPDFObjectHandle::newArray(own));
-                if (bits & 1)
+                change("/Fields", QPDFObjectHandle::newArray(list));
+                if (exclude)
                     change("/Flags", QPDFObjectHandle::newInteger(bits & ~1LL));
+            } else if (listed > 0 && every) {
+                // One file, and the excluded fields are all left out: every field, as before.
+                change("/Fields", QPDFObjectHandle::newNull());
+                change("/Flags", QPDFObjectHandle::newInteger(bits & ~1LL));
+            } else if (static_cast<int>(kept.size()) < listed) {
+                change("/Fields", QPDFObjectHandle::newArray(kept)); // without the fields left out
             }
         }
         if (!scopedNext.isSameObjectAs(next))

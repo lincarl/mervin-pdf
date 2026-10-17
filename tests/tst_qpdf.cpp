@@ -454,7 +454,8 @@ void makeReferencedPdf(const QString &path, Reference reference)
         QPDFObjectHandle name = widget(q, pages[0], "/FT /Tx /T (name) /V (kept name)");
         name.replaceKey("/AA", parse("<< /Bl << /S /ResetForm >> >>"));
         QPDFObjectHandle other = widget(q, pages[0], "/FT /Tx /T (other) /V (kept other)");
-        const std::string all = "[(name) (other) (submit) (except) (none) (group) (exceptchild)]";
+        const std::string all =
+            "[(name) (other) (submit) (except) (none) (group) (exceptchild) (emptylist) (resetlater)]";
         other.replaceKey("/AA", parse("<< /Fo << /S /ResetForm /Fields " + all + " /Flags 1 >> >>"));
         QPDFObjectHandle submit = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (submit)");
         submit.replaceKey("/A", parse("<< /S /SubmitForm /F (https://example.invalid/form) /Flags 4 "
@@ -476,7 +477,15 @@ void makeReferencedPdf(const QString &path, Reference reference)
         QPDFObjectHandle exceptChild = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (exceptchild)");
         exceptChild.replaceKey("/A", parse("<< /S /SubmitForm /F (https://example.invalid/form) "
                                            "/Fields [(group.a)] /Flags 1 >>"));
-        installForm(q, {name, other, submit, except, none, group, exceptChild});
+        // An empty list, which viewers read as every field, and a list of a field on page 2.
+        QPDFObjectHandle emptyList = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (emptylist)");
+        emptyList.replaceKey("/A", parse("<< /S /ResetForm /Fields [] >>"));
+        QPDFObjectHandle later = widget(q, pages[1], "/FT /Tx /T (later) /V (later value)");
+        QPDFObjectHandle resetLater = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (resetlater)");
+        resetLater.replaceKey("/A", parse("<< /S /ResetForm /Fields [(later)] >>"));
+        resetLater.getKey("/A").getKey("/Fields").appendItem(later);
+        installForm(q, {name, other, submit, except, none, group, exceptChild, emptyList, later,
+                        resetLater});
         break;
     }
     case Reference::ResetByName: {
@@ -763,9 +772,10 @@ QString actionScope(const QString &path, const std::string &field, const QString
             return type + QStringLiteral("all");
         QStringList names;
         for (QPDFObjectHandle item : fields.aitems())
-            names << QString::fromStdString(item.isString()
-                                                ? item.getUTF8Value()
-                                                : QPDFFormFieldObjectHelper(item).getFullyQualifiedName());
+            names << QString::fromStdString(
+                item.isString()       ? item.getUTF8Value()
+                : item.isDictionary() ? QPDFFormFieldObjectHelper(item).getFullyQualifiedName()
+                                      : std::string("null"));
         QPDFObjectHandle flags = action.getKey("/Flags");
         const bool exclude = flags.isInteger() && (flags.getIntValue() & 1);
         return type + (exclude ? QStringLiteral("but ") : QString()) + names.join(u' ');
@@ -2093,7 +2103,8 @@ void TstQpdf::copiesPointButtonsAtRenamedFields()
 /// a copy of one.
 void TstQpdf::copiesScopeDocumentWideFormActions_data()
 {
-    const QString own = QStringLiteral("name other submit except none group exceptchild");
+    const QString own =
+        QStringLiteral("name other submit except none group exceptchild emptylist resetlater");
     QTest::addColumn<bool>("merged");
     QTest::addColumn<QString>("field");
     QTest::addColumn<QStringList>("keys");
@@ -2105,9 +2116,16 @@ void TstQpdf::copiesScopeDocumentWideFormActions_data()
     QTest::newRow("merge, reset all on blur") << true << "name" << QStringList{"/AA", "/Bl"}
                                               << "ResetForm: " + own;
     QTest::newRow("merge, all but one") << true << "except" << QStringList{"/A"}
-                                        << QStringLiteral("SubmitForm: other submit except none group exceptchild");
+                                        << QStringLiteral("SubmitForm: other submit except none group "
+                                                          "exceptchild emptylist resetlater");
     QTest::newRow("merge, all but a child") << true << "exceptchild" << QStringList{"/A"}
-                                            << QStringLiteral("SubmitForm: name other submit except none group.b exceptchild");
+                                            << QStringLiteral("SubmitForm: name other submit except none "
+                                                              "group.b exceptchild emptylist resetlater");
+    QTest::newRow("merge, empty list") << true << "emptylist" << QStringList{"/A"}
+                                       << "ResetForm: " + own;
+    // The page 2 field that it lists is left out, so it would act on none, or on every field.
+    QTest::newRow("merge, list of fields left out") << true << "resetlater" << QStringList{"/A"}
+                                                    << QStringLiteral("no action");
     // An action left with no field goes, and the actions after it take its place, as
     // viewers such as PDF.js read an empty /Fields as every field.
     QTest::newRow("merge, all but all, then more") << true << "none" << QStringList{"/A"}
@@ -2124,6 +2142,10 @@ void TstQpdf::copiesScopeDocumentWideFormActions_data()
                                            << "ResetForm: but " + own;
     QTest::newRow("one file, all but all on focus") << false << "other" << QStringList{"/AA", "/Fo"}
                                                     << "ResetForm: but " + own;
+    QTest::newRow("one file, empty list") << false << "emptylist" << QStringList{"/A"}
+                                          << QStringLiteral("ResetForm: ");
+    QTest::newRow("one file, list of fields left out") << false << "resetlater" << QStringList{"/A"}
+                                                       << QStringLiteral("no action");
 }
 
 /// Checks that a merge limits a copied submit or reset action that acts on every field, or
