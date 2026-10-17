@@ -433,8 +433,10 @@ int main(int argc, char *argv[])
         // restarted copy would read the files without them, and they could land over
         // its own writes, so it is not started. Launches this copy acknowledged and
         // did not open still get a copy, as the user asked for those files. WindowManager
-        // then kept the single-instance lock, which this process never releases, so
-        // that copy waits until this process and its stuck writes have ended.
+        // then kept the single-instance lock, which this process never releases, so that
+        // copy waits up to ipc::kLaunchWaitMs for this process to end. A write stuck in a
+        // request the system cannot abort keeps it alive, and the copy then runs
+        // standalone. The carried launches stay in the carry file for the next primary.
         const bool saved = mervin::appfiles::flush(0);
         if (!saved) {
             std::fprintf(stderr, "MervinPDF: could not finish saving settings\n");

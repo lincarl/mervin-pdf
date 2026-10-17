@@ -20,7 +20,9 @@ class SingleInstanceServer;
 // without taking its open. A quitting primary closes its endpoint and keeps the lock
 // through its exit wait (appfiles::kExitWaitMs); the rest covers its last windows and
 // its teardown. One whose writes outlast that wait keeps the lock until its process has
-// ended, which follows within its teardown (see SingleInstanceServer::keepLockUntilExit).
+// ended (see SingleInstanceServer::keepLockUntilExit). That normally follows within its
+// teardown. A write stuck in a request the system cannot abort keeps the process alive
+// until the request returns, and a launch then gives up after this wait.
 constexpr int kLaunchWaitMs = appfiles::kExitWaitMs + 5000;
 
 // Who runs the process at the other end of a connected local socket. On Unix this is

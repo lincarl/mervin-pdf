@@ -363,8 +363,14 @@ lock as stale when the process it names has ended or runs another program. On
 Windows the open handle also keeps another process from deleting the file until
 then. That copy can be the one `relaunch::startIfDue()` starts at once on Windows.
 After the exit wait the process only tears down the application and gives
-background work 200 ms before it ends, so the copy waits well under
-`ipc::kLaunchWaitMs`. While
+background work 200 ms before it ends, so the copy normally waits well under
+`ipc::kLaunchWaitMs`. A write stuck in a request the system cannot abort, as on a
+FUSE or network folder that stopped answering, keeps the process from ending until
+the request returns. A launch then waits `ipc::kLaunchWaitMs` and opens its files
+standalone. On Windows the copy `startIfDue()` started does the same, and the
+carried launches stay in the carry file for the next primary within
+`relaunch::kCarriedMaxAgeMs`. On Linux that copy starts only after the process has
+ended. While
 Quit or a language restart is in progress, or an update asks about unsaved edits
 before it closes the windows, `WindowManager` holds the Opens that arrive. If that
 is cancelled, they open then. Closing the last window does not hold them, so an Open
@@ -381,16 +387,23 @@ which is also the copy of a language restart, the copy an update starts, or a co
 the user starts first. No path goes on a command line or into the environment,
 unless the carry file cannot be written. The launches then stay with `relaunch`,
 and the copy that `startIfDue()` starts gets their files as arguments. They are
-absolute paths, passed as separate process arguments that go through no shell or
-cmd. A copy an update started before that write failed cannot get them, so they are
-logged instead. A file older than 10 minutes (`relaunch::kCarriedMaxAgeMs`), as one
-left by a copy that crashed, is removed unread, as is one dated more than a minute
-ahead (`relaunch::kCarriedMaxAheadMs`), which allows for a clock set back a little
-between the two copies. The age bound leaves time for an installer between the two
-copies. At session end nothing is written or started, so those files are lost with
-the session. On Linux `start()` connects to the socket before it removes it, so
-a lock file that something deleted while its primary runs does not make the next
-launch a second primary. The server closes its socket before it releases the lock.
+absolute paths, so the copy cannot read one as an option. On Windows QProcess builds
+the command line itself and no cmd runs. On Linux the helper shell that waits for
+this process gets them as positional parameters and passes them on with a quoted
+`"$@"`, so it never parses them. A copy an update started before that write failed
+cannot get them, so they are logged instead. A file older than 10 minutes
+(`relaunch::kCarriedMaxAgeMs`), as one left by a copy that crashed, is removed
+unread, as is one dated more than a minute ahead (`relaunch::kCarriedMaxAheadMs`),
+which allows for a clock set back a little between the two copies. The age bound
+leaves time for an installer between the two copies. At session end nothing is
+written or started, so those files are lost with the session. On Linux `start()`
+connects to the socket before it removes it, so a lock file that something deleted
+while its primary runs does not make the next launch a second primary. The server
+closes its socket before it releases the lock. QLockFile cannot tell whether a lock
+file without content is stale, as a process leaves one that ended between making and
+writing it, so `start()` removes such a file once it is 2 s old and tries again. On
+Unix it does the same for any lock without a live holder. QLockFile does not let it
+remove a file that a live process holds.
 
 If a live process holds the lock but no primary takes the Open in that time, as
 when the lock holder is stopped, the launch opens its files in a standalone process.
@@ -415,20 +428,25 @@ these locations moved listen in the temp folder, under a group name hashed from
 removed once such copies are no longer expected. Each is offered the Open in the
 same protocol, after the same check that the process runs as this user. The lock
 check (`ipc::lockHeldByLiveProcess()`) only reads the lock file, so it never makes a
-lock another launch could see. It counts a lock as held while the process the file
-names lives and, on Linux, runs the program the file names, as QLockFile does. A
-file without content counts as held for 2 s while its maker writes it. A copy of
-this version that holds the lock gets the launch with the whole wait, and the other
-folders and an older copy are not asked. If one of them takes the Open, the launch
-exits. If it takes the connection but does not answer within the wait, it keeps the
-Open, so the launch opens the files in a standalone process, as beside a primary of
-this version that does not answer. An older copy, which has no rule to drop such an
-Open, shows the files as well once it runs again. If nothing answers, the process is
-another user's, or it closes the connection without an acknowledgement, as a
-quitting copy does, the launch goes on as above. The reverse case cannot be fixed in
-the older code. An older copy launched while a newer one runs starts a second
-primary until one of them exits. Windows kept its pipe and lock names, so older and
-newer copies find each other there in both directions.
+lock another launch could see. Only this user's processes write locks in these
+folders, so it counts a lock as held only while the process the file names lives and
+this user can signal it. A lock does not count if its process ID now belongs to
+another user, root or the kernel, if it comes from another machine ID or an earlier
+boot, or, on Linux, if that ID now runs another program of this user. A process of
+this user whose program cannot be read still counts, as one whose last thread waits
+in a stuck file system call after the rest of it ended. A file without content
+counts as held for 2 s while its maker writes it. A copy of this version that holds
+the lock gets the launch with the whole wait, and the other folders and an older
+copy are not asked. If one of them takes the Open, the launch exits. If it takes the
+connection but does not answer within the wait, it keeps the Open, so the launch
+opens the files in a standalone process, as beside a primary of this version that
+does not answer. An older copy, which has no rule to drop such an Open, shows the
+files as well once it runs again. If nothing answers, the process is another user's,
+or it closes the connection without an acknowledgement, as a quitting copy does, the
+launch goes on as above. The reverse case cannot be fixed in the older code. An
+older copy launched while a newer one runs starts a second primary until one of them
+exits. Windows kept its pipe and lock names, so older and newer copies find each
+other there in both directions.
 
 Session restoration creates the tab list but opens only the selected document. Other
 restored tabs load when selected.

@@ -40,6 +40,11 @@ InstancePaths instancePaths(const QString &name = QString());
 QString legacyEndpoint(const QString &name = QString());
 #endif
 
+// Whether `lockFile` holds no lock information and is older than QLockFile needs to write
+// it, as a lock file that a process left when it ended between making and writing it.
+// QLockFile with a stale lock time of 0 never counts such a file as stale. Only reads it.
+bool lockLeftUnwritten(const QString &lockFile);
+
 #ifdef Q_OS_UNIX
 // The lock files, endpoints and carry files of the group `name` in the other folders that
 // instancePaths() can choose, for when the folders available changed while a primary ran.
@@ -47,11 +52,14 @@ QString legacyEndpoint(const QString &name = QString());
 // in them. The launch's own folder, which instancePaths() makes, is left out.
 QList<InstancePaths> otherInstancePaths(const QString &name = QString());
 
-// Whether a live process holds the lock file `lockFile`. Only reads the file, so no other
-// launch can see a lock this check made. A file without content counts as held for a
-// moment, while its maker writes it. On Linux, a process that runs another program under
-// the ID the file names does not count. Every folder instancePaths() chooses belongs to
-// this machine, so the host the file names is not checked.
+// Whether a live process holds the lock file `lockFile`, which lies in one of this user's
+// private folders. Only reads the file, so no other launch can see a lock this check made.
+// A file without content counts as held for a moment, while its maker writes it (see
+// lockLeftUnwritten). A lock from another machine ID or an earlier boot is not held, and
+// neither is one whose process ID now belongs to another user, root or the kernel, as only
+// this user's processes write there. On Linux, a process of this user that now runs another
+// program under that ID does not count either. One whose program cannot be read, as a
+// process whose last thread still waits in a file system call, does.
 bool lockHeldByLiveProcess(const QString &lockFile);
 
 // For tests only. Replaces /run/user as the folder that holds the users' runtime folders,

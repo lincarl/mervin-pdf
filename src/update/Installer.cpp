@@ -175,6 +175,8 @@ bool relaunchAfterExit(const QString &exe, const QStringList &paths)
 #ifdef Q_OS_LINUX
     QProcess sh;
     sh.setProgram(QStringLiteral("/bin/sh"));
+    // The program, its arguments and any carried paths reach the script as positional
+    // parameters. They must stay in the quoted "$@", so the shell never parses them.
     sh.setArguments(QStringList{QStringLiteral("-c"),
                                 QStringLiteral("pid=$1; shift; while kill -0 \"$pid\" 2>/dev/null; do "
                                                "sleep 0.2; done; exec \"$@\""),

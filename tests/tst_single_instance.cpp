@@ -129,6 +129,8 @@ private slots:
     void launchThatGaveUpIsNotOpened();
     void peerCheck_data();
     void peerCheck();
+    void lockLeftWithoutContent_data();
+    void lockLeftWithoutContent();
 #ifdef Q_OS_UNIX
     void filesLiveInRuntimeDir();
     void launchesWithAndWithoutXdgRuntimeDirShareOnePrimary();
@@ -643,6 +645,35 @@ void TstSingleInstance::peerCheck()
     QCOMPARE(opensWithin(server, 200).size(), 0);
 }
 
+void TstSingleInstance::lockLeftWithoutContent_data()
+{
+    QTest::addColumn<bool>("old");
+    QTest::newRow("left by a process that ended") << true;
+    QTest::newRow("being written") << false;
+}
+
+// A process that ended between making its lock file and writing it leaves the file empty.
+// QLockFile never counts that as stale, so start() replaces it itself once it is older than
+// QLockFile needs to write it. One that is being written still holds the lock.
+void TstSingleInstance::lockLeftWithoutContent()
+{
+    QFETCH(bool, old);
+    const QString lockFile = mervin::ipc::instancePaths(kTestPipe).lockFile;
+    {
+        QFile file(lockFile);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        if (old)
+            QVERIFY(file.setFileTime(QDateTime::currentDateTime().addSecs(-60),
+                                     QFileDevice::FileModificationTime));
+    }
+    const auto removeLock = qScopeGuard([&] { QFile::remove(lockFile); });
+    QCOMPARE(mervin::ipc::lockLeftUnwritten(lockFile), old);
+    SingleInstanceServer server;
+    QCOMPARE(server.start(kTestPipe), old ? Start::Started : Start::Running);
+    if (old)
+        QVERIFY(QFileInfo(lockFile).size() > 0); // this process's lock now
+}
+
 #ifdef Q_OS_UNIX
 namespace {
 // Whether `dir` is this user's folder with mode 0700.
@@ -764,23 +795,22 @@ void TstSingleInstance::primaryInAnotherFolderIsFound()
     QCOMPARE(primary.takeOpens().size(), 1);
 }
 
-// Before it probes other folders, a launch checks whether a live process holds this
-// group's lock. It only reads the lock file, so another launch never sees a lock that this
-// check made. A lock file left by a process that has exited stays as it is, for start() to
-// replace.
 void TstSingleInstance::launchWaitsForQuittingPrimaryInAnotherFolder_data()
 {
-    QTest::addColumn<bool>("released");
-    QTest::newRow("the other copy exits") << true;
-    QTest::newRow("the other copy does not exit") << false;
+    QTest::addColumn<QString>("other");
+    QTest::newRow("the other copy exits") << QStringLiteral("exits");
+    QTest::newRow("the other copy does not exit") << QStringLiteral("stays");
+    QTest::newRow("a lock left with an ID another user has now") << QStringLiteral("leftover");
 }
 
 // A copy that holds the lock in another folder and has closed its endpoint is in its exit
 // wait, or starting. A launch whose own folder's lock is free waits for it as for a holder
-// of that lock, and becomes the primary only once it has let go.
+// of that lock, and becomes the primary only once it has let go. A lock left there by a
+// process that ended, whose ID another user's process has now, does not hold it back.
 void TstSingleInstance::launchWaitsForQuittingPrimaryInAnotherFolder()
 {
-    QFETCH(bool, released);
+    QFETCH(QString, other);
+    const bool released = other == QLatin1String("exits");
     QTemporaryDir cache(kShortTemp);
     QVERIFY(cache.isValid());
     const EnvOverride cacheHome("XDG_CACHE_HOME", QFile::encodeName(cache.path()));
@@ -791,17 +821,36 @@ void TstSingleInstance::launchWaitsForQuittingPrimaryInAnotherFolder()
     }
     QVERIFY(otherLock.startsWith(cache.path() + QLatin1Char('/')));
     QLockFile quitting(otherLock);
-    QVERIFY(quitting.tryLock(0));
+    if (other == QLatin1String("leftover")) {
+        if (QCoreApplication::applicationPid() == 1)
+            QSKIP("this test runs as process 1");
+        QFile file(otherLock);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QVERIFY(file.write("1\nMervinPDF\n" + QSysInfo::machineHostName().toUtf8() + '\n'
+                           + QSysInfo::machineUniqueId() + '\n' + QSysInfo::bootUniqueId()
+                           + '\n')
+                > 0);
+    } else {
+        QVERIFY(quitting.tryLock(0));
+    }
+    const auto removeLeftover = qScopeGuard([&] {
+        if (other == QLatin1String("leftover"))
+            QFile::remove(otherLock);
+    });
 
     std::atomic<bool> unlocked = false;
     std::optional<Launch> result;
     bool afterRelease = false;
     bool listening = false;
-    const int waitMs = released ? 5000 : 600;
+    qint64 elapsed = -1;
+    const int waitMs = other == QLatin1String("stays") ? 600 : 5000;
     const std::unique_ptr<QThread> launch(QThread::create([&] {
         SingleInstanceServer next;
+        QElapsedTimer timer;
+        timer.start();
         result = mervin::ipc::claimOrHandOff(next, Message::open({QStringLiteral("c.pdf")}),
                                              waitMs, kTestPipe);
+        elapsed = timer.elapsed();
         afterRelease = unlocked;
         listening = next.isListening();
     }));
@@ -812,7 +861,11 @@ void TstSingleInstance::launchWaitsForQuittingPrimaryInAnotherFolder()
         quitting.unlock(); // the exit wait is over
     }
     QVERIFY(launch->wait(10000));
-    if (released) {
+    if (other == QLatin1String("leftover")) {
+        QCOMPARE(result, std::optional(Launch::Primary));
+        QVERIFY2(elapsed < 2000, qPrintable(QString::number(elapsed)));
+        QVERIFY(listening);
+    } else if (released) {
         QCOMPARE(result, std::optional(Launch::Primary));
         QVERIFY2(afterRelease, "became the primary while the other copy still held its lock");
         QVERIFY(listening);
@@ -822,6 +875,10 @@ void TstSingleInstance::launchWaitsForQuittingPrimaryInAnotherFolder()
     }
 }
 
+// Before it probes other folders, a launch checks whether a live process holds this
+// group's lock. It only reads the lock file, so another launch never sees a lock that this
+// check made. A lock file left by a process that has exited stays as it is, for start() to
+// replace.
 void TstSingleInstance::lockCheckOnlyReadsTheLockFile()
 {
     QTemporaryDir cache(kShortTemp);
@@ -866,14 +923,18 @@ void TstSingleInstance::lockHolder_data()
     QTest::newRow("no lock file") << QStringLiteral("none") << false;
     QTest::newRow("this process") << QStringLiteral("self") << true;
     QTest::newRow("a process that ended") << QStringLiteral("ended") << false;
+    QTest::newRow("a process of another user") << QStringLiteral("process 1") << false;
 #  ifdef Q_OS_LINUX
     QTest::newRow("another program under that ID") << QStringLiteral("other program") << false;
 #  endif
+    QTest::newRow("an earlier boot") << QStringLiteral("earlier boot") << false;
+    QTest::newRow("another machine") << QStringLiteral("other machine") << false;
     QTest::newRow("being written") << QStringLiteral("empty now") << true;
     QTest::newRow("left without content") << QStringLiteral("empty old") << false;
 }
 
-// When a lock file counts as held by a live process, read without taking the lock.
+// When a lock file in one of this user's folders counts as held by a live process, read
+// without taking the lock. The files are written as QLockFile writes them.
 void TstSingleInstance::lockHolder()
 {
     QFETCH(QString, holder);
@@ -882,11 +943,14 @@ void TstSingleInstance::lockHolder()
     QVERIFY(dir.isValid());
     const QString lockFile = QDir(dir.path()).filePath(QStringLiteral("group.lock"));
     const QString self = QFileInfo(QCoreApplication::applicationFilePath()).fileName();
-    const auto writeLock = [&](qint64 pid, const QString &app) {
+    const auto writeLock = [&](qint64 pid, const QString &app,
+                               const QByteArray &machine = QSysInfo::machineUniqueId(),
+                               const QByteArray &boot = QSysInfo::bootUniqueId()) {
         QFile file(lockFile);
         return file.open(QIODevice::WriteOnly)
             && file.write(QByteArray::number(pid) + '\n' + app.toUtf8() + '\n'
-                          + QSysInfo::machineHostName().toUtf8() + '\n')
+                          + QSysInfo::machineHostName().toUtf8() + '\n' + machine + '\n'
+                          + boot + '\n')
             > 0;
     };
     QProcess other;
@@ -902,6 +966,20 @@ void TstSingleInstance::lockHolder()
         const qint64 pid = other.processId();
         QVERIFY(other.waitForFinished());
         QVERIFY(writeLock(pid, self));
+    } else if (holder == QLatin1String("process 1")) {
+        // The init process, root's, or this test's own in a container where it is process 1.
+        if (QCoreApplication::applicationPid() == 1)
+            QSKIP("this test runs as process 1");
+        QVERIFY(writeLock(1, self));
+    } else if (holder == QLatin1String("earlier boot")) {
+        if (QSysInfo::bootUniqueId().isEmpty())
+            QSKIP("this system has no boot ID");
+        QVERIFY(writeLock(QCoreApplication::applicationPid(), self, QSysInfo::machineUniqueId(),
+                          "00000000-0000-0000-0000-000000000000"));
+    } else if (holder == QLatin1String("other machine")) {
+        if (QSysInfo::machineUniqueId().isEmpty())
+            QSKIP("this system has no machine ID");
+        QVERIFY(writeLock(QCoreApplication::applicationPid(), self, "another-machine"));
     } else if (holder == QLatin1String("other program")) {
         other.start(QStringLiteral("sleep"), {QStringLiteral("30")});
         QVERIFY(other.waitForStarted());

@@ -27,10 +27,12 @@ bool requested();
 QString program(const QString &appImage, const QString &appDir, const QString &applicationFile);
 
 // Starts the new copy with this run's --profile, and `paths` for it to open. They are
-// absolute, so the copy cannot read one as an option. Each is a separate argument of the
-// process, which goes through no shell or cmd. Linux waits for this process to exit
-// first; Windows starts it at once, so call this after the instance server is gone.
-// False if it could not be started.
+// absolute, so the copy cannot read one as an option. On Windows QProcess builds the
+// command line itself and no cmd runs. On Linux the helper shell that waits for this
+// process gets them as positional parameters and passes them on with a quoted "$@", so
+// it never parses them. Linux waits for this process to exit first; Windows starts it
+// at once, so call this after the instance server is gone. False if it could not be
+// started.
 bool start(const QStringList &paths = {});
 
 // Adds a launch that this copy acknowledged but will not open, because it quits first.
@@ -63,9 +65,10 @@ constexpr qint64 kCarriedMaxAgeMs = 10 * 60 * 1000;
 constexpr qint64 kCarriedMaxAheadMs = 60 * 1000;
 
 // Reads and removes the launches a previous primary left in `file`. Call it while
-// holding the lock that guards `file`. Empty if there are none, if the file cannot be
-// read, or if it is older than kCarriedMaxAgeMs or dated more than kCarriedMaxAheadMs
-// ahead.
+// holding the lock that guards `file`, or after checking that no live process holds
+// that lock (see SingleInstanceServer::carriedFiles). Empty if there are none, if the
+// file cannot be read, or if it is older than kCarriedMaxAgeMs or dated more than
+// kCarriedMaxAheadMs ahead.
 QList<ipc::Message> takeCarried(const QString &file);
 
 // Starts the next copy if one is due. It is due if a restart was asked for and `restart`

@@ -4,18 +4,17 @@
 #include "platform/PlatformIntegration.h"
 
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
+#include <QFileInfo>
+#include <QLockFile>
 
 #ifdef Q_OS_UNIX
-#  include <QDateTime>
 #  include <QFile>
-#  include <QFileInfo>
-#  include <QLockFile>
 #  include <QStandardPaths>
 #  include <QSysInfo>
 
 #  include <algorithm>
-#  include <cerrno>
 #  include <csignal>
 
 #  include <sys/stat.h>
@@ -26,6 +25,9 @@
 namespace mervin::ipc {
 
 namespace {
+
+// How long a lock file may be without content while its maker writes it.
+constexpr qint64 kUnwrittenLockMs = 2000;
 
 // A short, stable, filesystem/pipe-safe token for `user`.
 QString tokenOf(const QByteArray &user)
@@ -156,9 +158,6 @@ InstancePaths pathsIn(const QString &dir, const QString &group)
             folder.filePath(group + QStringLiteral(".carried"))};
 }
 
-// How long a lock file may be without content while its maker writes it.
-constexpr qint64 kUnwrittenLockMs = 2000;
-
 // This user's folder in the temp folder.
 QString tempDirPath()
 {
@@ -232,24 +231,36 @@ QList<InstancePaths> otherInstancePaths(const QString &name)
 
 bool lockHeldByLiveProcess(const QString &lockFile)
 {
-    const QFileInfo file(lockFile);
-    if (!file.exists())
+    QFile file(lockFile);
+    if (!file.open(QIODevice::ReadOnly))
         return false;
-    qint64 pid = 0;
-    QString host;
-    QString app;
-    if (!QLockFile(lockFile).getLockInfo(&pid, &host, &app) || pid <= 0) {
-        // QLockFile writes the file right after it made it. One still without content
-        // after that is left from a process that ended in between.
-        const qint64 age = file.lastModified().msecsTo(QDateTime::currentDateTime());
-        return age >= -kUnwrittenLockMs && age < kUnwrittenLockMs;
-    }
-    if (::kill(pid_t(pid), 0) != 0 && errno != EPERM)
+    // QLockFile writes the process ID, the program's file name, the host name, the machine
+    // ID and the boot ID, one per line.
+    const QList<QByteArray> lines = file.read(4096).split('\n');
+    file.close();
+    bool numeric = false;
+    const qint64 pid = lines.value(0).toLongLong(&numeric);
+    if (!numeric || pid <= 0)
+        return !lockLeftUnwritten(lockFile);
+    // Each folder instancePaths() chooses belongs to this machine. A lock made under another
+    // machine ID, or in an earlier boot of this machine, has no live holder here.
+    const QByteArray machine = QSysInfo::machineUniqueId();
+    if (!lines.value(3).isEmpty() && !machine.isEmpty() && lines.value(3) != machine)
+        return false;
+    const QByteArray boot = QSysInfo::bootUniqueId();
+    if (!lines.value(4).isEmpty() && !boot.isEmpty() && lines.value(4) != boot)
+        return false;
+    // Only this user's processes make locks in this user's private folders, and this user can
+    // signal each of them. Any failure, EPERM included, means that the ID now belongs to
+    // another user, root or the kernel, and the process that made the lock has ended.
+    if (::kill(pid_t(pid), 0) != 0)
         return false;
 #  ifdef Q_OS_LINUX
-    // QLockFile records the program's file name. As QLockFile does, a process that now
-    // runs another program under that ID does not hold the lock. A program file that was
-    // replaced while it ran, as by an update, still counts as the same.
+    // A process of this user that now runs another program under that ID does not hold the
+    // lock. One whose program cannot be read still does, as a process whose last thread
+    // still waits in a file system call after the rest of it ended. A program file that was
+    // replaced while it ran, as by an update, counts as the same.
+    const QString app = QString::fromUtf8(lines.value(1));
     QString exe = QFileInfo(QStringLiteral("/proc/%1/exe").arg(pid)).symLinkTarget();
     exe.remove(QStringLiteral(" (deleted)"));
     if (!exe.isEmpty() && !app.isEmpty() && QFileInfo(exe).fileName() != app)
@@ -263,6 +274,20 @@ void setUserRuntimeRootForTests(const QString &root)
     g_userRuntimeRoot = root.isEmpty() ? QStringLiteral("/run/user") : root;
 }
 #endif
+
+bool lockLeftUnwritten(const QString &lockFile)
+{
+    const QFileInfo file(lockFile);
+    qint64 pid = 0;
+    QString host;
+    QString app;
+    if (!file.exists() || (QLockFile(lockFile).getLockInfo(&pid, &host, &app) && pid > 0))
+        return false;
+    // QLockFile writes the file right after it made it. One still without content after
+    // that was left by a process that ended in between.
+    const qint64 age = file.lastModified().msecsTo(QDateTime::currentDateTime());
+    return age < -kUnwrittenLockMs || age >= kUnwrittenLockMs;
+}
 
 #ifdef Q_OS_LINUX
 QString legacyEndpoint(const QString &name)

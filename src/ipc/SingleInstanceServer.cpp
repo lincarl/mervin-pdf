@@ -32,6 +32,21 @@ std::vector<std::unique_ptr<QLockFile>> &locksKeptUntilExit()
     return *locks;
 }
 
+// Whether the lock file `path`, which tryLock() found taken, has no live holder after all.
+// QLockFile cannot tell that of a file without content, as a process leaves one that ended
+// between making and writing it, and with a stale lock time of 0 it never counts it as
+// stale. On Unix any lock without a live holder counts (see lockHeldByLiveProcess). The
+// caller removes such a file once, with removeStaleLockFile(), which leaves a file that a
+// live QLockFile holds, through its native lock on Unix and its open handle on Windows.
+bool leftBehind(const QString &path)
+{
+#ifdef Q_OS_UNIX
+    return !lockHeldByLiveProcess(path);
+#else
+    return lockLeftUnwritten(path);
+#endif
+}
+
 #ifdef Q_OS_UNIX
 // The XDG base directory spec lets the system remove files from $XDG_RUNTIME_DIR
 // that nothing has opened for 6 hours, unless their sticky bit is set.
@@ -177,7 +192,11 @@ SingleInstanceServer::Start SingleInstanceServer::start(const QString &serverNam
     // A crashed holder's lock is reclaimed via stale detection.
     lock_ = std::make_unique<QLockFile>(paths.lockFile);
     lock_->setStaleLockTime(0);
-    if (!lock_->tryLock(0)) {
+    bool locked = lock_->tryLock(0);
+    if (!locked && lock_->error() == QLockFile::LockFailedError && leftBehind(paths.lockFile)
+        && lock_->removeStaleLockFile())
+        locked = lock_->tryLock(0);
+    if (!locked) {
         const bool held = lock_->error() == QLockFile::LockFailedError;
         lock_.reset();
         if (held)

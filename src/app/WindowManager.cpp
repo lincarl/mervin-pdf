@@ -352,8 +352,9 @@ void WindowManager::adoptInstanceServer(std::unique_ptr<ipc::SingleInstanceServe
     connect(instanceServer_.get(), &ipc::SingleInstanceServer::opensReceived, this,
             &WindowManager::takeInstanceOpens);
     // Launches a primary acknowledged and did not open before it quit go first. This copy
-    // holds the lock now, as the file requires. A primary that ran in another folder left
-    // them there.
+    // holds its own lock now, as its own carry file requires. A primary that ran in another
+    // folder left its launches there. Those files are taken only while no live process
+    // holds that folder's lock.
     for (const QString &file : instanceServer_->carriedFiles()) {
         const QList<ipc::Message> carried = relaunch::takeCarried(file);
         instanceOpens_ += carried;
