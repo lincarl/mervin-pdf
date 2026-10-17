@@ -415,7 +415,6 @@ private:
     bool shuttingDown_ = false;
     bool quitting_ = false;
     bool checkingActivity_ = false;
-    bool cacheTrimmed_ = false;
     int unloadInactiveMinutes_ = 30;
     bool closeToTray_ = true;
     QElapsedTimer activityClock_;

@@ -733,6 +733,29 @@ the base context's memory before the parts it shares with its clones, so the bas
 must be the last of them dropped. `RenderEngine::opener()` clones a context on the
 UI thread for an open that runs later on another thread.
 
+All these contexts share one MuPDF resource store. MuPDF 1.28 reads a store entry
+it has found after it releases the store lock, so a call that frees an entry another
+thread has just found hands that thread freed memory. Eviction by size takes only
+entries that nothing else holds. MuPDF runs it when the store is full, and
+`fz_shrink_store` runs it on request. A lookup takes its reference before it releases
+the lock, so eviction by size never frees an entry another thread has found.
+`fz_empty_store`, `fz_filter_store` and `fz_remove_item` free entries whatever their
+references, and the application never calls them.
+
+A closed document can leave decoded images and colour links in the store. A PDF
+purges the glyph cache when it closes, but other formats do not, and a render that
+finishes after the close adds glyphs again, each of which keeps its font. While no
+document is loaded, each activity check (`WindowManager::checkDocumentActivity`,
+which runs every second) calls `RenderEngine::trimCache()`. The trim shrinks the store
+with `fz_shrink_store`, lowering the target in steps of 1% of the store's limit so
+that freeing thousands of entries takes linear time, and purges the glyph cache, which
+hands out glyphs under its own lock. Both are safe while workers render. MuPDF itself
+still frees entries in use when a PDF closes. It filters the document's pattern tiles
+out of the store while that document's display lists may still rasterize, and it
+filters out entries with direct object keys that another document may have found,
+because MuPDF matches those keys across documents. Comparing such keys can also read
+the closing document's cross-reference index after MuPDF has freed it.
+
 A single MuPDF document handle is not safe for concurrent access. `Document`
 therefore provides an access mutex used while loading pages, parsing content,
 extracting text, reading geometry, or changing PDF objects. Workers build display

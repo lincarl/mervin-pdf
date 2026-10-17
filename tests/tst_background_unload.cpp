@@ -27,14 +27,17 @@
 #include <QTimer>
 #include <QtTest>
 
+#include <mupdf/fitz.h>
+
 using namespace mervin;
 
 namespace {
 /// Creates an isolated source fixture for checkpoint and replacement checks.
-QString copy(QTemporaryDir &files, const QString &name)
+QString copy(QTemporaryDir &files, const QString &name,
+             const QString &source = QStringLiteral(MERVIN_FIXTURE_PDF))
 {
     const QString path = files.filePath(name);
-    return QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path) ? path : QString();
+    return QFile::copy(source, path) ? path : QString();
 }
 
 /// Reads fixture bytes for original and destination preservation checks.
@@ -55,6 +58,84 @@ QStringList recoveryEntries()
 {
     return QDir(QDir(ConfigPaths::configDirPath()).filePath(QStringLiteral("recovery")))
         .entryList(QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot);
+}
+
+/// Whether MuPDF's shared resource store lists an entry whose key contains `key`, as
+/// MuPDF's store dump describes it, for example "(image " for a decoded image. MuPDF
+/// formats each key after it releases the store lock, so call this only while no other
+/// thread trims or filters the store. Reaps wait until the dump has finished.
+bool storeLists(fz_context *base, const char *key)
+{
+    fz_buffer *buffer = nullptr;
+    fz_output *out = nullptr;
+    bool found = false;
+    fz_var(buffer);
+    fz_var(out);
+    fz_defer_reap_start(base);
+    fz_try(base) {
+        // MuPDF writes the dump while holding its allocation lock, so the buffer must
+        // not need to grow. A few store entries take well under a kilobyte.
+        buffer = fz_new_buffer(base, 1 << 16);
+        out = fz_new_output_with_buffer(base, buffer);
+        fz_debug_store(base, out);
+        fz_close_output(base, out);
+        unsigned char *data = nullptr;
+        const size_t size = fz_buffer_storage(base, buffer, &data);
+        found = QByteArray::fromRawData(reinterpret_cast<const char *>(data),
+                                        static_cast<qsizetype>(size))
+                    .contains(key);
+    }
+    fz_always(base) {
+        fz_drop_output(base, out);
+        fz_drop_buffer(base, buffer);
+        fz_defer_reap_end(base);
+    }
+    fz_catch(base) {
+        found = false;
+    }
+    return found;
+}
+
+/// A value the test puts in MuPDF's shared store, keyed by its own address. Give it
+/// static storage, since the store can outlive the test that filled it.
+struct StoreProbe
+{
+    fz_storable storable;
+};
+
+/// Leaves the probe alone, since the test owns its storage.
+void dropProbe(fz_context *, fz_storable *) {}
+
+/// Store type for StoreProbe entries, hashed by address as MuPDF hashes pointer keys.
+const fz_store_type probeType = {
+    "test probe",
+    [](fz_context *, fz_store_hash *hash, void *key) {
+        hash->u.pi.ptr = key;
+        return 1;
+    },
+    [](fz_context *, void *key) { return key; },
+    [](fz_context *, void *) {},
+    [](fz_context *, void *a, void *b) { return a == b ? 0 : 1; },
+    [](fz_context *, char *buf, size_t size, void *) { fz_strlcpy(buf, "(test probe)", size); },
+    nullptr,
+};
+
+/// Puts `probe` in the shared store. A held probe keeps the test's reference as well as
+/// the store's, as a thread that has just found an entry holds it.
+void storeProbe(fz_context *base, StoreProbe &probe, bool held)
+{
+    FZ_INIT_STORABLE(&probe, 1, dropProbe);
+    fz_store_item(base, &probe, &probe, sizeof probe, &probeType);
+    if (!held)
+        fz_drop_storable(base, &probe.storable);
+}
+
+/// Whether the shared store still holds `probe`.
+bool storeHolds(fz_context *base, StoreProbe &probe)
+{
+    void *found = fz_find_item(base, dropProbe, &probe, &probeType);
+    fz_drop_storable(base, static_cast<fz_storable *>(found));
+    return found == &probe;
 }
 }
 
@@ -598,6 +679,69 @@ private slots:
         QCOMPARE(page->viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
         QCOMPARE(page->viewer()->annotModel()->pageAnnots(0).front().contents,
                  QStringLiteral("Retained edit"));
+    }
+
+    /// Once every document has unloaded, trims the entries in MuPDF's shared store that
+    /// nothing else holds and keeps the held ones. MuPDF reads a store entry it has found
+    /// after it releases the store lock, so a trim that freed held entries gave a render
+    /// worker freed memory, and the process crashed or corrupted its heap.
+    void unloadingEveryDocumentTrimsOnlyUnheldStoreEntries()
+    {
+        QTemporaryDir files;
+        const QString path = copy(files, QStringLiteral("unloaded.pdf"));
+        QVERIFY(!path.isEmpty());
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        QVERIFY(testing::openAndWait(*window, path));
+        auto *tab = window->findChild<TabPage *>();
+        QVERIFY(tab);
+        fz_context *base = manager.engine()->baseContext().get();
+        static StoreProbe held;
+        static StoreProbe unheld;
+        storeProbe(base, held, true);
+        storeProbe(base, unheld, false);
+        const auto release = qScopeGuard([base] { fz_drop_storable(base, &held.storable); });
+        manager.checkDocumentActivity();
+        QVERIFY(storeHolds(base, unheld));
+
+        window->hide();
+        QVERIFY(testing::suspendAndWait(*tab));
+        QVERIFY(!window->hasResidentDocuments());
+        manager.checkDocumentActivity();
+        QVERIFY(storeHolds(base, held));
+        QVERIFY(!storeHolds(base, unheld));
+    }
+
+    /// Frees the decoded images that an unloaded document leaves in MuPDF's shared
+    /// store. MuPDF keeps them after the document closes, so a scanned document kept its
+    /// page images in memory while its window sat in the tray.
+    void unloadingEveryDocumentFreesItsDecodedImages()
+    {
+        QTemporaryDir files;
+        const QString path =
+            copy(files, QStringLiteral("scan.pdf"), QStringLiteral(MERVIN_SCAN_PDF));
+        QVERIFY(!path.isEmpty());
+        WindowManager manager;
+        QSignalSpy rendered(manager.engine(), &RenderEngine::resultReady);
+        MainWindow *window = manager.createWindow();
+        QVERIFY(testing::openAndWait(*window, path));
+        auto *tab = window->findChild<TabPage *>();
+        QVERIFY(tab);
+        fz_context *base = manager.engine()->baseContext().get();
+        // Unload only after the render has finished. MuPDF frees the image itself when a
+        // display list outlives the close, which would hide a missing trim, and the
+        // worker drops its list before it delivers the result.
+        QTRY_VERIFY(!rendered.isEmpty());
+        QVERIFY(storeLists(base, "(image "));
+
+        window->hide();
+        QVERIFY(testing::suspendAndWait(*tab));
+        QVERIFY(!window->hasResidentDocuments());
+        QTRY_COMPARE(Document::closing(), 0);
+        // The fixture's one render was delivered before the unload, so no worker holds a
+        // display list, and one check after the close frees the images.
+        manager.checkDocumentActivity();
+        QVERIFY(!storeLists(base, "(image "));
     }
 };
 

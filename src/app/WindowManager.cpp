@@ -1453,14 +1453,12 @@ void WindowManager::checkDocumentActivity()
         window->updateDocumentActivity(now, unloadInactiveMinutes_);
         resident = window->hasResidentDocuments() || resident;
     }
-    if (resident)
-        cacheTrimmed_ = false;
-    else if (!cacheTrimmed_) {
+    // Closed documents leave decoded images, colour links and glyph-cache fonts in
+    // MuPDF's shared caches, and a render that finishes after its document closed adds
+    // more. While no document is loaded, this check trims them on every call, which
+    // takes microseconds when there is nothing to free.
+    if (!resident)
         engine_->trimCache();
-        // Unloaded documents close on background threads, and what MuPDF cached
-        // for one goes at the first trim after it has closed.
-        cacheTrimmed_ = Document::closing() == 0;
-    }
 }
 
 void WindowManager::notifySuspensionFailure(const QString &message)

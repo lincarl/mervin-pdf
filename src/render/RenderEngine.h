@@ -16,6 +16,12 @@ class DocumentOpener;
 // Owns the worker pool and the base MuPDF context, which lives on while any context
 // cloned from it does (see baseContext()). Each worker uses a cloned context; mutex
 // callbacks protect shared MuPDF caches. Contexts themselves are not thread-safe.
+// All contexts share one MuPDF resource store. MuPDF 1.28 reads a store entry it has
+// found after it releases the store lock (fz_find_item, and fz_store_item when the
+// entry already exists), so freeing an entry that another thread has just found hands
+// that thread freed memory. fz_empty_store, fz_filter_store and fz_remove_item free
+// entries whatever their reference counts, so never call them on the shared store.
+// trimCache() uses only calls that cannot free an entry in use.
 class RenderEngine : public QObject
 {
     Q_OBJECT
@@ -55,7 +61,13 @@ public:
 
     void cancelRequests(quint64 requester);
 
-    // Release unused shared MuPDF resources after document contents have unloaded.
+    // Frees the shared MuPDF resources that nothing uses, such as the decoded images,
+    // colour links and glyph-cache fonts that closed documents leave behind. This is
+    // safe while workers render. fz_shrink_store evicts only store entries that nothing
+    // else holds, and a lookup takes its reference before it releases the store lock.
+    // fz_purge_glyph_cache is safe because a glyph lookup takes its reference under the
+    // glyph cache's own lock. Call it on the engine's thread when no document is
+    // loaded, since it also evicts what loaded documents would reuse.
     void trimCache();
 
     // Stops the workers without waiting for them (idempotent). A worker stuck reading
