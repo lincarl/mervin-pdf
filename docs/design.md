@@ -920,24 +920,24 @@ that the result will not be encrypted. The window opens an Extract or Delete res
 or a one-file merge (`MergePlan::resultPassword`), with the password that read its
 source.
 
-Extract, Split and Merge build each output from an empty PDF with
-`QPDFPageDocumentHelper::addPage`, which copies a page but not its form fields.
-`FormCopy` records each copied page, and before writing, `FormCopy::finish` gives the
-pages private annotations and adds their fields to the output's `/AcroForm`, renaming a
-field whose name is taken. It calls `QPDFAcroFormDocumentHelper::transformAnnotations`,
-the function behind the `fixCopiedAnnotations` that qpdf's own page selection calls per
-page, once for all pages of a source. Each call copies the whole tree of every field it
-meets, so per page a 200-page form with one top-level field took minutes and gigabytes,
-and a field shown on two pages became two fields. A page copied again goes in a later
-pass and gets fields of its own. If a pass throws, as qpdf before 12.4 can on damaged
-annotations, its pages are copied one at a time with `fixCopiedAnnotations`, and a page
-that still fails stays as `addPage` copied it. `FormCopy` then points each annotation's
-`/P` at its new page, because `transformAnnotations` leaves it on the page that `addPage`
-copied first, which is another page when a page is copied again, and
-`fixCopiedAnnotations` does the same before qpdf 12.3. A copied field tree comes along
-whole, so `finish` then removes the fields that have no widget on an output page, keeping
-a parent that a copied widget shares. The source helpers are built with the
-`QPDFAcroFormDocumentHelper` constructor, as `get` needs qpdf 12.3.
+They copy each page into that output with `QPDFPageDocumentHelper::addPage`, which copies
+a page but not its form fields. `FormCopy` records each copied page, and before writing,
+`FormCopy::finish` gives the pages private annotations and adds their fields to the
+output's `/AcroForm`, renaming a field whose name is taken. It calls
+`QPDFAcroFormDocumentHelper::transformAnnotations`, the function behind the
+`fixCopiedAnnotations` that qpdf's own page selection calls per page, once for all pages
+of a source. Each call copies the whole tree of every field it meets, so per page a
+200-page form with one top-level field took minutes and gigabytes, and a field shown on
+two pages became two fields. A page copied again goes in a later pass and gets fields of
+its own. If a pass throws, as qpdf before 12.4 can on damaged annotations, its pages are
+copied one at a time with `fixCopiedAnnotations`, and a page that still fails stays as
+`addPage` copied it. `FormCopy` then points each annotation's `/P` at its new page,
+because `transformAnnotations` leaves it on the page that `addPage` copied first, which
+is another page when a page is copied again, and `fixCopiedAnnotations` does the same
+before qpdf 12.3. A copied field tree comes along whole, so `finish` then removes the
+fields that have no widget on an output page, keeping a parent that a copied widget
+shares. The source helpers are built with the `QPDFAcroFormDocumentHelper` constructor,
+as `get` needs qpdf 12.3.
 
 `transformAnnotations` first copies each field tree whole with `copyForeignObject` and
 then copies that copy field by field, so the actions of the copied annotations, such as a
@@ -969,15 +969,14 @@ items left below them, relinking their siblings and correcting `/Count`. A direc
 which ISO 32000 does not allow but viewers follow, is made indirect first, and an outline
 that reaches an item twice stays as it was. It removes the named destinations of deleted
 pages from `/Dests` and the `/Names /Dests` tree, after the outline, which looks some
-bookmarks up through them. It removes
-the structure elements whose content is only on deleted pages, with their `/ParentTree`
-and `/IDTree` entries, and the deleted pages' content items from the elements that
-stay. It removes the form fields whose widgets are all on deleted pages from `/Fields`,
-`/CO` and their parents' `/Kids`, and drops `/XFA` when it removes one. Finally it
-replaces the deleted pages, their annotations that no kept page lists and the removed
-fields with null (`QPDF::replaceObject`), so links and other references cannot keep
-their content in the output. A reply on a kept page keeps its `/IRT`, which then names
-null, so it answers nothing. A damaged outline or structure
+bookmarks up through them. It removes the structure elements whose content is only on
+deleted pages, with their `/ParentTree` and `/IDTree` entries, and the deleted pages'
+content items from the elements that stay. It removes the form fields whose widgets are
+all on deleted pages from `/Fields`, `/CO` and their parents' `/Kids`, and drops `/XFA`
+when it removes one. Finally it replaces the deleted pages, their annotations that no
+kept page lists and the removed fields with null (`QPDF::replaceObject`), so links and
+other references cannot keep their content in the output. A reply on a kept page keeps
+its `/IRT`, which then names null, so it answers nothing. A damaged outline or structure
 tree is left as it was.
 
 Pages can share one resources dictionary, or inherit it from `/Pages`, and then list the
@@ -986,12 +985,12 @@ dictionary. `sharesResources` makes the test of qpdf's own page selection
 (`QPDFJob::shouldRemoveUnreferencedResources`), a shared resources or `/XObject`
 dictionary or resources on a `/Pages` node, and adds one case: an indirect XObject or font
 that the resources of more than one page or form XObject list. That also holds for files
-that share a font or a logo, where it costs one content read per copied or kept page, and
-the walk itself visits each page and resource entry once. Only then does `trimResources` call
-`QPDFPageObjectHelper::removeUnreferencedResources`, which reads the page's content and
-gives the page its own resources without the ones it does not use. Delete Pages trims
-the kept pages after the cleanup, and `ResourceTrim` trims each source page before
-`addPage` first copies it for Extract, Split and Merge. Otherwise a deleted page's image
+that share a font or a logo, where it costs one content read per copied or kept page,
+and the walk itself visits each page and resource entry once. Only then does
+`trimResources` call `QPDFPageObjectHelper::removeUnreferencedResources`, which reads
+the page's content and gives the page its own resources without the ones it does not
+use. Delete Pages trims the kept pages after the cleanup, and `ResourceTrim` trims each
+source page before `addPage` first copies it for Extract, Split and Merge. Otherwise a deleted page's image
 would stay in the copy, and a copied page would bring the images of pages left out. The
 test runs before `removePage` or `addPage`, which move inherited resources onto the pages.
 

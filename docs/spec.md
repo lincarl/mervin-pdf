@@ -232,8 +232,8 @@ of its own, and a copied field whose name the new file already has is renamed, f
 example to `name+1`, so the copies of a repeated page and fields of the same name in
 merged files fill in separately. A button that resets, submits or hides copied fields
 acts on the copies in the new file, whether it names them by reference or by their
-names. The new file does not keep the form's calculation order or
-XFA data, so calculated fields no longer update in viewers that use them.
+names. The new file does not keep the form's calculation order or XFA data, so
+calculated fields no longer update in viewers that use them.
 
 Merge opens at once and reads each input's page count in the background. Pending
 rows show Reading and keep Merge disabled. The footer names the first row and file
@@ -275,19 +275,19 @@ is refused before anything is written, with the reason on the error line. The wi
 writes a copy, by default `<name>-edited.pdf` beside the document, which keeps the
 document's structure and encryption; the original file is never changed. The copy
 does not contain the deleted pages' content, images, annotations or form fields, nor
-the bookmarks, destination names and tagged structure elements that lead only to them. Links and other
-references to a deleted page no longer go anywhere. A comment that replies to a comment
-on a deleted page stays, as a comment of its own. A form that loses a field also
-loses its XFA data, which holds every field's value. Extract and Delete share one
-remembered Open when done choice.
+the bookmarks, destination names and tagged structure elements that lead only to them.
+Links and other references to a deleted page no longer go anywhere. A comment that
+replies to a comment on a deleted page stays, as a comment of its own. A form that
+loses a field also loses its XFA data, which holds every field's value. Extract and
+Delete share one remembered Open when done choice.
 
 Extract and Delete check the source in the background before opening their dialog.
 Their write checks the chosen password and page count again. A changed count keeps
 the ranges and asks the user to check them before another attempt. A source that
 Extract or Delete cannot read while it writes, such as one whose saved measurements are
 damaged or from a newer version, is reported as unreadable and blocks the tool. Merge
-names such an input in its reopened window. Stopping the probe opens no dialog, and stopping
-a write suppresses its later result.
+names such an input in its reopened window. Stopping the probe opens no dialog, and
+stopping a write suppresses its later result.
 
 Extract and Delete copy pages from the saved file, so unsaved comments, form entries
 and measurements are not included; their window says so when the open document has
