@@ -179,6 +179,13 @@ Launch claimOrHandOff(SingleInstanceServer &server, const Message &open, int wai
                       const QString &name, const UserLookup &lookup)
 {
     const QDeadlineTimer deadline(waitMs);
+#ifdef Q_OS_LINUX
+    // Upgrade support, removed with legacyEndpoint(). A copy from before the lock and
+    // socket left the temp folder does not see this group's lock, so while one runs the
+    // files go to it. One that does not take them, as when it is quitting, is passed over.
+    if (handOff(legacyEndpoint(name), open, deadline, lookup) == Handoff::Delivered)
+        return Launch::Delivered;
+#endif
     const QString endpoint = instancePaths(name).server;
     for (;;) {
         const SingleInstanceServer::Start started = server.start(name);

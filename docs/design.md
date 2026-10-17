@@ -363,9 +363,19 @@ those belong to the lock holder. Its windows still save settings, such as their
 geometry. If the lock or endpoint cannot be made and nothing answers, nothing owns
 that state, so the launch runs the full UI without a server. There is then no
 single-instance coordination. Each later launch does the same, and those copies
-share the stores, last writer wins. On Linux, copies built before these locations
-moved use names in /tmp, so a launch of a newer copy while an older one runs starts
-a second primary until the older one exits.
+share the stores, last writer wins.
+
+On Linux, copies built before these locations moved listen in the temp folder, under
+a group name hashed from `$USERNAME` or `$USER` (`ipc::legacyEndpoint()`). As
+upgrade support, to be removed once such copies are no longer expected,
+`claimOrHandOff()` first offers its Open there, in the same protocol, after the same
+check that the process runs as this user. If such a copy takes it, the launch exits.
+If nothing answers, the copy is another user's, or it closes the connection without
+an acknowledgement, as a quitting copy does, the launch goes on as above. An older
+copy that answers too late may still show the files. The reverse case cannot be
+fixed in the older code. An older copy launched while a newer one runs starts a
+second primary until one of them exits. Windows kept its pipe and lock names, so
+older and newer copies find each other there in both directions.
 
 Session restoration creates the tab list but opens only the selected document. Other
 restored tabs load when selected.

@@ -5,6 +5,7 @@
 #include "ipc/SingleInstanceServer.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -12,6 +13,7 @@
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QLockFile>
+#include <QMutex>
 #include <QScopeGuard>
 #include <QSemaphore>
 #include <QTemporaryDir>
@@ -126,26 +128,38 @@ private slots:
     void deletedLockKeepsLivePrimary();
     void deadSocketIsReplaced();
 #endif
+#ifdef Q_OS_LINUX
+    void legacyNameMatchesOlderCopies();
+    void legacyCopyGetsTheOpen();
+    void legacyCopyOfAnotherUserGetsNothing();
+    void quittingLegacyCopyIsSkipped();
+    void deadLegacySocketIsIgnored();
+#endif
 
 private:
 #ifdef Q_OS_UNIX
-    // Keeps the tests out of the user's real runtime directory.
+    // Keeps the tests out of the user's real runtime directory, and out of the temp
+    // folder, where builds from before the move listen under the same group names.
     QTemporaryDir runtime_;
+    QTemporaryDir tmp_;
     std::optional<EnvOverride> runtimeEnv_;
+    std::optional<EnvOverride> tmpEnv_;
 #endif
 };
 
 void TstSingleInstance::initTestCase()
 {
 #ifdef Q_OS_UNIX
-    QVERIFY(runtime_.isValid());
+    QVERIFY(runtime_.isValid() && tmp_.isValid());
     runtimeEnv_.emplace("XDG_RUNTIME_DIR", QFile::encodeName(runtime_.path()));
+    tmpEnv_.emplace("TMPDIR", QFile::encodeName(tmp_.path()));
 #endif
 }
 
 void TstSingleInstance::cleanupTestCase()
 {
 #ifdef Q_OS_UNIX
+    tmpEnv_.reset();
     runtimeEnv_.reset();
 #endif
 }
@@ -747,7 +761,8 @@ void TstSingleInstance::tempFolderMustBePrivate()
 
     // Another user's folder.
     QVERIFY(QDir().mkdir(fallback));
-    QVERIFY(QFile::setPermissions(fallback, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    QVERIFY(QFile::setPermissions(fallback,
+                                  QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
     QVERIFY(ownPrivateDir(fallback));
     QVERIFY(!mervin::ipc::isPrivateDir(fallback, uint(::geteuid()) + 1));
 
@@ -812,6 +827,158 @@ void TstSingleInstance::deadSocketIsReplaced()
     QCOMPARE(mervin::ipc::handOff(testEndpoint(), Message::open({QStringLiteral("a.pdf")}),
                                   QDeadlineTimer(1000)),
              Handoff::Delivered);
+}
+#endif
+
+#ifdef Q_OS_LINUX
+namespace {
+// A copy from before the single-instance files left the temp folder, listening under its
+// old name and speaking the same protocol. It acknowledges each Open, or, as one that is
+// quitting, closes the connection without an answer.
+class LegacyCopy
+{
+public:
+    LegacyCopy(const QString &endpoint, bool answers)
+        : thread_(QThread::create([this, endpoint, answers] {
+            QLocalServer server;
+            QObject::connect(&server, &QLocalServer::newConnection, &server, [&] {
+                while (QLocalSocket *socket = server.nextPendingConnection()) {
+                    auto read = [this, socket, answers,
+                                 decoder = mervin::ipc::MessageDecoder()]() mutable {
+                        const QByteArray bytes = socket->readAll();
+                        {
+                            const QMutexLocker locker(&mutex_);
+                            received_ += bytes;
+                        }
+                        for (const Message &m : decoder.feed(bytes)) {
+                            if (m.cmd != Message::Cmd::Open)
+                                continue;
+                            if (!answers) {
+                                socket->abort();
+                                return;
+                            }
+                            socket->write(Message::ack(QStringLiteral("open")).encode());
+                            socket->flush();
+                        }
+                    };
+                    QObject::connect(socket, &QLocalSocket::readyRead, socket, std::move(read));
+                }
+            });
+            listening = server.listen(endpoint);
+            QEventLoop().exec();
+        }))
+    {
+        thread_->start();
+    }
+    ~LegacyCopy()
+    {
+        thread_->quit();
+        thread_->wait();
+    }
+
+    // Everything the launches wrote to this copy.
+    QByteArray received() const
+    {
+        const QMutexLocker locker(&mutex_);
+        return received_;
+    }
+
+    std::atomic<bool> listening = false;
+
+private:
+    mutable QMutex mutex_;
+    QByteArray received_;
+    std::unique_ptr<QThread> thread_;
+};
+} // namespace
+
+// Older copies named the group from $USERNAME or $USER and listened in the temp folder.
+void TstSingleInstance::legacyNameMatchesOlderCopies()
+{
+    const EnvOverride userName("USERNAME", QByteArray());
+    const EnvOverride user("USER", "someone");
+    const QByteArray digest =
+        QCryptographicHash::hash("someone", QCryptographicHash::Sha1).toHex().left(16);
+    QCOMPARE(mervin::ipc::legacyEndpoint(),
+             QDir(QDir::tempPath()).filePath(QStringLiteral("MervinPDF-")
+                                             + QString::fromLatin1(digest)));
+    QCOMPARE(mervin::ipc::legacyEndpoint(kTestPipe), QDir(QDir::tempPath()).filePath(kTestPipe));
+}
+
+// After an upgrade while an older copy runs, a launch hands its files to that copy, in the
+// bytes an older launch sent, instead of starting a second primary beside it.
+void TstSingleInstance::legacyCopyGetsTheOpen()
+{
+    LegacyCopy legacy(mervin::ipc::legacyEndpoint(kTestPipe), true);
+    QTRY_VERIFY(legacy.listening);
+    const Message open =
+        Message::open({QStringLiteral("/home/a/old.pdf")}, QStringLiteral("new-window"));
+    SingleInstanceServer launch;
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, open, 3000, kTestPipe), Launch::Delivered);
+    QVERIFY(!launch.isListening());
+    QTRY_COMPARE(legacy.received(), open.encode());
+
+    // The launch took no lock of its own.
+    SingleInstanceServer next;
+    QCOMPARE(next.start(kTestPipe), Start::Started);
+}
+
+// An older copy's name in the temp folder can be anyone's socket. Another user's process
+// gets no paths, and the launch becomes the primary.
+void TstSingleInstance::legacyCopyOfAnotherUserGetsNothing()
+{
+    LegacyCopy legacy(mervin::ipc::legacyEndpoint(kTestPipe), true);
+    QTRY_VERIFY(legacy.listening);
+    const mervin::ipc::UserLookup other = [](const QLocalSocket &s) {
+        const std::optional<QByteArray> user = mervin::ipc::peerUser(s);
+        return user ? std::optional(*user + QByteArray("-other")) : user;
+    };
+    SingleInstanceServer launch;
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, Message::open({QStringLiteral("/home/a/p.pdf")}),
+                                         3000, kTestPipe, other),
+             Launch::Primary);
+    QVERIFY(launch.isListening());
+    QTest::qWait(200);
+    QVERIFY(legacy.received().isEmpty());
+}
+
+// An older copy that closes the connection without an answer is quitting. The launch then
+// becomes the primary.
+void TstSingleInstance::quittingLegacyCopyIsSkipped()
+{
+    LegacyCopy legacy(mervin::ipc::legacyEndpoint(kTestPipe), false);
+    QTRY_VERIFY(legacy.listening);
+    SingleInstanceServer launch;
+    QElapsedTimer timer;
+    timer.start();
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, Message::open({QStringLiteral("q.pdf")}), 3000,
+                                         kTestPipe),
+             Launch::Primary);
+    QVERIFY2(timer.elapsed() < 2000, qPrintable(QString::number(timer.elapsed())));
+    QTRY_VERIFY(!legacy.received().isEmpty());
+}
+
+// A socket file an older copy left behind when it crashed is passed over at once.
+void TstSingleInstance::deadLegacySocketIsIgnored()
+{
+    const QByteArray path = QFile::encodeName(mervin::ipc::legacyEndpoint(kTestPipe));
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    QVERIFY(fd >= 0);
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    QVERIFY(size_t(path.size()) < sizeof(addr.sun_path));
+    ::memcpy(addr.sun_path, path.constData(), path.size() + 1);
+    QCOMPARE(::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof addr), 0);
+    ::close(fd);
+    const auto remove = qScopeGuard([&] { QFile::remove(QString::fromLocal8Bit(path)); });
+
+    SingleInstanceServer launch;
+    QElapsedTimer timer;
+    timer.start();
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, Message::open({QStringLiteral("d.pdf")}), 3000,
+                                         kTestPipe),
+             Launch::Primary);
+    QVERIFY2(timer.elapsed() < 1000, qPrintable(QString::number(timer.elapsed())));
 }
 #endif
 

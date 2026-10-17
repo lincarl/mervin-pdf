@@ -27,6 +27,15 @@ struct InstancePaths
 // `server` is the pipe name.
 InstancePaths instancePaths(const QString &name = QString());
 
+#ifdef Q_OS_LINUX
+// Upgrade support for copies built before the lock and socket left the temp folder, which
+// a launch offers its files to while one runs (see claimOrHandOff). Remove it once such
+// copies are no longer expected to run. The socket such a copy of the group `name`
+// listens on, or of its own group when `name` is empty: the group name in the temp folder,
+// with the user token hashed from $USERNAME or $USER instead of the uid.
+QString legacyEndpoint(const QString &name = QString());
+#endif
+
 #ifdef Q_OS_UNIX
 // Whether `dir` is a folder, not a link, that `uid` owns and that only its owner can
 // open (mode 0700). Public for tests.

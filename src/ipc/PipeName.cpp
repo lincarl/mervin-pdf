@@ -20,23 +20,61 @@ namespace mervin::ipc {
 
 namespace {
 
-// A short, stable, filesystem/pipe-safe token identifying the current user.
-QString userToken()
+// A short, stable, filesystem/pipe-safe token for `user`.
+QString tokenOf(const QByteArray &user)
 {
-#ifdef Q_OS_UNIX
-    // The uid, as anyone can set $USER to another user's name.
-    const QByteArray user = QByteArray::number(uint(::getuid()));
-#else
+    const QByteArray digest = QCryptographicHash::hash(user, QCryptographicHash::Sha1).toHex();
+    return QString::fromLatin1(digest.left(16));
+}
+
+#if defined(Q_OS_WIN) || defined(Q_OS_LINUX)
+// The user's name as the environment gives it.
+QByteArray userName()
+{
     QString name = qEnvironmentVariable("USERNAME");
     if (name.isEmpty())
         name = qEnvironmentVariable("USER");
     if (name.isEmpty())
         name = QStringLiteral("default");
-    const QByteArray user = name.toUtf8();
+    return name.toUtf8();
+}
 #endif
 
-    const QByteArray digest = QCryptographicHash::hash(user, QCryptographicHash::Sha1).toHex();
-    return QString::fromLatin1(digest.left(16));
+// The token identifying the current user.
+QString userToken()
+{
+#ifdef Q_OS_UNIX
+    // The uid, as anyone can set $USER to another user's name.
+    return tokenOf(QByteArray::number(uint(::getuid())));
+#else
+    return tokenOf(userName());
+#endif
+}
+
+// The single-instance group of the user with `token`.
+QString groupName(const QString &token)
+{
+    QString name = QStringLiteral("MervinPDF-") + token;
+    // Store and MSI copies can coexist. A Store activation must not hand its
+    // document to an MSI process with a different updater and default-app identity.
+    if (PlatformIntegration::hasPackageIdentity())
+        name += QStringLiteral("-msix");
+
+    // A --profile instance forms its own single-instance group: hash the
+    // profile directory into the pipe name so it never hands its files to (or
+    // gets blocked by) the installed app, while two launches on the SAME
+    // profile still coordinate normally.
+    const QString profile = ConfigPaths::overrideDir();
+    if (!profile.isEmpty()) {
+        QString key = QDir::cleanPath(profile);
+#ifdef Q_OS_WIN
+        key = key.toLower(); // Windows paths are case-insensitive
+#endif
+        const QByteArray digest =
+            QCryptographicHash::hash(key.toUtf8(), QCryptographicHash::Sha1).toHex();
+        name += QLatin1Char('-') + QString::fromLatin1(digest.left(16));
+    }
+    return name;
 }
 
 #ifdef Q_OS_UNIX
@@ -123,27 +161,7 @@ QString tempDir()
 
 QString hostPipeName()
 {
-    QString name = QStringLiteral("MervinPDF-") + userToken();
-    // Store and MSI copies can coexist. A Store activation must not hand its
-    // document to an MSI process with a different updater and default-app identity.
-    if (PlatformIntegration::hasPackageIdentity())
-        name += QStringLiteral("-msix");
-
-    // A --profile instance forms its own single-instance group: hash the
-    // profile directory into the pipe name so it never hands its files to (or
-    // gets blocked by) the installed app, while two launches on the SAME
-    // profile still coordinate normally.
-    const QString profile = ConfigPaths::overrideDir();
-    if (!profile.isEmpty()) {
-        QString key = QDir::cleanPath(profile);
-#ifdef Q_OS_WIN
-        key = key.toLower(); // Windows paths are case-insensitive
-#endif
-        const QByteArray digest =
-            QCryptographicHash::hash(key.toUtf8(), QCryptographicHash::Sha1).toHex();
-        name += QLatin1Char('-') + QString::fromLatin1(digest.left(16));
-    }
-    return name;
+    return groupName(userToken());
 }
 
 InstancePaths instancePaths(const QString &name)
@@ -164,6 +182,16 @@ InstancePaths instancePaths(const QString &name)
     return {QDir(QDir::tempPath()).filePath(group + QStringLiteral(".lock")), group};
 #endif
 }
+
+#ifdef Q_OS_LINUX
+QString legacyEndpoint(const QString &name)
+{
+    // Older copies hashed the name from the environment, and Qt put a name that is not
+    // an absolute path in the temp folder.
+    const QString group = name.isEmpty() ? groupName(tokenOf(userName())) : name;
+    return QDir::cleanPath(QDir::tempPath()) + QLatin1Char('/') + group;
+}
+#endif
 
 #ifdef Q_OS_UNIX
 bool isPrivateDir(const QString &dir, uint uid)

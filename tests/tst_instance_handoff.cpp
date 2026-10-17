@@ -8,15 +8,18 @@
 #include "ipc/PipeName.h"
 #include "ipc/SingleInstanceServer.h"
 #include "recent/PathKey.h"
+#include "recent/RecentStore.h"
 #include "render/Document.h"
 #include "ui/MainWindow.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QLocalSocket>
 #include <QPointer>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QtTest>
@@ -88,6 +91,8 @@ private slots:
     void exitWaitKeepsLockWithoutEndpoint();
     void standaloneWritesNoStores_data();
     void standaloneWritesNoStores();
+    void standaloneSavesNoMountsOnQuit_data();
+    void standaloneSavesNoMountsOnQuit();
 
 private:
     // A started server for kGroup, or null after a failed check.
@@ -274,6 +279,47 @@ void TstInstanceHandoff::standaloneWritesNoStores()
         QVERIFY2(profile.exists(QString::fromLatin1(name)) == ownsStores, name);
     manager.quitAll();
     QTRY_VERIFY_WITH_TIMEOUT(!window, 10000);
+}
+
+void TstInstanceHandoff::standaloneSavesNoMountsOnQuit_data()
+{
+    standaloneWritesNoStores_data();
+}
+
+// Mounts found just before quitting are saved on the way out, but only by the copy that
+// owns Recent. A standalone copy leaves recent.json as the primary wrote it.
+void TstInstanceHandoff::standaloneSavesNoMountsOnQuit()
+{
+    QFETCH(bool, ownsStores);
+    Settings settings = Settings::load();
+    settings.recentKeepMissing = true; // no prune pass that would save at its end
+    QVERIFY(settings.save());
+    const QString path = QFileInfo(pdf_).canonicalFilePath();
+    RecentStore recent; // as an older version wrote it, without the mount
+    recent.add(path, QDateTime::currentMSecsSinceEpoch());
+    QVERIFY(recent.save(RecentStore::defaultFile()));
+    QFile file(RecentStore::defaultFile());
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QByteArray before = file.readAll();
+    file.close();
+
+    {
+        WindowManager manager(ownsStores);
+        QSignalSpy checked(manager.fileProbe(), &FileProbe::checked);
+        manager.fileProbe()->check({{path, QString()}});
+        QVERIFY(checked.wait(10000));
+    } // found, and waiting for the save that kMountSaveMs delays
+    QVERIFY(appfiles::flush(10000));
+
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QByteArray after = file.readAll();
+    if (!ownsStores) {
+        QCOMPARE(after, before);
+        return;
+    }
+    RecentStore onDisk;
+    QVERIFY(onDisk.load(RecentStore::defaultFile()));
+    QCOMPARE(onDisk.recordedMount(path), RecentStore::mountOf(path));
 }
 
 QTEST_MAIN(TstInstanceHandoff)
