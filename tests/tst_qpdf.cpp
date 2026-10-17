@@ -480,6 +480,31 @@ QString formProblem(const QString &path, int widgets, const QString &password = 
     return {};
 }
 
+// Each top-level form field of `path` as its name and the pages that its widgets point at
+// with /P, for example "shared 1 2".
+QStringList fieldPages(const QString &path)
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    q.processFile(name.constData());
+    std::map<QPDFObjGen, int> pageNumber;
+    for (QPDFObjectHandle page : q.getAllPages())
+        pageNumber.emplace(page.getObjGen(), int(pageNumber.size()) + 1);
+    QStringList lines;
+    QPDFObjectHandle form = q.getRoot().getKey("/AcroForm");
+    if (!form.isDictionary())
+        return lines;
+    for (QPDFObjectHandle field : form.getKey("/Fields").aitems()) {
+        QString line = QString::fromStdString(field.getKey("/T").getUTF8Value());
+        QPDFObjectHandle kids = field.getKey("/Kids");
+        for (QPDFObjectHandle widget : kids.isArray() ? kids.getArrayAsVector()
+                                                      : std::vector<QPDFObjectHandle>{field})
+            line += QStringLiteral(" %1").arg(pageNumber[widget.getKey("/P").getObjGen()]);
+        lines << line;
+    }
+    return lines;
+}
+
 // Rewrites `path` with `blob` as its /Mervin_Measurements: a string, or JSON for a stream.
 void setMeasurementBlob(const QString &path, const std::string &blob, bool stream)
 {
@@ -588,6 +613,7 @@ private slots:
     void copiesKeepFormFields();
     void copiesLeaveOutFieldsOfOtherPages_data();
     void copiesLeaveOutFieldsOfOtherPages();
+    void copiesKeepAFieldThatCopiedPagesShare();
     void mergeNamesInputWithBadMeasurements_data();
     void mergeNamesInputWithBadMeasurements();
     void mergeConcatenates();
@@ -1168,6 +1194,26 @@ void TstQpdf::copiesLeaveOutFieldsOfOtherPages()
     QVERIFY(pdfContains(parts.at(0), keptText));
     QVERIFY(!pdfContains(parts.at(2), kSecret));
     QVERIFY(!pdfContains(parts.at(2), keptText));
+}
+
+/// Checks that a field shown on two copied pages stays one field, while a repeated page gets
+/// a field of its own.
+void TstQpdf::copiesKeepAFieldThatCopiedPagesShare()
+{
+    const QString src = in(QStringLiteral("shared_src.pdf"));
+    const QString out = in(QStringLiteral("shared_out.pdf"));
+    makeReferencedPdf(src, Reference::SharedField);
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0, 1}, {}}}, out), PageOps::Status::Ok);
+    QCOMPARE(fieldPages(out), QStringList({QStringLiteral("shared 1 2")}));
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0, 1, 0}, {}}}, out),
+             PageOps::Status::Ok);
+    QCOMPARE(fieldPages(out),
+             QStringList({QStringLiteral("shared 1 2"), QStringLiteral("shared+1 3")}));
+    mervin::RenderEngine engine;
+    QString err;
+    auto doc = engine.openDocument(out, QString(), &err, nullptr);
+    QVERIFY2(doc, qPrintable(err));
+    QVERIFY(doc->hasForm());
 }
 
 /// A string blob and a stream from a newer measurement format.

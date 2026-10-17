@@ -10,6 +10,7 @@
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFAcroFormDocumentHelper.hh>
 #include <qpdf/QPDFExc.hh>
+#include <qpdf/QPDFMatrix.hh>
 #include <qpdf/QPDFNameTreeObjectHelper.hh>
 #include <qpdf/QPDFNumberTreeObjectHelper.hh>
 #include <qpdf/QPDFOutlineDocumentHelper.hh>
@@ -557,48 +558,36 @@ private:
 
 /// Copies form fields along with the pages that one output gets from QPDFPageDocumentHelper::
 /// addPage, which copies only the page and leaves its fields out of the output's /AcroForm.
-/// As in qpdf's own page selection, each copied page gets its own annotations and fields,
-/// and a field whose name the output already has is renamed, for example to "name+1", so
-/// two copies of one page fill in separately.
+/// Call copied() after each addPage and finish() before writing.
+///
+/// Like fixCopiedAnnotations in qpdf's own page selection, finish() gives each copied page
+/// its own annotations and fields, and renames a field whose name the output already has,
+/// for example to "name+1". It calls transformAnnotations, the function behind
+/// fixCopiedAnnotations, once for all pages of a source instead of once per page, because a
+/// field tree that spans pages is copied whole on every call: per page, a 200-page form
+/// with one top-level field took minutes and gigabytes. A field shown on several copied
+/// pages therefore stays one field. A page copied again goes in a later pass and gets
+/// fields of its own, so the copies fill in separately.
 class FormCopy
 {
 public:
     FormCopy(QPDF &out, SourceForms &sources) : out_(out), form_(out), sources_(sources) {}
 
-    /// Copies the annotations and fields of `page` from `source` onto the page that addPage
-    /// just added last to the output.
+    /// Records that addPage just added `page` of `source` as the output's last page.
     void copied(QPDF &source, QPDFPageObjectHelper page)
     {
-        QPDFAcroFormDocumentHelper *from = sources_.of(source);
-        if (!from)
-            return;
-        QPDFObjectHandle copy = out_.getAllPages().back();
-        QPDFObjectHandle plain = copy.getKey("/Annots");
-        try {
-            form_.fixCopiedAnnotations(copy, page.getObjectHandle(), *from);
-        } catch (const std::exception &) {
-            // qpdf before 12.4 can throw on damaged annotations. Like qpdf, keep the page
-            // as addPage copied it.
-            if (plain.isNull())
-                copy.removeKey("/Annots");
-            else
-                copy.replaceKey("/Annots", plain);
-            return;
-        }
-        // qpdf before 12.3 leaves /P on the page the annotations came from, which is the
-        // first copy when a page is copied again.
-        QPDFObjectHandle annots = copy.getKey("/Annots");
-        if (annots.isArray())
-            for (QPDFObjectHandle annot : annots.aitems())
-                if (annot.isDictionary() && annot.hasKey("/P"))
-                    annot.replaceKey("/P", copy);
+        QPDFObjectHandle from = page.getObjectHandle();
+        const int pass = passes_[{&source, from.getObjGen()}]++;
+        copies_.push_back({&source, pass, from, out_.getAllPages().back()});
     }
 
-    /// Removes the copied fields that have no widget on an output page. A field tree that
-    /// spans several pages comes along whole, and the output must not carry the values of
-    /// pages it leaves out. A value on a parent that a copied widget shares stays.
+    /// Copies the forms of the recorded pages, then removes the copied fields that have no
+    /// widget on an output page. A field tree that spans several pages comes along whole,
+    /// and the output must not carry the values of pages it leaves out. A value on a parent
+    /// that a copied widget shares stays.
     void finish()
     {
+        copyForms();
         ObjectSet widgets;
         for (QPDFObjectHandle page : out_.getAllPages())
             addAnnotations(page, widgets);
@@ -633,9 +622,126 @@ public:
     }
 
 private:
+    /// A page that addPage copied into the output.
+    struct Copy
+    {
+        QPDF *source;
+        int pass; // 0 for the first copy of a source page, 1 for the second, and so on
+        QPDFObjectHandle from;
+        QPDFObjectHandle to;
+    };
+
+    // Copies the forms of each source's pages one pass at a time, in the order they came.
+    void copyForms()
+    {
+        std::vector<std::pair<QPDF *, int>> order;
+        std::map<std::pair<QPDF *, int>, std::vector<Copy>> batches;
+        for (const Copy &copy : copies_) {
+            std::vector<Copy> &batch = batches[{copy.source, copy.pass}];
+            if (batch.empty())
+                order.emplace_back(copy.source, copy.pass);
+            batch.push_back(copy);
+        }
+        for (const auto &key : order) {
+            QPDFAcroFormDocumentHelper *from = sources_.of(*key.first);
+            if (!from)
+                continue;
+            std::vector<Copy> &batch = batches[key];
+            if (!copyBatch(batch, *from))
+                for (Copy &copy : batch)
+                    copyPage(copy, *from);
+        }
+    }
+
+    // Gives the pages of `batch`, distinct pages of one source, their own annotations and
+    // fields in one transformAnnotations call. When qpdf throws, the pages stay as addPage
+    // copied them and this returns false.
+    // Handles are not const, as qpdf 11 reads objects through non-const methods.
+    bool copyBatch(std::vector<Copy> &batch, QPDFAcroFormDocumentHelper &from)
+    {
+        QPDFObjectHandle annots = QPDFObjectHandle::newArray();
+        std::vector<int> counts; // how many of `annots` each page has
+        for (Copy &copy : batch) {
+            int count = 0;
+            QPDFObjectHandle list = copy.from.getKey("/Annots");
+            if (list.isArray())
+                // qpdf skips anything else, which would break the counts.
+                for (QPDFObjectHandle annot : list.aitems())
+                    if (annot.isDictionary()) {
+                        annots.appendItem(annot);
+                        ++count;
+                    }
+            counts.push_back(count);
+        }
+        if (annots.getArrayNItems() == 0)
+            return true;
+        std::vector<QPDFObjectHandle> plain;
+        for (Copy &copy : batch)
+            plain.push_back(copy.to.getKey("/Annots"));
+        try {
+            std::vector<QPDFObjectHandle> made, fields;
+            std::set<QPDFObjGen> sourceFields;
+            form_.transformAnnotations(annots, made, fields, sourceFields, QPDFMatrix(),
+                                       &from.getQPDF(), &from);
+            if (made.size() != static_cast<size_t>(annots.getArrayNItems()))
+                throw std::runtime_error("qpdf left out annotations");
+            auto next = made.cbegin();
+            for (size_t i = 0; i < batch.size(); ++i) {
+                if (counts[i] == 0)
+                    continue; // as fixCopiedAnnotations leaves a page without annotations
+                batch[i].to.replaceKey("/Annots", QPDFObjectHandle::newArray(
+                                                      std::vector(next, next + counts[i])));
+                next += counts[i];
+                pointAt(batch[i].to);
+            }
+            form_.addAndRenameFormFields(fields);
+            return true;
+        } catch (const std::exception &) {
+            for (size_t i = 0; i < batch.size(); ++i)
+                restore(batch[i].to, plain[i]);
+            return false;
+        }
+    }
+
+    // Copies one page's form with fixCopiedAnnotations, after copyBatch failed. qpdf before
+    // 12.4 can throw on damaged annotations; like qpdf, keep such a page as addPage copied it.
+    void copyPage(Copy &copy, QPDFAcroFormDocumentHelper &from)
+    {
+        QPDFObjectHandle plain = copy.to.getKey("/Annots");
+        try {
+            form_.fixCopiedAnnotations(copy.to, copy.from, from);
+        } catch (const std::exception &) {
+            restore(copy.to, plain);
+            return;
+        }
+        pointAt(copy.to);
+    }
+
+    // Points the annotations of `page` at it. qpdf before 12.3 leaves /P on the page the
+    // annotations came from, which is the first copy when a page is copied again.
+    static void pointAt(QPDFObjectHandle page)
+    {
+        QPDFObjectHandle annots = page.getKey("/Annots");
+        if (annots.isArray())
+            for (QPDFObjectHandle annot : annots.aitems())
+                if (annot.isDictionary() && annot.hasKey("/P"))
+                    annot.replaceKey("/P", page);
+    }
+
+    // Puts back the /Annots that addPage gave `page`.
+    static void restore(QPDFObjectHandle page, QPDFObjectHandle plain)
+    {
+        if (plain.isNull())
+            page.removeKey("/Annots");
+        else
+            page.replaceKey("/Annots", plain);
+    }
+
     QPDF &out_;
     QPDFAcroFormDocumentHelper form_;
     SourceForms &sources_;
+    std::map<std::pair<QPDF *, QPDFObjGen>, int> passes_; // copies so far of each source page
+    std::vector<Copy> copies_;
 };
 
 } // namespace
