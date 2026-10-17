@@ -798,8 +798,10 @@ void Updater::pollInstall()
                 return Ready{};
             // Hashed again, as the file can have changed since it was downloaded.
             if (!pending.sha256.isEmpty() && fileSha256(pending.file) != pending.sha256) {
-                discardDownloads(kind);
+                // The flag is saved first, so a copy that stops in between still
+                // checks again at its next start.
                 QSettings().setValue(stateKey(kind, kCheckDue), true);
+                discardDownloads(kind);
                 return Ready{{}, true};
             }
             return Ready{pending};
