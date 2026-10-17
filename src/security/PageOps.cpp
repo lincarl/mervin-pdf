@@ -175,6 +175,20 @@ std::vector<QPDFObjectHandle> fieldsAbove(QPDFObjectHandle node)
     return above;
 }
 
+/// Prunes the field tree of `widget` from its top, then each field above the widget on its
+/// own, so a field whose parent's /Kids does not list it, as in a damaged file, is pruned as
+/// well. A field that the walk from the top reached costs a lookup. Returns the fields above
+/// the widget, nearest first.
+std::vector<QPDFObjectHandle> pruneFieldsOf(QPDFObjectHandle widget, FieldPruner &pruner)
+{
+    const std::vector<QPDFObjectHandle> above = fieldsAbove(widget);
+    if (above.empty())
+        pruner.prune(widget);
+    for (auto field = above.rbegin(); field != above.rend(); ++field)
+        pruner.prune(*field);
+    return above;
+}
+
 /// The objects of a Delete Pages source, collected before the pages go.
 struct Removal
 {
@@ -625,11 +639,8 @@ ObjectSet pruneDeletedFields(QPDF &q, const Removal &removal)
         pruner.pruneArray(form.getKey("/CO"));
     }
     // A tree that /Fields lists was pruned above, which makes this a lookup.
-    for (QPDFObjectHandle widget : removal.keptWidgets) {
-        const std::vector<QPDFObjectHandle> above = fieldsAbove(widget);
-        if (!above.empty())
-            pruner.prune(above.back());
-    }
+    for (QPDFObjectHandle widget : removal.keptWidgets)
+        pruneFieldsOf(widget, pruner);
     if (form.isDictionary() && !pruner.removed().empty())
         form.removeKey("/XFA");
     return pruner.removed();
@@ -892,18 +903,17 @@ private:
         std::map<std::string, std::string> names; // fully qualified names that a rename changed
     };
 
-    // Prunes the field tree of `widget`, if it is a widget, from its top, and adds the fields
-    // above the widget to `used`.
+    // Prunes the field tree of `widget`, if it is a widget (see pruneFieldsOf), and adds the
+    // fields above the widget to `used`.
     static void pruneTreeOf(QPDFObjectHandle widget, FieldPruner &pruner, ObjectSet *used)
     {
         if (!widget.isDictionary() || !widget.getKey("/Subtype").isNameAndEquals("/Widget"))
             return;
-        const std::vector<QPDFObjectHandle> above = fieldsAbove(widget);
+        const std::vector<QPDFObjectHandle> above = pruneFieldsOf(widget, pruner);
         if (used)
             for (QPDFObjectHandle field : above)
                 if (field.isIndirect())
                     used->insert(field.getObjGen());
-        pruner.prune(above.empty() ? widget : above.back());
     }
 
     // addPage copies what a page refers to, so a reply's /IRT brings along the note it answers
