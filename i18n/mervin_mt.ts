@@ -7,6 +7,31 @@
         <source>Enter the document password:</source>
         <translation>Daħħal il-password tad-dokument:</translation>
     </message>
+    <message numerus="yes">
+        <source>%n file(s) in %1 already exist. Split wrote nothing.</source>
+        <extracomment>Tray message after Split found that some of the files it would write, such as plan-002.pdf, already exist while its window was hidden in the tray, so it could not ask whether to replace them. %n is the number of those files, %1 the folder Split writes to. Split wrote no file.</extracomment>
+        <translation>
+            <numerusform>Fajls li diġà jeżistu fil-folder %1: %n. Ma nkiteb xejn.</numerusform>
+            <numerusform>Fajls li diġà jeżistu fil-folder %1: %n. Ma nkiteb xejn.</numerusform>
+            <numerusform>Fajls li diġà jeżistu fil-folder %1: %n. Ma nkiteb xejn.</numerusform>
+            <numerusform>Fajls li diġà jeżistu fil-folder %1: %n. Ma nkiteb xejn.</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n file(s) in %1 already exist. Replace them?</source>
+        <extracomment>Asked after Split found that some of the files it would write, such as plan-002.pdf, already exist. %n is the number of those files, %1 the folder Split writes to. Nothing has been replaced yet. Yes replaces those files and writes the others; No writes no file.</extracomment>
+        <translation>
+            <numerusform>Fajls li diġà jeżistu fil-folder %1: %n. Trid tissostitwihom?</numerusform>
+            <numerusform>Fajls li diġà jeżistu fil-folder %1: %n. Trid tissostitwihom?</numerusform>
+            <numerusform>Fajls li diġà jeżistu fil-folder %1: %n. Trid tissostitwihom?</numerusform>
+            <numerusform>Fajls li diġà jeżistu fil-folder %1: %n. Trid tissostitwihom?</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>&quot;%1&quot; changed after Split checked it, so Split stopped without replacing it.</source>
+        <extracomment>Split checked each of its files before writing. %1 is the name of one that another program changed, created or removed before Split replaced it. Split left that file as it is and wrote none of the files after it. The files with lower numbers that Split wrote before stay.</extracomment>
+        <translation>“%1” inbidel wara l-kontroll, għalhekk il-qsim waqaf u l-fajl ma ġiex issostitwit.</translation>
+    </message>
     <message>
         <source>Operation failed</source>
         <translation>L-operazzjoni falliet</translation>

@@ -268,9 +268,11 @@ private:
                                 const QString &password, bool asked,
                                 const std::shared_ptr<PageToolResult> &result);
     // A file that needs a password asks for one, window-modal, and runs the tool
-    // again with it, remembered on the tab if it works. A failure says why, and
-    // success runs the tool's own question. A window in the tray shows failures as a
-    // tray message and asks nothing.
+    // again with it, remembered on the tab if it works. Outputs that already exist ask
+    // once whether to replace them, with No as the default, and Yes runs a copy of the
+    // tool that approves the states the job found. A failure says why, and success runs
+    // the tool's own question. A window in the tray shows failures and existing outputs
+    // as a tray message and asks nothing.
     void finishPageTool(mervin::TabPage *tab, const std::shared_ptr<const PageTool> &tool,
                         const QString &password, bool asked, const PageToolResult &result);
     struct CopyResult;

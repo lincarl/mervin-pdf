@@ -206,7 +206,14 @@ bar over the pages names the folder or file the tool waits for, such as "Saving 
 /nas/docs. The drive is not answering.", and offers Stop waiting. Stopping makes the
 tab usable at once and prevents later output commits. A replacement already admitted
 may still finish. Split keeps its committed files. These tools do not write over a
-file that is open in a tab. Closing a tab or requesting an ordinary application
+file that is open in a tab. When some of Split's `<name>-NNN.pdf` files already exist
+in the chosen folder, Split asks once, for example "3 files in /nas/out already exist.
+Replace them?", with No as the default. No writes nothing. Yes writes every file and
+replaces the existing ones. A file that another program changes, creates or removes
+after Split checked it stays as it is. Split stops at that file, keeps the files it
+wrote before, and names the file in a warning. A window hidden in the tray cannot ask.
+Its tray message names the folder and how many files exist, and Split writes nothing.
+Closing a tab or requesting an ordinary application
 quit waits for the tool and shows its wait notice. Closing a window does the same
 unless it hides to the tray. Stop waiting then continues the close decision,
 including any unsaved-edit question. Windows session end follows the bounded

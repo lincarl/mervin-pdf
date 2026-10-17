@@ -758,6 +758,26 @@ atomically with tab admission. A later open is refused while the reservation las
 Stop releases the reservation before a commit, so a canceled writer cannot block a
 new tab. A commit already started retains it until the replacement returns. Normal
 completion and failure release it when the job's scope closes.
+
+Split reads every output with `DestinationConsent` on the tab's worker after the
+open-tab check, so that refusal comes before any replacement question, as in Security.
+When an output exists and the run carries no approval, Split writes nothing and
+returns every output's state, absent ones included, in `PageToolResult::toApprove`.
+`finishPageTool` checks that before the failure messages and asks one window-modal
+question with No as the default, "%n file(s) in %1 already exist. Replace them?", with
+the folder fitted like the wait bar's (`fitFileSentence`) to half the screen's width.
+Yes runs a copy of the `PageTool` whose `approved` field holds those states. Before
+writing, the approved run reads only outputs that the approval lacks, as when the
+source gained pages, and asks again if one of them exists. `PageOps::split` passes
+each part's `mayCommit` to `AtomicPdfWriter::write`. It reads that output again under
+the destination lock, after flushing and before commit admission, and compares it with
+the state Split checked. Split replaces no file that changed, appeared or was removed
+since then. It stops there with the earlier parts committed, and the window names that
+file in a warning. A failed check fails the split with the file's name and reason. As
+in Merge, another process can still change a file between the final comparison and the
+rename. A window in the tray reports existing outputs through `notifyInTray` and
+writes nothing.
+
 When the tab's password does not open the file, the window asks for one
 and runs the tool again with it, and the tab keeps a password that worked. Everything
 a finished operation raises, the password prompt, an error or "Open it now?", is

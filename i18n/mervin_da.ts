@@ -7,6 +7,27 @@
         <source>Enter the document password:</source>
         <translation>Indtast dokumentets adgangskode:</translation>
     </message>
+    <message numerus="yes">
+        <source>%n file(s) in %1 already exist. Split wrote nothing.</source>
+        <extracomment>Tray message after Split found that some of the files it would write, such as plan-002.pdf, already exist while its window was hidden in the tray, so it could not ask whether to replace them. %n is the number of those files, %1 the folder Split writes to. Split wrote no file.</extracomment>
+        <translation>
+            <numerusform>%n fil i %1 findes allerede. Intet blev skrevet.</numerusform>
+            <numerusform>%n filer i %1 findes allerede. Intet blev skrevet.</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n file(s) in %1 already exist. Replace them?</source>
+        <extracomment>Asked after Split found that some of the files it would write, such as plan-002.pdf, already exist. %n is the number of those files, %1 the folder Split writes to. Nothing has been replaced yet. Yes replaces those files and writes the others; No writes no file.</extracomment>
+        <translation>
+            <numerusform>%n fil i %1 findes allerede. Vil du erstatte den?</numerusform>
+            <numerusform>%n filer i %1 findes allerede. Vil du erstatte dem?</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>&quot;%1&quot; changed after Split checked it, so Split stopped without replacing it.</source>
+        <extracomment>Split checked each of its files before writing. %1 is the name of one that another program changed, created or removed before Split replaced it. Split left that file as it is and wrote none of the files after it. The files with lower numbers that Split wrote before stay.</extracomment>
+        <translation>»%1« blev ændret efter kontrollen, så opdelingen stoppede uden at erstatte den.</translation>
+    </message>
     <message>
         <source>Operation failed</source>
         <translation>Handlingen mislykkedes</translation>
