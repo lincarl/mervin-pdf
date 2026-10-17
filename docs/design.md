@@ -1321,14 +1321,18 @@ display defaults of the first contributing measurement set.
 
 Opening a document reads `/Mervin_Measurements` through the open MuPDF document
 (`Document::mervinMeasurements`), and page operations read it with qpdf
-(`measurementPages::read` through `measurementPages::decodeBlob`). Both accept only a
-plain stream or up to four `/FlateDecode` filters without parameters, the form Mervin
-writes, and refuse anything else before decoding, because a filter's parameters, such
-as a PNG predictor's `/Columns`, size its buffers before any data is read. MuPDF's
-`/F` and `/DP` abbreviations count as parameters too. Both stop once the decoded data
-passes 16 MiB (`kMaxMeasurementBlobBytes`), since neither library limits Flate output
-by default. A refused blob opens as no measurements and fails page operations with
-Invalid measurement metadata.
+(`measurementPages::read` through `measurementPages::decodeBlob`). Mervin writes the blob
+as a stream with a single `/FlateDecode` and no `/DecodeParms`. Both readers accept only a
+stream with no filter or that single `/FlateDecode`, given as a name or a one-element
+array, and refuse anything else before decoding. A filter's parameters, such as a PNG
+predictor's `/Columns`, size its buffers before any data is read, and chained Flate
+stages can keep a core busy for a long time without producing output. Both also refuse
+`/F` and `/DP`, MuPDF's abbreviations for `/Filter` and `/DecodeParms`, which qpdf
+ignores. Both stop once the decoded data passes 16 MiB (`kMaxMeasurementBlobBytes`),
+since neither library limits Flate output by default. A refused blob opens as no
+measurements and fails page operations with Invalid measurement metadata. The open-time
+reader also accepts a blob stored as a string up to the same limit, which page
+operations refuse as invalid; Mervin never writes one.
 
 Opening does not use qpdf, which inflates a whole object stream or cross-reference
 stream into memory when it resolves an object in it (qpdf 11.9.0 `QPDF.cc:1792`). MuPDF

@@ -6,8 +6,8 @@
 #include "security/PageOps.h"
 
 #include <qpdf/Buffer.hh>
-#include <qpdf/Pl_Buffer.hh>
 #include <qpdf/Pl_Flate.hh>
+#include <qpdf/Pl_String.hh>
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFObjectHandle.hh>
 #include <qpdf/QPDFPageDocumentHelper.hh>
@@ -55,14 +55,15 @@ void makePdf(const QString &path, int n, int rotate = 0, double ox = 0.0, double
     w.write();
 }
 
-// Compresses `data` once with qpdf's Flate encoder.
+// Compresses `data` once with qpdf's Flate encoder. Pl_String exists from qpdf 11.0.
 std::string deflate(const std::string &data)
 {
-    Pl_Buffer buffer("deflated");
-    Pl_Flate flate("deflate", &buffer, Pl_Flate::a_deflate);
+    std::string out;
+    Pl_String sink("deflated", nullptr, out);
+    Pl_Flate flate("deflate", &sink, Pl_Flate::a_deflate);
     flate.writeString(data);
     flate.finish();
-    return buffer.getString();
+    return out;
 }
 
 // Writes a one-page PDF whose catalog holds `encoded` as /Mervin_Measurements, stored as
@@ -159,15 +160,12 @@ void capRows()
 }
 
 // Writes a one-page PDF whose blob is valid measurement JSON padded with leading spaces
-// to `size` bytes, then compressed twice. It stays small on disk.
+// to `size` bytes, compressed once as Mervin writes it. It stays small on disk.
 void makeLargeBlobPdf(const QString &path, qsizetype size)
 {
     const QByteArray json = serializeMeasurements(oneDistance());
     const std::string data = std::string(size_t(size - json.size()), ' ') + json.toStdString();
-    auto filters = QPDFObjectHandle::newArray();
-    filters.appendItem(QPDFObjectHandle::newName("/FlateDecode"));
-    filters.appendItem(QPDFObjectHandle::newName("/FlateDecode"));
-    makeBlobPdf(path, deflate(deflate(data)), filters);
+    makeBlobPdf(path, deflate(data), QPDFObjectHandle::newName("/FlateDecode"));
     QVERIFY(QFileInfo(path).size() < 64 * 1024);
 }
 
@@ -351,7 +349,7 @@ void TstMeasureExport::blobReadStopsAtTheCap_data()
     capRows();
 }
 
-/// Both blob readers return a doubly compressed blob only up to the cap.
+/// Both blob readers return a compressed blob only up to the cap.
 void TstMeasureExport::blobReadStopsAtTheCap()
 {
     QFETCH(qsizetype, size);
@@ -394,48 +392,59 @@ void TstMeasureExport::pageOperationsStopAtTheCap()
 
 void TstMeasureExport::foreignEncodingsGiveNoData_data()
 {
-    QTest::addColumn<QString>("filters");
-    QTest::addColumn<QString>("parmsKey");
-    QTest::addColumn<QString>("parms");
+    QTest::addColumn<QString>("filter");   // the /Filter value, in PDF syntax
+    QTest::addColumn<QString>("key");      // another stream dictionary key, if any
+    QTest::addColumn<QString>("value");    // its value
+    QTest::addColumn<int>("deflations");   // times the data is Flate-compressed
+    QTest::addColumn<bool>("png");         // rows prefixed for a PNG predictor
+    QTest::addColumn<bool>("hex");         // ASCIIHex-encoded
     QTest::addColumn<bool>("accepted");
-    // Mervin writes the blob plain or with /FlateDecode only.
-    QTest::newRow("plain") << QStringLiteral("null") << QString() << QString() << true;
-    QTest::newRow("Flate") << QStringLiteral("/FlateDecode") << QString() << QString() << true;
-    QTest::newRow("two Flate filters")
-        << QStringLiteral("[/FlateDecode /FlateDecode]") << QString() << QString() << true;
+    const QString flate = QStringLiteral("/FlateDecode");
+    const QString predictor = QStringLiteral("<< /Predictor 12 /Columns 16 >>");
+    // Mervin writes the blob with a single /FlateDecode.
+    QTest::newRow("plain") << QStringLiteral("null") << QString() << QString() << 0 << false
+                           << false << true;
+    QTest::newRow("Flate") << flate << QString() << QString() << 1 << false << false << true;
+    QTest::newRow("Flate in a one-element array")
+        << QStringLiteral("[/FlateDecode]") << QString() << QString() << 1 << false << false << true;
+    // Chained Flate stages can inflate data that the next stage consumes without output.
+    QTest::newRow("two Flate filters") << QStringLiteral("[/FlateDecode /FlateDecode]") << QString()
+                                       << QString() << 2 << false << false << false;
     // qpdf sizes a predictor's row buffers from /Columns before any data arrives.
-    QTest::newRow("Flate with a PNG predictor") << QStringLiteral("/FlateDecode")
-        << QStringLiteral("/DecodeParms") << QStringLiteral("<< /Predictor 12 /Columns 16 >>") << false;
-    QTest::newRow("predictor under the /DP abbreviation") << QStringLiteral("/FlateDecode")
-        << QStringLiteral("/DP") << QStringLiteral("<< /Predictor 12 /Columns 16 >>") << false;
-    QTest::newRow("hex filter") << QStringLiteral("/ASCIIHexDecode") << QString() << QString() << false;
-    QTest::newRow("five Flate filters")
-        << QStringLiteral("[/FlateDecode /FlateDecode /FlateDecode /FlateDecode /FlateDecode]")
-        << QString() << QString() << false;
+    QTest::newRow("Flate with a PNG predictor")
+        << flate << QStringLiteral("/DecodeParms") << predictor << 1 << true << false << false;
+    QTest::newRow("predictor under the /DP abbreviation")
+        << flate << QStringLiteral("/DP") << predictor << 1 << true << false << false;
+    // MuPDF reads /F as /Filter when /Filter is absent, and qpdf ignores it, so only the
+    // refusal keeps the two readers in agreement.
+    QTest::newRow("Flate under the /F abbreviation")
+        << QStringLiteral("null") << QStringLiteral("/F") << flate << 1 << false << false << false;
+    QTest::newRow("hex filter") << QStringLiteral("/ASCIIHexDecode") << QString() << QString() << 0
+                                << false << true << false;
 }
 
-/// The blob's readers decode only the plain Flate streams Mervin writes, before any
-/// filter can allocate memory from the stream's own parameters.
+/// The blob's readers decode only the plain or single-Flate streams Mervin writes, before
+/// any filter can allocate memory from the stream's own parameters.
 void TstMeasureExport::foreignEncodingsGiveNoData()
 {
-    QFETCH(QString, filters);
-    QFETCH(QString, parmsKey);
-    QFETCH(QString, parms);
+    QFETCH(QString, filter);
+    QFETCH(QString, key);
+    QFETCH(QString, value);
+    QFETCH(int, deflations);
+    QFETCH(bool, png);
+    QFETCH(bool, hex);
     QFETCH(bool, accepted);
     const std::string json = serializeMeasurements(oneDistance()).toStdString();
-    const auto filterList = QPDFObjectHandle::parse(filters.toStdString());
-    std::string encoded = parms.isEmpty() ? json : pngRows(json);
-    if (filters.contains(QStringLiteral("ASCIIHex"))) {
+    std::string encoded = png ? pngRows(json) : json;
+    for (int i = 0; i < deflations; ++i)
+        encoded = deflate(encoded);
+    if (hex)
         encoded = QByteArray::fromStdString(encoded).toHex().toStdString() + '>';
-    } else {
-        for (int i = 0; i < filters.count(QStringLiteral("/FlateDecode")); ++i)
-            encoded = deflate(encoded);
-    }
     std::map<std::string, std::string> extra;
-    if (!parmsKey.isEmpty())
-        extra[parmsKey.toStdString()] = parms.toStdString();
+    if (!key.isEmpty())
+        extra[key.toStdString()] = value.toStdString();
     const QString in = p("foreign.pdf"), out = p("foreign-rotated.pdf");
-    makeBlobPdf(in, encoded, filterList, {}, extra);
+    makeBlobPdf(in, encoded, QPDFObjectHandle::parse(filter.toStdString()), {}, extra);
 
     const auto blob = MeasureExport::readMervinBlob(in);
     QCOMPARE(blob.has_value(), accepted);

@@ -57,12 +57,12 @@ struct MeasureDoc
 QByteArray serializeMeasurements(const MeasureDoc &doc);
 bool parseMeasurements(const QByteArray &json, MeasureDoc *out);
 
-// Limits for reading a saved /Mervin_Measurements blob, which Mervin writes far smaller,
-// plain or with /FlateDecode and no filter parameters. Its readers refuse other encodings
-// before decoding, since a filter's parameters can make it allocate memory up front, and
-// stop once the decoded data passes the size limit.
+// The most decoded bytes a saved /Mervin_Measurements blob may hold. Mervin writes its
+// blob far smaller, as a stream with no filter or a single /FlateDecode and no filter
+// parameters. The blob's readers refuse other encodings before decoding, because a
+// filter's parameters can make it allocate memory up front and chained Flate stages can
+// spend time without passing this limit. They stop once the decoded data passes it.
 inline constexpr qsizetype kMaxMeasurementBlobBytes = 16 * 1024 * 1024;
-inline constexpr int kMaxMeasurementBlobFilters = 4;
 
 // A measurement paired with everything the PDF emitter needs: its page-point
 // geometry, the page transform that lands it in PDF user space, and the
