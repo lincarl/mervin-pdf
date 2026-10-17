@@ -1241,6 +1241,43 @@ void TstTranslationLayout::security()
              mervin::SecurityDialog::tr("Use a different owner password to restrict permissions."));
     inspect(refusal, QStringLiteral("Security refused owner password"));
 
+    // Different passwords that agree as far as the algorithm reads them are refused with a
+    // reason that names its limit.
+    const QString start32 = QStringLiteral("Northwind quarterly report 2026 ");
+    const QString start127 = QString(63, QChar(0xFC)) + QLatin1Char('a');
+    const struct
+    {
+        int algorithm; // index in the algorithm list
+        QString start;
+        QString reason;
+    } sharedStarts[] = {
+        {1, start32, mervin::SecurityDialog::tr("AES-128 and RC4-128 use only the first 32 characters "
+                                                "of a password. Make the two passwords differ within them.")},
+        {0, start127, mervin::SecurityDialog::tr("AES-256 uses only the first 127 bytes of a password. "
+                                                 "Make the two passwords differ within them.")}};
+    for (const auto &shared : sharedStarts) {
+        mervin::SecurityDialog sharedStart(plain_, mervin::QpdfService::Info{});
+        sharedStart.setAttribute(Qt::WA_DontShowOnScreen);
+        sharedStart.show();
+        settle();
+        sharedStart.findChild<QLineEdit *>(QStringLiteral("securityUserPassword"))
+            ->setText(shared.start + QStringLiteral("read"));
+        sharedStart.findChild<QLineEdit *>(QStringLiteral("securityOwnerPassword"))
+            ->setText(shared.start + QStringLiteral("admin"));
+        sharedStart.findChild<QComboBox *>(QStringLiteral("securityAlgorithm"))
+            ->setCurrentIndex(shared.algorithm);
+        sharedStart.findChild<QCheckBox *>(QStringLiteral("securityAllowPrint"))->setChecked(false);
+        guard.start(50);
+        sharedStart.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
+        guard.stop();
+        auto *startRefused = sharedStart.findChild<QLabel *>(QStringLiteral("securityError"));
+        QVERIFY(startRefused && !startRefused->isHidden());
+        QCOMPARE(startRefused->text(), shared.reason);
+        inspect(sharedStart, QStringLiteral("Security refused owner password with the same first %1")
+                                 .arg(shared.algorithm == 0 ? QStringLiteral("127 bytes")
+                                                            : QStringLiteral("32 characters")));
+    }
+
     mervin::SecurityDialog::Request choices;
     choices.output = QStringLiteral("/srv/nas/docs/chosen-encrypted-copy.pdf");
     choices.userPassword = QStringLiteral("chosen open password");

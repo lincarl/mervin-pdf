@@ -633,22 +633,32 @@ private slots:
         QTest::addColumn<QString>("owner");
         QTest::addColumn<int>("algorithm"); // index in the algorithm list
         QTest::addColumn<bool>("restricted");
-        QTest::addColumn<bool>("refused");
+        QTest::addColumn<QString>("refusal"); // empty when the form accepts the choices
         const QString same = QStringLiteral("same");
-        QTest::newRow("same password, restricted") << same << same << 0 << true << true;
-        QTest::newRow("same password, everything allowed") << same << same << 0 << false << false;
-        QTest::newRow("empty owner, restricted") << same << QString() << 0 << true << false;
+        const QString identical = SecurityDialog::tr("Use a different owner password to restrict permissions.");
+        const QString first32 = SecurityDialog::tr(
+            "AES-128 and RC4-128 use only the first 32 characters of a password. Make the two passwords differ within them.");
+        const QString first127 = SecurityDialog::tr(
+            "AES-256 uses only the first 127 bytes of a password. Make the two passwords differ within them.");
+        QTest::newRow("same password, restricted") << same << same << 0 << true << identical;
+        QTest::newRow("same password, everything allowed") << same << same << 0 << false << QString();
+        QTest::newRow("empty owner, restricted") << same << QString() << 0 << true << QString();
         // AES-128 and RC4-128 keep the first 32 characters of each password.
         const QString prefix = QStringLiteral("Northwind quarterly report 2026 ");
         QTest::newRow("same first 32 characters, AES-128")
-            << prefix + QStringLiteral("read") << prefix + QStringLiteral("admin") << 1 << true << true;
+            << prefix + QStringLiteral("read") << prefix + QStringLiteral("admin") << 1 << true
+            << first32;
+        QTest::newRow("same first 32 characters, RC4-128")
+            << prefix + QStringLiteral("read") << prefix + QStringLiteral("admin") << 2 << true
+            << first32;
         QTest::newRow("same first 32 characters, AES-256")
-            << prefix + QStringLiteral("read") << prefix + QStringLiteral("admin") << 0 << true << false;
+            << prefix + QStringLiteral("read") << prefix + QStringLiteral("admin") << 0 << true
+            << QString();
         // AES-256 keeps the first 127 bytes of UTF-8, here 64 characters.
         const QString bytes127 = QString(63, QChar(0xFC)) + QLatin1Char('a');
         QTest::newRow("same first 127 bytes, AES-256")
             << bytes127 + QStringLiteral("read") << bytes127 + QStringLiteral("admin") << 0 << true
-            << true;
+            << first127;
     }
 
     /// Checks that restrictions the open password would lift are refused inside the form.
@@ -658,7 +668,8 @@ private slots:
         QFETCH(QString, owner);
         QFETCH(int, algorithm);
         QFETCH(bool, restricted);
-        QFETCH(bool, refused);
+        QFETCH(QString, refusal);
+        const bool refused = !refusal.isEmpty();
         QTemporaryDir files;
         const QString source = files.filePath(QStringLiteral("plan.pdf"));
         const QString output = files.filePath(QStringLiteral("protected.pdf"));
@@ -691,8 +702,7 @@ private slots:
                 return;
             auto *error = dialog.findChild<QLabel *>(QStringLiteral("securityError"));
             QVERIFY(error && error->isVisible());
-            QCOMPARE(error->text(),
-                     SecurityDialog::tr("Use a different owner password to restrict permissions."));
+            QCOMPARE(error->text(), refusal);
             QVERIFY(dialog.isVisible());
             QVERIFY(!dialog.request());
             QCOMPARE(ownerTop(), top);

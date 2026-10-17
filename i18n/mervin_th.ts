@@ -3326,6 +3326,16 @@ This file is no longer on disk.</source>
         <translation>&lt;b&gt;ไม่สามารถอ่านข้อมูลความปลอดภัยได้&lt;/b&gt;&lt;br&gt;%1</translation>
     </message>
     <message>
+        <source>AES-256 uses only the first 127 bytes of a password. Make the two passwords differ within them.</source>
+        <extracomment>Shown below the owner-password field when it differs from the open password only after their first 127 bytes, while a permission is not allowed and AES-256 is chosen. Anyone with the open password could then lift the restrictions. A byte is a unit of stored text. Letters without accents, digits and common punctuation take one byte each, accented letters two, and most other scripts three or four. Keep the algorithm name and the number.</extracomment>
+        <translation>AES-256 ใช้เพียง 127 ไบต์แรกของรหัสผ่าน ทำให้รหัสผ่านทั้งสองต่างกันภายในช่วงนี้</translation>
+    </message>
+    <message>
+        <source>AES-128 and RC4-128 use only the first 32 characters of a password. Make the two passwords differ within them.</source>
+        <extracomment>Shown below the owner-password field when it differs from the open password only after their first 32 characters, while a permission is not allowed and AES-128 or RC4-128 is chosen. Anyone with the open password could then lift the restrictions. Keep the algorithm names and the number.</extracomment>
+        <translation>AES-128 และ RC4-128 ใช้เพียง 32 อักขระแรกของรหัสผ่าน ทำให้รหัสผ่านทั้งสองต่างกันภายในช่วงนี้</translation>
+    </message>
+    <message>
         <source>A password is required.</source>
         <translation>จำเป็นต้องมีรหัสผ่าน</translation>
     </message>
@@ -3369,7 +3379,7 @@ This file is no longer on disk.</source>
     </message>
     <message>
         <source>Use a different owner password to restrict permissions.</source>
-        <extracomment>Shown below the owner-password field when it repeats the open password while a permission is not allowed. Anyone with the open password could then lift the restrictions. An empty owner field is also accepted.</extracomment>
+        <extracomment>Shown below the owner-password field when it is the same as the open password while a permission is not allowed. Anyone with the open password could then lift the restrictions. An empty owner field is also accepted.</extracomment>
         <translation>ใช้รหัสผ่านตั้งค่าสิทธิ์อื่นเพื่อจำกัดสิทธิ์</translation>
     </message>
     <message>

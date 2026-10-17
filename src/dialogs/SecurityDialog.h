@@ -48,7 +48,8 @@ private:
     /// Chooses an output and accepts an encryption request without writing a file.
     /// Refuses below the owner field, before the picker, an owner password keyed with the
     /// same bytes as the open password (QpdfService::keyBytes) while a permission is
-    /// restricted.
+    /// restricted. Passwords that differ only after the keyed part get a reason that names
+    /// the algorithm's limit.
     void doEncrypt();
     /// Confirms restriction removal when needed and accepts a decrypted-copy request.
     void doDecrypt(bool stripRestrictions); // false = remove password, true = strip

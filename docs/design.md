@@ -1040,6 +1040,9 @@ PDFDocEncoding form. Without an owner password, it uses the open password when e
 permission is allowed and 32 random bytes in hex otherwise, because owner rights
 ignore the permission flags. `SecurityDialog` compares the two passwords' key bytes and
 refuses equal ones while a permission is restricted, in a line below the owner field.
+Different passwords with equal key bytes get a reason that names the chosen algorithm's
+limit, 32 characters for AES-128 and RC4-128 (PDFDocEncoding has one byte per character)
+or 127 bytes for AES-256.
 Its minimum follows its layout (`followLayoutMinimum`), so the dialog grows for that
 line, and spare height gathers above Close, so the fields stay in place when the line
 goes away. `readInfo` names RC4 for V1 and V2 files, for which qpdf reports no method.
