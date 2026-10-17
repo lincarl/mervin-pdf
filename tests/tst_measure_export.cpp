@@ -22,6 +22,7 @@
 #include <QTest>
 #include <QTranslator>
 
+#include <algorithm>
 #include <functional>
 #include <map>
 #include <string>
@@ -64,6 +65,33 @@ std::string deflate(const std::string &data)
     Pl_Flate flate("deflate", &sink, Pl_Flate::a_deflate);
     flate.writeString(data);
     flate.finish();
+    return out;
+}
+
+// Wraps `data` in a zlib stream of stored blocks, as zlib does with data it cannot
+// compress. This is about the largest encoding Flate gives for any data.
+std::string storedFlate(const std::string &data)
+{
+    std::string out("\x78\x01", 2);
+    size_t at = 0;
+    do {
+        const size_t n = std::min<size_t>(data.size() - at, 65535);
+        out += char(at + n == data.size() ? 1 : 0); // the last block is final
+        out += char(n & 0xFF);
+        out += char(n >> 8);
+        out += char(~n & 0xFF);
+        out += char(~n >> 8 & 0xFF);
+        out.append(data, at, n);
+        at += n;
+    } while (at < data.size());
+    quint32 a = 1, b = 0;
+    for (const unsigned char c : data) {
+        a = (a + c) % 65521;
+        b = (b + a) % 65521;
+    }
+    const quint32 sum = b << 16 | a;
+    for (int shift = 24; shift >= 0; shift -= 8)
+        out += char(sum >> shift & 0xFF);
     return out;
 }
 
@@ -239,6 +267,7 @@ private slots:
     void foreignEncodingsGiveNoData();
     void damagedFlateGivesNoData_data();
     void damagedFlateGivesNoData();
+    void storedFlateAtTheCapReads();
     void mergeRefusesMeasurementsPastTheCap_data();
     void mergeRefusesMeasurementsPastTheCap();
     void saveRefusesMeasurementsPastTheCap();
@@ -493,11 +522,14 @@ void TstMeasureExport::damagedFlateGivesNoData_data()
     // The data is complete, so both libraries could return it with only a warning.
     QTest::newRow("missing Adler-32") << QStringLiteral("trailer");
     QTest::newRow("truncated in the data") << QStringLiteral("data");
+    // Valid Flate data that is far larger encoded than decoded.
+    QTest::newRow("encoded far past the limit") << QStringLiteral("padding");
 }
 
 /// A damaged Flate blob gives no data in either reader. MuPDF and qpdf both decode such a
 /// stream with only a warning, so a reader that ignored warnings would show partial or
-/// unverified measurements that the other reader rejects.
+/// unverified measurements that the other reader rejects. Neither reader reads more encoded
+/// data than the decoded limit allows either.
 void TstMeasureExport::damagedFlateGivesNoData()
 {
     QFETCH(QString, damage);
@@ -506,8 +538,18 @@ void TstMeasureExport::damagedFlateGivesNoData()
         encoded.back() = char(encoded.back() ^ 0xFF); // the last byte of the Adler-32
     else if (damage == QLatin1String("trailer"))
         encoded.resize(encoded.size() - 4);
-    else
+    else if (damage == QLatin1String("data"))
         encoded.resize(encoded.size() / 2);
+    else {
+        // Empty stored blocks between the zlib header and the data decode to nothing.
+        const std::string emptyBlock("\x00\x00\x00\xFF\xFF", 5);
+        const size_t blocks = size_t(kMaxMeasurementBlobBytes + 1024 * 1024) / emptyBlock.size();
+        std::string padded = encoded.substr(0, 2);
+        padded.reserve(padded.size() + blocks * emptyBlock.size() + encoded.size());
+        for (size_t i = 0; i < blocks; ++i)
+            padded += emptyBlock;
+        encoded = padded + encoded.substr(2);
+    }
     const QString in = p("damaged.pdf"), out = p("damaged-rotated.pdf");
     makeBlobPdf(in, encoded, QPDFObjectHandle::newName("/FlateDecode"));
 
@@ -521,6 +563,30 @@ void TstMeasureExport::damagedFlateGivesNoData()
     QCOMPARE(PageOps::rotatePages(in, out, {0}, 90, true, {}, &err), PageOps::Status::Failed);
     QCOMPARE(err, QCoreApplication::translate("mervin::measurementPages",
                                               "Invalid measurement metadata."));
+}
+
+/// Both readers accept a blob at the cap stored uncompressed inside Flate, so the encoded
+/// limit leaves room for Flate's own overhead.
+void TstMeasureExport::storedFlateAtTheCapReads()
+{
+    const QByteArray json = serializeMeasurements(oneDistance());
+    const std::string data =
+        std::string(size_t(kMaxMeasurementBlobBytes - json.size()), ' ') + json.toStdString();
+    const std::string encoded = storedFlate(data);
+    QVERIFY(encoded.size() > data.size());
+    const QString in = p("stored-cap.pdf");
+    makeBlobPdf(in, encoded, QPDFObjectHandle::newName("/FlateDecode"));
+
+    const auto blob = MeasureExport::readMervinBlob(in);
+    QVERIFY(blob.has_value());
+    QCOMPARE(blob->size(), kMaxMeasurementBlobBytes);
+    RenderEngine engine;
+    const auto document = engine.openDocument(in);
+    QVERIFY(document);
+    const auto opened = document->mervinMeasurements();
+    QVERIFY(opened.has_value());
+    QCOMPARE(opened->size(), kMaxMeasurementBlobBytes);
+    QVERIFY(!document->measurementsUnreadable());
 }
 
 void TstMeasureExport::mergeRefusesMeasurementsPastTheCap_data()

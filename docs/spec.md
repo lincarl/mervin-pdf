@@ -144,8 +144,9 @@ The measuring tool is intended for scaled plans, CAD exports, and maps.
 - Units, precision, and line width can be adjusted. Measurement vertices and value
   labels can be repositioned on the page.
 - Editable measurements and manual scales can be saved back into the PDF for use in
-  Mervin. Saved measurement data that decompresses to more than 16 MiB, that is stored
-  other than plain or compressed once with Flate, that is damaged, such as a Flate
+  Mervin. Saved measurement data that decompresses to more than 16 MiB, that takes more
+  than 16 MiB and 64 KiB in the file, that is stored other than plain or compressed
+  once with Flate, that is damaged, such as a Flate
   stream with a bad checksum or missing data, or that Mervin cannot parse, is not shown
   when the document opens, and the page tools report it as invalid. Mervin never
   replaces such data. Saving edits, copies, flattened exports and the recovery copy of

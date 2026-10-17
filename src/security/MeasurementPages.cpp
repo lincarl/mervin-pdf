@@ -30,6 +30,34 @@ private:
     QByteArray &bytes_;
 };
 
+// Counts a stream's encoded bytes and keeps the last four, which end a zlib stream with its
+// checksum. Throws once the count passes kMaxMeasurementBlobRawBytes, so qpdf stops
+// reading. Nothing else is kept.
+class RawTail final : public Pipeline
+{
+public:
+    RawTail() : Pipeline("measurement blob encoding", nullptr) {}
+
+    void write(unsigned char const *data, size_t length) override
+    {
+        if (length > size_t(kMaxMeasurementBlobRawBytes) - total_)
+            throw std::length_error("measurement blob encoding exceeds its size limit");
+        for (size_t i = length > 4 ? length - 4 : 0; i < length; ++i)
+            tail_ = tail_ << 8 | data[i];
+        total_ += length;
+    }
+
+    void finish() override {}
+
+    size_t total() const { return total_; }
+    // The last four bytes, read as the big-endian checksum.
+    quint32 tail() const { return tail_; }
+
+private:
+    size_t total_ = 0;
+    quint32 tail_ = 0;
+};
+
 // The Adler-32 checksum that ends a zlib stream, of the decoded `data`.
 quint32 adler32(const QByteArray &data)
 {
@@ -63,6 +91,7 @@ std::optional<QByteArray> decodeBlob(QPDFObjectHandle &stream)
     // qpdf builds a filter's buffers from its parameters before any data reaches the sink.
     if (!plainFlate(stream.getDict()))
         return std::nullopt;
+    RawTail raw;
     QByteArray bytes;
     CappedSink sink(bytes);
     bool decoded = false;
@@ -72,24 +101,21 @@ std::optional<QByteArray> decodeBlob(QPDFObjectHandle &stream)
     QPDF *owner = stream.getOwningQPDF();
     const size_t warnings = owner ? owner->numWarnings() : 0;
     try {
-        // qpdf adds no warning of its own, since the caller reports a failure as missing or
+        // Empty Flate blocks decode to nothing, so the decoded limit alone does not bound the
+        // read. The encoded data is counted first, without keeping it. qpdf adds no warning
+        // of its own for either pass, since the caller reports a failure as missing or
         // invalid metadata.
+        if (!stream.pipeStreamData(&raw, nullptr, 0, qpdf_dl_none, true))
+            return std::nullopt;
         if (!stream.pipeStreamData(&sink, &decoded, 0, qpdf_dl_generalized, true) || !decoded)
             return std::nullopt;
         if (owner && owner->numWarnings() > warnings)
             return std::nullopt;
         // qpdf accepts a wrong Flate checksum without a warning, where MuPDF warns. Mervin's
         // zlib stream ends with its checksum, so compare it here as well.
-        if (!stream.getDict().getKey("/Filter").isNull()) {
-            const auto raw = stream.getRawStreamData(); // decrypted, still Flate-encoded
-            if (raw->getSize() < 4)
-                return std::nullopt;
-            const unsigned char *end = raw->getBuffer() + raw->getSize();
-            const quint32 stored = quint32(end[-4]) << 24 | quint32(end[-3]) << 16
-                                   | quint32(end[-2]) << 8 | quint32(end[-1]);
-            if (stored != adler32(bytes))
-                return std::nullopt;
-        }
+        if (!stream.getDict().getKey("/Filter").isNull()
+            && (raw.total() < 4 || raw.tail() != adler32(bytes)))
+            return std::nullopt;
     } catch (const std::exception &) {
         return std::nullopt;
     }

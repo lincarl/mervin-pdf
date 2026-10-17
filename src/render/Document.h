@@ -230,9 +230,10 @@ public:
     bool hasForm() const;
 
     // The /Mervin_Measurements blob read from this open document under the access lock,
-    // or nullopt when it is absent, larger than kMaxMeasurementBlobBytes, encoded other
-    // than Mervin writes it, or unreadable, which includes any MuPDF warning during the
-    // read, such as for a bad Flate checksum or missing data. Also nullopt for non-PDFs.
+    // or nullopt when it is absent, larger than kMaxMeasurementBlobBytes decoded or
+    // kMaxMeasurementBlobRawBytes encoded, encoded other than Mervin writes it, or
+    // unreadable, which includes any MuPDF warning during the read, such as for a bad
+    // Flate checksum or missing data. Also nullopt for non-PDFs.
     // Opening reads saved measurements here rather than with qpdf, which inflates whole
     // object streams without a limit while it resolves objects.
     std::optional<QByteArray> mervinMeasurements() const;
