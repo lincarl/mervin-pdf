@@ -168,11 +168,11 @@ Edited document retained at %2.
 %1</source>
         <extracomment>%1 is the folder the files were written to.</extracomment>
         <translation>
-            <numerusform>Напиша %n датотека до:
+            <numerusform>Запишани датотеки: %n. Папка:
 %1</numerusform>
-            <numerusform>Напиша %n датотеки на:
+            <numerusform>Запишани се %n датотеки во:
 %1</numerusform>
-            <numerusform>Напиша %n датотеки на:
+            <numerusform>Запишани се %n датотеки во:
 %1</numerusform>
         </translation>
     </message>
@@ -2122,7 +2122,7 @@ The exported file is viewable in any PDF viewer.</source>
     <message numerus="yes">
         <source>Result: %n page(s), in the order shown.</source>
         <translation>
-            <numerusform>Резултат: %n страница, по прикажаниот редослед.</numerusform>
+            <numerusform>Резултат: %n стр., по прикажаниот редослед.</numerusform>
             <numerusform>Резултат: %n страници, по прикажаниот редослед.</numerusform>
             <numerusform>Резултат: %n страници, по прикажаниот редослед.</numerusform>
         </translation>
@@ -2131,7 +2131,7 @@ The exported file is viewable in any PDF viewer.</source>
         <source>Result: %n of %1 page(s) remain (%2).</source>
         <extracomment>Result line of Delete pages, under the page strip. %n is how many pages the new file keeps, %1 the document&apos;s page count, %2 the pages that remain as ranges, like &quot;1, 3-4&quot;. In English the verb follows %n: &quot;1 of 6 pages remains&quot;, &quot;3 of 6 pages remain&quot;.</extracomment>
         <translation>
-            <numerusform>Резултат: останува %n страница од %1 (%2).</numerusform>
+            <numerusform>Резултат по бришењето: %n од %1 стр. (%2).</numerusform>
             <numerusform>Резултат: остануваат %n страници од %1 (%2).</numerusform>
             <numerusform>Резултат: остануваат %n страници од %1 (%2).</numerusform>
         </translation>
@@ -2155,7 +2155,7 @@ The exported file is viewable in any PDF viewer.</source>
         <source>Pages %1 (%n page(s)). Click to show them.</source>
         <extracomment>Tooltip of a tile standing in for hidden pages: %1 is their range, like &quot;14-30&quot;.</extracomment>
         <translation>
-            <numerusform>Страници %1 (%n страница). Кликнете за да ги прикажете.</numerusform>
+            <numerusform>Страници %1 (%n стр.). Кликнете за да ги прикажете.</numerusform>
             <numerusform>Страници %1 (%n страници). Кликнете за да ги прикажете.</numerusform>
             <numerusform>Страници %1 (%n страници). Кликнете за да ги прикажете.</numerusform>
         </translation>
@@ -2194,7 +2194,7 @@ The exported file is viewable in any PDF viewer.</source>
         <source>Deleted %n page(s) in a copy saved as %1</source>
         <extracomment>Status bar message after Delete pages wrote its new file. %n is how many pages it left out, %1 the new file&apos;s name. The original is unchanged.</extracomment>
         <translation>
-            <numerusform>Избришана е %n страница во копија зачувана како %1</numerusform>
+            <numerusform>Избришани страници: %n. Копијата е зачувана како %1</numerusform>
             <numerusform>Избришани се %n страници во копија зачувана како %1</numerusform>
             <numerusform>Избришани се %n страници во копија зачувана како %1</numerusform>
         </translation>
@@ -2208,9 +2208,9 @@ The exported file is viewable in any PDF viewer.</source>
         <source>Extracted %n page(s) to %1</source>
         <extracomment>%1 is the new file&apos;s name.</extracomment>
         <translation>
-            <numerusform>Извлечена е %n страница до %1</numerusform>
-            <numerusform>Извлечени %n страници до %1</numerusform>
-            <numerusform>Извлечени %n страници до %1</numerusform>
+            <numerusform>Извлечени страници: %n. Датотека: %1</numerusform>
+            <numerusform>Извлечени %n страници во %1</numerusform>
+            <numerusform>Извлечени %n страници во %1</numerusform>
         </translation>
     </message>
 </context>
@@ -2395,9 +2395,9 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <source>%n best-quality model(s) available</source>
         <extracomment>%n is the number of OCR language models listed.</extracomment>
         <translation>
-            <numerusform>Достапен е %n модел со најдобар квалитет</numerusform>
-            <numerusform>Достапни се %n најквалитетни модели</numerusform>
-            <numerusform>Достапни се %n најквалитетни модели</numerusform>
+            <numerusform>Достапни модели со најдобар квалитет: %n</numerusform>
+            <numerusform>Достапни модели со најдобар квалитет: %n</numerusform>
+            <numerusform>Достапни модели со најдобар квалитет: %n</numerusform>
         </translation>
     </message>
     <message>
@@ -2692,13 +2692,13 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
 %1</source>
         <extracomment>%1 is a list of files, one per line. The number of files picks the singular or plural form.</extracomment>
         <translation>
-            <numerusform>Овие датотеки не може да се спојат:
+            <numerusform>Датотеки што не може да се спојат:
 
 %1</numerusform>
-            <numerusform>Овие датотеки не може да се спојат:
+            <numerusform>Датотеки што не може да се спојат:
 
 %1</numerusform>
-            <numerusform>Овие датотеки не може да се спојат:
+            <numerusform>Датотеки што не може да се спојат:
 
 %1</numerusform>
         </translation>
@@ -2803,7 +2803,7 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <source>%n file(s)</source>
         <extracomment>Goes into %1 of &quot;Result: %n page(s) from %1, in the order shown.&quot;, so use the form that fits after &quot;from&quot;.</extracomment>
         <translation>
-            <numerusform>%n датотека</numerusform>
+            <numerusform>датотеки: %n</numerusform>
             <numerusform>%n датотеки</numerusform>
             <numerusform>%n датотеки</numerusform>
         </translation>
@@ -2812,9 +2812,9 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <source>Result: %n page(s) from %1, in the order shown.</source>
         <extracomment>%1 is the number of files, like &quot;4 files&quot;.</extracomment>
         <translation>
-            <numerusform>Резултат: %n страница од %1, по прикажаниот редослед.</numerusform>
-            <numerusform>Резултат: %n страници од %1, по прикажаниот редослед.</numerusform>
-            <numerusform>Резултат: %n страници од %1, по прикажаниот редослед.</numerusform>
+            <numerusform>Резултат: %n стр. по прикажаниот редослед (%1).</numerusform>
+            <numerusform>Резултат: %n страници по прикажаниот редослед (%1).</numerusform>
+            <numerusform>Резултат: %n страници по прикажаниот редослед (%1).</numerusform>
         </translation>
     </message>
     <message>
@@ -2932,7 +2932,7 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <source>It has %n page(s); page %1 does not exist.</source>
         <extracomment>Merge or extract error, shown below a line that names the file. %n is the file&apos;s page count, %1 the missing page number.</extracomment>
         <translation>
-            <numerusform>Има %n страница; страница %1 не постои.</numerusform>
+            <numerusform>Има %n стр.; страница %1 не постои.</numerusform>
             <numerusform>Има %n страници; страница %1 не постои.</numerusform>
             <numerusform>Има %n страници; страница %1 не постои.</numerusform>
         </translation>
@@ -3070,23 +3070,23 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <source>%n day(s) ago</source>
         <extracomment>When a recent file was last opened. Used from 2 days on.</extracomment>
         <translation>
-            <numerusform>пред %n ден</numerusform>
-            <numerusform>пред %n дена</numerusform>
-            <numerusform>пред %n дена</numerusform>
+            <numerusform>пред %n д.</numerusform>
+            <numerusform>пред %n д.</numerusform>
+            <numerusform>пред %n д.</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>%n page(s)</source>
         <translation>
-            <numerusform>%n страница</numerusform>
-            <numerusform>%n страници</numerusform>
-            <numerusform>%n страници</numerusform>
+            <numerusform>%n стр.</numerusform>
+            <numerusform>%n стр.</numerusform>
+            <numerusform>%n стр.</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>Stopped, %n file(s) found</source>
         <translation>
-            <numerusform>Запрено, пронајдена е %n датотека</numerusform>
+            <numerusform>Запрено. Пронајдени датотеки: %n</numerusform>
             <numerusform>Запрено, пронајдени се %n датотеки</numerusform>
             <numerusform>Запрено, пронајдени се %n датотеки</numerusform>
         </translation>
@@ -3094,7 +3094,7 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     <message numerus="yes">
         <source>%n file(s) found</source>
         <translation>
-            <numerusform>Пронајдена е %n датотека</numerusform>
+            <numerusform>Пронајдени датотеки: %n</numerusform>
             <numerusform>Пронајдени се %n датотеки</numerusform>
             <numerusform>Пронајдени се %n датотеки</numerusform>
         </translation>
@@ -3116,18 +3116,18 @@ This file is no longer on disk.</source>
     <message numerus="yes">
         <source>%n result(s)</source>
         <translation>
-            <numerusform>%n резултат</numerusform>
-            <numerusform>%n резултати</numerusform>
-            <numerusform>%n резултати</numerusform>
+            <numerusform>Резултати: %n</numerusform>
+            <numerusform>Резултати: %n</numerusform>
+            <numerusform>Резултати: %n</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>Your last %n opened document(s)</source>
         <extracomment>Status bar summary of the Recent list.</extracomment>
         <translation>
-            <numerusform>Вашиот последен %n отворен документ</numerusform>
-            <numerusform>Вашите последни %n отворени документи</numerusform>
-            <numerusform>Вашите последни %n отворени документи</numerusform>
+            <numerusform>Последно отворени документи: %n</numerusform>
+            <numerusform>Последно отворени документи: %n</numerusform>
+            <numerusform>Последно отворени документи: %n</numerusform>
         </translation>
     </message>
     <message>
