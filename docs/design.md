@@ -633,7 +633,8 @@ count toward it, so a malformed giant page cannot shrink the rest of the documen
 `RenderEngine` refuses a raster beyond the limit instead of returning a blank image, so
 such a page shows plain paper, as any page whose render fails does. A move to a screen
 with another device pixel ratio (`QEvent::DevicePixelRatioChange`) re-renders at the
-new ratio and clamps the zoom again, in every zoom mode.
+new ratio and clamps the zoom again, in every zoom mode. When that changes the zoom, it
+keeps the page point in the middle of the view, as any other zoom does.
 
 All interactive geometry uses a consistent unrotated page-point space with a
 top-left origin. The viewer converts between that space, screen coordinates, and PDF

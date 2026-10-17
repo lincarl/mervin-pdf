@@ -90,6 +90,7 @@ private slots:
     void deepZoomStopsAtTheRasteriserRange();
     void deepZoomFollowsTheDevicePixelRatio();
     void aGiantPageLeavesTheZoomRangeToTheOthers();
+    void deviceRatioChangeKeepsTheReadingPoint();
 
 private:
     // Point the one viewer at a document and settle the deferred layout pass.
@@ -881,6 +882,57 @@ void TstViewerFit::aGiantPageLeavesTheZoomRangeToTheOthers()
     viewer.goToPage(1);
     QTRY_VERIFY_WITH_TIMEOUT(rendered(1, true), 15000);
     QVERIFY(!rendered(0, true));
+}
+
+// When a ratio change lowers the zoom through the cap, the scroll range shrinks. The
+// page point in the middle of the view must stay there, as for any other zoom,
+// instead of the view jumping, for example to the page's foot.
+void TstViewerFit::deviceRatioChangeKeepsTheReadingPoint()
+{
+    const QString path = dir_->filePath(QStringLiteral("roll-reading.pdf"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(rollPdf());
+    file.close();
+    QString err;
+    auto roll = engine_->openDocument(path, QString(), &err);
+    QVERIFY2(roll != nullptr, qPrintable(err));
+    const double length = roll->pageSize(0).height(); // 11338.58 pt
+
+    ViewerWidget viewer(engine_.get());
+    viewer.setAttribute(Qt::WA_DontShowOnScreen, true);
+    viewer.setZoomEaseMs(0);
+    viewer.resize(1000, 800);
+    viewer.setDocument(roll.get());
+    viewer.show();
+    QCoreApplication::processEvents();
+    const double screen = viewer.devicePixelRatioF();
+    const auto capAt = [length](double ratio) {
+        return (mervin::kMaxDevicePixel - 1) / (length * ratio);
+    };
+    viewer.setScale((capAt(screen) + capAt(screen * 2)) / 2);
+    // Read near the page's foot, nine tenths of the way down.
+    viewer.verticalScrollBar()->setValue(viewer.verticalScrollBar()->maximum() * 9 / 10);
+    // The page point, in points, shown in the middle of the viewport.
+    const auto middle = [&viewer] {
+        const ViewerWidget::ScrollAnchor corner = viewer.scrollAnchor();
+        const QSizeF page = QSizeF(2590.87, 11338.58) * viewer.scale();
+        const QSize view = viewer.viewport()->size();
+        return QPointF((corner.fracX * page.width() + view.width() / 2.0) / viewer.scale(),
+                       (corner.fracY * page.height() + view.height() / 2.0) / viewer.scale());
+    };
+    const QPointF before = middle();
+    QVERIFY2(before.y() > length * 0.8 && before.y() < length * 0.95,
+             qPrintable(QString::number(before.y())));
+
+    viewer.setDevicePixelRatioForTest(screen * 2);
+    QEvent moved(QEvent::DevicePixelRatioChange);
+    QCoreApplication::sendEvent(&viewer, &moved);
+    QCOMPARE(viewer.scale(), capAt(screen * 2));
+    const QPointF after = middle();
+    QVERIFY2(std::abs(after.x() - before.x()) < 0.5 && std::abs(after.y() - before.y()) < 0.5,
+             qPrintable(QStringLiteral("middle moved from %1, %2 to %3, %4").arg(before.x())
+                            .arg(before.y()).arg(after.x()).arg(after.y())));
 }
 
 QTEST_MAIN(TstViewerFit)

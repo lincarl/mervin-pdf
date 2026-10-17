@@ -226,10 +226,25 @@ void ViewerWidget::applyDeviceRatio()
     if (!doc_ || deviceRatio() == dpr_)
         return;
     endZoomEase(); // the eased rects belong to the old ratio
-    if (zoomMode_ != ZoomMode::Custom)
+    // The layout does not depend on the ratio, so the page point under the viewport
+    // centre can still be read at the old scale after this.
+    dpr_ = deviceRatio();
+    double target = clampScale(scale_);
+    if (zoomMode_ != ZoomMode::Custom) {
+        const double previous = scale_;
         applyFitScale();
-    invalidateRenders(PreviewPolicy::Keep); // the cached images carry the old ratio
-    relayout(); // reads the new ratio and clamps the zoom to maximumScale()
+        target = scale_;
+        scale_ = previous;
+    }
+    if (qFuzzyCompare(target, scale_)) {
+        invalidateRenders(PreviewPolicy::Keep); // the cached images carry the old ratio
+        relayout();
+    } else {
+        // The new cap or fit changes the zoom. Keep the page point the reader looks at
+        // in the middle, as any other zoom does, instead of letting the shrinking
+        // scroll range move the view.
+        rescaleKeeping(target, viewportCenter(), true);
+    }
     emit scaleChanged(scale_);
 }
 
