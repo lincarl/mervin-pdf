@@ -120,6 +120,27 @@ std::unique_ptr<QPDF> openWithBytes(const QString &path, const QByteArray &passw
     return q;
 }
 
+// Replaces the crypt filter names in a qpdf-written V4 or V5 file with `methods`, as other
+// programs choose them. Key derivation ignores these names, so the passwords still open
+// the file. The optional /AuthEvent /DocOpen entry makes room, so no offset moves.
+void retargetCryptFilters(const QString &path, const QByteArray &methods)
+{
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QByteArray bytes = file.readAll();
+    file.close();
+    const QByteArray authEvent(" /AuthEvent /DocOpen");
+    const QByteArray filters(" /StmF /StdCF /StrF /StdCF");
+    QCOMPARE(bytes.count(authEvent), 1);
+    QCOMPARE(bytes.count(filters), 1);
+    const qsizetype room = authEvent.size() + filters.size();
+    QVERIFY(methods.size() + 1 <= room);
+    bytes.replace(authEvent, QByteArray());
+    bytes.replace(filters, ' ' + methods + QByteArray(room - methods.size() - 1, ' '));
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QCOMPARE(file.write(bytes), bytes.size());
+}
+
 } // namespace
 
 class TstQpdf : public QObject
@@ -149,6 +170,8 @@ private slots:
     void limitedPermissionsAreReported();
     void rc4RevisionsAreReportedAsRc4_data();
     void rc4RevisionsAreReportedAsRc4();
+    void cryptFilterNamesTheAlgorithm_data();
+    void cryptFilterNamesTheAlgorithm();
     void deletePagesReducesCount();
     void mergeConcatenates();
     void mergeHonoursPerFileRanges();
@@ -733,6 +756,50 @@ void TstQpdf::rc4RevisionsAreReportedAsRc4()
     QVERIFY(info.encrypted);
     QCOMPARE(info.revision, revision);
     QCOMPARE(info.algorithm, QStringLiteral("RC4"));
+    QCOMPARE(info.keyLengthBits, bits);
+}
+
+void TstQpdf::cryptFilterNamesTheAlgorithm_data()
+{
+    QTest::addColumn<bool>("aes256");
+    QTest::addColumn<QByteArray>("methods");
+    QTest::addColumn<QString>("algorithm");
+    QTest::addColumn<int>("bits");
+    // Acrobat encrypts only attachments this way. Streams and strings stay plain.
+    QTest::newRow("attachments only")
+        << true << QByteArray("/StmF /Identity /StrF /Identity /EFF /StdCF")
+        << QStringLiteral("AES-256") << 256;
+    // The stream filter names the algorithm when attachments use another.
+    QTest::newRow("streams before attachments")
+        << false << QByteArray("/StmF /StdCF /StrF /StdCF /EFF /Identity")
+        << QStringLiteral("AES-128") << 128;
+}
+
+/// V4 and V5 files name the first crypt filter in use, in stream, string, attachment order.
+void TstQpdf::cryptFilterNamesTheAlgorithm()
+{
+    QFETCH(bool, aes256);
+    QFETCH(QByteArray, methods);
+    QFETCH(QString, algorithm);
+    QFETCH(int, bits);
+    const QString enc = in(QStringLiteral("cf_enc.pdf"));
+    makeEncrypted(enc, [aes256](QPDFWriter &writer) {
+        writer.setObjectStreamMode(qpdf_o_disable);
+        if (aes256) {
+            writer.setR6EncryptionParameters("open", "owner", true, true, true, true, true, true,
+                                             qpdf_r3p_full, true);
+        } else {
+            writer.setR4EncryptionParametersInsecure("open", "owner", true, true, true, true, true,
+                                                     true, qpdf_r3p_full, true, true);
+        }
+    });
+    retargetCryptFilters(enc, methods);
+    QpdfService::Info info;
+    QString err;
+    QCOMPARE(QpdfService().readInfo(enc, QStringLiteral("open"), info, &err),
+             QpdfService::Status::Ok);
+    QVERIFY(info.encrypted);
+    QCOMPARE(info.algorithm, algorithm);
     QCOMPARE(info.keyLengthBits, bits);
 }
 

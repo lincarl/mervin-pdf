@@ -157,6 +157,8 @@ SecurityDialog::SecurityDialog(const QString &documentPath, const QpdfService::I
         connect(edit, &QLineEdit::textChanged, this, choicesChanged);
     for (QCheckBox *c : {allowPrint_, allowCopy_, allowModify_, allowAnnotate_})
         connect(c, &QCheckBox::toggled, this, choicesChanged);
+    // The algorithm decides how much of each password counts.
+    connect(algoCombo_, &QComboBox::currentIndexChanged, this, choicesChanged);
     choicesChanged();
     showInfo(info, error);
     // The layout alone sets the minimum, which grows while a refusal shows.
@@ -250,9 +252,13 @@ SecurityDialog::Request SecurityDialog::choices() const
 void SecurityDialog::doEncrypt()
 {
     const Request chosen = choices();
-    // The open password would grant owner rights, which ignore the restrictions.
-    if (!chosen.permissions.allowsEverything() && !chosen.ownerPassword.isEmpty()
-        && chosen.ownerPassword == chosen.userPassword) {
+    // An owner password keyed with the same bytes as the open password gives anyone with
+    // the open password owner rights, which ignore the restrictions. AES-128 and RC4-128
+    // key only the first 32 characters, so longer passwords can match without being equal.
+    // A password the algorithm cannot store fails later with its own message.
+    const auto userKey = QpdfService::keyBytes(chosen.userPassword, chosen.algorithm);
+    if (!chosen.permissions.allowsEverything() && !chosen.ownerPassword.isEmpty() && userKey
+        && userKey == QpdfService::keyBytes(chosen.ownerPassword, chosen.algorithm)) {
         //: Shown below the owner-password field when it repeats the open password while
         //: a permission is not allowed. Anyone with the open password could then lift
         //: the restrictions. An empty owner field is also accepted.

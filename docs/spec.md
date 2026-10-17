@@ -290,8 +290,10 @@ An empty owner password becomes the open password while every permission is allo
 When a permission is not allowed, an empty owner password becomes a random password
 that nobody is told, so the open password cannot lift the restriction in other PDF
 readers. Strip Owner Restrictions still removes it with the open password. Security
-refuses an owner password equal to the open password while a permission is not
-allowed, before it asks where to save. AES-128 and RC4-128 store passwords in
+refuses an owner password that matches the open password while a permission is not
+allowed, before it asks where to save. AES-128 and RC4-128 use only the first 32
+characters of a password and AES-256 the first 127 bytes, so longer passwords that
+agree that far also count as matching. AES-128 and RC4-128 store passwords in
 PDFDocEncoding, as the PDF format requires, so a password with other characters,
 such as Chinese, fails with a request to choose AES-256. AES-256 accepts any
 character.

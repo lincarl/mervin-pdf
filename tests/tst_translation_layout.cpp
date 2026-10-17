@@ -1198,7 +1198,7 @@ void TstTranslationLayout::security()
              mervin::QpdfService::Status::Ok);
     mervin::SecurityDialog protectedDocument(encrypted_, info);
     inspect(protectedDocument, QStringLiteral("Security restricted encrypted document"));
-    // The longest summary: both limited states beside two Not allowed.
+    // The longest summary has both limited states beside two Not allowed.
     mervin::QpdfService::Info limited;
     limited.encrypted = true;
     limited.algorithm = QStringLiteral("RC4");

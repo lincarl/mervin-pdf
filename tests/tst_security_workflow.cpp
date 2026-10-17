@@ -574,21 +574,89 @@ private slots:
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 
+    /// Checks that the owner placeholder says what an empty owner password becomes.
+    void ownerPlaceholderFollowsPermissions()
+    {
+        SecurityDialog dialog(QStringLiteral(MERVIN_FIXTURE_PDF), QpdfService::Info{});
+        auto *owner = dialog.findChild<QLineEdit *>(QStringLiteral("securityOwnerPassword"));
+        auto *copy = dialog.findChild<QCheckBox *>(QStringLiteral("securityAllowCopy"));
+        const QString open = SecurityDialog::tr("defaults to the open password");
+        QCOMPARE(owner->placeholderText(), open);
+        copy->setChecked(false);
+        QCOMPARE(owner->placeholderText(), SecurityDialog::tr("defaults to a random password"));
+        copy->setChecked(true);
+        QCOMPARE(owner->placeholderText(), open);
+    }
+
+    /// Covers each limited permission state on its own.
+    void limitedStatesFillTheirOwnSlots_data()
+    {
+        QTest::addColumn<bool>("lowResolution");
+        QTest::addColumn<QString>("printing");
+        QTest::addColumn<QString>("modifying");
+        QTest::newRow("low-resolution printing only")
+            << true << SecurityDialog::tr("Low resolution only") << SecurityDialog::tr("Not allowed");
+        QTest::newRow("page assembly only")
+            << false << SecurityDialog::tr("Not allowed") << SecurityDialog::tr("Page assembly only");
+    }
+
+    /// Checks that a limited state replaces Not allowed only for its own permission.
+    void limitedStatesFillTheirOwnSlots()
+    {
+        QFETCH(bool, lowResolution);
+        QFETCH(QString, printing);
+        QFETCH(QString, modifying);
+        QpdfService::Info info;
+        info.encrypted = true;
+        info.algorithm = QStringLiteral("AES-128");
+        info.keyLengthBits = 128;
+        info.revision = 4;
+        info.permissions = {false, false, false, false};
+        info.lowResolutionPrintOnly = lowResolution;
+        info.pageAssemblyOnly = !lowResolution;
+        SecurityDialog dialog(QStringLiteral(MERVIN_FIXTURE_PDF), info);
+        QString summary;
+        for (QLabel *label : dialog.findChildren<QLabel *>()) {
+            if (label->textFormat() == Qt::RichText)
+                summary = label->text();
+        }
+        QVERIFY2(summary.contains(QStringLiteral("Printing: %1 \u00B7").arg(printing)),
+                 qPrintable(summary));
+        QVERIFY2(summary.contains(QStringLiteral("Modifying: %1 \u00B7").arg(modifying)),
+                 qPrintable(summary));
+    }
+
     /// Covers owner choices the form refuses or accepts before its Save As picker.
     void ownerPasswordMustDifferForRestrictions_data()
     {
+        QTest::addColumn<QString>("user");
         QTest::addColumn<QString>("owner");
+        QTest::addColumn<int>("algorithm"); // index in the algorithm list
         QTest::addColumn<bool>("restricted");
         QTest::addColumn<bool>("refused");
-        QTest::newRow("same password, restricted") << QStringLiteral("same") << true << true;
-        QTest::newRow("same password, everything allowed") << QStringLiteral("same") << false << false;
-        QTest::newRow("empty owner, restricted") << QString() << true << false;
+        const QString same = QStringLiteral("same");
+        QTest::newRow("same password, restricted") << same << same << 0 << true << true;
+        QTest::newRow("same password, everything allowed") << same << same << 0 << false << false;
+        QTest::newRow("empty owner, restricted") << same << QString() << 0 << true << false;
+        // AES-128 and RC4-128 keep the first 32 characters of each password.
+        const QString prefix = QStringLiteral("Northwind quarterly report 2026 ");
+        QTest::newRow("same first 32 characters, AES-128")
+            << prefix + QStringLiteral("read") << prefix + QStringLiteral("admin") << 1 << true << true;
+        QTest::newRow("same first 32 characters, AES-256")
+            << prefix + QStringLiteral("read") << prefix + QStringLiteral("admin") << 0 << true << false;
+        // AES-256 keeps the first 127 bytes of UTF-8, here 64 characters.
+        const QString bytes127 = QString(63, QChar(0xFC)) + QLatin1Char('a');
+        QTest::newRow("same first 127 bytes, AES-256")
+            << bytes127 + QStringLiteral("read") << bytes127 + QStringLiteral("admin") << 0 << true
+            << true;
     }
 
     /// Checks that restrictions the open password would lift are refused inside the form.
     void ownerPasswordMustDifferForRestrictions()
     {
+        QFETCH(QString, user);
         QFETCH(QString, owner);
+        QFETCH(int, algorithm);
         QFETCH(bool, restricted);
         QFETCH(bool, refused);
         QTemporaryDir files;
@@ -606,9 +674,10 @@ private slots:
         }
         bool checked = false;
         dialogs.security = [&](SecurityDialog &dialog) {
-            dialog.findChild<QLineEdit *>(QStringLiteral("securityUserPassword"))->setText(QStringLiteral("same"));
+            dialog.findChild<QLineEdit *>(QStringLiteral("securityUserPassword"))->setText(user);
             auto *ownerEdit = dialog.findChild<QLineEdit *>(QStringLiteral("securityOwnerPassword"));
             ownerEdit->setText(owner);
+            dialog.findChild<QComboBox *>(QStringLiteral("securityAlgorithm"))->setCurrentIndex(algorithm);
             dialog.findChild<QCheckBox *>(QStringLiteral("securityAllowPrint"))->setChecked(!restricted);
             // The field being corrected keeps its place while the refusal comes and goes.
             const auto ownerTop = [&] {
@@ -643,8 +712,7 @@ private slots:
             QTRY_VERIFY(QFileInfo::exists(output));
             QTRY_VERIFY(dialogs.answers.isEmpty());
             QpdfService::Info info;
-            QCOMPARE(QpdfService().readInfo(output, QStringLiteral("same"), info),
-                     QpdfService::Status::Ok);
+            QCOMPARE(QpdfService().readInfo(output, user, info), QpdfService::Status::Ok);
             QCOMPARE(info.permissions.canPrint, !restricted);
         }
         QTRY_VERIFY(!QApplication::activeModalWidget());

@@ -68,8 +68,8 @@ QpdfService::Status openQpdf(const QString &path, const QString &password,
         return failed(job::notRunError());
     const std::string utf8 = password.toStdString();
     // Only a password with a character beyond ASCII that PDFDocEncoding also has, such
-    // as "café", has a second form to try. A file cannot be keyed with a character that
-    // PDFDocEncoding lacks.
+    // as "café", has a second form to try. A password with a character that
+    // PDFDocEncoding lacks has only its UTF-8 form.
     std::string pdfDoc;
     const bool twoForms = QUtil::utf8_to_pdf_doc(utf8, pdfDoc) && pdfDoc != utf8;
     try {

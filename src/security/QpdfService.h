@@ -1,9 +1,11 @@
 #pragma once
 
+#include <QByteArray>
 #include <QCoreApplication>
 #include <QString>
 
 #include <functional>
+#include <optional>
 
 namespace mervin {
 
@@ -59,6 +61,12 @@ public:
         bool pageAssemblyOnly = false;       // only inserting, rotating or deleting pages allowed
     };
 
+    /// The password bytes a file encrypted with `algorithm` is keyed with: the first 32
+    /// bytes of the PDFDocEncoding form for AES-128 and RC4-128, and the first 127 bytes of
+    /// UTF-8 for AES-256. Passwords with the same bytes are the same password to every
+    /// reader. nullopt when PDFDocEncoding lacks a character of `password`.
+    static std::optional<QByteArray> keyBytes(const QString &password, Algorithm algorithm);
+
     // Read encryption / permission metadata. `password` may be empty.
     Status readInfo(const QString &path, const QString &password, Info &out, QString *error = nullptr);
 
@@ -74,9 +82,9 @@ public:
     // permission changes. An empty `ownerPassword` becomes `userPassword` when
     // `perms` allows everything, and otherwise a random password nobody is told,
     // so the open password cannot lift the restrictions. decrypt() still removes
-    // them with the open password. AES-128 and RC4-128 store both passwords in
-    // PDFDocEncoding and fail without writing when a character has no PDFDocEncoding
-    // form; AES-256 stores UTF-8. Use for both "add password" (currentPassword
+    // them with the open password. Both passwords are keyed with keyBytes(), so
+    // AES-128 and RC4-128 use PDFDocEncoding and fail without writing when a character
+    // has no PDFDocEncoding form; AES-256 uses UTF-8. Use for both "add password" (currentPassword
     // empty) and "change password". Optional mayCommit validates the destination
     // under its write lock before publication.
     Status encrypt(const QString &inPath, const QString &outPath, const QString &currentPassword,
