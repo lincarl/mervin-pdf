@@ -46,10 +46,15 @@ public:
     static Status probe(const QString &path, int *count, const QString &password = QString(),
                         QString *error = nullptr, bool *encrypted = nullptr);
 
-    // Write a copy with the given pages removed.
+    // Write a copy with the given pages removed. The copy keeps the source's structure and
+    // encryption but leaves out what only the removed pages used: the pages, their
+    // annotations, images and form fields, and the outline items, destination names and
+    // structure elements that lead only to them. Other references to the pages become null.
+    // On failure, failedIndex is 0 when the source could not be opened or read, including
+    // measurement data it cannot read, as merge() names its input, or -1 otherwise.
     static Status deletePages(const QString &inPath, const QString &outPath,
                               const QList<int> &pages, const QString &password = QString(),
-                              QString *error = nullptr);
+                              QString *error = nullptr, int *failedIndex = nullptr);
 
     // Rotate `pages` by `angle` (a multiple of 90). relative=true adds to the
     // existing rotation; false sets it absolutely.
@@ -70,10 +75,13 @@ public:
     };
 
     // Concatenate selected pages in input order (one input performs extraction). Reject invalid
-    // page indices to avoid silently shortening output. On failure, failedIndex identifies the
-    // unreadable input, or -1 for errors such as output writes. Optional mayCommit
-    // runs under the output lock after flushing and before commit admission. The
-    // output is encrypted like its source when every input names the same path.
+    // page indices to avoid silently shortening output. Form fields come along with their
+    // pages, without the fields and values of pages left out. On failure, failedIndex names
+    // the input that could not be opened or read, including a missing page and measurement
+    // data it cannot read, or is -1 for errors while building or writing the output. qpdf
+    // reads most stream data while writing, so a damaged stream in an input also gives -1.
+    // Optional mayCommit runs under the output lock after flushing and before commit admission.
+    // The output is encrypted like its source when every input names the same path.
     static Status merge(const QList<MergeInput> &inputs, const QString &outPath,
                         QString *error = nullptr, int *failedIndex = nullptr,
                         const std::function<bool()> &mayCommit = {});
@@ -81,7 +89,8 @@ public:
     // Concatenate all pages of `inPaths` (in order) into one document.
     static Status merge(const QStringList &inPaths, const QString &outPath, QString *error = nullptr);
 
-    // Write each page of the source to "<outDir>/<baseName>-NNN.pdf". The
+    // Write each page of the source to "<outDir>/<baseName>-NNN.pdf", with the form fields
+    // of that page as merge() copies them. The
     // produced paths are appended to `outFiles` if provided. `mayWrite`, when given,
     // gets every output path once the source is read, before the first write. When it
     // answers false, nothing is written and the split fails without an error, as the

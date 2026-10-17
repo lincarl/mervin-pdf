@@ -66,6 +66,15 @@ def scanned_page():
          "\nstream\n").encode() + image + b"\nendstream",
     ])
 
+def unreadable_measurements():
+    """Three pages whose measurement data is a string, which page operations cannot read."""
+    page = b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>"
+    return pdf([
+        b"<< /Type /Catalog /Pages 2 0 R /Mervin_Measurements (damaged) >>",
+        b"<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>",
+        page, page, page,
+    ])
+
 def main(directory):
     directory.mkdir(parents=True, exist_ok=True)
     fixtures = {
@@ -79,6 +88,7 @@ def main(directory):
         "form_comment.pdf": document(4),
         "example1.pdf": document(8, mixed=True),
         "long.pdf": document(10000, mixed=True),
+        "unreadable-measurements.pdf": unreadable_measurements(),
     }
     for name, data in fixtures.items():
         path = directory / name

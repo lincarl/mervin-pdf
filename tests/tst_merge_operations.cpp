@@ -52,6 +52,7 @@ bool writeBytes(const QString &path, const QByteArray &data)
     QFile file(path);
     return file.open(QIODevice::WriteOnly) && file.write(data) == data.size();
 }
+
 } // namespace
 
 /// Exercises worker writes, recovery dialogs and result delivery through real controls.
@@ -270,6 +271,25 @@ private slots:
         QCOMPARE(reopenedSpec_, spec_);
         QCOMPARE(reopenedOutput_, QDir::toNativeSeparators(output_));
         QVERIFY(reopenedError_.contains(QStringLiteral("source.pdf")));
+        QVERIFY(!QFileInfo::exists(output_));
+    }
+
+    /// Checks that an input whose measurements cannot be read is named, not the output.
+    void unreadableMeasurementsNameTheirRow()
+    {
+        beforeMerge_ = [this] {
+            QVERIFY(QFile::remove(source_));
+            // Three pages whose measurement data is a string, which page operations cannot read.
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_UNREADABLE_PDF), source_));
+        };
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        QVERIFY(testing::openAndWait(window, source_));
+        QVERIFY(QMetaObject::invokeMethod(&window, "mergeDocuments"));
+        QTRY_COMPARE_WITH_TIMEOUT(dialogsSeen_, 2, 10000);
+        QCOMPARE(reopenedSpec_, spec_);
+        QVERIFY2(reopenedError_.contains(QStringLiteral("source.pdf")), qPrintable(reopenedError_));
+        QVERIFY(!reopenedError_.contains(QStringLiteral("Could not write")));
         QVERIFY(!QFileInfo::exists(output_));
     }
 

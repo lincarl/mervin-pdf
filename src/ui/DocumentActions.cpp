@@ -1670,14 +1670,18 @@ void MainWindow::runPagesJob(TabPage *tab, const std::shared_ptr<PagesJob> &resu
         const auto job = result->output;
         if (mervin::job::stopped())
             return;
+        int failedInput = -1; // 0 when the source could not be read
         const PageOps::Status status = job.mode == mervin::ExtractPlan::Mode::Delete
-            ? PageOps::deletePages(source.path, job.path, job.pages, choices.password, &choices.error)
+            ? PageOps::deletePages(source.path, job.path, job.pages, choices.password,
+                                   &choices.error, &failedInput)
             : PageOps::merge({PageOps::MergeInput{source.path, job.pages, choices.password}},
-                             job.path, &choices.error);
+                             job.path, &choices.error, &failedInput);
         result->succeeded = status == PageOps::Status::Ok;
         if (!result->succeeded)
             choices.failure = status == PageOps::Status::NeedsPassword
-                ? Dialog::Choices::Failure::Password : Dialog::Choices::Failure::Write;
+                ? Dialog::Choices::Failure::Password
+                : failedInput == 0 ? Dialog::Choices::Failure::Read
+                                   : Dialog::Choices::Failure::Write;
     };
     operation.finished = [page = QPointer<TabPage>(tab), result] {
         if (page)

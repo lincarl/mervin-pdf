@@ -302,7 +302,8 @@ qt_add_executable(tst_merge_operations tst_merge_operations.cpp TestWaits.h)
 target_link_libraries(tst_merge_operations PRIVATE mervin_app Qt6::Test)
 set_target_properties(tst_merge_operations PROPERTIES WIN32_EXECUTABLE OFF)
 target_compile_definitions(tst_merge_operations PRIVATE
-    MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
+    MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf"
+    MERVIN_UNREADABLE_PDF="${MERVIN_FIXTURES_DIR}/unreadable-measurements.pdf")
 add_test(NAME tst_merge_operations COMMAND tst_merge_operations)
 set_tests_properties(tst_merge_operations PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
@@ -565,7 +566,8 @@ qt_add_executable(tst_page_dialog_operations tst_page_dialog_operations.cpp Test
 target_link_libraries(tst_page_dialog_operations PRIVATE mervin_app Qt6::Test)
 set_target_properties(tst_page_dialog_operations PROPERTIES WIN32_EXECUTABLE OFF)
 target_compile_definitions(tst_page_dialog_operations PRIVATE
-    MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
+    MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf"
+    MERVIN_UNREADABLE_PDF="${MERVIN_FIXTURES_DIR}/unreadable-measurements.pdf")
 add_test(NAME tst_page_dialog_operations COMMAND tst_page_dialog_operations)
 set_tests_properties(tst_page_dialog_operations PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"

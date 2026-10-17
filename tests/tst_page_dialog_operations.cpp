@@ -90,6 +90,7 @@ void hold(job::Step step, const QString &path)
         return reported == step && where == path;
     });
 }
+
 } // namespace
 
 /// Checks page-tool worker ownership, retained choices and result delivery.
@@ -250,6 +251,41 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(&window, "extractPagesOp"));
         QTRY_COMPARE(shown_, 2);
         QVERIFY(current(window)->isUsable());
+        QVERIFY(!QFileInfo::exists(out));
+    }
+
+    /// Covers Extract and Delete, which both write through the page worker.
+    void unreadableSourceIsNotAWriteFailure_data()
+    {
+        QTest::addColumn<bool>("deleting");
+        QTest::addColumn<QString>("message");
+        QTest::newRow("extract") << false << QStringLiteral("This PDF cannot be read for extraction.");
+        QTest::newRow("delete") << true << QStringLiteral("This PDF cannot be read for deleting pages.");
+    }
+
+    /// Reports a source that Extract or Delete cannot read as unreadable, not as a failed write.
+    void unreadableSourceIsNotAWriteFailure()
+    {
+        QFETCH(bool, deleting);
+        QFETCH(QString, message);
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("measured.pdf"));
+        const QString out = files.filePath(QStringLiteral("chosen.pdf"));
+        // Three pages whose measurement data is a string. The viewer and the page count
+        // accept it, but page operations cannot read it.
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_UNREADABLE_PDF), path));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showWindow(window);
+        QVERIFY(testing::openAndWait(window, path));
+        choices_ << [out](ExtractDialog &dialog) { choose(dialog, out); };
+        choices_ << [message](ExtractDialog &dialog) {
+            QCOMPARE(error(dialog), message);
+            QVERIFY(!dialog.findChild<QPushButton *>(QStringLiteral("extractAccept"))->isEnabled());
+            dialog.reject();
+        };
+        QVERIFY(QMetaObject::invokeMethod(&window, deleting ? "deletePagesOp" : "extractPagesOp"));
+        QTRY_COMPARE(shown_, 2);
         QVERIFY(!QFileInfo::exists(out));
     }
 

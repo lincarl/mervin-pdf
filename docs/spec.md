@@ -211,6 +211,30 @@ close with their selected plan and write in the launching tab, with the same wai
 and Stop waiting as other page tools. None saves over a file open in a tab or over an
 input document. Failure reopens the chosen ranges, order and output with its reason.
 
+Extract, Split and Merge copy only the images and fonts that the copied pages draw, also
+when the source's pages list each other's. A copied comment that replies to a comment on
+a page they do not copy stays, as a comment of its own, as in Delete Pages.
+
+Extract, Split and Merge keep the form fields of the pages they copy, so the new file
+can be filled in, and leave out the fields and values of pages they do not copy. A field
+shown on several of the copied pages stays one field. A repeated page gets fields of its
+own, and a copied field whose name the new file already has is renamed, for example to
+`name+1`, so the copies of a repeated page and fields of the same name in merged files
+fill in separately. A button that resets, submits or hides copied fields acts on the
+copies in the new file, whether it names them by reference or by their names. When Merge
+combines several files, a copied button or action that submits or resets every field, or
+every field but some, acts only on the fields that came from its own file, and one that
+would act on no field is left out. An empty list of fields counts as every field, as
+viewers read it so. A button that lists only fields the new file leaves out is left out
+too. A copied button that hides fields or comments, or plays a movie or media clip, acts
+only on those of its own file in a merged file, also when another file has one of the
+same name, and is left out when none remains. In a damaged file, a chain of actions ends
+after 100 actions or where it comes back to an earlier one, and fields more than 100
+levels below their top field are left out of the form. Form scripts, which Mervin does
+not run, can still read every field of the merged file in viewers that run them. The new
+file does not keep the form's calculation order or XFA data, so calculated fields no
+longer update in viewers that use them.
+
 Merge opens at once and reads each input's page count in the background. Pending
 rows show Reading and keep Merge disabled. The footer names the first row and file
 still being read, including when that row is scrolled out of view. Windows drives
@@ -249,13 +273,23 @@ to a row or taking it out of the row that holds it. The result line names the pa
 that remain, for example "Result: 3 of 6 pages remain (1, 3-4)." Deleting every page
 is refused before anything is written, with the reason on the error line. The window
 writes a copy, by default `<name>-edited.pdf` beside the document, which keeps the
-document's structure and encryption; the original file is never changed. Extract and
-Delete share one remembered Open when done choice.
+document's structure and encryption; the original file is never changed. The copy
+does not contain the deleted pages' content, images, annotations or form fields, nor
+the bookmarks, destination names and tagged structure elements that lead only to them.
+Links and other references to a deleted page no longer go anywhere. A comment that
+replies to a comment on a deleted page stays, as a comment of its own. A form that
+loses a field also loses its XFA data, which holds every field's value. In a damaged
+file, bookmarks, tagged structure and form fields more than 100 levels deep lose what
+lies below that depth, and a list of bookmarks that comes back to an earlier one ends
+there. Extract and Delete share one remembered Open when done choice.
 
 Extract and Delete check the source in the background before opening their dialog.
 Their write checks the chosen password and page count again. A changed count keeps
-the ranges and asks the user to check them before another attempt. Stopping the
-probe opens no dialog, and stopping a write suppresses its later result.
+the ranges and asks the user to check them before another attempt. A source that
+Extract or Delete cannot read while it writes, such as one whose saved measurements are
+damaged or from a newer version, is reported as unreadable and blocks the tool. Merge
+names such an input in its reopened window. Stopping the probe opens no dialog, and
+stopping a write suppresses its later result.
 
 Extract and Delete copy pages from the saved file, so unsaved comments, form entries
 and measurements are not included; their window says so when the open document has
