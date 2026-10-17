@@ -62,14 +62,11 @@ using mervin::testing::PipeWriter;
 
 namespace {
 // A self-contained AcroForm exercises pending editor text as well as saved PDF objects.
-// A `measured` one says in its catalog that it carries Mervin measurements, so a load
-// reads the file a second time, for them, after it opened it.
 // A second field exercises continued commits after an edit observer deletes the tab.
-QByteArray formPdf(bool measured = false, bool secondField = false)
+QByteArray formPdf(bool secondField = false)
 {
     QList<QByteArray> objects{
         QByteArray("<< /Type /Catalog /Pages 2 0 R ")
-            + (measured ? "/Mervin_Measurements () " : "")
             + "/AcroForm << /Fields [4 0 R " + (secondField ? "6 0 R" : "")
             + "] /DR << /Font << /Helv 5 0 R >> >> "
               "/DA (/Helv 12 Tf 0 g) >> >>",
@@ -424,13 +421,14 @@ private slots:
     }
 #endif
 
-    // Closing a tab whose load waits for the drive stops that load, so once the drive
-    // answers it reads nothing more, here the measurements it would read next.
+    // Closing a tab whose load waits for the drive in RenderEngine::open, the load's only
+    // read of the file, stops that load. Once the drive answers, the load reports no
+    // further read of the file and its background task ends.
     void closingALoadingTabStopsItsRead()
     {
         QTemporaryDir files;
-        const QString path = files.filePath(QStringLiteral("measured.pdf"));
-        QVERIFY(writeFile(path, formPdf(true)));
+        const QString path = files.filePath(QStringLiteral("form.pdf"));
+        QVERIFY(writeFile(path, formPdf()));
         std::atomic<int> reads{0};
         job::testing::failWhen([path, &reads](job::Step step, const QString &file) {
             if (step == job::Step::Reading && file == path)
@@ -1382,7 +1380,7 @@ private slots:
     {
         QFETCH(bool, secondField);
         const QString path = profile_->filePath(QStringLiteral("form.pdf"));
-        QVERIFY(writeFile(path, formPdf(false, secondField)));
+        QVERIFY(writeFile(path, formPdf(secondField)));
         RenderEngine engine;
         TabPage tab(&engine);
         showForLayout(tab);
@@ -1427,7 +1425,7 @@ private slots:
     {
         QFETCH(bool, secondField);
         const QString path = profile_->filePath(QStringLiteral("form.pdf"));
-        QVERIFY(writeFile(path, formPdf(false, secondField)));
+        QVERIFY(writeFile(path, formPdf(secondField)));
         const QByteArray original = readFile(path);
         RenderEngine engine;
         auto *tab = new TabPage(&engine);

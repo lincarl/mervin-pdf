@@ -6,9 +6,7 @@
 #include <algorithm>
 #include <stdexcept>
 
-#include <qpdf/Constants.h>
 #include <qpdf/QPDF.hh>
-#include <qpdf/QPDFExc.hh>
 #include <qpdf/QPDFPageDocumentHelper.hh>
 #include <qpdf/QPDFPageObjectHelper.hh>
 
@@ -23,63 +21,31 @@
 
 namespace mervin {
 
-namespace {
-
-std::string u8(const QString &s)
-{
-    const QByteArray b = s.toUtf8();
-    return std::string(b.constData(), static_cast<size_t>(b.size()));
-}
-
-PageOps::Status open(QPDF &q, const QString &path, const QString &password, QString *error)
-{
-    if (!job::reading(path)) {
-        if (error)
-            *error = job::notRunError();
-        return PageOps::Status::Failed;
-    }
-    try {
-        const std::string pw = u8(password);
-        processReportedFile(q, path, password.isEmpty() ? nullptr : pw.c_str());
-        return PageOps::Status::Ok;
-    } catch (const QPDFExc &e) {
-        if (e.getErrorCode() == qpdf_e_password) {
-            // QpdfService's message, so translators see it once.
-            if (error)
-                *error = QpdfService::tr("A password is required to open this document.");
-            return PageOps::Status::NeedsPassword;
-        }
-        if (error)
-            *error = QString::fromUtf8(e.what());
-        return PageOps::Status::Failed;
-    } catch (const std::exception &e) {
-        if (error)
-            *error = QString::fromUtf8(e.what());
-        return PageOps::Status::Failed;
-    }
-}
-
-} // namespace
-
 int PageOps::pageCount(const QString &path, const QString &password)
 {
-    QPDF q;
-    if (open(q, path, password, nullptr) != Status::Ok)
+    std::unique_ptr<QPDF> q;
+    if (openQpdf(path, password, q, nullptr) != Status::Ok)
         return -1;
     try {
-        return static_cast<int>(QPDFPageDocumentHelper(q).getAllPages().size());
+        return static_cast<int>(QPDFPageDocumentHelper(*q).getAllPages().size());
     } catch (const std::exception &) {
         return -1;
     }
 }
 
+QString PageOps::measurementsTooLargeError()
+{
+    return measurementPages::tooLargeError();
+}
+
 PageOps::Status PageOps::probe(const QString &path, int *count, const QString &password,
                                QString *error, bool *encrypted)
 {
-    QPDF q;
-    const Status st = open(q, path, password, error);
+    std::unique_ptr<QPDF> source;
+    const Status st = openQpdf(path, password, source, error);
     if (st != Status::Ok)
         return st;
+    QPDF &q = *source;
     try {
         if (count)
             *count = static_cast<int>(QPDFPageDocumentHelper(q).getAllPages().size());
@@ -114,10 +80,11 @@ PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPa
                                      const QList<int> &pages, const QString &password,
                                      QString *error)
 {
-    QPDF q;
-    const Status st = open(q, inPath, password, error);
+    std::unique_ptr<QPDF> source;
+    const Status st = openQpdf(inPath, password, source, error);
     if (st != Status::Ok)
         return st;
+    QPDF &q = *source;
     try {
         QPDFPageDocumentHelper dh(q);
         auto all = dh.getAllPages();
@@ -151,10 +118,11 @@ PageOps::Status PageOps::rotatePages(const QString &inPath, const QString &outPa
                                      const QList<int> &pages, int angle, bool relative,
                                      const QString &password, QString *error)
 {
-    QPDF q;
-    const Status st = open(q, inPath, password, error);
+    std::unique_ptr<QPDF> source;
+    const Status st = openQpdf(inPath, password, source, error);
     if (st != Status::Ok)
         return st;
+    QPDF &q = *source;
     try {
         QPDFPageDocumentHelper dh(q);
         auto all = dh.getAllPages();
@@ -250,8 +218,8 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
             const MergeInput &in = inputs.at(i);
             auto it = opened.find(in.path);
             if (it == opened.end()) {
-                auto src = std::make_unique<QPDF>();
-                const Status st = open(*src, in.path, in.password, error);
+                std::unique_ptr<QPDF> src;
+                const Status st = openQpdf(in.path, in.password, src, error);
                 if (st != Status::Ok) {
                     if (failedIndex)
                         *failedIndex = i;
@@ -316,10 +284,11 @@ PageOps::Status PageOps::split(const QString &inPath, const QString &outDir, con
                                const std::function<bool(const QStringList &)> &mayWrite,
                                const std::function<bool(const QString &)> &mayCommit)
 {
-    QPDF q;
-    const Status st = open(q, inPath, password, error);
+    std::unique_ptr<QPDF> source;
+    const Status st = openQpdf(inPath, password, source, error);
     if (st != Status::Ok)
         return st;
+    QPDF &q = *source;
     try {
         QPDFPageDocumentHelper dh(q);
         auto all = dh.getAllPages();

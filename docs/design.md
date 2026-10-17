@@ -1026,6 +1026,32 @@ The window does not refresh consent while that question is open. Open-tab checks
 reject known protected outputs before asking, and every actual write still checks
 the source identity and reserves the destination.
 
+qpdf uses password bytes as given. Every qpdf source in `QpdfService`, `PageOps` and
+`MeasureExport` opens through `openQpdf` (`security/QpdfSource`), which tries the
+password as UTF-8 and, after a password error, once more in PDFDocEncoding on a fresh
+`QPDF`. AES-256 (R6) keys use UTF-8. R2 to R4 keys use PDFDocEncoding, which MuPDF
+also sends. The UTF-8 attempt keeps AES-128 and RC4-128 files readable that earlier
+versions of Mervin keyed with UTF-8, though MuPDF still rejects those when the password
+has characters beyond ASCII. `QpdfService::keyBytes` gives the bytes each algorithm keys
+a file with: the first 32 bytes of the PDFDocEncoding form for AES-128 and RC4-128, and
+the first 127 bytes of UTF-8 for AES-256, as qpdf and MuPDF cut them. `encrypt` passes
+those bytes to qpdf and fails before it reads the source when a password has no
+PDFDocEncoding form. Without an owner password, it uses the open password when every
+permission is allowed and 32 random bytes in hex otherwise, because owner rights
+ignore the permission flags. `SecurityDialog` compares the two passwords' key bytes and
+refuses equal ones while a permission is restricted, in a line below the owner field.
+Different passwords with equal key bytes get a reason that names the chosen algorithm's
+limit, 32 characters for AES-128 and RC4-128 (PDFDocEncoding has one byte per character)
+or 127 bytes for AES-256.
+Its minimum follows its layout (`followLayoutMinimum`), so the dialog grows for that
+line, and spare height gathers above Close, so the fields stay in place when the line
+goes away. `readInfo` names RC4 for V1 and V2 files, for which qpdf reports no method.
+For V4 and V5 it names the first method in use, in stream, string and attachment
+order, so a file that encrypts only attachments reads as their method. It
+counts printing as allowed only with high-resolution printing (bit 12 from R3) and
+modifying only with bit 4, and reports low-resolution printing and page assembly
+alone (bit 11) as limited states.
+
 Both encryption and decryption compare the approved snapshot again after flushing
 the temporary output, under `AtomicPdfWriter`'s destination lock and before commit
 admission. A changed or unreadable destination is preserved and reopens the retained
@@ -1295,6 +1321,67 @@ Page deletion, extraction, merge, split, and rotation preserve editable measurem
 metadata. Page numbers follow output order (including duplicates); rotation transforms
 points and swaps anisotropic manual scales on quarter turns. Merged documents use the
 display defaults of the first contributing measurement set.
+
+Opening a document reads `/Mervin_Measurements` through the open MuPDF document
+(`Document::mervinMeasurements`), and page operations read it with qpdf
+(`measurementPages::read` through `measurementPages::decodeBlob`). Mervin writes the blob
+as a stream with a single `/FlateDecode` and no `/DecodeParms`. Both readers accept only a
+stream with no filter or that single `/FlateDecode`, given as a name or a one-element
+array, and refuse anything else before decoding. A filter's parameters, such as a PNG
+predictor's `/Columns`, size its buffers before any data is read, and chained Flate stages
+can keep a core busy for a long time without producing output. Both also refuse `/F` and
+`/DP`, MuPDF's abbreviations for `/Filter` and `/DecodeParms`, which qpdf ignores. Both
+stop once the decoded data passes 16 MiB (`kMaxMeasurementBlobBytes`), since neither
+library limits Flate output by default. Empty Flate blocks decode to nothing, so a stream
+can hold far more encoded data than it decodes to. Before decoding, both readers count the
+encoded bytes in a pass that keeps none of them, and refuse a blob with more than 16 MiB
+and 64 KiB (`kMaxMeasurementBlobRawBytes`), which leaves room for Flate's own overhead.
+The pass counts the bytes each library reads rather than trusting `/Length`, and stops
+just past the limit. Both also treat a warning during the decode as a failure, because
+MuPDF and qpdf return what they could decode from a Flate stream with a bad checksum or
+missing data and only warn. The MuPDF reader flushes pending warnings and sets a warning
+callback on the document's own `fz_context` for the read, then restores the previous one.
+The qpdf reader compares the owning QPDF's `numWarnings()` before and after. qpdf accepts
+a wrong Flate checksum without any warning, as other readers do, so the qpdf reader keeps
+the last four encoded bytes from the counting pass and compares them with the Adler-32 of
+the decoded data. A refused blob opens as no measurements and fails page operations with
+Invalid measurement metadata. Both readers also refuse a blob that is not a stream, such
+as a string, which no Mervin release writes. Every write of the blob goes through
+`measurementPages::store`, from page operations by way of `measurementPages::write` and
+from Save and copies by way of `MeasureExport::embedMervin`. It throws before the output
+is written when the JSON passes the same 16 MiB, so Mervin never writes a blob its readers
+would refuse, for example after a Merge combines the measurements of several files. Split
+stores each part's measurements before that part's writer opens, so a refused part fails
+the split and keeps the parts written before it. The operation fails with "The
+measurements are too large to save." (`PageOps::measurementsTooLargeError`), which the
+Merge dialog shows in place of its write-failure summary.
+
+A document whose blob is present but unusable, because `mervinMeasurements` refused it or
+`TabPage::readDocument` could not parse it, records that on the `Document`
+(`measurementsUnreadable`). Its measurements would otherwise be lost silently, since the
+viewer starts with none and every save writes the viewer's measurements. Save with edits,
+the unload recovery copy and Save as copy then write through `MeasureExport::keepMervin`,
+and a flattened export, which may replace its source, keeps the blob too. Both mark the
+blob stream with qpdf's `setFilterOnWrite(false)`, so qpdf copies its stream data without
+decoding it, whatever its size. MuPDF's own rewrite in `savePdfTo` copies a filtered
+stream's raw bytes, so a Flate-encoded blob keeps its bytes exactly. An unfiltered blob
+gets MuPDF's usual Flate compression, with the same decoded bytes. A string blob keeps its
+value in both writers. The viewer refuses `setMeasureMode(true)`, calibration, Set Scale
+and a resumed measure state for such a document, and the Measure action says why, so no
+new measurements exist that a save would drop.
+
+Opening does not use qpdf, which inflates a whole object stream or cross-reference
+stream into memory when it resolves an object in it (qpdf 11.9.0 `QPDF.cc:1792`). MuPDF
+reads through those streams as it parses them. A crafted file of a few hundred
+kilobytes with a padded object stream can therefore still exhaust memory in every
+operation that parses the file on disk with qpdf: Security, Rotate, Delete, Extract,
+Split, Merge and the Merge and Extract probes. Save with edits, the recovery copy of an
+unloaded tab, Save as copy, export and printing with measurements hand qpdf a copy that
+MuPDF rewrote in full without object streams. qpdf 12.3.2 can cap Flate output for the
+whole process (`Pl_Flate::memory_limit`, in 12.4 also
+`qpdf::global::limits::flate_max_memory`), but qpdf 11.9.0, which CI's Linux tests use,
+has no such cap, and the cap applies to every Flate stream qpdf decodes, so it would also
+refuse legitimate streams larger than its value.
 
 `AtomicPdfWriter` streams all qpdf output through `QSaveFile`, including page,
 security and measurement operations. A failed write discards its temporary file;

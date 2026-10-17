@@ -503,6 +503,11 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
         <translation>Pasukti, ištrinti, išskleisti, padalinti ar sujungti puslapius; dokumentų saugumas</translation>
     </message>
     <message>
+        <source>Mervin cannot read this file&apos;s measurements. Measuring is off so that they stay unchanged.</source>
+        <extracomment>Shown when the user chooses Measure on a PDF whose saved measurements Mervin cannot read, because they are too large or stored in a form it does not accept. Mervin keeps them unchanged when it saves, so it offers no measuring.</extracomment>
+        <translation>Mervin negali perskaityti šio failo išmatavimų. Matavimas išjungtas, kad jie liktų nepakeisti.</translation>
+    </message>
+    <message>
         <source>Fit Page</source>
         <extracomment>Zoom choice: scale the page so the whole page fits the window.</extracomment>
         <translation>Sutalpinti puslapį</translation>
@@ -2995,6 +3000,11 @@ Atidarykite sistemos Nustatymai → Numatytosios programos (arba dešiniuoju pel
         <extracomment>Shown as the encryption algorithm when qpdf cannot identify it.</extracomment>
         <translation>Nežinoma</translation>
     </message>
+    <message>
+        <source>A password contains characters that AES-128 and RC4-128 cannot use. Choose AES-256.</source>
+        <extracomment>Reason shown after &quot;The operation failed.&quot; when encrypting. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
+        <translation>Slaptažodyje yra simbolių, kurių AES-128 ir RC4-128 negali naudoti. Pasirinkite AES-256.</translation>
+    </message>
 </context>
 <context>
     <name>mervin::RecentFilesPanel</name>
@@ -3288,8 +3298,13 @@ This file is no longer on disk.</source>
     </message>
     <message>
         <source>defaults to the open password</source>
-        <extracomment>Placeholder in the owner-password field. If empty, use the open password to protect the PDF permission settings. The user can enter a different one.</extracomment>
+        <extracomment>Placeholder in the owner-password field while every permission below is allowed. If empty, the open password also becomes the owner password. The user can enter a different one.</extracomment>
         <translation>jei tuščia, naudojamas atvėrimo slaptažodis</translation>
+    </message>
+    <message>
+        <source>defaults to a random password</source>
+        <extracomment>Placeholder in the owner-password field while a permission below is not allowed. If empty, Mervin protects the permission settings with a random owner password that nobody is told. The user can enter one instead.</extracomment>
+        <translation>jei tuščia, naudojamas atsitiktinis slaptažodis</translation>
     </message>
     <message>
         <source>AES-256 (recommended)</source>
@@ -3359,6 +3374,16 @@ This file is no longer on disk.</source>
         <translation>&lt;b&gt;Nepavyko perskaityti saugos informacijos.&lt;/b&gt;&lt;br&gt;%1</translation>
     </message>
     <message>
+        <source>AES-256 uses only the first 127 bytes of a password. Make the two passwords differ within them.</source>
+        <extracomment>Shown below the owner-password field when it differs from the open password only after their first 127 bytes, while a permission is not allowed and AES-256 is chosen. Anyone with the open password could then lift the restrictions. A byte is a unit of stored text. Letters without accents, digits and common punctuation take one byte each, accented letters two, and most other scripts three or four. Keep the algorithm name and the number.</extracomment>
+        <translation>AES-256 naudoja tik pirmuosius 127 slaptažodžio baitus. Pasirūpinkite, kad abu slaptažodžiai skirtųsi juose.</translation>
+    </message>
+    <message>
+        <source>AES-128 and RC4-128 use only the first 32 characters of a password. Make the two passwords differ within them.</source>
+        <extracomment>Shown below the owner-password field when it differs from the open password only after their first 32 characters, while a permission is not allowed and AES-128 or RC4-128 is chosen. Anyone with the open password could then lift the restrictions. Keep the algorithm names and the number.</extracomment>
+        <translation>AES-128 ir RC4-128 naudoja tik pirmuosius 32 slaptažodžio simbolius. Pasirūpinkite, kad abu slaptažodžiai skirtųsi juose.</translation>
+    </message>
+    <message>
         <source>A password is required.</source>
         <translation>Reikalingas slaptažodis.</translation>
     </message>
@@ -3377,8 +3402,18 @@ This file is no longer on disk.</source>
         <translation>Šis dokumentas &lt;b&gt;neužšifruotas&lt;/b&gt;.</translation>
     </message>
     <message>
+        <source>Low resolution only</source>
+        <extracomment>Printing state, fills %3 of the encryption summary. The PDF allows printing, but only in low resolution, possibly of degraded quality.</extracomment>
+        <translation>Tik maža skyra</translation>
+    </message>
+    <message>
+        <source>Page assembly only</source>
+        <extracomment>Modifying state, fills %5 of the encryption summary. The PDF allows only page assembly, such as inserting, rotating or deleting pages, and no other changes to its content.</extracomment>
+        <translation>Tik puslapių komponavimas</translation>
+    </message>
+    <message>
         <source>&lt;b&gt;Encrypted&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;Printing: %3 · Copying: %4 · Modifying: %5 · Annotating: %6&lt;br&gt;&lt;i&gt;Note: Mervin never enforces these permission flags.&lt;/i&gt;</source>
-        <extracomment>%1 is the encryption algorithm, such as AES-256. %2 is the key length in bits. %3 to %6 are Allowed or Not allowed.</extracomment>
+        <extracomment>%1 is the encryption algorithm, such as AES-256. %2 is the key length in bits. %3 is Allowed, Low resolution only or Not allowed. %5 is Allowed, Page assembly only or Not allowed. %4 and %6 are Allowed or Not allowed.</extracomment>
         <translation>&lt;b&gt;Šifruota&lt;/b&gt; · %1 (%2 bitų)&lt;br&gt;Spausdinimas: %3 · Kopijuojamas: %4 · Modifikuojamas: %5 · Anotacija: %6&lt;br&gt;&lt;i&gt;Pastaba: Mervin niekada neverčia laikytis šių leidimų apribojimų.&lt;/i&gt;</translation>
     </message>
     <message>
@@ -3389,6 +3424,11 @@ This file is no longer on disk.</source>
         <source>PDF documents (*.pdf)</source>
         <extracomment>File type filter. Keep &quot;(*.pdf)&quot; as it is.</extracomment>
         <translation>PDF dokumentai (*.pdf)</translation>
+    </message>
+    <message>
+        <source>Use a different owner password to restrict permissions.</source>
+        <extracomment>Shown below the owner-password field when it is the same as the open password while a permission is not allowed. Anyone with the open password could then lift the restrictions. An empty owner field is also accepted.</extracomment>
+        <translation>Norėdami apriboti leidimus, naudokite kitą leidimų slaptažodį.</translation>
     </message>
     <message>
         <source>This writes a copy with all owner-password restrictions removed (printing, copying, and editing become permitted).
@@ -4380,13 +4420,18 @@ Naujasis „AppImage“ išsaugomas adresu:
     <name>mervin::measurementPages</name>
     <message>
         <source>Invalid measurement metadata.</source>
-        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged.</extracomment>
+        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or too large to read.</extracomment>
         <translation>Netinkami matavimo metaduomenys.</translation>
     </message>
     <message>
         <source>Unsupported measurement metadata.</source>
         <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or come from a newer version.</extracomment>
         <translation>Nepalaikomi matavimo metaduomenys.</translation>
+    </message>
+    <message>
+        <source>The measurements are too large to save.</source>
+        <extracomment>Reason a save, copy or page operation fails without writing anything. The measurements Mervin would store in the PDF pass the 16 MiB it reads back, as can happen when merging files that carry many measurements.</extracomment>
+        <translation>Išmatavimai per dideli, kad būtų galima juos išsaugoti.</translation>
     </message>
 </context>
 </TS>

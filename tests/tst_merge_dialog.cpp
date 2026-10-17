@@ -491,6 +491,19 @@ void TstMergeDialog::failedPlanCanBeReopened()
     QCOMPARE(retry.result(), int(QDialog::Accepted));
     QCOMPARE(retry.inputs().front().pages, (QList<int>{1, 2}));
     QVERIFY(!QFileInfo::exists(target));
+
+    // Measurements too large to save are named as the reason, not as a write failure.
+    const QString tooLarge = mervin::PageOps::measurementsTooLargeError();
+    MergeDialog measured(d.plan(), target, tooLarge, -1);
+    prepare(measured);
+    QCOMPARE(error(measured), tooLarge);
+    QCOMPARE(MergeDialog::failureSummary(d.plan(), target, -1, MergeDialog::Conflict::None, tooLarge),
+             tooLarge);
+    // Another output error keeps the write summary, with its detail in the tooltip.
+    MergeDialog locked(d.plan(), target, QStringLiteral("Permission denied"), -1);
+    prepare(locked);
+    QVERIFY(error(locked).contains(QFileInfo(target).fileName()));
+    QVERIFY(error(locked) != tooLarge);
 }
 
 /// Releases probe holds and settles detached background work between cases.

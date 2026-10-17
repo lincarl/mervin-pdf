@@ -178,9 +178,10 @@ private:
 };
 
 /// Selects distinct passwords, AES-128 and restricted permissions for retry assertions.
-void setEncryptionChoices(SecurityDialog &dialog)
+void setEncryptionChoices(SecurityDialog &dialog,
+                          const QString &openPassword = QStringLiteral("new password"))
 {
-    dialog.findChild<QLineEdit *>(QStringLiteral("securityUserPassword"))->setText(QStringLiteral("new password"));
+    dialog.findChild<QLineEdit *>(QStringLiteral("securityUserPassword"))->setText(openPassword);
     dialog.findChild<QLineEdit *>(QStringLiteral("securityOwnerPassword"))->setText(QStringLiteral("owner guard"));
     dialog.findChild<QComboBox *>(QStringLiteral("securityAlgorithm"))->setCurrentIndex(1);
     for (const QString &name : {QStringLiteral("securityAllowPrint"), QStringLiteral("securityAllowCopy"),
@@ -527,9 +528,18 @@ private slots:
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 
+    /// Covers an ASCII password and one that AES-128 stores in PDFDocEncoding.
+    void encryptedResultOpensWithItsNewPassword_data()
+    {
+        QTest::addColumn<QString>("password");
+        QTest::newRow("ASCII") << QStringLiteral("new password");
+        QTest::newRow("Latin-1") << QStringLiteral("Müller");
+    }
+
     /// Checks that the result opens using its new password and retains chosen restrictions.
     void encryptedResultOpensWithItsNewPassword()
     {
+        QFETCH(QString, password);
         QTemporaryDir files;
         const QString source = files.filePath(QStringLiteral("plan.pdf"));
         const QString output = files.filePath(QStringLiteral("protected.pdf"));
@@ -544,7 +554,7 @@ private slots:
         dialogs.files.append(output);
         dialogs.answers.append(QMessageBox::Yes);
         dialogs.security = [&](SecurityDialog &dialog) {
-            setEncryptionChoices(dialog);
+            setEncryptionChoices(dialog, password);
             dialog.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
         };
         QVERIFY(QMetaObject::invokeMethod(&window, "openSecurity"));
@@ -555,12 +565,168 @@ private slots:
         QCOMPARE(dialogs.securityCount, 1);
         QCOMPARE(job::testing::stepsOnMainThread(), guiSteps);
         QpdfService::Info info;
-        QCOMPARE(QpdfService().readInfo(output, QStringLiteral("new password"), info), QpdfService::Status::Ok);
+        QCOMPARE(QpdfService().readInfo(output, password, info), QpdfService::Status::Ok);
         QVERIFY(info.encrypted);
         QCOMPARE(info.keyLengthBits, 128);
         QVERIFY(!info.permissions.canPrint && !info.permissions.canCopy
                 && !info.permissions.canModify && !info.permissions.canAnnotate);
         QCOMPARE(bytes(source), original);
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
+    /// Checks that the owner placeholder says what an empty owner password becomes.
+    void ownerPlaceholderFollowsPermissions()
+    {
+        SecurityDialog dialog(QStringLiteral(MERVIN_FIXTURE_PDF), QpdfService::Info{});
+        auto *owner = dialog.findChild<QLineEdit *>(QStringLiteral("securityOwnerPassword"));
+        auto *copy = dialog.findChild<QCheckBox *>(QStringLiteral("securityAllowCopy"));
+        const QString open = SecurityDialog::tr("defaults to the open password");
+        QCOMPARE(owner->placeholderText(), open);
+        copy->setChecked(false);
+        QCOMPARE(owner->placeholderText(), SecurityDialog::tr("defaults to a random password"));
+        copy->setChecked(true);
+        QCOMPARE(owner->placeholderText(), open);
+    }
+
+    /// Covers each limited permission state on its own.
+    void limitedStatesFillTheirOwnSlots_data()
+    {
+        QTest::addColumn<bool>("lowResolution");
+        QTest::addColumn<QString>("printing");
+        QTest::addColumn<QString>("modifying");
+        QTest::newRow("low-resolution printing only")
+            << true << SecurityDialog::tr("Low resolution only") << SecurityDialog::tr("Not allowed");
+        QTest::newRow("page assembly only")
+            << false << SecurityDialog::tr("Not allowed") << SecurityDialog::tr("Page assembly only");
+    }
+
+    /// Checks that a limited state replaces Not allowed only for its own permission.
+    void limitedStatesFillTheirOwnSlots()
+    {
+        QFETCH(bool, lowResolution);
+        QFETCH(QString, printing);
+        QFETCH(QString, modifying);
+        QpdfService::Info info;
+        info.encrypted = true;
+        info.algorithm = QStringLiteral("AES-128");
+        info.keyLengthBits = 128;
+        info.revision = 4;
+        info.permissions = {false, false, false, false};
+        info.lowResolutionPrintOnly = lowResolution;
+        info.pageAssemblyOnly = !lowResolution;
+        SecurityDialog dialog(QStringLiteral(MERVIN_FIXTURE_PDF), info);
+        QString summary;
+        for (QLabel *label : dialog.findChildren<QLabel *>()) {
+            if (label->textFormat() == Qt::RichText)
+                summary = label->text();
+        }
+        QVERIFY2(summary.contains(QStringLiteral("Printing: %1 \u00B7").arg(printing)),
+                 qPrintable(summary));
+        QVERIFY2(summary.contains(QStringLiteral("Modifying: %1 \u00B7").arg(modifying)),
+                 qPrintable(summary));
+    }
+
+    /// Covers owner choices the form refuses or accepts before its Save As picker.
+    void ownerPasswordMustDifferForRestrictions_data()
+    {
+        QTest::addColumn<QString>("user");
+        QTest::addColumn<QString>("owner");
+        QTest::addColumn<int>("algorithm"); // index in the algorithm list
+        QTest::addColumn<bool>("restricted");
+        QTest::addColumn<QString>("refusal"); // empty when the form accepts the choices
+        const QString same = QStringLiteral("same");
+        const QString identical = SecurityDialog::tr("Use a different owner password to restrict permissions.");
+        const QString first32 = SecurityDialog::tr(
+            "AES-128 and RC4-128 use only the first 32 characters of a password. Make the two passwords differ within them.");
+        const QString first127 = SecurityDialog::tr(
+            "AES-256 uses only the first 127 bytes of a password. Make the two passwords differ within them.");
+        QTest::newRow("same password, restricted") << same << same << 0 << true << identical;
+        QTest::newRow("same password, everything allowed") << same << same << 0 << false << QString();
+        QTest::newRow("empty owner, restricted") << same << QString() << 0 << true << QString();
+        // AES-128 and RC4-128 keep the first 32 characters of each password.
+        const QString prefix = QStringLiteral("Northwind quarterly report 2026 ");
+        QTest::newRow("same first 32 characters, AES-128")
+            << prefix + QStringLiteral("read") << prefix + QStringLiteral("admin") << 1 << true
+            << first32;
+        QTest::newRow("same first 32 characters, RC4-128")
+            << prefix + QStringLiteral("read") << prefix + QStringLiteral("admin") << 2 << true
+            << first32;
+        QTest::newRow("same first 32 characters, AES-256")
+            << prefix + QStringLiteral("read") << prefix + QStringLiteral("admin") << 0 << true
+            << QString();
+        // AES-256 keeps the first 127 bytes of UTF-8, here 64 characters.
+        const QString bytes127 = QString(63, QChar(0xFC)) + QLatin1Char('a');
+        QTest::newRow("same first 127 bytes, AES-256")
+            << bytes127 + QStringLiteral("read") << bytes127 + QStringLiteral("admin") << 0 << true
+            << first127;
+    }
+
+    /// Checks that restrictions the open password would lift are refused inside the form.
+    void ownerPasswordMustDifferForRestrictions()
+    {
+        QFETCH(QString, user);
+        QFETCH(QString, owner);
+        QFETCH(int, algorithm);
+        QFETCH(bool, restricted);
+        QFETCH(QString, refusal);
+        const bool refused = !refusal.isEmpty();
+        QTemporaryDir files;
+        const QString source = files.filePath(QStringLiteral("plan.pdf"));
+        const QString output = files.filePath(QStringLiteral("protected.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showWindow(window);
+        QVERIFY(testing::openAndWait(window, source));
+        Interaction dialogs;
+        if (!refused) {
+            dialogs.files.append(output);
+            dialogs.answers.append(QMessageBox::No); // Open it now?
+        }
+        bool checked = false;
+        dialogs.security = [&](SecurityDialog &dialog) {
+            dialog.findChild<QLineEdit *>(QStringLiteral("securityUserPassword"))->setText(user);
+            auto *ownerEdit = dialog.findChild<QLineEdit *>(QStringLiteral("securityOwnerPassword"));
+            ownerEdit->setText(owner);
+            dialog.findChild<QComboBox *>(QStringLiteral("securityAlgorithm"))->setCurrentIndex(algorithm);
+            dialog.findChild<QCheckBox *>(QStringLiteral("securityAllowPrint"))->setChecked(!restricted);
+            // The field being corrected keeps its place while the refusal comes and goes.
+            const auto ownerTop = [&] {
+                // Layout requests posted from this nested callback need a running loop.
+                QTest::qWait(100);
+                return ownerEdit->mapTo(&dialog, QPoint()).y();
+            };
+            const int top = ownerTop();
+            dialog.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
+            if (!refused)
+                return;
+            auto *error = dialog.findChild<QLabel *>(QStringLiteral("securityError"));
+            QVERIFY(error && error->isVisible());
+            QCOMPARE(error->text(), refusal);
+            QVERIFY(dialog.isVisible());
+            QVERIFY(!dialog.request());
+            QCOMPARE(ownerTop(), top);
+            // The next change to the choices clears the refusal.
+            ownerEdit->setText(QStringLiteral("other"));
+            QVERIFY(error->isHidden());
+            QCOMPARE(ownerTop(), top);
+            checked = true;
+            dialog.reject();
+        };
+        QVERIFY(QMetaObject::invokeMethod(&window, "openSecurity"));
+        if (refused) {
+            QTRY_VERIFY(checked);
+            QVERIFY(dialogs.suggested.isEmpty()); // no Save As picker
+            QVERIFY(!QFileInfo::exists(output));
+        } else {
+            QTRY_VERIFY(QFileInfo::exists(output));
+            QTRY_VERIFY(dialogs.answers.isEmpty());
+            QpdfService::Info info;
+            QCOMPARE(QpdfService().readInfo(output, user, info), QpdfService::Status::Ok);
+            QCOMPARE(info.permissions.canPrint, !restricted);
+        }
+        QTRY_VERIFY(!QApplication::activeModalWidget());
+        QCOMPARE(dialogs.securityCount, 1);
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 

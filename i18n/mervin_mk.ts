@@ -503,6 +503,11 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
         <translation>Ротирај, бришеш, извлекувај, дели или спојувај страници; безбедност на документите</translation>
     </message>
     <message>
+        <source>Mervin cannot read this file&apos;s measurements. Measuring is off so that they stay unchanged.</source>
+        <extracomment>Shown when the user chooses Measure on a PDF whose saved measurements Mervin cannot read, because they are too large or stored in a form it does not accept. Mervin keeps them unchanged when it saves, so it offers no measuring.</extracomment>
+        <translation>Mervin не може да ги прочита мерењата на оваа датотека. Мерењето е исклучено за да останат непроменети.</translation>
+    </message>
+    <message>
         <source>Fit Page</source>
         <extracomment>Zoom choice: scale the page so the whole page fits the window.</extracomment>
         <translation>Вклопи страница</translation>
@@ -2995,6 +3000,11 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <extracomment>Shown as the encryption algorithm when qpdf cannot identify it.</extracomment>
         <translation>Непознат</translation>
     </message>
+    <message>
+        <source>A password contains characters that AES-128 and RC4-128 cannot use. Choose AES-256.</source>
+        <extracomment>Reason shown after &quot;The operation failed.&quot; when encrypting. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
+        <translation>Лозинката содржи знаци што AES-128 и RC4-128 не можат да ги користат. Изберете AES-256.</translation>
+    </message>
 </context>
 <context>
     <name>mervin::RecentFilesPanel</name>
@@ -3288,8 +3298,13 @@ This file is no longer on disk.</source>
     </message>
     <message>
         <source>defaults to the open password</source>
-        <extracomment>Placeholder in the owner-password field. If empty, use the open password to protect the PDF permission settings. The user can enter a different one.</extracomment>
+        <extracomment>Placeholder in the owner-password field while every permission below is allowed. If empty, the open password also becomes the owner password. The user can enter a different one.</extracomment>
         <translation>ако е празно, се користи лозинката за отворање</translation>
+    </message>
+    <message>
+        <source>defaults to a random password</source>
+        <extracomment>Placeholder in the owner-password field while a permission below is not allowed. If empty, Mervin protects the permission settings with a random owner password that nobody is told. The user can enter one instead.</extracomment>
+        <translation>ако е празно, се користи случајна лозинка</translation>
     </message>
     <message>
         <source>AES-256 (recommended)</source>
@@ -3359,6 +3374,16 @@ This file is no longer on disk.</source>
         <translation>&lt;b&gt;Не можев да прочитам безбедносни информации.&lt;/b&gt;&lt;br&gt;%1</translation>
     </message>
     <message>
+        <source>AES-256 uses only the first 127 bytes of a password. Make the two passwords differ within them.</source>
+        <extracomment>Shown below the owner-password field when it differs from the open password only after their first 127 bytes, while a permission is not allowed and AES-256 is chosen. Anyone with the open password could then lift the restrictions. A byte is a unit of stored text. Letters without accents, digits and common punctuation take one byte each, accented letters two, and most other scripts three or four. Keep the algorithm name and the number.</extracomment>
+        <translation>AES-256 ги користи само првите 127 бајти од лозинката. Направете двете лозинки да се разликуваат во нив.</translation>
+    </message>
+    <message>
+        <source>AES-128 and RC4-128 use only the first 32 characters of a password. Make the two passwords differ within them.</source>
+        <extracomment>Shown below the owner-password field when it differs from the open password only after their first 32 characters, while a permission is not allowed and AES-128 or RC4-128 is chosen. Anyone with the open password could then lift the restrictions. Keep the algorithm names and the number.</extracomment>
+        <translation>AES-128 и RC4-128 ги користат само првите 32 знаци од лозинката. Направете двете лозинки да се разликуваат во нив.</translation>
+    </message>
+    <message>
         <source>A password is required.</source>
         <translation>Потребна е лозинка.</translation>
     </message>
@@ -3377,8 +3402,18 @@ This file is no longer on disk.</source>
         <translation>Овој документ &lt;b&gt;не е шифриран&lt;/b&gt;.</translation>
     </message>
     <message>
+        <source>Low resolution only</source>
+        <extracomment>Printing state, fills %3 of the encryption summary. The PDF allows printing, but only in low resolution, possibly of degraded quality.</extracomment>
+        <translation>Само во ниска резолуција</translation>
+    </message>
+    <message>
+        <source>Page assembly only</source>
+        <extracomment>Modifying state, fills %5 of the encryption summary. The PDF allows only page assembly, such as inserting, rotating or deleting pages, and no other changes to its content.</extracomment>
+        <translation>Само составување страници</translation>
+    </message>
+    <message>
         <source>&lt;b&gt;Encrypted&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;Printing: %3 · Copying: %4 · Modifying: %5 · Annotating: %6&lt;br&gt;&lt;i&gt;Note: Mervin never enforces these permission flags.&lt;/i&gt;</source>
-        <extracomment>%1 is the encryption algorithm, such as AES-256. %2 is the key length in bits. %3 to %6 are Allowed or Not allowed.</extracomment>
+        <extracomment>%1 is the encryption algorithm, such as AES-256. %2 is the key length in bits. %3 is Allowed, Low resolution only or Not allowed. %5 is Allowed, Page assembly only or Not allowed. %4 and %6 are Allowed or Not allowed.</extracomment>
         <translation>&lt;b&gt;Шифрирана&lt;/b&gt; · %1 (%2-бит)&lt;br&gt;Печатење: %3 · Копирање: %4 · Измена: %5 · Забелешка: %6&lt;br&gt;&lt;i&gt;Напомена: Mervin никогаш не ги спроведува овие ограничувања на дозволите.&lt;/i&gt;</translation>
     </message>
     <message>
@@ -3389,6 +3424,11 @@ This file is no longer on disk.</source>
         <source>PDF documents (*.pdf)</source>
         <extracomment>File type filter. Keep &quot;(*.pdf)&quot; as it is.</extracomment>
         <translation>PDF документи (*.pdf)</translation>
+    </message>
+    <message>
+        <source>Use a different owner password to restrict permissions.</source>
+        <extracomment>Shown below the owner-password field when it is the same as the open password while a permission is not allowed. Anyone with the open password could then lift the restrictions. An empty owner field is also accepted.</extracomment>
+        <translation>За да ги ограничите дозволите, користете друга лозинка за дозволи.</translation>
     </message>
     <message>
         <source>This writes a copy with all owner-password restrictions removed (printing, copying, and editing become permitted).
@@ -4380,13 +4420,18 @@ The new AppImage is saved at:
     <name>mervin::measurementPages</name>
     <message>
         <source>Invalid measurement metadata.</source>
-        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged.</extracomment>
+        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or too large to read.</extracomment>
         <translation>Неважечки метаподатоци за мерење.</translation>
     </message>
     <message>
         <source>Unsupported measurement metadata.</source>
         <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or come from a newer version.</extracomment>
         <translation>Неподдржани метаподатоци за мерење.</translation>
+    </message>
+    <message>
+        <source>The measurements are too large to save.</source>
+        <extracomment>Reason a save, copy or page operation fails without writing anything. The measurements Mervin would store in the PDF pass the 16 MiB it reads back, as can happen when merging files that carry many measurements.</extracomment>
+        <translation>Мерењата се преголеми за да се зачуваат.</translation>
     </message>
 </context>
 </TS>

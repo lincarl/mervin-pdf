@@ -292,6 +292,7 @@ struct TabPage::Save {
     SourceStamp baseline;
     ViewerWidget::ResumeState viewer;
     MeasureDoc measurements;
+    bool keepStoredMeasurements = false; // the document could not read its blob
     bool formMode = false;
     bool loaded = false;
     std::optional<sessionend::RecoveryWrite> recoveryWrite;
@@ -350,6 +351,7 @@ struct TabPage::Unload {
     SourceStamp source;
     ViewerWidget::ResumeState viewer;
     MeasureDoc measurements;
+    bool keepStoredMeasurements = false; // the document could not read its blob
     std::shared_ptr<DocumentLifetime> lifetime;
     QString priorCopy;
     QString priorManifest;
@@ -742,12 +744,12 @@ std::shared_ptr<TabPage::OpenResult> TabPage::readDocument(DocumentOpener &opene
     if (!result->document)
         return result;
     result->document->hasForm(); // cache the answer before the viewer installs it
-    if (result->document->hasMervinMeasurements()) {
-        if (auto blob = MeasureExport::readMervinBlob(path, password)) {
-            MeasureDoc measurements;
-            if (parseMeasurements(*blob, &measurements))
-                result->measurements = std::move(measurements);
-        }
+    if (const auto blob = result->document->mervinMeasurements()) {
+        MeasureDoc measurements;
+        if (parseMeasurements(*blob, &measurements))
+            result->measurements = std::move(measurements);
+        else
+            result->document->markMeasurementsUnreadable(); // saves keep it as it is
     }
     return result;
 }
@@ -1097,6 +1099,7 @@ void TabPage::startUnload(std::shared_ptr<Unload> unload)
     unload->password = password_;
     unload->source = saved_->source;
     unload->measurements = viewer_->measurementDocument();
+    unload->keepStoredMeasurements = doc_->measurementsUnreadable();
     unload->lifetime = doc_->lifetime();
     unload->priorCopy = recoveryPath_;
     unload->priorManifest = recoveryManifest_;
@@ -1153,8 +1156,12 @@ void TabPage::startUnload(std::shared_ptr<Unload> unload)
                 }
                 job::endHolding();
                 if (!snapshot || job::stopped()
-                    || MeasureExport::embedMervin(live, unload->copy, unload->measurements,
-                            unload->password, &unload->error) != MeasureExport::Status::Ok)
+                    || (unload->keepStoredMeasurements
+                            ? MeasureExport::keepMervin(live, unload->copy, unload->password,
+                                                        &unload->error)
+                            : MeasureExport::embedMervin(live, unload->copy, unload->measurements,
+                                                         unload->password, &unload->error))
+                        != MeasureExport::Status::Ok)
                     return;
                 if (!QFile::setPermissions(unload->copy,
                         QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {
@@ -1661,6 +1668,7 @@ void TabPage::startSave(SaveCallbacks callbacks)
     if (doc_) {
         save->directory = recoveryDirectory();
         save->measurements = viewer_->measurementDocument();
+        save->keepStoredMeasurements = doc_->measurementsUnreadable();
         save->lifetime = doc_->lifetime();
         save->opener = engine_->opener();
     } else {
@@ -1784,8 +1792,12 @@ void TabPage::startSave(SaveCallbacks callbacks)
                     }
                     job::endHolding();
                     if (!snapshot || job::stopped()
-                        || MeasureExport::embedMervin(live, save->copy, save->measurements,
-                                save->password, &save->completion.error) != MeasureExport::Status::Ok)
+                        || (save->keepStoredMeasurements
+                                ? MeasureExport::keepMervin(live, save->copy, save->password,
+                                                            &save->completion.error)
+                                : MeasureExport::embedMervin(live, save->copy, save->measurements,
+                                                             save->password, &save->completion.error))
+                            != MeasureExport::Status::Ok)
                         return;
                     if (!QFile::setPermissions(save->copy,
                             QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {

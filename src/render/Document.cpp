@@ -1,6 +1,7 @@
 #include "render/Document.h"
 
 #include "io/Background.h"
+#include "render/MeasureContent.h"
 #include "render/RenderTypes.h"
 
 #include <mupdf/fitz.h>
@@ -1012,28 +1013,122 @@ bool Document::hasForm() const
     return has;
 }
 
-bool Document::hasMervinMeasurements() const
+namespace {
+
+// Whether the measurement blob `stream` names only the encoding Mervin writes: no filter,
+// or a single /FlateDecode as a name or a one-element array, and no /DecodeParms. MuPDF
+// also reads /F for /Filter and /DP for /DecodeParms, so those keys are refused too. A
+// predictor's parameters would size its buffers before any data is read, and chained
+// Flate stages can spend time without producing output.
+bool plainFlateBlob(fz_context *ctx, pdf_obj *stream)
 {
-    const ScreenQuery query(*lifetime_, "Document::hasMervinMeasurements");
+    for (pdf_obj *key : {PDF_NAME(DecodeParms), PDF_NAME(DP), PDF_NAME(F)}) {
+        if (!pdf_is_null(ctx, pdf_dict_get(ctx, stream, key)))
+            return false;
+    }
+    pdf_obj *filter = pdf_dict_get(ctx, stream, PDF_NAME(Filter));
+    if (pdf_is_array(ctx, filter) && pdf_array_len(ctx, filter) == 1)
+        filter = pdf_array_get(ctx, filter, 0);
+    return pdf_is_null(ctx, filter) || pdf_name_eq(ctx, filter, PDF_NAME(FlateDecode));
+}
+
+// Records that MuPDF warned while the measurement blob was read.
+void noteBlobWarning(void *warned, const char *)
+{
+    *static_cast<bool *>(warned) = true;
+}
+
+} // namespace
+
+std::optional<QByteArray> Document::mervinMeasurements() const
+{
+    const ScreenQuery query(*lifetime_, "Document::mervinMeasurements");
     if (query.refused())
-        return false;
+        return std::nullopt;
     std::lock_guard<std::mutex> lk(access_);
-    if (mervinBlobCache_)
-        return *mervinBlobCache_;
-    bool has = false;
+    constexpr size_t limit = size_t(kMaxMeasurementBlobBytes);
+    fz_stream *stream = nullptr;
+    fz_buffer *data = nullptr;
+    bool present = false;
+    bool warned = false;
+    fz_var(stream);
+    fz_var(data);
+    fz_var(present);
+    fz_var(warned);
+    // MuPDF ends a Flate stream with a bad checksum or missing data with only a warning
+    // and returns what it decoded, so a warning during this read counts as a failure, as
+    // in measurementPages::decodeBlob. Flushing first keeps an earlier warning out, and lets
+    // a repeat of it reach the callback instead of only being counted.
+    fz_flush_warnings(ctx_);
+    void *previousUser = nullptr;
+    fz_warning_cb *previous = fz_warning_callback(ctx_, &previousUser);
+    fz_set_warning_callback(ctx_, noteBlobWarning, &warned);
     fz_try(ctx_) {
         pdf_document *pdoc = pdf_specifics(ctx_, doc_);
-        if (pdoc) {
-            pdf_obj *root = pdf_dict_get(ctx_, pdf_trailer(ctx_, pdoc), PDF_NAME(Root));
-            pdf_obj *blob = pdf_dict_gets(ctx_, root, "Mervin_Measurements");
-            has = blob != nullptr && !pdf_is_null(ctx_, blob);
+        pdf_obj *root = pdoc ? pdf_dict_get(ctx_, pdf_trailer(ctx_, pdoc), PDF_NAME(Root)) : nullptr;
+        pdf_obj *blob = pdf_dict_gets(ctx_, root, "Mervin_Measurements");
+        present = blob && !pdf_is_null(ctx_, blob);
+        // Mervin writes only streams. Any other object, such as a string, is refused as
+        // page operations refuse it, so both readers see the same blobs.
+        if (pdf_is_stream(ctx_, blob) && plainFlateBlob(ctx_, blob)) {
+            // Empty Flate blocks decode to nothing, so the encoded data is counted first,
+            // without keeping it, and a blob past kMaxMeasurementBlobRawBytes is refused.
+            constexpr size_t rawLimit = size_t(kMaxMeasurementBlobRawBytes);
+            unsigned char chunk[16 * 1024];
+            stream = pdf_open_raw_stream(ctx_, blob);
+            size_t raw = 0;
+            while (raw <= rawLimit) {
+                const size_t count = fz_read(ctx_, stream, chunk, sizeof chunk);
+                if (!count)
+                    break;
+                raw += count;
+            }
+            fz_drop_stream(ctx_, stream);
+            stream = nullptr;
+            // MuPDF decodes as it reads, so the read ends as soon as the data passes the limit.
+            if (raw <= rawLimit) {
+                stream = pdf_open_stream(ctx_, blob);
+                data = fz_new_buffer(ctx_, 4096);
+            }
+            size_t total = 0;
+            while (stream) {
+                const size_t count = fz_read(ctx_, stream, chunk, sizeof chunk);
+                // MuPDF can turn a decoding error into the end of the stream.
+                if (stream->error || count > limit - total) {
+                    fz_drop_buffer(ctx_, data);
+                    data = nullptr;
+                    break;
+                }
+                if (!count)
+                    break;
+                fz_append_data(ctx_, data, chunk, count);
+                total += count;
+            }
         }
     }
-    fz_catch(ctx_) {
-        has = false;
+    fz_always(ctx_) {
+        fz_drop_stream(ctx_, stream); // closing the Flate filter can warn too
+        fz_flush_warnings(ctx_);
+        fz_set_warning_callback(ctx_, previous, previousUser);
     }
-    mervinBlobCache_ = has;
-    return has;
+    fz_catch(ctx_) {
+        fz_drop_buffer(ctx_, data);
+        data = nullptr;
+    }
+    if (warned) {
+        fz_drop_buffer(ctx_, data);
+        data = nullptr;
+    }
+    if (!data) {
+        if (present)
+            measurementsUnreadable_.store(true);
+        return std::nullopt;
+    }
+    unsigned char *bytes = nullptr;
+    const size_t length = fz_buffer_storage(ctx_, data, &bytes);
+    QByteArray out(reinterpret_cast<const char *>(bytes), qsizetype(length));
+    fz_drop_buffer(ctx_, data);
+    return out;
 }
 
 bool Document::isPdf() const

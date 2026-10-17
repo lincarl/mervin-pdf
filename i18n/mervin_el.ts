@@ -499,6 +499,11 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
         <translation>Περιστροφή, διαγραφή, εξαγωγή, διαίρεση ή συγχώνευση σελίδων. ασφάλεια εγγράφων</translation>
     </message>
     <message>
+        <source>Mervin cannot read this file&apos;s measurements. Measuring is off so that they stay unchanged.</source>
+        <extracomment>Shown when the user chooses Measure on a PDF whose saved measurements Mervin cannot read, because they are too large or stored in a form it does not accept. Mervin keeps them unchanged when it saves, so it offers no measuring.</extracomment>
+        <translation>Το Mervin δεν μπορεί να διαβάσει τις μετρήσεις αυτού του αρχείου. Η μέτρηση είναι απενεργοποιημένη ώστε να μείνουν αμετάβλητες.</translation>
+    </message>
+    <message>
         <source>Fit Page</source>
         <extracomment>Zoom choice: scale the page so the whole page fits the window.</extracomment>
         <translation>Προσαρμογή σελίδας</translation>
@@ -2979,6 +2984,11 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <extracomment>Shown as the encryption algorithm when qpdf cannot identify it.</extracomment>
         <translation>Άγνωστο</translation>
     </message>
+    <message>
+        <source>A password contains characters that AES-128 and RC4-128 cannot use. Choose AES-256.</source>
+        <extracomment>Reason shown after &quot;The operation failed.&quot; when encrypting. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
+        <translation>Ένας κωδικός περιέχει χαρακτήρες που δεν υποστηρίζουν τα AES-128 και RC4-128. Επιλέξτε AES-256.</translation>
+    </message>
 </context>
 <context>
     <name>mervin::RecentFilesPanel</name>
@@ -3266,8 +3276,13 @@ This file is no longer on disk.</source>
     </message>
     <message>
         <source>defaults to the open password</source>
-        <extracomment>Placeholder in the owner-password field. If empty, use the open password to protect the PDF permission settings. The user can enter a different one.</extracomment>
+        <extracomment>Placeholder in the owner-password field while every permission below is allowed. If empty, the open password also becomes the owner password. The user can enter a different one.</extracomment>
         <translation>αν μείνει κενό, χρησιμοποιείται ο κωδικός ανοίγματος</translation>
+    </message>
+    <message>
+        <source>defaults to a random password</source>
+        <extracomment>Placeholder in the owner-password field while a permission below is not allowed. If empty, Mervin protects the permission settings with a random owner password that nobody is told. The user can enter one instead.</extracomment>
+        <translation>αν μείνει κενό, χρησιμοποιείται τυχαίος κωδικός</translation>
     </message>
     <message>
         <source>AES-256 (recommended)</source>
@@ -3337,6 +3352,16 @@ This file is no longer on disk.</source>
         <translation>&lt;b&gt;Δεν ήταν δυνατή η ανάγνωση των πληροφοριών ασφαλείας.&lt;/b&gt;&lt;br&gt;%1</translation>
     </message>
     <message>
+        <source>AES-256 uses only the first 127 bytes of a password. Make the two passwords differ within them.</source>
+        <extracomment>Shown below the owner-password field when it differs from the open password only after their first 127 bytes, while a permission is not allowed and AES-256 is chosen. Anyone with the open password could then lift the restrictions. A byte is a unit of stored text. Letters without accents, digits and common punctuation take one byte each, accented letters two, and most other scripts three or four. Keep the algorithm name and the number.</extracomment>
+        <translation>Το AES-256 χρησιμοποιεί μόνο τα πρώτα 127 byte ενός κωδικού. Κάντε τους δύο κωδικούς να διαφέρουν μέσα σε αυτά.</translation>
+    </message>
+    <message>
+        <source>AES-128 and RC4-128 use only the first 32 characters of a password. Make the two passwords differ within them.</source>
+        <extracomment>Shown below the owner-password field when it differs from the open password only after their first 32 characters, while a permission is not allowed and AES-128 or RC4-128 is chosen. Anyone with the open password could then lift the restrictions. Keep the algorithm names and the number.</extracomment>
+        <translation>Τα AES-128 και RC4-128 χρησιμοποιούν μόνο τους πρώτους 32 χαρακτήρες ενός κωδικού. Κάντε τους δύο κωδικούς να διαφέρουν μέσα σε αυτούς.</translation>
+    </message>
+    <message>
         <source>A password is required.</source>
         <translation>Απαιτείται κωδικός πρόσβασης.</translation>
     </message>
@@ -3355,8 +3380,18 @@ This file is no longer on disk.</source>
         <translation>Αυτό το έγγραφο &lt;b&gt;δεν είναι κρυπτογραφημένο&lt;/b&gt;.</translation>
     </message>
     <message>
+        <source>Low resolution only</source>
+        <extracomment>Printing state, fills %3 of the encryption summary. The PDF allows printing, but only in low resolution, possibly of degraded quality.</extracomment>
+        <translation>Μόνο σε χαμηλή ανάλυση</translation>
+    </message>
+    <message>
+        <source>Page assembly only</source>
+        <extracomment>Modifying state, fills %5 of the encryption summary. The PDF allows only page assembly, such as inserting, rotating or deleting pages, and no other changes to its content.</extracomment>
+        <translation>Μόνο συναρμολόγηση σελίδων</translation>
+    </message>
+    <message>
         <source>&lt;b&gt;Encrypted&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;Printing: %3 · Copying: %4 · Modifying: %5 · Annotating: %6&lt;br&gt;&lt;i&gt;Note: Mervin never enforces these permission flags.&lt;/i&gt;</source>
-        <extracomment>%1 is the encryption algorithm, such as AES-256. %2 is the key length in bits. %3 to %6 are Allowed or Not allowed.</extracomment>
+        <extracomment>%1 is the encryption algorithm, such as AES-256. %2 is the key length in bits. %3 is Allowed, Low resolution only or Not allowed. %5 is Allowed, Page assembly only or Not allowed. %4 and %6 are Allowed or Not allowed.</extracomment>
         <translation>&lt;b&gt;Κρυπτογραφημένο&lt;/b&gt; · %1 (%2-bit)&lt;br&gt;Εκτύπωση: %3 · Αντιγραφή: %4 · Τροποποίηση: %5 · Σχολιασμός: %6&lt;br&gt;&lt;i&gt;Σημείωση: Το Mervin δεν επιβάλλει ποτέ αυτούς τους περιορισμούς δικαιωμάτων.&lt;/i&gt;</translation>
     </message>
     <message>
@@ -3367,6 +3402,11 @@ This file is no longer on disk.</source>
         <source>PDF documents (*.pdf)</source>
         <extracomment>File type filter. Keep &quot;(*.pdf)&quot; as it is.</extracomment>
         <translation>έγγραφα PDF (*.pdf)</translation>
+    </message>
+    <message>
+        <source>Use a different owner password to restrict permissions.</source>
+        <extracomment>Shown below the owner-password field when it is the same as the open password while a permission is not allowed. Anyone with the open password could then lift the restrictions. An empty owner field is also accepted.</extracomment>
+        <translation>Χρησιμοποιήστε διαφορετικό κωδικό δικαιωμάτων για να περιορίσετε τα δικαιώματα.</translation>
     </message>
     <message>
         <source>This writes a copy with all owner-password restrictions removed (printing, copying, and editing become permitted).
@@ -4358,13 +4398,18 @@ The new AppImage is saved at:
     <name>mervin::measurementPages</name>
     <message>
         <source>Invalid measurement metadata.</source>
-        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged.</extracomment>
+        <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or too large to read.</extracomment>
         <translation>Μη έγκυρα μεταδεδομένα μέτρησης.</translation>
     </message>
     <message>
         <source>Unsupported measurement metadata.</source>
         <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or come from a newer version.</extracomment>
         <translation>Μη υποστηριζόμενα μεταδεδομένα μέτρησης.</translation>
+    </message>
+    <message>
+        <source>The measurements are too large to save.</source>
+        <extracomment>Reason a save, copy or page operation fails without writing anything. The measurements Mervin would store in the PDF pass the 16 MiB it reads back, as can happen when merging files that carry many measurements.</extracomment>
+        <translation>Οι μετρήσεις είναι πολύ μεγάλες για να αποθηκευτούν.</translation>
     </message>
 </context>
 </TS>
