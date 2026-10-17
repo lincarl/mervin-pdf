@@ -954,14 +954,18 @@ Delete Pages removes pages from the source's own `QPDF` and writes it, so it kee
 encryption, outlines and structure. `QPDFPageDocumentHelper::removePage` only takes a
 page out of `/Pages`, so `removeDeletedContent` then removes what only the deleted
 pages used. It removes the outline items that only go to a deleted page and have no
-items left below them, relinking their siblings and correcting `/Count`. It removes
+items left below them, relinking their siblings and correcting `/Count`. A direct item,
+which ISO 32000 does not allow but viewers follow, is made indirect first, and an outline
+that reaches an item twice stays as it was. It removes the named destinations of deleted
+pages from `/Dests` and the `/Names /Dests` tree, after the outline, which looks some
+bookmarks up through them. It removes
 the structure elements whose content is only on deleted pages, with their `/ParentTree`
 and `/IDTree` entries, and the deleted pages' content items from the elements that
 stay. It removes the form fields whose widgets are all on deleted pages from `/Fields`,
 `/CO` and their parents' `/Kids`, and drops `/XFA` when it removes one. Finally it
 replaces the deleted pages, their annotations that no kept page lists and the removed
-fields with null (`QPDF::replaceObject`), so links, named destinations and other
-references cannot keep their content in the output. A damaged outline or structure
+fields with null (`QPDF::replaceObject`), so links and other references cannot keep
+their content in the output. A damaged outline or structure
 tree is left as it was.
 
 Pages can share one resources dictionary, or inherit it from `/Pages`, and then list the

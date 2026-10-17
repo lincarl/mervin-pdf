@@ -219,6 +219,29 @@ bool unlinkOutlines(QPDFObjectHandle parent, const ObjectSet &doomed, ObjectSet 
     return true;
 }
 
+/// Makes the direct items below `parent` indirect, so that the walks above tell items apart
+/// by object number. ISO 32000 wants indirect items, but viewers follow a direct /Next as
+/// well. Returns false for an outline that reaches an item twice, which they cannot relink.
+bool makeOutlineIndirect(QPDF &q, QPDFObjectHandle parent, ObjectSet &seen, int depth)
+{
+    QPDFObjectHandle holder = parent;
+    const char *link = "/First";
+    for (QPDFObjectHandle item = parent.getKey("/First"); item.isDictionary();
+         item = item.getKey("/Next")) {
+        if (!item.isIndirect()) {
+            item = q.makeIndirectObject(item);
+            holder.replaceKey(link, item);
+        }
+        if (!seen.insert(item.getObjGen()).second)
+            return false;
+        if (depth < kMaxDepth && !makeOutlineIndirect(q, item, seen, depth + 1))
+            return false;
+        holder = item;
+        link = "/Next";
+    }
+    return true;
+}
+
 /// Removes the outline items that go only to a deleted page and have no items left below
 /// them, as their titles can describe the page. A damaged outline stays as it was.
 void pruneOutlines(QPDF &q, const ObjectSet &pages)
@@ -228,8 +251,11 @@ void pruneOutlines(QPDF &q, const ObjectSet &pages)
         return;
     ObjectSet doomed;
     try {
-        QPDFOutlineDocumentHelper names(q);
         ObjectSet seen;
+        if (!makeOutlineIndirect(q, outlines, seen, 0))
+            return;
+        QPDFOutlineDocumentHelper names(q);
+        seen.clear();
         findDeadOutlines(outlines, names, pages, seen, doomed, 0);
     } catch (const std::exception &) {
         return;
@@ -237,6 +263,43 @@ void pruneOutlines(QPDF &q, const ObjectSet &pages)
     ObjectSet seen;
     if (!doomed.empty())
         unlinkOutlines(outlines, doomed, seen, 0);
+}
+
+/// Removes the named destinations that go to one of `pages`, from the catalog's /Dests and
+/// from the /Names /Dests tree, as their names can describe the page. Call it after
+/// pruneOutlines, which looks bookmarks up by these names. A damaged name tree stays as it
+/// was.
+void pruneDestinations(QPDF &q, const ObjectSet &pages)
+{
+    const auto deleted = [&pages](QPDFObjectHandle dest) {
+        if (dest.isDictionary())
+            dest = dest.getKey("/D");
+        if (!dest.isArray() || dest.getArrayNItems() == 0)
+            return false;
+        QPDFObjectHandle page = dest.getArrayItem(0);
+        return page.isIndirect() && pages.count(page.getObjGen()) > 0;
+    };
+    QPDFObjectHandle root = q.getRoot();
+    QPDFObjectHandle dests = root.getKey("/Dests");
+    if (dests.isDictionary())
+        for (const std::string &name : dests.getKeys())
+            if (deleted(dests.getKey(name)))
+                dests.removeKey(name);
+    QPDFObjectHandle names = root.getKey("/Names");
+    QPDFObjectHandle tree = names.isDictionary() ? names.getKey("/Dests") : names;
+    if (!tree.isDictionary())
+        return;
+    try {
+        QPDFNameTreeObjectHelper helper(tree, q);
+        std::vector<std::string> gone;
+        for (const auto &[name, dest] : helper.getAsMap())
+            if (deleted(dest))
+                gone.push_back(name);
+        for (const std::string &name : gone)
+            helper.remove(name);
+    } catch (const std::exception &) {
+        // The names stay, with null in place of the page.
+    }
 }
 
 /// Finds the structure elements that mark content only on deleted pages. read() only
@@ -536,9 +599,9 @@ private:
 /// QPDFPageDocumentHelper::removePage took them out of the page tree, which is all it
 /// does. The pages, the annotations that no kept page lists and the form fields that only
 /// deleted pages show become null, so outlines, links, structure and other references
-/// cannot keep their content. Outline items and structure elements that lead only to
-/// deleted pages go as well. With `shared` (see sharesResources, which must look before
-/// removePage), the kept pages also lose the resources that they do not use.
+/// cannot keep their content. Outline items, named destinations and structure elements
+/// that lead only to deleted pages go as well. With `shared` (see sharesResources, which
+/// must look before removePage), the kept pages also lose the resources they do not use.
 void removeDeletedContent(QPDF &q, const std::vector<QPDFPageObjectHelper> &pages,
                           const std::set<int> &drop, bool shared)
 {
@@ -564,6 +627,7 @@ void removeDeletedContent(QPDF &q, const std::vector<QPDFPageObjectHelper> &page
     for (long long key : keptKeys)
         removal.parentKeys.erase(key);
     pruneOutlines(q, removal.pages);
+    pruneDestinations(q, removal.pages);
     pruneStructure(q, removal);
     const ObjectSet fields = pruneDeletedFields(q, removal);
     const ObjectSet *gone[] = {&removal.pages, &removal.annotations, &fields};

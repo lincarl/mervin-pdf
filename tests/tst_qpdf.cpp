@@ -67,6 +67,10 @@ enum class Reference {
     ChildFieldNoForm, // ChildField in a file without /AcroForm, as Extract wrote before forms
     SharedResources, // one /Resources for all pages, with the image that only page 2 draws
     InheritedResources, // the same /Resources on /Pages instead of on the pages
+    DirectOutline,   // a bookmark to page 2, then a direct one to page 1, then one to page 3
+    ClosedOutline,   // closed bookmarks with children on pages 1 and 2, and only on page 2
+    SharedWidget,    // a field whose one widget pages 1 and 2 both list
+    WidgetlessField, // a field that no page shows, beside a field on page 2
 };
 
 // A page that shows `text` in two marked-content sequences, MCID 0 and 1.
@@ -217,11 +221,19 @@ void makeReferencedPdf(const QString &path, Reference reference)
         root.replaceKey("/Outlines", outlines);
         break;
     case Reference::NamedOutline: {
-        root.replaceKey("/Names", parse("<< /Dests << /Names [(chapter) null] >> >>"));
-        root.getKey("/Names").getKey("/Dests").getKey("/Names").setArrayItem(1, fit(pages[1]));
+        // The destination names of page 2 name the secret, those of page 1 stay.
+        QPDFObjectHandle names = QPDFObjectHandle::newArray(
+            {QPDFObjectHandle::newString(kSecret + " chapter"), fit(pages[1]),
+             QPDFObjectHandle::newString("pageone"), fit(pages[0])});
+        root.replaceKey("/Names", parse("<< /Dests << >> >>"));
+        root.getKey("/Names").getKey("/Dests").replaceKey("/Names", names);
+        root.replaceKey("/Dests", q.makeIndirectObject(QPDFObjectHandle::newDictionary()));
+        root.getKey("/Dests").replaceKey("/" + kSecret + "dest", fit(pages[1]));
+        root.getKey("/Dests").replaceKey("/pageone", fit(pages[0]));
         QPDFObjectHandle named = bookmark(q, kSecret + " bookmark", pages[1]);
         named.removeKey("/Dest");
-        named.replaceKey("/A", parse("<< /S /GoTo /D (chapter) >>"));
+        named.replaceKey("/A", parse("<< /S /GoTo >>"));
+        named.getKey("/A").replaceKey("/D", QPDFObjectHandle::newString(kSecret + " chapter"));
         outline(outlines, {bookmark(q, "Page one", pages[0]), named});
         root.replaceKey("/Outlines", outlines);
         break;
@@ -373,6 +385,47 @@ void makeReferencedPdf(const QString &path, Reference reference)
         }
         if (reference == Reference::InheritedResources)
             root.getKey("/Pages").replaceKey("/Resources", resources);
+        break;
+    }
+    case Reference::DirectOutline: {
+        // ISO 32000 wants indirect items, but viewers follow a direct /Next as well.
+        QPDFObjectHandle first = bookmark(q, kSecret + " bookmark", pages[1]);
+        QPDFObjectHandle last = bookmark(q, "Page three", pages[2]);
+        QPDFObjectHandle direct = QPDFObjectHandle::newDictionary();
+        direct.replaceKey("/Title", QPDFObjectHandle::newString("Direct one"));
+        direct.replaceKey("/Dest", fit(pages[0]));
+        direct.replaceKey("/Next", last);
+        for (QPDFObjectHandle item : {first, direct, last})
+            item.replaceKey("/Parent", outlines);
+        first.replaceKey("/Next", direct);
+        outlines.replaceKey("/First", first);
+        outlines.replaceKey("/Last", last);
+        outlines.replaceKey("/Count", QPDFObjectHandle::newInteger(3));
+        root.replaceKey("/Outlines", outlines);
+        break;
+    }
+    case Reference::ClosedOutline: {
+        // A closed chapter keeps one of its two children, a closed section loses its only one.
+        QPDFObjectHandle chapter = bookmark(q, "Chapter", pages[0]);
+        QPDFObjectHandle section = bookmark(q, "Section", pages[2]);
+        outline(chapter, {bookmark(q, "Kept child", pages[0]), bookmark(q, kSecret + " child", pages[1])});
+        outline(section, {bookmark(q, kSecret + " only child", pages[1])});
+        chapter.replaceKey("/Count", QPDFObjectHandle::newInteger(-2));
+        section.replaceKey("/Count", QPDFObjectHandle::newInteger(-1));
+        outline(outlines, {chapter, section});
+        root.replaceKey("/Outlines", outlines);
+        break;
+    }
+    case Reference::SharedWidget: {
+        // Extract wrote repeated pages like this before forms, without /AcroForm.
+        QPDFObjectHandle twice = widget(q, pages[0], "/FT /Tx /T (twice) /V (kept twice)");
+        pages[1].replaceKey("/Annots", QPDFObjectHandle::newArray({twice}));
+        installForm(q, {twice});
+        break;
+    }
+    case Reference::WidgetlessField: {
+        QPDFObjectHandle data = q.makeIndirectObject(parse("<< /FT /Tx /T (data) /V (kept data) >>"));
+        installForm(q, {data, widget(q, pages[1], "/FT /Tx /T (secret) /V (" + kSecret + ")")});
         break;
     }
     case Reference::ChildFieldNoForm: {
@@ -1400,6 +1453,10 @@ void TstQpdf::deleteLeavesOutDeletedContent_data()
     QTest::newRow("reset button") << int(Reference::ResetButton);
     QTest::newRow("shared resources") << int(Reference::SharedResources);
     QTest::newRow("inherited resources") << int(Reference::InheritedResources);
+    QTest::newRow("direct bookmark") << int(Reference::DirectOutline);
+    QTest::newRow("closed bookmarks") << int(Reference::ClosedOutline);
+    QTest::newRow("widget on two pages") << int(Reference::SharedWidget);
+    QTest::newRow("field without widget") << int(Reference::WidgetlessField);
 }
 
 /// Checks that no object of a Delete Pages copy holds the deleted page's content, or what
@@ -1442,6 +1499,49 @@ void TstQpdf::deleteLeavesOutDeletedContent()
         QCOMPARE(outlines.getKey("/Count").getIntValue(), 1LL);
         QCOMPARE(outlines.getKey("/First").getObjGen(), outlines.getKey("/Last").getObjGen());
         QVERIFY(!outlines.getKey("/First").hasKey("/Next"));
+        if (ref == Reference::NamedOutline) {
+            // The names of page 1 stay.
+            QCOMPARE(QPDFNameTreeObjectHelper(root.getKey("/Names").getKey("/Dests"), q).getAsMap().size(),
+                     size_t(1));
+            QVERIFY(QPDFNameTreeObjectHelper(root.getKey("/Names").getKey("/Dests"), q).hasName("pageone"));
+            QVERIFY(root.getKey("/Dests").getKeys() == std::set<std::string>({"/pageone"}));
+        }
+        break;
+    case Reference::DirectOutline: {
+        QCOMPARE(outlines.getKey("/Count").getIntValue(), 2LL);
+        QPDFObjectHandle first = outlines.getKey("/First");
+        QCOMPARE(QString::fromStdString(first.getKey("/Title").getUTF8Value()), QStringLiteral("Direct one"));
+        QCOMPARE(first.getKey("/Next").getObjGen(), outlines.getKey("/Last").getObjGen());
+        QCOMPARE(QString::fromStdString(outlines.getKey("/Last").getKey("/Title").getUTF8Value()),
+                 QStringLiteral("Page three"));
+        break;
+    }
+    case Reference::ClosedOutline: {
+        // Closed items count their remaining children as negative numbers.
+        QCOMPARE(outlines.getKey("/Count").getIntValue(), 2LL);
+        QPDFObjectHandle chapter = outlines.getKey("/First");
+        QPDFObjectHandle section = outlines.getKey("/Last");
+        QCOMPARE(chapter.getKey("/Count").getIntValue(), -1LL);
+        QCOMPARE(QString::fromStdString(chapter.getKey("/First").getKey("/Title").getUTF8Value()),
+                 QStringLiteral("Kept child"));
+        QVERIFY(!section.hasKey("/First") && !section.hasKey("/Count"));
+        break;
+    }
+    case Reference::SharedWidget: {
+        // Page 1 keeps the widget, and the field keeps it too.
+        QCOMPARE(pages.at(0).getKey("/Annots").getArrayNItems(), 1);
+        QPDFObjectHandle twice = pages.at(0).getKey("/Annots").getArrayItem(0);
+        QVERIFY(twice.isDictionary());
+        QCOMPARE(fields.getArrayNItems(), 1);
+        QCOMPARE(fields.getArrayItem(0).getObjGen(), twice.getObjGen());
+        QVERIFY(pdfContains(out, "kept twice"));
+        break;
+    }
+    case Reference::WidgetlessField:
+        QCOMPARE(fields.getArrayNItems(), 1);
+        QCOMPARE(QString::fromStdString(fields.getArrayItem(0).getKey("/T").getUTF8Value()),
+                 QStringLiteral("data"));
+        QVERIFY(pdfContains(out, "kept data"));
         break;
     case Reference::NestedOutline: {
         // The chapter stays for its child, the section loses its only child.
