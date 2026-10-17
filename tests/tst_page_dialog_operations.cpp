@@ -280,9 +280,20 @@ private slots:
         QVERIFY(!QFileInfo::exists(out));
     }
 
-    /// Reports a source that Extract cannot read as unreadable, not as a failed write.
+    /// Covers Extract and Delete, which both write through the page worker.
+    void unreadableSourceIsNotAWriteFailure_data()
+    {
+        QTest::addColumn<bool>("deleting");
+        QTest::addColumn<QString>("message");
+        QTest::newRow("extract") << false << QStringLiteral("This PDF cannot be read for extraction.");
+        QTest::newRow("delete") << true << QStringLiteral("This PDF cannot be read for deleting pages.");
+    }
+
+    /// Reports a source that Extract or Delete cannot read as unreadable, not as a failed write.
     void unreadableSourceIsNotAWriteFailure()
     {
+        QFETCH(bool, deleting);
+        QFETCH(QString, message);
         QTemporaryDir files;
         const QString path = files.filePath(QStringLiteral("measured.pdf"));
         const QString out = files.filePath(QStringLiteral("chosen.pdf"));
@@ -292,12 +303,12 @@ private slots:
         showWindow(window);
         QVERIFY(testing::openAndWait(window, path));
         choices_ << [out](ExtractDialog &dialog) { choose(dialog, out); };
-        choices_ << [](ExtractDialog &dialog) {
-            QCOMPARE(error(dialog), QStringLiteral("This PDF cannot be read for extraction."));
+        choices_ << [message](ExtractDialog &dialog) {
+            QCOMPARE(error(dialog), message);
             QVERIFY(!dialog.findChild<QPushButton *>(QStringLiteral("extractAccept"))->isEnabled());
             dialog.reject();
         };
-        QVERIFY(QMetaObject::invokeMethod(&window, "extractPagesOp"));
+        QVERIFY(QMetaObject::invokeMethod(&window, deleting ? "deletePagesOp" : "extractPagesOp"));
         QTRY_COMPARE(shown_, 2);
         QVERIFY(!QFileInfo::exists(out));
     }

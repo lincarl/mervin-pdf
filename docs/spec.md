@@ -271,9 +271,9 @@ remembered Open when done choice.
 Extract and Delete check the source in the background before opening their dialog.
 Their write checks the chosen password and page count again. A changed count keeps
 the ranges and asks the user to check them before another attempt. A source that
-Extract cannot read while it writes, such as one whose saved measurements are damaged
-or from a newer version, is reported as unreadable and blocks Extract. Merge names
-such an input in its reopened window. Stopping the probe opens no dialog, and stopping
+Extract or Delete cannot read while it writes, such as one whose saved measurements are
+damaged or from a newer version, is reported as unreadable and blocks the tool. Merge
+names such an input in its reopened window. Stopping the probe opens no dialog, and stopping
 a write suppresses its later result.
 
 Extract and Delete copy pages from the saved file, so unsaved comments, form entries

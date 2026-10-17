@@ -48,11 +48,13 @@ public:
 
     // Write a copy with the given pages removed. The copy keeps the source's structure and
     // encryption but leaves out what only the removed pages used: the pages, their
-    // annotations and form fields, and the outline items and structure elements that lead
-    // only to them. Other references to the pages become null.
+    // annotations, images and form fields, and the outline items, destination names and
+    // structure elements that lead only to them. Other references to the pages become null.
+    // On failure, failedIndex is 0 when the source could not be opened or read, including
+    // measurement data it cannot read, as merge() names its input, or -1 otherwise.
     static Status deletePages(const QString &inPath, const QString &outPath,
                               const QList<int> &pages, const QString &password = QString(),
-                              QString *error = nullptr);
+                              QString *error = nullptr, int *failedIndex = nullptr);
 
     // Rotate `pages` by `angle` (a multiple of 90). relative=true adds to the
     // existing rotation; false sets it absolutely.
