@@ -4379,5 +4379,10 @@ AppImageใหม่ถูกบันทึกไว้ที่:
         <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or come from a newer version.</extracomment>
         <translation>ข้อมูลเมตาการวัดที่ไม่รองรับ</translation>
     </message>
+    <message>
+        <source>The measurements are too large to save.</source>
+        <extracomment>Reason a save, copy or page operation fails without writing anything. The measurements Mervin would store in the PDF pass the 16 MiB it reads back, as can happen when merging files that carry many measurements.</extracomment>
+        <translation>การวัดมีขนาดใหญ่เกินกว่าจะบันทึกได้</translation>
+    </message>
 </context>
 </TS>

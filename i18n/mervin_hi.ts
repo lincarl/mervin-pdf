@@ -4401,5 +4401,10 @@ The new AppImage is saved at:
         <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or come from a newer version.</extracomment>
         <translation>असमर्थित माप मेटाडेटा।</translation>
     </message>
+    <message>
+        <source>The measurements are too large to save.</source>
+        <extracomment>Reason a save, copy or page operation fails without writing anything. The measurements Mervin would store in the PDF pass the 16 MiB it reads back, as can happen when merging files that carry many measurements.</extracomment>
+        <translation>माप सहेजने के लिए बहुत बड़े हैं।</translation>
+    </message>
 </context>
 </TS>

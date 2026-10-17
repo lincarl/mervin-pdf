@@ -23,6 +23,8 @@ public:
                           const std::vector<RenderMeasurement> &marks,
                           const QString &password = QString(), QString *error = nullptr);
 
+    // Writes a copy whose catalog holds `doc` as editable JSON. Fails without writing, with
+    // PageOps::measurementsTooLargeError(), when the JSON would pass kMaxMeasurementBlobBytes.
     static Status embedMervin(const QString &inPath, const QString &outPath, const MeasureDoc &doc,
                               const QString &password = QString(), QString *error = nullptr);
 

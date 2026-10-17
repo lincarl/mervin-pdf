@@ -33,6 +33,11 @@ int PageOps::pageCount(const QString &path, const QString &password)
     }
 }
 
+QString PageOps::measurementsTooLargeError()
+{
+    return measurementPages::tooLargeError();
+}
+
 PageOps::Status PageOps::probe(const QString &path, int *count, const QString &password,
                                QString *error, bool *encrypted)
 {

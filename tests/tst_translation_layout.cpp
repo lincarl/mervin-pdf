@@ -1097,6 +1097,16 @@ void TstTranslationLayout::merge()
         const auto *note = mixed.findChild<QLabel *>(QStringLiteral("mergeEncryptionNote"));
         QVERIFY(note && note->isVisible());
     }
+    {
+        // Combined measurements too large to save replace the write summary.
+        const QString output = profile_.filePath(QStringLiteral("merge-measured-output.pdf"));
+        const QString tooLarge = mervin::PageOps::measurementsTooLargeError();
+        mervin::MergeDialog failed(dialog.plan(), output, tooLarge, -1);
+        auto *reason = failed.findChild<QLabel *>(QStringLiteral("mergeError"));
+        QVERIFY(reason);
+        QTRY_COMPARE(reason->text(), tooLarge);
+        inspect(failed, QStringLiteral("Merge measurements too large to save"));
+    }
     for (const auto conflict : {mervin::MergeDialog::Conflict::Changed,
                                 mervin::MergeDialog::Conflict::CheckFailed}) {
         const QString output = profile_.filePath(QStringLiteral("merge-consent-output.pdf"));
