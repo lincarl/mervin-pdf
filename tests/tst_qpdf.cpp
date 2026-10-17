@@ -454,15 +454,19 @@ void makeReferencedPdf(const QString &path, Reference reference)
         QPDFObjectHandle name = widget(q, pages[0], "/FT /Tx /T (name) /V (kept name)");
         name.replaceKey("/AA", parse("<< /Bl << /S /ResetForm >> >>"));
         QPDFObjectHandle other = widget(q, pages[0], "/FT /Tx /T (other) /V (kept other)");
+        const std::string all = "[(name) (other) (submit) (except) (none) (group) (exceptchild)]";
+        other.replaceKey("/AA", parse("<< /Fo << /S /ResetForm /Fields " + all + " /Flags 1 >> >>"));
         QPDFObjectHandle submit = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (submit)");
         submit.replaceKey("/A", parse("<< /S /SubmitForm /F (https://example.invalid/form) /Flags 4 "
                                       "/Next << /S /ResetForm >> >>"));
         QPDFObjectHandle except = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (except)");
         except.replaceKey("/A", parse("<< /S /SubmitForm /F (https://example.invalid/form) "
-                                      "/Fields [(name)] /Flags 1 >>"));
+                                      "/Fields [(name)] /Flags 1 /Next << /S /ResetForm /Fields " + all
+                                      + " /Flags 1 /Next << /S /SubmitForm /F (https://example.invalid/"
+                                        "form) /Fields [(other)] >> >> >>"));
         QPDFObjectHandle none = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (none)");
-        none.replaceKey("/A", parse("<< /S /ResetForm /Fields [(name) (other) (submit) (except) "
-                                    "(none) (group) (exceptchild)] /Flags 1 >>"));
+        none.replaceKey("/A", parse("<< /S /ResetForm /Fields " + all + " /Flags 1 /Next << /S "
+                                    "/SubmitForm /F (https://example.invalid/form) /Fields [(name)] >> >>"));
         QPDFObjectHandle group = q.makeIndirectObject(parse("<< /FT /Tx /T (group) >>"));
         QPDFObjectHandle a = q.makeIndirectObject(parse("<< /T (a) /V (kept a) >>"));
         QPDFObjectHandle b = q.makeIndirectObject(parse("<< /T (b) /V (kept b) >>"));
@@ -735,9 +739,10 @@ QStringList resetTargets(const QString &path)
     return targets;
 }
 
-// What the action under `keys` of top-level field `field` of `path` acts on: "all" without
-// /Fields, otherwise the fully qualified names that /Fields lists, after "but" when the
-// Exclude flag is set.
+// The type of the action under `keys` of top-level field `field` of `path`, and what it
+// acts on: "all" without /Fields, otherwise the fully qualified names that /Fields lists,
+// after "but" when the Exclude flag is set. For example "ResetForm: but name", or
+// "no action".
 QString actionScope(const QString &path, const std::string &field, const QStringList &keys)
 {
     QPDF q;
@@ -748,10 +753,14 @@ QString actionScope(const QString &path, const std::string &field, const QString
             continue;
         QPDFObjectHandle action = top;
         for (const QString &key : keys)
-            action = action.getKey(key.toStdString());
+            action = action.isDictionary() ? action.getKey(key.toStdString())
+                                           : QPDFObjectHandle::newNull();
+        if (!action.isDictionary())
+            return QStringLiteral("no action");
+        const QString type = QString::fromStdString(action.getKey("/S").getName()).mid(1) + u": ";
         QPDFObjectHandle fields = action.getKey("/Fields");
         if (!fields.isArray())
-            return QStringLiteral("all");
+            return type + QStringLiteral("all");
         QStringList names;
         for (QPDFObjectHandle item : fields.aitems())
             names << QString::fromStdString(item.isString()
@@ -759,7 +768,7 @@ QString actionScope(const QString &path, const std::string &field, const QString
                                                 : QPDFFormFieldObjectHelper(item).getFullyQualifiedName());
         QPDFObjectHandle flags = action.getKey("/Flags");
         const bool exclude = flags.isInteger() && (flags.getIntValue() & 1);
-        return (exclude ? QStringLiteral("but ") : QString()) + names.join(u' ');
+        return type + (exclude ? QStringLiteral("but ") : QString()) + names.join(u' ');
     }
     return QStringLiteral("no field");
 }
@@ -2089,18 +2098,32 @@ void TstQpdf::copiesScopeDocumentWideFormActions_data()
     QTest::addColumn<QString>("field");
     QTest::addColumn<QStringList>("keys");
     QTest::addColumn<QString>("scope");
-    QTest::newRow("merge, submit all") << true << "submit" << QStringList{"/A"} << own;
-    QTest::newRow("merge, then reset all") << true << "submit" << QStringList{"/A", "/Next"} << own;
-    QTest::newRow("merge, reset all on blur") << true << "name" << QStringList{"/AA", "/Bl"} << own;
+    QTest::newRow("merge, submit all") << true << "submit" << QStringList{"/A"}
+                                       << "SubmitForm: " + own;
+    QTest::newRow("merge, then reset all") << true << "submit" << QStringList{"/A", "/Next"}
+                                           << "ResetForm: " + own;
+    QTest::newRow("merge, reset all on blur") << true << "name" << QStringList{"/AA", "/Bl"}
+                                              << "ResetForm: " + own;
     QTest::newRow("merge, all but one") << true << "except" << QStringList{"/A"}
-                                        << QStringLiteral("other submit except none group exceptchild");
+                                        << QStringLiteral("SubmitForm: other submit except none group exceptchild");
     QTest::newRow("merge, all but a child") << true << "exceptchild" << QStringList{"/A"}
-                                            << QStringLiteral("name other submit except none group.b exceptchild");
-    QTest::newRow("merge, all but all") << true << "none" << QStringList{"/A"} << QString();
+                                            << QStringLiteral("SubmitForm: name other submit except none group.b exceptchild");
+    // An action left with no field goes, and the actions after it take its place, as
+    // viewers such as PDF.js read an empty /Fields as every field.
+    QTest::newRow("merge, all but all, then more") << true << "none" << QStringList{"/A"}
+                                                   << QStringLiteral("SubmitForm: name");
+    QTest::newRow("merge, all but all within a chain") << true << "except" << QStringList{"/A", "/Next"}
+                                                       << QStringLiteral("SubmitForm: other");
+    QTest::newRow("merge, all but all on focus") << true << "other" << QStringList{"/AA", "/Fo"}
+                                                 << QStringLiteral("no action");
     QTest::newRow("one file, submit all") << false << "submit" << QStringList{"/A"}
-                                          << QStringLiteral("all");
+                                          << QStringLiteral("SubmitForm: all");
     QTest::newRow("one file, all but one") << false << "except" << QStringList{"/A"}
-                                           << QStringLiteral("but name");
+                                           << QStringLiteral("SubmitForm: but name");
+    QTest::newRow("one file, all but all") << false << "none" << QStringList{"/A"}
+                                           << "ResetForm: but " + own;
+    QTest::newRow("one file, all but all on focus") << false << "other" << QStringList{"/AA", "/Fo"}
+                                                    << "ResetForm: but " + own;
 }
 
 /// Checks that a merge limits a copied submit or reset action that acts on every field, or
