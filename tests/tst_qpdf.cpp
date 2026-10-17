@@ -1434,6 +1434,22 @@ void TstQpdf::copiesKeepFormFields()
     QCOMPARE(parts.size(), 2);
     for (const QString &part : parts)
         QCOMPARE(formProblem(part, 1), QString());
+
+    // Extract and Split of an encrypted form keep its encryption and its fields.
+    QpdfService::Info info;
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{enc, {1}, QStringLiteral("secret")}}, out),
+             PageOps::Status::Ok);
+    QCOMPARE(svc.readInfo(out, QString(), info, nullptr), QpdfService::Status::NeedsPassword);
+    QCOMPARE(formProblem(out, 1, QStringLiteral("secret")), QString());
+    parts.clear();
+    QCOMPARE(PageOps::split(enc, dir_.path(), QStringLiteral("form-enc-part"), QStringLiteral("secret"),
+                            &parts),
+             PageOps::Status::Ok);
+    QCOMPARE(parts.size(), 2);
+    for (const QString &part : parts) {
+        QCOMPARE(svc.readInfo(part, QString(), info, nullptr), QpdfService::Status::NeedsPassword);
+        QCOMPARE(formProblem(part, 1, QStringLiteral("secret")), QString());
+    }
 }
 
 /// Fixtures whose page 1 widget shares a field tree with a field or widget of page 2. The
