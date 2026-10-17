@@ -7,6 +7,7 @@
 #include "render/FormModel.h"
 #include "render/MeasureContent.h"
 #include "render/RenderEngine.h"
+#include "render/RenderTypes.h"
 #include "ui/AnnotPopup.h"
 #include "ui/Icons.h"
 #include "ui/PdfPropertiesPopup.h"
@@ -55,6 +56,7 @@ namespace mervin {
 namespace {
 constexpr double kMinScale = 0.08;
 constexpr double kMaxScale = 100.0; // 10000% - deep zoom uses clipped rendering (see ensureRendered)
+// maximumScale() lowers kMaxScale for pages whose raster would pass kMaxDevicePixel.
 
 // Discrete zoom uses round rungs; pinch gestures and typed values remain continuous.
 // Every rung exceeds kZoomLadderMinStep so the minimum-step rule cannot skip alternate levels.
@@ -182,9 +184,21 @@ int ViewerWidget::pageCount() const
     return doc_ ? doc_->pageCount() : 0;
 }
 
+double ViewerWidget::maximumScale() const
+{
+    // MuPDF draws a raster exactly only up to kMaxDevicePixel on a side, so the
+    // largest page at this scale and device pixel ratio must stay within it. One
+    // pixel of headroom covers rounding the page bounds out to whole pixels.
+    if (largestPageSide_ <= 0 || dpr_ <= 0)
+        return kMaxScale;
+    return std::min(kMaxScale, (kMaxDevicePixel - 1) / (largestPageSide_ * dpr_));
+}
+
 double ViewerWidget::clampScale(double s) const
 {
-    return std::clamp(s, kMinScale, kMaxScale);
+    // A page too large even for kMinScale shows at its largest exact scale.
+    const double highest = maximumScale();
+    return std::clamp(s, std::min(kMinScale, highest), highest);
 }
 
 double ViewerWidget::nextZoomLevel(double current, int dir) const
@@ -419,6 +433,11 @@ void ViewerWidget::setDocument(Document *doc)
     emitMeasurementsChanged();
     layout_ = ViewLayout{};
     layout_.setDocument(doc_);
+    largestPageSide_ = 0;
+    for (int page = 0; page < pageCount(); ++page) {
+        const QSizeF size = doc_->pageSize(page);
+        largestPageSide_ = std::max({largestPageSide_, size.width(), size.height()});
+    }
     dpr_ = devicePixelRatioF();
     applyFitScale();
     relayout();
@@ -477,6 +496,9 @@ void ViewerWidget::applyFitScale()
 void ViewerWidget::relayout()
 {
     dpr_ = devicePixelRatioF();
+    // A higher device pixel ratio lowers maximumScale(). Every caller emits
+    // scaleChanged afterwards, so the zoom box shows the scale in effect.
+    scale_ = clampScale(scale_);
     layout_.setMode(layoutMode_);
     layout_.setRotation(rotation_);
     layout_.setScale(scale_);

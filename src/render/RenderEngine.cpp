@@ -858,6 +858,13 @@ void RenderEngine::workerLoop(const std::shared_ptr<Shared> &shared, fz_context 
             fz_matrix ctm = fz_pre_rotate(
                 fz_scale(static_cast<float>(req.scale), static_cast<float>(req.scale)),
                 static_cast<float>(req.rotation));
+            const fz_irect full =
+                fz_round_rect(fz_transform_rect(fz_bound_display_list(ctx, list), ctm));
+            // Beyond MuPDF's edge clamp a tile would come back blank or with shapes
+            // moved, so fail instead. The viewer and the print preview stay within it.
+            if (std::max({std::abs(full.x0), std::abs(full.y0), std::abs(full.x1),
+                          std::abs(full.y1)}) > kMaxDevicePixel)
+                fz_throw(ctx, FZ_ERROR_ARGUMENT, "page raster beyond the rasteriser's range");
 
             if (req.clip.isEmpty()) {
                 // Whole page (normal zoom).
@@ -867,8 +874,6 @@ void RenderEngine::workerLoop(const std::shared_ptr<Shared> &shared, fz_context 
                 // page's full device image, so the pixmap stays small no matter
                 // how high the scale. clip is in device px relative to the full
                 // image's top-left, which maps onto the transformed bbox origin.
-                const fz_irect full =
-                    fz_round_rect(fz_transform_rect(fz_bound_display_list(ctx, list), ctm));
                 fz_irect want;
                 want.x0 = full.x0 + req.clip.left();
                 want.y0 = full.y0 + req.clip.top();

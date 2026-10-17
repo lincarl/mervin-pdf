@@ -18,6 +18,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -465,6 +466,56 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(images(200, 16).size(), 16, 10000);
         for (const QImage &image : images(200, 16))
             QCOMPARE(image, smooth);
+    }
+
+    // MuPDF clamps every edge to kMaxDevicePixel pixels from the device origin. A
+    // tile of a longer page raster would come back blank or with shapes moved, so the
+    // engine reports a failure instead, and a tile just inside the limit renders.
+    void tilesBeyondTheEdgeClampFail()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        // A 914 mm x 4 m roll drawing with a blue band across its bottom 400 pt.
+        const QByteArray content = "0 0 1 rg 0 0 2590.87 400 re f";
+        const QString path = writePdf(dir, QStringLiteral("roll.pdf"), {
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 2590.87 11338.58] /Contents 4 0 R >>",
+            "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content
+                + "\nendstream",
+        });
+        QVERIFY(!path.isEmpty());
+        RenderEngine engine;
+        auto doc = engine.openDocument(path);
+        QVERIFY(doc);
+        QSignalSpy results(&engine, &RenderEngine::resultReady);
+        const auto render = [&](quint64 requester, double scale) {
+            // The bottom-left 500 x 500 pixels of the page's raster at `scale`.
+            RenderRequest request;
+            request.document = doc.get();
+            request.requester = requester;
+            request.scale = scale;
+            const int height = int(std::ceil(11338.58 * scale));
+            request.clip = QRect(0, height - 500, 500, 500);
+            engine.submit(request);
+        };
+        const auto result = [&](quint64 requester) -> std::optional<RenderResult> {
+            for (const auto &args : results)
+                if (args[0].value<RenderResult>().requester == requester)
+                    return args[0].value<RenderResult>();
+            return std::nullopt;
+        };
+
+        render(1, 100); // 1133858 pixels tall
+        render(2, 92);  // 1043150 pixels tall
+        QTRY_VERIFY_WITH_TIMEOUT(result(1) && result(2), 10000);
+        QVERIFY(!result(1)->ok);
+        QVERIFY(result(1)->image.isNull());
+        QVERIFY(result(2)->ok);
+        const QImage inside = result(2)->image;
+        QCOMPARE(inside.size(), QSize(500, 500));
+        const QColor band = inside.pixelColor(250, 250);
+        QVERIFY(band.blue() > 200 && band.red() < 60 && band.green() < 60);
     }
 
     // A query that slips through on the screen thread while a job holds the

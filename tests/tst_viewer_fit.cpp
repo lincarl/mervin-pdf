@@ -27,6 +27,7 @@
 #include "io/Background.h"
 #include "render/Document.h"
 #include "render/RenderEngine.h"
+#include "render/RenderTypes.h"
 #include "ui/ViewerWidget.h"
 
 #include <QFile>
@@ -79,6 +80,7 @@ private slots:
     void goToPageLandsOnTheRowTop();
     void goToPageEmitsOnePageChange();
     void clickBesideAShortPageStaysOnThatPage();
+    void deepZoomStopsAtTheRasteriserRange();
 
 private:
     // Point the one viewer at a document and settle the deferred layout pass.
@@ -699,6 +701,64 @@ void TstViewerFit::clickBesideAShortPageStaysOnThatPage()
     // Below the last row is nearest to the last page, not back to the first.
     const QRect last = m.pageRect(3);
     QCOMPARE(viewer_->pageAtCanvasForTest(QPoint(last.center().x(), last.bottom() + 40)), 3);
+}
+
+// MuPDF draws a page raster exactly only up to kMaxDevicePixel pixels on a side.
+// Beyond it, deep-zoom tiles came back blank and long shapes moved. The zoom stops at
+// the largest exact scale instead, and the zoom box hears that scale.
+void TstViewerFit::deepZoomStopsAtTheRasteriserRange()
+{
+    // A roll drawing 914 mm wide and 4 m long, with a blue band across its bottom
+    // 400 pt.
+    constexpr double length = 11338.58;
+    const QByteArray content = "0 0 1 rg 0 0 2590.87 400 re f";
+    const QString path = dir_->filePath(QStringLiteral("roll.pdf"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(assemblePdf({
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 2590.87 11338.58] /Contents 4 0 R >>",
+        "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content
+            + "\nendstream",
+    }));
+    file.close();
+    QString err;
+    auto roll = engine_->openDocument(path, QString(), &err);
+    QVERIFY2(roll != nullptr, qPrintable(err));
+
+    ViewerWidget viewer(engine_.get());
+    viewer.setAttribute(Qt::WA_DontShowOnScreen, true);
+    viewer.resize(1000, 800);
+    viewer.setDocument(roll.get());
+    viewer.show();
+    QCoreApplication::processEvents();
+    const double dpr = viewer.devicePixelRatioF();
+    // Pages of ordinary size keep the whole zoom range.
+    QCOMPARE(viewer_->maximumScale(), 100.0);
+    // At 10000% this page's raster would be longer than MuPDF draws exactly.
+    QVERIFY(length * 100 * dpr > mervin::kMaxDevicePixel);
+
+    QSignalSpy scales(&viewer, &ViewerWidget::scaleChanged);
+    viewer.setScale(100);
+    const double capped = viewer.scale();
+    QVERIFY2(length * capped * dpr <= mervin::kMaxDevicePixel
+                 && length * capped * dpr > mervin::kMaxDevicePixel - 2,
+             qPrintable(QStringLiteral("zoom %1").arg(capped)));
+    QCOMPARE(viewer.maximumScale(), capped);
+    QVERIFY(!scales.isEmpty());
+    QCOMPARE(scales.last().at(0).toDouble(), capped);
+    viewer.zoomIn();
+    QCOMPARE(viewer.scale(), capped);
+
+    // The band at the page's foot, beyond 2^20 device pixels at 10000%, renders.
+    viewer.verticalScrollBar()->setValue(viewer.verticalScrollBar()->maximum());
+    const auto blueAtCentre = [&viewer] {
+        const QImage frame = viewer.viewport()->grab().toImage();
+        const QColor pixel = frame.pixelColor(frame.width() / 2, frame.height() / 2);
+        return pixel.blue() > 200 && pixel.red() < 60 && pixel.green() < 60;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(blueAtCentre(), 15000);
 }
 
 QTEST_MAIN(TstViewerFit)

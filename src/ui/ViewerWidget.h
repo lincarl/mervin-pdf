@@ -102,6 +102,10 @@ public:
     // The page under a viewport point (0-based), or -1 in the gaps around pages.
     int pageUnder(QPoint viewportPos) const;
     double scale() const { return scale_; }
+    // The highest zoom at which MuPDF still draws every page exactly: 10000%, or
+    // less when the document's largest page would make a raster beyond
+    // kMaxDevicePixel at this device pixel ratio. Every zoom is clamped to it.
+    double maximumScale() const;
     ZoomMode zoomMode() const { return zoomMode_; }
     ViewLayout::Mode layoutMode() const { return layoutMode_; }
     PageTheme pageTheme() const { return pageTheme_; }
@@ -618,6 +622,7 @@ private:
     double scale_ = 1.0;
     int rotation_ = 0;
     double dpr_ = 1.0;
+    double largestPageSide_ = 0; // points, the longest side of any page
     ZoomMode zoomMode_ = ZoomMode::FitWidth;
     ViewLayout::Mode layoutMode_;
     PageTheme pageTheme_ = PageTheme::Light;
