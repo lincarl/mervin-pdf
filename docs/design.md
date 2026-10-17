@@ -981,19 +981,22 @@ encryption, outlines and structure. `QPDFPageDocumentHelper::removePage` only ta
 page out of `/Pages`, so `removeDeletedContent` then removes what only the deleted pages
 used. It removes the outline items that only go to a deleted page and have no items left
 below them, relinking their siblings and correcting `/Count`. A direct item, which
-ISO 32000 does not allow but viewers follow, is made indirect first. It removes the
-named destinations of deleted pages from `/Dests` and the `/Names /Dests` tree, after
-the outline, which looks some bookmarks up through them. It removes the structure
-elements whose content is only on deleted pages, with their `/ParentTree` and `/IDTree`
-entries, and the deleted pages' content items from the elements that stay. It removes
-the form fields whose widgets are all on deleted pages from `/Fields`, `/CO` and their
-parents' `/Kids`, and drops `/XFA` when it removes one. It also prunes the trees that the
-widgets of kept pages reach through `/Parent` when `/AcroForm` does not list them, as in
-files that Extract wrote before it copied forms. Finally it replaces the deleted
-pages, their annotations that no kept page lists and the removed fields with null
-(`QPDF::replaceObject`), so links and other references cannot keep their content in the
-output. A reply on a kept page keeps its `/IRT`, which then names null, so it answers
-nothing. An outline or structure tree that qpdf cannot read is left as it was.
+ISO 32000 does not allow but viewers follow, is made indirect first, and an outline
+`/Last`, `/Prev` or `/Parent` that names something outside the chain of `/First` and
+`/Next` is set to the item the chain reached, so a stray bookmark is no longer
+referenced and the writer drops it. It removes the named destinations of deleted pages
+from `/Dests` and the `/Names /Dests` tree, after the outline, which looks some
+bookmarks up through them. It removes the structure elements whose content is only on
+deleted pages, with their `/ParentTree` and `/IDTree` entries, and the deleted pages'
+content items from the elements that stay. It removes the form fields whose widgets are
+all on deleted pages from `/Fields`, `/CO` and their parents' `/Kids`, and drops `/XFA`
+when it removes one. It also prunes the trees that the widgets of kept pages reach
+through `/Parent` when `/AcroForm` does not list them, as in files that Extract wrote
+before it copied forms. Finally it replaces the deleted pages, their annotations that no
+kept page lists and the removed fields with null (`QPDF::replaceObject`), so links and
+other references cannot keep their content in the output. A reply on a kept page keeps
+its `/IRT`, which then names null, so it answers nothing. An outline or structure tree
+that qpdf cannot read is left as it was.
 
 The recursive walks in `PageOps.cpp` follow at most `kMaxDepth` (100) levels, as qpdf's
 own form traversal does, and fail closed there. They cut what lies deeper instead of
