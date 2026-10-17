@@ -987,7 +987,9 @@ the outline, which looks some bookmarks up through them. It removes the structur
 elements whose content is only on deleted pages, with their `/ParentTree` and `/IDTree`
 entries, and the deleted pages' content items from the elements that stay. It removes
 the form fields whose widgets are all on deleted pages from `/Fields`, `/CO` and their
-parents' `/Kids`, and drops `/XFA` when it removes one. Finally it replaces the deleted
+parents' `/Kids`, and drops `/XFA` when it removes one. It also prunes the trees that the
+widgets of kept pages reach through `/Parent` when `/AcroForm` does not list them, as in
+files that Extract wrote before it copied forms. Finally it replaces the deleted
 pages, their annotations that no kept page lists and the removed fields with null
 (`QPDF::replaceObject`), so links and other references cannot keep their content in the
 output. A reply on a kept page keeps its `/IRT`, which then names null, so it answers

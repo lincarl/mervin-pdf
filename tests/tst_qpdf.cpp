@@ -1809,6 +1809,7 @@ void TstQpdf::deleteLeavesOutDeletedContent_data()
     QTest::newRow("bookmarks deeper than 100 levels") << int(Reference::DeepOutline);
     QTest::newRow("structure deeper than 100 levels") << int(Reference::DeepStructure);
     QTest::newRow("field deeper than 100 levels") << int(Reference::DeepField);
+    QTest::newRow("child field without a form") << int(Reference::ChildFieldNoForm);
 }
 
 /// Checks that no object of a Delete Pages copy holds the deleted page's content, or what
@@ -2012,7 +2013,14 @@ void TstQpdf::deleteLeavesOutDeletedContent()
         QVERIFY(pdfContains(out, "IMAGETHREE"));
         break;
     }
-    case Reference::ChildFieldNoForm:
+    case Reference::ChildFieldNoForm: {
+        // Without /AcroForm, the tree of the street widget loses the field of page 2.
+        QPDFObjectHandle street = pages.at(0).getKey("/Annots").getArrayItem(0).getKey("/Parent");
+        QCOMPARE(QString::fromStdString(street.getKey("/T").getUTF8Value()), QStringLiteral("street"));
+        QCOMPARE(street.getKey("/Parent").getKey("/Kids").getArrayNItems(), 1);
+        QVERIFY(pdfContains(out, "kept street"));
+        break;
+    }
     case Reference::ResetByName:
     case Reference::SubmitButtons:
     case Reference::ActionChains:
