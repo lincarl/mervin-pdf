@@ -133,6 +133,8 @@ private slots:
     void legacyCopyGetsTheOpen();
     void legacyCopyOfAnotherUserGetsNothing();
     void quittingLegacyCopyIsSkipped();
+    void silentLegacyCopyMeansStandalone();
+    void newerPrimaryGoesBeforeLegacyCopy();
     void deadLegacySocketIsIgnored();
 #endif
 
@@ -583,6 +585,18 @@ bool ownPrivateDir(const QString &dir)
     return mervin::ipc::isPrivateDir(dir, uint(::geteuid()));
 }
 
+// A template for folders with a short path of their own, so that the socket path lengths
+// in a test do not depend on the temp folder the suite runs in.
+const QString kShortTemp = QStringLiteral("/tmp/msi-XXXXXX");
+
+// The longest socket path Qt takes. It keeps a byte of sockaddr_un for the terminating
+// zero, and on Linux one more for abstract names.
+#  ifdef Q_OS_LINUX
+constexpr int kSocketPathLimit = int(sizeof(sockaddr_un::sun_path)) - 2;
+#  else
+constexpr int kSocketPathLimit = int(sizeof(sockaddr_un::sun_path)) - 1;
+#  endif
+
 // The temp-folder fallback for this user.
 QString tempFallback(const QString &tmp)
 {
@@ -592,8 +606,8 @@ QString tempFallback(const QString &tmp)
 
 void TstSingleInstance::filesLiveInRuntimeDir()
 {
-    QTemporaryDir runtime;
-    QTemporaryDir tmp;
+    QTemporaryDir runtime(kShortTemp);
+    QTemporaryDir tmp(kShortTemp);
     QVERIFY(runtime.isValid() && tmp.isValid());
     const EnvOverride env("XDG_RUNTIME_DIR", QFile::encodeName(runtime.path()));
     const EnvOverride tmpEnv("TMPDIR", QFile::encodeName(tmp.path()));
@@ -627,9 +641,14 @@ void TstSingleInstance::filesLiveInRuntimeDir()
 
 void TstSingleInstance::noRuntimeDirUsesPrivateCacheFolder()
 {
-    QTemporaryDir cache;
-    QTemporaryDir tmp;
+    QTemporaryDir cache(kShortTemp);
+    QTemporaryDir tmp(kShortTemp);
     QVERIFY(cache.isValid() && tmp.isValid());
+    const int cacheSocket = int(cache.path().size())
+        + int(QStringLiteral("/mervin-pdf/run-").size()) + 8 + 1 + int(kTestPipe.size());
+    QVERIFY2(cacheSocket <= kSocketPathLimit,
+             qPrintable(QStringLiteral("the cache folder %1 is too deep for this test")
+                            .arg(cache.path())));
     const EnvOverride runtime("XDG_RUNTIME_DIR", QByteArray());
     const EnvOverride cacheHome("XDG_CACHE_HOME", QFile::encodeName(cache.path()));
     const EnvOverride tmpEnv("TMPDIR", QFile::encodeName(tmp.path()));
@@ -691,29 +710,23 @@ void TstSingleInstance::tooLongPathFallsBack()
     QFETCH(QString, folder);
     QFETCH(int, over);
     QFETCH(QString, expected);
-    QTemporaryDir root;
-    QTemporaryDir tmp;
+    QTemporaryDir root(kShortTemp);
+    QTemporaryDir tmp(kShortTemp);
     QVERIFY(root.isValid() && tmp.isValid());
-#  ifdef Q_OS_LINUX
-    constexpr int kSpare = 2;
-#  else
-    constexpr int kSpare = 1;
-#  endif
-    const int limit = int(sizeof(sockaddr_un::sun_path)) - kSpare;
-    // A folder in `root` whose socket path, after `suffix` more bytes, is `over` bytes
-    // over the limit.
-    const auto sized = [&](int suffix) {
-        const int name = limit + over - suffix - int(root.path().size()) - 1;
-        return root.path() + QLatin1Char('/') + QString(name, QLatin1Char('x'));
-    };
+    const int limit = kSocketPathLimit;
     const int runtimeSuffix = 1 + int(kTestPipe.size());
     const int cacheSuffix = int(QStringLiteral("/mervin-pdf/run-").size()) + 8 + 1
         + int(kTestPipe.size());
-    const QString runtimeDir = folder == QLatin1String("runtime")
-        ? sized(runtimeSuffix)
-        : QString();
-    const QString cacheDir = folder == QLatin1String("cache") ? sized(cacheSuffix)
-                                                              : root.filePath(QStringLiteral("c"));
+    // The name of a folder in `root` whose socket path, after `suffix` more bytes, is
+    // `over` bytes over the limit.
+    const int name = limit + over
+        - (folder == QLatin1String("runtime") ? runtimeSuffix : cacheSuffix)
+        - int(root.path().size()) - 1;
+    QVERIFY2(name > 0, qPrintable(QStringLiteral("%1 is too deep for this test").arg(root.path())));
+    const QString sized = root.path() + QLatin1Char('/') + QString(name, QLatin1Char('x'));
+    const QString runtimeDir = folder == QLatin1String("runtime") ? sized : QString();
+    const QString cacheDir =
+        folder == QLatin1String("cache") ? sized : root.filePath(QStringLiteral("c"));
     if (!runtimeDir.isEmpty()) {
         QVERIFY(QDir().mkpath(runtimeDir));
         QVERIFY(QFile::setPermissions(runtimeDir,
@@ -832,18 +845,24 @@ void TstSingleInstance::deadSocketIsReplaced()
 
 #ifdef Q_OS_LINUX
 namespace {
+// What a copy from before the move does with an Open.
+enum class Legacy {
+    Answers, // acknowledges it
+    Closes,  // closes the connection without an answer, as one that is quitting
+    Silent,  // reads it and never answers, as one whose GUI thread hangs
+};
+
 // A copy from before the single-instance files left the temp folder, listening under its
-// old name and speaking the same protocol. It acknowledges each Open, or, as one that is
-// quitting, closes the connection without an answer.
+// old name and speaking the same protocol.
 class LegacyCopy
 {
 public:
-    LegacyCopy(const QString &endpoint, bool answers)
-        : thread_(QThread::create([this, endpoint, answers] {
+    LegacyCopy(const QString &endpoint, Legacy mode)
+        : thread_(QThread::create([this, endpoint, mode] {
             QLocalServer server;
             QObject::connect(&server, &QLocalServer::newConnection, &server, [&] {
                 while (QLocalSocket *socket = server.nextPendingConnection()) {
-                    auto read = [this, socket, answers,
+                    auto read = [this, socket, mode,
                                  decoder = mervin::ipc::MessageDecoder()]() mutable {
                         const QByteArray bytes = socket->readAll();
                         {
@@ -851,9 +870,9 @@ public:
                             received_ += bytes;
                         }
                         for (const Message &m : decoder.feed(bytes)) {
-                            if (m.cmd != Message::Cmd::Open)
+                            if (m.cmd != Message::Cmd::Open || mode == Legacy::Silent)
                                 continue;
-                            if (!answers) {
+                            if (mode == Legacy::Closes) {
                                 socket->abort();
                                 return;
                             }
@@ -909,7 +928,7 @@ void TstSingleInstance::legacyNameMatchesOlderCopies()
 // bytes an older launch sent, instead of starting a second primary beside it.
 void TstSingleInstance::legacyCopyGetsTheOpen()
 {
-    LegacyCopy legacy(mervin::ipc::legacyEndpoint(kTestPipe), true);
+    LegacyCopy legacy(mervin::ipc::legacyEndpoint(kTestPipe), Legacy::Answers);
     QTRY_VERIFY(legacy.listening);
     const Message open =
         Message::open({QStringLiteral("/home/a/old.pdf")}, QStringLiteral("new-window"));
@@ -927,7 +946,7 @@ void TstSingleInstance::legacyCopyGetsTheOpen()
 // gets no paths, and the launch becomes the primary.
 void TstSingleInstance::legacyCopyOfAnotherUserGetsNothing()
 {
-    LegacyCopy legacy(mervin::ipc::legacyEndpoint(kTestPipe), true);
+    LegacyCopy legacy(mervin::ipc::legacyEndpoint(kTestPipe), Legacy::Answers);
     QTRY_VERIFY(legacy.listening);
     const mervin::ipc::UserLookup other = [](const QLocalSocket &s) {
         const std::optional<QByteArray> user = mervin::ipc::peerUser(s);
@@ -946,7 +965,7 @@ void TstSingleInstance::legacyCopyOfAnotherUserGetsNothing()
 // becomes the primary.
 void TstSingleInstance::quittingLegacyCopyIsSkipped()
 {
-    LegacyCopy legacy(mervin::ipc::legacyEndpoint(kTestPipe), false);
+    LegacyCopy legacy(mervin::ipc::legacyEndpoint(kTestPipe), Legacy::Closes);
     QTRY_VERIFY(legacy.listening);
     SingleInstanceServer launch;
     QElapsedTimer timer;
@@ -956,6 +975,48 @@ void TstSingleInstance::quittingLegacyCopyIsSkipped()
              Launch::Primary);
     QVERIFY2(timer.elapsed() < 2000, qPrintable(QString::number(timer.elapsed())));
     QTRY_VERIFY(!legacy.received().isEmpty());
+}
+
+// An older copy that takes the open and never answers keeps it, and opens the files once
+// it runs again. With no copy of this version holding the lock, the launch opens them
+// standalone, as beside a primary of this version that does not answer.
+void TstSingleInstance::silentLegacyCopyMeansStandalone()
+{
+    LegacyCopy legacy(mervin::ipc::legacyEndpoint(kTestPipe), Legacy::Silent);
+    QTRY_VERIFY(legacy.listening);
+    const Message open = Message::open({QStringLiteral("/home/a/s.pdf")});
+    SingleInstanceServer launch;
+    QElapsedTimer timer;
+    timer.start();
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, open, 600, kTestPipe), Launch::Standalone);
+    QVERIFY2(timer.elapsed() >= 500, qPrintable(QString::number(timer.elapsed())));
+    QVERIFY(!launch.isListening());
+    QTRY_COMPARE(legacy.received(), open.encode()); // once
+    QTest::qWait(100);
+    QCOMPARE(legacy.received(), open.encode());
+
+    // The launch took no lock of its own.
+    SingleInstanceServer next;
+    QCOMPARE(next.start(kTestPipe), Start::Started);
+}
+
+// A copy of this version that holds the lock takes the launches, with the whole wait, and
+// an older copy beside it is not asked, even if it hangs.
+void TstSingleInstance::newerPrimaryGoesBeforeLegacyCopy()
+{
+    SingleInstanceServer primary;
+    QCOMPARE(primary.start(kTestPipe), Start::Started);
+    LegacyCopy legacy(mervin::ipc::legacyEndpoint(kTestPipe), Legacy::Silent);
+    QTRY_VERIFY(legacy.listening);
+    const Message open = Message::open({QStringLiteral("/home/a/n.pdf")});
+    SingleInstanceServer launch;
+    QElapsedTimer timer;
+    timer.start();
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, open, 600, kTestPipe), Launch::Delivered);
+    QVERIFY2(timer.elapsed() < 400, qPrintable(QString::number(timer.elapsed())));
+    QCOMPARE(primary.takeOpens().size(), 1);
+    QTest::qWait(100);
+    QVERIFY(legacy.received().isEmpty());
 }
 
 // A socket file an older copy left behind when it crashed is passed over at once.

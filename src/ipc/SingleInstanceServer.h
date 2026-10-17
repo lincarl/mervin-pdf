@@ -54,8 +54,8 @@ public:
     // as that launch opened its files in a copy of its own.
     QList<Message> takeOpens();
 
-    // For tests only: runs `work` on the server thread, which handles no connection
-    // until it returns. Does nothing unless the server is listening.
+    // Runs `work` on the server thread, for tests only. The thread handles no connection
+    // until `work` returns. Does nothing unless the server is listening.
     void runOnServerThreadForTests(std::function<void()> work);
 
 signals:

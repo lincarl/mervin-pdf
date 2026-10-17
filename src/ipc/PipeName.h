@@ -30,9 +30,9 @@ InstancePaths instancePaths(const QString &name = QString());
 #ifdef Q_OS_LINUX
 // Upgrade support for copies built before the lock and socket left the temp folder, which
 // a launch offers its files to while one runs (see claimOrHandOff). Remove it once such
-// copies are no longer expected to run. The socket such a copy of the group `name`
-// listens on, or of its own group when `name` is empty: the group name in the temp folder,
-// with the user token hashed from $USERNAME or $USER instead of the uid.
+// copies are no longer expected to run. Returns the socket that such a copy of the group
+// `name`, or of its own group when `name` is empty, listens on. That is the group name in
+// the temp folder, with the user token hashed from $USERNAME or $USER instead of the uid.
 QString legacyEndpoint(const QString &name = QString());
 #endif
 

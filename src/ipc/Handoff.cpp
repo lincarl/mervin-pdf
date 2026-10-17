@@ -4,6 +4,7 @@
 #include "ipc/SingleInstanceServer.h"
 
 #include <QLocalSocket>
+#include <QLockFile>
 #include <QThread>
 
 #include <algorithm>
@@ -37,6 +38,21 @@ int msLeft(const QDeadlineTimer &deadline)
 {
     return int(std::max<qint64>(0, deadline.remainingTime()));
 }
+
+#ifdef Q_OS_LINUX
+// Whether a live process holds the lock file `path`. Uses a lock object of its own, so a
+// lock that this process holds counts as held too.
+bool heldByLiveProcess(const QString &path)
+{
+    QLockFile lock(path);
+    lock.setStaleLockTime(0);
+    if (lock.tryLock(0)) {
+        lock.unlock();
+        return false;
+    }
+    return lock.error() == QLockFile::LockFailedError;
+}
+#endif
 
 #ifdef Q_OS_WIN
 // The user SID in `process`'s token, or empty when it cannot be read.
@@ -179,14 +195,26 @@ Launch claimOrHandOff(SingleInstanceServer &server, const Message &open, int wai
                       const QString &name, const UserLookup &lookup)
 {
     const QDeadlineTimer deadline(waitMs);
+    const InstancePaths paths = instancePaths(name);
 #ifdef Q_OS_LINUX
     // Upgrade support, removed with legacyEndpoint(). A copy from before the lock and
-    // socket left the temp folder does not see this group's lock, so while one runs the
-    // files go to it. One that does not take them, as when it is quitting, is passed over.
-    if (handOff(legacyEndpoint(name), open, deadline, lookup) == Handoff::Delivered)
-        return Launch::Delivered;
+    // socket left the temp folder does not see this group's lock. Only while no copy of
+    // this version holds that lock, the files go to such a copy if one of this user runs.
+    // One that takes the open but does not answer in time keeps it, so this launch opens
+    // the files standalone, as beside a primary of this version that does not answer.
+    // One that closes the connection, as when it is quitting, is passed over.
+    if (paths.lockFile.isEmpty() || !heldByLiveProcess(paths.lockFile)) {
+        switch (handOff(legacyEndpoint(name), open, deadline, lookup)) {
+        case Handoff::Delivered:
+            return Launch::Delivered;
+        case Handoff::Busy:
+            return Launch::Standalone;
+        case Handoff::NoPrimary:
+            break;
+        }
+    }
 #endif
-    const QString endpoint = instancePaths(name).server;
+    const QString &endpoint = paths.server;
     for (;;) {
         const SingleInstanceServer::Start started = server.start(name);
         if (started == SingleInstanceServer::Start::Started)

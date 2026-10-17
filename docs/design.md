@@ -368,14 +368,18 @@ share the stores, last writer wins.
 On Linux, copies built before these locations moved listen in the temp folder, under
 a group name hashed from `$USERNAME` or `$USER` (`ipc::legacyEndpoint()`). As
 upgrade support, to be removed once such copies are no longer expected,
-`claimOrHandOff()` first offers its Open there, in the same protocol, after the same
-check that the process runs as this user. If such a copy takes it, the launch exits.
-If nothing answers, the copy is another user's, or it closes the connection without
-an acknowledgement, as a quitting copy does, the launch goes on as above. An older
-copy that answers too late may still show the files. The reverse case cannot be
-fixed in the older code. An older copy launched while a newer one runs starts a
-second primary until one of them exits. Windows kept its pipe and lock names, so
-older and newer copies find each other there in both directions.
+`claimOrHandOff()` offers its Open there first while no copy of this version holds
+the lock, in the same protocol, after the same check that the process runs as this
+user. A copy of this version that holds the lock gets the launch with the whole
+wait, and an older copy is not asked. If an older copy takes the Open, the launch
+exits. If it takes the connection but does not answer within the wait, it keeps the
+Open and shows the files once it runs again, so the launch opens them in a
+standalone process, as beside a primary of this version that does not answer. If
+nothing answers, the copy is another user's, or it closes the connection without an
+acknowledgement, as a quitting copy does, the launch goes on as above. The reverse
+case cannot be fixed in the older code. An older copy launched while a newer one
+runs starts a second primary until one of them exits. Windows kept its pipe and lock
+names, so older and newer copies find each other there in both directions.
 
 Session restoration creates the tab list but opens only the selected document. Other
 restored tabs load when selected.
