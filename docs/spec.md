@@ -293,7 +293,8 @@ readers. Strip Owner Restrictions still removes it with the open password. Secur
 refuses an owner password that matches the open password while a permission is not
 allowed, before it asks where to save. AES-128 and RC4-128 use only the first 32
 characters of a password and AES-256 the first 127 bytes, so longer passwords that
-agree that far also count as matching. AES-128 and RC4-128 store passwords in
+agree that far also count as matching. For those, Security names the limit and asks
+for passwords that differ within it. AES-128 and RC4-128 store passwords in
 PDFDocEncoding, as the PDF format requires, so a password with other characters,
 such as Chinese, fails with a request to choose AES-256. AES-256 accepts any
 character.
