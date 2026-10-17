@@ -236,6 +236,13 @@ public:
     // a limit while it resolves objects.
     std::optional<QByteArray> mervinMeasurements() const;
 
+    // Whether this document holds a /Mervin_Measurements blob that Mervin could not use,
+    // because mervinMeasurements() refused it or its caller could not parse it and called
+    // markMeasurementsUnreadable(). Saves then keep the stored blob as it is, and the
+    // viewer offers no measuring, so measurements Mervin could not read are never replaced.
+    bool measurementsUnreadable() const { return measurementsUnreadable_.load(); }
+    void markMeasurementsUnreadable() const { measurementsUnreadable_.store(true); }
+
     // True when this is a PDF (pdf_specifics succeeds) - i.e. annotations and form
     // fields can be created and written. False for the other formats MuPDF can
     // open (XPS, CBZ, image documents). Read under the access lock.
@@ -281,6 +288,7 @@ private:
     mutable std::vector<std::optional<PageMeasurement>> measureCache_; // lazy, per page
     mutable std::vector<std::optional<PageGeometry>> geomCache_;       // lazy, per page
     mutable std::optional<bool> formCache_;                            // lazy: has /AcroForm
+    mutable std::atomic<bool> measurementsUnreadable_{false};
 };
 
 // A document that a background job opened or took over, on its way between threads.

@@ -345,15 +345,19 @@ void ViewerWidget::restoreResumeState(const ResumeState &state)
     measureUnit_ = state.measureUnit;
     measurePrecision_ = state.measurePrecision;
     measureLineWidth_ = state.measureLineWidth;
-    measureToolEnabled_ = state.measureEnabled;
+    // A document whose stored measurements Mervin could not read offers no measuring.
+    const bool unreadable = doc_ && doc_->measurementsUnreadable();
+    measureToolEnabled_ = state.measureEnabled && !unreadable;
     commentToolEnabled_ = state.commentEnabled && annotModel_;
     toolMode_ = state.tool;
+    if ((toolMode_ == ToolMode::Measure || toolMode_ == ToolMode::Calibrate) && unreadable)
+        toolMode_ = ToolMode::None;
     if (toolMode_ == ToolMode::FillForms && !formModel_)
         toolMode_ = ToolMode::None;
     if ((toolMode_ == ToolMode::Highlight || toolMode_ == ToolMode::Comment) && !annotModel_)
         toolMode_ = ToolMode::None;
-    inProgress_ = state.inProgress;
-    inProgressPage_ = state.inProgressPage;
+    inProgress_ = unreadable ? std::vector<QPointF>{} : state.inProgress;
+    inProgressPage_ = unreadable ? -1 : state.inProgressPage;
     if (inProgressPage_ >= pageCount()) {
         inProgress_.clear();
         inProgressPage_ = -1;

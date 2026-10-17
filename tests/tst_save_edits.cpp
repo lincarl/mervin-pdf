@@ -15,6 +15,12 @@
 #include "ui/ViewerWidget.h"
 #include "Stalls.h"
 
+#include <qpdf/QPDF.hh>
+#include <qpdf/QPDFObjectHandle.hh>
+#include <qpdf/QPDFPageDocumentHelper.hh>
+#include <qpdf/QPDFPageObjectHelper.hh>
+#include <qpdf/QPDFWriter.hh>
+
 #include <QDir>
 #include <QDialog>
 #include <QElapsedTimer>
@@ -63,6 +69,49 @@ struct Outcome {
     }
 };
 
+// Writes the fixture with `stored` as its /Mervin_Measurements stream, Flate-encoded bytes
+// kept exactly as given, as another program or a newer Mervin could write them.
+void writeStoredBlob(const QString &path, const QByteArray &stored)
+{
+    QPDF pdf;
+    pdf.processFile(MERVIN_FIXTURE_PDF);
+    QPDFObjectHandle blob = pdf.newStream();
+    blob.replaceStreamData(stored.toStdString(), QPDFObjectHandle::newName("/FlateDecode"),
+                           QPDFObjectHandle::newNull());
+    pdf.getRoot().replaceKey("/Mervin_Measurements", blob);
+    const QByteArray name = path.toUtf8();
+    QPDFWriter writer(pdf, name.constData());
+    writer.setStreamDataMode(qpdf_s_preserve);
+    writer.setDecodeLevel(qpdf_dl_none);
+    writer.write();
+}
+
+// The stored blob's raw stream bytes and the number of annotations on page 1.
+std::pair<QByteArray, int> storedBlobAndNotes(const QString &path)
+{
+    QPDF pdf;
+    pdf.processFile(path.toUtf8().constData());
+    QPDFObjectHandle blob = pdf.getRoot().getKey("/Mervin_Measurements");
+    QByteArray raw;
+    if (blob.isStream()) {
+        const auto buffer = blob.getRawStreamData();
+        raw = QByteArray(reinterpret_cast<const char *>(buffer->getBuffer()),
+                         qsizetype(buffer->getSize()));
+    }
+    QPDFObjectHandle annots =
+        QPDFPageDocumentHelper(pdf).getAllPages().front().getObjectHandle().getKey("/Annots");
+    return {raw, annots.isArray() ? annots.getArrayNItems() : 0};
+}
+
+// Blobs Mervin cannot read: one too large, one that is not measurement data.
+void addUnreadableBlobRows()
+{
+    QTest::addColumn<QByteArray>("stored");
+    QTest::newRow("larger than the read limit")
+        << qCompress(QByteArray(17 * 1024 * 1024, ' '), 9).mid(4); // zlib data after the size
+    QTest::newRow("not measurement data") << qCompress(QByteArray("not JSON"), 9).mid(4);
+}
+
 // Lists private recovery artifacts to detect files left after terminal cleanup.
 QStringList recoveryEntries()
 {
@@ -102,6 +151,61 @@ private slots:
         ConfigPaths::setOverrideDir({});
         TabPage::setSlowDelayForTesting(TabPage::kSlowMs);
         profile_.reset();
+    }
+
+    void unreadableMeasurementsSurviveSave_data() { addUnreadableBlobRows(); }
+
+    // Checks that Save with edits keeps a stored blob Mervin could not read byte for byte.
+    void unreadableMeasurementsSurviveSave()
+    {
+        QFETCH(QByteArray, stored);
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("measured.pdf"));
+        writeStoredBlob(path, stored);
+        const auto [before, notesBefore] = storedBlobAndNotes(path);
+        QCOMPARE(before, stored);
+        RenderEngine engine;
+        TabPage tab(&engine);
+        QVERIFY(tab.open(path));
+        QVERIFY(edit(tab));
+        Outcome outcome;
+        tab.startSave(outcome.callbacks());
+        QTRY_VERIFY_WITH_TIMEOUT(outcome.completion.has_value(), 10000);
+        QCOMPARE(outcome.completion->result, TabPage::SaveResult::Saved);
+        const auto [after, notesAfter] = storedBlobAndNotes(path);
+        QVERIFY(notesAfter > notesBefore); // the note and its popup were saved
+        QCOMPARE(after, stored);
+    }
+
+    void unreadableMeasurementsOfferNoMeasuring_data() { addUnreadableBlobRows(); }
+
+    // Checks that no tool path turns measuring on for a blob Mervin could not read, since
+    // Save would keep the stored blob and lose new measurements.
+    void unreadableMeasurementsOfferNoMeasuring()
+    {
+        QFETCH(QByteArray, stored);
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("measured.pdf"));
+        writeStoredBlob(path, stored);
+        RenderEngine engine;
+        TabPage tab(&engine);
+        QVERIFY(tab.open(path));
+        ViewerWidget *viewer = tab.viewer();
+        viewer->setMeasureMode(true);
+        QVERIFY(!viewer->measureToolEnabled());
+        auto state = viewer->captureResumeState();
+        state.measureEnabled = true;
+        state.tool = ViewerWidget::ToolMode::Measure;
+        viewer->restoreResumeState(state);
+        QVERIFY(!viewer->measureToolEnabled());
+        QVERIFY(!viewer->measureMode());
+        // A readable document still measures.
+        const QString plain = files.filePath(QStringLiteral("plain.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), plain));
+        TabPage other(&engine);
+        QVERIFY(other.open(plain));
+        other.viewer()->setMeasureMode(true);
+        QVERIFY(other.viewer()->measureToolEnabled());
     }
 
     // Checks durable recovery precedes original close and retains full viewer state.

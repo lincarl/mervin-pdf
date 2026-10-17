@@ -1043,12 +1043,15 @@ std::optional<QByteArray> Document::mervinMeasurements() const
     constexpr size_t limit = size_t(kMaxMeasurementBlobBytes);
     fz_stream *stream = nullptr;
     fz_buffer *data = nullptr;
+    bool present = false;
     fz_var(stream);
     fz_var(data);
+    fz_var(present);
     fz_try(ctx_) {
         pdf_document *pdoc = pdf_specifics(ctx_, doc_);
         pdf_obj *root = pdoc ? pdf_dict_get(ctx_, pdf_trailer(ctx_, pdoc), PDF_NAME(Root)) : nullptr;
         pdf_obj *blob = pdf_dict_gets(ctx_, root, "Mervin_Measurements");
+        present = blob && !pdf_is_null(ctx_, blob);
         if (pdf_is_string(ctx_, blob)) {
             if (pdf_to_str_len(ctx_, blob) <= limit) {
                 data = fz_new_buffer_from_copied_data(
@@ -1083,8 +1086,11 @@ std::optional<QByteArray> Document::mervinMeasurements() const
         fz_drop_buffer(ctx_, data);
         data = nullptr;
     }
-    if (!data)
+    if (!data) {
+        if (present)
+            measurementsUnreadable_.store(true);
         return std::nullopt;
+    }
     unsigned char *bytes = nullptr;
     const size_t length = fz_buffer_storage(ctx_, data, &bytes);
     QByteArray out(reinterpret_cast<const char *>(bytes), qsizetype(length));

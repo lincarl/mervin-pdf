@@ -503,6 +503,11 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
         <translation>Otáčanie, mazanie, extrahovanie, rozdelenie alebo zlúčenie stránok; zabezpečenie dokumentov</translation>
     </message>
     <message>
+        <source>Mervin cannot read this file&apos;s measurements. Measuring is off so that they stay unchanged.</source>
+        <extracomment>Shown when the user chooses Measure on a PDF whose saved measurements Mervin cannot read, because they are too large or stored in a form it does not accept. Mervin keeps them unchanged when it saves, so it offers no measuring.</extracomment>
+        <translation>Mervin nedokáže prečítať merania tohto súboru. Meranie je vypnuté, aby zostali bez zmeny.</translation>
+    </message>
+    <message>
         <source>Fit Page</source>
         <extracomment>Zoom choice: scale the page so the whole page fits the window.</extracomment>
         <translation>Prispôsobiť stranu</translation>

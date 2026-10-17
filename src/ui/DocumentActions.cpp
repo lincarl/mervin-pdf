@@ -1131,6 +1131,8 @@ void MainWindow::startCopy(TabPage *tab, const QString &destination, bool flatte
     viewer->commitActiveFormEditor();
     viewer->commitActiveAnnotEditor();
     const mervin::MeasureDoc measurements = collectMeasureDoc(viewer);
+    // Measurements the document could not read stay in the copy as they are.
+    const bool keepStored = viewer->document()->measurementsUnreadable();
     const auto lifetime = viewer->document()->lifetime();
     const QString password = tab->password();
     const QString sourceKey = mervin::normalizePathKey(tab->canonicalPath());
@@ -1139,7 +1141,7 @@ void MainWindow::startCopy(TabPage *tab, const QString &destination, bool flatte
     const auto result = std::make_shared<CopyResult>();
     TabPage::Operation operation;
     operation.destination = QFileInfo(destination).absolutePath();
-    operation.work = [lifetime, measurements, password, sourceKey, open, destination,
+    operation.work = [lifetime, measurements, keepStored, password, sourceKey, open, destination,
                       flatten, result] {
         const QString folder = QFileInfo(destination).absolutePath();
         if (!mervin::job::writing(folder)) {
@@ -1192,8 +1194,10 @@ void MainWindow::startCopy(TabPage *tab, const QString &destination, bool flatte
         if (mervin::job::stopped())
             return;
         const auto written = flatten
-            ? MeasureExport::flatten(live, output, marks, password, &result->error)
-            : MeasureExport::embedMervin(live, output, measurements, password, &result->error);
+            ? MeasureExport::flatten(live, output, marks, password, &result->error, keepStored)
+            : keepStored ? MeasureExport::keepMervin(live, output, password, &result->error)
+                         : MeasureExport::embedMervin(live, output, measurements, password,
+                                                      &result->error);
         if (written == MeasureExport::Status::Ok && !mervin::job::stopped())
             result->success = mervin::DocumentOutput::replace(output, destination, &result->error);
     };

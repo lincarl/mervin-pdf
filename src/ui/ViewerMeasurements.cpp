@@ -91,7 +91,8 @@ QPointF computeLabelAnchor(MeasureKind kind, const std::vector<QPointF> &w)
 void ViewerWidget::setMeasureMode(bool on)
 {
     if (on) {
-        if (!doc_)
+        // Saves keep measurements Mervin could not read, so new ones would be lost.
+        if (!doc_ || doc_->measurementsUnreadable())
             return;
         if (toolMode_ == ToolMode::Ocr)
             setOcrMode(false);
@@ -278,7 +279,7 @@ void ViewerWidget::notifyMeasurePanelPopupClosed()
 
 void ViewerWidget::beginCalibration()
 {
-    if (!doc_)
+    if (!doc_ || doc_->measurementsUnreadable())
         return;
     const bool wasCursorActive = measureMode();
     cancelInProgressMeasure();
@@ -305,7 +306,7 @@ void ViewerWidget::cancelCalibration()
 
 void ViewerWidget::promptSetScale()
 {
-    if (!doc_)
+    if (!doc_ || doc_->measurementsUnreadable())
         return;
     // Manual scale entry draws no line: drop any half-drawn vector and abandon a
     // pending calibration so the tool returns to a clean measuring state.

@@ -240,6 +240,7 @@ private slots:
     void mergeRefusesMeasurementsPastTheCap_data();
     void mergeRefusesMeasurementsPastTheCap();
     void saveRefusesMeasurementsPastTheCap();
+    void copiesKeepAnUnreadableBlobByteForByte();
     void openReaderMatchesQpdf();
     void embedKeyIsPrivateToCatalog();
     void valueLabelsWithoutScale();
@@ -539,6 +540,33 @@ void TstMeasureExport::saveRefusesMeasurementsPastTheCap()
              MeasureExport::Status::Failed);
     QCOMPARE(err, tooLargeReason());
     QVERIFY(!QFileInfo::exists(saved));
+}
+
+/// Save as copy and export keep a blob Mervin could not read exactly as stored.
+void TstMeasureExport::copiesKeepAnUnreadableBlobByteForByte()
+{
+    const std::string stored = deflate(std::string(size_t(kMaxMeasurementBlobBytes) + 1, ' '));
+    const QString in = p("unreadable.pdf"), kept = p("unreadable-kept.pdf"),
+                  exported = p("unreadable-exported.pdf"), clean = p("unreadable-clean.pdf");
+    makeBlobPdf(in, stored, QPDFObjectHandle::newName("/FlateDecode"));
+    const auto rawBlob = [](const QString &path) -> std::optional<std::string> {
+        QPDF q;
+        q.processFile(path.toUtf8().constData());
+        QPDFObjectHandle blob = q.getRoot().getKey("/Mervin_Measurements");
+        if (!blob.isStream())
+            return std::nullopt;
+        const auto buffer = blob.getRawStreamData();
+        return std::string(reinterpret_cast<const char *>(buffer->getBuffer()), buffer->getSize());
+    };
+    QCOMPARE(rawBlob(in), std::optional<std::string>(stored));
+    QString err;
+    QCOMPARE(MeasureExport::keepMervin(in, kept, {}, &err), MeasureExport::Status::Ok);
+    QCOMPARE(rawBlob(kept), std::optional<std::string>(stored));
+    QCOMPARE(MeasureExport::flatten(in, exported, {}, {}, &err, true), MeasureExport::Status::Ok);
+    QCOMPARE(rawBlob(exported), std::optional<std::string>(stored));
+    // A plain export still leaves Mervin's private data out.
+    QCOMPARE(MeasureExport::flatten(in, clean, {}, {}, &err), MeasureExport::Status::Ok);
+    QVERIFY(!rawBlob(clean).has_value());
 }
 
 void TstMeasureExport::openReaderMatchesQpdf()

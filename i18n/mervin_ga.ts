@@ -503,6 +503,11 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
         <translation>Rothlaigh, scrios, asbhaint, scoilt nó cumasc leathanaigh; slándáil doiciméad</translation>
     </message>
     <message>
+        <source>Mervin cannot read this file&apos;s measurements. Measuring is off so that they stay unchanged.</source>
+        <extracomment>Shown when the user chooses Measure on a PDF whose saved measurements Mervin cannot read, because they are too large or stored in a form it does not accept. Mervin keeps them unchanged when it saves, so it offers no measuring.</extracomment>
+        <translation>Ní féidir le Mervin tomhais an chomhaid seo a léamh. Tá tomhas múchta ionas go bhfanfaidh siad gan athrú.</translation>
+    </message>
+    <message>
         <source>Fit Page</source>
         <extracomment>Zoom choice: scale the page so the whole page fits the window.</extracomment>
         <translation>Oiriúnaigh don leathanach</translation>
