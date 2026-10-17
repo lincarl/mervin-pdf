@@ -145,7 +145,7 @@ The measuring tool is intended for scaled plans, CAD exports, and maps.
   labels can be repositioned on the page.
 - Editable measurements and manual scales can be saved back into the PDF for use in
   Mervin. Saved measurement data that decompresses to more than 16 MiB, that takes
-  more than 16 MiB and 64 KiB in the file, that is not a PDF stream, plain or
+  more than 16 MiB plus 64 KiB in the file, that is not a PDF stream, plain or
   compressed once with Flate, that is damaged, such as a Flate stream with a bad
   checksum or missing data, or that Mervin cannot parse, is not shown when the
   document opens, and the page tools report it as invalid. Mervin never replaces such
@@ -304,8 +304,9 @@ characters of a password and AES-256 the first 127 bytes, so longer passwords th
 agree that far also count as matching. For those, Security names the limit and asks
 for passwords that differ within it. AES-128 and RC4-128 store passwords in
 PDFDocEncoding, as the PDF format requires, so a password with other characters,
-such as Chinese, fails with a request to choose AES-256. AES-256 accepts any
-character.
+such as Chinese, fails with a request to choose AES-256. That failure comes after
+choosing where to save, and the matching check above applies only to passwords the
+chosen algorithm can store. AES-256 accepts any character.
 
 Saving supports these workflows:
 
