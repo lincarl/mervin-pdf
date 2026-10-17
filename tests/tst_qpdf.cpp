@@ -427,7 +427,8 @@ void makeReferencedPdf(const QString &path, Reference reference)
         break;
     }
     case Reference::SharedWidget: {
-        // Extract wrote repeated pages like this before forms, without /AcroForm.
+        // Extract wrote repeated pages before forms with one widget object on both copies.
+        // This file also has a form, so the field must keep the widget as well.
         QPDFObjectHandle twice = widget(q, pages[0], "/FT /Tx /T (twice) /V (kept twice)");
         pages[1].replaceKey("/Annots", QPDFObjectHandle::newArray({twice}));
         installForm(q, {twice});
@@ -1435,7 +1436,6 @@ void TstQpdf::copiesKeepFormFields()
         QCOMPARE(formProblem(part, 1), QString());
 }
 
-/// Fixtures whose page 1 widget shares a field tree with a field or widget of page 2.
 /// Fixtures whose page 1 widget shares a field tree with a field or widget of page 2. The
 /// widget count is that of page 1, or 0 for a source without /AcroForm.
 void TstQpdf::copiesLeaveOutFieldsOfOtherPages_data()
@@ -1586,10 +1586,32 @@ void TstQpdf::copiesLeaveOutCommentsOfOtherPages()
     QVERIFY(!pdfContains(out, kSecret));
     QCOMPARE(replyProblem(out, 1), QString());
 
-    // With both pages, the reply still answers the note.
+    // With both pages, the reply still answers the note, the one that page 2 lists, and the
+    // note keeps the popup that page 2 lists.
     QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0, 1}, {}}}, out), PageOps::Status::Ok);
     QVERIFY(pdfContains(out, kSecret));
     QCOMPARE(replyProblem(out, 0), QStringLiteral("the reply still answers a note"));
+    {
+        QPDF q;
+        const QByteArray name = out.toUtf8();
+        q.processFile(name.constData());
+        std::vector<QPDFObjectHandle> pages = q.getAllPages();
+        const auto listed = [&pages](size_t page, const std::string &contents) {
+            for (QPDFObjectHandle annot : pages.at(page).getKey("/Annots").aitems())
+                if (annot.getKey("/Contents").isString()
+                    && annot.getKey("/Contents").getUTF8Value() == contents)
+                    return annot;
+            return QPDFObjectHandle::newNull();
+        };
+        QPDFObjectHandle reply = listed(0, "Reply");
+        QPDFObjectHandle note = listed(1, kSecret + " note");
+        QVERIFY(reply.isDictionary() && note.isDictionary());
+        QCOMPARE(reply.getKey("/IRT").getObjGen(), note.getObjGen());
+        std::set<QPDFObjGen> onPage2;
+        for (QPDFObjectHandle annot : pages.at(1).getKey("/Annots").aitems())
+            onPage2.insert(annot.getObjGen());
+        QVERIFY(onPage2.count(note.getKey("/Popup").getObjGen()));
+    }
 
     QStringList parts;
     QCOMPARE(PageOps::split(src, dir_.path(), QStringLiteral("comments-%1").arg(reference), QString(),
