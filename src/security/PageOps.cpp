@@ -945,14 +945,20 @@ private:
     }
 
     // Replaces the /A action and each /AA action of `holder` with what `rewrite` makes of
-    // it, when that is a new object.
+    // it, when that is a new object. `rewrite` can also return null, which removes the key,
+    // or an array of actions, which then run one after the other (see asOneAction).
     template <typename Rewrite>
     static void rewriteActions(QPDFObjectHandle holder, Rewrite rewrite)
     {
         QPDFObjectHandle action = holder.getKey("/A");
         QPDFObjectHandle mapped = rewrite(action);
-        if (!mapped.isSameObjectAs(action))
-            holder.replaceKey("/A", mapped);
+        if (!mapped.isSameObjectAs(action)) {
+            mapped = asOneAction(mapped);
+            if (mapped.isNull())
+                holder.removeKey("/A");
+            else
+                holder.replaceKey("/A", mapped);
+        }
         QPDFObjectHandle triggers = holder.getKey("/AA");
         if (!triggers.isDictionary())
             return;
@@ -963,10 +969,43 @@ private:
                 continue;
             if (!result.isInitialized())
                 result = triggers.shallowCopy();
-            result.replaceKey(key, mappedValue);
+            mappedValue = asOneAction(mappedValue);
+            if (mappedValue.isNull())
+                result.removeKey(key);
+            else
+                result.replaceKey(key, mappedValue);
         }
-        if (result.isInitialized())
+        if (!result.isInitialized())
+            return;
+        if (result.getKeys().empty())
+            holder.removeKey("/AA");
+        else
             holder.replaceKey("/AA", result);
+    }
+
+    // One action for a place that takes one, such as /A, that runs `actions` when it is an
+    // array of them: the first, with the others after its own /Next, which keeps the order
+    // in which a viewer runs them. Returns null for an empty array.
+    static QPDFObjectHandle asOneAction(QPDFObjectHandle actions)
+    {
+        if (!actions.isArray())
+            return actions;
+        std::vector<QPDFObjectHandle> items = actions.getArrayAsVector();
+        if (items.empty())
+            return QPDFObjectHandle::newNull();
+        QPDFObjectHandle head = items.front();
+        if (items.size() == 1 || !head.isDictionary())
+            return head;
+        head = head.shallowCopy();
+        std::vector<QPDFObjectHandle> next;
+        QPDFObjectHandle own = head.getKey("/Next");
+        if (own.isArray())
+            next = own.getArrayAsVector();
+        else if (own.isDictionary())
+            next.push_back(own);
+        next.insert(next.end(), items.begin() + 1, items.end());
+        head.replaceKey("/Next", QPDFObjectHandle::newArray(next));
+        return head;
     }
 
     // Maps the fields in the /A and /AA actions of `holder` through `targets`.
@@ -982,9 +1021,10 @@ private:
     // an output with pages from several files, which holds the fields of all of them, such an
     // action copied from one file would send or clear the fields of the others. So each one
     // becomes an explicit list of the fields copied from its own file, without the excluded
-    // ones and without the flag. The actions of the pages, their annotations and the fields
-    // above their widgets are covered, with their /AA and /Next. JavaScript actions cannot be
-    // limited this way.
+    // ones and without the flag. One that would list no field goes, and the actions after it
+    // in its /Next take its place, as viewers such as PDF.js read an empty /Fields as every
+    // field. The actions of the pages, their annotations and the fields above their widgets
+    // are covered, with their /AA and /Next. JavaScript actions cannot be limited this way.
     void scopeFormActions()
     {
         std::map<QPDF *, std::vector<QPDFObjectHandle>> pagesOf;
@@ -1035,48 +1075,62 @@ private:
 
     // `action`, and the actions in its /Next, with each SubmitForm or ResetForm that acts on
     // every field, or every field but some, limited to the trees `tops`. Returns `action`
-    // itself when nothing changes, and a new object otherwise.
+    // itself when nothing changes, and a new object otherwise. An action that would list no
+    // field is left out, so the result can be its /Next: null when nothing follows, or an
+    // array of actions.
     static QPDFObjectHandle scopeAction(QPDFObjectHandle action,
                                         const std::vector<QPDFObjectHandle> &tops, int depth)
     {
         if (depth >= kMaxDepth)
             return action;
         if (action.isArray()) { // a /Next that lists several actions
-            std::vector<QPDFObjectHandle> items = action.getArrayAsVector();
+            std::vector<QPDFObjectHandle> items;
             bool changed = false;
-            for (QPDFObjectHandle &item : items) {
+            for (QPDFObjectHandle item : action.aitems()) {
                 QPDFObjectHandle scoped = scopeAction(item, tops, depth + 1);
-                if (!scoped.isSameObjectAs(item)) {
-                    item = scoped;
-                    changed = true;
+                if (scoped.isSameObjectAs(item)) {
+                    items.push_back(item);
+                    continue;
                 }
+                changed = true;
+                if (scoped.isArray())
+                    for (QPDFObjectHandle each : scoped.aitems())
+                        items.push_back(each);
+                else if (!scoped.isNull())
+                    items.push_back(scoped);
             }
-            return changed ? QPDFObjectHandle::newArray(items) : action;
+            if (!changed)
+                return action;
+            return items.empty() ? QPDFObjectHandle::newNull() : QPDFObjectHandle::newArray(items);
         }
         if (!action.isDictionary())
             return action;
+        QPDFObjectHandle next = action.getKey("/Next");
+        QPDFObjectHandle scopedNext = scopeAction(next, tops, depth + 1);
         QPDFObjectHandle result;
         const auto change = [&](const char *key, QPDFObjectHandle value) {
             if (!result.isInitialized())
                 result = action.shallowCopy();
-            result.replaceKey(key, value);
+            if (value.isNull())
+                result.removeKey(key);
+            else
+                result.replaceKey(key, value);
         };
         QPDFObjectHandle type = action.getKey("/S");
         if (type.isNameAndEquals("/SubmitForm") || type.isNameAndEquals("/ResetForm")) {
             QPDFObjectHandle flags = action.getKey("/Flags");
             const long long bits = flags.isInteger() ? flags.getIntValue() : 0;
             QPDFObjectHandle fields = action.getKey("/Fields");
-            if (!fields.isArray()) {
-                change("/Fields", QPDFObjectHandle::newArray(tops));
+            if (!fields.isArray() || (bits & 1)) {
+                const std::vector<QPDFObjectHandle> own =
+                    fields.isArray() ? withoutExcluded(tops, fields) : tops;
+                if (own.empty())
+                    return scopedNext; // what follows takes its place
+                change("/Fields", QPDFObjectHandle::newArray(own));
                 if (bits & 1)
                     change("/Flags", QPDFObjectHandle::newInteger(bits & ~1LL));
-            } else if (bits & 1) {
-                change("/Fields", QPDFObjectHandle::newArray(withoutExcluded(tops, fields)));
-                change("/Flags", QPDFObjectHandle::newInteger(bits & ~1LL));
             }
         }
-        QPDFObjectHandle next = action.getKey("/Next");
-        QPDFObjectHandle scopedNext = scopeAction(next, tops, depth + 1);
         if (!scopedNext.isSameObjectAs(next))
             change("/Next", scopedNext);
         return result.isInitialized() ? result : action;

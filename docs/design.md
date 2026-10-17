@@ -967,9 +967,11 @@ an output has pages from more than one file, `FormCopy::scopeFormActions` theref
 gives each such action, in `/A`, `/AA` and `/Next` of the pages, their annotations and
 the fields above their widgets, an explicit `/Fields` list of the top-level fields copied
 from its own file, without the excluded fields and without the flag. Otherwise a submit
-button of one file would send the fields that came from another. An empty list is
-written as `/Fields []`. Repeated pages of one file and single-file outputs keep their
-actions as they were. JavaScript actions cannot be limited this way and stay.
+button of one file would send the fields that came from another. An action that would
+list no field is removed instead, because viewers such as PDF.js read an empty `/Fields`
+as every field. The actions in its `/Next` take its place, and a key whose only action
+goes is removed. Repeated pages of one file and single-file outputs keep their actions as
+they were. JavaScript actions cannot be limited this way and stay.
 
 Delete Pages removes pages from the source's own `QPDF` and writes it, so it keeps
 encryption, outlines and structure. `QPDFPageDocumentHelper::removePage` only takes a
