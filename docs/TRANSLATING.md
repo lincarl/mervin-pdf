@@ -85,6 +85,7 @@ synonym still reads as a different concept next to the existing text.
 | Open password | Password needed to open an encrypted PDF. An empty value means no open password is required. |
 | Owner password | Password guarding the PDF permission settings. An empty field uses the open password. It does not refer to an account owner. |
 | Permissions | PDF flags for printing, copying, modifying and annotating. Mervin does not enforce these flags. |
+| Measure | The measuring tool, which measures distances, paths, areas and angles on the page. Use the verb or the word for measuring, not a noun for a step, a unit, a size or an event. |
 | Scale | Drawing scale, such as 1:100, used to convert page distances to real distances. Distinguish it from the viewer's zoom level. |
 | Calibrate | Set the drawing scale using a line of known real length. |
 | Reset calibration | Remove the user's scale override and restore the scale embedded in the PDF. |

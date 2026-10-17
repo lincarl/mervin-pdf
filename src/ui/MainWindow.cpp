@@ -902,11 +902,14 @@ void MainWindow::createActions()
             syncOcrAction();
     });
 
-    //: Toggles the measuring tool (distances, areas and angles on the page).
+    //: Turns the measuring tool on or off, for distances, paths, areas and angles on the
+    //: page. Measure is the verb, so use the verb or the word for measuring, not a noun
+    //: for a step, a unit or a size.
     measureAction_ = new QAction(tr("&Measure"), this);
     // The toolbar button needs its own tooltip. The default one is the menu text with
     // only the '&' removed, so a CJK mnemonic suffix such as "(M)" would show.
-    //: Tooltip of the toolbar's measure button (verb).
+    //: Tooltip of the toolbar's measuring tool button. Use the same word as the Measure
+    //: action, the verb or the word for measuring.
     measureAction_->setToolTip(tr("Measure"));
     measureAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_M));
     measureAction_->setCheckable(true);
