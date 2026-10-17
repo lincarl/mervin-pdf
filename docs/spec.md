@@ -37,8 +37,10 @@ This document describes the application's current user-facing behavior. See
 ## Windows, sessions, and recent files
 
 Mervin uses one process per user. Starting it again forwards files to the running
-process, also while that process is busy. A start while Mervin is quitting opens its
-files once the old process has exited. If the running process does not answer for 10
+process, also while that process is busy. A start while Mervin is quitting is held.
+If the quit is cancelled, the running process opens its files. If the quit goes ahead,
+the next copy opens them once the old process has exited, except when the quit is part
+of signing out or shutting down. If the running process does not answer for 10
 seconds, the files open in a separate process that leaves the session, Recent and
 updates to the running one, and the running process does not open them when it
 answers again. If an older version still running after an upgrade on Linux does not
