@@ -1,7 +1,7 @@
 #pragma once
 
+#include <QList>
 #include <QString>
-#include <QStringList>
 
 namespace mervin::ipc {
 
@@ -41,10 +41,18 @@ QString legacyEndpoint(const QString &name = QString());
 #endif
 
 #ifdef Q_OS_UNIX
-// The endpoints of the group `name` in the other folders a copy of this version may have
-// chosen, and in $XDG_RUNTIME_DIR, which earlier builds used. Only folders that exist and
-// are this user's own count.
-QStringList otherEndpoints(const QString &name = QString());
+// The lock files, endpoints and carry files of the group `name` in the other folders that
+// instancePaths() can choose, for when the folders available changed while a primary ran.
+// Only folders that already are this user's private folders count, and nothing is created
+// in them. The launch's own folder, which instancePaths() makes, is left out.
+QList<InstancePaths> otherInstancePaths(const QString &name = QString());
+
+// Whether a live process holds the lock file `lockFile`. Only reads the file, so no other
+// launch can see a lock this check made. A file without content counts as held for a
+// moment, while its maker writes it. On Linux, a process that runs another program under
+// the ID the file names does not count. Every folder instancePaths() chooses belongs to
+// this machine, so the host the file names is not checked.
+bool lockHeldByLiveProcess(const QString &lockFile);
 
 // For tests only. Replaces /run/user as the folder that holds the users' runtime folders,
 // or restores it when `root` is empty.

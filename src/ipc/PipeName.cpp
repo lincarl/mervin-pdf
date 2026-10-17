@@ -7,9 +7,16 @@
 #include <QDir>
 
 #ifdef Q_OS_UNIX
+#  include <QDateTime>
 #  include <QFile>
+#  include <QFileInfo>
+#  include <QLockFile>
 #  include <QStandardPaths>
 #  include <QSysInfo>
+
+#  include <algorithm>
+#  include <cerrno>
+#  include <csignal>
 
 #  include <sys/stat.h>
 #  include <sys/un.h>
@@ -106,18 +113,6 @@ QString userRuntimeDir()
     return isPrivateDir(dir, uint(::geteuid())) ? dir : QString();
 }
 
-// $XDG_RUNTIME_DIR when Qt accepts it, which it does only if it belongs to this user
-// with mode 0700, else empty. For anything else Qt answers with a folder in /tmp,
-// which is not used.
-QString runtimeDirFromEnvironment()
-{
-    const QString xdg = qEnvironmentVariable("XDG_RUNTIME_DIR");
-    if (!xdg.startsWith(QLatin1Char('/')))
-        return {};
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
-    return dir == xdg ? dir : QString();
-}
-
 // A short token for this machine. QLockFile names the host of a lock the same way.
 QString hostToken()
 {
@@ -129,7 +124,7 @@ QString hostToken()
 }
 
 // This machine's folder in the cache directory. Several machines can share a home
-// folder, and another machine's lock never goes stale here.
+// folder, and another machine's lock never goes stale here. Only computes the path.
 QString cacheDir()
 {
     QString cache = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation);
@@ -152,6 +147,17 @@ bool makePrivateDir(const QString &dir)
         return false;
     return isPrivateDir(dir, uint(::geteuid()));
 }
+
+// The lock file, endpoint and carry file of `group` in `dir`.
+InstancePaths pathsIn(const QString &dir, const QString &group)
+{
+    const QDir folder(dir);
+    return {folder.filePath(group + QStringLiteral(".lock")), folder.filePath(group),
+            folder.filePath(group + QStringLiteral(".carried"))};
+}
+
+// How long a lock file may be without content while its maker writes it.
+constexpr qint64 kUnwrittenLockMs = 2000;
 
 // This user's folder in the temp folder.
 QString tempDirPath()
@@ -194,9 +200,7 @@ InstancePaths instancePaths(const QString &name)
     }
     if (dir.isEmpty() || !socketFits(dir, group))
         return {};
-    const QDir folder(dir);
-    return {folder.filePath(group + QStringLiteral(".lock")), folder.filePath(group),
-            folder.filePath(group + QStringLiteral(".carried"))};
+    return pathsIn(dir, group);
 #else
     // The lock is in the per-user %TEMP%. The pipe namespace is shared by the machine,
     // so a launch checks whose process answers (see peerIsCurrentUser).
@@ -207,21 +211,51 @@ InstancePaths instancePaths(const QString &name)
 }
 
 #ifdef Q_OS_UNIX
-QStringList otherEndpoints(const QString &name)
+QList<InstancePaths> otherInstancePaths(const QString &name)
 {
     const QString group = name.isEmpty() ? hostPipeName() : name;
     const QString own = instancePaths(name).server;
-    QStringList endpoints;
-    // Only folders that are this user's already. Nothing is created here.
-    for (const QString &dir : {userRuntimeDir(), runtimeDirFromEnvironment(), cacheDir(),
-                               tempDirPath()}) {
+    QList<InstancePaths> others;
+    // Each folder is only checked with lstat. Nothing is created in any of them.
+    for (const QString &dir : {userRuntimeDir(), cacheDir(), tempDirPath()}) {
         if (dir.isEmpty() || !isPrivateDir(dir, uint(::geteuid())) || !socketFits(dir, group))
             continue;
-        const QString endpoint = QDir(dir).filePath(group);
-        if (endpoint != own && !endpoints.contains(endpoint))
-            endpoints.append(endpoint);
+        const InstancePaths paths = pathsIn(dir, group);
+        if (paths.server != own
+            && std::none_of(others.cbegin(), others.cend(), [&](const InstancePaths &other) {
+                   return other.server == paths.server;
+               }))
+            others.append(paths);
     }
-    return endpoints;
+    return others;
+}
+
+bool lockHeldByLiveProcess(const QString &lockFile)
+{
+    const QFileInfo file(lockFile);
+    if (!file.exists())
+        return false;
+    qint64 pid = 0;
+    QString host;
+    QString app;
+    if (!QLockFile(lockFile).getLockInfo(&pid, &host, &app) || pid <= 0) {
+        // QLockFile writes the file right after it made it. One still without content
+        // after that is left from a process that ended in between.
+        const qint64 age = file.lastModified().msecsTo(QDateTime::currentDateTime());
+        return age >= -kUnwrittenLockMs && age < kUnwrittenLockMs;
+    }
+    if (::kill(pid_t(pid), 0) != 0 && errno != EPERM)
+        return false;
+#  ifdef Q_OS_LINUX
+    // QLockFile records the program's file name. As QLockFile does, a process that now
+    // runs another program under that ID does not hold the lock. A program file that was
+    // replaced while it ran, as by an update, still counts as the same.
+    QString exe = QFileInfo(QStringLiteral("/proc/%1/exe").arg(pid)).symLinkTarget();
+    exe.remove(QStringLiteral(" (deleted)"));
+    if (!exe.isEmpty() && !app.isEmpty() && QFileInfo(exe).fileName() != app)
+        return false;
+#  endif
+    return true;
 }
 
 void setUserRuntimeRootForTests(const QString &root)

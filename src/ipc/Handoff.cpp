@@ -3,10 +3,8 @@
 #include "ipc/PipeName.h"
 #include "ipc/SingleInstanceServer.h"
 
-#include <QFileInfo>
 #include <QLocalSocket>
-#include <QLockFile>
-#include <QSysInfo>
+#include <QStringList>
 #include <QThread>
 
 #include <algorithm>
@@ -22,9 +20,6 @@
 #  include <sys/socket.h>
 #  include <sys/types.h>
 #  include <unistd.h>
-
-#  include <cerrno>
-#  include <csignal>
 #endif
 
 namespace mervin::ipc {
@@ -43,25 +38,6 @@ int msLeft(const QDeadlineTimer &deadline)
 {
     return int(std::max<qint64>(0, deadline.remainingTime()));
 }
-
-#ifdef Q_OS_UNIX
-// Whether a live process holds the lock file `path`. Only reads the file, so no other
-// launch can see a lock this check made. A file that is still being written, or that
-// names another host, counts as held.
-bool heldByLiveProcess(const QString &path)
-{
-    if (!QFileInfo::exists(path))
-        return false;
-    qint64 pid = 0;
-    QString host;
-    QString app;
-    if (!QLockFile(path).getLockInfo(&pid, &host, &app) || pid <= 0)
-        return true;
-    if (!host.isEmpty() && host != QSysInfo::machineHostName())
-        return true;
-    return ::kill(pid_t(pid), 0) == 0 || errno == EPERM;
-}
-#endif
 
 #ifdef Q_OS_WIN
 // The user SID in `process`'s token, or empty when it cannot be read.
@@ -213,8 +189,14 @@ Launch claimOrHandOff(SingleInstanceServer &server, const Message &open, int wai
     // A primary there that takes the open but does not answer in time keeps it, so this
     // launch opens the files standalone. One that closes the connection, as when it is
     // quitting, is passed over.
-    if (paths.lockFile.isEmpty() || !heldByLiveProcess(paths.lockFile)) {
-        QStringList elsewhere = otherEndpoints(name);
+    const QList<InstancePaths> others = otherInstancePaths(name);
+    const auto ownLockFree = [&] {
+        return paths.lockFile.isEmpty() || !lockHeldByLiveProcess(paths.lockFile);
+    };
+    if (ownLockFree()) {
+        QStringList elsewhere;
+        for (const InstancePaths &other : others)
+            elsewhere.append(other.server);
 #  ifdef Q_OS_LINUX
         elsewhere.append(legacyEndpoint(name));
 #  endif
@@ -232,23 +214,46 @@ Launch claimOrHandOff(SingleInstanceServer &server, const Message &open, int wai
 #endif
     const QString &endpoint = paths.server;
     for (;;) {
-        const SingleInstanceServer::Start started = server.start(name);
-        if (started == SingleInstanceServer::Start::Started)
-            return Launch::Primary;
-        // A failed start does not get better by waiting, but a primary may still answer.
-        const bool lockHeld = started == SingleInstanceServer::Start::Running;
-        switch (endpoint.isEmpty() ? Handoff::NoPrimary
-                                   : handOff(endpoint, open, deadline, lookup)) {
-        case Handoff::Delivered:
-            return Launch::Delivered;
-        case Handoff::Busy:
-            return Launch::Standalone;
-        case Handoff::NoPrimary:
-            break;
+        bool otherHolder = false;
+#ifdef Q_OS_UNIX
+        // A copy of this version that holds the lock in another folder is starting there,
+        // or quitting and waiting for its last writes. While this group's own lock is free,
+        // the launch waits for it as for a holder of that lock, and hands off once it answers.
+        if (ownLockFree()) {
+            for (const InstancePaths &other : others) {
+                if (!lockHeldByLiveProcess(other.lockFile))
+                    continue;
+                switch (handOff(other.server, open, deadline, lookup)) {
+                case Handoff::Delivered:
+                    return Launch::Delivered;
+                case Handoff::Busy:
+                    return Launch::Standalone;
+                case Handoff::NoPrimary:
+                    otherHolder = true;
+                    break;
+                }
+            }
         }
-        // Without a lock holder nothing owns the session and the shared files.
-        if (!lockHeld)
-            return Launch::Uncoordinated;
+#endif
+        if (!otherHolder) {
+            const SingleInstanceServer::Start started = server.start(name);
+            if (started == SingleInstanceServer::Start::Started)
+                return Launch::Primary;
+            // A failed start does not get better by waiting, but a primary may still answer.
+            const bool lockHeld = started == SingleInstanceServer::Start::Running;
+            switch (endpoint.isEmpty() ? Handoff::NoPrimary
+                                       : handOff(endpoint, open, deadline, lookup)) {
+            case Handoff::Delivered:
+                return Launch::Delivered;
+            case Handoff::Busy:
+                return Launch::Standalone;
+            case Handoff::NoPrimary:
+                break;
+            }
+            // Without a lock holder nothing owns the session and the shared files.
+            if (!lockHeld)
+                return Launch::Uncoordinated;
+        }
         // The lock holder is starting, or quitting and waiting for its last writes.
         if (deadline.hasExpired())
             return Launch::Standalone;

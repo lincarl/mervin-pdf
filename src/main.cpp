@@ -432,7 +432,9 @@ int main(int argc, char *argv[])
         // folder that stopped answering. They land if it answers again, or never. A
         // restarted copy would read the files without them, and they could land over
         // its own writes, so it is not started. Launches this copy acknowledged and
-        // did not open still get a copy, as the user asked for those files.
+        // did not open still get a copy, as the user asked for those files. WindowManager
+        // then kept the single-instance lock, which this process never releases, so
+        // that copy waits until this process and its stuck writes have ended.
         const bool saved = mervin::appfiles::flush(0);
         if (!saved) {
             std::fprintf(stderr, "MervinPDF: could not finish saving settings\n");

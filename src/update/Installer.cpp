@@ -170,7 +170,7 @@ QStringList packageInstallCommand(PackageKind kind, const QString &file)
     return {};
 }
 
-bool relaunchAfterExit(const QString &exe)
+bool relaunchAfterExit(const QString &exe, const QStringList &paths)
 {
 #ifdef Q_OS_LINUX
     QProcess sh;
@@ -180,7 +180,7 @@ bool relaunchAfterExit(const QString &exe)
                                                "sleep 0.2; done; exec \"$@\""),
                                 QStringLiteral("sh"),
                                 QString::number(QCoreApplication::applicationPid()), exe}
-                    + relaunchArguments());
+                    + relaunchArguments() + paths);
     // Leaving an AppImage: drop what its runtime exported into the mount that
     // vanishes with this process. The new image's runtime sets its own.
     if (const QString appDir = qEnvironmentVariable("APPDIR"); !appDir.isEmpty()) {
@@ -196,6 +196,7 @@ bool relaunchAfterExit(const QString &exe)
     return true;
 #else
     Q_UNUSED(exe);
+    Q_UNUSED(paths);
     return false;
 #endif
 }

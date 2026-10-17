@@ -19,7 +19,8 @@ class SingleInstanceServer;
 // How long a launch keeps trying while a live process holds the single-instance lock
 // without taking its open. A quitting primary closes its endpoint and keeps the lock
 // through its exit wait (appfiles::kExitWaitMs); the rest covers its last windows and
-// its teardown.
+// its teardown. One whose writes outlast that wait keeps the lock until its process has
+// ended, which follows within its teardown (see SingleInstanceServer::keepLockUntilExit).
 constexpr int kLaunchWaitMs = appfiles::kExitWaitMs + 5000;
 
 // Who runs the process at the other end of a connected local socket. On Unix this is
@@ -61,12 +62,13 @@ enum class Launch {
 
 // Starts `server` for the group `name` (hostPipeName() when empty), or hands `open`
 // to that group's primary. On Unix, while nothing holds the lock, it first offers `open`
-// to a primary of this user in another folder (see otherEndpoints), and on Linux to a
-// copy from before the lock and socket moved (see legacyEndpoint). While a live process
-// holds the lock, as a starting or quitting primary does, it tries again until `waitMs`
-// has passed. An open that a primary accepted over a connection is not written again.
-// If that primary reads it only after this launch gave up, it drops it, because the
-// launch then opens the files itself.
+// to a primary of this user in another folder (see otherInstancePaths), and on Linux to
+// a copy from before the lock and socket moved (see legacyEndpoint). While a live process
+// holds the lock, or holds the lock in another folder while nothing holds this one, as a
+// starting or quitting primary does, it tries again until `waitMs` has passed. An open
+// that a primary accepted over a connection is not written again. If that primary reads
+// it only after this launch gave up, it drops it, because the launch then opens the
+// files itself.
 Launch claimOrHandOff(SingleInstanceServer &server, const Message &open, int waitMs,
                       const QString &name = QString(), const UserLookup &lookup = peerUser);
 

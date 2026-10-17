@@ -11,6 +11,7 @@
 #include <QtGlobal>
 
 #include <utility>
+#include <vector>
 
 #ifdef Q_OS_UNIX
 #  include <sys/socket.h>
@@ -22,6 +23,14 @@
 namespace mervin::ipc {
 
 namespace {
+
+// The locks of primaries that quit with writes in flight (see keepLockUntilExit). Never
+// destroyed, so even static destruction does not release them. The process's end does.
+std::vector<std::unique_ptr<QLockFile>> &locksKeptUntilExit()
+{
+    static auto *locks = new std::vector<std::unique_ptr<QLockFile>>;
+    return *locks;
+}
 
 #ifdef Q_OS_UNIX
 // The XDG base directory spec lets the system remove files from $XDG_RUNTIME_DIR
@@ -210,6 +219,7 @@ SingleInstanceServer::Start SingleInstanceServer::start(const QString &serverNam
 #ifdef Q_OS_UNIX
         keepFromCleanup(paths.server);
 #endif
+        name_ = serverName;
         carriedFile_ = paths.carriedFile;
         return Start::Started;
     }
@@ -219,6 +229,31 @@ SingleInstanceServer::Start SingleInstanceServer::start(const QString &serverNam
     stopListening();
     lock_.reset();
     return Start::Failed;
+}
+
+QStringList SingleInstanceServer::carriedFiles() const
+{
+    if (carriedFile_.isEmpty())
+        return {};
+    QStringList files{carriedFile_};
+#ifdef Q_OS_UNIX
+    for (const InstancePaths &other : otherInstancePaths(name_))
+        if (other.carriedFile != carriedFile_ && !lockHeldByLiveProcess(other.lockFile))
+            files.append(other.carriedFile);
+#endif
+    return files;
+}
+
+void SingleInstanceServer::keepLockUntilExit()
+{
+    stopListening();
+    if (lock_)
+        locksKeptUntilExit().push_back(std::move(lock_));
+}
+
+void SingleInstanceServer::releaseKeptLocksForTests()
+{
+    locksKeptUntilExit().clear();
 }
 
 bool SingleInstanceServer::isListening() const

@@ -26,6 +26,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalSocket>
+#include <QLockFile>
 #include <QMessageBox>
 #include <QPointer>
 #include <QPushButton>
@@ -55,6 +56,12 @@ namespace {
 
 // A group of its own, so the test never meets a running copy.
 const QString kGroup = QStringLiteral("MervinPDF-unittest-wm");
+
+#ifdef Q_OS_UNIX
+// A template for the suite's own folders, short so that their socket paths fit whatever
+// the temp folder the suite runs with.
+const QString kShortTemp = QStringLiteral("/tmp/mih-XXXXXX");
+#endif
 
 // Offers `path` to the group's primary, as a later launch does.
 Handoff offer(const QString &path)
@@ -100,12 +107,14 @@ class TstInstanceHandoff : public QObject
 
 private slots:
     void initTestCase();
+    void cleanupTestCase();
     void init();
     void cleanup();
     void opensWaitingBeforeAdoptionOpen();
     void finalQuitStopsHandoffs_data();
     void finalQuitStopsHandoffs();
     void exitWaitKeepsLockWithoutEndpoint();
+    void writesInFlightKeepTheLock();
     void standaloneWritesNoStores_data();
     void standaloneWritesNoStores();
     void standaloneSavesNoMounts_data();
@@ -113,9 +122,15 @@ private slots:
     void launchBeforeFinalQuitGoesToNextCopy_data();
     void launchBeforeFinalQuitGoesToNextCopy();
     void quitWithNothingQueuedStartsNoCopy();
+    void failedCarryWritePassesFilesAsArguments();
     void carryFileKeepsEveryPath();
     void primaryOpensCarriedLaunches();
-    void staleCarryFileIsIgnored();
+#ifdef Q_OS_UNIX
+    void carryFileInAnotherFolder_data();
+    void carryFileInAnotherFolder();
+#endif
+    void carryFileDateBounds_data();
+    void carryFileDateBounds();
     void cancelledQuitOpensHeldLaunch_data();
     void cancelledQuitOpensHeldLaunch();
 
@@ -123,22 +138,45 @@ private:
     // A started server for kGroup, or null after a failed check.
     std::unique_ptr<SingleInstanceServer> startedServer();
 
-    QTemporaryDir runtime_;
+#ifdef Q_OS_UNIX
+    // Stand in for /run/user and the cache folder, so that nothing reaches the user's own.
+    QTemporaryDir runtime_{kShortTemp};
+    QTemporaryDir cache_{kShortTemp};
+    std::optional<QByteArray> cacheHome_; // the suite's XDG_CACHE_HOME, if it had one
+#endif
     std::unique_ptr<QTemporaryDir> profile_;
     QString pdf_;
 };
 
 void TstInstanceHandoff::initTestCase()
 {
-    QVERIFY(runtime_.isValid());
 #ifdef Q_OS_UNIX
+    QVERIFY(runtime_.isValid() && cache_.isValid());
     // Keeps the lock, socket and carry file out of the user's runtime folder, using a
-    // folder of its own in place of /run/user/<uid>.
+    // folder of its own in place of /run/user/<uid>, and any fallback out of the user's
+    // cache folder.
     const QString dir = QDir(runtime_.path()).filePath(QString::number(uint(::geteuid())));
     QVERIFY(QDir().mkpath(dir));
     QVERIFY(QFile::setPermissions(dir, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
     ipc::setUserRuntimeRootForTests(runtime_.path());
-    qunsetenv("XDG_RUNTIME_DIR");
+    if (qEnvironmentVariableIsSet("XDG_CACHE_HOME"))
+        cacheHome_ = qgetenv("XDG_CACHE_HOME");
+    qputenv("XDG_CACHE_HOME", QFile::encodeName(cache_.path()));
+    const QString lockFile = ipc::instancePaths(kGroup).lockFile;
+    QVERIFY2(lockFile.startsWith(dir + QLatin1Char('/')),
+             qPrintable(QStringLiteral("the lock is at %1, outside the suite's folder")
+                            .arg(lockFile)));
+#endif
+}
+
+void TstInstanceHandoff::cleanupTestCase()
+{
+#ifdef Q_OS_UNIX
+    ipc::setUserRuntimeRootForTests({});
+    if (cacheHome_)
+        qputenv("XDG_CACHE_HOME", *cacheHome_);
+    else
+        qunsetenv("XDG_CACHE_HOME");
 #endif
 }
 
@@ -162,6 +200,7 @@ void TstInstanceHandoff::cleanup()
     relaunch::writeCarried(QDir(profile_->path()).filePath(QStringLiteral("left.carried")));
     relaunch::nextCopyStarted();
     QFile::remove(ipc::instancePaths(kGroup).carriedFile);
+    SingleInstanceServer::releaseKeptLocksForTests();
     appfiles::testing::hold(false);
     QVERIFY(background::settle(10000));
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
@@ -284,6 +323,41 @@ void TstInstanceHandoff::exitWaitKeepsLockWithoutEndpoint()
     QVERIFY(!lockHeld());
 }
 
+// A primary whose own writes are still in flight when its exit wait ends keeps the lock
+// until the process ends. The next copy can then neither read the files before those
+// writes land nor write over them.
+void TstInstanceHandoff::writesInFlightKeepTheLock()
+{
+    const auto release = qScopeGuard([] {
+        appfiles::testing::hold(false);
+        SingleInstanceServer::releaseKeptLocksForTests();
+    });
+    std::unique_ptr<SingleInstanceServer> server = startedServer();
+    QVERIFY(server);
+    auto manager = std::make_unique<WindowManager>();
+    manager->adoptInstanceServer(std::move(server));
+    // A write that cannot start outlasts the exit wait.
+    appfiles::testing::hold(true);
+    appfiles::write(QDir(profile_->path()).filePath(QStringLiteral("held.json")), "{}");
+    manager.reset();
+    QVERIFY(!appfiles::flush(0));
+    QVERIFY(!endpointAnswers());
+    QVERIFY(lockHeld());
+
+    // A launch now waits for this process as for any live holder, and gives up as beside
+    // one, without becoming the primary.
+    SingleInstanceServer launch;
+    QCOMPARE(ipc::claimOrHandOff(launch, Message::open({pdf_}), 300, kGroup),
+             ipc::Launch::Standalone);
+    QVERIFY(!launch.isListening());
+
+    // The end of the process releases the lock.
+    appfiles::testing::hold(false);
+    QVERIFY(appfiles::flush(10000));
+    SingleInstanceServer::releaseKeptLocksForTests();
+    QVERIFY(!lockHeld());
+}
+
 void TstInstanceHandoff::standaloneWritesNoStores_data()
 {
     QTest::addColumn<bool>("ownsStores");
@@ -381,8 +455,10 @@ void TstInstanceHandoff::launchBeforeFinalQuitGoesToNextCopy()
 {
     QFETCH(int, path);
     int starts = 0;
-    relaunch::setStarterForTests([&] {
+    QStringList passed;
+    relaunch::setStarterForTests([&](const QStringList &paths) {
         ++starts;
+        passed = paths;
         return true;
     });
     const auto restore = qScopeGuard([] { relaunch::setStarterForTests({}); });
@@ -417,9 +493,10 @@ void TstInstanceHandoff::launchBeforeFinalQuitGoesToNextCopy()
     QVERIFY(relaunch::carrying());
     QCOMPARE(starts, 0);
 
-    // As main() does once runUi has returned.
+    // As main() does once runUi has returned. The file, not the command line, has them.
     QVERIFY(relaunch::startIfDue(true));
     QCOMPARE(starts, 1);
+    QVERIFY(passed.isEmpty());
     QVERIFY(!relaunch::carrying());
 
     // The copy that becomes the primary next opens the file and removes the carry file.
@@ -437,7 +514,7 @@ void TstInstanceHandoff::launchBeforeFinalQuitGoesToNextCopy()
 void TstInstanceHandoff::quitWithNothingQueuedStartsNoCopy()
 {
     int starts = 0;
-    relaunch::setStarterForTests([&] {
+    relaunch::setStarterForTests([&](const QStringList &) {
         ++starts;
         return true;
     });
@@ -455,6 +532,52 @@ void TstInstanceHandoff::quitWithNothingQueuedStartsNoCopy()
     QVERIFY(!QFile::exists(ipc::instancePaths(kGroup).carriedFile));
     QVERIFY(relaunch::startIfDue(true));
     QCOMPARE(starts, 0);
+}
+
+// Carried launches stay until a carry file holds them. If ~WindowManager cannot write it,
+// the copy that startIfDue starts gets their files as arguments.
+void TstInstanceHandoff::failedCarryWritePassesFilesAsArguments()
+{
+    const QDir profile(profile_->path());
+    relaunch::carry(Message::open({pdf_}, QStringLiteral("new-tab")));
+    QVERIFY(!relaunch::writeCarried(profile.filePath(QStringLiteral("missing/group.carried"))));
+    const QString file = profile.filePath(QStringLiteral("group.carried"));
+    QVERIFY(relaunch::writeCarried(file));
+    QCOMPARE(relaunch::takeCarried(file).size(), 1);
+    relaunch::nextCopyStarted();
+
+    // A folder in the carry file's place makes the destructor's write fail.
+    const QString carried = ipc::instancePaths(kGroup).carriedFile;
+    QVERIFY(QDir().mkdir(carried));
+    const auto removeFolder = qScopeGuard([&] { QDir().rmdir(carried); });
+    int starts = 0;
+    QStringList passed;
+    relaunch::setStarterForTests([&](const QStringList &paths) {
+        ++starts;
+        passed = paths;
+        return true;
+    });
+    const auto restore = qScopeGuard([] { relaunch::setStarterForTests({}); });
+    std::unique_ptr<SingleInstanceServer> server = startedServer();
+    QVERIFY(server);
+    auto manager = std::make_unique<WindowManager>();
+    manager->adoptInstanceServer(std::move(server));
+    const QPointer<MainWindow> window = manager->createWindow();
+    QCOMPARE(offer(pdf_), Handoff::Delivered);
+    manager->quitAll();
+    QTRY_VERIFY_WITH_TIMEOUT(!window, 10000);
+    manager.reset();
+    QVERIFY(QFileInfo(carried).isDir());
+    QVERIFY(relaunch::carrying());
+
+    // As main() does, here after writes that did not land, which allow no restart.
+    QVERIFY(relaunch::startIfDue(false));
+    QCOMPARE(starts, 1);
+    QCOMPARE(passed, QStringList{pdf_});
+    // Given away once.
+    QVERIFY(!relaunch::carrying());
+    QVERIFY(relaunch::writeCarried(file));
+    QVERIFY(!QFile::exists(file));
 }
 
 // The carry file keeps any path, in any number, as UTF-8 JSON that only this user can read,
@@ -499,7 +622,7 @@ void TstInstanceHandoff::carryFileKeepsEveryPath()
     QVERIFY(relaunch::carrying());
     relaunch::nextCopyStarted();
     int starts = 0;
-    relaunch::setStarterForTests([&] {
+    relaunch::setStarterForTests([&](const QStringList &) {
         ++starts;
         return true;
     });
@@ -530,14 +653,76 @@ void TstInstanceHandoff::primaryOpensCarriedLaunches()
     QTRY_VERIFY_WITH_TIMEOUT(manager.openTabPaths().isEmpty(), 10000);
 }
 
-// A carry file older than kCarriedMaxAgeMs, as one a copy that crashed left behind, opens
-// nothing and goes.
-void TstInstanceHandoff::staleCarryFileIsIgnored()
+#ifdef Q_OS_UNIX
+void TstInstanceHandoff::carryFileInAnotherFolder_data()
 {
+    QTest::addColumn<bool>("held");
+    QTest::newRow("its lock is free") << false;
+    QTest::newRow("a live process holds its lock") << true;
+}
+
+// A primary that ran in another folder, as one does that started before /run/user/<uid>
+// appeared, left its carry file there. The next primary takes it over, unless a live
+// process holds that folder's lock.
+void TstInstanceHandoff::carryFileInAnotherFolder()
+{
+    QFETCH(bool, held);
+    ipc::InstancePaths cache;
+    {
+        ipc::setUserRuntimeRootForTests(runtime_.path() + QStringLiteral("/none"));
+        const auto restoreRoot =
+            qScopeGuard([&] { ipc::setUserRuntimeRootForTests(runtime_.path()); });
+        cache = ipc::instancePaths(kGroup);
+    }
+    QVERIFY(cache.carriedFile.startsWith(cache_.path() + QLatin1Char('/')));
+    relaunch::carry(Message::open({pdf_}, QStringLiteral("new-tab")));
+    QVERIFY(relaunch::writeCarried(cache.carriedFile));
+    relaunch::nextCopyStarted();
+    const auto removeFile = qScopeGuard([&] { QFile::remove(cache.carriedFile); });
+    QLockFile holder(cache.lockFile);
+    if (held)
+        QVERIFY(holder.tryLock(0));
+
+    std::unique_ptr<SingleInstanceServer> server = startedServer();
+    QVERIFY(server);
+    QVERIFY(server->carriedFile() != cache.carriedFile);
+    WindowManager manager;
+    manager.adoptInstanceServer(std::move(server));
+    if (held) {
+        QTest::qWait(300);
+        QVERIFY(!shows(manager, pdf_));
+        QVERIFY(QFile::exists(cache.carriedFile));
+        return;
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(shows(manager, pdf_), 10000);
+    QVERIFY(!QFile::exists(cache.carriedFile));
+    manager.quitAll();
+    QTRY_VERIFY_WITH_TIMEOUT(manager.openTabPaths().isEmpty(), 10000);
+}
+#endif
+
+void TstInstanceHandoff::carryFileDateBounds_data()
+{
+    QTest::addColumn<qint64>("writtenMs"); // when the file says it was written, from now
+    QTest::addColumn<bool>("opens");
+    QTest::newRow("older than the limit") << -(relaunch::kCarriedMaxAgeMs + 1000) << false;
+    QTest::newRow("a minute within the limit")
+        << -(relaunch::kCarriedMaxAgeMs - 60 * 1000) << true;
+    QTest::newRow("59 s ahead") << relaunch::kCarriedMaxAheadMs - 1000 << true;
+    QTest::newRow("more than a minute ahead") << relaunch::kCarriedMaxAheadMs + 1000 << false;
+}
+
+// A carry file opens if it was written within kCarriedMaxAgeMs, or at most
+// kCarriedMaxAheadMs ahead, as after a clock was set back a little. One outside, as a
+// copy that crashed leaves it, opens nothing. Either way it goes.
+void TstInstanceHandoff::carryFileDateBounds()
+{
+    QFETCH(qint64, writtenMs);
+    QFETCH(bool, opens);
     const QString carried = ipc::instancePaths(kGroup).carriedFile;
     QJsonObject root;
     root.insert(QStringLiteral("written"),
-                double(QDateTime::currentMSecsSinceEpoch() - relaunch::kCarriedMaxAgeMs - 1000));
+                double(QDateTime::currentMSecsSinceEpoch() + writtenMs));
     root.insert(QStringLiteral("launches"),
                 QJsonArray{Message::open({pdf_}, QStringLiteral("new-tab")).toJson()});
     QFile file(carried);
@@ -549,9 +734,15 @@ void TstInstanceHandoff::staleCarryFileIsIgnored()
     QVERIFY(server);
     WindowManager manager;
     manager.adoptInstanceServer(std::move(server));
-    QTest::qWait(300);
-    QVERIFY(!shows(manager, pdf_));
+    if (opens) {
+        QTRY_VERIFY_WITH_TIMEOUT(shows(manager, pdf_), 10000);
+    } else {
+        QTest::qWait(300);
+        QVERIFY(!shows(manager, pdf_));
+    }
     QVERIFY(!QFile::exists(carried));
+    manager.quitAll();
+    QTRY_VERIFY_WITH_TIMEOUT(manager.openTabPaths().isEmpty(), 10000);
 }
 
 void TstInstanceHandoff::cancelledQuitOpensHeldLaunch_data()

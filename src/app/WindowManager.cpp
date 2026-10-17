@@ -352,12 +352,15 @@ void WindowManager::adoptInstanceServer(std::unique_ptr<ipc::SingleInstanceServe
     connect(instanceServer_.get(), &ipc::SingleInstanceServer::opensReceived, this,
             &WindowManager::takeInstanceOpens);
     // Launches a primary acknowledged and did not open before it quit go first. This copy
-    // holds the lock now, as the file requires.
-    const QList<ipc::Message> carried = relaunch::takeCarried(instanceServer_->carriedFile());
-    instanceOpens_ += carried;
-    for (qsizetype i = 0; i < carried.size(); ++i)
-        QMetaObject::invokeMethod(this, &WindowManager::openNextInstanceOpen,
-                                  Qt::QueuedConnection);
+    // holds the lock now, as the file requires. A primary that ran in another folder left
+    // them there.
+    for (const QString &file : instanceServer_->carriedFiles()) {
+        const QList<ipc::Message> carried = relaunch::takeCarried(file);
+        instanceOpens_ += carried;
+        for (qsizetype i = 0; i < carried.size(); ++i)
+            QMetaObject::invokeMethod(this, &WindowManager::openNextInstanceOpen,
+                                      Qt::QueuedConnection);
+    }
     // Launches acknowledged during startup wait in the server. They open once the
     // event loop runs, after the first window and the startup batches are queued.
     QMetaObject::invokeMethod(this, &WindowManager::takeInstanceOpens, Qt::QueuedConnection);
@@ -1126,9 +1129,19 @@ WindowManager::~WindowManager()
     appfiles::flush(left());
     Updater::waitForDisk(left());
     // The launches carried go to the next primary while this process still holds the
-    // lock, which instanceServer_ lets go of after this body.
+    // lock, which instanceServer_ lets go of after this body. If they cannot be written,
+    // relaunch keeps them for the next copy's command line.
     if (instanceServer_ && !relaunch::writeCarried(instanceServer_->carriedFile()))
-        std::fprintf(stderr, "MervinPDF: could not pass on the files opened during the quit\n");
+        std::fprintf(stderr, "MervinPDF: could not write the files opened during the quit "
+                             "to the carry file\n");
+    // Writes still in flight could land after the next copy has read the files, or over
+    // its own writes. The lock then stays until this process has ended, and the next copy
+    // waits for that, as it waits during this exit wait.
+    if (instanceServer_ && !appfiles::flush(0)) {
+        std::fprintf(stderr, "MervinPDF: keeping the single-instance lock until this "
+                             "process has ended\n");
+        instanceServer_->keepLockUntilExit();
+    }
 }
 
 MainWindow *WindowManager::createWindow()

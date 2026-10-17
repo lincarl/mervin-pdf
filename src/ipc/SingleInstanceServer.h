@@ -5,6 +5,7 @@
 #include <QList>
 #include <QMutex>
 #include <QObject>
+#include <QStringList>
 
 #include <functional>
 #include <memory>
@@ -48,6 +49,20 @@ public:
     // (relaunch::carry), next to the lock. Empty until start() returned Started.
     QString carriedFile() const { return carriedFile_; }
 
+    // The carry files a new primary takes over. That is its own, and on Unix those in the
+    // group's other folders whose lock no live process holds, as a primary that ran in
+    // another folder leaves them. Empty until start() returned Started.
+    QStringList carriedFiles() const;
+
+    // Keeps the lock until this process ends, for a primary that quits while writes of its
+    // own are still in flight. This process never releases it. The next copy waits while
+    // this process lives, and then takes the lock as stale. Also closes the endpoint.
+    void keepLockUntilExit();
+
+    // For tests only. Releases the locks keepLockUntilExit() kept, as the end of the
+    // process would.
+    static void releaseKeptLocksForTests();
+
     // Closes the endpoint and keeps the lock, for a primary that is quitting. Later
     // launches get no acknowledgement and wait until the lock is free. Opens
     // acknowledged before remain for takeOpens().
@@ -74,6 +89,7 @@ private:
     void queueOpen(const Message &open);
 
     std::unique_ptr<QLockFile> lock_; // single-instance guard
+    QString name_;                    // the group start() was called for
     QString carriedFile_;
     std::unique_ptr<QThread> thread_; // runs the Listener while listening
     Listener *listener_ = nullptr;    // lives on thread_, which deletes it

@@ -354,7 +354,17 @@ so the launch's write is still pending when it closes, and closing cancels it. T
 gap left is a launch whose deadline passes between the server's check and its
 acknowledgement, which is a matter of microseconds. Once a quit is final, the
 primary closes its endpoint and keeps the lock until its exit wait is over, so a
-launch during that wait becomes the next primary and reads the last writes. While
+launch during that wait becomes the next primary and reads the last writes. If
+writes of its own are still in flight when that wait ends, as on a profile folder
+that stopped answering, the process never releases the lock
+(`SingleInstanceServer::keepLockUntilExit()`). The next copy then waits while the
+process lives, and takes the lock as stale once it has ended. QLockFile counts a
+lock as stale when the process it names has ended or runs another program. On
+Windows the open handle also keeps another process from deleting the file until
+then. That copy can be the one `relaunch::startIfDue()` starts at once on Windows.
+After the exit wait the process only tears down the application and gives
+background work 200 ms before it ends, so the copy waits well under
+`ipc::kLaunchWaitMs`. While
 Quit or a language restart is in progress, or an update asks about unsaved edits
 before it closes the windows, `WindowManager` holds the Opens that arrive. If that
 is cancelled, they open then. Closing the last window does not hold them, so an Open
@@ -364,13 +374,21 @@ the process lets go of the lock, `~WindowManager` writes them to `<group>.carrie
 next to the lock, as UTF-8 JSON with mode 0600 (`relaunch::writeCarried()`), after
 any a previous primary left there. Whichever copy next becomes the primary reads and
 removes that file when it takes over its server, under its lock, and opens those
-files. That is the copy `relaunch::startIfDue()` starts once the process has quit,
+files. It also takes the carry files in the group's other folders whose lock no
+live process holds, as a primary that ran in another folder leaves them (see
+below). That is the copy `relaunch::startIfDue()` starts once the process has quit,
 which is also the copy of a language restart, the copy an update starts, or a copy
-the user starts first. No path goes on a command line or into the environment. A
-file older than 10 minutes (`relaunch::kCarriedMaxAgeMs`), as one left by a copy
-that crashed, is removed unread. The bound leaves time for an installer between the
-two copies. At session end nothing is written or started, so those files are lost
-with the session. On Linux `start()` connects to the socket before it removes it, so
+the user starts first. No path goes on a command line or into the environment,
+unless the carry file cannot be written. The launches then stay with `relaunch`,
+and the copy that `startIfDue()` starts gets their files as arguments. They are
+absolute paths, passed as separate process arguments that go through no shell or
+cmd. A copy an update started before that write failed cannot get them, so they are
+logged instead. A file older than 10 minutes (`relaunch::kCarriedMaxAgeMs`), as one
+left by a copy that crashed, is removed unread, as is one dated more than a minute
+ahead (`relaunch::kCarriedMaxAheadMs`), which allows for a clock set back a little
+between the two copies. The age bound leaves time for an installer between the two
+copies. At session end nothing is written or started, so those files are lost with
+the session. On Linux `start()` connects to the socket before it removes it, so
 a lock file that something deleted while its primary runs does not make the next
 launch a second primary. The server closes its socket before it releases the lock.
 
@@ -386,25 +404,31 @@ share the stores, last writer wins.
 
 While nothing holds this group's lock, `claimOrHandOff()` first looks for a primary
 elsewhere. One of this version can listen in another of the folders above, as when
-`/run/user/<uid>` appeared with a desktop login after it started from ssh, and
-builds from before this rule listened in `$XDG_RUNTIME_DIR`. `ipc::otherEndpoints()`
-lists those endpoints. On Linux, copies built before these locations moved listen in
-the temp folder, under a group name hashed from `$USERNAME` or `$USER`
-(`ipc::legacyEndpoint()`). That is upgrade support, to be removed once such copies
-are no longer expected. Each is offered the Open in the same protocol, after the
-same check that the process runs as this user. The lock check only reads the lock
-file, so it never makes a lock another launch could see. A copy of this version that
-holds the lock gets the launch with the whole wait, and the other folders and an
-older copy are not asked. If one of them takes the Open, the launch exits. If it
-takes the connection but does not answer within the wait, it keeps the Open, so the
-launch opens the files in a standalone process, as beside a primary of this version
-that does not answer. An older copy, which has no rule to drop such an Open, shows
-the files as well once it runs again. If nothing answers, the process is another
-user's, or it closes the connection without an acknowledgement, as a quitting copy
-does, the launch goes on as above. The reverse case cannot be fixed in the older
-code. An older copy launched while a newer one runs starts a second primary until
-one of them exits. Windows kept its pipe and lock names, so older and newer copies
-find each other there in both directions.
+`/run/user/<uid>` appeared with a desktop login after it started from ssh.
+`ipc::otherInstancePaths()` lists the group's paths in those folders that already
+are this user's private folders, and creates nothing. A copy that holds the lock in
+one of them and does not answer there is starting or in its exit wait. The launch
+waits for it as for a holder of this group's lock, within the same
+`ipc::kLaunchWaitMs`, and hands off once it answers. On Linux, copies built before
+these locations moved listen in the temp folder, under a group name hashed from
+`$USERNAME` or `$USER` (`ipc::legacyEndpoint()`). That is upgrade support, to be
+removed once such copies are no longer expected. Each is offered the Open in the
+same protocol, after the same check that the process runs as this user. The lock
+check (`ipc::lockHeldByLiveProcess()`) only reads the lock file, so it never makes a
+lock another launch could see. It counts a lock as held while the process the file
+names lives and, on Linux, runs the program the file names, as QLockFile does. A
+file without content counts as held for 2 s while its maker writes it. A copy of
+this version that holds the lock gets the launch with the whole wait, and the other
+folders and an older copy are not asked. If one of them takes the Open, the launch
+exits. If it takes the connection but does not answer within the wait, it keeps the
+Open, so the launch opens the files in a standalone process, as beside a primary of
+this version that does not answer. An older copy, which has no rule to drop such an
+Open, shows the files as well once it runs again. If nothing answers, the process is
+another user's, or it closes the connection without an acknowledgement, as a
+quitting copy does, the launch goes on as above. The reverse case cannot be fixed in
+the older code. An older copy launched while a newer one runs starts a second
+primary until one of them exits. Windows kept its pipe and lock names, so older and
+newer copies find each other there in both directions.
 
 Session restoration creates the tab list but opens only the selected document. Other
 restored tabs load when selected.

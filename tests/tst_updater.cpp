@@ -247,7 +247,7 @@ QStringList packageInstallCommand(PackageKind, const QString &file)
     return {};
 }
 QStringList relaunchArguments() { return {}; }
-bool relaunchAfterExit(const QString &) { return false; }
+bool relaunchAfterExit(const QString &, const QStringList &) { return false; }
 
 } // namespace mervin::update
 

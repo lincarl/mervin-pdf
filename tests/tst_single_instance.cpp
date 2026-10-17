@@ -6,10 +6,12 @@
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QLockFile>
@@ -17,8 +19,8 @@
 #include <QProcess>
 #include <QScopeGuard>
 #include <QSemaphore>
-#include <QTemporaryDir>
 #include <QSysInfo>
+#include <QTemporaryDir>
 #include <QTest>
 #include <QThread>
 
@@ -41,6 +43,12 @@ using Start = SingleInstanceServer::Start;
 
 // A unique-ish name so the test never collides with a real running host.
 static const QString kTestPipe = QStringLiteral("MervinPDF-unittest-si");
+
+#ifdef Q_OS_UNIX
+// A template for folders with a short path of their own, so that the socket path lengths
+// in a test do not depend on the temp folder the suite runs in.
+static const QString kShortTemp = QStringLiteral("/tmp/msi-XXXXXX");
+#endif
 
 namespace {
 bool packaged = false;
@@ -125,7 +133,11 @@ private slots:
     void filesLiveInRuntimeDir();
     void launchesWithAndWithoutXdgRuntimeDirShareOnePrimary();
     void primaryInAnotherFolderIsFound();
+    void launchWaitsForQuittingPrimaryInAnotherFolder_data();
+    void launchWaitsForQuittingPrimaryInAnotherFolder();
     void lockCheckOnlyReadsTheLockFile();
+    void lockHolder_data();
+    void lockHolder();
     void noRuntimeDirUsesPrivateCacheFolder();
     void tooLongPathFallsBack_data();
     void tooLongPathFallsBack();
@@ -140,18 +152,21 @@ private slots:
     void quittingLegacyCopyIsSkipped();
     void silentLegacyCopyMeansStandalone();
     void newerPrimaryGoesBeforeLegacyCopy();
-    void primaryInXdgRuntimeDirIsFound();
     void deadLegacySocketIsIgnored();
 #endif
 
 private:
 #ifdef Q_OS_UNIX
-    // Keeps the tests out of the user's real runtime directory, and out of the temp
-    // folder, where builds from before the move listen under the same group names.
-    QTemporaryDir runtimeRoot_;
-    QTemporaryDir tmp_;
+    // Keeps the tests out of the user's real runtime and cache folders, and out of the
+    // temp folder, where builds from before the move listen under the same group names.
+    // Short paths of their own keep every socket path within Qt's limit, whatever the
+    // temp folder the suite runs with.
+    QTemporaryDir runtimeRoot_{kShortTemp};
+    QTemporaryDir tmp_{kShortTemp};
+    QTemporaryDir cache_{kShortTemp};
     std::optional<EnvOverride> runtimeEnv_;
     std::optional<EnvOverride> tmpEnv_;
+    std::optional<EnvOverride> cacheEnv_;
 #endif
 };
 
@@ -186,19 +201,27 @@ public:
 void TstSingleInstance::initTestCase()
 {
 #ifdef Q_OS_UNIX
-    QVERIFY(runtimeRoot_.isValid() && tmp_.isValid());
+    QVERIFY(runtimeRoot_.isValid() && tmp_.isValid() && cache_.isValid());
     g_runtimeRoot = runtimeRoot_.path();
-    QVERIFY(!makeUserRuntimeDir(g_runtimeRoot).isEmpty());
+    const QString runtimeDir = makeUserRuntimeDir(g_runtimeRoot);
+    QVERIFY(!runtimeDir.isEmpty());
     mervin::ipc::setUserRuntimeRootForTests(g_runtimeRoot);
-    // Only probed, but kept out of the user's real one too.
+    // Nothing reads it any more, which the tests that set it show.
     runtimeEnv_.emplace("XDG_RUNTIME_DIR", QByteArray());
     tmpEnv_.emplace("TMPDIR", QFile::encodeName(tmp_.path()));
+    cacheEnv_.emplace("XDG_CACHE_HOME", QFile::encodeName(cache_.path()));
+    // A fallback to another folder fails here, not later in a test that cannot tell why.
+    const QString lockFile = mervin::ipc::instancePaths(kTestPipe).lockFile;
+    QVERIFY2(lockFile.startsWith(runtimeDir + QLatin1Char('/')),
+             qPrintable(QStringLiteral("the lock is at %1, outside the suite's folder")
+                            .arg(lockFile)));
 #endif
 }
 
 void TstSingleInstance::cleanupTestCase()
 {
 #ifdef Q_OS_UNIX
+    cacheEnv_.reset();
     tmpEnv_.reset();
     runtimeEnv_.reset();
     mervin::ipc::setUserRuntimeRootForTests({});
@@ -224,6 +247,10 @@ void TstSingleInstance::storeAndMsiHostsStaySeparate()
     QVERIFY(storeName != msiName);
     SingleInstanceServer store;
     QCOMPARE(store.start(), Start::Started);
+#ifdef Q_OS_UNIX
+    QVERIFY2(mervin::ipc::instancePaths().lockFile.startsWith(g_runtimeRoot + QLatin1Char('/')),
+             qPrintable(mervin::ipc::instancePaths().lockFile));
+#endif
     SingleInstanceServer duplicateStore;
     QCOMPARE(duplicateStore.start(), Start::Running);
 
@@ -624,10 +651,6 @@ bool ownPrivateDir(const QString &dir)
     return mervin::ipc::isPrivateDir(dir, uint(::geteuid()));
 }
 
-// A template for folders with a short path of their own, so that the socket path lengths
-// in a test do not depend on the temp folder the suite runs in.
-const QString kShortTemp = QStringLiteral("/tmp/msi-XXXXXX");
-
 // The longest socket path Qt takes. It keeps a byte of sockaddr_un for the terminating
 // zero, and on Linux one more for abstract names.
 #  ifdef Q_OS_LINUX
@@ -706,6 +729,16 @@ void TstSingleInstance::launchesWithAndWithoutXdgRuntimeDirShareOnePrimary()
              Launch::Delivered);
     QVERIFY(!launch.isListening());
     QCOMPARE(primary.takeOpens().size(), 1);
+
+    // A launch makes no folder the variable names.
+    const QString missing = QDir(elsewhere.path()).filePath(QStringLiteral("missing"));
+    const EnvOverride missingXdg("XDG_RUNTIME_DIR", QFile::encodeName(missing));
+    SingleInstanceServer another;
+    QCOMPARE(mervin::ipc::claimOrHandOff(another, Message::open({QStringLiteral("y.pdf")}), 1000,
+                                         kTestPipe),
+             Launch::Delivered);
+    QCOMPARE(primary.takeOpens().size(), 1);
+    QVERIFY(!QFileInfo::exists(missing));
 }
 
 // The folders available can change while a primary runs, as when /run/user/<uid> appears
@@ -735,6 +768,60 @@ void TstSingleInstance::primaryInAnotherFolderIsFound()
 // group's lock. It only reads the lock file, so another launch never sees a lock that this
 // check made. A lock file left by a process that has exited stays as it is, for start() to
 // replace.
+void TstSingleInstance::launchWaitsForQuittingPrimaryInAnotherFolder_data()
+{
+    QTest::addColumn<bool>("released");
+    QTest::newRow("the other copy exits") << true;
+    QTest::newRow("the other copy does not exit") << false;
+}
+
+// A copy that holds the lock in another folder and has closed its endpoint is in its exit
+// wait, or starting. A launch whose own folder's lock is free waits for it as for a holder
+// of that lock, and becomes the primary only once it has let go.
+void TstSingleInstance::launchWaitsForQuittingPrimaryInAnotherFolder()
+{
+    QFETCH(bool, released);
+    QTemporaryDir cache(kShortTemp);
+    QVERIFY(cache.isValid());
+    const EnvOverride cacheHome("XDG_CACHE_HOME", QFile::encodeName(cache.path()));
+    QString otherLock;
+    {
+        const RuntimeRootOverride noRuntimeDir(cache.path() + QStringLiteral("/no-runtime"));
+        otherLock = mervin::ipc::instancePaths(kTestPipe).lockFile;
+    }
+    QVERIFY(otherLock.startsWith(cache.path() + QLatin1Char('/')));
+    QLockFile quitting(otherLock);
+    QVERIFY(quitting.tryLock(0));
+
+    std::atomic<bool> unlocked = false;
+    std::optional<Launch> result;
+    bool afterRelease = false;
+    bool listening = false;
+    const int waitMs = released ? 5000 : 600;
+    const std::unique_ptr<QThread> launch(QThread::create([&] {
+        SingleInstanceServer next;
+        result = mervin::ipc::claimOrHandOff(next, Message::open({QStringLiteral("c.pdf")}),
+                                             waitMs, kTestPipe);
+        afterRelease = unlocked;
+        listening = next.isListening();
+    }));
+    launch->start();
+    if (released) {
+        QThread::msleep(500);
+        unlocked = true;
+        quitting.unlock(); // the exit wait is over
+    }
+    QVERIFY(launch->wait(10000));
+    if (released) {
+        QCOMPARE(result, std::optional(Launch::Primary));
+        QVERIFY2(afterRelease, "became the primary while the other copy still held its lock");
+        QVERIFY(listening);
+    } else {
+        QCOMPARE(result, std::optional(Launch::Standalone));
+        QVERIFY(!listening);
+    }
+}
+
 void TstSingleInstance::lockCheckOnlyReadsTheLockFile()
 {
     QTemporaryDir cache(kShortTemp);
@@ -770,6 +857,64 @@ void TstSingleInstance::lockCheckOnlyReadsTheLockFile()
     QFile file(lockFile);
     QVERIFY(file.open(QIODevice::ReadOnly));
     QCOMPARE(file.readAll(), stale);
+}
+
+void TstSingleInstance::lockHolder_data()
+{
+    QTest::addColumn<QString>("holder");
+    QTest::addColumn<bool>("held");
+    QTest::newRow("no lock file") << QStringLiteral("none") << false;
+    QTest::newRow("this process") << QStringLiteral("self") << true;
+    QTest::newRow("a process that ended") << QStringLiteral("ended") << false;
+#  ifdef Q_OS_LINUX
+    QTest::newRow("another program under that ID") << QStringLiteral("other program") << false;
+#  endif
+    QTest::newRow("being written") << QStringLiteral("empty now") << true;
+    QTest::newRow("left without content") << QStringLiteral("empty old") << false;
+}
+
+// When a lock file counts as held by a live process, read without taking the lock.
+void TstSingleInstance::lockHolder()
+{
+    QFETCH(QString, holder);
+    QFETCH(bool, held);
+    QTemporaryDir dir(kShortTemp);
+    QVERIFY(dir.isValid());
+    const QString lockFile = QDir(dir.path()).filePath(QStringLiteral("group.lock"));
+    const QString self = QFileInfo(QCoreApplication::applicationFilePath()).fileName();
+    const auto writeLock = [&](qint64 pid, const QString &app) {
+        QFile file(lockFile);
+        return file.open(QIODevice::WriteOnly)
+            && file.write(QByteArray::number(pid) + '\n' + app.toUtf8() + '\n'
+                          + QSysInfo::machineHostName().toUtf8() + '\n')
+            > 0;
+    };
+    QProcess other;
+    const auto stopOther = qScopeGuard([&] {
+        other.kill();
+        other.waitForFinished();
+    });
+    if (holder == QLatin1String("self")) {
+        QVERIFY(writeLock(QCoreApplication::applicationPid(), self));
+    } else if (holder == QLatin1String("ended")) {
+        other.start(QStringLiteral("true"), {});
+        QVERIFY(other.waitForStarted());
+        const qint64 pid = other.processId();
+        QVERIFY(other.waitForFinished());
+        QVERIFY(writeLock(pid, self));
+    } else if (holder == QLatin1String("other program")) {
+        other.start(QStringLiteral("sleep"), {QStringLiteral("30")});
+        QVERIFY(other.waitForStarted());
+        QVERIFY(writeLock(other.processId(), self));
+    } else if (holder.startsWith(QLatin1String("empty"))) {
+        QFile file(lockFile);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        if (holder == QLatin1String("empty old"))
+            QVERIFY(file.setFileTime(QDateTime::currentDateTime().addSecs(-60),
+                                     QFileDevice::FileModificationTime));
+    }
+    QCOMPARE(mervin::ipc::lockHeldByLiveProcess(lockFile), held);
+    QCOMPARE(QFile::exists(lockFile), holder != QLatin1String("none")); // made or removed none
 }
 
 void TstSingleInstance::noRuntimeDirUsesPrivateCacheFolder()
@@ -1151,22 +1296,6 @@ void TstSingleInstance::newerPrimaryGoesBeforeLegacyCopy()
     QCOMPARE(primary.takeOpens().size(), 1);
     QTest::qWait(100);
     QVERIFY(legacy.received().isEmpty());
-}
-
-// Builds before this one listened in $XDG_RUNTIME_DIR. A launch that has the variable
-// still finds a primary there.
-void TstSingleInstance::primaryInXdgRuntimeDirIsFound()
-{
-    QTemporaryDir xdgDir(kShortTemp);
-    QVERIFY(QFile::setPermissions(xdgDir.path(),
-                                  QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
-    const EnvOverride xdg("XDG_RUNTIME_DIR", QFile::encodeName(xdgDir.path()));
-    LegacyCopy earlier(QDir(xdgDir.path()).filePath(kTestPipe), Legacy::Answers);
-    QTRY_VERIFY(earlier.listening);
-    const Message open = Message::open({QStringLiteral("/home/a/x.pdf")});
-    SingleInstanceServer launch;
-    QCOMPARE(mervin::ipc::claimOrHandOff(launch, open, 1000, kTestPipe), Launch::Delivered);
-    QTRY_COMPARE(earlier.received(), open.encode());
 }
 
 // A socket file an older copy left behind when it crashed is passed over at once.
