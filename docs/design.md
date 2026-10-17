@@ -1007,7 +1007,9 @@ it has seen, in the field mapping and the scoping of form actions of every Merge
 Extract and Split output. Walks that do not recurse, such as the climb from a widget
 through `/Parent` and the gathering of a file's field names, reach each object once and
 have no depth limit, so they see whole trees and a field tree is always pruned from its
-top.
+top. Each field on the climb is then pruned on its own too, which costs a lookup for a
+field that the walk from the top reached, and checks a field whose parent's `/Kids` does
+not list it.
 
 Pages can share one resources dictionary, or inherit it from `/Pages`, and then list the
 images and fonts of every page. Some writers also give each page its own copy of such a

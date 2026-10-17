@@ -75,6 +75,7 @@ enum class Reference {
     DeepStructure,   // a figure on page 2 below 100 levels of sections
     DeepField,       // a field with a widget on page 2, 104 levels below its top
     DeepFieldNoForm, // DeepField in a file without /AcroForm
+    UnlistedField,   // a field of page 1 whose /Parent's /Kids does not list it, above a field on page 2
 };
 
 // A page that shows `text` in two marked-content sequences, MCID 0 and 1.
@@ -604,6 +605,23 @@ void makeReferencedPdf(const QString &path, Reference reference)
         level100.getKey("/Kids").appendItem(after);
         if (reference == Reference::DeepField)
             installForm(q, {before, top, after});
+        break;
+    }
+    case Reference::UnlistedField: {
+        // "hidden" names "address" as its /Parent, but address's /Kids lists only "street", as
+        // a damaged file can. Below hidden, beside its page 1 widget, the secret field has
+        // its widget on page 2.
+        QPDFObjectHandle address = q.makeIndirectObject(parse("<< /T (address) >>"));
+        QPDFObjectHandle street = q.makeIndirectObject(parse("<< /FT /Tx /T (street) /V (kept street) >>"));
+        adopt(street, {widget(q, pages[0])});
+        QPDFObjectHandle hidden = q.makeIndirectObject(parse("<< /FT /Tx /T (hidden) >>"));
+        QPDFObjectHandle secret = q.makeIndirectObject(parse("<< /T (secret) >>"));
+        secret.replaceKey("/V", QPDFObjectHandle::newString(kSecret));
+        adopt(secret, {widget(q, pages[1])});
+        adopt(hidden, {widget(q, pages[0]), secret});
+        adopt(address, {street});
+        hidden.replaceKey("/Parent", address);
+        installForm(q, {address});
         break;
     }
     case Reference::ResetByName: {
@@ -1455,6 +1473,7 @@ void TstQpdf::deleteLeavesOutDeletedContent_data()
     QTest::newRow("structure deeper than 100 levels") << int(Reference::DeepStructure);
     QTest::newRow("field deeper than 100 levels") << int(Reference::DeepField);
     QTest::newRow("child field without a form") << int(Reference::ChildFieldNoForm);
+    QTest::newRow("field that its parent does not list") << int(Reference::UnlistedField);
 }
 
 /// Checks that no object of a Delete Pages copy holds the deleted page's content, or what
@@ -1546,6 +1565,16 @@ void TstQpdf::deleteLeavesOutDeletedContent()
         QVERIFY(pdfContains(out, "kept before"));
         QVERIFY(pdfContains(out, "kept after"));
         break;
+    case Reference::UnlistedField: {
+        // "street" stays below "address", and "hidden" keeps only its page 1 widget.
+        QCOMPARE(fields.getArrayNItems(), 1);
+        QCOMPARE(fields.getArrayItem(0).getKey("/Kids").getArrayNItems(), 1);
+        QPDFObjectHandle hidden = pages.at(0).getKey("/Annots").getArrayItem(1).getKey("/Parent");
+        QCOMPARE(QString::fromStdString(hidden.getKey("/T").getUTF8Value()), QStringLiteral("hidden"));
+        QCOMPARE(hidden.getKey("/Kids").getArrayNItems(), 1);
+        QVERIFY(pdfContains(out, "kept street"));
+        break;
+    }
     case Reference::ClosedOutline: {
         // Closed items count their remaining children as negative numbers.
         QCOMPARE(outlines.getKey("/Count").getIntValue(), 2LL);
@@ -1772,6 +1801,9 @@ void TstQpdf::copiesLeaveOutFieldsOfOtherPages_data()
                                                    << QStringLiteral("kept after") << 0;
     QTest::newRow("field deeper than 100 levels, no form") << int(Reference::DeepFieldNoForm)
                                                             << QStringLiteral("kept after") << 0;
+    // The widget of the field that address does not list is outside the form.
+    QTest::newRow("field that its parent does not list") << int(Reference::UnlistedField)
+                                                          << QStringLiteral("kept street") << 0;
 }
 
 /// Checks that Extract, Merge and Split copy no form data of pages they leave out, and keep
