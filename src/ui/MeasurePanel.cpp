@@ -77,7 +77,8 @@ MeasurePanel::MeasurePanel(QWidget *parent)
     // ── Header: title + close (the title doubles as the drag handle) ──
     auto *headerRow = new QHBoxLayout;
     headerRow->setContentsMargins(0, 0, 0, 0);
-    //: Title of the measuring tool panel (noun, the tool's name).
+    //: Title of the measuring tool's panel. Use the verb or the word for measuring, in the
+    //: form that reads naturally as a panel title, not a noun for a step, a unit or a size.
     auto *title = new QLabel(tr("Measure"), this);
     title->setObjectName(QStringLiteral("measureTitle"));
     QFont tf = title->font();
@@ -109,6 +110,8 @@ MeasurePanel::MeasurePanel(QWidget *parent)
     measureToggleBtn_->setCheckable(true);
     measureToggleBtn_->setToolButtonStyle(Qt::ToolButtonIconOnly);
     measureToggleBtn_->setIconSize(QSize(16, 16));
+    //: Tooltip of the panel's button that turns measuring on. Start with the verb or the
+    //: word for measuring, in the form that reads naturally in a tooltip.
     measureToggleBtn_->setToolTip(
         tr("Measure - click the page to place points; toggle off to select text"));
     cursorRow->addWidget(measureToggleBtn_);

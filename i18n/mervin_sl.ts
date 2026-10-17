@@ -407,12 +407,12 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     </message>
     <message>
         <source>&amp;Measure</source>
-        <extracomment>Toggles the measuring tool (distances, areas and angles on the page).</extracomment>
+        <extracomment>Turns the measuring tool on or off, for distances, paths, areas and angles on the page. Measure is the verb, so use the verb or the word for measuring, not a noun for a step, a unit or a size.</extracomment>
         <translation>&amp;Meri</translation>
     </message>
     <message>
         <source>Measure</source>
-        <extracomment>Tooltip of the toolbar&apos;s measure button (verb).</extracomment>
+        <extracomment>Tooltip of the toolbar&apos;s measuring tool button. Use the verb or the word for measuring, in the form that reads naturally in a tooltip.</extracomment>
         <translation>Meri</translation>
     </message>
     <message>
@@ -1022,7 +1022,7 @@ Button: starts printing.</extracomment>
     </message>
     <message>
         <source>Measure</source>
-        <extracomment>Keyboard shortcut list: turn the measuring tool on or off.</extracomment>
+        <extracomment>Keyboard shortcut list: turn the measuring tool on or off. Use the verb or the word for measuring, in the form that reads naturally in this list.</extracomment>
         <translation>Meri</translation>
     </message>
     <message>
@@ -2479,7 +2479,7 @@ Odprite sistemske nastavitve → Privzete aplikacije (ali z desno miškino tipko
     <name>mervin::MeasurePanel</name>
     <message>
         <source>Measure</source>
-        <extracomment>Title of the measuring tool panel (noun, the tool&apos;s name).</extracomment>
+        <extracomment>Title of the measuring tool&apos;s panel. Use the verb or the word for measuring, in the form that reads naturally as a panel title, not a noun for a step, a unit or a size.</extracomment>
         <translation>Merjenje</translation>
     </message>
     <message>
@@ -2488,6 +2488,7 @@ Odprite sistemske nastavitve → Privzete aplikacije (ali z desno miškino tipko
     </message>
     <message>
         <source>Measure - click the page to place points; toggle off to select text</source>
+        <extracomment>Tooltip of the panel&apos;s button that turns measuring on. Start with the verb or the word for measuring, in the form that reads naturally in a tooltip.</extracomment>
         <translation>Izmeri - kliknite stran, da postavite točke; izklopite, da izberete besedilo</translation>
     </message>
     <message>
