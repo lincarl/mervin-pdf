@@ -1201,7 +1201,8 @@ It saves `recent.json` and announces the list once when the prune pass that foun
 them has its last answer, and otherwise `kMountSaveMs` (half a second) after the
 first one, on a timer that later finds do not restart. `FileProbe` answers one file
 at a time, so a pass on a slow share saves at most twice a second rather than once
-per file. Such a check never replaces a recorded mount.
+per file. An ordinary quit saves the mounts still waiting, before the final write
+of the app's files. Such a check never replaces a recorded mount.
 `recordOpen` gives the mount to the session too, which saves it for each open or kept
 document in `"mounts"` of `session.json`. Restore therefore still has it after Recent
 trims or clears the file. For a session saved before that field existed, restore

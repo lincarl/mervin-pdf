@@ -156,6 +156,28 @@ private slots:
         QCOMPARE(onDisk.recordedMount(kept_), mount);
     }
 
+    // A mount found just before quitting is saved on the way out, not lost with
+    // the timer that would have saved it, or the next start could drop the entry
+    // while its share is away.
+    void savesFoundMountsOnQuit()
+    {
+        Settings s = Settings::load();
+        s.recentKeepMissing = true; // no prune pass that would save at its end
+        QVERIFY(s.save());
+        {
+            WindowManager wm;
+            QSignalSpy checked(wm.fileProbe(), &FileProbe::checked);
+            wm.fileProbe()->check({{kept_, QString()}});
+            QVERIFY(checked.wait(10000));
+            // Found, and waiting for the save that kMountSaveMs delays.
+            QCOMPARE(entry(wm, kept_).mount, QString());
+        }
+        QVERIFY(mervin::appfiles::flush(10000));
+        RecentStore onDisk;
+        QVERIFY(onDisk.load(RecentStore::defaultFile()));
+        QCOMPARE(onDisk.recordedMount(kept_), RecentStore::mountOf(kept_));
+    }
+
     // A pass over many entries an older version wrote records every mount, but
     // saves recent.json and announces the list together, not once per answer,
     // since each announcement rebuilds every Recent page. The probe answers one

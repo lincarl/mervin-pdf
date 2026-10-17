@@ -213,9 +213,9 @@ public:
     // Its checks, as any other, record the mount of a file found there whose entry
     // has none (RecentStore::setMissingMounts).
     void pruneMissingRecent();
-    // Mounts found that way are saved, and the list announced, all together when
-    // the prune pass that found them ends, and otherwise at most this long after
-    // the first of them was found. Later finds do not delay the save.
+    // Mounts found that way are saved, and the list announced, together when the
+    // prune pass that found them ends, and otherwise at most this long after the
+    // first was found. Later finds do not delay the save, and a quit saves them.
     static constexpr int kMountSaveMs = 500;
 
     // Crash recovery / session restore (M11). restoreSession() loads the saved

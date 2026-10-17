@@ -1066,6 +1066,10 @@ WindowManager::~WindowManager()
     // updater must not add the ordinary five-second exit budget to logoff.
     if (sessionend::active())
         return;
+    // Mounts found within the last kMountSaveMs are saved with the rest. The
+    // windows are gone, so nothing is announced.
+    if (recent_.setMissingMounts(std::exchange(mountsDue_, {})))
+        appfiles::write(recentFile_, recent_.toJson());
     QElapsedTimer exitWait;
     exitWait.start();
     const auto left = [&exitWait] {
