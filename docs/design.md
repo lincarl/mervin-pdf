@@ -950,6 +950,14 @@ widget that a page lists. That also covers a source without `/AcroForm`, whose w
 reach their field tree only through `/Parent`, and a reference that could not be
 rewritten. The output has no `/CO` or `/XFA`, as `transformAnnotations` copies neither.
 
+`addPage` also copies the annotations that a copied annotation names, so a reply's `/IRT`
+brings along the note it answers, with its contents and popup, from a page left out.
+`copyBatch` points `/IRT`, `/Popup` and a popup's `/Parent` of the copied annotations at
+the copies that the same pass made. `finish` then replaces with null every annotation that
+no output page lists and whose `/P` is not an output page, and every popup whose `/Parent`
+is such an annotation. This is the rule of Delete Pages below, so a copied reply stays and
+answers nothing.
+
 Delete Pages removes pages from the source's own `QPDF` and writes it, so it keeps
 encryption, outlines and structure. `QPDFPageDocumentHelper::removePage` only takes a
 page out of `/Pages`, so `removeDeletedContent` then removes what only the deleted
@@ -965,7 +973,8 @@ stay. It removes the form fields whose widgets are all on deleted pages from `/F
 `/CO` and their parents' `/Kids`, and drops `/XFA` when it removes one. Finally it
 replaces the deleted pages, their annotations that no kept page lists and the removed
 fields with null (`QPDF::replaceObject`), so links and other references cannot keep
-their content in the output. A damaged outline or structure
+their content in the output. A reply on a kept page keeps its `/IRT`, which then names
+null, so it answers nothing. A damaged outline or structure
 tree is left as it was.
 
 Pages can share one resources dictionary, or inherit it from `/Pages`, and then list the

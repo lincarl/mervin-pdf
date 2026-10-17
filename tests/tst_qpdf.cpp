@@ -47,7 +47,7 @@ enum class Reference {
     NamedOutline,    // the same through a GoTo action and a named destination
     NestedOutline,   // such a bookmark below one that stays, and one to page 2 above one that stays
     Link,            // a link on page 1 to page 2
-    Reply,           // a reply on page 1 to a note on page 2
+    Reply,           // a reply on page 1 to a note on page 2, each with a popup
     Field,           // a text field whose only widget is on page 2
     CalculatedField, // a parent field in /CO whose only widget is on page 2
     ChildField,      // a child field on page 2 beside a child field on page 1
@@ -64,6 +64,7 @@ enum class Reference {
     ClosedOutline,   // closed bookmarks with children on pages 1 and 2, and only on page 2
     SharedWidget,    // a field whose one widget pages 1 and 2 both list
     WidgetlessField, // a field that no page shows, beside a field on page 2
+    ReplyInForm,     // Reply in a file with a form, so copies go through transformAnnotations
 };
 
 // A page that shows `text` in two marked-content sequences, MCID 0 and 1.
@@ -247,7 +248,8 @@ void makeReferencedPdf(const QString &path, Reference reference)
         annotate(pages[0], link);
         break;
     }
-    case Reference::Reply: {
+    case Reference::Reply:
+    case Reference::ReplyInForm: {
         QPDFObjectHandle note = q.makeIndirectObject(
             parse("<< /Type /Annot /Subtype /Text /Rect [72 600 92 620] >>"));
         note.replaceKey("/Contents", QPDFObjectHandle::newString(kSecret + " note"));
@@ -256,6 +258,16 @@ void makeReferencedPdf(const QString &path, Reference reference)
             parse("<< /Type /Annot /Subtype /Text /Rect [72 600 92 620] /Contents (Reply) >>"));
         reply.replaceKey("/IRT", note);
         annotate(pages[0], reply);
+        for (size_t i : {size_t(0), size_t(1)}) {
+            QPDFObjectHandle markup = i == 0 ? reply : note;
+            QPDFObjectHandle popup = q.makeIndirectObject(
+                parse("<< /Type /Annot /Subtype /Popup /Rect [100 600 300 700] >>"));
+            popup.replaceKey("/Parent", markup);
+            markup.replaceKey("/Popup", popup);
+            annotate(pages[i], popup);
+        }
+        if (reference == Reference::ReplyInForm)
+            installForm(q, {widget(q, pages[0], "/FT /Tx /T (name) /V (kept name)")});
         break;
     }
     case Reference::Field:
@@ -616,6 +628,36 @@ QStringList fieldPages(const QString &path)
     return lines;
 }
 
+// The first reason the comment "Reply" of page `index` of `path` is not a comment of its own
+// on that page, with its popup there too, or an empty string.
+QString replyProblem(const QString &path, int index)
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    q.processFile(name.constData());
+    QPDFObjectHandle page = q.getAllPages().at(size_t(index));
+    QPDFObjectHandle annots = page.getKey("/Annots");
+    if (!annots.isArray())
+        return QStringLiteral("no annotations");
+    std::set<QPDFObjGen> listed;
+    for (QPDFObjectHandle annot : annots.aitems())
+        listed.insert(annot.getObjGen());
+    for (QPDFObjectHandle annot : annots.aitems()) {
+        QPDFObjectHandle contents = annot.getKey("/Contents");
+        if (!contents.isString() || contents.getUTF8Value() != "Reply")
+            continue;
+        if (annot.getKey("/IRT").isDictionary())
+            return QStringLiteral("the reply still answers a note");
+        QPDFObjectHandle popup = annot.getKey("/Popup");
+        if (!popup.isDictionary() || !listed.count(popup.getObjGen()))
+            return QStringLiteral("the reply's popup is not on its page");
+        if (popup.getKey("/Parent").getObjGen() != annot.getObjGen())
+            return QStringLiteral("the popup belongs to another annotation");
+        return {};
+    }
+    return QStringLiteral("no reply");
+}
+
 // Rewrites `path` with `blob` as its /Mervin_Measurements, as a string or as the JSON of a
 // stream.
 void setMeasurementBlob(const QString &path, const std::string &blob, bool stream)
@@ -728,6 +770,8 @@ private slots:
     void copiesKeepAFieldThatCopiedPagesShare();
     void copiesLeaveOutResourcesOfOtherPages_data();
     void copiesLeaveOutResourcesOfOtherPages();
+    void copiesLeaveOutCommentsOfOtherPages_data();
+    void copiesLeaveOutCommentsOfOtherPages();
     void mergeNamesInputWithBadMeasurements_data();
     void mergeNamesInputWithBadMeasurements();
     void deleteNamesSourceWithBadMeasurements_data();
@@ -1105,6 +1149,7 @@ void TstQpdf::deleteLeavesOutDeletedContent_data()
     QTest::newRow("closed bookmarks") << int(Reference::ClosedOutline);
     QTest::newRow("widget on two pages") << int(Reference::SharedWidget);
     QTest::newRow("field without widget") << int(Reference::WidgetlessField);
+    QTest::newRow("reply in a form") << int(Reference::ReplyInForm);
 }
 
 /// Checks that no object of a Delete Pages copy holds the deleted page's content, or what
@@ -1204,8 +1249,12 @@ void TstQpdf::deleteLeavesOutDeletedContent()
         break;
     }
     case Reference::Link:
-    case Reference::Reply:
         QCOMPARE(pages.at(0).getKey("/Annots").getArrayNItems(), 1);
+        break;
+    case Reference::Reply:
+    case Reference::ReplyInForm:
+        // The reply and its popup stay, without the note they answered.
+        QCOMPARE(replyProblem(out, 0), QString());
         break;
     case Reference::Field:
     case Reference::TaggedWidget:
@@ -1457,6 +1506,53 @@ void TstQpdf::copiesLeaveOutResourcesOfOtherPages()
     QVERIFY(pdfContains(parts.at(1), kSecret));
     QVERIFY(!pdfContains(parts.at(2), kSecret));
     QVERIFY(pdfContains(parts.at(2), "IMAGETHREE"));
+}
+
+/// A reply to a note on page 2, in a file without and with a form.
+void TstQpdf::copiesLeaveOutCommentsOfOtherPages_data()
+{
+    QTest::addColumn<int>("reference");
+    QTest::newRow("reply") << int(Reference::Reply);
+    QTest::newRow("reply in a form") << int(Reference::ReplyInForm);
+}
+
+/// Checks that Extract, Merge and Split leave out the note that a copied reply answers when
+/// they leave out its page, as Delete Pages does, and keep the reply on its page.
+void TstQpdf::copiesLeaveOutCommentsOfOtherPages()
+{
+    QFETCH(int, reference);
+    const QString src = in(QStringLiteral("comments_src_%1.pdf").arg(reference));
+    const QString other = in(QStringLiteral("comments_other_%1.pdf").arg(reference));
+    const QString out = in(QStringLiteral("comments_out_%1.pdf").arg(reference));
+    makeReferencedPdf(src, Reference(reference));
+    makePdf(other, 1);
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0}, {}}}, out), PageOps::Status::Ok);
+    QVERIFY(!pdfContains(out, kSecret));
+    QCOMPARE(replyProblem(out, 0), QString());
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {2, 0}, {}}}, out), PageOps::Status::Ok);
+    QVERIFY(!pdfContains(out, kSecret));
+    QCOMPARE(replyProblem(out, 1), QString());
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{other, {}, {}}, {src, {0}, {}}}, out),
+             PageOps::Status::Ok);
+    QVERIFY(!pdfContains(out, kSecret));
+    QCOMPARE(replyProblem(out, 1), QString());
+
+    // With both pages, the reply still answers the note.
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0, 1}, {}}}, out), PageOps::Status::Ok);
+    QVERIFY(pdfContains(out, kSecret));
+    QCOMPARE(replyProblem(out, 0), QStringLiteral("the reply still answers a note"));
+
+    QStringList parts;
+    QCOMPARE(PageOps::split(src, dir_.path(), QStringLiteral("comments-%1").arg(reference), QString(),
+                            &parts),
+             PageOps::Status::Ok);
+    QCOMPARE(parts.size(), 3);
+    QVERIFY(!pdfContains(parts.at(0), kSecret));
+    QCOMPARE(replyProblem(parts.at(0), 0), QString());
+    QVERIFY(pdfContains(parts.at(1), kSecret));
 }
 
 /// A string blob and a stream from a newer measurement format.
