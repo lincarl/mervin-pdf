@@ -961,17 +961,20 @@ no output page lists and whose `/P` is not an output page, and every popup whose
 is such an annotation. This is the rule of Delete Pages below, so a copied reply stays and
 answers nothing.
 
-A SubmitForm or ResetForm action without `/Fields`, or with the Exclude flag (bit 1 of
-`/Flags`), acts on every field of the document, or every field but the listed ones. When
-an output has pages from more than one file, `FormCopy::scopeFormActions` therefore
-gives each such action, in `/A`, `/AA` and `/Next` of the pages, their annotations and
-the fields above their widgets, an explicit `/Fields` list of the top-level fields copied
-from its own file, without the excluded fields and without the flag. Otherwise a submit
-button of one file would send the fields that came from another. An action that would
-list no field is removed instead, because viewers such as PDF.js read an empty `/Fields`
-as every field. The actions in its `/Next` take its place, and a key whose only action
-goes is removed. Repeated pages of one file and single-file outputs keep their actions as
-they were. JavaScript actions cannot be limited this way and stay.
+A SubmitForm or ResetForm action without `/Fields`, with an empty `/Fields`, which
+viewers such as PDF.js read as every field, or with the Exclude flag (bit 1 of `/Flags`)
+acts on every field of the document, or every field but the listed ones. When an output
+has pages from more than one file, `FormCopy::scopeFormActions` therefore gives each such
+action, in `/A`, `/AA` and `/Next` of the pages, their annotations and the fields above
+their widgets, an explicit `/Fields` list of the top-level fields copied from its own
+file, without the excluded fields and without the flag. Otherwise a submit button of one
+file would send the fields that came from another. In every output it also drops the
+entries that name a field the copy left out, or, in a merge, a field of another file. An
+action whose listed fields are all gone, or that would list no field, is removed instead
+of getting an empty `/Fields`. The actions in its `/Next` take its place, and a key whose
+only action goes is removed. An Exclude list whose fields are all gone excludes nothing.
+Repeated pages of one file and single-file outputs keep an action that names no fields as
+it was. JavaScript actions cannot be limited this way and stay.
 
 Delete Pages removes pages from the source's own `QPDF` and writes it, so it keeps
 encryption, outlines and structure. `QPDFPageDocumentHelper::removePage` only takes a
