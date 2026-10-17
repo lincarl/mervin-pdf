@@ -682,10 +682,13 @@ void pruneStructure(QPDF &q, const Removal &removal)
 }
 
 /// Removes the form fields that only deleted pages show, from /Fields, /CO and their
-/// parents' /Kids, and returns them. That includes the trees that the widgets of kept pages
-/// reach through /Parent when /AcroForm does not list them, as in files that Extract wrote
-/// before it copied forms. Removing a field also drops /XFA, whose data holds every field's
-/// value and would no longer match the form.
+/// parents' /Kids, and returns the ones to replace with null. That includes the trees that
+/// the widgets of kept pages reach through /Parent when /AcroForm does not list them, as in
+/// files that Extract wrote before it copied forms. A field above such a widget is not
+/// returned, even when the walk through /Kids did not reach the widget, as in a damaged
+/// file, because the widget inherits its type, flags and name from it. Its other kids that
+/// only deleted pages show go all the same. Removing a field also drops /XFA, whose data
+/// holds every field's value and would no longer match the form.
 ObjectSet pruneDeletedFields(QPDF &q, const Removal &removal)
 {
     FieldPruner pruner(removal.keptAnnotations, &removal.annotations);
@@ -694,12 +697,19 @@ ObjectSet pruneDeletedFields(QPDF &q, const Removal &removal)
         pruner.pruneArray(form.getKey("/Fields"));
         pruner.pruneArray(form.getKey("/CO"));
     }
+    ObjectSet used; // the fields above the widgets of kept pages
     // A tree that /Fields lists was pruned above, which makes this a lookup.
     for (QPDFObjectHandle widget : removal.keptWidgets)
-        pruneFieldsOf(widget, pruner);
+        for (QPDFObjectHandle field : pruneFieldsOf(widget, pruner))
+            if (field.isIndirect())
+                used.insert(field.getObjGen());
     if (form.isDictionary() && !pruner.removed().empty())
         form.removeKey("/XFA");
-    return pruner.removed();
+    ObjectSet gone;
+    for (const QPDFObjGen &id : pruner.removed())
+        if (!used.count(id))
+            gone.insert(id);
+    return gone;
 }
 
 /// Whether pages of `q` can list images and fonts that other pages draw: they share a
