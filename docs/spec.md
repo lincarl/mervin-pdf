@@ -226,9 +226,11 @@ combines several files, a copied button or action that submits or resets every f
 every field but some, acts only on the fields that came from its own file, and one that
 would act on no field is left out. An empty list of fields counts as every field, as
 viewers read it so. A button that lists only fields the new file leaves out is left out
-too. Form scripts, which Mervin does not run, can still read every field of the merged
-file in viewers that run them. The new file does not keep the form's calculation order
-or XFA data, so calculated fields no longer update in viewers that use them.
+too. In a damaged file, a chain of actions ends after 100 actions or where it comes back
+to an earlier one, and fields more than 100 levels below their top field are left out of
+the form. Form scripts, which Mervin does not run, can still read every field of the
+merged file in viewers that run them. The new file does not keep the form's calculation
+order or XFA data, so calculated fields no longer update in viewers that use them.
 
 Merge opens at once and reads each input's page count in the background. Pending
 rows show Reading and keep Merge disabled. The footer names the first row and file
@@ -273,8 +275,10 @@ does not contain the deleted pages' content, images, annotations or form fields,
 the bookmarks, destination names and tagged structure elements that lead only to them.
 Links and other references to a deleted page no longer go anywhere. A comment that
 replies to a comment on a deleted page stays, as a comment of its own. A form that
-loses a field also loses its XFA data, which holds every field's value. Extract and
-Delete share one remembered Open when done choice.
+loses a field also loses its XFA data, which holds every field's value. In a damaged
+file, bookmarks, tagged structure and form fields more than 100 levels deep lose what
+lies below that depth, and a list of bookmarks that comes back to an earlier one ends
+there. Extract and Delete share one remembered Open when done choice.
 
 Extract and Delete check the source in the background before opening their dialog.
 Their write checks the chosen password and page count again. A changed count keeps
