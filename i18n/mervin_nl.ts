@@ -404,7 +404,7 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     </message>
     <message>
         <source>Measure</source>
-        <extracomment>Tooltip of the toolbar&apos;s measuring tool button. Use the same word as the Measure action, the verb or the word for measuring.</extracomment>
+        <extracomment>Tooltip of the toolbar&apos;s measuring tool button. Use the verb or the word for measuring, in the form that reads naturally in a tooltip.</extracomment>
         <translation>Meten</translation>
     </message>
     <message>
@@ -1014,7 +1014,7 @@ Button: starts printing.</extracomment>
     </message>
     <message>
         <source>Measure</source>
-        <extracomment>Keyboard shortcut list: turn the measuring tool on or off. Use the same word as the Measure action, the verb or the word for measuring.</extracomment>
+        <extracomment>Keyboard shortcut list: turn the measuring tool on or off. Use the verb or the word for measuring, in the form that reads naturally in this list.</extracomment>
         <translation>Meten</translation>
     </message>
     <message>
@@ -2459,7 +2459,7 @@ Open de instellingen van uw systeem → Standaardtoepassingen (of klik met de re
     <name>mervin::MeasurePanel</name>
     <message>
         <source>Measure</source>
-        <extracomment>Title of the measuring tool&apos;s panel. Use the same word as the Measure action, the verb or the word for measuring, not a noun for a step, a unit or a size.</extracomment>
+        <extracomment>Title of the measuring tool&apos;s panel. Use the verb or the word for measuring, in the form that reads naturally as a panel title, not a noun for a step, a unit or a size.</extracomment>
         <translation>Meten</translation>
     </message>
     <message>
@@ -2468,7 +2468,7 @@ Open de instellingen van uw systeem → Standaardtoepassingen (of klik met de re
     </message>
     <message>
         <source>Measure - click the page to place points; toggle off to select text</source>
-        <extracomment>Tooltip of the panel&apos;s button that turns measuring on. Start with the same word as the Measure action, the verb or the word for measuring.</extracomment>
+        <extracomment>Tooltip of the panel&apos;s button that turns measuring on. Start with the verb or the word for measuring, in the form that reads naturally in a tooltip.</extracomment>
         <translation>Meten - klik op de pagina om punten te plaatsen; schakel uit om tekst te selecteren</translation>
     </message>
     <message>

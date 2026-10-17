@@ -209,8 +209,8 @@ constexpr ShortcutRow kShortcuts[] = {
     //: Keyboard shortcut list: recognise the text in a selected region.
     //: OCR is optical character recognition.
     {QT_TRANSLATE_NOOP("SettingsDialog", "OCR selection"), "Ctrl+Shift+O"},
-    //: Keyboard shortcut list: turn the measuring tool on or off. Use the same word as
-    //: the Measure action, the verb or the word for measuring.
+    //: Keyboard shortcut list: turn the measuring tool on or off. Use the verb or the word
+    //: for measuring, in the form that reads naturally in this list.
     {QT_TRANSLATE_NOOP("SettingsDialog", "Measure"), "Ctrl+Shift+M"},
     //: Keyboard shortcut list: turn the form filling tool on or off.
     {QT_TRANSLATE_NOOP("SettingsDialog", "Fill forms"), "Ctrl+Shift+F"},

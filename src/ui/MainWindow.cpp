@@ -908,8 +908,8 @@ void MainWindow::createActions()
     measureAction_ = new QAction(tr("&Measure"), this);
     // The toolbar button needs its own tooltip. The default one is the menu text with
     // only the '&' removed, so a CJK mnemonic suffix such as "(M)" would show.
-    //: Tooltip of the toolbar's measuring tool button. Use the same word as the Measure
-    //: action, the verb or the word for measuring.
+    //: Tooltip of the toolbar's measuring tool button. Use the verb or the word for
+    //: measuring, in the form that reads naturally in a tooltip.
     measureAction_->setToolTip(tr("Measure"));
     measureAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_M));
     measureAction_->setCheckable(true);
