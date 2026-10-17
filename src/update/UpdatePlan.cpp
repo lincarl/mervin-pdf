@@ -38,48 +38,34 @@ bool isNewerStableVersion(const QVersionNumber &candidate, QString installedVers
     return comparison > 0 || (comparison == 0 && !match.captured(2).isEmpty());
 }
 
-std::optional<Release> parseRelease(const QByteArray &json)
+QString packageKindName(PackageKind kind)
 {
-    const QJsonObject root = QJsonDocument::fromJson(json).object();
-    if (root.value(QStringLiteral("draft")).toBool()
-        || root.value(QStringLiteral("prerelease")).toBool())
-        return std::nullopt;
-    Release r;
-    r.tag = root.value(QStringLiteral("tag_name")).toString();
-    r.version = parseVersion(r.tag);
-    if (r.version.isNull())
-        return std::nullopt;
-    r.pageUrl = root.value(QStringLiteral("html_url")).toString();
-
-    const QString digestPrefix = QStringLiteral("sha256:");
-    for (const QJsonValue &v : root.value(QStringLiteral("assets")).toArray()) {
-        const QJsonObject a = v.toObject();
-        ReleaseAsset asset;
-        asset.name = a.value(QStringLiteral("name")).toString();
-        asset.url = a.value(QStringLiteral("browser_download_url")).toString();
-        const QString digest = a.value(QStringLiteral("digest")).toString();
-        if (digest.startsWith(digestPrefix))
-            asset.sha256 = digest.mid(digestPrefix.size()).toLower();
-        if (!asset.name.isEmpty() && !asset.url.isEmpty())
-            r.assets.append(asset);
+    switch (kind) {
+    case PackageKind::None:
+        return QStringLiteral("none");
+    case PackageKind::Msi:
+        return QStringLiteral("msi");
+    case PackageKind::Msix:
+        return QStringLiteral("msix");
+    case PackageKind::AppImage:
+        return QStringLiteral("appimage");
+    case PackageKind::Deb:
+        return QStringLiteral("deb");
+    case PackageKind::Rpm:
+        return QStringLiteral("rpm");
     }
-    return r;
+    return QStringLiteral("none");
 }
 
-std::optional<ReleaseAsset> assetFor(const QList<ReleaseAsset> &assets, PackageKind kind,
-                                     const QString &osVersion)
+bool isPackageFileName(PackageKind kind, const QString &fileName)
 {
     // Asset names as release.yml publishes them.
-    auto named = [](const ReleaseAsset &a, QLatin1StringView prefix, QLatin1StringView suffix) {
-        return a.name.startsWith(prefix, Qt::CaseInsensitive)
-            && a.name.endsWith(suffix, Qt::CaseInsensitive);
-    };
     QLatin1StringView prefix;
     QLatin1StringView suffix;
     switch (kind) {
     case PackageKind::None:
     case PackageKind::Msix:
-        return std::nullopt;
+        return false;
     case PackageKind::Msi: // MervinPDF-1.64.0.msi
         prefix = QLatin1StringView("MervinPDF-");
         suffix = QLatin1StringView(".msi");
@@ -97,11 +83,52 @@ std::optional<ReleaseAsset> assetFor(const QList<ReleaseAsset> &assets, PackageK
         suffix = QLatin1StringView(".x86_64.rpm");
         break;
     }
+    // The name becomes a path in the updates folder, so it must stay there.
+    return fileName.startsWith(prefix, Qt::CaseInsensitive)
+        && fileName.endsWith(suffix, Qt::CaseInsensitive) && !fileName.contains(QLatin1Char('/'))
+        && !fileName.contains(QLatin1Char('\\'));
+}
 
+ReleaseResponse parseRelease(const QByteArray &json)
+{
+    // Anything but an object with a string tag_name is not a release answer.
+    const QJsonObject root = QJsonDocument::fromJson(json).object();
+    const QJsonValue tag = root.value(QStringLiteral("tag_name"));
+    if (!tag.isString())
+        return {};
+    ReleaseResponse response{true, std::nullopt};
+    if (root.value(QStringLiteral("draft")).toBool()
+        || root.value(QStringLiteral("prerelease")).toBool())
+        return response;
+    Release r;
+    r.tag = tag.toString();
+    r.version = parseVersion(r.tag);
+    if (r.version.isNull())
+        return response;
+    r.pageUrl = root.value(QStringLiteral("html_url")).toString();
+
+    const QString digestPrefix = QStringLiteral("sha256:");
+    for (const QJsonValue &v : root.value(QStringLiteral("assets")).toArray()) {
+        const QJsonObject a = v.toObject();
+        ReleaseAsset asset;
+        asset.name = a.value(QStringLiteral("name")).toString();
+        asset.url = a.value(QStringLiteral("browser_download_url")).toString();
+        const QString digest = a.value(QStringLiteral("digest")).toString();
+        if (digest.startsWith(digestPrefix))
+            asset.sha256 = digest.mid(digestPrefix.size()).toLower();
+        if (!asset.name.isEmpty() && !asset.url.isEmpty())
+            r.assets.append(asset);
+    }
+    response.release = std::move(r);
+    return response;
+}
+
+std::optional<ReleaseAsset> assetFor(const QList<ReleaseAsset> &assets, PackageKind kind,
+                                     const QString &osVersion)
+{
     std::optional<ReleaseAsset> match;
     for (const ReleaseAsset &a : assets) {
-        if (!named(a, prefix, suffix) || a.sha256.isEmpty() || a.name.contains(QLatin1Char('/'))
-            || a.name.contains(QLatin1Char('\\')))
+        if (!isPackageFileName(kind, a.name) || a.sha256.isEmpty())
             continue;
         if (kind == PackageKind::Deb && !osVersion.isEmpty()
             && a.name.contains(QStringLiteral("_ubuntu%1_").arg(osVersion), Qt::CaseInsensitive))

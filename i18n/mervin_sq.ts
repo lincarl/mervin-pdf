@@ -4158,10 +4158,15 @@ Vazhdoni?</translation>
         <source>Couldn&apos;t check for updates right now.
 
 %1</source>
-        <extracomment>%1 is the network error message.</extracomment>
+        <extracomment>%1 says why, such as a network error message.</extracomment>
         <translation>Nuk mund të kontrolloja për përditësime për momentin.
 
 %1</translation>
+    </message>
+    <message>
+        <source>The update server&apos;s answer couldn&apos;t be read.</source>
+        <extracomment>Shown below &quot;Couldn&apos;t check for updates right now.&quot; when the update server&apos;s answer was not release information, such as a web page from a network filter.</extracomment>
+        <translation>Përgjigjja e serverit të përditësimeve nuk mund të lexohej.</translation>
     </message>
     <message>
         <source>Check for Updates</source>

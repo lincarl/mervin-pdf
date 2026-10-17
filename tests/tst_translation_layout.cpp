@@ -35,6 +35,7 @@
 #include "ui/ThemeTokens.h"
 #include "ui/ViewerWidget.h"
 #include "ui/WaitBar.h"
+#include "update/Updater.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -259,6 +260,8 @@ private slots:
     void splitMessages();
     void toolPanels_data() { addLanguageMatrix(); }
     void toolPanels();
+    void updateCheckWarning_data() { addLanguageMatrix(); }
+    void updateCheckWarning();
     void waitBar_data() { addLanguageMatrix(); }
     void waitBar();
 
@@ -574,6 +577,16 @@ void TstTranslationLayout::loadPlaceholder()
     QCOMPARE(reserved->findChild<QLabel *>(QStringLiteral("documentLoadStatus"))->text(),
              mervin::TabPage::pathBeingWrittenError());
     inspect(window, QStringLiteral("Opening an output that is being written"), reserved);
+}
+
+/// Checks the warning a manual update check shows when the server's answer is not a release.
+void TstTranslationLayout::updateCheckWarning()
+{
+    QMessageBox warning(QMessageBox::Warning, mervin::Updater::tr("Update"),
+        mervin::Updater::tr("Couldn't check for updates right now.\n\n%1")
+            .arg(mervin::Updater::tr("The update server's answer couldn't be read.")),
+        QMessageBox::Ok);
+    inspect(warning, QStringLiteral("Update check answer not readable"));
 }
 
 // The bar over a tab whose operation waits for a drive that stopped answering, saving

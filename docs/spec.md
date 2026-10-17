@@ -382,11 +382,20 @@ Network access follows an explicit action or the automatic update setting:
   startup when at least 30 days have passed since the last successful check (on by
   default, off in Settings > General). A profile without a saved check date checks on its next start.
   Successful manual checks also reset the interval. Failed scheduled checks retry
-  on the next start after network or download transfer errors. Handing off to the
+  on the next start after network or download transfer errors, or when the update
+  server's answer cannot be read, as when a network filter returns its own page.
+  A manual check then says that it could not check. A downloaded update that no
+  longer matches its checksum when it is about to install is deleted, and the next
+  start checks again. Handing off to the
   Windows installer also resets the interval, so an unsuccessful installation
   cannot cause an immediate install and restart loop. An installed copy
   downloads the new release in the same package format it was installed from
   (MSI installer, AppImage, .deb, or .rpm), installs it automatically, then restarts.
+  Copies in different formats on one computer, such as an AppImage beside the .deb
+  install, keep separate check dates and downloads, and never install or delete each
+  other's packages. Each start of an installed copy deletes its downloaded update
+  once that is no longer newer than the copy, such as the one just installed, also
+  with automatic updates off.
   This applies to both Check for Updates and scheduled checks, with no separate
   install confirmation. The usual save prompts protect unsaved documents, and
   cancelling a save prompt cancels the restart. Operating system permission

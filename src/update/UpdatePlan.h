@@ -20,6 +20,15 @@ namespace mervin::update {
 // Store manage Msix updates; that kind must never use GitHub release assets.
 enum class PackageKind { None, Msi, Msix, AppImage, Deb, Rpm };
 
+// The name under which a kind keeps its update state, in QSettings keys and as
+// its folder in the updates folder, such as "appimage". Stored, so never rename one.
+QString packageKindName(PackageKind kind);
+
+// Whether `fileName` is a `kind` package named as release.yml names it, such as
+// MervinPDF-1.64.0-x86_64.AppImage for an AppImage, and a plain file name.
+// Never true for None or Msix.
+bool isPackageFileName(PackageKind kind, const QString &fileName);
+
 inline constexpr int kDaysPerCheck = 30;
 
 // Check on startup after 30 days. Missing or future timestamps need a fresh
@@ -49,12 +58,21 @@ QVersionNumber parseVersion(QString text);
 // release candidate with the same numeric version, but never a newer base version.
 bool isNewerStableVersion(const QVersionNumber &candidate, QString installedVersion);
 
-// A GitHub "latest release" API response, or nullopt for a draft, prerelease,
-// or unusable version tag.
-std::optional<Release> parseRelease(const QByteArray &json);
+// What a GitHub "latest release" API response says.
+struct ReleaseResponse
+{
+    // A JSON object with a string tag_name. Anything else, such as a proxy's
+    // notice page sent with HTTP 200, says nothing about the releases.
+    bool understood = false;
+    // Nullopt for a draft, a prerelease or a tag that is not a stable version,
+    // and when the response is not understood.
+    std::optional<Release> release;
+};
 
-// Choose a package-kind asset or nullopt. Require an x86-64 build, SHA-256 digest and plain
-// filename. For .deb alternatives, prefer QSysInfo::productVersion via osVersion.
+ReleaseResponse parseRelease(const QByteArray &json);
+
+// Choose a package-kind asset or nullopt. Require a name isPackageFileName accepts
+// and a SHA-256 digest. For .deb alternatives, prefer QSysInfo::productVersion via osVersion.
 std::optional<ReleaseAsset> assetFor(const QList<ReleaseAsset> &assets, PackageKind kind,
                                      const QString &osVersion);
 

@@ -254,7 +254,7 @@ These still touch the disk on the UI thread and are planned work:
   the UI thread. Opening the completed local PDF uses the background loader.
 - Two small updater steps: telling how this copy was installed when the updater
   starts (a registry read on Windows, a check that `$APPIMAGE` is a file on Linux),
-  and starting the Windows installer, whose working folder is the updates folder.
+  and starting the Windows installer, whose working folder is the download's folder.
 
 ### Opening a new tab
 
@@ -1217,13 +1217,31 @@ check, and on Apply, or OK with changes pending, a request to apply the edited c
 only its OCR language list changes files, through the OCR folder's thread. `MainWindow::applySettings` saves
 that copy, re-applies viewing defaults to the open document only when they changed,
 and broadcasts theme and annotation defaults through `WindowManager`.
-The last update check's UTC timestamp and pending download use `QSettings`; the downloads
-themselves live in a machine-local `updates/` folder (`%LOCALAPPDATA%\MervinPDF` on
-Windows, `$XDG_CACHE_HOME/mervin-pdf` on Linux, or inside the profile). `Updater`
-reads and writes them, streams a download to disk, and finds the package manager or
-replaces the AppImage on one background thread, in the order asked, and each step of
-a check, download or installation goes on when its disk work answers. A step whose
-operation ended meanwhile, as when automatic updates were switched off, is dropped.
+The last update check's UTC timestamp and the pending download's version, path and
+SHA-256 use `QSettings`; the downloads themselves live in a machine-local `updates/`
+folder (`%LOCALAPPDATA%\MervinPDF` on Windows, `$XDG_CACHE_HOME/mervin-pdf` on Linux,
+or inside the profile). Copies of different package kinds run by one user, such as an
+AppImage beside the .deb install, share both, so each kind keeps its state under
+`update/<kind>/` (for example `update/appimage/pendingFile`) and its downloads in
+`updates/<kind>/`, named by `update::packageKindName`. A copy reads, installs and
+deletes only its own kind's state and files. Earlier versions kept one shared
+record under `update/` and the downloads in `updates/` itself. A copy still resumes
+and cleans up such a record and such files when the file name is its kind's package
+(`update::isPackageFileName`), leaves other kinds' alone, and uses the shared check
+date until it has its own. Before installing, the updater hashes the file again and
+discards it if the SHA-256 no longer matches. The check that found that download then
+does not count. `update/<kind>/checkDue` makes the next start check again, and the
+next completed check clears it. A record from an older version has no hash and is not
+checked again. `Updater::install` also refuses a file whose name is
+not this kind's package. At each start, also with automatic updates off, an installed
+copy deletes its kind's downloads that are no longer newer than itself. A response
+to the release check that is not a JSON object with a string `tag_name`, such as a
+network filter's page sent with HTTP 200, does not count as a check. `Updater`
+reads and writes this state and the downloads, streams a download to disk, and finds
+the package manager or replaces the AppImage on one background thread, in the order
+asked, and each step of a check, download or installation goes on when its disk work
+answers. A step whose operation ended meanwhile, as when automatic updates were
+switched off, is dropped.
 The last check date is read when the updater starts and kept in memory, so Settings
 shows it without reading the profile. Handing off to the Windows installer consumes
 the pending update first, then closes the windows, starts the installer and quits in
