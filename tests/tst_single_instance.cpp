@@ -149,6 +149,8 @@ private slots:
     void socketFolderMustBePrivate_data();
     void socketFolderMustBePrivate();
     void launchFindsPrimaryThroughAnotherPath();
+    void profileFolderWithoutSockets_data();
+    void profileFolderWithoutSockets();
     void deletedLockKeepsLivePrimary();
     void deadSocketIsReplaced();
 #endif
@@ -1341,6 +1343,62 @@ void TstSingleInstance::launchFindsPrimaryThroughAnotherPath()
                                          kTestPipe),
              Launch::Delivered);
     QCOMPARE(primary.takeOpens().size(), 1);
+}
+
+void TstSingleInstance::profileFolderWithoutSockets_data()
+{
+    QTest::addColumn<bool>("socketFolderUsable");
+    QTest::newRow("the socket folder in /tmp takes it") << true;
+    QTest::newRow("the socket folder is refused too") << false;
+}
+
+// Some file systems hold no sockets, as sshfs, vboxsf and some CIFS mounts. When listening
+// next to the lock in the profile's instance folder fails, the primary listens in this
+// user's socket folder in /tmp instead and records that, and a launch hands off there.
+// Only if that fails too does the primary keep the lock without an endpoint, so a launch
+// runs standalone.
+void TstSingleInstance::profileFolderWithoutSockets()
+{
+    QFETCH(bool, socketFolderUsable);
+    QTemporaryDir profile(kShortTemp);
+    QTemporaryDir socketRoot(kShortTemp);
+    QVERIFY(profile.isValid() && socketRoot.isValid());
+    const ProfileOverride profileOverride(profile.path());
+    const NoRuntimeDir noRuntimeDir;
+    mervin::ipc::setSocketRootForTests(socketRoot.path());
+    const auto restoreRoot =
+        qScopeGuard([&] { mervin::ipc::setSocketRootForTests(socketRoot_.path()); });
+    if (!socketFolderUsable) {
+        QVERIFY(QDir().mkdir(socketFolder(socketRoot.path())));
+        QVERIFY(QFile::setPermissions(socketFolder(socketRoot.path()),
+                                      QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner
+                                          | QFile::ReadOther | QFile::ExeOther));
+    }
+    const mervin::ipc::InstancePaths paths = mervin::ipc::instancePaths(kTestPipe);
+    QCOMPARE(QFileInfo(paths.server).path(), QFileInfo(paths.lockFile).path());
+    // A folder in the socket's place, which removeServer() cannot remove, makes bind()
+    // fail there, as such a file system does.
+    QVERIFY(QDir().mkdir(paths.server));
+
+    SingleInstanceServer primary;
+    QCOMPARE(primary.start(kTestPipe), Start::Started);
+    QVERIFY(QFile::exists(paths.lockFile));
+    SingleInstanceServer launch;
+    if (socketFolderUsable) {
+        QVERIFY(primary.isListening());
+        const QString moved = QDir(socketFolder(socketRoot.path())).filePath(kTestPipe);
+        QCOMPARE(mervin::ipc::endpointOf(paths), moved);
+        QCOMPARE(mervin::ipc::claimOrHandOff(launch, Message::open({QStringLiteral("f.pdf")}),
+                                             1000, kTestPipe),
+                 Launch::Delivered);
+        QCOMPARE(primary.takeOpens().size(), 1);
+    } else {
+        QVERIFY(!primary.isListening());
+        QCOMPARE(mervin::ipc::claimOrHandOff(launch, Message::open({QStringLiteral("f.pdf")}),
+                                             600, kTestPipe),
+                 Launch::Standalone);
+    }
+    QVERIFY(!launch.isListening());
 }
 
 // MPDF-20: a cleaner that removes a live primary's lock file must not let the next

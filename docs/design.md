@@ -329,22 +329,24 @@ that share a profile folder apart, as a lock that another machine holds never go
 stale. Qt needs a socket path to fit into the 108 bytes of `sockaddr_un` with two
 bytes to spare on Linux, one for the terminating zero and one for abstract names, so
 the longest path it takes is 106 bytes. Where the profile folder makes the path
-longer, the lock and the carry file stay in the instance folder and the socket goes
-to `mervin-pdf-<uid>` in /tmp, which is fixed, unlike `$TMPDIR`. Anyone can create
-names in /tmp, so Mervin uses that folder only if it created it or it already is
-this user's folder, not a link, with mode 0700. The primary records where it listens
-in `<group>.endpoint` in the instance folder (`ipc::recordEndpoint()`), so a launch
-that reaches the profile folder through another path, as through a link, still finds
-it. If no folder takes the socket, or listening fails, the primary keeps the lock
-and listens nowhere, so later launches open their files standalone, as beside a
-primary that does not answer. Without a usable instance folder there is no lock, and
-each launch runs on its own. Two launches of one profile that spell its folder
-differently, as a relative and an absolute `--profile` path, still form different
-groups, as the group name hashes the path as given. On Windows the lock stays in the
-per-user %TEMP%, where released copies keep it too, so that an older and a newer
-copy still meet after an upgrade. Two launches there with different values of
-`%TEMP%` take different locks. The endpoint is a named pipe. A Store copy and each
-`--profile` directory form groups of their own.
+longer, or where listening there fails because its file system holds no sockets, as
+sshfs, vboxsf and some CIFS mounts, the lock and the carry file stay in the instance
+folder and the socket goes to `mervin-pdf-<uid>` in /tmp, which is fixed, unlike
+`$TMPDIR`. Anyone can create names in /tmp, so Mervin uses that folder only if it
+created it or it already is this user's folder, not a link, with mode 0700. The
+primary records where it listens in `<group>.endpoint` in the instance folder
+(`ipc::recordEndpoint()`), so a launch that reaches the profile folder through
+another path, as through a link, still finds it. If no folder takes the socket, or
+listening fails in /tmp as well, the primary keeps the lock and listens nowhere, so
+later launches open their files standalone, as beside a primary that does not
+answer. Without a usable instance folder there is no lock, and each launch runs on
+its own. Two launches of one profile that spell its folder differently, as a
+relative and an absolute `--profile` path, still form different groups, as the group
+name hashes the path as given. On Windows the lock stays in the per-user %TEMP%,
+where released copies keep it too, so that an older and a newer copy still meet
+after an upgrade. Two launches there with different values of `%TEMP%` take
+different locks. The endpoint is a named pipe. A Store copy and each `--profile`
+directory form groups of their own.
 
 Subsequent launches send newline-delimited JSON containing file paths and open
 behavior, wait for an acknowledgement, and exit. A launch first checks that the

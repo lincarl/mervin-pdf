@@ -28,8 +28,10 @@ struct InstancePaths
 //   not this user's 0700 folder or is a link. The profile folder's own mode is left as
 //   it is. The host part keeps machines that share the profile folder apart. Where Qt
 //   does not take the socket path there, the socket goes to mervin-pdf-<uid> in /tmp,
-//   on the same terms. With no usable folder for it, `server` is empty, and the lock
-//   alone keeps the profile's files to one copy.
+//   on the same terms (see socketFolderServer), as it does when the profile folder's
+//   file system holds no sockets (see SingleInstanceServer::start). With no usable
+//   folder for it, `server` is empty, and the lock alone keeps the profile's files to
+//   one copy.
 // All are empty when no folder takes the lock. On Windows the lock is in %TEMP% and
 // `server` is the pipe name.
 InstancePaths instancePaths(const QString &name = QString());
@@ -77,6 +79,11 @@ bool lockHeldByLiveProcess(const QString &lockFile);
 // For tests only. Replaces /run/user as the folder that holds the users' runtime folders,
 // or restores it when `root` is empty.
 void setUserRuntimeRootForTests(const QString &root);
+
+// The socket of the group `name` in this user's folder in /tmp, which is made if it is
+// missing, for a primary whose profile folder holds no sockets. Empty if that folder is
+// refused or Qt does not take the path. See instancePaths() for the folder's terms.
+QString socketFolderServer(const QString &name = QString());
 
 // For tests only. Replaces /tmp as the folder that holds this user's socket folder, or
 // restores it when `root` is empty.

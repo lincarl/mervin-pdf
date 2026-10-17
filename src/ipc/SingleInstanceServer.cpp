@@ -3,6 +3,7 @@
 #include "ipc/PipeName.h"
 
 #include <QFile>
+#include <QFileInfo>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QLockFile>
@@ -256,6 +257,29 @@ SingleInstanceServer::Start SingleInstanceServer::start(const QString &serverNam
         return Start::Started;
     }
 
+#ifdef Q_OS_UNIX
+    // Some file systems hold no sockets, as sshfs, vboxsf and some CIFS mounts. A socket
+    // next to the lock in the profile's instance folder then moves once to this user's
+    // socket folder in /tmp, which the record tells launches. A server that answers there
+    // belongs to another copy, so its socket stays.
+    if (InstancePaths moved = paths;
+        !paths.endpointFile.isEmpty()
+        && QFileInfo(paths.server).path() == QFileInfo(paths.lockFile).path()
+        && !(moved.server = socketFolderServer(serverName)).isEmpty() && !answers(moved.server)) {
+        QLocalServer::removeServer(moved.server);
+        QString movedError;
+        QMetaObject::invokeMethod(
+            listener, [&] { listening = listener->listen(moved.server, &movedError); },
+            Qt::BlockingQueuedConnection);
+        if (listening) {
+            keepFromCleanup(moved.server);
+            recordEndpoint(moved);
+            return Start::Started;
+        }
+        qWarning("MervinPDF: failed to listen on '%s': %s", qUtf8Printable(moved.server),
+                 qUtf8Printable(movedError));
+    }
+#endif
     qWarning("MervinPDF: failed to listen on '%s': %s; later launches open their files on "
              "their own.",
              qUtf8Printable(paths.server), qUtf8Printable(error));

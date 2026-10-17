@@ -162,6 +162,16 @@ InstancePaths pathsIn(const QString &dir, const QString &group)
             folder.filePath(group + QStringLiteral(".carried")), QString()};
 }
 
+// The socket of `group` in this user's socket folder, which is made only if `make` is true.
+// Empty if that folder is refused or Qt does not take the path.
+QString socketInSocketFolder(const QString &group, bool make)
+{
+    const QString socketDir = socketDirPath();
+    const bool usable =
+        make ? !ownPrivateDir(socketDir).isEmpty() : isPrivateDir(socketDir, uint(::geteuid()));
+    return usable && socketFits(socketDir, group) ? QDir(socketDir).filePath(group) : QString();
+}
+
 // The paths of `group` in the profile's instance folder `dir`. The socket goes there if Qt
 // takes its path, else to this user's socket folder, which is made only if `make` is
 // true. Without a usable socket folder `server` is empty. The primary records where it
@@ -170,13 +180,8 @@ InstancePaths instanceFolderPaths(const QString &dir, const QString &group, bool
 {
     InstancePaths paths = pathsIn(dir, group);
     paths.endpointFile = QDir(dir).filePath(group + QStringLiteral(".endpoint"));
-    if (!socketFits(dir, group)) {
-        const QString socketDir = socketDirPath();
-        const bool usable =
-            make ? !ownPrivateDir(socketDir).isEmpty() : isPrivateDir(socketDir, uint(::geteuid()));
-        paths.server =
-            usable && socketFits(socketDir, group) ? QDir(socketDir).filePath(group) : QString();
-    }
+    if (!socketFits(dir, group))
+        paths.server = socketInSocketFolder(group, make);
     return paths;
 }
 #endif
@@ -305,6 +310,11 @@ bool lockHeldByLiveProcess(const QString &lockFile)
 void setUserRuntimeRootForTests(const QString &root)
 {
     g_userRuntimeRoot = root.isEmpty() ? QStringLiteral("/run/user") : root;
+}
+
+QString socketFolderServer(const QString &name)
+{
+    return socketInSocketFolder(name.isEmpty() ? hostPipeName() : name, true);
 }
 
 void setSocketRootForTests(const QString &root)
