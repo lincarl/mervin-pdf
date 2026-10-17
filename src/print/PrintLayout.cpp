@@ -1,5 +1,7 @@
 #include "PrintLayout.h"
 
+#include "render/RenderTypes.h"
+
 #include <QPainter>
 
 #include <algorithm>
@@ -9,9 +11,10 @@ namespace mervin::printing {
 
 namespace {
 
-// MuPDF clamps device coordinates to 2^24 (fz_round_rect), so a page raster cannot
-// address more pixels than this on a side.
-constexpr double kMaxRasterSide = 16777216.0;
+// The largest page raster MuPDF draws correctly (kMaxDevicePixel). Rendering each band
+// at the device origin would not lift it, because an edge that reaches further from
+// the band is still clamped, which moves its part inside the band.
+constexpr double kMaxRasterSide = kMaxDevicePixel;
 // fz_round_rect's tolerance, so rounding noise does not add a row or column.
 constexpr double kRoundingSlack = 0.001;
 

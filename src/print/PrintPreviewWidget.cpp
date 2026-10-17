@@ -121,14 +121,25 @@ void PrintPreviewWidget::requestImage()
     const double screenDpi = 72.0 * sheet.width() / paper.width() * devicePixelRatioF();
     const double dpi = monochrome ? qualityDpi : std::min(screenDpi, qualityDpi);
     const QRectF printable = layout_.paintRect(QPageLayout::Point);
-    printing::RasterPlan plan = printing::rasterPlan(pagePoints_, printable, settings_, dpi);
-    // Bound either raster so huge sheets cannot exhaust memory in preview.
+    // Bound either raster so huge sheets cannot exhaust memory in preview. The bound
+    // applies to the visible part, which the plan then rounds out to whole pixels.
+    const QSizeF visible =
+        (printing::destinationRect(pagePoints_, printable, settings_) & printable).size();
     const double limit = monochrome ? 4096.0 : 2048.0;
-    const int longest = std::max(plan.source.width(), plan.source.height());
-    if (longest > limit)
-        plan = printing::rasterPlan(pagePoints_, printable, settings_, dpi * limit / longest);
-    if (plan.isEmpty())
+    const double longest = std::max(visible.width(), visible.height()) * dpi / 72.0;
+    const printing::RasterPlan plan = printing::rasterPlan(
+        pagePoints_, printable, settings_, longest > limit ? dpi * limit / longest : dpi);
+    if (plan.isEmpty()) {
+        // The page's raster is too large to render even at this preview size.
+        engine_->cancelRequests(requester_);
+        ++generation_;
+        requestedScale_ = 0;
+        requestedSource_ = {};
+        message_ = tr("Could not render this page.");
+        update();
+        emit previewReady();
         return;
+    }
     if (qFuzzyCompare(plan.scale, requestedScale_) && plan.source == requestedSource_
         && monochrome == requestedMonochrome_)
         return;
@@ -164,6 +175,7 @@ const QImage &PrintPreviewWidget::preparedImage(const QSize &deviceSize)
         prepared_ = printing::reduceToDevice(converted_, deviceSize);
         preparedKey_ = converted_.cacheKey();
         preparedSize_ = deviceSize;
+        ++reductions_;
     }
     return prepared_;
 }

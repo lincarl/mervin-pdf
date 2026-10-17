@@ -135,6 +135,185 @@ private:
     bool saveQueued_ = false;
 };
 
+// Writes a one-page PDF with a complete cross-reference table to `path`.
+bool writePagePdf(const QString &path, const QByteArray &page, const QByteArray &content)
+{
+    const QList<QByteArray> objects{
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R " + page + " /Contents 4 0 R >>",
+        "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content
+            + "\nendstream",
+    };
+    QByteArray pdf = "%PDF-1.7\n";
+    QByteArray xref = "0000000000 65535 f \n";
+    for (qsizetype i = 0; i < objects.size(); ++i) {
+        xref += QByteArray::number(pdf.size()).rightJustified(10, '0') + " 00000 n \n";
+        pdf += QByteArray::number(i + 1) + " 0 obj\n" + objects[i] + "\nendobj\n";
+    }
+    const QByteArray start = QByteArray::number(pdf.size());
+    const QByteArray size = QByteArray::number(objects.size() + 1);
+    pdf += "xref\n0 " + size + "\n" + xref + "trailer\n<< /Size " + size
+           + " /Root 1 0 R >>\nstartxref\n" + start + "\n%%EOF\n";
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly) && file.write(pdf) == pdf.size();
+}
+
+// The printable area of the app's PDF printer on A4. The app creates this same printer
+// before showing its dialog, and the dialog keeps that printer's margins when it
+// switches to PDF output, clamped to what the page allows. Without printers (Linux CI)
+// the first printer is already PDF, with Qt's nonzero default margins, which expose the
+// former double-offset bug. On Windows it is the default printer, whose margins can be
+// zero. The app turns the sheet to match the page's orientation. Empty if the margins
+// cannot be set.
+QRectF applicationPrintable(QPageLayout::Orientation orientation = QPageLayout::Portrait)
+{
+    const QMarginsF preferred =
+        QPrinter(QPrinter::HighResolution).pageLayout().margins(QPageLayout::Point);
+    QPrinter reference(QPrinter::HighResolution);
+    reference.setOutputFormat(QPrinter::PdfFormat);
+    reference.setFullPage(false);
+    reference.setPageSize(QPageSize(QPageSize::A4));
+    reference.setPageOrientation(orientation);
+    QPageLayout layout = reference.pageLayout();
+    layout.setUnits(QPageLayout::Point);
+    const QMarginsF minimum = layout.minimumMargins();
+    const QMarginsF maximum = layout.maximumMargins();
+    if (!reference.setPageMargins(
+            QMarginsF(qBound(minimum.left(), preferred.left(), maximum.left()),
+                      qBound(minimum.top(), preferred.top(), maximum.top()),
+                      qBound(minimum.right(), preferred.right(), maximum.right()),
+                      qBound(minimum.bottom(), preferred.bottom(), maximum.bottom())),
+            QPageLayout::Point))
+        return {};
+    return reference.pageLayout().paintRect(QPageLayout::Point);
+}
+
+// Print dialog choices for placement checks. The indexes follow the dialog's
+// alignment, scale and colour lists.
+struct PlacementChoices
+{
+    int alignment = 0;
+    int scaleMode = 1;
+    int percent = 100;
+    int colour = 0;
+    int qualityDpi = 72;
+};
+
+// Drives the custom dialog on A4 with `choices` and the file picker, and records any
+// message box, until stop(). Collects what went wrong in `errors`.
+class PlacementInteraction
+{
+public:
+    PlacementInteraction(MainWindow &window, QString output, PlacementChoices choices)
+    {
+        elapsed_.start();
+        QObject::connect(&timer_, &QTimer::timeout, &window,
+                [this, output = std::move(output), choices] {
+            QWidget *modal = QApplication::activeModalWidget();
+            if (errors.isEmpty() && elapsed_.elapsed() > 20000) {
+                const QString stage = !configured ? QStringLiteral("waiting for the print dialog")
+                    : !printQueued_ ? QStringLiteral("waiting for validated print settings")
+                    : !saveQueued_ ? QStringLiteral("waiting for the save dialog")
+                    : !saved ? QStringLiteral("saving the selected output path")
+                             : QStringLiteral("waiting for print completion");
+                errors.append(QStringLiteral("Print interaction timed out while %1").arg(stage));
+            }
+            if (!errors.isEmpty()) {
+                if (auto *dialog = qobject_cast<QDialog *>(modal))
+                    dialog->reject();
+                return;
+            }
+            if (auto *box = qobject_cast<QMessageBox *>(modal)) {
+                errors.append(box->text());
+                box->reject();
+                return;
+            }
+            if (auto *dialog = qobject_cast<PrintDialog *>(modal)) {
+                auto *print = dialog->findChild<QPushButton *>("printConfirm");
+                if (!configured) {
+                    configured = true;
+                    auto *toFile = dialog->findChild<QCheckBox *>("printToFile");
+                    auto *paper = dialog->findChild<QComboBox *>("printPaperSize");
+                    auto *align = dialog->findChild<QComboBox *>("printAlignment");
+                    auto *scale = dialog->findChild<QComboBox *>("printScale");
+                    auto *percentage = dialog->findChild<QSpinBox *>("printScalePercent");
+                    auto *colourCombo = dialog->findChild<QComboBox *>("printColour");
+                    auto *quality = dialog->findChild<QComboBox *>("printQuality");
+                    if (!toFile || !paper || !align || !scale || !percentage || !colourCombo
+                        || !quality || !print) {
+                        errors.append(QStringLiteral("Print controls were missing"));
+                        dialog->reject();
+                        return;
+                    }
+                    toFile->setChecked(true);
+                    for (int index = 0; index < paper->count(); ++index) {
+                        if (paper->itemData(index).value<QPageSize>().id() == QPageSize::A4) {
+                            paper->setCurrentIndex(index);
+                            break;
+                        }
+                    }
+                    align->setCurrentIndex(choices.alignment);
+                    scale->setCurrentIndex(choices.scaleMode);
+                    percentage->setValue(choices.percent);
+                    colourCombo->setCurrentIndex(choices.colour);
+                    // Most checks probe placement, which raster quality does not affect,
+                    // at 72 dpi, where one raster pixel is one printed point.
+                    quality->setItemData(quality->currentIndex(), choices.qualityDpi);
+                }
+                // Validation is debounced. Wait for its result instead of assuming
+                // it finished after a fixed delay on a busy machine.
+                if (!printQueued_ && print->isEnabled()) {
+                    printQueued_ = true;
+                    QTimer::singleShot(0, print, &QPushButton::click);
+                }
+                return;
+            }
+            if (auto *picker = qobject_cast<QFileDialog *>(modal)) {
+                if (saveQueued_)
+                    return;
+                auto *name = picker->findChild<QLineEdit *>("fileNameEdit");
+                if (!name) {
+                    errors.append(QStringLiteral("The save dialog filename field was missing"));
+                    picker->reject();
+                    return;
+                }
+                saveQueued_ = true;
+                QTimer::singleShot(0, picker, [this, output, picker, name] {
+                    // An absolute typed filename avoids selectFile() racing the
+                    // asynchronous directory model and restoring the suggested name.
+                    name->setText(QDir::toNativeSeparators(output));
+                    const QStringList selected = picker->selectedFiles();
+                    if (selected.size() != 1
+                        || QFileInfo(selected.front()).absoluteFilePath() != output) {
+                        errors.append(
+                            QStringLiteral("The save dialog selected the wrong output path"));
+                        picker->reject();
+                        return;
+                    }
+                    // Validate and accept in one event turn so directory updates
+                    // cannot replace the filename between these two operations.
+                    QMetaObject::invokeMethod(picker, "accept", Qt::DirectConnection);
+                    saved = picker->result() == QDialog::Accepted;
+                });
+            }
+        });
+        timer_.start(10);
+    }
+
+    void stop() { timer_.stop(); }
+
+    QStringList errors;
+    bool configured = false;
+    bool saved = false;
+
+private:
+    QTimer timer_;
+    QElapsedTimer elapsed_;
+    bool printQueued_ = false;
+    bool saveQueued_ = false;
+};
+
 // Reads fixture bytes to prove stopped output leaves an existing destination intact.
 QByteArray bytes(const QString &path)
 {
@@ -194,6 +373,9 @@ private slots:
     void cleanup();
     void applicationPrintPlacement_data();
     void applicationPrintPlacement();
+    void printedRasterGeometry_data();
+    void printedRasterGeometry();
+    void unrenderablePageReportsFailure();
     void printDoesNotWaitForPageAccess();
     void printDestinationConflict_data();
     void printDestinationConflict();
@@ -209,6 +391,8 @@ private slots:
 private:
     QTemporaryDir files_;
     QString sourcePath_;
+    QString largePath_;
+    QString hugePath_;
 };
 
 void TstPrintOutput::initTestCase()
@@ -225,7 +409,26 @@ void TstPrintOutput::initTestCase()
     QVERIFY(painter.isActive());
     painter.fillRect(QRectF(0, 0, 100, 160), QColor(220, 20, 20));
     painter.fillRect(QRectF(10, 10, 20, 20), QColor(200, 200, 200));
+    painter.setPen(QPen(Qt::black, 0.1));
+    painter.drawLine(QLineF(12, 20.5, 28, 20.5));
     QVERIFY(painter.end());
+
+    // A page larger than A4 with a 40 pt black square at its centre.
+    largePath_ = files_.filePath("large.pdf");
+    QPdfWriter large(largePath_);
+    large.setResolution(72);
+    large.setPageSize(QPageSize(QSizeF(1000, 1400), QPageSize::Point));
+    large.setPageMargins(QMarginsF());
+    QPainter marker(&large);
+    QVERIFY(marker.isActive());
+    marker.fillRect(QRectF(480, 680, 40, 40), Qt::black);
+    QVERIFY(marker.end());
+
+    // A 2.88 million point square page (UserUnit 200), whose raster even at 72 dpi is
+    // beyond the 2^20 pixels MuPDF draws correctly.
+    hugePath_ = files_.filePath("huge.pdf");
+    QVERIFY(writePagePdf(hugePath_, "/MediaBox [0 0 14400 14400] /UserUnit 200",
+                         "0.86 0.08 0.08 rg 0 0 14400 14400 re f 0 g 7100 7100 200 200 re f"));
 }
 
 void TstPrintOutput::cleanupTestCase()
@@ -275,139 +478,22 @@ void TstPrintOutput::applicationPrintPlacement()
     MainWindow window(&engine, nullptr);
     QVERIFY(mervin::testing::openAndWait(window, sourcePath_));
 
-    // Rebuild the printer the way the app does. It creates this same printer
-    // before showing its dialog, and the dialog keeps that printer's margins
-    // when it switches to PDF output, clamped to what the page allows. Without
-    // printers (Linux CI) the first printer is already PDF, with Qt's nonzero
-    // default margins, which expose the former double-offset bug. On Windows it
-    // is the default printer, whose margins can be zero.
-    const QMarginsF preferred =
-        QPrinter(QPrinter::HighResolution).pageLayout().margins(QPageLayout::Point);
-    QPrinter reference(QPrinter::HighResolution);
-    reference.setOutputFormat(QPrinter::PdfFormat);
-    reference.setFullPage(false);
-    reference.setPageSize(QPageSize(QPageSize::A4));
-    reference.setPageOrientation(QPageLayout::Portrait);
-    QPageLayout layout = reference.pageLayout();
-    layout.setUnits(QPageLayout::Point);
-    const QMarginsF minimum = layout.minimumMargins();
-    const QMarginsF maximum = layout.maximumMargins();
-    QVERIFY(reference.setPageMargins(
-        QMarginsF(qBound(minimum.left(), preferred.left(), maximum.left()),
-                  qBound(minimum.top(), preferred.top(), maximum.top()),
-                  qBound(minimum.right(), preferred.right(), maximum.right()),
-                  qBound(minimum.bottom(), preferred.bottom(), maximum.bottom())),
-        QPageLayout::Point));
-    const QRectF printable = reference.pageLayout().paintRect(QPageLayout::Point);
+    const QRectF printable = applicationPrintable();
+    QVERIFY(!printable.isEmpty());
     if (QPrinterInfo::availablePrinters().isEmpty()) {
         QVERIFY(printable.left() > 0);
         QVERIFY(printable.top() > 0);
     }
 
-    QStringList errors;
-    bool configured = false;
-    bool printQueued = false;
-    bool saveQueued = false;
-    bool saved = false;
-    QElapsedTimer elapsed;
-    elapsed.start();
-    QTimer dialogs;
-    connect(&dialogs, &QTimer::timeout, &window, [&] {
-        QWidget *modal = QApplication::activeModalWidget();
-        if (errors.isEmpty() && elapsed.elapsed() > 20000) {
-            const QString stage = !configured ? QStringLiteral("waiting for the print dialog")
-                : !printQueued ? QStringLiteral("waiting for validated print settings")
-                : !saveQueued ? QStringLiteral("waiting for the save dialog")
-                : !saved ? QStringLiteral("saving the selected output path")
-                         : QStringLiteral("waiting for print completion");
-            errors.append(QStringLiteral("Print interaction timed out while %1").arg(stage));
-        }
-        if (!errors.isEmpty()) {
-            if (auto *dialog = qobject_cast<QDialog *>(modal))
-                dialog->reject();
-            return;
-        }
-        if (auto *box = qobject_cast<QMessageBox *>(modal)) {
-            errors.append(box->text());
-            box->reject();
-            return;
-        }
-        if (auto *dialog = qobject_cast<PrintDialog *>(modal)) {
-            auto *print = dialog->findChild<QPushButton *>("printConfirm");
-            if (!configured) {
-                configured = true;
-                auto *toFile = dialog->findChild<QCheckBox *>("printToFile");
-                auto *paper = dialog->findChild<QComboBox *>("printPaperSize");
-                auto *align = dialog->findChild<QComboBox *>("printAlignment");
-                auto *scale = dialog->findChild<QComboBox *>("printScale");
-                auto *percentage = dialog->findChild<QSpinBox *>("printScalePercent");
-                auto *colourCombo = dialog->findChild<QComboBox *>("printColour");
-                auto *quality = dialog->findChild<QComboBox *>("printQuality");
-                if (!toFile || !paper || !align || !scale || !percentage || !colourCombo
-                    || !quality || !print) {
-                    errors.append(QStringLiteral("Print controls were missing"));
-                    dialog->reject();
-                    return;
-                }
-                toFile->setChecked(true);
-                for (int index = 0; index < paper->count(); ++index) {
-                    if (paper->itemData(index).value<QPageSize>().id() == QPageSize::A4) {
-                        paper->setCurrentIndex(index);
-                        break;
-                    }
-                }
-                align->setCurrentIndex(alignment);
-                scale->setCurrentIndex(scaleMode);
-                percentage->setValue(percent);
-                colourCombo->setCurrentIndex(colour);
-                // Raster quality does not affect placement. Keep this probe at 72 DPI.
-                quality->setItemData(quality->currentIndex(), 72);
-            }
-            // Validation is debounced. Wait for its result instead of assuming
-            // it finished after a fixed delay on a busy machine.
-            if (!printQueued && print->isEnabled()) {
-                printQueued = true;
-                QTimer::singleShot(0, print, &QPushButton::click);
-            }
-            return;
-        }
-        if (auto *picker = qobject_cast<QFileDialog *>(modal)) {
-            if (saveQueued)
-                return;
-            auto *name = picker->findChild<QLineEdit *>("fileNameEdit");
-            if (!name) {
-                errors.append(QStringLiteral("The save dialog filename field was missing"));
-                picker->reject();
-                return;
-            }
-            saveQueued = true;
-            QTimer::singleShot(0, picker, [&, picker, name] {
-                // An absolute typed filename avoids selectFile() racing the
-                // asynchronous directory model and restoring the suggested name.
-                name->setText(QDir::toNativeSeparators(output));
-                const QStringList selected = picker->selectedFiles();
-                if (selected.size() != 1
-                    || QFileInfo(selected.front()).absoluteFilePath() != output) {
-                    errors.append(QStringLiteral("The save dialog selected the wrong output path"));
-                    picker->reject();
-                    return;
-                }
-                // Validate and accept in one event turn so directory updates
-                // cannot replace the filename between these two operations.
-                QMetaObject::invokeMethod(picker, "accept", Qt::DirectConnection);
-                saved = picker->result() == QDialog::Accepted;
-            });
-        }
-    });
-    dialogs.start(10);
+    PlacementInteraction dialogs(window, output, {alignment, scaleMode, percent, colour, 72});
     QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
     auto *tab = window.findChild<TabPage *>();
     QVERIFY(tab);
     QTRY_VERIFY_WITH_TIMEOUT(!tab->isBusy(), 10000);
     dialogs.stop();
-    QVERIFY2(errors.isEmpty(), qPrintable(errors.join('\n')));
-    QVERIFY(configured);
-    QVERIFY(saved);
+    QVERIFY2(dialogs.errors.isEmpty(), qPrintable(dialogs.errors.join('\n')));
+    QVERIFY(dialogs.configured);
+    QVERIFY(dialogs.saved);
     QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(output), 10000);
     auto printed = engine.openDocument(output);
     QVERIFY(printed);
@@ -489,7 +575,159 @@ void TstPrintOutput::applicationPrintPlacement()
         }
         QVERIFY(black);
         QVERIFY(white);
+        // The 0.1 pt hairline across the light patch, 20 pt below the page top, prints
+        // black. Antialiased, its light gray would fall above the threshold and vanish.
+        QCOMPARE(images.size(), size_t(1));
+        QPDFObjectHandle stream = images.begin()->second;
+        QCOMPARE(stream.getDict().getKey("/BitsPerComponent").getIntValue(), 8);
+        const long long width = stream.getDict().getKey("/Width").getIntValue();
+        const auto data = stream.getStreamData(qpdf_dl_all);
+        bool hairline = false;
+        for (long long row = 18; row <= 22 && !hairline; ++row) {
+            bool line = true;
+            for (long long x = 14; x <= 26; ++x)
+                line &= data->getBuffer()[row * width + x] == 0;
+            hairline |= line;
+        }
+        QVERIFY(hairline);
     }
+}
+
+void TstPrintOutput::printedRasterGeometry_data()
+{
+    QTest::addColumn<bool>("large");
+    QTest::addColumn<int>("rotation");
+    QTest::addColumn<int>("scaleMode");
+    QTest::addColumn<int>("quality");
+    // Only the middle of the page is visible, so the raster starts inside the page.
+    QTest::newRow("oversized page") << true << 0 << 1 << 72;
+    // More than 2^24 visible pixels, so the page prints in several bands.
+    QTest::newRow("bands at 600 dpi") << true << 0 << 0 << 600;
+    QTest::newRow("turned page") << false << 90 << 1 << 72;
+}
+
+// Checks the black and white raster of a printed page: its embedded bands, where its
+// marker lands, and a page turned in the viewer.
+void TstPrintOutput::printedRasterGeometry()
+{
+    QFETCH(bool, large);
+    QFETCH(int, rotation);
+    QFETCH(int, scaleMode);
+    QFETCH(int, quality);
+    const QString output =
+        files_.filePath(QString::fromLatin1(QTest::currentDataTag()).replace(' ', '-') + ".pdf");
+    RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    QVERIFY(mervin::testing::openAndWait(window, large ? largePath_ : sourcePath_));
+    auto *tab = window.findChild<TabPage *>();
+    QVERIFY(tab);
+    tab->viewer()->setRotation(rotation);
+    QSizeF page = large ? QSizeF(1000, 1400) : QSizeF(100, 160);
+    if (rotation == 90)
+        page.transpose();
+    const QRectF printable = applicationPrintable(
+        page.width() > page.height() ? QPageLayout::Landscape : QPageLayout::Portrait);
+    QVERIFY(!printable.isEmpty());
+
+    PlacementInteraction dialogs(window, output, {0, scaleMode, 100, 2, quality});
+    QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
+    QTRY_VERIFY_WITH_TIMEOUT(!tab->isBusy(), 20000);
+    dialogs.stop();
+    QVERIFY2(dialogs.errors.isEmpty(), qPrintable(dialogs.errors.join('\n')));
+    QVERIFY(dialogs.saved);
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(output), 10000);
+
+    // Where the centred page lands, from its size alone.
+    const double factor = scaleMode == 0
+        ? std::min(printable.width() / page.width(), printable.height() / page.height())
+        : 1.0;
+    const QSizeF size = page * factor;
+    const QRectF destination(printable.center() - QPointF(size.width(), size.height()) / 2,
+                             size);
+    const QRectF visible = destination & printable;
+
+    // The bands, in drawing order, are as wide as the visible part at `quality`. Their
+    // heights add up to it plus one row for each later band, because every band but
+    // the last repeats the next band's first row.
+    QPDF pdf;
+    pdf.processFile(output.toUtf8().constData());
+    std::vector<QPDFObjectHandle> bands;
+    for (auto &[name, stream] : QPDFPageDocumentHelper(pdf).getAllPages().front().getImages())
+        bands.push_back(stream);
+    std::sort(bands.begin(), bands.end(), [](QPDFObjectHandle a, QPDFObjectHandle b) {
+        return a.getObjectID() < b.getObjectID();
+    });
+    QVERIFY(quality == 600 ? bands.size() >= 2 : bands.size() == 1);
+    const double density = quality / 72.0;
+    long long rows = 0;
+    for (size_t index = 0; index < bands.size(); ++index) {
+        QPDFObjectHandle dict = bands[index].getDict();
+        QCOMPARE(dict.getKey("/BitsPerComponent").getIntValue(), 8);
+        const long long width = dict.getKey("/Width").getIntValue();
+        const long long height = dict.getKey("/Height").getIntValue();
+        QVERIFY2(std::abs(width - visible.width() * density) <= 2,
+                 qPrintable(QStringLiteral("band %1 is %2 wide").arg(index).arg(width)));
+        rows += height;
+        if (index + 1 < bands.size()) {
+            const auto above = bands[index].getStreamData(qpdf_dl_all);
+            const auto below = bands[index + 1].getStreamData(qpdf_dl_all);
+            QCOMPARE(QByteArray(reinterpret_cast<const char *>(above->getBuffer())
+                                    + (height - 1) * width, width),
+                     QByteArray(reinterpret_cast<const char *>(below->getBuffer()), width));
+        }
+    }
+    rows -= qsizetype(bands.size()) - 1;
+    QVERIFY2(std::abs(rows - visible.height() * density) <= 2,
+             qPrintable(QStringLiteral("%1 rows for %2 pt").arg(rows).arg(visible.height())));
+
+    // The marker, the black square at the large page's centre or the light patch near
+    // the small page's top-left corner, lands where the page puts it.
+    auto printed = engine.openDocument(output);
+    QVERIFY(printed);
+    const QImage image = engine.renderPageImage(printed.get(), 0, 1.0, 0);
+    QVERIFY(!image.isNull());
+    if (large) {
+        QRect marker;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x)
+                if (qGray(image.pixel(x, y)) < 128)
+                    marker |= QRect(x, y, 1, 1);
+        const QPointF centre = QRectF(marker).center();
+        QVERIFY2(std::abs(centre.x() - printable.center().x()) <= 1.5
+                     && std::abs(centre.y() - printable.center().y()) <= 1.5,
+                 qPrintable(QStringLiteral("marker at %1, %2, printable centre %3, %4")
+                                .arg(centre.x()).arg(centre.y())
+                                .arg(printable.center().x()).arg(printable.center().y())));
+        QVERIFY(std::abs(marker.width() - 40 * factor) <= 2);
+        QVERIFY(std::abs(marker.height() - 40 * factor) <= 2);
+    } else {
+        // Turned clockwise, the patch from (10, 10) to (30, 30) of the 100 x 160 page
+        // covers (130, 10) to (150, 30) of the 160 x 100 page. The hairline across it
+        // becomes a vertical line at x 139.5, so sample the patch beside the line.
+        const QPointF patch = destination.topLeft() + QPointF(146, 14);
+        const QPointF unturned = destination.topLeft() + QPointF(14, 14);
+        QCOMPARE(image.pixelColor(patch.toPoint()), QColor(Qt::white));
+        QCOMPARE(image.pixelColor(unturned.toPoint()), QColor(Qt::black));
+    }
+}
+
+// A page whose raster is beyond what MuPDF draws reports its page instead of printing
+// a blank sheet.
+void TstPrintOutput::unrenderablePageReportsFailure()
+{
+    const QString output = files_.filePath("unrenderable.pdf");
+    RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    QVERIFY(mervin::testing::openAndWait(window, hugePath_));
+    auto *tab = window.findChild<TabPage *>();
+    QVERIFY(tab);
+    PlacementInteraction dialogs(window, output, {0, 1, 100, 0, 72});
+    QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
+    QTRY_VERIFY_WITH_TIMEOUT(!dialogs.errors.isEmpty(), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(!tab->isBusy(), 10000);
+    dialogs.stop();
+    QCOMPARE(dialogs.errors, QStringList{QStringLiteral("Could not render page 1.")});
+    QVERIFY(!QFileInfo::exists(output));
 }
 
 // Checks the accepted print command returns while live document access is stalled.

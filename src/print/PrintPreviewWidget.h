@@ -28,8 +28,10 @@ public:
                  const printing::Settings &settings);
     void clear(const QString &message);
     bool isReady() const { return !image_.isNull() && message_.isEmpty(); }
-    // How many times painting converted a render's colour mode, for tests.
+    // How many times painting converted a render's colour mode, and how many times it
+    // reduced a conversion to the device size, for tests.
     int conversions() const { return conversions_; }
+    int reductions() const { return reductions_; }
 
 signals:
     void previewReady();
@@ -69,6 +71,7 @@ private:
     qint64 preparedKey_ = 0;
     QSize preparedSize_;
     int conversions_ = 0;
+    int reductions_ = 0;
 };
 
 } // namespace mervin

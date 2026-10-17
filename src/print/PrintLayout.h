@@ -42,7 +42,8 @@ struct RasterPlan
 // Plans a page raster whose resolution follows the page's printed size, so a
 // reduced page needs fewer pixels and an enlarged one keeps `dpi`. The source
 // covers only the part of the page inside printableRect, rounded out to whole
-// pixels. Empty for invalid sizes or a non-positive dpi.
+// pixels. Empty for invalid sizes, a non-positive or infinite dpi, or a page raster
+// wider or taller than kMaxDevicePixel.
 RasterPlan rasterPlan(const QSizeF &pagePoints, const QRectF &printableRect,
                       const Settings &settings, double dpi);
 
@@ -57,8 +58,9 @@ QRectF rasterTarget(const QRectF &destination, const QSizeF &pagePoints, double 
 QList<QRect> rasterBands(const QRect &source, qint64 maxPixels);
 
 // Painting a raster has a prepare step, convertColour and for previews
-// reduceToDevice, and a draw step, drawImage. Printing prepares each raster before
-// it starts the sheet, and the preview keeps prepared rasters between paints.
+// reduceToDevice, and a draw step, drawImage. Printing prepares each band before it
+// draws the band, and a sheet's first band before it starts the sheet. The preview
+// keeps prepared rasters between paints.
 
 // Colour keeps the source unchanged. Grayscale and black and white composite
 // transparency over white first. Black and white uses a 128 luminance threshold.

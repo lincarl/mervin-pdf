@@ -1,6 +1,7 @@
 #include "render/Document.h"
 
 #include "io/Background.h"
+#include "render/RenderTypes.h"
 
 #include <mupdf/fitz.h>
 #include <mupdf/pdf.h>
@@ -15,6 +16,7 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 #include <unordered_map>
@@ -129,6 +131,12 @@ QImage Document::renderPage(int pageNo, double scale, int rotation, const QRect 
         full = fz_round_rect(fz_transform_rect(fz_bound_page(ctx_, page), transform));
     }
     fz_catch(ctx_) {
+        fz_drop_page(ctx_, page);
+        return {};
+    }
+    // Beyond MuPDF's edge clamp the result would be blank or distorted, not an error.
+    if (std::max({std::abs(full.x0), std::abs(full.y0), std::abs(full.x1), std::abs(full.y1)})
+        > kMaxDevicePixel) {
         fz_drop_page(ctx_, page);
         return {};
     }

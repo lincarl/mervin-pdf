@@ -6,6 +6,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QFile>
 #include <QFileDialog>
 #include <QLabel>
 #include <QLineEdit>
@@ -47,6 +48,34 @@ QRect matchingBounds(const QImage &image, bool paper)
     return bounds;
 }
 
+// Writes a one-page PDF with a complete cross-reference table and returns its path.
+QString writePagePdf(const QTemporaryDir &dir, const QString &name, const QByteArray &page,
+                     const QByteArray &content)
+{
+    const QList<QByteArray> objects{
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R " + page + " /Contents 4 0 R >>",
+        "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content
+            + "\nendstream",
+    };
+    QByteArray pdf = "%PDF-1.7\n";
+    QByteArray xref = "0000000000 65535 f \n";
+    for (qsizetype i = 0; i < objects.size(); ++i) {
+        xref += QByteArray::number(pdf.size()).rightJustified(10, '0') + " 00000 n \n";
+        pdf += QByteArray::number(i + 1) + " 0 obj\n" + objects[i] + "\nendobj\n";
+    }
+    const QByteArray start = QByteArray::number(pdf.size());
+    const QByteArray size = QByteArray::number(objects.size() + 1);
+    pdf += "xref\n0 " + size + "\n" + xref + "trailer\n<< /Size " + size
+           + " /Root 1 0 R >>\nstartxref\n" + start + "\n%%EOF\n";
+    const QString path = dir.filePath(name);
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(pdf) != pdf.size())
+        return {};
+    return path;
+}
+
 void configurePrinter(QPrinter &printer)
 {
     printer.setOutputFormat(QPrinter::PdfFormat);
@@ -66,6 +95,7 @@ private slots:
     void customOrderValidationAndStaleResults();
     void sheetAlwaysFitsAfterResizeAndOrientation();
     void blackAndWhitePreviewConvertsOnce();
+    void previewReportsAnUnrenderablePage();
     void cancellingSaveKeepsDialogOpen();
 
 private:
@@ -279,20 +309,64 @@ void TstPrintDialog::blackAndWhitePreviewConvertsOnce()
     QCOMPARE(centreColour(preview), QColor(Qt::black));
     const int renders = rendered.size();
     const int conversions = preview->conversions();
+    const int reductions = preview->reductions();
     QVERIFY(conversions > 0);
+    QVERIFY(reductions > 0);
 
-    // Exposes and resizes reuse the converted raster, since its scale follows the
-    // print quality rather than the widget size.
+    // Exposes reuse the prepared raster. A resize reduces the conversion once for the
+    // new device size and converts nothing, since the render's scale follows the print
+    // quality rather than the widget size.
     for (int i = 0; i < 5; ++i)
         preview->repaint();
     QCOMPARE(preview->conversions(), conversions);
+    QCOMPARE(preview->reductions(), reductions);
     const QSize before = preview->size();
     dialog.resize(dialog.width() + 120, dialog.height() + 80);
     QTest::qWait(300);
     QVERIFY(preview->size() != before);
     QCOMPARE(centreColour(preview), QColor(Qt::black));
+    QCOMPARE(preview->reductions(), reductions + 1);
+    for (int i = 0; i < 5; ++i)
+        preview->repaint();
+    QCOMPARE(preview->reductions(), reductions + 1);
     QCOMPARE(rendered.size(), renders);
     QCOMPARE(preview->conversions(), conversions);
+}
+
+// A page whose raster at the preview's resolution is beyond what MuPDF draws must say
+// so instead of staying on the loading text or keeping an earlier picture.
+void TstPrintDialog::previewReportsAnUnrenderablePage()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // 14.4 million points square (UserUnit 1000). Fitted to A4 it renders, but at
+    // actual size even a screen-resolution raster is far beyond 2^20 pixels.
+    const QString path = writePagePdf(dir, QStringLiteral("huge.pdf"),
+                                      "/MediaBox [0 0 14400 14400] /UserUnit 1000",
+                                      "0.86 0.08 0.08 rg 0 0 14400 14400 re f");
+    QVERIFY(!path.isEmpty());
+    RenderEngine engine;
+    auto document = engine.openDocument(path);
+    QVERIFY(document);
+    QPrinter printer;
+    configurePrinter(printer);
+    PrintDialog dialog(&printer, &engine, document.get(), 0, QPageLayout::Portrait, 1, "huge");
+    dialog.show();
+    auto *preview = dialog.findChild<PrintPreviewWidget *>();
+    auto *scale = dialog.findChild<QComboBox *>("printScale");
+    QVERIFY(preview && scale);
+    QTRY_VERIFY(preview->isReady());
+    QVERIFY(centreColour(preview).red() > 180);
+
+    QSignalSpy answered(preview, &PrintPreviewWidget::previewReady);
+    scale->setCurrentIndex(1); // Actual size
+    QTRY_VERIFY(!answered.isEmpty());
+    QVERIFY(!preview->isReady());
+    // The message replaces the sheet, so no paper is drawn.
+    QVERIFY(matchingBounds(preview->grab().toImage(), true).isEmpty());
+    scale->setCurrentIndex(0);
+    QTRY_VERIFY(preview->isReady());
+    QVERIFY(centreColour(preview).red() > 180);
 }
 
 void TstPrintDialog::cancellingSaveKeepsDialogOpen()

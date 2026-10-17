@@ -1060,34 +1060,48 @@ renders pages with Document::renderPage on the document's own context.
 quality setting holds on paper. A page reduced to the sheet renders fewer pixels, and
 an enlarged page is not stretched. A device-pixel clip limits the raster to the part
 of the page inside the printable area, and `printing::rasterBands` splits that part
-into horizontal bands of whole raster rows, at most 2^24 pixels each. Qt's PDF engine
-holds about 8 bytes a pixel while it draws a band, so the job's peak memory stays
-near 135 MB above the app's own on any sheet and quality. Each band but the last also
-renders the next band's first row, which the next band draws over, because Qt's
-Windows engine truncates an image's position and height to whole device pixels.
-Black and white renders without antialiasing, so its threshold acts on colours, and
-MuPDF draws every stroke at least one pixel wide.
+into horizontal bands of whole raster rows, at most 2^24 pixels each. In Qt's PDF
+engine, which Print to file and CUPS printers use, a band holds about 8 bytes a pixel
+while it is drawn, so the job's peak memory stays near 135 MB above the app's own on
+any sheet and quality. Qt's Windows engine records a sheet's images in a QPicture and
+replays them when the sheet ends, so on a Windows printer the whole visible raster of
+a sheet stays in memory until then. Each band but the last also renders the next
+band's first row, which the next band draws over, because Qt's Windows engine
+truncates an image's position and height to whole device pixels. Black and white
+renders without antialiasing, so its threshold acts on colours, and MuPDF draws every
+stroke at least one pixel wide.
+
+MuPDF's rasteriser clamps every edge to 2^20 device pixels from the device origin, so
+on a larger page raster the shapes beyond that vanish or bend. Rendering each band at
+the device origin would not lift the limit, because an edge that reaches further from
+the band is still clamped, which moves its part inside the band. `rasterPlan` therefore
+plans no raster wider or taller than 2^20 pixels, and Document::renderPage returns no
+image for one. Such a page reports that it could not be rendered instead of printing a
+blank or distorted sheet.
 
 Each band takes a short document hold for rendering, and the first band's hold also
 reads the page size. Each hold ends before colour conversion, painting or any printer
 call. The worker converts a band's colour mode before it draws the band. It begins the
 job or starts a sheet only after the sheet's first band converted, so a failed render
-or conversion reports its page instead of leaving a blank sheet. A blocked printer
-call names its printer in the wait bar. Stop takes effect between bands and
-suppresses completion. A print completion already submitted may finish. The worker
-checks painter.end and reports a completion failure.
+or conversion reports its page instead of leaving a blank sheet. That band is drawn
+even when Stop arrives while the printer starts the sheet. A blocked printer call
+names its printer in the wait bar. Stop ends document access at once, so no further
+band renders, and suppresses completion. A print completion already submitted may
+finish. The worker checks painter.end and reports a completion failure.
 
 Qt cannot cancel a print job, because QPrinter::abort does nothing in Qt's PDF, CUPS
 and Windows engines. When Stop or a failure ends a printer job early, the painter
-still ends it, and the printer receives the sheets drawn so far, including a partly
-drawn sheet after a failure in a later band. Print to file discards its private PDF.
+still ends it, and the printer receives the sheets drawn so far. Stop or a failure
+between the bands of a page printed in several bands leaves that sheet partly drawn.
+Print to file discards its private PDF.
 
 The print preview renders through RenderEngine with the same raster plan, at screen
 resolution for colour and grayscale, and like printing for black and white, at the
-print quality without antialiasing. Its raster stays within 2048 or 4096 pixels on a
-side. It keeps the colour conversion and its reduction to
-the device size between paints, and redoes them only for a new render, colour mode or
-device size.
+print quality without antialiasing. It lowers the resolution so that the visible part
+stays within 2048 or 4096 pixels on a side, and shows that it could not render the
+page when even that raster is beyond 2^20 pixels. It keeps the colour conversion and
+its reduction to the device size between paints, and redoes them only for a new
+render, colour mode or device size.
 
 Print to file reserves and checks the destination against source and open tabs before
 output begins. QPrinter writes a private local PDF, then closes before the worker

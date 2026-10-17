@@ -122,18 +122,22 @@ struct PrintResult
 // file and CUPS printers use, draws a band, it holds about 8 bytes a pixel: the render
 // (RGB888, or Grayscale8 once converted), the engine's ARGB32 copy, and its samples or
 // soft mask. 2^24 pixels keep that near 135 MB on any sheet and quality, while a Letter
-// or A4 sheet at 300 dpi (8.4 and 8.7 million pixels) still prints as one image. Every
-// band runs the page again, so a smaller budget costs time for little memory.
+// or A4 sheet at 300 dpi (8.4 and 8.7 million pixels) still prints as one image. Qt's
+// Windows engine keeps a sheet's images until the sheet ends, so there the budget bounds
+// only the render and its conversion. Every band runs the page again, so a smaller
+// budget costs time for little memory.
 constexpr qint64 kPrintBandPixels = qint64(1) << 24;
 
 // Paints on the worker that owns `printer`. A page renders at renderDpi on paper,
 // whatever its scale, and only its part inside the printable area, in bands of whole
 // raster rows (printing::rasterPlan and rasterBands). Each band holds live document
 // access only while it renders, then converts its colour mode and draws. A sheet, and
-// the job with the first one, starts only after its first band converted, so a page
-// that fails there leaves no blank sheet. A failure in a later band leaves the sheet
-// partly drawn. Qt's print engines cannot cancel a job (QPrinter::abort does nothing
-// in the PDF, CUPS and Windows engines), so when Stop or a failure returns early, the
+// the job with the first one, starts only after its first band converted, and that band
+// is drawn even when Stop arrives while the printer starts the sheet, so no sheet stays
+// blank. Stop ends document access, so no further band renders. Stop or a failure
+// between the bands of a page printed in several bands therefore leaves that sheet
+// partly drawn. Qt's print engines cannot cancel a job (QPrinter::abort does nothing in
+// the PDF, CUPS and Windows engines), so when Stop or a failure returns early, the
 // painter's destructor still ends the job and a printer receives the sheets drawn so
 // far. Print to file discards its staged PDF instead.
 void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetime> &lifetime,
@@ -223,8 +227,6 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
                     result.failure = PrintResult::Failure::NextPage;
                     return;
                 }
-                if (mervin::job::stopped())
-                    return;
             }
             const QRectF target = printing::rasterTarget(
                 plan.destination, pagePoints, plan.scale,

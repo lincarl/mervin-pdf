@@ -257,7 +257,7 @@ public:
     // `antialias`, edges are hard and MuPDF draws every stroke at least one pixel
     // wide, so a black and white threshold acts on colours rather than on partial
     // coverage. The result is the part of `clip` inside the page, as RGB888, or null
-    // on failure.
+    // on failure or when the page's raster reaches beyond kMaxDevicePixel.
     QImage renderPage(int page, double scale, int rotation, const QRect &clip = {},
                       bool antialias = true) const;
 

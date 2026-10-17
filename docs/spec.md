@@ -284,10 +284,14 @@ replacing the chosen destination. Printing to the source or another open tab is
 refused. Stop before the file replacement keeps its previous bytes. Printer errors
 include a failure to finish submitting the job. A job sent to a printer cannot be
 cancelled, so after Stop or an error the printer still prints the sheets drawn so far.
+Stop ends the job's use of the document at once. A large page at high quality prints
+in several parts, so Stop or an error partway through it leaves that sheet partly
+printed. Stop never leaves a blank sheet.
 
 Print renders each page at the selected quality for its size on paper, and only the
 part that lands on the sheet. Black and white renders without antialiasing, so lines
-thinner than a printed dot still print one dot wide.
+thinner than a printed dot still print one dot wide. A page whose raster would be
+too large reports that it could not be rendered, in the preview and when printing.
 
 Save as copy and Export run in the tab's background job. Their wait bar offers Stop
 waiting after two seconds without progress, and other tabs and windows stay usable.

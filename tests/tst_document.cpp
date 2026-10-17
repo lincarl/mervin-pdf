@@ -38,6 +38,7 @@ private slots:
     void clippedRenderMatchesFullRender_data();
     void clippedRenderMatchesFullRender();
     void renderWithoutAntialiasingKeepsHairlines();
+    void renderStaysWithinTheEdgeClamp();
 };
 
 namespace {
@@ -334,6 +335,56 @@ void TstDocument::renderWithoutAntialiasingKeepsHairlines()
     QCOMPARE(darkest(hard), 0);
     // The context's antialiasing returns for later renders.
     QCOMPARE(doc->renderPage(0, 1, 0), smooth);
+}
+
+// MuPDF clamps edges to 2^20 device pixels from the device origin. A band of a larger
+// raster would come back blank or with displaced shapes, so it must fail instead,
+// while a raster just inside the limit keeps every shape in place.
+void TstDocument::renderStaysWithinTheEdgeClamp()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // A 144000 pt square page (UserUnit 10) with a small square right of its centre
+    // and a long line of slope 2 through the centre.
+    const QByteArray content = "0 g 7220 7190 40 20 re f 0 G 0.5 w 3600 0 m 10800 14400 l S";
+    const QByteArray pdf = assemblePdf({
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 14400 14400] /UserUnit 10 "
+        "/Contents 4 0 R >>",
+        "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content
+            + "\nendstream",
+    });
+    const QString path = writeTemp(dir, QStringLiteral("huge.pdf"), pdf);
+    QVERIFY(!path.isEmpty());
+    RenderEngine engine;
+    auto doc = engine.openDocument(path);
+    QVERIFY(doc);
+    QCOMPARE(doc->pageSize(0), QSizeF(144000, 144000));
+
+    // At 7.2 pixels a point the raster is 1036800 pixels square. The page centre is
+    // pixel 518400, where the line crosses the band's middle row at band column 2000.
+    // The line is 36 pixels wide, so its row spans about 40 columns. The square
+    // starts at column 3440.
+    const QImage band = doc->renderPage(0, 7.2, 0, QRect(516400, 518350, 4000, 100));
+    QVERIFY(!band.isNull());
+    int first = -1;
+    int last = -1;
+    for (int x = 0; x < 3000; ++x) {
+        if (qGray(band.pixel(x, 50)) < 128) {
+            first = first < 0 ? x : first;
+            last = x;
+        }
+    }
+    QVERIFY2(std::abs((first + last) / 2 - 2000) <= 3 && last - first >= 30 && last - first <= 50,
+             qPrintable(QStringLiteral("line at columns %1 to %2").arg(first).arg(last)));
+    for (int x = 3460; x < 4000; x += 20)
+        QVERIFY2(qGray(band.pixel(x, 50)) < 128, qPrintable(QString::number(x)));
+
+    // At 16 pixels a point the raster is 2304000 pixels square, and the same place is
+    // beyond the clamp.
+    QVERIFY(doc->renderPage(0, 16, 0, QRect(1148000, 1151900, 8000, 200)).isNull());
+    QVERIFY(doc->renderPage(0, 16, 0, QRect(0, 0, 100, 100)).isNull());
 }
 
 QTEST_GUILESS_MAIN(TstDocument)

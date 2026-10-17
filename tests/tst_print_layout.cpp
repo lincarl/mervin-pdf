@@ -180,12 +180,15 @@ void TstPrintLayout::invalidRasterPlansAreEmpty()
     QVERIFY(rasterPlan(QSizeF(100, 100), printable, settings, -300).isEmpty());
     QVERIFY(rasterPlan(QSizeF(100, 100), printable, settings,
                        std::numeric_limits<double>::infinity()).isEmpty());
-    // MuPDF cannot address a raster side beyond 2^24 pixels.
-    settings.scaleMode = ScaleMode::ActualSize;
-    QVERIFY(rasterPlan(QSizeF(1e7, 1e7), QRectF(0, 0, 1e7, 1e7), settings, 300).isEmpty());
-    // The largest PDF page at 400% and 1200 dpi still plans its visible part.
+    // MuPDF draws a page raster correctly only up to 2^20 pixels on a side, so a page
+    // that would reach one pixel further has no plan, even with a small visible part.
     settings.scaleMode = ScaleMode::Custom;
     settings.scalePercent = 400;
+    QVERIFY(!rasterPlan(QSizeF(262144, 100), printable, settings, 72).isEmpty());
+    QVERIFY(rasterPlan(QSizeF(262144.25, 100), printable, settings, 72).isEmpty());
+    QVERIFY(rasterPlan(QSizeF(100, 262144.25), printable, settings, 72).isEmpty());
+    // The largest page without a UserUnit at 400% and 1200 dpi still plans its visible
+    // part.
     const RasterPlan large = rasterPlan(QSizeF(14400, 14400), printable, settings, 1200);
     QCOMPARE(large.source.size(), QSize(3334, 1668));
 }
