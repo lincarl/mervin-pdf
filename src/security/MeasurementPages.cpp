@@ -30,9 +30,10 @@ private:
     QByteArray &bytes_;
 };
 
-// Whether the blob `dict` names only the encoding Mervin writes. The parameter keys
-// include the abbreviations MuPDF reads, so the viewer and page operations accept the
-// same blobs.
+// Whether the blob `dict` names only the encoding Mervin writes: no filter, or a single
+// /FlateDecode as a name or a one-element array, and no /DecodeParms. qpdf ignores /F and
+// /DP, MuPDF's abbreviations for /Filter and /DecodeParms, so they are refused too, and
+// the open-time reader (Document::mervinMeasurements) refuses the same streams.
 bool plainFlate(QPDFObjectHandle dict)
 {
     for (const char *key : {"/DecodeParms", "/DP", "/F"}) {
@@ -40,18 +41,9 @@ bool plainFlate(QPDFObjectHandle dict)
             return false;
     }
     QPDFObjectHandle filter = dict.getKey("/Filter");
-    if (filter.isNull())
-        return true;
-    if (filter.isName())
-        return filter.getName() == "/FlateDecode";
-    if (!filter.isArray() || filter.getArrayNItems() > kMaxMeasurementBlobFilters)
-        return false;
-    for (int i = 0; i < filter.getArrayNItems(); ++i) {
-        const QPDFObjectHandle item = filter.getArrayItem(i);
-        if (!item.isName() || item.getName() != "/FlateDecode")
-            return false;
-    }
-    return true;
+    if (filter.isArray() && filter.getArrayNItems() == 1)
+        filter = filter.getArrayItem(0);
+    return filter.isNull() || (filter.isName() && filter.getName() == "/FlateDecode");
 }
 } // namespace
 

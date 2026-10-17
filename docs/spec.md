@@ -145,8 +145,8 @@ The measuring tool is intended for scaled plans, CAD exports, and maps.
   labels can be repositioned on the page.
 - Editable measurements and manual scales can be saved back into the PDF for use in
   Mervin. Saved measurement data that decompresses to more than 16 MiB, or that is
-  stored other than plain or Flate-compressed, is ignored when the document opens, and
-  the page tools report it as invalid.
+  stored other than plain or compressed once with Flate, is ignored when the document
+  opens, and the page tools report it as invalid.
 - A flattened export writes ordinary PDF graphics that are visible in other PDF
   readers. Printing can include the same measurement graphics.
 

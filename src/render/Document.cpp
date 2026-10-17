@@ -1015,10 +1015,11 @@ bool Document::hasForm() const
 
 namespace {
 
-// Whether the measurement blob `stream` names only the encoding Mervin writes: no filter
-// or up to kMaxMeasurementBlobFilters /FlateDecode, and no filter parameters. MuPDF also
-// reads /F for /Filter and /DP for /DecodeParms. A predictor's parameters would size its
-// buffers before any data is read.
+// Whether the measurement blob `stream` names only the encoding Mervin writes: no filter,
+// or a single /FlateDecode as a name or a one-element array, and no /DecodeParms. MuPDF
+// also reads /F for /Filter and /DP for /DecodeParms, so those keys are refused too. A
+// predictor's parameters would size its buffers before any data is read, and chained
+// Flate stages can spend time without producing output.
 bool plainFlateBlob(fz_context *ctx, pdf_obj *stream)
 {
     for (pdf_obj *key : {PDF_NAME(DecodeParms), PDF_NAME(DP), PDF_NAME(F)}) {
@@ -1026,18 +1027,9 @@ bool plainFlateBlob(fz_context *ctx, pdf_obj *stream)
             return false;
     }
     pdf_obj *filter = pdf_dict_get(ctx, stream, PDF_NAME(Filter));
-    if (pdf_is_null(ctx, filter))
-        return true;
-    if (pdf_is_name(ctx, filter))
-        return pdf_name_eq(ctx, filter, PDF_NAME(FlateDecode));
-    const int count = pdf_is_array(ctx, filter) ? pdf_array_len(ctx, filter) : -1;
-    if (count < 0 || count > kMaxMeasurementBlobFilters)
-        return false;
-    for (int i = 0; i < count; ++i) {
-        if (!pdf_name_eq(ctx, pdf_array_get(ctx, filter, i), PDF_NAME(FlateDecode)))
-            return false;
-    }
-    return true;
+    if (pdf_is_array(ctx, filter) && pdf_array_len(ctx, filter) == 1)
+        filter = pdf_array_get(ctx, filter, 0);
+    return pdf_is_null(ctx, filter) || pdf_name_eq(ctx, filter, PDF_NAME(FlateDecode));
 }
 
 } // namespace
