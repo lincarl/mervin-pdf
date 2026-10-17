@@ -194,12 +194,30 @@ private:
     ObjectSet removed_;
 };
 
+/// The fields above `node` through /Parent, nearest first, up to the top of its tree, or up
+/// to a field already listed, as in a loop. Fields have no /Type, which keeps the climb out
+/// of anything else that a damaged /Parent might name.
+std::vector<QPDFObjectHandle> fieldsAbove(QPDFObjectHandle node)
+{
+    std::vector<QPDFObjectHandle> above;
+    ObjectSet seen;
+    if (node.isIndirect())
+        seen.insert(node.getObjGen());
+    for (QPDFObjectHandle parent = node.getKey("/Parent");
+         parent.isDictionary() && !parent.hasKey("/Type")
+         && (!parent.isIndirect() || seen.insert(parent.getObjGen()).second);
+         parent = parent.getKey("/Parent"))
+        above.push_back(parent);
+    return above;
+}
+
 /// The objects of a Delete Pages source, collected before the pages go.
 struct Removal
 {
     ObjectSet pages;           // the deleted pages
     ObjectSet annotations;     // the indirect annotations that only deleted pages list
     ObjectSet keptAnnotations; // the indirect annotations that kept pages list
+    std::vector<QPDFObjectHandle> keptWidgets; // the widgets that kept pages list
     std::set<long long> parentKeys; // ParentTree keys that only those pages and annotations use
 };
 
@@ -630,17 +648,25 @@ void pruneStructure(QPDF &q, const Removal &removal)
 }
 
 /// Removes the form fields that only deleted pages show, from /Fields, /CO and their
-/// parents' /Kids, and returns them. Removing a field also drops /XFA, whose data holds
-/// every field's value and would no longer match the form.
+/// parents' /Kids, and returns them. That includes the trees that the widgets of kept pages
+/// reach through /Parent when /AcroForm does not list them, as in files that Extract wrote
+/// before it copied forms. Removing a field also drops /XFA, whose data holds every field's
+/// value and would no longer match the form.
 ObjectSet pruneDeletedFields(QPDF &q, const Removal &removal)
 {
-    QPDFObjectHandle form = q.getRoot().getKey("/AcroForm");
-    if (!form.isDictionary())
-        return {};
     FieldPruner pruner(removal.keptAnnotations, &removal.annotations);
-    pruner.pruneArray(form.getKey("/Fields"));
-    pruner.pruneArray(form.getKey("/CO"));
-    if (!pruner.removed().empty())
+    QPDFObjectHandle form = q.getRoot().getKey("/AcroForm");
+    if (form.isDictionary()) {
+        pruner.pruneArray(form.getKey("/Fields"));
+        pruner.pruneArray(form.getKey("/CO"));
+    }
+    // A tree that /Fields lists was pruned above, which makes this a lookup.
+    for (QPDFObjectHandle widget : removal.keptWidgets) {
+        const std::vector<QPDFObjectHandle> above = fieldsAbove(widget);
+        if (!above.empty())
+            pruner.prune(above.back());
+    }
+    if (form.isDictionary() && !pruner.removed().empty())
         form.removeKey("/XFA");
     return pruner.removed();
 }
@@ -762,10 +788,16 @@ void removeDeletedContent(QPDF &q, const std::vector<QPDFPageObjectHelper> &page
         if (page.getKey("/StructParents").isInteger())
             keys.insert(page.getKey("/StructParents").getIntValue());
         QPDFObjectHandle annots = page.getKey("/Annots");
-        if (annots.isArray())
-            for (QPDFObjectHandle annot : annots.aitems())
-                if (annot.isDictionary() && annot.getKey("/StructParent").isInteger())
-                    keys.insert(annot.getKey("/StructParent").getIntValue());
+        if (!annots.isArray())
+            continue;
+        for (QPDFObjectHandle annot : annots.aitems()) {
+            if (!annot.isDictionary())
+                continue;
+            if (annot.getKey("/StructParent").isInteger())
+                keys.insert(annot.getKey("/StructParent").getIntValue());
+            if (!deleted && annot.getKey("/Subtype").isNameAndEquals("/Widget"))
+                removal.keptWidgets.push_back(annot);
+        }
     }
     for (const QPDFObjGen &id : removal.keptAnnotations)
         removal.annotations.erase(id);
@@ -895,23 +927,6 @@ private:
         Copies copies;
         std::map<std::string, std::string> names; // fully qualified names that a rename changed
     };
-
-    // The fields above `node` through /Parent, nearest first, up to the top of its tree, or
-    // up to a field already listed, as in a loop. Fields have no /Type, which keeps the climb
-    // out of anything else that a damaged /Parent might name.
-    static std::vector<QPDFObjectHandle> fieldsAbove(QPDFObjectHandle node)
-    {
-        std::vector<QPDFObjectHandle> above;
-        ObjectSet seen;
-        if (node.isIndirect())
-            seen.insert(node.getObjGen());
-        for (QPDFObjectHandle parent = node.getKey("/Parent");
-             parent.isDictionary() && !parent.hasKey("/Type")
-             && (!parent.isIndirect() || seen.insert(parent.getObjGen()).second);
-             parent = parent.getKey("/Parent"))
-            above.push_back(parent);
-        return above;
-    }
 
     // Prunes the field tree of `widget`, if it is a widget, from its top, and adds the fields
     // above the widget to `used`.
