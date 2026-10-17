@@ -964,6 +964,17 @@ fields with null (`QPDF::replaceObject`), so links, named destinations and other
 references cannot keep their content in the output. A damaged outline or structure
 tree is left as it was.
 
+Pages can share one resources dictionary, or inherit it from `/Pages`, and then list the
+images and fonts of every page. `sharesResources` makes the test of qpdf's own page
+selection (`QPDFJob::shouldRemoveUnreferencedResources`): a shared resources or `/XObject`
+dictionary, or resources on a `/Pages` node. Only then does `trimResources` call
+`QPDFPageObjectHelper::removeUnreferencedResources`, which reads the page's content and
+gives the page its own resources without the ones it does not use. Delete Pages trims
+the kept pages after the cleanup, and `ResourceTrim` trims each source page before
+`addPage` first copies it for Extract, Split and Merge. Otherwise a deleted page's image
+would stay in the copy, and a copied page would bring the images of pages left out. The
+test runs before `removePage` or `addPage`, which move inherited resources onto the pages.
+
 In `PageOps::merge`, an exception while an input is read, such as unreadable
 measurement data, sets `failedIndex` to that input. Extract maps index 0 to its
 unreadable-source failure. Errors after the inputs are read keep -1, which the

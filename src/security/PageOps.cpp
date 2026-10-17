@@ -489,14 +489,94 @@ ObjectSet pruneDeletedFields(QPDF &q, const Removal &removal)
     return pruner.removed();
 }
 
+/// Whether pages of `q` share a resources dictionary or an /XObject dictionary, or inherit
+/// resources from a /Pages node. Such files often list resources that a page does not use,
+/// so only then is it worth reading every page's content to find them. This is the test
+/// that qpdf's own page selection makes (QPDFJob::shouldRemoveUnreferencedResources). Call
+/// it before addPage or removePage, which move inherited resources onto the pages.
+bool sharesResources(QPDF &q)
+{
+    try {
+        ObjectSet nodes, resources;
+        std::vector<QPDFObjectHandle> queue{q.getRoot().getKey("/Pages")};
+        while (!queue.empty()) {
+            QPDFObjectHandle node = queue.back();
+            queue.pop_back();
+            if (node.isIndirect() && !nodes.insert(node.getObjGen()).second)
+                continue;
+            QPDFObjectHandle dict = node.isStream() ? node.getDict() : node;
+            if (!dict.isDictionary())
+                continue;
+            QPDFObjectHandle kids = dict.getKey("/Kids");
+            if (kids.isArray()) {
+                if (dict.hasKey("/Resources"))
+                    return true;
+                for (QPDFObjectHandle kid : kids.aitems())
+                    queue.push_back(kid);
+                continue;
+            }
+            // A page, or a form XObject that one draws.
+            QPDFObjectHandle own = dict.getKey("/Resources");
+            if (own.isIndirect() && !resources.insert(own.getObjGen()).second)
+                return true;
+            if (!own.isDictionary())
+                continue;
+            QPDFObjectHandle xobjects = own.getKey("/XObject");
+            if (xobjects.isIndirect() && !resources.insert(xobjects.getObjGen()).second)
+                return true;
+            if (xobjects.isDictionary())
+                for (auto item : xobjects.ditems())
+                    if (item.second.isFormXObject())
+                        queue.push_back(item.second);
+        }
+    } catch (const std::exception &) {
+        // A page tree that qpdf cannot walk keeps its resources.
+    }
+    return false;
+}
+
+/// Removes from `page` the fonts and XObjects that its content does not use. qpdf gives
+/// the page its own resources dictionary first, and leaves a page whose content it cannot
+/// read as it was.
+void trimResources(QPDFPageObjectHelper page)
+{
+    try {
+        page.removeUnreferencedResources();
+    } catch (const std::exception &) {
+        // The page keeps resources it does not use.
+    }
+}
+
+/// Trims the pages that merge() and split() copy when their source shares resources (see
+/// sharesResources), as qpdf's page selection does. Otherwise a copied page brings along
+/// the images and fonts of every page that shares its resources.
+class ResourceTrim
+{
+public:
+    /// Trims `page` of `source` before addPage copies it the first time.
+    void before(QPDF &source, QPDFPageObjectHelper page)
+    {
+        auto it = shares_.find(&source);
+        if (it == shares_.end())
+            it = shares_.emplace(&source, sharesResources(source)).first;
+        if (it->second && trimmed_.insert({&source, page.getObjectHandle().getObjGen()}).second)
+            trimResources(page);
+    }
+
+private:
+    std::map<QPDF *, bool> shares_;
+    std::set<std::pair<QPDF *, QPDFObjGen>> trimmed_;
+};
+
 /// Leaves out of `q` what only the deleted pages of `pages` used, after
 /// QPDFPageDocumentHelper::removePage took them out of the page tree, which is all it
 /// does. The pages, the annotations that no kept page lists and the form fields that only
 /// deleted pages show become null, so outlines, links, structure and other references
 /// cannot keep their content. Outline items and structure elements that lead only to
-/// deleted pages go as well.
+/// deleted pages go as well. With `shared` (see sharesResources, which must look before
+/// removePage), the kept pages also lose the resources that they do not use.
 void removeDeletedContent(QPDF &q, const std::vector<QPDFPageObjectHelper> &pages,
-                          const std::set<int> &drop)
+                          const std::set<int> &drop, bool shared)
 {
     Removal removal;
     std::set<long long> keptKeys; // ParentTree keys that kept pages or their annotations use
@@ -526,6 +606,9 @@ void removeDeletedContent(QPDF &q, const std::vector<QPDFPageObjectHelper> &page
     for (const ObjectSet *objects : gone)
         for (const QPDFObjGen &id : *objects)
             q.replaceObject(id, QPDFObjectHandle::newNull());
+    if (shared)
+        for (QPDFPageObjectHelper page : QPDFPageDocumentHelper(q).getAllPages())
+            trimResources(page);
 }
 
 /// Form helpers for the documents that pages are copied from, each made once.
@@ -970,6 +1053,7 @@ PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPa
         QPDFPageDocumentHelper dh(q);
         auto all = dh.getAllPages();
         const std::set<int> drop(pages.begin(), pages.end());
+        const bool shared = sharesResources(q);
         QList<int> kept;
         for (int index : drop)
             if (index < 0 || index >= int(all.size()))
@@ -981,7 +1065,7 @@ PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPa
                 dh.removePage(all[static_cast<size_t>(i)]);
             else
                 kept.append(i);
-        removeDeletedContent(q, all, drop);
+        removeDeletedContent(q, all, drop, shared);
         MeasureDoc mapped;
         measurementPages::append(mapped, measurementPages::read(q), kept, 0);
         measurementPages::write(q, mapped);
@@ -1095,6 +1179,7 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
         std::map<QString, QPDF *> opened;
         SourceForms sourceForms;
         FormCopy forms(out, sourceForms);
+        ResourceTrim resources;
         MeasureDoc mergedMeasurements;
         int outputPage = 0;
 
@@ -1134,6 +1219,7 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
                         *failedIndex = i;
                     return Status::Failed;
                 }
+                resources.before(*it->second, all[static_cast<size_t>(idx)]);
                 odh.addPage(all[static_cast<size_t>(idx)], false);
                 forms.copied(*it->second, all[static_cast<size_t>(idx)]);
             }
@@ -1191,10 +1277,12 @@ PageOps::Status PageOps::split(const QString &inPath, const QString &outDir, con
             return Status::Failed;
         const auto data = measurementPages::read(q);
         SourceForms sourceForms;
+        ResourceTrim resources;
         for (int i = 0; i < static_cast<int>(all.size()); ++i) {
             QPDF out;
             out.emptyPDF();
             FormCopy forms(out, sourceForms);
+            resources.before(q, all[static_cast<size_t>(i)]);
             QPDFPageDocumentHelper(out).addPage(all[static_cast<size_t>(i)], false);
             forms.copied(q, all[static_cast<size_t>(i)]);
             forms.finish();
