@@ -4380,5 +4380,10 @@ AppImage mới được lưu tại:
         <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or come from a newer version.</extracomment>
         <translation>Siêu dữ liệu đo lường không được hỗ trợ.</translation>
     </message>
+    <message>
+        <source>The measurements are too large to save.</source>
+        <extracomment>Reason a save, copy or page operation fails without writing anything. The measurements Mervin would store in the PDF pass the 16 MiB it reads back, as can happen when merging files that carry many measurements.</extracomment>
+        <translation>Số đo quá lớn để lưu.</translation>
+    </message>
 </context>
 </TS>

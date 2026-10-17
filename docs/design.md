@@ -1335,7 +1335,14 @@ ignores. Both stop once the decoded data passes 16 MiB (`kMaxMeasurementBlobByte
 since neither library limits Flate output by default. A refused blob opens as no
 measurements and fails page operations with Invalid measurement metadata. The open-time
 reader also accepts a blob stored as a string up to the same limit, which page
-operations refuse as invalid; Mervin never writes one.
+operations refuse as invalid; Mervin never writes one. Every write of the blob goes
+through `measurementPages::store`, from page operations by way of
+`measurementPages::write` and from Save and copies by way of `MeasureExport::embedMervin`.
+It throws before the output is written when the JSON passes the same 16 MiB, so Mervin
+never writes a blob its readers would refuse, for example after a Merge combines the
+measurements of several files. The operation fails with "The measurements are too
+large to save." (`PageOps::measurementsTooLargeError`), which the Merge dialog shows in
+place of its write-failure summary.
 
 Opening does not use qpdf, which inflates a whole object stream or cross-reference
 stream into memory when it resolves an object in it (qpdf 11.9.0 `QPDF.cc:1792`). MuPDF

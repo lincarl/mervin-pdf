@@ -297,14 +297,14 @@ MergeDialog::MergeDialog(const MergePlan &plan, const QString &output, const QSt
     outputEdited_ = true;
     outputEdit_->setText(QDir::toNativeSeparators(output));
     rebuild(plan_.isEmpty() ? -1 : 0);
-    writeError_ = failureSummary(plan_, output, failedIndex, conflict);
+    writeError_ = failureSummary(plan_, output, failedIndex, conflict, error);
     writeErrorDetail_ = QDir::toNativeSeparators(error);
     refreshFooter();
 }
 
 /// Explains the failed input, destination conflict or write while keeping the plan retryable.
 QString MergeDialog::failureSummary(const MergePlan &plan, const QString &output,
-                                    int failedIndex, Conflict conflict)
+                                    int failedIndex, Conflict conflict, const QString &error)
 {
     if (conflict == Conflict::Input) {
         return tr("The merged file cannot replace one of the files being "
@@ -324,6 +324,8 @@ QString MergeDialog::failureSummary(const MergePlan &plan, const QString &output
     } else if (failedIndex >= 0 && failedIndex < plan.count()) {
         //: %1 is the name of the file being merged when it failed.
         return tr("The merge failed on \"%1\".").arg(plan.displayName(failedIndex));
+    } else if (!error.isEmpty() && error == PageOps::measurementsTooLargeError()) {
+        return error;
     } else {
         //: %1 is the merged file's name.
         return tr("Could not write \"%1\". If another program has it open, close "

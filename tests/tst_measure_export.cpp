@@ -16,6 +16,7 @@
 
 #include <QByteArray>
 #include <QCoreApplication>
+#include <QFile>
 #include <QFileInfo>
 #include <QTemporaryDir>
 #include <QTest>
@@ -142,6 +143,26 @@ std::string pngRows(const std::string &data)
     return rows;
 }
 
+// One manual scale on page 0 whose label holds `labelLength` characters, a cheap way to
+// give the measurement blob a chosen size.
+MeasureDoc longLabel(qsizetype labelLength)
+{
+    MeasureDoc md;
+    PageScale scale;
+    scale.page = 0;
+    scale.mmPerPointX = scale.mmPerPointY = 1.0;
+    scale.label = QString(labelLength, QLatin1Char('x'));
+    md.pageScales.push_back(scale);
+    return md;
+}
+
+// The reason a write gives when the measurements would pass the read limit.
+QString tooLargeReason()
+{
+    return QCoreApplication::translate("mervin::measurementPages",
+                                       "The measurements are too large to save.");
+}
+
 // One distance on page 0.
 MeasureDoc oneDistance()
 {
@@ -216,6 +237,9 @@ private slots:
     void pageOperationsStopAtTheCap();
     void foreignEncodingsGiveNoData_data();
     void foreignEncodingsGiveNoData();
+    void mergeRefusesMeasurementsPastTheCap_data();
+    void mergeRefusesMeasurementsPastTheCap();
+    void saveRefusesMeasurementsPastTheCap();
     void openReaderMatchesQpdf();
     void embedKeyIsPrivateToCatalog();
     void valueLabelsWithoutScale();
@@ -457,6 +481,64 @@ void TstMeasureExport::foreignEncodingsGiveNoData()
     QString err;
     QCOMPARE(PageOps::rotatePages(in, out, {0}, 90, true, {}, &err),
              accepted ? PageOps::Status::Ok : PageOps::Status::Failed);
+}
+
+void TstMeasureExport::mergeRefusesMeasurementsPastTheCap_data()
+{
+    QTest::addColumn<qsizetype>("labelLength"); // per source
+    QTest::addColumn<bool>("accepted");
+    // Each source's blob stays below the cap, so both open with their measurements.
+    QTest::newRow("together past the cap") << kMaxMeasurementBlobBytes / 2 + 1024 << false;
+    QTest::newRow("together under the cap") << kMaxMeasurementBlobBytes / 2 - 64 * 1024 << true;
+}
+
+/// Merge writes no output whose measurements its readers would refuse, so they are never
+/// lost on the next open.
+void TstMeasureExport::mergeRefusesMeasurementsPastTheCap()
+{
+    QFETCH(qsizetype, labelLength);
+    QFETCH(bool, accepted);
+    const QString plain = p("cap-plain.pdf"), first = p("cap-first.pdf"),
+                  second = p("cap-second.pdf"), merged = p("cap-merged.pdf");
+    QFile::remove(merged);
+    makePdf(plain, 1);
+    QString err;
+    QCOMPARE(MeasureExport::embedMervin(plain, first, longLabel(labelLength), {}, &err),
+             MeasureExport::Status::Ok);
+    QCOMPARE(MeasureExport::embedMervin(plain, second, longLabel(labelLength), {}, &err),
+             MeasureExport::Status::Ok);
+    QVERIFY(MeasureExport::readMervinBlob(first).has_value());
+
+    const auto status = PageOps::merge({{first, {}, {}}, {second, {}, {}}}, merged, &err);
+    if (!accepted) {
+        QCOMPARE(status, PageOps::Status::Failed);
+        QCOMPARE(err, tooLargeReason());
+        QVERIFY(!QFileInfo::exists(merged));
+        return;
+    }
+    QCOMPARE(status, PageOps::Status::Ok);
+    RenderEngine engine;
+    const auto document = engine.openDocument(merged);
+    QVERIFY(document);
+    const auto blob = document->mervinMeasurements();
+    QVERIFY(blob.has_value());
+    MeasureDoc back;
+    QVERIFY(parseMeasurements(*blob, &back));
+    QCOMPARE(int(back.pageScales.size()), 2);
+    QCOMPARE(back.pageScales.back().page, 1);
+    QCOMPARE(back.pageScales.back().label.size(), labelLength);
+}
+
+/// Saving measurements that would pass the read limit fails before anything is written.
+void TstMeasureExport::saveRefusesMeasurementsPastTheCap()
+{
+    const QString plain = p("cap-save-plain.pdf"), saved = p("cap-save.pdf");
+    makePdf(plain, 1);
+    QString err;
+    QCOMPARE(MeasureExport::embedMervin(plain, saved, longLabel(kMaxMeasurementBlobBytes), {}, &err),
+             MeasureExport::Status::Failed);
+    QCOMPARE(err, tooLargeReason());
+    QVERIFY(!QFileInfo::exists(saved));
 }
 
 void TstMeasureExport::openReaderMatchesQpdf()

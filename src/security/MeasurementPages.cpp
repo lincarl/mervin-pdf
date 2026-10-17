@@ -89,14 +89,31 @@ MeasureDoc read(QPDF &pdf)
     return data;
 }
 
+QString tooLargeError()
+{
+    //: Reason a save, copy or page operation fails without writing anything. The
+    //: measurements Mervin would store in the PDF pass the 16 MiB it reads back, as can
+    //: happen when merging files that carry many measurements.
+    return QCoreApplication::translate("mervin::measurementPages",
+                                       "The measurements are too large to save.");
+}
+
+void store(QPDF &pdf, const MeasureDoc &data)
+{
+    const QByteArray json = serializeMeasurements(data);
+    // The readers would refuse a larger blob and drop the measurements on the next open.
+    if (json.size() > kMaxMeasurementBlobBytes)
+        throw std::runtime_error(tooLargeError().toStdString());
+    pdf.getRoot().replaceKey("/Mervin_Measurements", pdf.newStream(json.toStdString()));
+}
+
 void write(QPDF &pdf, const MeasureDoc &data)
 {
     if (data.measurements.empty() && data.pageScales.empty()) {
         pdf.getRoot().removeKey("/Mervin_Measurements");
         return;
     }
-    pdf.getRoot().replaceKey("/Mervin_Measurements",
-                            pdf.newStream(serializeMeasurements(data).toStdString()));
+    store(pdf, data);
 }
 
 void append(MeasureDoc &output, const MeasureDoc &source, const QList<int> &pages, int offset)

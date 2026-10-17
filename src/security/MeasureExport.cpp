@@ -109,9 +109,7 @@ MeasureExport::Status MeasureExport::embedMervin(const QString &inPath, const QS
         return st;
     QPDF &q = *source;
     try {
-        const QByteArray json = serializeMeasurements(doc);
-        auto stream = q.newStream(std::string(json.constData(), static_cast<size_t>(json.size())));
-        q.getRoot().replaceKey("/Mervin_Measurements", stream);
+        measurementPages::store(q, doc); // throws before anything is written when too large
         AtomicPdfWriter output(q, outPath);
         output.write();
         return Status::Ok;

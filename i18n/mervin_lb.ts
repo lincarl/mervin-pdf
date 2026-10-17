@@ -4402,5 +4402,10 @@ Dat neit AppImage gëtt op:
         <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or come from a newer version.</extracomment>
         <translation>Net ënnerstëtzt Mooss Metadaten.</translation>
     </message>
+    <message>
+        <source>The measurements are too large to save.</source>
+        <extracomment>Reason a save, copy or page operation fails without writing anything. The measurements Mervin would store in the PDF pass the 16 MiB it reads back, as can happen when merging files that carry many measurements.</extracomment>
+        <translation>D&apos;Miessunge si ze grouss fir ze späicheren.</translation>
+    </message>
 </context>
 </TS>

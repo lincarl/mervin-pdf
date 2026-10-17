@@ -1895,7 +1895,8 @@ void MainWindow::showMergeDialog(TabPage *tab, const std::shared_ptr<MergeReques
     if (hiddenToTray_) {
         if (result && wm_)
             wm_->notifyInTray(mervin::MergeDialog::tr("Merge PDFs"), mervin::MergeDialog::failureSummary(
-                request->plan, request->output, result->failedIndex, result->conflict));
+                request->plan, request->output, result->failedIndex, result->conflict,
+                result->error));
         return;
     }
     // Reopening the failed plan belongs to its launching tab, even if the user

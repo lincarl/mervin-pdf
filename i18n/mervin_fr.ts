@@ -4402,5 +4402,10 @@ La nouvelle AppImage est enregistrée à l&apos;emplacement&#xa0;:
         <extracomment>Page operation error. The measurements Mervin saved in this PDF are damaged or come from a newer version.</extracomment>
         <translation>Métadonnées de mesure non prises en charge.</translation>
     </message>
+    <message>
+        <source>The measurements are too large to save.</source>
+        <extracomment>Reason a save, copy or page operation fails without writing anything. The measurements Mervin would store in the PDF pass the 16 MiB it reads back, as can happen when merging files that carry many measurements.</extracomment>
+        <translation>Les mesures sont trop volumineuses pour être enregistrées.</translation>
+    </message>
 </context>
 </TS>
