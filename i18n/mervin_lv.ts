@@ -403,13 +403,13 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     </message>
     <message>
         <source>&amp;Measure</source>
-        <extracomment>Toggles the measuring tool (distances, areas and angles on the page).</extracomment>
-        <translation>&amp;Pasākums</translation>
+        <extracomment>Turns the measuring tool on or off, for distances, paths, areas and angles on the page. Measure is the verb, so use the verb or the word for measuring, not a noun for a step, a unit or a size.</extracomment>
+        <translation>&amp;Mērīt</translation>
     </message>
     <message>
         <source>Measure</source>
-        <extracomment>Tooltip of the toolbar&apos;s measure button (verb).</extracomment>
-        <translation>Pasākums</translation>
+        <extracomment>Tooltip of the toolbar&apos;s measuring tool button. Use the verb or the word for measuring, in the form that reads naturally in a tooltip.</extracomment>
+        <translation>Mērīt</translation>
     </message>
     <message>
         <source>Fill &amp;Forms</source>
@@ -1018,8 +1018,8 @@ Button: starts printing.</extracomment>
     </message>
     <message>
         <source>Measure</source>
-        <extracomment>Keyboard shortcut list: turn the measuring tool on or off.</extracomment>
-        <translation>Pasākums</translation>
+        <extracomment>Keyboard shortcut list: turn the measuring tool on or off. Use the verb or the word for measuring, in the form that reads naturally in this list.</extracomment>
+        <translation>Mērīt</translation>
     </message>
     <message>
         <source>Fill forms</source>
@@ -2469,8 +2469,8 @@ Atveriet sistēmas Iestatījumi → Noklusējuma lietojumprogrammas (vai ar pele
     <name>mervin::MeasurePanel</name>
     <message>
         <source>Measure</source>
-        <extracomment>Title of the measuring tool panel (noun, the tool&apos;s name).</extracomment>
-        <translation>Pasākums</translation>
+        <extracomment>Title of the measuring tool&apos;s panel. Use the verb or the word for measuring, in the form that reads naturally as a panel title, not a noun for a step, a unit or a size.</extracomment>
+        <translation>Mērīšana</translation>
     </message>
     <message>
         <source>Close measuring tool</source>
@@ -2478,7 +2478,8 @@ Atveriet sistēmas Iestatījumi → Noklusējuma lietojumprogrammas (vai ar pele
     </message>
     <message>
         <source>Measure - click the page to place points; toggle off to select text</source>
-        <translation>Mērījums - noklikšķiniet uz lapas, lai novietotu punktus; izslēdziet, lai atlasītu tekstu</translation>
+        <extracomment>Tooltip of the panel&apos;s button that turns measuring on. Start with the verb or the word for measuring, in the form that reads naturally in a tooltip.</extracomment>
+        <translation>Mērīšana - noklikšķiniet uz lapas, lai novietotu punktus; izslēdziet, lai atlasītu tekstu</translation>
     </message>
     <message>
         <source>Distance</source>
@@ -2514,7 +2515,7 @@ Atveriet sistēmas Iestatījumi → Noklusējuma lietojumprogrammas (vai ar pele
     </message>
     <message>
         <source>Measure an angle (three points)</source>
-        <translation>Izmēra leņķi (trīs punkti)</translation>
+        <translation>Izmēriet leņķi (trīs punkti)</translation>
     </message>
     <message>
         <source>Scale -</source>
