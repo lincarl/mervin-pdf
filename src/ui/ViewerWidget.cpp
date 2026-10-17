@@ -7,6 +7,7 @@
 #include "render/FormModel.h"
 #include "render/MeasureContent.h"
 #include "render/RenderEngine.h"
+#include "render/RenderTypes.h"
 #include "ui/AnnotPopup.h"
 #include "ui/Icons.h"
 #include "ui/PdfPropertiesPopup.h"
@@ -47,6 +48,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
 #include <optional>
 
@@ -55,6 +57,8 @@ namespace mervin {
 namespace {
 constexpr double kMinScale = 0.08;
 constexpr double kMaxScale = 100.0; // 10000% - deep zoom uses clipped rendering (see ensureRendered)
+// maximumScale() lowers kMaxScale for a document whose largest page would pass
+// kMaxDevicePixel, for every page of that document.
 
 // Discrete zoom uses round rungs; pinch gestures and typed values remain continuous.
 // Every rung exceeds kZoomLadderMinStep so the minimum-step rule cannot skip alternate levels.
@@ -182,9 +186,66 @@ int ViewerWidget::pageCount() const
     return doc_ ? doc_->pageCount() : 0;
 }
 
+double ViewerWidget::maximumScale() const
+{
+    // MuPDF draws a raster exactly only up to kMaxDevicePixel on a side, so the
+    // largest page at this scale and device pixel ratio must stay within it. One
+    // pixel of headroom covers rounding the page bounds out to whole pixels. A page
+    // that passes the limit even at kMinScale, such as a malformed giant MediaBox,
+    // cannot render at any zoom, so it must not pin the other pages to it.
+    if (dpr_ <= 0)
+        return kMaxScale;
+    const double limit = kMaxDevicePixel - 1;
+    const auto fits = std::upper_bound(pageSides_.begin(), pageSides_.end(),
+                                       limit / (kMinScale * dpr_));
+    if (fits == pageSides_.begin())
+        return pageSides_.empty() ? kMaxScale : kMinScale;
+    return std::clamp(limit / (*std::prev(fits) * dpr_), kMinScale, kMaxScale);
+}
+
 double ViewerWidget::clampScale(double s) const
 {
-    return std::clamp(s, kMinScale, kMaxScale);
+    return std::clamp(s, kMinScale, maximumScale());
+}
+
+double ViewerWidget::deviceRatio() const
+{
+    return ratioForTest_ > 0 ? ratioForTest_ : devicePixelRatioF();
+}
+
+bool ViewerWidget::event(QEvent *event)
+{
+    if (event->type() == QEvent::DevicePixelRatioChange
+        || event->type() == QEvent::ScreenChangeInternal)
+        applyDeviceRatio();
+    return QAbstractScrollArea::event(event);
+}
+
+void ViewerWidget::applyDeviceRatio()
+{
+    if (!doc_ || deviceRatio() == dpr_)
+        return;
+    endZoomEase(); // the eased rects belong to the old ratio
+    // The layout does not depend on the ratio, so the page point under the viewport
+    // centre can still be read at the old scale after this.
+    dpr_ = deviceRatio();
+    double target = clampScale(scale_);
+    if (zoomMode_ != ZoomMode::Custom) {
+        const double previous = scale_;
+        applyFitScale();
+        target = scale_;
+        scale_ = previous;
+    }
+    if (qFuzzyCompare(target, scale_)) {
+        invalidateRenders(PreviewPolicy::Keep); // the cached images carry the old ratio
+        relayout();
+    } else {
+        // The new cap or fit changes the zoom. Keep the page point the reader looks at
+        // in the middle, as any other zoom does, instead of letting the shrinking
+        // scroll range move the view.
+        rescaleKeeping(target, viewportCenter(), true);
+    }
+    emit scaleChanged(scale_);
 }
 
 double ViewerWidget::nextZoomLevel(double current, int dir) const
@@ -419,7 +480,14 @@ void ViewerWidget::setDocument(Document *doc)
     emitMeasurementsChanged();
     layout_ = ViewLayout{};
     layout_.setDocument(doc_);
-    dpr_ = devicePixelRatioF();
+    pageSides_.clear();
+    pageSides_.reserve(pageCount());
+    for (int page = 0; page < pageCount(); ++page) {
+        const QSizeF size = doc_->pageSize(page);
+        pageSides_.push_back(std::max(size.width(), size.height()));
+    }
+    std::sort(pageSides_.begin(), pageSides_.end());
+    dpr_ = deviceRatio();
     applyFitScale();
     relayout();
     verticalScrollBar()->setValue(0);
@@ -476,7 +544,10 @@ void ViewerWidget::applyFitScale()
 
 void ViewerWidget::relayout()
 {
-    dpr_ = devicePixelRatioF();
+    dpr_ = deviceRatio();
+    // A higher device pixel ratio lowers maximumScale(). Every caller emits
+    // scaleChanged afterwards, so the zoom box shows the scale in effect.
+    scale_ = clampScale(scale_);
     layout_.setMode(layoutMode_);
     layout_.setRotation(rotation_);
     layout_.setScale(scale_);
@@ -983,7 +1054,7 @@ void ViewerWidget::resizeEvent(QResizeEvent *event)
         // Only invalidate rendered images when the fitted scale changes.
         const double previous = scale_;
         applyFitScale();
-        if (!qFuzzyCompare(previous, scale_) || dpr_ != devicePixelRatioF()) {
+        if (!qFuzzyCompare(previous, scale_) || dpr_ != deviceRatio()) {
             invalidateRenders(PreviewPolicy::Keep);
             relayout();
             emit scaleChanged(scale_);
@@ -1026,7 +1097,7 @@ void ViewerWidget::showEvent(QShowEvent *event)
         // Also re-render when the device pixel ratio moved while the tab was
         // hidden (window dragged to another monitor) - dpr_ only refreshes in
         // relayout(), and the cached images carry the old ratio.
-        if (!qFuzzyCompare(previous, scale_) || dpr_ != devicePixelRatioF()) {
+        if (!qFuzzyCompare(previous, scale_) || dpr_ != deviceRatio()) {
             invalidateRenders(PreviewPolicy::Keep);
             relayout();
             emit scaleChanged(scale_);

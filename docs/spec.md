@@ -21,7 +21,10 @@ This document describes the application's current user-facing behavior. See
   option.
 - Navigate by page number, page thumbnails, document outline, and internal links.
 - Use a wide zoom range, Fit Page or Fit Width, rotate the view in 90-degree steps,
-  pan with the middle mouse button, and zoom toward the pointer.
+  pan with the middle mouse button, and zoom toward the pointer. Zoom goes up to
+  10000%. A document with a page too long to render exactly at that zoom, such as a
+  roll drawing several metres long, stops at the highest zoom that renders exactly,
+  and the zoom box shows it.
 - Select and copy text, or search the document with case-sensitive and whole-word
   options. Ctrl+F or the toolbar's search button opens a find card over the top
   right of the page, and Escape closes it. Search state is kept separately for each

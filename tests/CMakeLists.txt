@@ -160,6 +160,13 @@ add_test(NAME tst_viewer_fit COMMAND tst_viewer_fit)
 set_tests_properties(tst_viewer_fit PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+# The zoom cap depends on the device pixel ratio, which is 1 in a plain offscreen run.
+set(_mervin_dpr2_env ${_mervin_test_env})
+list(APPEND _mervin_dpr2_env "QT_SCALE_FACTOR=set:2")
+add_test(NAME tst_viewer_fit_dpr2 COMMAND tst_viewer_fit deepZoomStopsAtTheRasteriserRange)
+set_tests_properties(tst_viewer_fit_dpr2 PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_dpr2_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
 # Developer tool (not a test): renders pages through the real Comfort
 # pipeline and writes PNGs for visual verification of the image treatments.

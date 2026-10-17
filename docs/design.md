@@ -618,6 +618,24 @@ requests, cache use, coordinate conversion, selection, links, and tool overlays.
 setting. Visible pages and current rows use binary search over ordered rows. A page-image cache limits memory use; high zoom levels render visible tiles
 and use a preview layer while fresh pixels arrive.
 
+Zoom runs from 8% to 10000%. MuPDF's rasteriser clamps every edge to `kMaxDevicePixel`
+(2^20) device pixels from the device origin, and a tile is placed in the page's whole
+raster, so a raster longer than that would give blank tiles beyond it and move long
+shapes in the tiles before it. `ViewerWidget::maximumScale` therefore lowers the top of
+the zoom range for a document whose largest page would pass the limit at the current
+device pixel ratio, and every zoom, fit and restored view is clamped to it. The zoom
+box shows the clamped zoom. The cap applies to the whole document, because one zoom
+lays out every page and maps page points to the screen for selection, annotations,
+forms and measurements. It only binds for pages longer than about 3.7 m at 100%
+display scaling, or 1.2 m at 300%, so an A0 page keeps 10000% up to 300%. The cap never
+goes below 8%. A page too large to render even at 8%, about 4.6 km at 100%, does not
+count toward it, so a malformed giant page cannot shrink the rest of the document.
+`RenderEngine` refuses a raster beyond the limit instead of returning a blank image, so
+such a page shows plain paper, as any page whose render fails does. A move to a screen
+with another device pixel ratio (`QEvent::DevicePixelRatioChange`) re-renders at the
+new ratio and clamps the zoom again, in every zoom mode. When that changes the zoom, it
+keeps the page point in the middle of the view, as any other zoom does.
+
 All interactive geometry uses a consistent unrotated page-point space with a
 top-left origin. The viewer converts between that space, screen coordinates, and PDF
 user space for rotated pages and non-zero page origins.
