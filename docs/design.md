@@ -1085,21 +1085,27 @@ call. The worker converts a band's colour mode before it draws the band. It begi
 job or starts a sheet only after the sheet's first band converted, so a failed render
 or conversion reports its page instead of leaving a blank sheet. That band is drawn
 even when Stop arrives while the printer starts the sheet. A blocked printer call
-names its printer in the wait bar. Stop ends document access at once, so no further
-band renders, and suppresses completion. A print completion already submitted may
-finish. The worker checks painter.end and reports a completion failure.
+names its printer in the wait bar. Document::renderPage gives MuPDF no cookie, so a
+band that is rendering when Stop arrives runs to its end under its hold, and the tab
+stays covered until then, as for other jobs that hold the document. Then document
+access ends, no further band renders, and completion is suppressed. A print
+completion already submitted may finish. The worker checks painter.end and reports a
+completion failure.
 
 Qt cannot cancel a print job, because QPrinter::abort does nothing in Qt's PDF, CUPS
 and Windows engines. When Stop or a failure ends a printer job early, the painter
-still ends it, and the printer receives the sheets drawn so far. Stop or a failure
-between the bands of a page printed in several bands leaves that sheet partly drawn.
-Print to file discards its private PDF.
+still ends it, and the printer receives the sheets drawn so far. The band count
+follows the visible raster at the render dpi, so an A4 or Letter page at 600 dpi
+already prints in two or three bands. Stop or a failure between the bands of a page
+leaves that sheet partly drawn, and its drawn top strip can be blank. Print to file
+discards its private PDF.
 
 The print preview renders through RenderEngine with the same raster plan, at screen
 resolution for colour and grayscale, and like printing for black and white, at the
 print quality without antialiasing. It lowers the resolution so that the visible part
-stays within 2048 or 4096 pixels on a side, and shows that it could not render the
-page when even that raster is beyond 2^20 pixels. It keeps the colour conversion and
+stays within 2048 or 4096 pixels on a side. It shows that it could not render the
+page when even that raster is beyond 2^20 pixels, or when the plan at the print quality
+is, so it predicts the pages that printing refuses. It keeps the colour conversion and
 its reduction to the device size between paints, and redoes them only for a new
 render, colour mode or device size.
 

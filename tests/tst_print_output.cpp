@@ -6,6 +6,7 @@
 #include "io/Background.h"
 #include "io/JobContext.h"
 #include "dialogs/PrintDialog.h"
+#include "print/PrintLayout.h"
 #include "print/PrintPreviewWidget.h"
 #include "render/Document.h"
 #include "render/AnnotModel.h"
@@ -18,6 +19,7 @@
 
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFPageDocumentHelper.hh>
+#include <qpdf/QPDFPageObjectHelper.hh>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -39,6 +41,7 @@
 #include <QTemporaryDir>
 #include <QScopeGuard>
 #include <QTimer>
+#include <QTransform>
 #include <QtTest>
 
 #include <algorithm>
@@ -312,6 +315,48 @@ private:
     QElapsedTimer elapsed_;
     bool printQueued_ = false;
     bool saveQueued_ = false;
+};
+
+// Collects where a page draws each image, in drawing order, by following the content
+// stream's q, Q and cm operators. Rectangles are in points from the page's top-left.
+class ImagePlacements : public QPDFObjectHandle::ParserCallbacks
+{
+public:
+    explicit ImagePlacements(double pageHeight) : pageHeight_(pageHeight) {}
+
+    void handleObject(QPDFObjectHandle object) override
+    {
+        if (!object.isOperator()) {
+            operands_.push_back(object);
+            return;
+        }
+        const std::string op = object.getOperatorValue();
+        if (op == "q") {
+            stack_.push_back(ctm_);
+        } else if (op == "Q" && !stack_.empty()) {
+            ctm_ = stack_.back();
+            stack_.pop_back();
+        } else if (op == "cm" && operands_.size() == 6) {
+            const auto value = [this](size_t i) { return operands_[i].getNumericValue(); };
+            ctm_ = QTransform(value(0), value(1), value(2), value(3), value(4), value(5)) * ctm_;
+        } else if (op == "Do" && operands_.size() == 1) {
+            const QRectF unit = ctm_.mapRect(QRectF(0, 0, 1, 1));
+            names.push_back(operands_[0].getName());
+            rects.append(QRectF(unit.left(), pageHeight_ - unit.bottom(), unit.width(),
+                                unit.height()));
+        }
+        operands_.clear();
+    }
+    void handleEOF() override {}
+
+    std::vector<std::string> names; // the image resources, in drawing order
+    QList<QRectF> rects;            // where each one lands
+
+private:
+    double pageHeight_;
+    QTransform ctm_;
+    std::vector<QTransform> stack_;
+    std::vector<QPDFObjectHandle> operands_;
 };
 
 // Reads fixture bytes to prove stopped output leaves an existing destination intact.
@@ -622,7 +667,9 @@ void TstPrintOutput::printedRasterGeometry()
     auto *tab = window.findChild<TabPage *>();
     QVERIFY(tab);
     tab->viewer()->setRotation(rotation);
-    QSizeF page = large ? QSizeF(1000, 1400) : QSizeF(100, 160);
+    // The page size printPages reads: 1000 x 1400 pt or 100 x 160 pt, turned with the view.
+    QSizeF page = tab->viewer()->document()->pageSize(0);
+    QCOMPARE(page, large ? QSizeF(1000, 1400) : QSizeF(100, 160));
     if (rotation == 90)
         page.transpose();
     const QRectF printable = applicationPrintable(
@@ -644,41 +691,65 @@ void TstPrintOutput::printedRasterGeometry()
     const QSizeF size = page * factor;
     const QRectF destination(printable.center() - QPointF(size.width(), size.height()) / 2,
                              size);
-    const QRectF visible = destination & printable;
 
-    // The bands, in drawing order, are as wide as the visible part at `quality`. Their
-    // heights add up to it plus one row for each later band, because every band but
-    // the last repeats the next band's first row.
+    // The bands, in drawing order, are the rows rasterBands splits the planned raster
+    // into under the print path's 2^24-pixel budget. Every band but the last also
+    // carries the next band's first row, and each lands exactly where its rows belong,
+    // so the repeated row sits under the next band's first row.
+    printing::Settings settings;
+    settings.scaleMode = printing::ScaleMode(scaleMode);
+    settings.colourMode = printing::ColourMode::BlackAndWhite;
+    const printing::RasterPlan plan = printing::rasterPlan(page, printable, settings, quality);
+    QVERIFY(!plan.isEmpty());
+    const QList<QRect> expected = printing::rasterBands(plan.source, qint64(1) << 24);
+    QVERIFY(quality == 600 ? expected.size() >= 2 : expected.size() == 1);
     QPDF pdf;
     pdf.processFile(output.toUtf8().constData());
-    std::vector<QPDFObjectHandle> bands;
-    for (auto &[name, stream] : QPDFPageDocumentHelper(pdf).getAllPages().front().getImages())
-        bands.push_back(stream);
-    std::sort(bands.begin(), bands.end(), [](QPDFObjectHandle a, QPDFObjectHandle b) {
-        return a.getObjectID() < b.getObjectID();
-    });
-    QVERIFY(quality == 600 ? bands.size() >= 2 : bands.size() == 1);
-    const double density = quality / 72.0;
-    long long rows = 0;
-    for (size_t index = 0; index < bands.size(); ++index) {
-        QPDFObjectHandle dict = bands[index].getDict();
+    QPDFPageObjectHelper sheet = QPDFPageDocumentHelper(pdf).getAllPages().front();
+    ImagePlacements placements(sheet.getMediaBox().getArrayItem(3).getNumericValue());
+    sheet.parseContents(&placements);
+    auto images = sheet.getImages();
+    QCOMPARE(placements.rects.size(), expected.size());
+    // Qt's PDF engine puts the printable area's origin on a whole 1200 dpi device pixel
+    // (QPdfEnginePrivate::pageMatrix), which moves everything drawn by the same amount,
+    // under one device pixel (0.06 pt). Each band is placed relative to that.
+    QPointF shift;
+    for (qsizetype index = 0; index < expected.size(); ++index) {
+        QPDFObjectHandle band = images.at(placements.names[index]);
+        QPDFObjectHandle dict = band.getDict();
         QCOMPARE(dict.getKey("/BitsPerComponent").getIntValue(), 8);
-        const long long width = dict.getKey("/Width").getIntValue();
-        const long long height = dict.getKey("/Height").getIntValue();
-        QVERIFY2(std::abs(width - visible.width() * density) <= 2,
-                 qPrintable(QStringLiteral("band %1 is %2 wide").arg(index).arg(width)));
-        rows += height;
-        if (index + 1 < bands.size()) {
-            const auto above = bands[index].getStreamData(qpdf_dl_all);
-            const auto below = bands[index + 1].getStreamData(qpdf_dl_all);
+        const int width = int(dict.getKey("/Width").getIntValue());
+        const int height = int(dict.getKey("/Height").getIntValue());
+        const bool last = index + 1 == expected.size();
+        QCOMPARE(width, plan.source.width());
+        QCOMPARE(height, expected[index].height() + (last ? 0 : 1));
+        const QRectF want = printing::rasterTarget(
+            plan.destination, page, plan.scale,
+            QRect(expected[index].topLeft(), QSize(width, height)));
+        if (index == 0) {
+            shift = placements.rects[0].topLeft() - want.topLeft();
+            QVERIFY2(std::abs(shift.x()) < 0.06 && std::abs(shift.y()) < 0.06,
+                     qPrintable(QStringLiteral("shifted by %1, %2").arg(shift.x())
+                                    .arg(shift.y())));
+        }
+        const QRectF got = placements.rects[index].translated(-shift);
+        QVERIFY2(std::abs(got.left() - want.left()) < 0.005
+                     && std::abs(got.top() - want.top()) < 0.005
+                     && std::abs(got.width() - want.width()) < 0.005
+                     && std::abs(got.height() - want.height()) < 0.005,
+                 qPrintable(QStringLiteral("band %1 drawn at %2, %3, %4 x %5 instead of %6, %7, "
+                                           "%8 x %9")
+                                .arg(index).arg(got.left()).arg(got.top()).arg(got.width())
+                                .arg(got.height()).arg(want.left()).arg(want.top())
+                                .arg(want.width()).arg(want.height())));
+        if (!last) {
+            const auto above = band.getStreamData(qpdf_dl_all);
+            const auto below = images.at(placements.names[index + 1]).getStreamData(qpdf_dl_all);
             QCOMPARE(QByteArray(reinterpret_cast<const char *>(above->getBuffer())
-                                    + (height - 1) * width, width),
+                                    + qsizetype(height - 1) * width, width),
                      QByteArray(reinterpret_cast<const char *>(below->getBuffer()), width));
         }
     }
-    rows -= qsizetype(bands.size()) - 1;
-    QVERIFY2(std::abs(rows - visible.height() * density) <= 2,
-             qPrintable(QStringLiteral("%1 rows for %2 pt").arg(rows).arg(visible.height())));
 
     // The marker, the black square at the large page's centre or the light patch near
     // the small page's top-left corner, lands where the page puts it.

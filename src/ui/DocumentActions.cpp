@@ -133,8 +133,9 @@ constexpr qint64 kPrintBandPixels = qint64(1) << 24;
 // raster rows (printing::rasterPlan and rasterBands). Each band holds live document
 // access only while it renders, then converts its colour mode and draws. A sheet, and
 // the job with the first one, starts only after its first band converted, and that band
-// is drawn even when Stop arrives while the printer starts the sheet, so no sheet stays
-// blank. Stop ends document access, so no further band renders. Stop or a failure
+// is drawn even when Stop arrives while the printer starts the sheet, so no sheet starts
+// without being drawn on. A band rendering when Stop arrives finishes (renderPage has no
+// cookie), then document access ends and no further band renders. Stop or a failure
 // between the bands of a page printed in several bands therefore leaves that sheet
 // partly drawn. Qt's print engines cannot cancel a job (QPrinter::abort does nothing in
 // the PDF, CUPS and Windows engines), so when Stop or a failure returns early, the

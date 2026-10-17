@@ -284,9 +284,12 @@ replacing the chosen destination. Printing to the source or another open tab is
 refused. Stop before the file replacement keeps its previous bytes. Printer errors
 include a failure to finish submitting the job. A job sent to a printer cannot be
 cancelled, so after Stop or an error the printer still prints the sheets drawn so far.
-Stop ends the job's use of the document at once. A large page at high quality prints
-in several parts, so Stop or an error partway through it leaves that sheet partly
-printed. Stop never leaves a blank sheet.
+After Stop, the job finishes the part of the page it is rendering, then stops using
+the document, and the tab stays covered until then. A sheet whose printed area holds
+more than about 16 million raster pixels, such as any A4 or Letter page at High
+quality, prints in several horizontal parts. Stop or an error partway through such a
+page leaves that sheet partly printed, and the printed part can be blank if the page
+has no ink there. Stop never starts a sheet without drawing on it.
 
 Print renders each page at the selected quality for its size on paper, and only the
 part that lands on the sheet. Black and white renders without antialiasing, so lines

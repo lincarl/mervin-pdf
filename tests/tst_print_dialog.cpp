@@ -21,6 +21,7 @@
 #include <QTimer>
 #include <QtTest>
 
+#include <algorithm>
 #include <cmath>
 
 using namespace mervin;
@@ -96,6 +97,8 @@ private slots:
     void sheetAlwaysFitsAfterResizeAndOrientation();
     void blackAndWhitePreviewConvertsOnce();
     void previewReportsAnUnrenderablePage();
+    void previewPredictsAPrintRefusal();
+    void previewShowsTheVisiblePartOfALargePage();
     void cancellingSaveKeepsDialogOpen();
 
 private:
@@ -367,6 +370,103 @@ void TstPrintDialog::previewReportsAnUnrenderablePage()
     scale->setCurrentIndex(0);
     QTRY_VERIFY(preview->isReady());
     QVERIFY(centreColour(preview).red() > 180);
+}
+
+// The preview renders at a lower resolution than printing. A page that printing would
+// refuse at the print quality must say so in the preview too, instead of showing it.
+void TstPrintDialog::previewPredictsAPrintRefusal()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // 432000 points square (UserUnit 30). At actual size and 300 dpi its raster is
+    // 1.8 million pixels square, beyond 2^20, while a screen-resolution raster is not.
+    const QString path = writePagePdf(dir, QStringLiteral("long.pdf"),
+                                      "/MediaBox [0 0 14400 14400] /UserUnit 30",
+                                      "0.86 0.08 0.08 rg 0 0 14400 14400 re f");
+    QVERIFY(!path.isEmpty());
+    RenderEngine engine;
+    auto document = engine.openDocument(path);
+    QVERIFY(document);
+    QPrinter printer(QPrinter::HighResolution);
+    configurePrinter(printer);
+    PrintDialog dialog(&printer, &engine, document.get(), 0, QPageLayout::Portrait, 1, "long");
+    dialog.show();
+    auto *preview = dialog.findChild<PrintPreviewWidget *>();
+    auto *scale = dialog.findChild<QComboBox *>("printScale");
+    QVERIFY(preview && scale);
+    QTRY_VERIFY(preview->isReady());
+
+    QSignalSpy answered(preview, &PrintPreviewWidget::previewReady);
+    scale->setCurrentIndex(1); // Actual size
+    QTRY_VERIFY(!answered.isEmpty());
+    QTest::qWait(300); // no further render is due
+    QVERIFY(!preview->isReady());
+    QVERIFY(matchingBounds(preview->grab().toImage(), true).isEmpty());
+}
+
+// At actual size only the middle of a page larger than the sheet is visible. The
+// preview renders just that part, places it where the page puts it, and in black and
+// white keeps a hairline, as printing does.
+void TstPrintDialog::previewShowsTheVisiblePartOfALargePage()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // A white 1000 x 1400 pt page with a 40 pt black square at its centre and a 0.1 pt
+    // hairline 100.5 pt below the centre.
+    const QString path = writePagePdf(dir, QStringLiteral("large.pdf"),
+                                      "/MediaBox [0 0 1000 1400]",
+                                      "0 g 480 680 40 40 re f 0 G 0.1 w 400 599.5 m 600 599.5 l S");
+    QVERIFY(!path.isEmpty());
+    RenderEngine engine;
+    auto document = engine.openDocument(path);
+    QVERIFY(document);
+    // A screen-resolution printer would cap the black-and-white preview below 300 dpi.
+    QPrinter printer(QPrinter::HighResolution);
+    configurePrinter(printer);
+    PrintDialog dialog(&printer, &engine, document.get(), 0, QPageLayout::Portrait, 1, "large");
+    dialog.show();
+    auto *preview = dialog.findChild<PrintPreviewWidget *>();
+    auto *scale = dialog.findChild<QComboBox *>("printScale");
+    auto *colour = dialog.findChild<QComboBox *>("printColour");
+    QVERIFY(preview && scale && colour);
+    QTRY_VERIFY(preview->isReady());
+    QSignalSpy rendered(preview, &PrintPreviewWidget::previewReady);
+    scale->setCurrentIndex(1); // Actual size
+    colour->setCurrentIndex(2);
+    QTRY_VERIFY(!rendered.isEmpty());
+    QTest::qWait(300); // no further render is due
+    QTRY_VERIFY(preview->isReady());
+
+    // The page centre lands at the printable area's centre, in sheet points.
+    const QImage image = preview->grab().toImage();
+    const QRect sheet = matchingBounds(image, true);
+    QVERIFY(!sheet.isEmpty());
+    const QPageLayout layout = printer.pageLayout();
+    const double perPoint = sheet.width() / layout.fullRect(QPageLayout::Point).width();
+    const QPointF centre = QPointF(sheet.topLeft())
+        + layout.paintRect(QPageLayout::Point).center() * perPoint;
+    QRect marker;
+    const int reach = int(40 * perPoint);
+    for (int y = int(centre.y()) - reach; y <= int(centre.y()) + reach; ++y)
+        for (int x = int(centre.x()) - reach; x <= int(centre.x()) + reach; ++x)
+            if (image.rect().contains(x, y) && qGray(image.pixel(x, y)) < 100)
+                marker |= QRect(x, y, 1, 1);
+    QVERIFY2(!marker.isEmpty(), "no marker near the printable centre");
+    const QPointF found = QRectF(marker).center();
+    QVERIFY2(std::abs(found.x() - centre.x()) <= 2 && std::abs(found.y() - centre.y()) <= 2,
+             qPrintable(QStringLiteral("marker at %1, %2, expected %3, %4").arg(found.x())
+                            .arg(found.y()).arg(centre.x()).arg(centre.y())));
+    QVERIFY(std::abs(marker.width() - 40 * perPoint) <= 2);
+
+    // The hairline, rendered without antialiasing before the threshold, shows as a
+    // darker row. Antialiased, it would turn white at the threshold.
+    const int row = qRound(centre.y() + 100.5 * perPoint);
+    int darkest = 255;
+    for (int y = row - 1; y <= row + 1; ++y)
+        for (int x = int(centre.x() - 50 * perPoint); x <= int(centre.x() + 50 * perPoint); ++x)
+            darkest = std::min(darkest, qGray(image.pixel(x, y)));
+    QVERIFY2(darkest < 240, qPrintable(QStringLiteral("darkest %1 at %2 px a point")
+                                           .arg(darkest).arg(perPoint)));
 }
 
 void TstPrintDialog::cancellingSaveKeepsDialogOpen()

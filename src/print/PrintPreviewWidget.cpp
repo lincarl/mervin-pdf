@@ -129,8 +129,12 @@ void PrintPreviewWidget::requestImage()
     const double longest = std::max(visible.width(), visible.height()) * dpi / 72.0;
     const printing::RasterPlan plan = printing::rasterPlan(
         pagePoints_, printable, settings_, longest > limit ? dpi * limit / longest : dpi);
-    if (plan.isEmpty()) {
-        // The page's raster is too large to render even at this preview size.
+    // Printing plans at the print quality, as printPages does, and refuses a page whose
+    // raster would be too large there. The preview says so too, even when its own
+    // smaller raster would render.
+    const double printDpi = std::max(72, settings_.qualityDpi);
+    if (plan.isEmpty()
+        || printing::rasterPlan(pagePoints_, printable, settings_, printDpi).isEmpty()) {
         engine_->cancelRequests(requester_);
         ++generation_;
         requestedScale_ = 0;
