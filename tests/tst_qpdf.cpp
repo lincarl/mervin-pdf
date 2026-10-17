@@ -623,7 +623,8 @@ QStringList fieldPages(const QString &path)
     return lines;
 }
 
-// Rewrites `path` with `blob` as its /Mervin_Measurements: a string, or JSON for a stream.
+// Rewrites `path` with `blob` as its /Mervin_Measurements, as a string or as the JSON of a
+// stream.
 void setMeasurementBlob(const QString &path, const std::string &blob, bool stream)
 {
     const QString copy = path + QStringLiteral(".tmp");
@@ -794,6 +795,8 @@ private slots:
     void copiesLeaveOutResourcesOfOtherPages();
     void mergeNamesInputWithBadMeasurements_data();
     void mergeNamesInputWithBadMeasurements();
+    void deleteNamesSourceWithBadMeasurements_data();
+    void deleteNamesSourceWithBadMeasurements();
     void mergeConcatenates();
     void mergeHonoursPerFileRanges();
     void mergeRepeatsAPage();
@@ -1842,6 +1845,38 @@ void TstQpdf::mergeNamesInputWithBadMeasurements()
     QCOMPARE(failed, 1);
     QCOMPARE(err, message);
     QVERIFY(!QFileInfo::exists(out));
+}
+
+/// The blobs of mergeNamesInputWithBadMeasurements.
+void TstQpdf::deleteNamesSourceWithBadMeasurements_data()
+{
+    mergeNamesInputWithBadMeasurements_data();
+}
+
+/// Checks that Delete Pages names its source when it cannot read the measurements, and not
+/// when the output cannot be written.
+void TstQpdf::deleteNamesSourceWithBadMeasurements()
+{
+    QFETCH(bool, stream);
+    QFETCH(QString, blob);
+    QFETCH(QString, message);
+    const QString good = in(QStringLiteral("db_good.pdf"));
+    const QString bad = in(QStringLiteral("db_bad.pdf"));
+    const QString out = in(QStringLiteral("db_out.pdf"));
+    makePdf(good, 2);
+    makePdf(bad, 2);
+    setMeasurementBlob(bad, blob.toStdString(), stream);
+    QString err;
+    int failed = -1;
+    QCOMPARE(PageOps::deletePages(bad, out, {0}, {}, &err, &failed), PageOps::Status::Failed);
+    QCOMPARE(failed, 0);
+    QCOMPARE(err, message);
+    QVERIFY(!QFileInfo::exists(out));
+    failed = 0;
+    QCOMPARE(PageOps::deletePages(good, in(QStringLiteral("missing/db_out.pdf")), {0}, {}, &err,
+                                  &failed),
+             PageOps::Status::Failed);
+    QCOMPARE(failed, -1);
 }
 
 void TstQpdf::mergeConcatenates()

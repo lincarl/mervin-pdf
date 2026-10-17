@@ -980,9 +980,10 @@ would stay in the copy, and a copied page would bring the images of pages left o
 test runs before `removePage` or `addPage`, which move inherited resources onto the pages.
 
 In `PageOps::merge`, an exception while an input is read, such as unreadable
-measurement data, sets `failedIndex` to that input. Extract maps index 0 to its
-unreadable-source failure. Errors after the inputs are read keep -1, which the
-dialogs report as a failed write.
+measurement data, sets `failedIndex` to that input. `PageOps::deletePages` sets its
+`failedIndex` to 0 in the same cases, as it reads the measurement data before it removes
+anything. Extract and Delete map index 0 to their unreadable-source failure. Errors after
+the inputs are read keep -1, which the dialogs report as a failed write.
 
 Rotate Pages, Split, accepted Merge plans and Security run as their tab's operation
 (`TabPage::startOperation`), so only that tab waits for the file. Page tool prompts

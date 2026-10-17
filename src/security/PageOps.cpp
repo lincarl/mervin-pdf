@@ -1077,16 +1077,24 @@ void setKeyLength(QPDF &source)
 
 PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPath,
                                      const QList<int> &pages, const QString &password,
-                                     QString *error)
+                                     QString *error, int *failedIndex)
 {
+    if (failedIndex)
+        *failedIndex = -1;
     std::unique_ptr<QPDF> source;
     const Status st = openQpdf(inPath, password, source, error);
-    if (st != Status::Ok)
+    if (st != Status::Ok) {
+        if (failedIndex)
+            *failedIndex = 0;
         return st;
+    }
     QPDF &q = *source;
+    bool reading = true; // an exception names the source in failedIndex
     try {
         QPDFPageDocumentHelper dh(q);
         auto all = dh.getAllPages();
+        const MeasureDoc measurements = measurementPages::read(q);
+        reading = false;
         const std::set<int> drop(pages.begin(), pages.end());
         const bool shared = sharesResources(q);
         QList<int> kept;
@@ -1102,7 +1110,7 @@ PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPa
                 kept.append(i);
         removeDeletedContent(q, all, drop, shared);
         MeasureDoc mapped;
-        measurementPages::append(mapped, measurementPages::read(q), kept, 0);
+        measurementPages::append(mapped, measurements, kept, 0);
         measurementPages::write(q, mapped);
         setKeyLength(q);
         AtomicPdfWriter output(q, outPath);
@@ -1111,6 +1119,8 @@ PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPa
     } catch (const std::exception &e) {
         if (error)
             *error = QString::fromUtf8(e.what());
+        if (failedIndex && reading)
+            *failedIndex = 0;
         return Status::Failed;
     }
 }
