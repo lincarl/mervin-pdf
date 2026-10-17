@@ -582,6 +582,19 @@ endif()
 
 set_tests_properties(tst_ink_rects PROPERTIES LABELS "optional-corpus")
 
+# MuPDF's bundled libjpeg, FreeType, zlib and Brotli must stay out of the dynamic
+# symbol table, or Qt's JPEG plugin, libqpdf and Qt's font code call MuPDF's
+# copies (see cmake/FindMuPDF.cmake). Check the application, a test that links
+# MuPDF directly and two that link qpdf directly. The release jobs run the same
+# script on their builds.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME linux_symbol_exports
+        COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/scripts/check-linux-exports.py"
+            --nm "${CMAKE_NM}"
+            "$<TARGET_FILE:MervinPDF>" "$<TARGET_FILE:tst_document>"
+            "$<TARGET_FILE:tst_qpdf>" "$<TARGET_FILE:tst_print_output>")
+endif()
+
 target_compile_definitions(tst_document_output PRIVATE MERVIN_SCAN_PDF="${MERVIN_FIXTURES_DIR}/scan.pdf")
 target_compile_definitions(tst_document_output PRIVATE MERVIN_INHERITED_PDF="${MERVIN_FIXTURES_DIR}/inherited-resources.pdf")
 
@@ -606,6 +619,7 @@ add_test(NAME i18n_catalogs
         "-DLCONVERT=$<TARGET_FILE:Qt6::lconvert>"
         "-DGENERATE_PROJECT=${Qt6LinguistTools_DIR}/GenerateLUpdateProject.cmake"
         "-DPROJECT_FILE=${_mervin_lupdate_project}.cmake"
+        "-DCATALOG_DIR=${CMAKE_SOURCE_DIR}/i18n"
         "-DSOURCE_LANGUAGE=${QT_I18N_SOURCE_LANGUAGE}"
         "-DLUPDATE_OPTIONS=${_mervin_lupdate_options}"
         "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/i18n_catalogs"

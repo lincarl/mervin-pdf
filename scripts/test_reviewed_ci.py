@@ -88,7 +88,7 @@ class GateFixture(unittest.TestCase):
         self.jobs = [
             {"name": f"build / {name}", "status": "completed", "conclusion": "success"}
             for name in ("repository-checks", "linux-tests (release)", "linux-tests (sanitize)",
-                         "windows-tests", "windows-msix-tests")
+                         "linux-system-qt-tests", "windows-tests", "windows-msix-tests")
         ]
         self.api.api.side_effect = self.request
         self.api.pages.side_effect = self.pages
@@ -373,18 +373,20 @@ class LifecycleTests(GateFixture):
     def test_aggregate_success_cannot_hide_skipped_missing_or_failed_required_jobs(self):
         self.statuses[SHA].insert(0, ci_status())
         originals = deepcopy(self.jobs)
-        for replacement in (None, {"status": "completed", "conclusion": "skipped"},
-                            {"status": "completed", "conclusion": "failure"},
-                            {"status": "in_progress", "conclusion": None}):
-            self.jobs = deepcopy(originals)
-            if replacement is None:
-                self.jobs.pop()
-            else:
-                self.jobs[-1].update(replacement)
-            self.api.status.reset_mock()
-            with self.subTest(replacement=replacement), self.assertRaisesRegex(gate.GateError, "jobs"):
-                gate.finish(self.api, "7", SHA, "success")
-            self.assertEqual(self.api.status.call_args.args[:2], (SHA, "failure"))
+        for index, job in enumerate(originals):
+            for replacement in (None, {"status": "completed", "conclusion": "skipped"},
+                                {"status": "completed", "conclusion": "failure"},
+                                {"status": "in_progress", "conclusion": None}):
+                self.jobs = deepcopy(originals)
+                if replacement is None:
+                    del self.jobs[index]
+                else:
+                    self.jobs[index].update(replacement)
+                self.api.status.reset_mock()
+                with self.subTest(job=job["name"], replacement=replacement), \
+                        self.assertRaisesRegex(gate.GateError, "jobs"):
+                    gate.finish(self.api, "7", SHA, "success")
+                self.assertEqual(self.api.status.call_args.args[:2], (SHA, "failure"))
 
     def test_push_after_start_turns_previous_revision_failure(self):
         self.statuses[SHA].insert(0, ci_status())

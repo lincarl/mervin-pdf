@@ -13,6 +13,15 @@
 #            jbig2dec/tesseract/leptonica); only system m/pthread/dl are needed.
 #            GNU ld resolves archives in a single pass, so they are wrapped in
 #            --start-group/--end-group to satisfy mutual references.
+#            The system libqpdf, Qt and Qt's JPEG plugin load the system jpeg,
+#            freetype, zlib and brotli. Without --exclude-libs, GNU ld exports
+#            the archives' definitions of the names those libraries use, and the
+#            dynamic linker binds the libraries to MuPDF's copies. Qt's JPEG
+#            writer, built for the system libjpeg, then calls MuPDF's JPEG 10
+#            code, which rejects the call because the library versions differ,
+#            so colour prints lose their page images. --exclude-libs keeps every
+#            symbol of these archives out of the dynamic symbol table, which the
+#            linux_symbol_exports test checks with scripts/check-linux-exports.py.
 #
 # Point MUPDF_DIR (cache var or environment variable) at the MuPDF source root.
 # Provides the imported target  MuPDF::MuPDF.
@@ -76,8 +85,14 @@ if(MuPDF_FOUND AND NOT TARGET MuPDF::MuPDF)
     if(WIN32)
         set(_mupdf_link "${MUPDF_ALL_LIBS}")
     else()
+        # Hide every archive the glob found. -Wl, splits its argument at
+        # commas, so the archive file names are joined with colons.
+        set(_mupdf_archives "${MUPDF_ALL_LIBS}")
+        list(TRANSFORM _mupdf_archives REPLACE "^.*/" "")
+        list(JOIN _mupdf_archives ":" _mupdf_archives)
         set(_mupdf_link
             -Wl,--start-group ${MUPDF_ALL_LIBS} -Wl,--end-group
+            "-Wl,--exclude-libs,${_mupdf_archives}"
             m pthread ${CMAKE_DL_LIBS})
     endif()
     set_target_properties(MuPDF::MuPDF PROPERTIES

@@ -79,9 +79,7 @@ private slots:
     void init();
 
     void pageCountRoundTrip();
-#ifdef Q_OS_WIN
     void jpegDecodersCoexist();
-#endif
     void encryptAes256ThenReadInfo();
     void decryptRemovesEncryption();
     void userPasswordRequiredToOpen();
@@ -275,11 +273,12 @@ void TstQpdf::pageCountRoundTrip()
     QCOMPARE(PageOps::pageCount(p), 4);
 }
 
-#ifdef Q_OS_WIN
 void TstQpdf::jpegDecodersCoexist()
 {
-    // Static Windows builds contain different JPEG ABIs in qpdf and MuPDF.
-    // Exercise both decoders in one process to detect accidental symbol sharing.
+    // qpdf's libjpeg and MuPDF's bundled JPEG 10 have different ABIs. Windows
+    // links both into the executable; on Linux the shared libqpdf and Qt's JPEG
+    // plugin bind to MuPDF's copy if the executable exports it. Encode with Qt,
+    // then decode with qpdf and MuPDF in one process to detect symbol sharing.
     QImage source(16, 16, QImage::Format_RGB888);
     const QColor left(200, 32, 24);
     const QColor right(24, 64, 200);
@@ -344,7 +343,6 @@ void TstQpdf::jpegDecodersCoexist()
         QVERIFY(qAbs(actual.blue() - expected.blue()) <= 3);
     }
 }
-#endif
 
 void TstQpdf::encryptAes256ThenReadInfo()
 {

@@ -12,13 +12,14 @@
 #   GENERATE_PROJECT   Qt's GenerateLUpdateProject.cmake
 #   PROJECT_FILE       the .lupdate/<target>_project.cmake that qt_add_translations
 #                      writes at configure time; lists the sources and catalogs
+#   CATALOG_DIR        the directory of the committed catalogs
 #   SOURCE_LANGUAGE    the source language ("en"); its catalog holds only plural forms
 #   LUPDATE_OPTIONS    the LUPDATE_OPTIONS given to qt_add_translations, space-separated
 #   WORK_DIR           scratch directory, emptied first
 
 cmake_minimum_required(VERSION 3.25)
 
-foreach(var IN ITEMS LUPDATE LCONVERT GENERATE_PROJECT PROJECT_FILE SOURCE_LANGUAGE WORK_DIR)
+foreach(var IN ITEMS LUPDATE LCONVERT GENERATE_PROJECT PROJECT_FILE CATALOG_DIR SOURCE_LANGUAGE WORK_DIR)
     if("${${var}}" STREQUAL "")
         message(FATAL_ERROR "CheckTranslations.cmake needs -D${var}=...")
     endif()
@@ -80,9 +81,21 @@ function(unfinished_messages ts_file out_count out_lines)
     set(${out_lines} "${lines}" PARENT_SCOPE)
 endfunction()
 
-# The catalogs update_translations writes, as absolute paths.
+# The catalogs update_translations writes, as absolute paths. Qt 6.12 lists the
+# source language's catalog itself. Qt 6.10 lists a working copy in the directory
+# of PROJECT_FILE instead, which update_translations creates from the catalog in
+# CATALOG_DIR and converts back into it, so check that catalog.
 include("${PROJECT_FILE}")
-set(committed ${lupdate_translations})
+get_filename_component(lupdate_dir "${PROJECT_FILE}" DIRECTORY)
+set(committed "")
+foreach(ts IN LISTS lupdate_translations)
+    get_filename_component(dir "${ts}" DIRECTORY)
+    if(dir PATH_EQUAL lupdate_dir)
+        get_filename_component(name "${ts}" NAME)
+        set(ts "${CATALOG_DIR}/${name}")
+    endif()
+    list(APPEND committed "${ts}")
+endforeach()
 if(committed STREQUAL "")
     message(FATAL_ERROR "${PROJECT_FILE} lists no translation catalogs.")
 endif()
