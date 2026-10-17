@@ -1,6 +1,7 @@
 #include "render/Document.h"
 
 #include "io/Background.h"
+#include "render/MeasureContent.h"
 #include "render/RenderTypes.h"
 
 #include <mupdf/fitz.h>
@@ -1012,28 +1013,91 @@ bool Document::hasForm() const
     return has;
 }
 
-bool Document::hasMervinMeasurements() const
+namespace {
+
+// Whether the measurement blob `stream` names only the encoding Mervin writes: no filter
+// or up to kMaxMeasurementBlobFilters /FlateDecode, and no filter parameters. MuPDF also
+// reads /F for /Filter and /DP for /DecodeParms. A predictor's parameters would size its
+// buffers before any data is read.
+bool plainFlateBlob(fz_context *ctx, pdf_obj *stream)
 {
-    const ScreenQuery query(*lifetime_, "Document::hasMervinMeasurements");
-    if (query.refused())
+    for (pdf_obj *key : {PDF_NAME(DecodeParms), PDF_NAME(DP), PDF_NAME(F)}) {
+        if (!pdf_is_null(ctx, pdf_dict_get(ctx, stream, key)))
+            return false;
+    }
+    pdf_obj *filter = pdf_dict_get(ctx, stream, PDF_NAME(Filter));
+    if (pdf_is_null(ctx, filter))
+        return true;
+    if (pdf_is_name(ctx, filter))
+        return pdf_name_eq(ctx, filter, PDF_NAME(FlateDecode));
+    const int count = pdf_is_array(ctx, filter) ? pdf_array_len(ctx, filter) : -1;
+    if (count < 0 || count > kMaxMeasurementBlobFilters)
         return false;
+    for (int i = 0; i < count; ++i) {
+        if (!pdf_name_eq(ctx, pdf_array_get(ctx, filter, i), PDF_NAME(FlateDecode)))
+            return false;
+    }
+    return true;
+}
+
+} // namespace
+
+std::optional<QByteArray> Document::mervinMeasurements() const
+{
+    const ScreenQuery query(*lifetime_, "Document::mervinMeasurements");
+    if (query.refused())
+        return std::nullopt;
     std::lock_guard<std::mutex> lk(access_);
-    if (mervinBlobCache_)
-        return *mervinBlobCache_;
-    bool has = false;
+    constexpr size_t limit = size_t(kMaxMeasurementBlobBytes);
+    fz_stream *stream = nullptr;
+    fz_buffer *data = nullptr;
+    fz_var(stream);
+    fz_var(data);
     fz_try(ctx_) {
         pdf_document *pdoc = pdf_specifics(ctx_, doc_);
-        if (pdoc) {
-            pdf_obj *root = pdf_dict_get(ctx_, pdf_trailer(ctx_, pdoc), PDF_NAME(Root));
-            pdf_obj *blob = pdf_dict_gets(ctx_, root, "Mervin_Measurements");
-            has = blob != nullptr && !pdf_is_null(ctx_, blob);
+        pdf_obj *root = pdoc ? pdf_dict_get(ctx_, pdf_trailer(ctx_, pdoc), PDF_NAME(Root)) : nullptr;
+        pdf_obj *blob = pdf_dict_gets(ctx_, root, "Mervin_Measurements");
+        if (pdf_is_string(ctx_, blob)) {
+            if (pdf_to_str_len(ctx_, blob) <= limit) {
+                data = fz_new_buffer_from_copied_data(
+                    ctx_, reinterpret_cast<const unsigned char *>(pdf_to_str_buf(ctx_, blob)),
+                    pdf_to_str_len(ctx_, blob));
+            }
+        } else if (pdf_is_stream(ctx_, blob) && plainFlateBlob(ctx_, blob)) {
+            // MuPDF decodes as it reads, so the read ends as soon as the data passes the limit.
+            stream = pdf_open_stream(ctx_, blob);
+            data = fz_new_buffer(ctx_, 4096);
+            size_t total = 0;
+            unsigned char chunk[16 * 1024];
+            for (;;) {
+                const size_t count = fz_read(ctx_, stream, chunk, sizeof chunk);
+                // MuPDF can turn a decoding error into the end of the stream.
+                if (stream->error || count > limit - total) {
+                    fz_drop_buffer(ctx_, data);
+                    data = nullptr;
+                    break;
+                }
+                if (!count)
+                    break;
+                fz_append_data(ctx_, data, chunk, count);
+                total += count;
+            }
         }
     }
-    fz_catch(ctx_) {
-        has = false;
+    fz_always(ctx_) {
+        fz_drop_stream(ctx_, stream);
     }
-    mervinBlobCache_ = has;
-    return has;
+    fz_catch(ctx_) {
+        fz_drop_buffer(ctx_, data);
+        data = nullptr;
+    }
+    if (!data)
+        return std::nullopt;
+    unsigned char *bytes = nullptr;
+    const size_t length = fz_buffer_storage(ctx_, data, &bytes);
+    QByteArray out(reinterpret_cast<const char *>(bytes), qsizetype(length));
+    fz_drop_buffer(ctx_, data);
+    return out;
 }
 
 bool Document::isPdf() const

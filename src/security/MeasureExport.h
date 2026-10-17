@@ -26,10 +26,11 @@ public:
     static Status embedMervin(const QString &inPath, const QString &outPath, const MeasureDoc &doc,
                               const QString &password = QString(), QString *error = nullptr);
 
-    // The Mervin-only measurement blob embedded by embedMervin, or nullopt when
-    // absent / unreadable / password-protected / larger than
-    // measurementPages::kMaxBlobBytes. Opens its own QPDF on the path,
-    // so it is independent of any live MuPDF handle and safe on the UI thread.
+    // The Mervin-only measurement blob embedded by embedMervin, read with qpdf, or nullopt
+    // when absent / unreadable / password-protected / larger than kMaxMeasurementBlobBytes /
+    // encoded other than Mervin writes it (measurementPages::decodeBlob). Opens its own QPDF
+    // on the path, so it is independent of any live MuPDF handle. The viewer reads the blob
+    // through Document::mervinMeasurements instead; tests use this to check written files.
     static std::optional<QByteArray> readMervinBlob(const QString &inPath,
                                                     const QString &password = QString());
 };

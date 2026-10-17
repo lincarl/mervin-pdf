@@ -137,7 +137,7 @@ std::optional<QByteArray> MeasureExport::readMervinBlob(const QString &inPath,
             return measurementPages::decodeBlob(blob);
         if (blob.isString()) {
             const std::string sv = blob.getStringValue();
-            if (sv.size() > size_t(measurementPages::kMaxBlobBytes))
+            if (sv.size() > size_t(kMaxMeasurementBlobBytes))
                 return std::nullopt;
             return QByteArray(sv.data(), qsizetype(sv.size()));
         }

@@ -1314,12 +1314,31 @@ editors and offers Save, Discard, or Cancel for unsaved changes.
 Page deletion, extraction, merge, split, and rotation preserve editable measurement
 metadata. Page numbers follow output order (including duplicates); rotation transforms
 points and swaps anisotropic manual scales on quarter turns. Merged documents use the
-display defaults of the first contributing measurement set. Both readers of
-`/Mervin_Measurements`, `MeasureExport::readMervinBlob` for an opening document and
-`measurementPages::read` for page operations, decode it through
-`measurementPages::decodeBlob`. Its sink stops qpdf once the data passes 16 MiB, since
-qpdf sets no limit on Flate output by default. A larger blob opens as no measurements and
-fails page operations with Invalid measurement metadata.
+display defaults of the first contributing measurement set.
+
+Opening a document reads `/Mervin_Measurements` through the open MuPDF document
+(`Document::mervinMeasurements`), and page operations read it with qpdf
+(`measurementPages::read` through `measurementPages::decodeBlob`). Both accept only a
+plain stream or up to four `/FlateDecode` filters without parameters, the form Mervin
+writes, and refuse anything else before decoding, because a filter's parameters, such
+as a PNG predictor's `/Columns`, size its buffers before any data is read. MuPDF's
+`/F` and `/DP` abbreviations count as parameters too. Both stop once the decoded data
+passes 16 MiB (`kMaxMeasurementBlobBytes`), since neither library limits Flate output
+by default. A refused blob opens as no measurements and fails page operations with
+Invalid measurement metadata.
+
+Opening does not use qpdf, which inflates a whole object stream or cross-reference
+stream into memory when it resolves an object in it (qpdf 11.9.0 `QPDF.cc:1792`). MuPDF
+reads through those streams as it parses them. A crafted file of a few hundred
+kilobytes with a padded object stream can therefore still exhaust memory in every
+operation that parses the file on disk with qpdf: Security, Rotate, Delete, Extract,
+Split, Merge and the Merge and Extract probes. Save with edits, the recovery copy of an
+unloaded tab, Save as copy, export and printing with measurements hand qpdf a copy that
+MuPDF rewrote in full without object streams. qpdf 12.3.2 can cap Flate output for the
+whole process (`Pl_Flate::memory_limit`, in 12.4 also
+`qpdf::global::limits::flate_max_memory`), but qpdf 11.9.0, which CI's Linux tests use,
+has no such cap, and the cap applies to every Flate stream qpdf decodes, so it would also
+refuse legitimate streams larger than its value.
 
 `AtomicPdfWriter` streams all qpdf output through `QSaveFile`, including page,
 security and measurement operations. A failed write discards its temporary file;

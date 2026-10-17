@@ -3,6 +3,7 @@
 #include "render/GeometryTypes.h"
 #include "render/MeasureTypes.h"
 
+#include <QByteArray>
 #include <QPointF>
 #include <QImage>
 #include <QRect>
@@ -228,9 +229,12 @@ public:
     // the Fill-Forms action's enabled state. Read on demand under the access lock.
     bool hasForm() const;
 
-    // Cached /Mervin_Measurements catalog check under the access lock; false for non-PDFs.
-    // Gates the second qpdf parse used to restore measurements.
-    bool hasMervinMeasurements() const;
+    // The /Mervin_Measurements blob read from this open document under the access lock,
+    // or nullopt when it is absent, larger than kMaxMeasurementBlobBytes, encoded other
+    // than Mervin writes it, or unreadable. Also nullopt for non-PDFs. Opening reads saved
+    // measurements here rather than with qpdf, which inflates whole object streams without
+    // a limit while it resolves objects.
+    std::optional<QByteArray> mervinMeasurements() const;
 
     // True when this is a PDF (pdf_specifics succeeds) - i.e. annotations and form
     // fields can be created and written. False for the other formats MuPDF can
@@ -277,7 +281,6 @@ private:
     mutable std::vector<std::optional<PageMeasurement>> measureCache_; // lazy, per page
     mutable std::vector<std::optional<PageGeometry>> geomCache_;       // lazy, per page
     mutable std::optional<bool> formCache_;                            // lazy: has /AcroForm
-    mutable std::optional<bool> mervinBlobCache_; // lazy: has /Mervin_Measurements
 };
 
 // A document that a background job opened or took over, on its way between threads.

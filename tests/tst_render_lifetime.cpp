@@ -572,8 +572,8 @@ private slots:
             QVERIFY(refused("Document::itemPropertiesAt",
                             [&] { return !doc->itemPropertiesAt(0, QPointF(40, 40)); }));
             QVERIFY(refused("Document::hasForm", [&] { return !doc->hasForm(); }));
-            QVERIFY(refused("Document::hasMervinMeasurements",
-                            [&] { return !doc->hasMervinMeasurements(); }));
+            QVERIFY(refused("Document::mervinMeasurements",
+                            [&] { return !doc->mervinMeasurements(); }));
             QVERIFY(refused("Document::isPdf", [&] { return !doc->isPdf(); }));
             QVERIFY(refused("Document::withPdfDocument", [&] {
                 bool called = false;
