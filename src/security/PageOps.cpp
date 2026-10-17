@@ -1060,6 +1060,20 @@ private:
         return changed ? QPDFObjectHandle::newArray(items) : fields;
     }
 
+    // The entry of an action of type `type` that names an annotation by reference: /Annotation
+    // of a Movie, /AN of a Rendition and /TA of a GoTo3DView or RichMediaExecute action, or
+    // null for other types. A Movie can name its annotation by title in /T instead.
+    static const char *annotationKey(QPDFObjectHandle type)
+    {
+        if (type.isNameAndEquals("/Movie"))
+            return "/Annotation";
+        if (type.isNameAndEquals("/Rendition"))
+            return "/AN";
+        if (type.isNameAndEquals("/GoTo3DView") || type.isNameAndEquals("/RichMediaExecute"))
+            return "/TA";
+        return nullptr;
+    }
+
     // Whether a walk of an action chain ends at `action`, reached at `depth`: past the depth
     // limit, or back at an action in `seen`, as in a loop. Adds an indirect `action` that does
     // not end the walk to `seen`.
@@ -1069,10 +1083,11 @@ private:
             || (action.isIndirect() && !seen.insert(action.getObjGen()).second);
     }
 
-    // `action` with the fields of its /Fields and /T, and of the actions in its /Next, mapped
-    // through `targets`. Returns `action` itself when nothing changes, and a new object
-    // otherwise, so an action that several annotations share stays as it was. The chain
-    // ends where endsChain() says, without the action there and what follows it, so the
+    // `action` with its targets, and those of the actions in its /Next, mapped through
+    // `targets`: the fields of a SubmitForm or ResetForm /Fields and of a Hide /T, and the
+    // annotation that annotationKey() names. Returns `action` itself when nothing changes, and
+    // a new object otherwise, so an action that several annotations share stays as it was. The
+    // chain ends where endsChain() says, without the action there and what follows it, so the
     // result can be null.
     static QPDFObjectHandle mapAction(QPDFObjectHandle action, const Targets &targets,
                                       ObjectSet &seen, int depth)
@@ -1105,7 +1120,12 @@ private:
             else
                 result.replaceKey(key, mapped);
         };
-        for (const char *key : {"/Fields", "/T"}) {
+        QPDFObjectHandle type = action.getKey("/S");
+        const char *key = type.isNameAndEquals("/Hide") ? "/T"
+            : type.isNameAndEquals("/SubmitForm") || type.isNameAndEquals("/ResetForm")
+            ? "/Fields"
+            : annotationKey(type); // a Movie's /T is a title, not a field name
+        if (key) {
             QPDFObjectHandle value = action.getKey(key);
             change(key, value, mapFields(value, targets));
         }
@@ -1197,10 +1217,22 @@ private:
     // in its /Next take its place. In every output, entries that name a field the copy left
     // out are dropped, so an action whose listed fields are all left out goes too, and an
     // Exclude list that names none of them then excludes nothing. No copied action ends
-    // with an empty /Fields unless its source had one and the output has one file. The
-    // actions of the pages, their annotations and the fields above their widgets are
-    // covered, with their /AA and /Next. JavaScript actions cannot be limited this way.
-    // A /Next chain ends after kMaxDepth actions, or where it comes back to an action.
+    // with an empty /Fields unless its source had one and the output has one file.
+    //
+    // A Hide action names fields by fully qualified name or reference, and annotations by
+    // reference, in /T. A Movie, Rendition, GoTo3DView or RichMediaExecute action names an
+    // annotation by reference, and a Movie can name one by title instead. In an output with
+    // several files, a name could find a field or annotation of another file, so these keep
+    // only the targets of their own file, and go when none remains, with their /Next taking
+    // their place. A Movie title then becomes a reference to its own movie annotation, as
+    // nothing renames those and another file can have the same title. An output with one
+    // file drops only the targets that it left out, and keeps a name that named nothing in
+    // the source, as it acts on nothing either way.
+    //
+    // The actions of the pages, their annotations and the fields above their widgets are
+    // covered, with their /AA and /Next. JavaScript and ImportData actions cannot be limited
+    // this way. A /Next chain ends after kMaxDepth actions, or where it comes back to an
+    // action.
     void scopeFormActions()
     {
         std::map<QPDF *, std::vector<QPDFObjectHandle>> pagesOf;
@@ -1213,7 +1245,8 @@ private:
         const bool several = pagesOf.size() > 1;
         for (auto &[source, pages] : pagesOf) {
             std::vector<QPDFObjectHandle> tops, holders; // its top-level fields, what has actions
-            ObjectSet seen, seenTops;
+            ObjectSet seen, seenTops, annotations;
+            std::map<std::string, QPDFObjectHandle> movies; // its movie annotations by title
             const auto hold = [&holders, &seen](QPDFObjectHandle object) {
                 if (object.isIndirect() && seen.insert(object.getObjGen()).second)
                     holders.push_back(object);
@@ -1227,6 +1260,11 @@ private:
                     if (!annot.isDictionary())
                         continue;
                     hold(annot);
+                    if (annot.isIndirect())
+                        annotations.insert(annot.getObjGen());
+                    if (annot.isIndirect() && annot.getKey("/Subtype").isNameAndEquals("/Movie")
+                        && annot.getKey("/T").isString())
+                        movies.emplace(annot.getKey("/T").getUTF8Value(), annot);
                     if (!annot.getKey("/Subtype").isNameAndEquals("/Widget"))
                         continue;
                     QPDFObjectHandle node = annot;
@@ -1238,7 +1276,12 @@ private:
                         tops.push_back(node);
                 }
             }
-            const OwnFields own(tops);
+            OwnTargets own(tops);
+            own.annotations = std::move(annotations);
+            own.movies = std::move(movies);
+            own.single = !several;
+            if (own.single)
+                own.readSource(*source);
             for (QPDFObjectHandle holder : holders)
                 rewriteActions(holder, [&](QPDFObjectHandle action) {
                     ObjectSet seenActions;
@@ -1247,11 +1290,12 @@ private:
         }
     }
 
-    /// The fields of one file in an output, by object and by fully qualified name.
-    struct OwnFields
+    /// What the actions of one file in an output may name: its fields, by object and by fully
+    /// qualified name, and the annotations of its pages, with its movie annotations by title.
+    struct OwnTargets
     {
         // Reaches each field once, so it needs no depth limit.
-        explicit OwnFields(const std::vector<QPDFObjectHandle> &tops)
+        explicit OwnTargets(const std::vector<QPDFObjectHandle> &tops)
         {
             std::vector<QPDFObjectHandle> queue = tops;
             while (!queue.empty()) {
@@ -1276,19 +1320,66 @@ private:
             return entry.isString() && names.count(entry.getUTF8Value()) > 0;
         }
 
+        /// Whether a Hide action keeps `entry` of its /T: one of the fields or annotations, or
+        /// in an output with one file, a name that named no field of the source.
+        bool hides(QPDFObjectHandle entry) const
+        {
+            if (entry.isIndirect())
+                return ids.count(entry.getObjGen()) > 0 || annotations.count(entry.getObjGen()) > 0;
+            if (!entry.isString())
+                return false;
+            const std::string name = entry.getUTF8Value();
+            return names.count(name) > 0 || (single && !sourceNames.count(name));
+        }
+
+        /// Whether an action keeps `annotation`, the annotation that it names by reference.
+        bool shows(QPDFObjectHandle annotation) const
+        {
+            return annotation.isIndirect() && annotations.count(annotation.getObjGen()) > 0;
+        }
+
+        /// Reads the names of the fields of `source`, the output's one file, and the titles of
+        /// its movie annotations, so that a name that the copy left out can be told from one
+        /// that named nothing.
+        void readSource(QPDF &source)
+        {
+            try {
+                QPDFObjectHandle form = source.getRoot().getKey("/AcroForm");
+                QPDFObjectHandle fields = form.isDictionary() ? form.getKey("/Fields") : form;
+                if (fields.isArray())
+                    for (const auto &named : fieldNames(fields.getArrayAsVector()))
+                        sourceNames.insert(named.second);
+                for (QPDFObjectHandle page : source.getAllPages()) {
+                    QPDFObjectHandle annots = page.getKey("/Annots");
+                    if (annots.isArray())
+                        for (QPDFObjectHandle annot : annots.aitems())
+                            if (annot.isDictionary() && annot.getKey("/Subtype").isNameAndEquals("/Movie")
+                                && annot.getKey("/T").isString())
+                                sourceMovies.insert(annot.getKey("/T").getUTF8Value());
+                }
+            } catch (const std::exception &) {
+                // A name that the copy left out then stays, and finds nothing.
+            }
+        }
+
         ObjectSet ids;
         std::set<std::string> names;
+        ObjectSet annotations;
+        std::map<std::string, QPDFObjectHandle> movies; // the first of each title
+        bool single = false; // the output has pages of this file only
+        std::set<std::string> sourceNames, sourceMovies; // read only for a single file
     };
 
-    // `action`, and the actions in its /Next, with each SubmitForm or ResetForm limited as
-    // scopeFormActions says, to the trees `tops` of one file whose fields are `own`, and
-    // `several` when the output has more than one file. Returns `action` itself when nothing
-    // changes, and a new object otherwise. An action that is left out gives way to its /Next,
-    // so the result can be null when nothing follows, or an array of actions. The chain ends
-    // where endsChain() says, without the action there and what follows it, in every output.
+    // `action`, and the actions in its /Next, with each SubmitForm, ResetForm, Hide and
+    // annotation action (see annotationKey) limited as scopeFormActions says, to the trees
+    // `tops` of one file whose targets are `own`, and `several` when the output has more than
+    // one file. Returns `action` itself when nothing changes, and a new object otherwise. An
+    // action that is left out gives way to its /Next, so the result can be null when nothing
+    // follows, or an array of actions. The chain ends where endsChain() says, without the
+    // action there and what follows it, in every output.
     static QPDFObjectHandle scopeAction(QPDFObjectHandle action,
                                         const std::vector<QPDFObjectHandle> &tops,
-                                        const OwnFields &own, bool several, ObjectSet &seen,
+                                        const OwnTargets &own, bool several, ObjectSet &seen,
                                         int depth)
     {
         if (!action.isDictionary() && !action.isArray())
@@ -1327,6 +1418,44 @@ private:
                 result.replaceKey(key, value);
         };
         QPDFObjectHandle type = action.getKey("/S");
+        // A missing entry is a direct null. A reference to an object that finish() nulled
+        // is not, and names a target that the copy left out.
+        const auto missing = [](QPDFObjectHandle value) { return !value.isIndirect() && value.isNull(); };
+        if (type.isNameAndEquals("/Hide")) {
+            QPDFObjectHandle targets = action.getKey("/T");
+            if (!missing(targets)) {
+                const std::vector<QPDFObjectHandle> listed = targets.isArray()
+                    ? targets.getArrayAsVector()
+                    : std::vector<QPDFObjectHandle>{targets};
+                std::vector<QPDFObjectHandle> kept;
+                for (QPDFObjectHandle entry : listed)
+                    if (own.hides(entry))
+                        kept.push_back(entry);
+                if (kept.empty())
+                    return scopedNext; // it would hide nothing, so what follows takes its place
+                if (kept.size() < listed.size())
+                    change("/T", QPDFObjectHandle::newArray(kept));
+            }
+        } else if (const char *key = annotationKey(type)) {
+            QPDFObjectHandle annotation = action.getKey(key);
+            QPDFObjectHandle title = action.getKey("/T");
+            if (!missing(annotation)) {
+                if (!own.shows(annotation))
+                    return scopedNext; // its annotation is not one of its own file's
+            } else if (type.isNameAndEquals("/Movie") && title.isString()) {
+                const auto found = own.movies.find(title.getUTF8Value());
+                if (several) {
+                    // Nothing renames movie annotations, so another file can have one of the
+                    // same title. The action names its own one by reference instead.
+                    if (found == own.movies.end())
+                        return scopedNext;
+                    change("/T", QPDFObjectHandle::newNull());
+                    change("/Annotation", found->second);
+                } else if (found == own.movies.end() && own.sourceMovies.count(title.getUTF8Value())) {
+                    return scopedNext; // its movie annotation was left out
+                }
+            }
+        }
         if (type.isNameAndEquals("/SubmitForm") || type.isNameAndEquals("/ResetForm")) {
             QPDFObjectHandle flags = action.getKey("/Flags");
             const long long bits = flags.isInteger() ? flags.getIntValue() : 0;
