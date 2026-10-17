@@ -932,10 +932,23 @@ and a field shown on two pages became two fields. A page copied again goes in a 
 pass and gets fields of its own. If a pass throws, as qpdf before 12.4 can on damaged
 annotations, its pages are copied one at a time with `fixCopiedAnnotations`, and a page
 that still fails stays as `addPage` copied it. `FormCopy` then points each annotation's
-`/P` at its new page, which qpdf releases before 12.3 do not do. A copied field tree
-comes along whole, so `finish` then removes the fields that have no widget on an output
-page, keeping a parent that a copied widget shares. The source helpers are built with the
+`/P` at its new page, because `transformAnnotations` leaves it on the page that `addPage`
+copied first, which is another page when a page is copied again, and
+`fixCopiedAnnotations` does the same before qpdf 12.3. A copied field tree comes along
+whole, so `finish` then removes the fields that have no widget on an output page, keeping
+a parent that a copied widget shares. The source helpers are built with the
 `QPDFAcroFormDocumentHelper` constructor, as `get` needs qpdf 12.3.
+
+`transformAnnotations` first copies each field tree whole with `copyForeignObject` and
+then copies that copy field by field, so the actions of the copied annotations, such as a
+reset button's `/Fields` or a hide action's `/T`, still name the first copy, with every
+page's values. `copyBatch` maps each node of the first copy to the node at the same place
+in the second and rewrites those references in `/A`, `/AA` and `/Next`. `finish` then
+climbs `/Parent` from every widget in the output, listed on a page or not, prunes each
+field tree it reaches and replaces the fields that go with null, except those above a
+widget that a page lists. That also covers a source without `/AcroForm`, whose widgets
+reach their field tree only through `/Parent`, and a reference that could not be
+rewritten. The output has no `/CO` or `/XFA`, as `transformAnnotations` copies neither.
 
 Delete Pages removes pages from the source's own `QPDF` and writes it, so it keeps
 encryption, outlines and structure. `QPDFPageDocumentHelper::removePage` only takes a

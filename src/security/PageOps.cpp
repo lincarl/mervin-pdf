@@ -563,11 +563,16 @@ private:
 /// Like fixCopiedAnnotations in qpdf's own page selection, finish() gives each copied page
 /// its own annotations and fields, and renames a field whose name the output already has,
 /// for example to "name+1". It calls transformAnnotations, the function behind
-/// fixCopiedAnnotations, once for all pages of a source instead of once per page, because a
-/// field tree that spans pages is copied whole on every call: per page, a 200-page form
-/// with one top-level field took minutes and gigabytes. A field shown on several copied
-/// pages therefore stays one field. A page copied again goes in a later pass and gets
-/// fields of its own, so the copies fill in separately.
+/// fixCopiedAnnotations, once for all pages of a source instead of once per page, because
+/// each call copies the whole tree of a field that spans pages. Copied per page, a 200-page
+/// form with one top-level field took minutes and gigabytes. A field shown on several
+/// copied pages therefore stays one field. A page copied again goes in a later pass and
+/// gets fields of its own, so the copies fill in separately.
+///
+/// transformAnnotations first copies each field tree whole with copyForeignObject, then
+/// copies that copy field by field. Actions of the copied annotations, such as a reset
+/// button's /Fields, still name the first copy, so copyBatch points them at the second, and
+/// finish() empties what is left of the first copies.
 class FormCopy
 {
 public:
@@ -600,28 +605,179 @@ public:
             if (!fields.isArray() || fields.getArrayNItems() == 0)
                 root.removeKey("/AcroForm");
         }
-        // The widgets of a page whose form could not be copied reach their copied field
-        // tree only through /Parent. Fields have no /Type, which keeps the climb out of
-        // anything else that a damaged /Parent might name.
+        // Prunes every field tree that a widget in the output belongs to, whether a page
+        // lists the widget or not. The widgets of a page whose form could not be copied reach
+        // their field tree only through /Parent, and the first copies of field trees are
+        // reachable only from actions that copyBatch could not point elsewhere. The fields
+        // that go are emptied, except those above a widget that a page lists, which still
+        // names them.
+        ObjectSet used;
         for (QPDFObjectHandle page : out_.getAllPages()) {
             QPDFObjectHandle annots = page.getKey("/Annots");
-            if (!annots.isArray())
-                continue;
-            for (QPDFObjectHandle top : annots.aitems()) {
-                if (!top.isDictionary() || !top.getKey("/Subtype").isNameAndEquals("/Widget"))
-                    continue;
-                for (int depth = 0; depth < kMaxDepth; ++depth) {
-                    QPDFObjectHandle parent = top.getKey("/Parent");
-                    if (!parent.isDictionary() || parent.hasKey("/Type"))
-                        break;
-                    top = parent;
-                }
-                pruner.prune(top);
-            }
+            if (annots.isArray())
+                for (QPDFObjectHandle annot : annots.aitems())
+                    pruneTreeOf(annot, pruner, &used);
         }
+        for (QPDFObjectHandle object : out_.getAllObjects())
+            pruneTreeOf(object, pruner, nullptr);
+        for (const QPDFObjGen &id : pruner.removed())
+            if (!used.count(id))
+                out_.replaceObject(id, QPDFObjectHandle::newNull());
     }
 
 private:
+    /// Copies of field tree nodes, from a first copy to the copy that a page uses.
+    using Copies = std::map<QPDFObjGen, QPDFObjectHandle>;
+
+    // Prunes the field tree of `widget`, if it is a widget, and adds its fields to `used`.
+    // Fields have no /Type, which keeps the climb out of anything else that a damaged
+    // /Parent might name.
+    static void pruneTreeOf(QPDFObjectHandle widget, FieldPruner &pruner, ObjectSet *used)
+    {
+        if (!widget.isDictionary() || !widget.getKey("/Subtype").isNameAndEquals("/Widget"))
+            return;
+        QPDFObjectHandle top = widget;
+        for (int depth = 0; depth < kMaxDepth; ++depth) {
+            QPDFObjectHandle parent = top.getKey("/Parent");
+            if (!parent.isDictionary() || parent.hasKey("/Type"))
+                break;
+            top = parent;
+            if (used && top.isIndirect())
+                used->insert(top.getObjGen());
+        }
+        pruner.prune(top);
+    }
+
+    // The top of the field tree that `node` belongs to.
+    static QPDFObjectHandle fieldTop(QPDFObjectHandle node)
+    {
+        for (int depth = 0; depth < kMaxDepth; ++depth) {
+            QPDFObjectHandle parent = node.getKey("/Parent");
+            if (!parent.isDictionary() || parent.hasKey("/Type"))
+                break;
+            node = parent;
+        }
+        return node;
+    }
+
+    // Adds to `copies` each node of the tree below `first` with the node at the same place
+    // below `copy`, which transformAnnotations made from it.
+    static void mapTree(QPDFObjectHandle first, QPDFObjectHandle copy, Copies &copies, int depth)
+    {
+        if (!first.isIndirect() || !copy.isIndirect() || first.getObjGen() == copy.getObjGen()
+            || !copies.emplace(first.getObjGen(), copy).second || depth >= kMaxDepth)
+            return;
+        QPDFObjectHandle kids = first.getKey("/Kids");
+        QPDFObjectHandle copiedKids = copy.getKey("/Kids");
+        if (kids.isArray() && copiedKids.isArray())
+            for (int i = 0; i < std::min(kids.getArrayNItems(), copiedKids.getArrayNItems()); ++i)
+                mapTree(kids.getArrayItem(i), copiedKids.getArrayItem(i), copies, depth + 1);
+    }
+
+    // `fields`, a field reference or an array of them, with the references in `copies`
+    // replaced. Returns `fields` itself when nothing changes, and a new object otherwise.
+    static QPDFObjectHandle mapFields(QPDFObjectHandle fields, const Copies &copies)
+    {
+        if (fields.isIndirect()) {
+            const auto it = copies.find(fields.getObjGen());
+            return it == copies.end() ? fields : it->second;
+        }
+        if (!fields.isArray())
+            return fields;
+        std::vector<QPDFObjectHandle> items = fields.getArrayAsVector();
+        bool changed = false;
+        for (QPDFObjectHandle &item : items) {
+            QPDFObjectHandle mapped = mapFields(item, copies);
+            if (!mapped.isSameObjectAs(item)) {
+                item = mapped;
+                changed = true;
+            }
+        }
+        return changed ? QPDFObjectHandle::newArray(items) : fields;
+    }
+
+    // `action` with the field references of its /Fields and /T, and of the actions in its
+    // /Next, mapped through `copies`. Returns `action` itself when nothing changes, and a
+    // new object otherwise, so an action that several annotations share stays as it was.
+    static QPDFObjectHandle mapAction(QPDFObjectHandle action, const Copies &copies, int depth)
+    {
+        if (depth >= kMaxDepth)
+            return action;
+        if (action.isArray()) { // a /Next that lists several actions
+            std::vector<QPDFObjectHandle> items = action.getArrayAsVector();
+            bool changed = false;
+            for (QPDFObjectHandle &item : items) {
+                QPDFObjectHandle mapped = mapAction(item, copies, depth + 1);
+                if (!mapped.isSameObjectAs(item)) {
+                    item = mapped;
+                    changed = true;
+                }
+            }
+            return changed ? QPDFObjectHandle::newArray(items) : action;
+        }
+        if (!action.isDictionary())
+            return action;
+        QPDFObjectHandle result;
+        const auto change = [&](const char *key, QPDFObjectHandle old, QPDFObjectHandle mapped) {
+            if (mapped.isSameObjectAs(old))
+                return;
+            if (!result.isInitialized())
+                result = action.shallowCopy();
+            result.replaceKey(key, mapped);
+        };
+        for (const char *key : {"/Fields", "/T"}) {
+            QPDFObjectHandle value = action.getKey(key);
+            change(key, value, mapFields(value, copies));
+        }
+        QPDFObjectHandle next = action.getKey("/Next");
+        change("/Next", next, mapAction(next, copies, depth + 1));
+        return result.isInitialized() ? result : action;
+    }
+
+    // Maps the field references in the /A and /AA actions of `holder` through `copies`.
+    static void mapActions(QPDFObjectHandle holder, const Copies &copies)
+    {
+        QPDFObjectHandle action = holder.getKey("/A");
+        QPDFObjectHandle mapped = mapAction(action, copies, 0);
+        if (!mapped.isSameObjectAs(action))
+            holder.replaceKey("/A", mapped);
+        QPDFObjectHandle triggers = holder.getKey("/AA");
+        if (!triggers.isDictionary())
+            return;
+        QPDFObjectHandle result;
+        for (const auto &[key, value] : triggers.ditems()) {
+            QPDFObjectHandle mappedValue = mapAction(value, copies, 0);
+            if (mappedValue.isSameObjectAs(value))
+                continue;
+            if (!result.isInitialized())
+                result = triggers.shallowCopy();
+            result.replaceKey(key, mappedValue);
+        }
+        if (result.isInitialized())
+            holder.replaceKey("/AA", result);
+    }
+
+    // Points the actions of `made`, the copies of the source annotations in `annots`, and of
+    // their fields at the copied fields instead of the first copies of the field trees.
+    void retarget(QPDFObjectHandle annots, const std::vector<QPDFObjectHandle> &made)
+    {
+        Copies copies;
+        for (int i = 0; i < annots.getArrayNItems(); ++i) {
+            QPDFObjectHandle annot = annots.getArrayItem(i);
+            // transformAnnotations copied each indirect annotation with copyForeignObject,
+            // which returns that copy again.
+            if (annot.isIndirect())
+                mapTree(fieldTop(out_.copyForeignObject(annot)),
+                        fieldTop(made[static_cast<size_t>(i)]), copies, 0);
+        }
+        if (copies.empty())
+            return;
+        for (QPDFObjectHandle annot : made)
+            mapActions(annot, copies);
+        for (auto &[first, copy] : copies)
+            mapActions(copy, copies);
+    }
+
     /// A page that addPage copied into the output.
     struct Copy
     {
@@ -685,6 +841,12 @@ private:
                                        &from.getQPDF(), &from);
             if (made.size() != static_cast<size_t>(annots.getArrayNItems()))
                 throw std::runtime_error("qpdf left out annotations");
+            try {
+                retarget(annots, made);
+            } catch (const std::exception &) {
+                // A reference that is not pointed at the copy keeps naming the first copy,
+                // which finish() empties.
+            }
             auto next = made.cbegin();
             for (size_t i = 0; i < batch.size(); ++i) {
                 if (counts[i] == 0)
@@ -717,8 +879,9 @@ private:
         pointAt(copy.to);
     }
 
-    // Points the annotations of `page` at it. qpdf before 12.3 leaves /P on the page the
-    // annotations came from, which is the first copy when a page is copied again.
+    // Points the annotations of `page` at it. transformAnnotations leaves /P on the page
+    // that addPage copied first, which is another page when a page is copied again, and so
+    // does fixCopiedAnnotations before qpdf 12.3.
     static void pointAt(QPDFObjectHandle page)
     {
         QPDFObjectHandle annots = page.getKey("/Annots");

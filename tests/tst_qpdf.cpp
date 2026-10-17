@@ -56,6 +56,8 @@ enum class Reference {
     Structure,       // a figure element on page 2 with alternate text
     NestedStructure, // a section only on page 2, and a paragraph across pages 2 and 3
     TaggedWidget,    // an /OBJR structure element for the page 2 widget of a tagged form
+    ResetButton,     // a reset button on page 1 that names a field with a child on each page
+    ChildFieldNoForm, // ChildField in a file without /AcroForm, as Extract wrote before forms
 };
 
 // A page that shows `text` in two marked-content sequences, MCID 0 and 1.
@@ -319,6 +321,31 @@ void makeReferencedPdf(const QString &path, Reference reference)
         documentKids = {perPage[0], perPage[1], form, perPage[2]};
         parents[3] = form;
         tagged = true;
+        break;
+    }
+    case Reference::ResetButton: {
+        QPDFObjectHandle form1 = q.makeIndirectObject(parse("<< /FT /Tx /T (form1) >>"));
+        QPDFObjectHandle one = q.makeIndirectObject(parse("<< /T (p1) /V (kept one) >>"));
+        QPDFObjectHandle two = q.makeIndirectObject(parse("<< /T (p2) >>"));
+        two.replaceKey("/V", QPDFObjectHandle::newString(kSecret));
+        adopt(one, {widget(q, pages[0])});
+        adopt(two, {widget(q, pages[1])});
+        adopt(form1, {one, two});
+        QPDFObjectHandle reset = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (reset)");
+        reset.replaceKey("/A", parse("<< /S /ResetForm /Fields [] >>"));
+        reset.getKey("/A").getKey("/Fields").appendItem(form1);
+        installForm(q, {form1, reset});
+        break;
+    }
+    case Reference::ChildFieldNoForm: {
+        QPDFObjectHandle address = q.makeIndirectObject(parse("<< /T (address) >>"));
+        QPDFObjectHandle street =
+            q.makeIndirectObject(parse("<< /FT /Tx /T (street) /V (kept street) >>"));
+        QPDFObjectHandle secret = q.makeIndirectObject(parse("<< /FT /Tx /T (secret) >>"));
+        secret.replaceKey("/V", QPDFObjectHandle::newString(kSecret));
+        adopt(street, {widget(q, pages[0])});
+        adopt(secret, {widget(q, pages[1])});
+        adopt(address, {street, secret});
         break;
     }
     }
@@ -982,6 +1009,7 @@ void TstQpdf::deleteLeavesOutDeletedContent_data()
     QTest::newRow("structure element") << int(Reference::Structure);
     QTest::newRow("nested structure") << int(Reference::NestedStructure);
     QTest::newRow("tagged widget") << int(Reference::TaggedWidget);
+    QTest::newRow("reset button") << int(Reference::ResetButton);
 }
 
 /// Checks that no object of a Delete Pages copy holds the deleted page's content, or what
@@ -1087,6 +1115,16 @@ void TstQpdf::deleteLeavesOutDeletedContent()
         QVERIFY(QPDFNameTreeObjectHelper(tree.getKey("/IDTree"), q).getAsMap().empty());
         break;
     }
+    case Reference::ResetButton: {
+        // The button and the field it names stay, without the child field of page 2.
+        QCOMPARE(fields.getArrayNItems(), 2);
+        QCOMPARE(fields.getArrayItem(0).getKey("/Kids").getArrayNItems(), 1);
+        QCOMPARE(fields.getArrayItem(1).getKey("/A").getKey("/Fields").getArrayItem(0).getObjGen(),
+                 fields.getArrayItem(0).getObjGen());
+        break;
+    }
+    case Reference::ChildFieldNoForm:
+        break;
     }
     if (ref == Reference::TaggedWidget) {
         QCOMPARE(documentKids(), 2);
@@ -1157,12 +1195,17 @@ void TstQpdf::copiesKeepFormFields()
 }
 
 /// Fixtures whose page 1 widget shares a field tree with a field or widget of page 2.
+/// Fixtures whose page 1 widget shares a field tree with a field or widget of page 2. The
+/// widget count is that of page 1, or 0 for a source without /AcroForm.
 void TstQpdf::copiesLeaveOutFieldsOfOtherPages_data()
 {
     QTest::addColumn<int>("reference");
     QTest::addColumn<QString>("kept");
-    QTest::newRow("child field") << int(Reference::ChildField) << QStringLiteral("kept street");
-    QTest::newRow("shared field") << int(Reference::SharedField) << QStringLiteral("shared value");
+    QTest::addColumn<int>("widgets");
+    QTest::newRow("child field") << int(Reference::ChildField) << QStringLiteral("kept street") << 1;
+    QTest::newRow("shared field") << int(Reference::SharedField) << QStringLiteral("shared value") << 1;
+    QTest::newRow("reset button") << int(Reference::ResetButton) << QStringLiteral("kept one") << 2;
+    QTest::newRow("no form") << int(Reference::ChildFieldNoForm) << QStringLiteral("kept street") << 0;
 }
 
 /// Checks that Extract, Merge and Split copy no form data of pages they leave out, and keep
@@ -1171,6 +1214,7 @@ void TstQpdf::copiesLeaveOutFieldsOfOtherPages()
 {
     QFETCH(int, reference);
     QFETCH(QString, kept);
+    QFETCH(int, widgets);
     const QString src = in(QStringLiteral("other_src_%1.pdf").arg(reference));
     const QString out = in(QStringLiteral("other_out_%1.pdf").arg(reference));
     makeReferencedPdf(src, Reference(reference));
@@ -1179,7 +1223,18 @@ void TstQpdf::copiesLeaveOutFieldsOfOtherPages()
     QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0}, {}}}, out), PageOps::Status::Ok);
     QVERIFY(!pdfContains(out, kSecret));
     QVERIFY(pdfContains(out, keptText));
-    QCOMPARE(formProblem(out, 1), QString());
+    if (widgets > 0)
+        QCOMPARE(formProblem(out, widgets), QString());
+    if (Reference(reference) == Reference::ResetButton) {
+        // The copied button resets the copied field, not a copy that no page shows.
+        QPDF q;
+        const QByteArray name = out.toUtf8();
+        q.processFile(name.constData());
+        QPDFObjectHandle fields = q.getRoot().getKey("/AcroForm").getKey("/Fields");
+        QCOMPARE(fields.getArrayNItems(), 2);
+        QCOMPARE(fields.getArrayItem(1).getKey("/A").getKey("/Fields").getArrayItem(0).getObjGen(),
+                 fields.getArrayItem(0).getObjGen());
+    }
 
     QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {2, 0}, {}}}, out), PageOps::Status::Ok);
     QVERIFY(!pdfContains(out, kSecret));
