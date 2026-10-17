@@ -102,9 +102,11 @@ public:
     // The page under a viewport point (0-based), or -1 in the gaps around pages.
     int pageUnder(QPoint viewportPos) const;
     double scale() const { return scale_; }
-    // The highest zoom at which MuPDF still draws every page exactly: 10000%, or
-    // less when the document's largest page would make a raster beyond
-    // kMaxDevicePixel at this device pixel ratio. Every zoom is clamped to it.
+    // The highest zoom at which MuPDF still draws the document's pages exactly. It is
+    // 10000%, or less when the largest page would make a raster beyond kMaxDevicePixel
+    // at this device pixel ratio, and never below the 8% floor. A page too large even
+    // at 8% does not count, and the render engine refuses it. Every zoom is clamped to
+    // this one value for the whole document.
     double maximumScale() const;
     ZoomMode zoomMode() const { return zoomMode_; }
     ViewLayout::Mode layoutMode() const { return layoutMode_; }
@@ -151,6 +153,10 @@ public:
     // Test hook: the off-page answer decides where a measurement vertex or a
     // comment lands, and nothing about a wrong one is visible on screen.
     int pageAtCanvasForTest(QPoint canvas) const { return pageAtCanvas(canvas); }
+    // Use `ratio` instead of the screen's device pixel ratio once the next ratio change
+    // arrives, and 0 for the screen's again. Test hook: CI runs offscreen at ratio 1,
+    // where the ratio's part in maximumScale() would go untested.
+    void setDevicePixelRatioForTest(double ratio) { ratioForTest_ = ratio; }
 
     ScrollAnchor scrollAnchor() const;
     // Restore an anchor captured by scrollAnchor(). Sticky: re-applied across the
@@ -399,6 +405,10 @@ signals:
     void measurementsChanged(const QStringList &items);
 
 protected:
+    // A move to a screen with another device pixel ratio keeps the logical size, so no
+    // resize follows. The ratio change re-renders at the new ratio and re-clamps the
+    // zoom to maximumScale().
+    bool event(QEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void showEvent(QShowEvent *event) override;
@@ -452,6 +462,11 @@ private:
     QPoint centerDelta() const;   // px to centre content smaller than the viewport
     QPoint contentOffset() const; // content->viewport translation (scroll minus centring)
     double clampScale(double s) const;
+    // The device pixel ratio renders use, the screen's or the test override.
+    double deviceRatio() const;
+    // Takes a new device pixel ratio. It re-fits, re-renders keeping the stretched
+    // previews, re-clamps the zoom and reports the zoom in effect.
+    void applyDeviceRatio();
     // The zoom level one gesture away from `current`: the next rung of the zoom
     // ladder up (dir > 0) or down (dir < 0), skipping any rung too close to be
     // worth a gesture. Returns the clamp at either end, which the caller turns into
@@ -622,7 +637,8 @@ private:
     double scale_ = 1.0;
     int rotation_ = 0;
     double dpr_ = 1.0;
-    double largestPageSide_ = 0; // points, the longest side of any page
+    std::vector<double> pageSides_; // points, each page's longer side, ascending
+    double ratioForTest_ = 0;       // setDevicePixelRatioForTest
     ZoomMode zoomMode_ = ZoomMode::FitWidth;
     ViewLayout::Mode layoutMode_;
     PageTheme pageTheme_ = PageTheme::Light;

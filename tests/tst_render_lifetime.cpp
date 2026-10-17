@@ -470,7 +470,8 @@ private slots:
 
     // MuPDF clamps every edge to kMaxDevicePixel pixels from the device origin. A
     // tile of a longer page raster would come back blank or with shapes moved, so the
-    // engine reports a failure instead, and a tile just inside the limit renders.
+    // engine reports a failure instead, even for a tile that itself lies inside the
+    // limit, and a tile of a raster just inside the limit renders.
     void tilesBeyondTheEdgeClampFail()
     {
         QTemporaryDir dir;
@@ -489,14 +490,14 @@ private slots:
         auto doc = engine.openDocument(path);
         QVERIFY(doc);
         QSignalSpy results(&engine, &RenderEngine::resultReady);
-        const auto render = [&](quint64 requester, double scale) {
-            // The bottom-left 500 x 500 pixels of the page's raster at `scale`.
+        const auto render = [&](quint64 requester, double scale, bool top) {
+            // The top-left or bottom-left 500 x 500 pixels of the raster at `scale`.
             RenderRequest request;
             request.document = doc.get();
             request.requester = requester;
             request.scale = scale;
             const int height = int(std::ceil(11338.58 * scale));
-            request.clip = QRect(0, height - 500, 500, 500);
+            request.clip = QRect(0, top ? 0 : height - 500, 500, 500);
             engine.submit(request);
         };
         const auto result = [&](quint64 requester) -> std::optional<RenderResult> {
@@ -506,11 +507,14 @@ private slots:
             return std::nullopt;
         };
 
-        render(1, 100); // 1133858 pixels tall
-        render(2, 92);  // 1043150 pixels tall
-        QTRY_VERIFY_WITH_TIMEOUT(result(1) && result(2), 10000);
+        render(1, 100, false); // 1133858 pixels tall
+        render(2, 92, false);  // 1043150 pixels tall
+        render(3, 100, true);
+        QTRY_VERIFY_WITH_TIMEOUT(result(1) && result(2) && result(3), 10000);
         QVERIFY(!result(1)->ok);
         QVERIFY(result(1)->image.isNull());
+        QVERIFY(!result(3)->ok);
+        QVERIFY(result(3)->image.isNull());
         QVERIFY(result(2)->ok);
         const QImage inside = result(2)->image;
         QCOMPARE(inside.size(), QSize(500, 500));

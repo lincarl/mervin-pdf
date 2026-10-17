@@ -23,7 +23,14 @@
 // rotation 90 as well as 0 because at rotation 0 the width term binds and the
 // height half of the fit would never be exercised.
 //
-// Reuse one viewer and engine across cases; tst_render_lifetime covers concurrent teardown.
+// The last three cases cover the zoom cap that keeps page rasters within MuPDF's
+// exact range (kMaxDevicePixel). They generate their own documents, a 914 mm x 4 m
+// roll drawing and a document with one malformed giant page, and each builds its own
+// viewer and waits for renders. CMake also runs deepZoomStopsAtTheRasteriserRange at
+// QT_SCALE_FACTOR=2, so the device pixel ratio's part in the cap is checked for real.
+//
+// The other cases reuse one viewer and engine; tst_render_lifetime covers concurrent
+// teardown.
 #include "io/Background.h"
 #include "render/Document.h"
 #include "render/RenderEngine.h"
@@ -81,6 +88,8 @@ private slots:
     void goToPageEmitsOnePageChange();
     void clickBesideAShortPageStaysOnThatPage();
     void deepZoomStopsAtTheRasteriserRange();
+    void deepZoomFollowsTheDevicePixelRatio();
+    void aGiantPageLeavesTheZoomRangeToTheOthers();
 
 private:
     // Point the one viewer at a document and settle the deferred layout pass.
@@ -138,6 +147,19 @@ QByteArray mediaBoxPdf(const QList<QSizeF> &sizes)
     return assemblePdf(bodies);
 }
 
+// A 914 mm x 4 m roll drawing with a blue band across its bottom 400 pt.
+QByteArray rollPdf()
+{
+    const QByteArray content = "0 0 1 rg 0 0 2590.87 400 re f";
+    return assemblePdf({
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 2590.87 11338.58] /Contents 4 0 R >>",
+        "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content
+            + "\nendstream",
+    });
+}
+
 } // namespace
 
 void TstViewerFit::initTestCase()
@@ -191,8 +213,8 @@ void TstViewerFit::initTestCase()
 
 void TstViewerFit::cleanupTestCase()
 {
-    // This test walks three documents through every page mode, rotation and fit
-    // mode without ever waiting for a render, so it leaves the worker threads a
+    // Most cases walk documents through every page mode, rotation and fit mode
+    // without ever waiting for a render, so they leave the worker threads a
     // long queue. Nothing joins them: a worker keeps the MuPDF context it renders
     // with, and shutdown() drops the queue. Wait for them to finish before the
     // process ends, as one still rasterising when static destructors run could
@@ -705,23 +727,14 @@ void TstViewerFit::clickBesideAShortPageStaysOnThatPage()
 
 // MuPDF draws a page raster exactly only up to kMaxDevicePixel pixels on a side.
 // Beyond it, deep-zoom tiles came back blank and long shapes moved. The zoom stops at
-// the largest exact scale instead, and the zoom box hears that scale.
+// the largest exact scale instead, and scaleChanged reports that scale.
 void TstViewerFit::deepZoomStopsAtTheRasteriserRange()
 {
-    // A roll drawing 914 mm wide and 4 m long, with a blue band across its bottom
-    // 400 pt.
     constexpr double length = 11338.58;
-    const QByteArray content = "0 0 1 rg 0 0 2590.87 400 re f";
     const QString path = dir_->filePath(QStringLiteral("roll.pdf"));
     QFile file(path);
     QVERIFY(file.open(QIODevice::WriteOnly));
-    file.write(assemblePdf({
-        "<< /Type /Catalog /Pages 2 0 R >>",
-        "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
-        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 2590.87 11338.58] /Contents 4 0 R >>",
-        "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content
-            + "\nendstream",
-    }));
+    file.write(rollPdf());
     file.close();
     QString err;
     auto roll = engine_->openDocument(path, QString(), &err);
@@ -759,6 +772,115 @@ void TstViewerFit::deepZoomStopsAtTheRasteriserRange()
         return pixel.blue() > 200 && pixel.red() < 60 && pixel.green() < 60;
     };
     QTRY_VERIFY_WITH_TIMEOUT(blueAtCentre(), 15000);
+}
+
+// A window moved to a screen with another device pixel ratio gets no resize, only a
+// ratio change. The zoom must follow the new ratio's cap right then, not on some later
+// zoom gesture, where Zoom In could otherwise lower the zoom.
+void TstViewerFit::deepZoomFollowsTheDevicePixelRatio()
+{
+    const QString path = dir_->filePath(QStringLiteral("roll-ratio.pdf"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(rollPdf());
+    file.close();
+    QString err;
+    auto roll = engine_->openDocument(path, QString(), &err);
+    QVERIFY2(roll != nullptr, qPrintable(err));
+    const double length = roll->pageSize(0).height(); // 11338.58 pt
+
+    ViewerWidget viewer(engine_.get());
+    viewer.setAttribute(Qt::WA_DontShowOnScreen, true);
+    viewer.resize(1000, 800);
+    viewer.setDocument(roll.get());
+    viewer.show();
+    QCoreApplication::processEvents();
+    const double screen = viewer.devicePixelRatioF();
+    const auto capAt = [length](double ratio) {
+        return (mervin::kMaxDevicePixel - 1) / (length * ratio);
+    };
+    // A zoom within the cap at the screen's ratio and above the cap at twice that
+    // ratio, about 6900% at ratio 1.
+    const double start = (capAt(screen) + capAt(screen * 2)) / 2;
+    QVERIFY(capAt(screen) < 100);
+    viewer.setScale(start);
+    QCOMPARE(viewer.scale(), start);
+
+    // The window moves to a screen with twice the ratio, and the cap halves at once.
+    QSignalSpy scales(&viewer, &ViewerWidget::scaleChanged);
+    viewer.setDevicePixelRatioForTest(screen * 2);
+    QEvent moved(QEvent::DevicePixelRatioChange);
+    QCoreApplication::sendEvent(&viewer, &moved);
+    QCOMPARE(viewer.maximumScale(), capAt(screen * 2));
+    QCOMPARE(viewer.scale(), viewer.maximumScale());
+    QVERIFY(!scales.isEmpty());
+    QCOMPARE(scales.last().at(0).toDouble(), viewer.scale());
+    const double lowered = viewer.scale();
+    viewer.zoomIn();
+    QCOMPARE(viewer.scale(), lowered);
+
+    // Back on the first screen, the zoom stays but may rise to the old cap again.
+    viewer.setDevicePixelRatioForTest(0);
+    QCoreApplication::sendEvent(&viewer, &moved);
+    QCOMPARE(viewer.maximumScale(), capAt(screen));
+    QCOMPARE(viewer.scale(), lowered);
+    viewer.zoomIn();
+    QVERIFY(viewer.scale() > lowered);
+    QVERIFY(viewer.scale() <= viewer.maximumScale());
+}
+
+// One malformed page too large to render at any zoom must not shrink the zoom range
+// of the rest of the document. That page shows plain paper, as a failed render does.
+void TstViewerFit::aGiantPageLeavesTheZoomRangeToTheOthers()
+{
+    // A 20 million point wide page, then an A4 page. Written out by hand, because
+    // QByteArray::number would write the width as 2e+07, which PDF does not accept.
+    const QString path = dir_->filePath(QStringLiteral("giant.pdf"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(assemblePdf({
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Count 2 /Kids [3 0 R 4 0 R] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 20000000 842] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>",
+    }));
+    file.close();
+    // Its own engine, so the results below can only come from this viewer.
+    mervin::RenderEngine engine;
+    QString err;
+    auto giant = engine.openDocument(path, QString(), &err);
+    QVERIFY2(giant != nullptr, qPrintable(err));
+    QCOMPARE(giant->pageSize(0).width(), 20000000.0);
+
+    QSignalSpy results(&engine, &mervin::RenderEngine::resultReady);
+    ViewerWidget viewer(&engine);
+    viewer.setAttribute(Qt::WA_DontShowOnScreen, true);
+    viewer.resize(1000, 800);
+    viewer.setDocument(giant.get());
+    viewer.show();
+    QCoreApplication::processEvents();
+
+    QCOMPARE(viewer.maximumScale(), 100.0);
+    viewer.setScale(1.0);
+    QCOMPARE(viewer.scale(), 1.0);
+    viewer.setScale(0.01);
+    QCOMPARE(viewer.scale(), 0.08);
+
+    // The giant page's render fails instead of coming back blank, and the A4 page
+    // still renders.
+    const auto rendered = [&](int page, bool ok) {
+        for (const auto &args : results) {
+            const auto result = args[0].value<mervin::RenderResult>();
+            if (result.pageNo == page && result.ok == ok)
+                return true;
+        }
+        return false;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(rendered(0, false), 15000);
+    viewer.setScale(1.0);
+    viewer.goToPage(1);
+    QTRY_VERIFY_WITH_TIMEOUT(rendered(1, true), 15000);
+    QVERIFY(!rendered(0, true));
 }
 
 QTEST_MAIN(TstViewerFit)
