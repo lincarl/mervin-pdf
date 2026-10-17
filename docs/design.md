@@ -978,21 +978,34 @@ it was. JavaScript actions cannot be limited this way and stay.
 
 Delete Pages removes pages from the source's own `QPDF` and writes it, so it keeps
 encryption, outlines and structure. `QPDFPageDocumentHelper::removePage` only takes a
-page out of `/Pages`, so `removeDeletedContent` then removes what only the deleted
-pages used. It removes the outline items that only go to a deleted page and have no
-items left below them, relinking their siblings and correcting `/Count`. A direct item,
-which ISO 32000 does not allow but viewers follow, is made indirect first, and an outline
-that reaches an item twice stays as it was. It removes the named destinations of deleted
-pages from `/Dests` and the `/Names /Dests` tree, after the outline, which looks some
-bookmarks up through them. It removes the structure elements whose content is only on
-deleted pages, with their `/ParentTree` and `/IDTree` entries, and the deleted pages'
-content items from the elements that stay. It removes the form fields whose widgets are
-all on deleted pages from `/Fields`, `/CO` and their parents' `/Kids`, and drops `/XFA`
-when it removes one. Finally it replaces the deleted pages, their annotations that no
-kept page lists and the removed fields with null (`QPDF::replaceObject`), so links and
-other references cannot keep their content in the output. A reply on a kept page keeps
-its `/IRT`, which then names null, so it answers nothing. A damaged outline or structure
-tree is left as it was.
+page out of `/Pages`, so `removeDeletedContent` then removes what only the deleted pages
+used. It removes the outline items that only go to a deleted page and have no items left
+below them, relinking their siblings and correcting `/Count`. A direct item, which
+ISO 32000 does not allow but viewers follow, is made indirect first. It removes the
+named destinations of deleted pages from `/Dests` and the `/Names /Dests` tree, after
+the outline, which looks some bookmarks up through them. It removes the structure
+elements whose content is only on deleted pages, with their `/ParentTree` and `/IDTree`
+entries, and the deleted pages' content items from the elements that stay. It removes
+the form fields whose widgets are all on deleted pages from `/Fields`, `/CO` and their
+parents' `/Kids`, and drops `/XFA` when it removes one. Finally it replaces the deleted
+pages, their annotations that no kept page lists and the removed fields with null
+(`QPDF::replaceObject`), so links and other references cannot keep their content in the
+output. A reply on a kept page keeps its `/IRT`, which then names null, so it answers
+nothing. An outline or structure tree that qpdf cannot read is left as it was.
+
+The recursive walks in `PageOps.cpp` follow at most `kMaxDepth` (100) levels, as qpdf's
+own form traversal does, and fail closed there. They cut what lies deeper instead of
+keeping it unchecked. An outline item at that depth loses the items below it, and an
+outline chain that comes back to an item it has seen ends before it, with `/Count`
+corrected above. A structure element below that depth goes, with the elements below it.
+A field at that depth loses its `/Kids`, and the fields and widgets below it go, except
+widgets that an output or kept page lists, which keep their annotation. An action chain
+under `/A`, `/AA` or `/Next` ends after 100 actions, or where it comes back to an action
+it has seen, in the field mapping and the scoping of form actions of every Merge,
+Extract and Split output. Walks that do not recurse, such as the climb from a widget
+through `/Parent` and the gathering of a file's field names, reach each object once and
+have no depth limit, so they see whole trees and a field tree is always pruned from its
+top.
 
 Pages can share one resources dictionary, or inherit it from `/Pages`, and then list the
 images and fonts of every page. Some writers also give each page its own copy of such a

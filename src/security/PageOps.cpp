@@ -31,8 +31,11 @@ namespace {
 
 using ObjectSet = std::set<QPDFObjGen>;
 
-// How deep the cleanup below follows form fields, outline items and structure elements.
-// qpdf's own form traversal stops at the same depth.
+// How deep the recursive walks below follow form fields, outline items, structure elements
+// and action chains. qpdf's own form traversal stops at the same depth. A walk that removes
+// or limits something cuts what lies deeper, and a chain that comes back to an object it
+// has seen ends there, so nothing stays unchecked because a walk stopped. Walks that do not
+// recurse, such as a climb through /Parent, reach each object once and need no limit.
 constexpr int kMaxDepth = 100;
 
 /// Adds the indirect annotations that `page` lists in /Annots to `into`.
@@ -50,7 +53,7 @@ void addAnnotations(QPDFObjectHandle page, ObjectSet &into)
 /// when it, or a field or widget below it, is a widget in `kept`. With `dropped`, as for
 /// Delete Pages, a field also stays when nothing below it is in `dropped`, so fields that
 /// no page shows remain. A field that goes leaves its parent's /Kids, and its own subtree
-/// goes with it.
+/// goes with it. Below kMaxDepth levels everything goes but the widgets in `kept`.
 class FieldPruner
 {
 public:
@@ -71,8 +74,9 @@ public:
                 fields.eraseItem(i);
     }
 
-    /// The fields that went. Their descendants that hold no widget of `dropped` are not
-    /// listed, as nothing shows them.
+    /// The fields that went, and what was below the depth limit but the widgets in `kept`.
+    /// The descendants of a field that went that hold no widget of `dropped` are not listed,
+    /// as nothing shows them.
     const ObjectSet &removed() const { return removed_; }
 
 private:
@@ -106,17 +110,51 @@ private:
                 else
                     kids.eraseItem(i);
             }
+        } else if (kids.isArray()) {
+            // Deeper than the walk goes: what is below goes unread, and the field counts as
+            // holding a dropped widget, so it stays only when it is a kept widget itself.
+            dropBelow(kids);
+            field.removeKey("/Kids");
+            verdict.dropped = true;
         }
         verdict.stays = verdict.kept || (dropped_ && !verdict.dropped);
-        if (!verdict.stays)
+        if (verdict.stays)
+            removed_.erase(id); // dropBelow() may have reached it below another field
+        else
             removed_.insert(id);
         seen_[id] = verdict;
         return verdict;
     }
 
+    // Adds the fields and widgets below `kids`, a /Kids array, to removed_, except the
+    // widgets in `kept` and what visit() has reached. It does not recurse and reaches each
+    // object once, so it needs no depth limit. A dictionary with a /Type other than /Annot
+    // is not part of a field tree, and stays.
+    void dropBelow(QPDFObjectHandle kids)
+    {
+        std::vector<QPDFObjectHandle> queue = kids.getArrayAsVector();
+        while (!queue.empty()) {
+            QPDFObjectHandle node = queue.back();
+            queue.pop_back();
+            if (!node.isIndirect() || !node.isDictionary() || seen_.count(node.getObjGen())
+                || !below_.insert(node.getObjGen()).second)
+                continue;
+            QPDFObjectHandle type = node.getKey("/Type");
+            if (!type.isNull() && !type.isNameAndEquals("/Annot"))
+                continue;
+            if (!kept_.count(node.getObjGen()))
+                removed_.insert(node.getObjGen());
+            QPDFObjectHandle more = node.getKey("/Kids");
+            if (more.isArray())
+                for (QPDFObjectHandle kid : more.aitems())
+                    queue.push_back(kid);
+        }
+    }
+
     const ObjectSet &kept_;
     const ObjectSet *dropped_;
     std::map<QPDFObjGen, Verdict> seen_;
+    ObjectSet below_; // what dropBelow() reached
     ObjectSet removed_;
 };
 
@@ -171,6 +209,23 @@ bool findDeadOutlines(QPDFObjectHandle parent, QPDFOutlineDocumentHelper &names,
     return stays;
 }
 
+/// Sets /Count of `parent` from `items`, the items now below it: every open item for the
+/// outline root at `depth` 0, and for an item its open descendants, negative while it is
+/// closed. An item without /Count stays without it.
+void recountOutline(QPDFObjectHandle parent, const std::vector<QPDFObjectHandle> &items, int depth)
+{
+    long long visible = 0; // the items shown below `parent` while it is open
+    for (QPDFObjectHandle item : items) {
+        QPDFObjectHandle count = item.getKey("/Count");
+        visible += 1 + (count.isInteger() ? std::max(0LL, count.getIntValue()) : 0);
+    }
+    QPDFObjectHandle count = parent.getKey("/Count");
+    if (depth == 0 || (count.isInteger() && count.getIntValue() > 0))
+        parent.replaceKey("/Count", QPDFObjectHandle::newInteger(visible));
+    else if (count.isInteger() && count.getIntValue() < 0)
+        parent.replaceKey("/Count", QPDFObjectHandle::newInteger(-visible));
+}
+
 /// Unlinks the doomed items below `parent`, links the rest again and recounts /Count
 /// where anything below changed. Returns whether anything below `parent` changed.
 bool unlinkOutlines(QPDFObjectHandle parent, const ObjectSet &doomed, ObjectSet &seen, int depth)
@@ -197,7 +252,6 @@ bool unlinkOutlines(QPDFObjectHandle parent, const ObjectSet &doomed, ObjectSet 
     }
     parent.replaceKey("/First", kept.front());
     parent.replaceKey("/Last", kept.back());
-    long long visible = 0; // the items shown below `parent` while it is open
     for (size_t i = 0; i < kept.size(); ++i) {
         if (i > 0)
             kept[i].replaceKey("/Prev", kept[i - 1]);
@@ -207,44 +261,60 @@ bool unlinkOutlines(QPDFObjectHandle parent, const ObjectSet &doomed, ObjectSet 
             kept[i].replaceKey("/Next", kept[i + 1]);
         else
             kept[i].removeKey("/Next");
-        QPDFObjectHandle count = kept[i].getKey("/Count");
-        visible += 1 + (count.isInteger() ? std::max(0LL, count.getIntValue()) : 0);
     }
-    // The outline root counts every open item. An item counts its open descendants,
-    // negative while it is closed, and an item without /Count stays without it.
-    QPDFObjectHandle count = parent.getKey("/Count");
-    if (depth == 0 || (count.isInteger() && count.getIntValue() > 0))
-        parent.replaceKey("/Count", QPDFObjectHandle::newInteger(visible));
-    else if (count.isInteger() && count.getIntValue() < 0)
-        parent.replaceKey("/Count", QPDFObjectHandle::newInteger(-visible));
+    recountOutline(parent, kept, depth);
     return true;
 }
 
 /// Makes the direct items below `parent` indirect, so that the walks above tell items apart
-/// by object number. ISO 32000 wants indirect items, but viewers follow a direct /Next as
-/// well. Returns false for an outline that reaches an item twice, which they cannot relink.
+/// by object number, and cuts what those walks would not check. ISO 32000 wants indirect
+/// items, but viewers follow a direct /Next as well. A chain that comes back to an item
+/// already seen, as in a loop, ends before it, and an item at the depth limit loses the
+/// items below it. Recounts /Count above a cut, and returns whether anything below `parent`
+/// was cut.
 bool makeOutlineIndirect(QPDF &q, QPDFObjectHandle parent, ObjectSet &seen, int depth)
 {
     QPDFObjectHandle holder = parent;
     const char *link = "/First";
+    std::vector<QPDFObjectHandle> items;
+    bool cut = false;
     for (QPDFObjectHandle item = parent.getKey("/First"); item.isDictionary();
          item = item.getKey("/Next")) {
         if (!item.isIndirect()) {
             item = q.makeIndirectObject(item);
             holder.replaceKey(link, item);
         }
-        if (!seen.insert(item.getObjGen()).second)
-            return false;
-        if (depth < kMaxDepth && !makeOutlineIndirect(q, item, seen, depth + 1))
-            return false;
+        if (!seen.insert(item.getObjGen()).second) {
+            holder.removeKey(link);
+            cut = true;
+            break;
+        }
+        if (depth < kMaxDepth) {
+            cut |= makeOutlineIndirect(q, item, seen, depth + 1);
+        } else if (item.hasKey("/First") || item.hasKey("/Last")) {
+            for (const char *key : {"/First", "/Last", "/Count"})
+                item.removeKey(key);
+            cut = true;
+        }
+        items.push_back(item);
         holder = item;
         link = "/Next";
     }
-    return true;
+    if (cut) {
+        if (items.empty()) {
+            for (const char *key : {"/First", "/Last", "/Count"})
+                parent.removeKey(key);
+        } else {
+            parent.replaceKey("/Last", items.back());
+            recountOutline(parent, items, depth);
+        }
+    }
+    return cut;
 }
 
 /// Removes the outline items that go only to a deleted page and have no items left below
-/// them, as their titles can describe the page. A damaged outline stays as it was.
+/// them, as their titles can describe the page. makeOutlineIndirect cuts loops and items
+/// deeper than the walks go first. An outline that qpdf cannot read stays as it was.
 void pruneOutlines(QPDF &q, const ObjectSet &pages)
 {
     QPDFObjectHandle outlines = q.getRoot().getKey("/Outlines");
@@ -253,8 +323,7 @@ void pruneOutlines(QPDF &q, const ObjectSet &pages)
     ObjectSet doomed;
     try {
         ObjectSet seen;
-        if (!makeOutlineIndirect(q, outlines, seen, 0))
-            return;
+        makeOutlineIndirect(q, outlines, seen, 0);
         QPDFOutlineDocumentHelper names(q);
         seen.clear();
         findDeadOutlines(outlines, names, pages, seen, doomed, 0);
@@ -303,10 +372,11 @@ void pruneDestinations(QPDF &q, const ObjectSet &pages)
     }
 }
 
-/// Finds the structure elements that mark content only on deleted pages. read() only
-/// looks, so a damaged structure tree can be left as it was; apply() then removes those
-/// elements with their /ParentTree and /IDTree entries, and takes the deleted pages'
-/// content items out of the elements that stay.
+/// Finds the structure elements that mark content only on deleted pages, and those below
+/// kMaxDepth levels, which go unread. read() only looks, so a structure tree that qpdf
+/// cannot read can be left as it was; apply() then removes those elements with their
+/// /ParentTree and /IDTree entries, and takes the deleted pages' content items out of the
+/// elements that stay.
 class StructurePruner
 {
 public:
@@ -405,8 +475,10 @@ private:
     {
         if (!isElement(elem))
             return None;
-        if (depth > kMaxDepth)
-            throw std::runtime_error("structure tree too deep");
+        if (depth > kMaxDepth) {
+            doomBelow(elem); // deeper than the walk goes, so it goes unread
+            return Deleted;
+        }
         const bool indirect = elem.isIndirect();
         if (indirect) {
             if (const auto it = places_.find(elem.getObjGen()); it != places_.end())
@@ -433,8 +505,28 @@ private:
             places_[elem.getObjGen()] = place;
             if (place == Deleted)
                 doomed_.insert(elem.getObjGen());
+            else
+                doomed_.erase(elem.getObjGen()); // doomBelow() may have reached it elsewhere
         }
         return place;
+    }
+
+    // Dooms `elem` and the elements below it that classify() has not placed. It does not
+    // recurse and reaches each element once, so it needs no depth limit.
+    void doomBelow(QPDFObjectHandle elem)
+    {
+        std::vector<QPDFObjectHandle> queue{elem};
+        while (!queue.empty()) {
+            QPDFObjectHandle node = queue.back();
+            queue.pop_back();
+            if (!isElement(node))
+                continue;
+            if (node.isIndirect()
+                && (places_.count(node.getObjGen()) || !doomed_.insert(node.getObjGen()).second))
+                continue; // placed, being placed, or doomed already
+            forEachKid(node, QPDFObjectHandle::newNull(),
+                       [&queue](QPDFObjectHandle kid, QPDFObjectHandle) { queue.push_back(kid); });
+        }
     }
 
     bool isDoomed(QPDFObjectHandle value) const
@@ -454,11 +546,10 @@ private:
             page = own;
         const auto gone = [&](QPDFObjectHandle kid) {
             if (isElement(kid)) {
-                // read() went through the same elements at the same depth, so classify()
-                // does not throw.
+                // read() went through the same elements at the same depth.
                 if (kid.isIndirect() ? isDoomed(kid) : classify(kid, page, depth) == Deleted)
                     return true;
-                if (depth < kMaxDepth)
+                if (depth <= kMaxDepth) // the kids beyond the limit are all Deleted
                     trim(kid, page, trimmed, depth + 1);
                 return false;
             }
@@ -486,7 +577,8 @@ private:
 };
 
 /// Removes the structure elements that mark content only on deleted pages, as their /Alt
-/// or /ActualText can describe the page. A damaged structure tree stays as it was.
+/// or /ActualText can describe the page, and those deeper than the walk goes. A structure
+/// tree that qpdf cannot read stays as it was.
 void pruneStructure(QPDF &q, const Removal &removal)
 {
     QPDFObjectHandle root = q.getRoot().getKey("/StructTreeRoot");
@@ -768,23 +860,35 @@ private:
         std::map<std::string, std::string> names; // fully qualified names that a rename changed
     };
 
-    // Prunes the field tree of `widget`, if it is a widget, and adds its fields to `used`.
-    // Fields have no /Type, which keeps the climb out of anything else that a damaged
-    // /Parent might name.
+    // The fields above `node` through /Parent, nearest first, up to the top of its tree, or
+    // up to a field already listed, as in a loop. Fields have no /Type, which keeps the climb
+    // out of anything else that a damaged /Parent might name.
+    static std::vector<QPDFObjectHandle> fieldsAbove(QPDFObjectHandle node)
+    {
+        std::vector<QPDFObjectHandle> above;
+        ObjectSet seen;
+        if (node.isIndirect())
+            seen.insert(node.getObjGen());
+        for (QPDFObjectHandle parent = node.getKey("/Parent");
+             parent.isDictionary() && !parent.hasKey("/Type")
+             && (!parent.isIndirect() || seen.insert(parent.getObjGen()).second);
+             parent = parent.getKey("/Parent"))
+            above.push_back(parent);
+        return above;
+    }
+
+    // Prunes the field tree of `widget`, if it is a widget, from its top, and adds the fields
+    // above the widget to `used`.
     static void pruneTreeOf(QPDFObjectHandle widget, FieldPruner &pruner, ObjectSet *used)
     {
         if (!widget.isDictionary() || !widget.getKey("/Subtype").isNameAndEquals("/Widget"))
             return;
-        QPDFObjectHandle top = widget;
-        for (int depth = 0; depth < kMaxDepth; ++depth) {
-            QPDFObjectHandle parent = top.getKey("/Parent");
-            if (!parent.isDictionary() || parent.hasKey("/Type"))
-                break;
-            top = parent;
-            if (used && top.isIndirect())
-                used->insert(top.getObjGen());
-        }
-        pruner.prune(top);
+        const std::vector<QPDFObjectHandle> above = fieldsAbove(widget);
+        if (used)
+            for (QPDFObjectHandle field : above)
+                if (field.isIndirect())
+                    used->insert(field.getObjGen());
+        pruner.prune(above.empty() ? widget : above.back());
     }
 
     // addPage copies what a page refers to, so a reply's /IRT brings along the note it answers
@@ -819,13 +923,8 @@ private:
     // The top of the field tree that `node` belongs to.
     static QPDFObjectHandle fieldTop(QPDFObjectHandle node)
     {
-        for (int depth = 0; depth < kMaxDepth; ++depth) {
-            QPDFObjectHandle parent = node.getKey("/Parent");
-            if (!parent.isDictionary() || parent.hasKey("/Type"))
-                break;
-            node = parent;
-        }
-        return node;
+        const std::vector<QPDFObjectHandle> above = fieldsAbove(node);
+        return above.empty() ? node : above.back();
     }
 
     // Adds to `copies` each node of the tree below `first` with the node at the same place
@@ -870,41 +969,57 @@ private:
         return changed ? QPDFObjectHandle::newArray(items) : fields;
     }
 
+    // Whether a walk of an action chain ends at `action`, reached at `depth`: past the depth
+    // limit, or back at an action in `seen`, as in a loop. Adds an indirect `action` that does
+    // not end the walk to `seen`.
+    static bool endsChain(QPDFObjectHandle action, ObjectSet &seen, int depth)
+    {
+        return depth >= kMaxDepth
+            || (action.isIndirect() && !seen.insert(action.getObjGen()).second);
+    }
+
     // `action` with the fields of its /Fields and /T, and of the actions in its /Next, mapped
     // through `targets`. Returns `action` itself when nothing changes, and a new object
-    // otherwise, so an action that several annotations share stays as it was.
-    static QPDFObjectHandle mapAction(QPDFObjectHandle action, const Targets &targets, int depth)
+    // otherwise, so an action that several annotations share stays as it was. The chain
+    // ends where endsChain() says, without the action there and what follows it, so the
+    // result can be null.
+    static QPDFObjectHandle mapAction(QPDFObjectHandle action, const Targets &targets,
+                                      ObjectSet &seen, int depth)
     {
-        if (depth >= kMaxDepth)
+        if (!action.isDictionary() && !action.isArray())
             return action;
+        if (endsChain(action, seen, depth))
+            return QPDFObjectHandle::newNull();
         if (action.isArray()) { // a /Next that lists several actions
-            std::vector<QPDFObjectHandle> items = action.getArrayAsVector();
+            std::vector<QPDFObjectHandle> items;
             bool changed = false;
-            for (QPDFObjectHandle &item : items) {
-                QPDFObjectHandle mapped = mapAction(item, targets, depth + 1);
-                if (!mapped.isSameObjectAs(item)) {
-                    item = mapped;
-                    changed = true;
-                }
+            for (QPDFObjectHandle item : action.aitems()) {
+                QPDFObjectHandle mapped = mapAction(item, targets, seen, depth + 1);
+                changed |= !mapped.isSameObjectAs(item);
+                if (!mapped.isNull())
+                    items.push_back(mapped);
             }
-            return changed ? QPDFObjectHandle::newArray(items) : action;
+            if (!changed)
+                return action;
+            return items.empty() ? QPDFObjectHandle::newNull() : QPDFObjectHandle::newArray(items);
         }
-        if (!action.isDictionary())
-            return action;
         QPDFObjectHandle result;
         const auto change = [&](const char *key, QPDFObjectHandle old, QPDFObjectHandle mapped) {
             if (mapped.isSameObjectAs(old))
                 return;
             if (!result.isInitialized())
                 result = action.shallowCopy();
-            result.replaceKey(key, mapped);
+            if (mapped.isNull())
+                result.removeKey(key);
+            else
+                result.replaceKey(key, mapped);
         };
         for (const char *key : {"/Fields", "/T"}) {
             QPDFObjectHandle value = action.getKey(key);
             change(key, value, mapFields(value, targets));
         }
         QPDFObjectHandle next = action.getKey("/Next");
-        change("/Next", next, mapAction(next, targets, depth + 1));
+        change("/Next", next, mapAction(next, targets, seen, depth + 1));
         return result.isInitialized() ? result : action;
     }
 
@@ -976,7 +1091,8 @@ private:
     static void mapActions(QPDFObjectHandle holder, const Targets &targets)
     {
         rewriteActions(holder, [&targets](QPDFObjectHandle action) {
-            return mapAction(action, targets, 0);
+            ObjectSet seen;
+            return mapAction(action, targets, seen, 0);
         });
     }
 
@@ -993,6 +1109,7 @@ private:
     // with an empty /Fields unless its source had one and the output has one file. The
     // actions of the pages, their annotations and the fields above their widgets are
     // covered, with their /AA and /Next. JavaScript actions cannot be limited this way.
+    // A /Next chain ends after kMaxDepth actions, or where it comes back to an action.
     void scopeFormActions()
     {
         std::map<QPDF *, std::vector<QPDFObjectHandle>> pagesOf;
@@ -1022,11 +1139,8 @@ private:
                     if (!annot.getKey("/Subtype").isNameAndEquals("/Widget"))
                         continue;
                     QPDFObjectHandle node = annot;
-                    for (int depth = 0; depth < kMaxDepth; ++depth) {
-                        QPDFObjectHandle parent = node.getKey("/Parent");
-                        if (!parent.isDictionary() || parent.hasKey("/Type"))
-                            break;
-                        node = parent;
+                    for (QPDFObjectHandle field : fieldsAbove(annot)) {
+                        node = field;
                         hold(node);
                     }
                     if (node.isIndirect() && seenTops.insert(node.getObjGen()).second)
@@ -1036,7 +1150,8 @@ private:
             const OwnFields own(tops);
             for (QPDFObjectHandle holder : holders)
                 rewriteActions(holder, [&](QPDFObjectHandle action) {
-                    return scopeAction(action, tops, own, several, 0);
+                    ObjectSet seenActions;
+                    return scopeAction(action, tops, own, several, seenActions, 0);
                 });
         }
     }
@@ -1044,22 +1159,21 @@ private:
     /// The fields of one file in an output, by object and by fully qualified name.
     struct OwnFields
     {
+        // Reaches each field once, so it needs no depth limit.
         explicit OwnFields(const std::vector<QPDFObjectHandle> &tops)
         {
-            std::vector<std::pair<QPDFObjectHandle, int>> queue;
-            for (QPDFObjectHandle top : tops)
-                queue.emplace_back(top, 0);
+            std::vector<QPDFObjectHandle> queue = tops;
             while (!queue.empty()) {
-                auto [node, depth] = queue.back();
+                QPDFObjectHandle node = queue.back();
                 queue.pop_back();
                 if (!node.isIndirect() || !node.isDictionary() || !ids.insert(node.getObjGen()).second)
                     continue;
                 if (node.hasKey("/T"))
                     names.insert(QPDFFormFieldObjectHelper(node).getFullyQualifiedName());
                 QPDFObjectHandle kids = node.getKey("/Kids");
-                if (kids.isArray() && depth < kMaxDepth)
+                if (kids.isArray())
                     for (QPDFObjectHandle kid : kids.aitems())
-                        queue.emplace_back(kid, depth + 1);
+                        queue.push_back(kid);
             }
         }
 
@@ -1079,18 +1193,22 @@ private:
     // scopeFormActions says, to the trees `tops` of one file whose fields are `own`, and
     // `several` when the output has more than one file. Returns `action` itself when nothing
     // changes, and a new object otherwise. An action that is left out gives way to its /Next,
-    // so the result can be null when nothing follows, or an array of actions.
+    // so the result can be null when nothing follows, or an array of actions. The chain ends
+    // where endsChain() says, without the action there and what follows it, in every output.
     static QPDFObjectHandle scopeAction(QPDFObjectHandle action,
                                         const std::vector<QPDFObjectHandle> &tops,
-                                        const OwnFields &own, bool several, int depth)
+                                        const OwnFields &own, bool several, ObjectSet &seen,
+                                        int depth)
     {
-        if (depth >= kMaxDepth)
+        if (!action.isDictionary() && !action.isArray())
             return action;
+        if (endsChain(action, seen, depth))
+            return QPDFObjectHandle::newNull();
         if (action.isArray()) { // a /Next that lists several actions
             std::vector<QPDFObjectHandle> items;
             bool changed = false;
             for (QPDFObjectHandle item : action.aitems()) {
-                QPDFObjectHandle scoped = scopeAction(item, tops, own, several, depth + 1);
+                QPDFObjectHandle scoped = scopeAction(item, tops, own, several, seen, depth + 1);
                 if (scoped.isSameObjectAs(item)) {
                     items.push_back(item);
                     continue;
@@ -1106,10 +1224,8 @@ private:
                 return action;
             return items.empty() ? QPDFObjectHandle::newNull() : QPDFObjectHandle::newArray(items);
         }
-        if (!action.isDictionary())
-            return action;
         QPDFObjectHandle next = action.getKey("/Next");
-        QPDFObjectHandle scopedNext = scopeAction(next, tops, own, several, depth + 1);
+        QPDFObjectHandle scopedNext = scopeAction(next, tops, own, several, seen, depth + 1);
         QPDFObjectHandle result;
         const auto change = [&](const char *key, QPDFObjectHandle value) {
             if (!result.isInitialized())
@@ -1137,7 +1253,7 @@ private:
                 return scopedNext; // its fields are all left out, so it acts on none
             if (several && (every || exclude)) {
                 const std::vector<QPDFObjectHandle> list =
-                    every ? tops : withoutExcluded(tops, QPDFObjectHandle::newArray(kept));
+                    every ? tops : withoutExcluded(tops, kept);
                 if (list.empty())
                     return scopedNext; // what follows takes its place
                 change("/Fields", QPDFObjectHandle::newArray(list));
@@ -1156,88 +1272,85 @@ private:
         return result.isInitialized() ? result : action;
     }
 
-    // The fields of the trees `tops` without the ones that `excluded` lists, by reference or
-    // fully qualified name, and their descendants. A field with no excluded field below it
-    // stands for its whole tree.
-    static std::vector<QPDFObjectHandle> withoutExcluded(const std::vector<QPDFObjectHandle> &tops,
-                                                         QPDFObjectHandle excluded)
+    /// Fields that an Exclude list names, by reference and by fully qualified name.
+    struct Excluded
     {
         ObjectSet ids;
         std::set<std::string> names;
-        for (QPDFObjectHandle item : excluded.aitems()) {
+    };
+
+    // The fields of the trees `tops` without the ones that `excluded` lists, by reference or
+    // fully qualified name, and their descendants. A field with nothing excluded below it
+    // stands for its whole tree.
+    static std::vector<QPDFObjectHandle>
+    withoutExcluded(const std::vector<QPDFObjectHandle> &tops,
+                    const std::vector<QPDFObjectHandle> &excluded)
+    {
+        Excluded gone;
+        for (QPDFObjectHandle item : excluded) {
             if (item.isIndirect())
-                ids.insert(item.getObjGen());
+                gone.ids.insert(item.getObjGen());
             else if (item.isString())
-                names.insert(item.getUTF8Value());
-        }
-        ObjectSet gone, above, seen; // excluded fields, the fields above them, visited ones
-        std::vector<std::pair<QPDFObjectHandle, int>> queue;
-        for (QPDFObjectHandle top : tops)
-            queue.emplace_back(top, 0);
-        while (!queue.empty()) {
-            auto [node, depth] = queue.back();
-            queue.pop_back();
-            if (!node.isIndirect() || !node.isDictionary() || !seen.insert(node.getObjGen()).second)
-                continue;
-            if (ids.count(node.getObjGen())
-                || (node.hasKey("/T")
-                    && names.count(QPDFFormFieldObjectHelper(node).getFullyQualifiedName()))) {
-                gone.insert(node.getObjGen());
-                QPDFObjectHandle parent = node.getKey("/Parent");
-                for (int up = 0; up < kMaxDepth && parent.isIndirect() && parent.isDictionary()
-                                 && !parent.hasKey("/Type");
-                     ++up, parent = parent.getKey("/Parent"))
-                    above.insert(parent.getObjGen());
-            }
-            QPDFObjectHandle kids = node.getKey("/Kids");
-            if (kids.isArray() && depth < kMaxDepth)
-                for (QPDFObjectHandle kid : kids.aitems())
-                    queue.emplace_back(kid, depth + 1);
+                gone.names.insert(item.getUTF8Value());
         }
         std::vector<QPDFObjectHandle> result;
+        ObjectSet seen;
         for (QPDFObjectHandle top : tops)
-            addUnexcluded(top, gone, above, result, 0);
+            if (addUnexcluded(top, gone, seen, result, 0))
+                result.push_back(top);
         return result;
     }
 
-    // Adds `node` to `result` unless it is in `gone`, or its fields that are not in `gone`
-    // when one below it is (`above`).
-    static void addUnexcluded(QPDFObjectHandle node, const ObjectSet &gone, const ObjectSet &above,
+    // Whether nothing in the tree of `node` is excluded, so that `node` can stand for it.
+    // Otherwise adds the fields below it that can stand for their own trees to `result`. A
+    // field reached twice, as in a loop, counts as excluded, and so does one at the depth
+    // limit with fields below it, so the list leaves out what the walk did not check.
+    static bool addUnexcluded(QPDFObjectHandle node, const Excluded &gone, ObjectSet &seen,
                               std::vector<QPDFObjectHandle> &result, int depth)
     {
-        if (!node.isIndirect() || gone.count(node.getObjGen()))
-            return;
-        if (!above.count(node.getObjGen())) {
-            result.push_back(node);
-            return;
-        }
+        if (!node.isIndirect() || !node.isDictionary())
+            return true; // qpdf skips it in a field tree too
+        if (!seen.insert(node.getObjGen()).second || gone.ids.count(node.getObjGen())
+            || (node.hasKey("/T")
+                && gone.names.count(QPDFFormFieldObjectHelper(node).getFullyQualifiedName())))
+            return false;
         QPDFObjectHandle kids = node.getKey("/Kids");
-        if (kids.isArray() && depth < kMaxDepth)
-            for (QPDFObjectHandle kid : kids.aitems())
-                if (kid.hasKey("/T") || kid.hasKey("/Kids"))
-                    addUnexcluded(kid, gone, above, result, depth + 1);
+        if (!kids.isArray() || kids.getArrayNItems() == 0)
+            return true;
+        if (depth >= kMaxDepth)
+            return false;
+        std::vector<QPDFObjectHandle> parts; // what stands for the kids' trees
+        bool whole = true;
+        for (QPDFObjectHandle kid : kids.aitems()) {
+            if (!addUnexcluded(kid, gone, seen, parts, depth + 1))
+                whole = false;
+            else if (kid.isIndirect() && (kid.hasKey("/T") || kid.hasKey("/Kids")))
+                parts.push_back(kid); // a field, not a bare widget
+        }
+        if (!whole)
+            result.insert(result.end(), parts.begin(), parts.end());
+        return whole;
     }
 
-    // The fields of the trees of `fields`, with their fully qualified names.
+    // The fields of the trees of `fields`, with their fully qualified names. The walk reaches
+    // each field once, so it needs no depth limit.
     static std::vector<std::pair<QPDFObjectHandle, std::string>>
     fieldNames(const std::vector<QPDFObjectHandle> &fields)
     {
         std::vector<std::pair<QPDFObjectHandle, std::string>> names;
         ObjectSet seen;
-        std::vector<std::pair<QPDFObjectHandle, int>> queue;
-        for (QPDFObjectHandle field : fields)
-            queue.emplace_back(field, 0);
+        std::vector<QPDFObjectHandle> queue = fields;
         while (!queue.empty()) {
-            auto [node, depth] = queue.back();
+            QPDFObjectHandle node = queue.back();
             queue.pop_back();
             if (!node.isIndirect() || !node.isDictionary() || !seen.insert(node.getObjGen()).second)
                 continue;
             if (node.hasKey("/T"))
                 names.emplace_back(node, QPDFFormFieldObjectHelper(node).getFullyQualifiedName());
             QPDFObjectHandle kids = node.getKey("/Kids");
-            if (kids.isArray() && depth < kMaxDepth)
+            if (kids.isArray())
                 for (QPDFObjectHandle kid : kids.aitems())
-                    queue.emplace_back(kid, depth + 1);
+                    queue.push_back(kid);
         }
         return names;
     }

@@ -76,6 +76,12 @@ enum class Reference {
     ReplyInForm,     // Reply in a file with a form, so copies go through transformAnnotations
     ResetByName,     // a reset button on page 1 that names its page's field by text
     SubmitButtons,   // buttons on page 1 that submit or reset every field, or all but some
+    ActionChains,    // buttons on page 1 whose /Next chains are short, very long, or loop
+    CyclicOutline,   // a bookmark to page 2 and one to page 1 whose /Next goes back to it
+    DeepOutline,     // a bookmark to page 2 below 105 levels of bookmarks to page 1
+    DeepStructure,   // a figure on page 2 below 100 levels of sections
+    DeepField,       // a field with a widget on page 2, 104 levels below its top
+    DeepFieldNoForm, // DeepField in a file without /AcroForm
 };
 
 // A page that shows `text` in two marked-content sequences, MCID 0 and 1.
@@ -488,6 +494,125 @@ void makeReferencedPdf(const QString &path, Reference reference)
                         resetLater});
         break;
     }
+    case Reference::ActionChains: {
+        // The cleanup follows /Next for 100 actions. Only action 110 of the long chain acts
+        // on every field, and the loop's second action goes back to its first.
+        QPDFObjectHandle name = widget(q, pages[0], "/FT /Tx /T (name) /V (kept name)");
+        QPDFObjectHandle shortChain = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (short)");
+        shortChain.replaceKey("/A", parse("<< /S /SubmitForm /F (https://example.invalid/form) "
+                                          "/Next << /S /ResetForm >> >>"));
+        QPDFObjectHandle deep = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (deep)");
+        QPDFObjectHandle next;
+        for (int i = 119; i >= 0; --i) {
+            QPDFObjectHandle action = q.makeIndirectObject(
+                parse(i == 110 ? "<< /S /SubmitForm /F (https://example.invalid/deep-tail) >>"
+                               : "<< /S /ResetForm /Fields [(name)] >>"));
+            if (next.isInitialized())
+                action.replaceKey("/Next", next);
+            next = action;
+        }
+        deep.replaceKey("/A", next);
+        QPDFObjectHandle loop = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (loop)");
+        QPDFObjectHandle submit =
+            q.makeIndirectObject(parse("<< /S /SubmitForm /F (https://example.invalid/form) >>"));
+        QPDFObjectHandle reset = q.makeIndirectObject(parse("<< /S /ResetForm /Fields [(name)] >>"));
+        submit.replaceKey("/Next", reset);
+        reset.replaceKey("/Next", submit);
+        loop.replaceKey("/A", submit);
+        installForm(q, {name, shortChain, deep, loop});
+        break;
+    }
+    case Reference::CyclicOutline: {
+        QPDFObjectHandle first = bookmark(q, kSecret + " bookmark", pages[1]);
+        QPDFObjectHandle second = bookmark(q, "Page one", pages[0]);
+        outline(outlines, {first, second});
+        second.replaceKey("/Next", first);
+        root.replaceKey("/Outlines", outlines);
+        break;
+    }
+    case Reference::DeepOutline: {
+        // Each level has one item, "Level 0" to "Level 104", and the cleanup follows 100.
+        QPDFObjectHandle below = bookmark(q, kSecret + " bookmark", pages[1]);
+        for (int i = 104; i >= 0; --i) {
+            QPDFObjectHandle item = bookmark(q, "Level " + std::to_string(i), pages[0]);
+            outline(item, {below});
+            below = item;
+        }
+        outline(outlines, {below});
+        root.replaceKey("/Outlines", outlines);
+        break;
+    }
+    case Reference::DeepStructure: {
+        // The 100th section, on page 1, marks page 1's second sequence and holds a direct
+        // element at level 101 that names the secret. Below that element, a paragraph that the
+        // ParentTree lists for page 1 holds page 2's figure. The cleanup follows 100 levels.
+        QPDFObjectHandle parent = document;
+        QPDFObjectHandle head;
+        for (int i = 0; i < 100; ++i) {
+            QPDFObjectHandle section = element(q, "/Sect", parent);
+            if (head.isInitialized())
+                parent.replaceKey("/K", section);
+            else
+                head = section;
+            parent = section;
+        }
+        parent.replaceKey("/Pg", pages[0]);
+        QPDFObjectHandle paragraph = element(q, "/P", parent);
+        paragraph.replaceKey("/Pg", pages[0]);
+        QPDFObjectHandle figure = element(q, "/Figure", paragraph, "/K 0");
+        figure.replaceKey("/Pg", pages[1]);
+        figure.replaceKey("/Alt", QPDFObjectHandle::newString(kSecret + " figure"));
+        paragraph.replaceKey("/K", QPDFObjectHandle::newArray({QPDFObjectHandle::newInteger(1), figure}));
+        QPDFObjectHandle division = parse("<< /Type /StructElem /S /Div >>");
+        division.replaceKey("/Alt", QPDFObjectHandle::newString(kSecret + " division"));
+        division.replaceKey("/P", parent);
+        division.replaceKey("/K", QPDFObjectHandle::newArray({paragraph}));
+        parent.replaceKey("/K", QPDFObjectHandle::newArray({QPDFObjectHandle::newInteger(1), division}));
+        documentKids = {perPage[0], head, perPage[2]};
+        parents[0] = QPDFObjectHandle::newArray({perPage[0], paragraph});
+        parents[1] = QPDFObjectHandle::newArray({figure, figure});
+        tagged = true;
+        break;
+    }
+    case Reference::DeepField:
+    case Reference::DeepFieldNoForm: {
+        // Below "deep" and 103 levels of fields, the secret field with its page 2 widget sits
+        // beside a widget on page 1, and "upper", below "deep" itself, holds the secret too,
+        // with a widget on page 2 if the file has a form and none otherwise. Level 100 also
+        // lists "before" and "after", fields of page 1 that /Fields lists before and after
+        // "deep", as a damaged file can. "deep" resets every field on a keystroke. The
+        // cleanup follows 100 levels.
+        QPDFObjectHandle top = q.makeIndirectObject(parse("<< /FT /Tx /T (deep) >>"));
+        top.replaceKey("/AA", parse("<< /K << /S /ResetForm >> >>"));
+        QPDFObjectHandle parent = top;
+        QPDFObjectHandle level100;
+        for (int i = 1; i < 104; ++i) {
+            QPDFObjectHandle field =
+                q.makeIndirectObject(parse("<< /T (level" + std::to_string(i) + ") >>"));
+            adopt(parent, {field});
+            if (i == 100)
+                level100 = field;
+            parent = field;
+        }
+        QPDFObjectHandle secret = q.makeIndirectObject(parse("<< /T (secret) >>"));
+        secret.replaceKey("/V", QPDFObjectHandle::newString(kSecret));
+        adopt(secret, {widget(q, pages[1])});
+        adopt(parent, {widget(q, pages[0]), secret});
+        QPDFObjectHandle upper = q.makeIndirectObject(parse("<< /T (upper) >>"));
+        upper.replaceKey("/V", QPDFObjectHandle::newString(kSecret));
+        if (reference == Reference::DeepField)
+            adopt(upper, {widget(q, pages[1])});
+        adopt(top, {top.getKey("/Kids").getArrayItem(0), upper});
+        QPDFObjectHandle before = q.makeIndirectObject(parse("<< /FT /Tx /T (before) /V (kept before) >>"));
+        QPDFObjectHandle after = q.makeIndirectObject(parse("<< /FT /Tx /T (after) /V (kept after) >>"));
+        adopt(before, {widget(q, pages[0])});
+        adopt(after, {widget(q, pages[0])});
+        level100.getKey("/Kids").appendItem(before);
+        level100.getKey("/Kids").appendItem(after);
+        if (reference == Reference::DeepField)
+            installForm(q, {before, top, after});
+        break;
+    }
     case Reference::ResetByName: {
         // ISO 32000 lets /Fields and a hide action's /T name fields by text as well.
         QPDFObjectHandle name = widget(q, pages[0], "/FT /Tx /T (name) /V (kept name)");
@@ -783,6 +908,55 @@ QString actionScope(const QString &path, const std::string &field, const QString
     return QStringLiteral("no field");
 }
 
+// The actions that the /A of top-level field `field` of `path` runs through /Next, as a
+// count and the number of them that submit or reset every field or all but some, for
+// example "2 actions, 1 for every field". A chain that comes back to an action adds
+// ", then back".
+QString chainSummary(const QString &path, const std::string &field)
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    q.processFile(name.constData());
+    for (QPDFObjectHandle top : q.getRoot().getKey("/AcroForm").getKey("/Fields").aitems()) {
+        if (!top.getKey("/T").isString() || top.getKey("/T").getUTF8Value() != field)
+            continue;
+        int actions = 0;
+        int everyField = 0;
+        bool back = false;
+        std::set<QPDFObjGen> seen;
+        std::vector<QPDFObjectHandle> todo{top.getKey("/A")};
+        while (!todo.empty()) {
+            QPDFObjectHandle action = todo.back();
+            todo.pop_back();
+            if (action.isArray()) {
+                std::vector<QPDFObjectHandle> items = action.getArrayAsVector();
+                todo.insert(todo.end(), items.rbegin(), items.rend());
+                continue;
+            }
+            if (!action.isDictionary())
+                continue;
+            if (action.isIndirect() && !seen.insert(action.getObjGen()).second) {
+                back = true;
+                continue;
+            }
+            ++actions;
+            QPDFObjectHandle type = action.getKey("/S");
+            QPDFObjectHandle fields = action.getKey("/Fields");
+            QPDFObjectHandle flags = action.getKey("/Flags");
+            if ((type.isNameAndEquals("/SubmitForm") || type.isNameAndEquals("/ResetForm"))
+                && (!fields.isArray() || fields.getArrayNItems() == 0
+                    || (flags.isInteger() && (flags.getIntValue() & 1))))
+                ++everyField;
+            todo.push_back(action.getKey("/Next"));
+        }
+        return QStringLiteral("%1 actions, %2 for every field%3")
+            .arg(actions)
+            .arg(everyField)
+            .arg(back ? QStringLiteral(", then back") : QString());
+    }
+    return QStringLiteral("no field");
+}
+
 // Rewrites `path` with `blob` as its /Mervin_Measurements, as a string or as the JSON of a
 // stream.
 void setMeasurementBlob(const QString &path, const std::string &blob, bool stream)
@@ -958,6 +1132,9 @@ private slots:
     void copiesPointButtonsAtRenamedFields();
     void copiesScopeDocumentWideFormActions_data();
     void copiesScopeDocumentWideFormActions();
+    void copiesCutLongAndLoopingActionChains_data();
+    void copiesCutLongAndLoopingActionChains();
+    void copiesScopeActionsAboveDeepWidgets();
     void mergeNamesInputWithBadMeasurements_data();
     void mergeNamesInputWithBadMeasurements();
     void deleteNamesSourceWithBadMeasurements_data();
@@ -1627,6 +1804,11 @@ void TstQpdf::deleteLeavesOutDeletedContent_data()
     QTest::newRow("widget on two pages") << int(Reference::SharedWidget);
     QTest::newRow("field without widget") << int(Reference::WidgetlessField);
     QTest::newRow("reply in a form") << int(Reference::ReplyInForm);
+    // Where the cleanup stops, at 100 levels or where a chain comes back, it cuts.
+    QTest::newRow("bookmarks that loop") << int(Reference::CyclicOutline);
+    QTest::newRow("bookmarks deeper than 100 levels") << int(Reference::DeepOutline);
+    QTest::newRow("structure deeper than 100 levels") << int(Reference::DeepStructure);
+    QTest::newRow("field deeper than 100 levels") << int(Reference::DeepField);
 }
 
 /// Checks that no object of a Delete Pages copy holds the deleted page's content, or what
@@ -1666,6 +1848,7 @@ void TstQpdf::deleteLeavesOutDeletedContent()
     switch (ref) {
     case Reference::Outline:
     case Reference::NamedOutline:
+    case Reference::CyclicOutline:
         QCOMPARE(outlines.getKey("/Count").getIntValue(), 1LL);
         QCOMPARE(outlines.getKey("/First").getObjGen(), outlines.getKey("/Last").getObjGen());
         QVERIFY(!outlines.getKey("/First").hasKey("/Next"));
@@ -1686,6 +1869,37 @@ void TstQpdf::deleteLeavesOutDeletedContent()
                  QStringLiteral("Page three"));
         break;
     }
+    case Reference::DeepOutline: {
+        // The items below level 100 go, and the counts above follow.
+        QCOMPARE(outlines.getKey("/Count").getIntValue(), 101LL);
+        QCOMPARE(outlines.getKey("/First").getKey("/Count").getIntValue(), 100LL);
+        QPDFObjectHandle item = outlines.getKey("/First");
+        for (int i = 0; i < 100; ++i)
+            item = item.getKey("/First");
+        QCOMPARE(QString::fromStdString(item.getKey("/Title").getUTF8Value()), QStringLiteral("Level 100"));
+        QVERIFY(!item.hasKey("/First") && !item.hasKey("/Last") && !item.hasKey("/Count"));
+        break;
+    }
+    case Reference::DeepStructure: {
+        // The sections stay for page 1, without what is below level 100.
+        QCOMPARE(documentKids(), 3);
+        QPDFObjectHandle section = tree.getKey("/K").getKey("/K").getArrayItem(1);
+        for (int i = 0; i < 99; ++i)
+            section = section.getKey("/K");
+        QCOMPARE(section.getKey("/K").getArrayNItems(), 1);
+        QCOMPARE(parentKeys(), QList<long long>({0, 2}));
+        break;
+    }
+    case Reference::DeepField:
+        // The deep field's tree goes. The fields that level 100 also lists stay.
+        QCOMPARE(fields.getArrayNItems(), 2);
+        QCOMPARE(QString::fromStdString(fields.getArrayItem(0).getKey("/T").getUTF8Value()),
+                 QStringLiteral("before"));
+        QCOMPARE(QString::fromStdString(fields.getArrayItem(1).getKey("/T").getUTF8Value()),
+                 QStringLiteral("after"));
+        QVERIFY(pdfContains(out, "kept before"));
+        QVERIFY(pdfContains(out, "kept after"));
+        break;
     case Reference::ClosedOutline: {
         // Closed items count their remaining children as negative numbers.
         QCOMPARE(outlines.getKey("/Count").getIntValue(), 2LL);
@@ -1801,6 +2015,8 @@ void TstQpdf::deleteLeavesOutDeletedContent()
     case Reference::ChildFieldNoForm:
     case Reference::ResetByName:
     case Reference::SubmitButtons:
+    case Reference::ActionChains:
+    case Reference::DeepFieldNoForm:
         break;
     }
     if (ref == Reference::TaggedWidget) {
@@ -1898,6 +2114,11 @@ void TstQpdf::copiesLeaveOutFieldsOfOtherPages_data()
     QTest::newRow("shared field") << int(Reference::SharedField) << QStringLiteral("shared value") << 1;
     QTest::newRow("reset button") << int(Reference::ResetButton) << QStringLiteral("kept one") << 2;
     QTest::newRow("no form") << int(Reference::ChildFieldNoForm) << QStringLiteral("kept street") << 0;
+    // The page 1 widget below level 100 leaves the form, so the widget count is not checked.
+    QTest::newRow("field deeper than 100 levels") << int(Reference::DeepField)
+                                                   << QStringLiteral("kept after") << 0;
+    QTest::newRow("field deeper than 100 levels, no form") << int(Reference::DeepFieldNoForm)
+                                                            << QStringLiteral("kept after") << 0;
 }
 
 /// Checks that Extract, Merge and Split copy no form data of pages they leave out, and keep
@@ -2168,6 +2389,83 @@ void TstQpdf::copiesScopeDocumentWideFormActions()
     QCOMPARE(actionScope(out, field.toStdString(), keys), scope);
     if (merged)
         QVERIFY(fieldPages(out).contains(QStringLiteral("field1 2")));
+}
+
+/// Action chains in a merge of two forms and in a copy of one: a short chain, one longer
+/// than the 100 actions that the cleanup follows, and one that loops.
+void TstQpdf::copiesCutLongAndLoopingActionChains_data()
+{
+    QTest::addColumn<bool>("merged");
+    QTest::addColumn<QString>("field");
+    QTest::addColumn<QString>("chain");
+    QTest::newRow("merge, long chain") << true << "deep" << "100 actions, 0 for every field";
+    QTest::newRow("merge, loop") << true << "loop" << "2 actions, 0 for every field";
+    QTest::newRow("merge, short chain") << true << "short" << "2 actions, 0 for every field";
+    QTest::newRow("one file, long chain") << false << "deep" << "100 actions, 0 for every field";
+    QTest::newRow("one file, loop") << false << "loop" << "2 actions, 1 for every field";
+    QTest::newRow("one file, short chain") << false << "short" << "2 actions, 2 for every field";
+}
+
+/// Checks that a copied action chain ends after 100 actions, or where it comes back to an
+/// action, so that no action past that point stays as it was. A short chain stays whole.
+void TstQpdf::copiesCutLongAndLoopingActionChains()
+{
+    QFETCH(bool, merged);
+    QFETCH(QString, field);
+    QFETCH(QString, chain);
+    const QString src = in(QStringLiteral("chains_src.pdf"));
+    const QString other = in(QStringLiteral("chains_other.pdf"));
+    const QString out = in(QStringLiteral("chains_out.pdf"));
+    makeReferencedPdf(src, Reference::ActionChains);
+    makeFormPdf(other, {300}, "field");
+    QList<PageOps::MergeInput> inputs{{src, {0}, {}}};
+    if (merged)
+        inputs.append({other, {}, {}});
+    QCOMPARE(PageOps::merge(inputs, out), PageOps::Status::Ok);
+    QCOMPARE(chainSummary(out, field.toStdString()), chain);
+    if (field == u"deep") {
+        QVERIFY(pdfContains(src, "deep-tail")); // the scan finds what it looks for
+        QVERIFY(!pdfContains(out, "deep-tail"));
+    }
+}
+
+/// Checks that a merge limits the document-wide actions of each field above a copied widget,
+/// however far above the widget the field is.
+void TstQpdf::copiesScopeActionsAboveDeepWidgets()
+{
+    const QString src = in(QStringLiteral("deepscope_src.pdf"));
+    const QString other = in(QStringLiteral("deepscope_other.pdf"));
+    const QString out = in(QStringLiteral("deepscope_out.pdf"));
+    makeReferencedPdf(src, Reference::DeepField);
+    makeFormPdf(other, {300}, "field");
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0}, {}}, {other, {}, {}}}, out),
+             PageOps::Status::Ok);
+    QPDF q;
+    const QByteArray name = out.toUtf8();
+    q.processFile(name.constData());
+    // The top of the page 1 widget that sits deepest, 104 levels below "deep".
+    QPDFObjectHandle top;
+    int levels = 0;
+    QPDFObjectHandle page = q.getAllPages().at(0); // qpdf 11 reads through non-const handles
+    for (QPDFObjectHandle annot : page.getKey("/Annots").aitems()) {
+        std::set<QPDFObjGen> seen;
+        int up = 0;
+        QPDFObjectHandle node = annot;
+        while (node.getKey("/Parent").isDictionary() && seen.insert(node.getObjGen()).second) {
+            node = node.getKey("/Parent");
+            ++up;
+        }
+        if (up > levels) {
+            levels = up;
+            top = node;
+        }
+    }
+    QCOMPARE(levels, 104);
+    QCOMPARE(QString::fromStdString(top.getKey("/T").getUTF8Value()), QStringLiteral("deep"));
+    QPDFObjectHandle reset = top.getKey("/AA").getKey("/K");
+    QVERIFY(reset.getKey("/S").isNameAndEquals("/ResetForm"));
+    QVERIFY(reset.getKey("/Fields").isArray());
+    QVERIFY(reset.getKey("/Fields").getArrayNItems() > 0);
 }
 
 /// A string blob and a stream from a newer measurement format.
