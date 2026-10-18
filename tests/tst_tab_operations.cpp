@@ -702,6 +702,9 @@ private slots:
         QVERIFY2(writer.holding(), qPrintable(took("Rotate Pages", timer)));
         QVERIFY(tab->isBusy());
         QVERIFY(!tab->viewer()->isVisible());
+        // Its reader runs in the background and waits for the pipe.
+        QTRY_VERIFY(background::running() > tasks);
+        QVERIFY(writer.holding());
 
         // Stopped first, so letting the read through writes and says nothing.
         tab->stopWaiting();
