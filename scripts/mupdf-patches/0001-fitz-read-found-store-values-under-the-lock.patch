@@ -23,7 +23,8 @@ store.
 This patch copies the value into a local while the lock is held and
 returns the local. The reference taken under the lock keeps the value
 alive after the entry is freed. foundValueSurvivesEviction in
-tests/tst_mupdf_store.cpp checks it.
+tests/tst_mupdf_store.cpp checks it. fz_store_item has a second window,
+while it makes room for a new entry, which patch 0003 closes.
 
 --- a/source/fitz/store.c
 +++ b/source/fitz/store.c

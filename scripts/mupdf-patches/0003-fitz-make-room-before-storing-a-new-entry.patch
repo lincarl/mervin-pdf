@@ -1,0 +1,147 @@
+Make room in the store before a new entry becomes visible (Mervin PDF patch for MuPDF 1.28.5)
+
+This file modifies MuPDF. The Mervin PDF project changed
+source/fitz/store.c on 2026-10-18. scripts/build-mupdf-linux.sh and
+scripts/build-mupdf-windows.ps1 apply it to the verified 1.28.5 source
+release after patch 0001, before building. Check it again on every
+MuPDF update.
+
+fz_store_item puts a new fz_item into the hash table first, with
+item->next == item, so the item is not in the LRU list yet. When the
+store is full, it then makes room. do_reap and ensure_space release
+FZ_LOCK_ALLOC while they free evicted values, and only afterwards does
+fz_store_item count the item's size and link it into the list with
+touch(). While the lock is released, another thread can find the item
+through the hash (fz_find_item, or the duplicate branch of another
+fz_store_item call), and its touch() links the item into the list.
+fz_filter_store, fz_empty_store or fz_remove_item can then free it
+whatever its reference count. The storing thread then runs touch() on
+freed memory, or rewrites the removal chain of a filter that has not
+freed the item yet.
+
+In Mervin, two render workers can store and find the same pattern tile
+(its key names the pattern, the document, the transform and the colour
+space) while a closing tab filters the document's tiles out of the
+store.
+
+This patch runs the size check before the hash insert, so the item
+enters the hash table, has its size counted and is linked into the list
+within one hold of FZ_LOCK_ALLOC. fz_hash_insert releases the lock only
+to resize the table, before it inserts the item. A store that finds a
+duplicate may now have evicted entries for nothing.
+newEntryStaysHiddenWhileStoreEvicts in tests/tst_mupdf_store.cpp checks
+it.
+
+--- a/source/fitz/store.c
++++ b/source/fitz/store.c
+@@ -478,6 +478,58 @@
+ 	item->prev = item;
+ 	item->type = type;
+ 
++	/* If we haven't got an infinite store, check for space within it.
++	 * Do this before the item goes into the hash table. do_reap and
++	 * ensure_space drop the lock while they free evicted values, and an
++	 * item in the hash table but not yet in the list could then be
++	 * found, linked and freed (fz_filter_store, fz_remove_item and
++	 * fz_empty_store free items whatever their refs) before we link it
++	 * ourselves below. If a duplicate turns up below, this eviction was
++	 * not needed. */
++	if (store->max != FZ_STORE_UNLIMITED)
++	{
++		/* FIXME: Overflow? */
++		size = store->size + itemsize;
++		if (size > store->max)
++		{
++			FZ_LOG_STORE(ctx, "Store size exceeded: item=%zu, size=%zu, max=%zu\n",
++				itemsize, store->size, store->max);
++			while (size > store->max)
++			{
++				size_t saved;
++
++				/* First, do any outstanding reaping, even if defer_reap_count > 0 */
++				if (store->needs_reaping)
++				{
++					do_reap(ctx); /* Drops alloc lock */
++					fz_lock(ctx, FZ_LOCK_ALLOC);
++				}
++				size = store->size + itemsize;
++				if (size <= store->max)
++					break;
++
++				/* ensure_space may drop, then retake the lock */
++				saved = ensure_space(ctx, size - store->max);
++				size -= saved;
++				if (saved == 0)
++				{
++					/* Failed to free any space. */
++					/* We used to 'unstore' it here, but that's wrong.
++					 * If we've already spent the memory to malloc it
++					 * then not putting it in the store just means that
++					 * a resource used multiple times will just be malloced
++					 * again. Better to put it in the store, have the
++					 * store account for it, and for it to potentially be reused.
++					 * When the caller drops the reference to it, it can then
++					 * be dropped from the store on the next attempt to store
++					 * anything else. */
++					break;
++				}
++			}
++			FZ_LOG_DUMP_STORE(ctx, "After eviction:\n");
++		}
++	}
++
+ 	/* If we can index it fast, put it into the hash table. This serves
+ 	 * to check whether we have one there already. */
+ 	if (use_hash)
+@@ -527,51 +579,6 @@
+ 		(void)Memento_takeRef(val);
+ 		val->refs++;
+ 	}
+-
+-	/* If we haven't got an infinite store, check for space within it */
+-	if (store->max != FZ_STORE_UNLIMITED)
+-	{
+-		/* FIXME: Overflow? */
+-		size = store->size + itemsize;
+-		if (size > store->max)
+-		{
+-			FZ_LOG_STORE(ctx, "Store size exceeded: item=%zu, size=%zu, max=%zu\n",
+-				itemsize, store->size, store->max);
+-			while (size > store->max)
+-			{
+-				size_t saved;
+-
+-				/* First, do any outstanding reaping, even if defer_reap_count > 0 */
+-				if (store->needs_reaping)
+-				{
+-					do_reap(ctx); /* Drops alloc lock */
+-					fz_lock(ctx, FZ_LOCK_ALLOC);
+-				}
+-				size = store->size + itemsize;
+-				if (size <= store->max)
+-					break;
+-
+-				/* ensure_space may drop, then retake the lock */
+-				saved = ensure_space(ctx, size - store->max);
+-				size -= saved;
+-				if (saved == 0)
+-				{
+-					/* Failed to free any space. */
+-					/* We used to 'unstore' it here, but that's wrong.
+-					 * If we've already spent the memory to malloc it
+-					 * then not putting it in the store just means that
+-					 * a resource used multiple times will just be malloced
+-					 * again. Better to put it in the store, have the
+-					 * store account for it, and for it to potentially be reused.
+-					 * When the caller drops the reference to it, it can then
+-					 * be dropped from the store on the next attempt to store
+-					 * anything else. */
+-					break;
+-				}
+-			}
+-			FZ_LOG_DUMP_STORE(ctx, "After eviction:\n");
+-		}
+-	}
+ 	store->size += itemsize;
+ 
+ 	/* Regardless of whether it's indexed, it goes into the linked list */

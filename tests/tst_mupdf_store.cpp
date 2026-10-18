@@ -31,6 +31,7 @@ class TstMupdfStore : public QObject
 private slots:
     void foundValueSurvivesEviction_data();
     void foundValueSurvivesEviction();
+    void newEntryStaysHiddenWhileStoreEvicts();
     void documentsKeepTheirOwnInlineColourSpace_data();
     void documentsKeepTheirOwnInlineColourSpace();
 };
@@ -216,6 +217,20 @@ void dropValue(fz_context *ctx, fz_storable *value)
     fz_free(ctx, value);
 }
 
+// A value whose drop function stops the dropping thread in the window, so the test
+// can act while the store frees the value with its lock released.
+struct ParkingValue
+{
+    fz_storable storable;
+    StoreWindow *window;
+};
+
+void dropParkingValue(fz_context *ctx, fz_storable *value)
+{
+    reinterpret_cast<ParkingValue *>(value)->window->park();
+    fz_free(ctx, value);
+}
+
 int hashKey(fz_context *, fz_store_hash *hash, void *key)
 {
     hash->u.pi.i = static_cast<TestKey *>(key)->id;
@@ -397,6 +412,71 @@ void TstMupdfStore::foundValueSurvivesEviction()
     QVERIFY2(evicted, "fz_filter_store did not free the entry");
     QCOMPARE(found, static_cast<void *>(value));
     QCOMPARE(refsLeft, 2);
+}
+
+// A store that has to make room keeps its new entry out of other threads' reach until
+// it has linked the entry. fz_store_item frees the entries it evicts with the store
+// lock released. Unpatched MuPDF has put the new entry into the hash table by then, so
+// another thread can find it, link it into the store's list and free it, as closing
+// its document does, and the storing thread then links freed memory. The test stops
+// the storing thread while it frees the evicted value, looks for the new entry and
+// filters it out. It does not filter an entry it found, because unpatched MuPDF would
+// then corrupt the heap instead of failing the test.
+void TstMupdfStore::newEntryStaysHiddenWhileStoreEvicts()
+{
+    // Both outlive the contexts that use them.
+    PoisoningAllocator allocator;
+    StoreWindow window;
+    const fz_alloc_context alloc = allocator.callbacks();
+    const fz_locks_context locks = window.callbacks();
+    // The store holds one old entry of this size and nothing more.
+    constexpr size_t kFull = 1000;
+    fz_context *ctx = fz_new_context(&alloc, &locks, kFull);
+    QVERIFY(ctx);
+    fz_context *workerCtx = fz_clone_context(ctx);
+    QVERIFY(workerCtx);
+
+    // Only the store holds the old value, so the next store evicts it.
+    auto *old = static_cast<ParkingValue *>(fz_calloc(ctx, 1, sizeof(ParkingValue)));
+    FZ_INIT_STORABLE(old, 1, &dropParkingValue);
+    old->window = &window;
+    TestKey oldKey{1};
+    QVERIFY(!fz_store_item(ctx, &oldKey, old, kFull, &hashedType));
+    fz_drop_storable(ctx, &old->storable);
+
+    auto *value = static_cast<TestValue *>(fz_calloc(ctx, 1, sizeof(TestValue)));
+    FZ_INIT_STORABLE(value, 1, &dropValue);
+    TestKey key{2};
+    void *existing = nullptr;
+    std::thread worker([&] {
+        existing = fz_store_item(workerCtx, &key, value, sizeof(TestValue), &hashedType);
+        window.finished();
+    });
+
+    const bool reachedWindow = window.waitForWindow();
+    bool hidden = false;
+    if (reachedWindow) {
+        void *early = fz_find_item(ctx, &dropValue, &key, &hashedType);
+        hidden = !early;
+        if (early)
+            fz_drop_storable(ctx, static_cast<fz_storable *>(early));
+        else
+            fz_filter_store(ctx, &isKey, &key, &hashedType);
+    }
+    window.release();
+    worker.join();
+
+    void *stored = fz_find_item(ctx, &dropValue, &key, &hashedType);
+    if (stored)
+        fz_drop_storable(ctx, static_cast<fz_storable *>(stored));
+    fz_drop_storable(ctx, &value->storable);
+    fz_drop_context(workerCtx);
+    fz_drop_context(ctx);
+
+    QVERIFY2(reachedWindow, "the store did not evict the old entry");
+    QVERIFY2(hidden, "another thread found the new entry while the store was evicting");
+    QVERIFY(!existing);
+    QCOMPARE(stored, static_cast<void *>(value));
 }
 
 void TstMupdfStore::documentsKeepTheirOwnInlineColourSpace_data()

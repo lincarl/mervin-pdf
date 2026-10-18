@@ -1852,7 +1852,7 @@ outdated MuPDF. `tst_mupdf_store` fails when a patch is missing.
 
 Check every patch again when MuPDF is updated. Drop a patch that the new release
 makes unnecessary, rework one that no longer applies, and keep a test for each
-remaining patch. MuPDF's master branch of 15 October 2026 still has both defects.
+remaining patch. MuPDF's master branch of 15 October 2026 still has these defects.
 
 - `0001-fitz-read-found-store-values-under-the-lock.patch` changes
   `source/fitz/store.c`. `fz_find_item` and the duplicate branch of
@@ -1863,7 +1863,9 @@ remaining patch. MuPDF's master branch of 15 October 2026 still has both defects
   gate, and the draw device looks up and stores the document's pattern tiles there,
   while `~Document` can close the document on another thread. Without the patch, a
   worker can read a freed entry and crash or corrupt the heap. The patch reads the
-  value while the lock is held.
+  value while the lock is held. Size-based eviction takes only entries that nothing
+  else holds, but it frees them with the lock released, which opens the window that
+  the third patch closes.
 - `0002-pdf-keep-direct-store-keys-per-document.patch` changes
   `source/pdf/pdf-store.c`. MuPDF stores inline colour spaces, shadings, functions
   and fonts under the direct PDF object that defines them, and finds them with
@@ -1876,6 +1878,15 @@ remaining patch. MuPDF's master branch of 15 October 2026 still has both defects
   removes the document's store entries, and a lookup in that gap crashed. The patch
   treats keys of different documents as different, so each document keeps its own
   entries.
+- `0003-fitz-make-room-before-storing-a-new-entry.patch` changes
+  `source/fitz/store.c` again and applies after the first patch. `fz_store_item`
+  put a new entry into the hash table and only then made room, freeing evicted
+  values with the store lock released, before it linked the entry into the store's
+  list. Another thread could find the entry in that gap, link it and free it. Two
+  render workers that draw the same pattern tile while its document closes could
+  therefore leave the storing worker writing to freed memory. The patch makes room
+  first, so the entry becomes visible only once it is linked. A store that finds a
+  duplicate may now evict entries it did not need to.
 
 The Windows script also adds `#define FZ_HIDE_INTERNAL_JPEG` to MuPDF's
 `scripts/libjpeg/jconfig.h`, which renames MuPDF's bundled JPEG symbols (see
