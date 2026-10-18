@@ -555,9 +555,12 @@ set_tests_properties(tst_save_edits PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 qt_add_executable(tst_background_unload tst_background_unload.cpp Stalls.h)
-target_link_libraries(tst_background_unload PRIVATE mervin_app Qt6::Test)
+# MuPDF directly, to inspect the shared resource store.
+target_link_libraries(tst_background_unload PRIVATE mervin_app Qt6::Test MuPDF::MuPDF)
 set_target_properties(tst_background_unload PROPERTIES WIN32_EXECUTABLE OFF)
-target_compile_definitions(tst_background_unload PRIVATE MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
+target_compile_definitions(tst_background_unload PRIVATE
+    MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf"
+    MERVIN_SCAN_PDF="${MERVIN_FIXTURES_DIR}/scan.pdf")
 add_test(NAME tst_background_unload COMMAND tst_background_unload)
 set_tests_properties(tst_background_unload PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"

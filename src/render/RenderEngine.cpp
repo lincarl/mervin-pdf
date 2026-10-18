@@ -745,7 +745,12 @@ void RenderEngine::cancelRequests(quint64 requester)
 
 void RenderEngine::trimCache()
 {
-    fz_empty_store(base_.get());
+    // Each eviction makes fz_shrink_store scan the store again for the entries it still
+    // has to free, so one call that frees everything takes time quadratic in the number
+    // of entries. Lowering the target by 1% of the store's limit at a time keeps each
+    // scan short. Steps above the current size do nothing.
+    for (unsigned int percent = 100; percent-- > 0;)
+        fz_shrink_store(base_.get(), percent);
     fz_purge_glyph_cache(base_.get());
 }
 
