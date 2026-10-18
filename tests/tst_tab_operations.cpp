@@ -1213,11 +1213,13 @@ private slots:
             QElapsedTimer timer;
             timer.start();
             step();
-            bool ran = false;
-            QTimer::singleShot(0, window, [&ran] { ran = true; });
-            while (!ran && held.holding())
+            // Shared, because a failed check below returns while the window, and with it
+            // the queued call, lives on.
+            const auto ran = std::make_shared<bool>(false);
+            QTimer::singleShot(0, window, [ran] { *ran = true; });
+            while (!*ran && held.holding())
                 QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-            QVERIFY2(ran && held.holding(), qPrintable(took(what, timer)));
+            QVERIFY2(*ran && held.holding(), qPrintable(took(what, timer)));
             QVERIFY2(Document::testing::refusals() == refusals, what);
         };
         answers("switching to another tab", [&] { tabs->setCurrentIndex(0); });
