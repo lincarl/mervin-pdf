@@ -55,12 +55,13 @@ $env:MUPDF_DIR = & scripts\build-mupdf-windows.ps1 -Dest C:\dev\src\mupdf-1.28.5
 # => platform\win32\x64\Release\*.lib below MUPDF_DIR
 ```
 
-The script verifies the official source archive, builds the libraries with the
-v143 toolset, and enables MuPDF's `FZ_HIDE_INTERNAL_JPEG` symbol prefix. MuPDF
-bundles IJG JPEG 10, while qpdf's libjpeg-turbo dependency uses the JPEG 6b ABI.
-Their identically named symbols cannot safely share one statically linked
-executable. The prefix keeps MuPDF's JPEG implementation separate. Linux builds
-do not use the prefix. They hide all of MuPDF's symbols instead, as described in
+The script verifies the official source archive, applies Mervin's MuPDF patches,
+builds the libraries with the v143 toolset, and enables MuPDF's
+`FZ_HIDE_INTERNAL_JPEG` symbol prefix. MuPDF bundles IJG JPEG 10, while qpdf's
+libjpeg-turbo dependency uses the JPEG 6b ABI. Their identically named symbols
+cannot safely share one statically linked executable. The prefix keeps MuPDF's
+JPEG implementation separate. Linux builds do not use the prefix. They hide all of
+MuPDF's symbols instead, as described in
 [Linux development and verification](#linux-development-and-verification).
 
 Rebuild MuPDF when migrating from the dynamic-vcpkg build. The script refuses
@@ -75,6 +76,27 @@ Notes:
 - MuPDF's Release config uses `/MD` (dynamic CRT), matching Qt - do not mix with `/MT`.
 - Only the **Release** libs were built; an `x64-debug` app build would need the Debug
   MuPDF libs (`/t:libmupdf /p:Configuration=Debug`).
+
+### MuPDF patches
+
+Both build scripts apply the patches in `scripts/mupdf-patches` to the MuPDF
+source with `git apply`, so they need `git` on `PATH`. The patches fix MuPDF
+defects that the pinned release still has (see
+[MuPDF patches](design.md#mupdf-patches)). The scripts record the patch set's
+SHA-256 in `mervin-patch-set.sha256` beside the libraries, and
+`cmake/FindMuPDF.cmake` stops with an error when that file is missing or names
+another patch set. The scripts delete that file before they change the source or
+rebuild, so an interrupted build never counts as patched.
+
+Builds made before Mervin carried patches, and builds with an older patch set,
+need the script run again with the same destination (and `-NoLtcg` on Windows if
+the destination was built with it). The script then applies the current patches,
+first reverting an older set from the copies it keeps in `mervin-patches` in the
+destination, and rebuilds only the files they change. When the current patches do
+not apply, the script stops and leaves the source at the patch set it records,
+putting back a set it has just reverted. If they do not apply to the unchanged
+release either, for example because the MuPDF source tree was modified, delete
+that destination and run the script again.
 
 ## Configure & build
 
@@ -222,10 +244,12 @@ the native installer and application work.
 
 Install Qt 6.9+ (Core, Gui, Widgets, Network, PrintSupport, Svg, Test, LinguistTools,
 and Qt's translation catalogs), qpdf development headers, toml++, CMake, Ninja, a C++20
-compiler, and Python 3. Build the pinned MuPDF with `scripts/build-mupdf-linux.sh`, then:
+compiler, Python 3 and git. Build the pinned MuPDF with `scripts/build-mupdf-linux.sh`,
+which applies Mervin's [MuPDF patches](#mupdf-patches). Run it again with the same
+destination when CMake reports that MuPDF lacks the current patches. Then:
 
 ```bash
-export MUPDF_DIR=/path/to/mupdf-1.28.5-source
+export MUPDF_DIR="$(scripts/build-mupdf-linux.sh /path/to/mupdf-1.28.5-source)"
 cmake --preset linux-release
 cmake --build --preset linux-release --parallel 2
 python3 scripts/fetch-test-tessdata.py build/linux-release/test-tessdata

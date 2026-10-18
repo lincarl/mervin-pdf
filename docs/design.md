@@ -17,8 +17,9 @@ Mervin is a C++20 desktop application built with CMake.
 | toml++ | Settings serialization |
 | Tesseract data through MuPDF | Local OCR language models |
 
-MuPDF is built from source and linked statically. Windows also statically links
-qpdf, toml++ and their vcpkg library dependencies using `x64-windows-static-md`.
+MuPDF is built from source with Mervin's [patches](#mupdf-patches) and linked
+statically. Windows also statically links qpdf, toml++ and their vcpkg library
+dependencies using `x64-windows-static-md`.
 Qt, its plugins and the Microsoft runtime remain dynamic. Linux uses its
 distribution's qpdf and toml++ packages without changing their linking
 configuration. MuPDF's archives bundle their own copies of libjpeg, FreeType, zlib
@@ -1838,13 +1839,33 @@ The application has no telemetry and does not upload documents. Networking is
 limited to explicit URL opens and downloads, the OCR model catalog and selected
 model downloads, and update checks/downloads.
 
+## MuPDF patches
+
+Mervin builds MuPDF 1.28.5 with the patches in `scripts/mupdf-patches`. Each patch
+file starts with a note that says what it changes in MuPDF, why, and when Mervin
+changed it. `scripts/build-mupdf-linux.sh` and `scripts/build-mupdf-windows.ps1`
+apply the patches with `git apply` to the source release they download and verify,
+and record the patch set's SHA-256 in `mervin-patch-set.sha256` beside the
+libraries. `cmake/FindMuPDF.cmake` refuses libraries built without the current set,
+and the CI cache keys use the same identity, so no build links an unpatched or
+outdated MuPDF.
+
+Check every patch again when MuPDF is updated. Drop a patch that the new release
+makes unnecessary, rework one that no longer applies, and keep a test for each
+remaining patch.
+
+The Windows script also adds `#define FZ_HIDE_INTERNAL_JPEG` to MuPDF's
+`scripts/libjpeg/jconfig.h`, which renames MuPDF's bundled JPEG symbols (see
+[BUILDING.md](BUILDING.md)).
+
 ## Build and verification
 
 The project supports Windows x64 and Linux x86-64. CMake builds the targets; the
 platform release pipeline adds a Windows MSI installer and Linux
 AppImage/DEB/RPM artifacts. Windows uses Qt 6.12.0; Linux requires Qt 6.9 or newer
 for the supported translation toolchain.
-MuPDF 1.28.5 is built from source with OCR support.
+MuPDF 1.28.5 is built from source with OCR support and the patches described in
+[MuPDF patches](#mupdf-patches).
 
 QtTest targets cover the core stores, IPC, rendering helpers, document tools,
 dialogs, layout, theme, and platform-sensitive behavior. Performance targets measure

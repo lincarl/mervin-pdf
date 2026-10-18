@@ -10,6 +10,9 @@ packaging/linux/postinst  text eol=lf
 packaging/linux/postrm    text eol=lf
 # Translation catalogs: lupdate rewrites them, so keep one line ending everywhere.
 *.ts            text eol=lf
+# MuPDF patches: git apply on Windows rejects CRLF copies against MuPDF's LF
+# sources, and the build scripts and CI cache keys hash these files.
+*.patch         text eol=lf
 
 # Binary assets - never normalize.
 *.png          binary
