@@ -693,6 +693,15 @@ private slots:
         mervin::testing::PipeWriter writer(path, kStallMs);
         QVERIFY(appfiles::flush(10000));
         const int tasks = background::running();
+        // Records when Rotate's reader reports reading the pipe, just before it opens
+        // it. The hook holds nothing.
+        const auto reading = std::make_shared<std::atomic<bool>>(false);
+        job::testing::holdWhen([reading, path](job::Step step, const QString &where) {
+            if (step == job::Step::Reading && where == path)
+                *reading = true;
+            return false;
+        });
+        const auto unhook = qScopeGuard([] { job::testing::release(); });
 
         QElapsedTimer timer;
         timer.start();
@@ -703,7 +712,7 @@ private slots:
         QVERIFY(tab->isBusy());
         QVERIFY(!tab->viewer()->isVisible());
         // Its reader runs in the background and waits for the pipe.
-        QTRY_VERIFY(background::running() > tasks);
+        QTRY_VERIFY(reading->load());
         QVERIFY(writer.holding());
 
         // Stopped first, so letting the read through writes and says nothing.
