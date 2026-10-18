@@ -203,11 +203,16 @@ jobs:
           target: desktop
           arch: linux_gcc_64
           cache: true
+      - name: Hash MuPDF patches
+        id: mupdf-patches
+        run: echo "id=$(bash scripts/build-mupdf-linux.sh --patch-set)" >> "$GITHUB_OUTPUT"
       - name: Cache MuPDF
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ~/src/mupdf-1.28.5-source
-          key: mupdf-1.28.5-ubuntu24-tests-v1
+          # The patch set's identity, as the build script records it, gives each
+          # MuPDF patch set its own cached build.
+          key: mupdf-1.28.5-ubuntu24-tests-v1-${{ steps.mupdf-patches.outputs.id }}
       - name: Build MuPDF
         run: echo "MUPDF_DIR=$(scripts/build-mupdf-linux.sh)" >> "$GITHUB_ENV"
       - name: Configure
@@ -256,11 +261,16 @@ jobs:
             qt6-tools-dev qt6-translations-l10n \
             libqpdf-dev libtomlplusplus-dev \
             libgl1-mesa-dev libxkbcommon-dev libxcb-cursor0
+      - name: Hash MuPDF patches
+        id: mupdf-patches
+        run: echo "id=$(bash scripts/build-mupdf-linux.sh --patch-set)" >> "$GITHUB_OUTPUT"
       - name: Cache MuPDF
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ~/src/mupdf-1.28.5-source
-          key: mupdf-1.28.5-ubuntu2604-tests-v1
+          # The patch set's identity, as the build script records it, gives each
+          # MuPDF patch set its own cached build.
+          key: mupdf-1.28.5-ubuntu2604-tests-v1-${{ steps.mupdf-patches.outputs.id }}
       - name: Build MuPDF
         run: echo "MUPDF_DIR=$(scripts/build-mupdf-linux.sh)" >> "$GITHUB_ENV"
       - name: Configure
@@ -320,12 +330,21 @@ jobs:
           arch: win64_msvc2022_64
           cache: true
 
+      - name: Hash MuPDF patches
+        id: mupdf-patches
+        shell: pwsh
+        run: |
+          $id = & scripts\build-mupdf-windows.ps1 -PrintPatchSet
+          "id=$id" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
       - name: Cache MuPDF
         id: mupdf-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: C:\dev\src\mupdf-${{ env.MUPDF_VERSION }}-tests-source
-          key: mupdf-${{ env.MUPDF_VERSION }}-${{ env.MUPDF_SHA256 }}-windows-msvc2022-v143-tests-native-jpeg-prefix-v1
+          # The patch set's identity, as the build script records it, gives each
+          # MuPDF patch set its own cached build.
+          key: mupdf-${{ env.MUPDF_VERSION }}-${{ env.MUPDF_SHA256 }}-windows-msvc2022-v143-tests-native-jpeg-prefix-v1-${{ steps.mupdf-patches.outputs.id }}
 
       - name: Build MuPDF
         shell: pwsh

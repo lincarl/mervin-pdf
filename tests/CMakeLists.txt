@@ -58,6 +58,7 @@ set(_mervin_tests
     tst_startup_plan
     tst_closed_tab_stack
     tst_document
+    tst_mupdf_store
     tst_view_layout
     tst_measure
     tst_measure_export
@@ -346,6 +347,10 @@ target_compile_definitions(tst_document PRIVATE
     MERVIN_FORM_PDF="${MERVIN_FIXTURES_DIR}/form_comment.pdf"
     MERVIN_HOUSE_PDF="${MERVIN_FIXTURES_DIR}/house-drawing.pdf"
     MERVIN_IMAGES_PDF="${MERVIN_FIXTURES_DIR}/images.pdf")
+
+# tst_mupdf_store checks the patches in scripts/mupdf-patches through MuPDF's store
+# API, with its own allocator and lock callbacks, so it needs MuPDF's headers too.
+target_link_libraries(tst_mupdf_store PRIVATE MuPDF::MuPDF)
 
 # tst_view_layout builds its own /MediaBox-only fixtures, with exact integer page
 # sizes so the layout arithmetic can be checked by hand.

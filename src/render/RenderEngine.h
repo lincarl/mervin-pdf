@@ -16,12 +16,13 @@ class DocumentOpener;
 // Owns the worker pool and the base MuPDF context, which lives on while any context
 // cloned from it does (see baseContext()). Each worker uses a cloned context; mutex
 // callbacks protect shared MuPDF caches. Contexts themselves are not thread-safe.
-// All contexts share one MuPDF resource store. MuPDF 1.28 reads a store entry it has
-// found after it releases the store lock (fz_find_item, and fz_store_item when the
-// entry already exists), so freeing an entry that another thread has just found hands
-// that thread freed memory. fz_empty_store, fz_filter_store and fz_remove_item free
-// entries whatever their reference counts, so never call them on the shared store.
-// trimCache() uses only calls that cannot free an entry in use.
+// All contexts share one MuPDF resource store. Unpatched MuPDF 1.28 reads a store entry
+// it has found after it releases the store lock (fz_find_item, and fz_store_item when
+// the entry already exists), and makes a new entry findable before it links it.
+// Mervin's MuPDF patches close both windows (see "MuPDF patches" in docs/design.md).
+// fz_empty_store, fz_filter_store and fz_remove_item free entries whatever their
+// reference counts, which is safe only with those patches, so do not call them on the
+// shared store. trimCache() uses only calls that cannot free an entry in use.
 class RenderEngine : public QObject
 {
     Q_OBJECT

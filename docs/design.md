@@ -17,8 +17,9 @@ Mervin is a C++20 desktop application built with CMake.
 | toml++ | Settings serialization |
 | Tesseract data through MuPDF | Local OCR language models |
 
-MuPDF is built from source and linked statically. Windows also statically links
-qpdf, toml++ and their vcpkg library dependencies using `x64-windows-static-md`.
+MuPDF is built from source with Mervin's [patches](#mupdf-patches) and linked
+statically. Windows also statically links qpdf, toml++ and their vcpkg library
+dependencies using `x64-windows-static-md`.
 Qt, its plugins and the Microsoft runtime remain dynamic. Linux uses its
 distribution's qpdf and toml++ packages without changing their linking
 configuration. MuPDF's archives bundle their own copies of libjpeg, FreeType, zlib
@@ -733,12 +734,13 @@ the base context's memory before the parts it shares with its clones, so the bas
 must be the last of them dropped. `RenderEngine::opener()` clones a context on the
 UI thread for an open that runs later on another thread.
 
-All these contexts share one MuPDF resource store. MuPDF 1.28 reads a store entry
-it has found after it releases the store lock, so a call that frees an entry another
-thread has just found hands that thread freed memory. Eviction by size takes only
-entries that nothing else holds. MuPDF runs it when the store is full, and
-`fz_shrink_store` runs it on request. A lookup takes its reference before it releases
-the lock, so eviction by size never frees an entry another thread has found.
+All these contexts share one MuPDF resource store. Unpatched MuPDF 1.28 reads a store
+entry it has found after it releases the store lock, so a call that frees an entry
+another thread has just found hands that thread freed memory. Mervin's build reads the
+entry while it holds the lock (see [MuPDF patches](#mupdf-patches)). Eviction by
+size takes only entries that nothing else holds. MuPDF runs it when the store is full,
+and `fz_shrink_store` runs it on request. A lookup takes its reference before it
+releases the lock, so eviction by size never frees an entry another thread has found.
 `fz_empty_store`, `fz_filter_store` and `fz_remove_item` free entries whatever their
 references, and the application never calls them.
 
@@ -750,11 +752,12 @@ which runs every second) calls `RenderEngine::trimCache()`. The trim shrinks the
 with `fz_shrink_store`, lowering the target in steps of 1% of the store's limit so
 that freeing thousands of entries takes linear time, and purges the glyph cache, which
 hands out glyphs under its own lock. Both are safe while workers render. MuPDF itself
-still frees entries in use when a PDF closes. It filters the document's pattern tiles
-out of the store while that document's display lists may still rasterize, and it
-filters out entries with direct object keys that another document may have found,
-because MuPDF matches those keys across documents. Comparing such keys can also read
-the closing document's cross-reference index after MuPDF has freed it.
+still frees entries in use when a PDF closes, because it filters the document's
+pattern tiles out of the store while that document's display lists may still
+rasterize. The first and third patches keep a tile that a worker has just found or is
+storing valid, and the second keeps the direct object keys of different documents
+apart, so one document no longer finds another document's entries or reads its
+cross-reference index (see [MuPDF patches](#mupdf-patches)).
 
 A single MuPDF document handle is not safe for concurrent access. `Document`
 therefore provides an access mutex used while loading pages, parsing content,
@@ -1838,13 +1841,67 @@ The application has no telemetry and does not upload documents. Networking is
 limited to explicit URL opens and downloads, the OCR model catalog and selected
 model downloads, and update checks/downloads.
 
+## MuPDF patches
+
+Mervin builds MuPDF 1.28.5 with the patches in `scripts/mupdf-patches`. Each patch
+file starts with a note that says what it changes in MuPDF, why, and when Mervin
+changed it. `scripts/build-mupdf-linux.sh` and `scripts/build-mupdf-windows.ps1`
+apply the patches with `git apply` to the source release they download and verify,
+and record the patch set's SHA-256 in `mervin-patch-set.sha256` beside the
+libraries. `cmake/FindMuPDF.cmake` refuses libraries built without the current set,
+and the CI cache keys use the same identity, so no build links an unpatched or
+outdated MuPDF. `tst_mupdf_store` fails when a patch is missing.
+
+Check every patch again when MuPDF is updated. Drop a patch that the new release
+makes unnecessary, rework one that no longer applies, and keep a test for each
+remaining patch. MuPDF's master branch of 15 October 2026 still has these defects.
+
+- `0001-fitz-read-found-store-values-under-the-lock.patch` changes
+  `source/fitz/store.c`. `fz_find_item` and the duplicate branch of
+  `fz_store_item` read the found entry's value after they release the store lock.
+  `fz_filter_store`, `fz_remove_item` and `fz_empty_store` free an entry whatever
+  its reference count, and MuPDF calls `fz_filter_store` itself when a PDF closes.
+  Render workers rasterise display lists after they release the document's lifetime
+  gate, and the draw device looks up and stores the document's pattern tiles there,
+  while `~Document` can close the document on another thread. Without the patch, a
+  worker can read a freed entry and crash or corrupt the heap. The patch reads the
+  value while the lock is held. Size-based eviction takes only entries that nothing
+  else holds, but it frees them with the lock released, which opens the window that
+  the third patch closes.
+- `0002-pdf-keep-direct-store-keys-per-document.patch` changes
+  `source/pdf/pdf-store.c`. MuPDF stores inline colour spaces, shadings, functions
+  and fonts under the direct PDF object that defines them, and finds them with
+  `pdf_objcmp`, which compares indirect references by number and generation but
+  ignores the document. Two open documents with equal inline resources therefore
+  shared one store entry. A document rendered with another document's palette when
+  their inline `/Indexed` arrays named different objects with the same number, and
+  the other document's close freed the shared entry. Comparing two equal inline
+  dictionaries also read the other document's xref, which its close frees before it
+  removes the document's store entries, and a lookup in that gap crashed. The patch
+  treats keys of different documents as different, so each document keeps its own
+  entries.
+- `0003-fitz-make-room-before-storing-a-new-entry.patch` changes
+  `source/fitz/store.c` again and applies after the first patch. `fz_store_item`
+  put a new entry into the hash table and only then made room, freeing evicted
+  values with the store lock released, before it linked the entry into the store's
+  list. Another thread could find the entry in that gap, link it and free it. Two
+  render workers that draw the same pattern tile while its document closes could
+  therefore leave the storing worker writing to freed memory. The patch makes room
+  first, so the entry becomes visible only once it is linked. A store that finds a
+  duplicate may now evict entries it did not need to.
+
+The Windows script also adds `#define FZ_HIDE_INTERNAL_JPEG` to MuPDF's
+`scripts/libjpeg/jconfig.h`, which renames MuPDF's bundled JPEG symbols (see
+[BUILDING.md](BUILDING.md)).
+
 ## Build and verification
 
 The project supports Windows x64 and Linux x86-64. CMake builds the targets; the
 platform release pipeline adds a Windows MSI installer and Linux
 AppImage/DEB/RPM artifacts. Windows uses Qt 6.12.0; Linux requires Qt 6.9 or newer
 for the supported translation toolchain.
-MuPDF 1.28.5 is built from source with OCR support.
+MuPDF 1.28.5 is built from source with OCR support and the patches described in
+[MuPDF patches](#mupdf-patches).
 
 QtTest targets cover the core stores, IPC, rendering helpers, document tools,
 dialogs, layout, theme, and platform-sensitive behavior. Performance targets measure

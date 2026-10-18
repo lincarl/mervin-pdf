@@ -77,7 +77,7 @@ downloads, OCR model downloads, and application updates.
 
 Mervin is a C++20 and Qt 6 application. It uses MuPDF for rendering and OCR, qpdf for structural and security operations, and CMake for its build.
 
-The build requires Qt 6.9 or newer (including the Qt SVG module, which renders the Lucide icons, and Qt's LinguistTools and translations, which build the UI language catalogs), MuPDF 1.28.5 built from source, qpdf, and toml++. Windows uses MSVC and vcpkg; Linux uses CMake/Ninja and the corresponding development packages.
+The build requires Qt 6.9 or newer (including the Qt SVG module, which renders the Lucide icons, and Qt's LinguistTools and translations, which build the UI language catalogs), MuPDF 1.28.5 built from source with the patches in `scripts/mupdf-patches`, qpdf, and toml++. Windows uses MSVC and vcpkg; Linux uses CMake/Ninja and the corresponding development packages.
 
 See [docs/BUILDING.md](docs/BUILDING.md) for detailed Windows setup and build instructions, and [docs/TRANSLATING.md](docs/TRANSLATING.md) for updating translations or adding a language.
 

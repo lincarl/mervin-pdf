@@ -689,9 +689,9 @@ private slots:
     }
 
     /// Once every document has unloaded, trims the entries in MuPDF's shared store that
-    /// nothing else holds and keeps the held ones. MuPDF reads a store entry it has found
-    /// after it releases the store lock, so a trim that freed held entries gave a render
-    /// worker freed memory, and the process crashed or corrupted its heap.
+    /// nothing else holds and keeps the held ones. Unpatched MuPDF reads a store entry it
+    /// has found after it releases the store lock, so a trim that freed held entries gave
+    /// a render worker freed memory, and the process crashed or corrupted its heap.
     void unloadingEveryDocumentTrimsOnlyUnheldStoreEntries()
     {
         QTemporaryDir files;

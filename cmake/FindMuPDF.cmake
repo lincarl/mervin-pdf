@@ -3,7 +3,9 @@
 # Locates the MuPDF static libraries built from source. MuPDF is built from the
 # official source release (not vcpkg/apt) so the OCR + codec feature set matches
 # across platforms. See scripts/build-mupdf-windows.ps1 and
-# scripts/build-mupdf-linux.sh (also used by the CI jobs).
+# scripts/build-mupdf-linux.sh (also used by the CI jobs), which apply the
+# patches in scripts/mupdf-patches. This module refuses libraries built without
+# the current patch set.
 #
 #   Windows: built via the VS solution -> ${MUPDF_DIR}/platform/win32/x64/Release/*.lib
 #            (every produced .lib is over-linked; ordering is irrelevant there).
@@ -74,6 +76,43 @@ else()
     set(_mupdf_libdir "${MUPDF_DIR}/build/release")
     find_library(MUPDF_CORE_LIBRARY NAMES mupdf HINTS "${_mupdf_libdir}")
     file(GLOB MUPDF_ALL_LIBS CONFIGURE_DEPENDS "${_mupdf_libdir}/libmupdf*.a")
+endif()
+
+# The build scripts apply the patches in scripts/mupdf-patches and record the
+# patch set beside the libraries. Without the patches, render workers can read
+# freed store entries and one document can render with another's colours (see
+# "MuPDF patches" in docs/design.md), so refuse libraries built without the
+# current set. The patch set's identity is the SHA-256 of sha256sum's lines
+# ("<hash>  <name>") for the patches in name order, as the scripts and the CI
+# cache keys compute it.
+file(GLOB _mupdf_patches CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/../scripts/mupdf-patches/*.patch")
+list(SORT _mupdf_patches)
+set(_mupdf_patch_lines "")
+foreach(_mupdf_patch IN LISTS _mupdf_patches)
+    file(SHA256 "${_mupdf_patch}" _mupdf_patch_hash)
+    get_filename_component(_mupdf_patch_name "${_mupdf_patch}" NAME)
+    string(APPEND _mupdf_patch_lines "${_mupdf_patch_hash}  ${_mupdf_patch_name}\n")
+endforeach()
+string(SHA256 _mupdf_patch_set "${_mupdf_patch_lines}")
+set(_mupdf_patch_marker "${_mupdf_libdir}/mervin-patch-set.sha256")
+# Check again when a patch changes or the libraries are rebuilt.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    ${_mupdf_patches} "${_mupdf_patch_marker}")
+set(_mupdf_built_patch_set "none")
+if(EXISTS "${_mupdf_patch_marker}")
+    file(READ "${_mupdf_patch_marker}" _mupdf_built_patch_set)
+    string(STRIP "${_mupdf_built_patch_set}" _mupdf_built_patch_set)
+endif()
+if(NOT _mupdf_built_patch_set STREQUAL _mupdf_patch_set)
+    if(WIN32)
+        set(_mupdf_rebuild "scripts\\build-mupdf-windows.ps1 -Dest ${MUPDF_DIR}, with -NoLtcg if it was built that way")
+    else()
+        set(_mupdf_rebuild "scripts/build-mupdf-linux.sh ${MUPDF_DIR}")
+    endif()
+    message(FATAL_ERROR
+        "MuPDF at ${MUPDF_DIR} was built with patch set ${_mupdf_built_patch_set}, not "
+        "${_mupdf_patch_set} from scripts/mupdf-patches. Run ${_mupdf_rebuild}. "
+        "It applies the current patches and rebuilds what changed.")
 endif()
 
 include(FindPackageHandleStandardArgs)

@@ -1,0 +1,74 @@
+Read a found store value under the lock (Mervin PDF patch for MuPDF 1.28.5)
+
+This file modifies MuPDF. The Mervin PDF project changed
+source/fitz/store.c on 2026-10-18. scripts/build-mupdf-linux.sh and
+scripts/build-mupdf-windows.ps1 apply it to the verified 1.28.5 source
+release before building. Check it again on every MuPDF update.
+
+fz_find_item and the duplicate branch of fz_store_item take a reference
+to the value of the entry they found, release FZ_LOCK_ALLOC, and only
+then read item->val from the fz_item again. fz_filter_store,
+fz_remove_item and fz_empty_store unlink and free an fz_item whatever
+its value's reference count, and MuPDF calls fz_filter_store itself
+when a PDF closes (pdf_empty_store and fz_drop_drawn_tiles_for_document).
+If another thread frees the entry between the unlock and the read, the
+function returns a pointer read from freed memory.
+
+In Mervin, render workers rasterise display lists outside the document
+lock, and the draw device looks up and stores pattern tiles there
+(fz_find_item and fz_store_item in draw-device.c). Closing a tab drops
+its document on another thread, which filters those tiles out of the
+store.
+
+This patch copies the value into a local while the lock is held and
+returns the local. The reference taken under the lock keeps the value
+alive after the entry is freed. foundValueSurvivesEviction in
+tests/tst_mupdf_store.cpp checks it. fz_store_item has a second window,
+while it makes room for a new entry, which patch 0003 closes.
+
+--- a/source/fitz/store.c
++++ b/source/fitz/store.c
+@@ -501,7 +501,12 @@
+ 		if (existing)
+ 		{
+ 			/* There was one there already! Take a new reference
+-			 * to the existing one, and drop our current one. */
++			 * to the existing one, and drop our current one.
++			 * Read the value while we hold the lock. Once we unlock,
++			 * another thread may free 'existing' (fz_filter_store,
++			 * fz_remove_item and fz_empty_store free items whatever
++			 * their refs), but our new reference keeps the value. */
++			fz_storable *existing_val = existing->val;
+ 			fz_warn(ctx, "found duplicate %s in the store", type->name);
+ 			touch(store, existing);
+ 			if (existing->val->refs > 0)
+@@ -512,7 +517,7 @@
+ 			fz_unlock(ctx, FZ_LOCK_ALLOC);
+ 			fz_free(ctx, item);
+ 			type->drop_key(ctx, key);
+-			return existing->val;
++			return existing_val;
+ 		}
+ 	}
+ 
+@@ -613,6 +618,11 @@
+ 	}
+ 	if (item)
+ 	{
++		/* Read the value while we hold the lock. Once we unlock,
++		 * another thread may free 'item' (fz_filter_store,
++		 * fz_remove_item and fz_empty_store free items whatever
++		 * their refs), but the reference we take keeps the value. */
++		fz_storable *val = item->val;
+ 		/* LRU the block. This also serves to ensure that any item
+ 		 * picked up from the hash before it has made it into the
+ 		 * linked list does not get whipped out again due to the
+@@ -625,7 +635,7 @@
+ 			item->val->refs++;
+ 		}
+ 		fz_unlock(ctx, FZ_LOCK_ALLOC);
+-		return (void *)item->val;
++		return (void *)val;
+ 	}
+ 	fz_unlock(ctx, FZ_LOCK_ALLOC);
+ 

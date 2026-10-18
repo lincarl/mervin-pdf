@@ -841,6 +841,10 @@ void RenderEngine::workerLoop(const std::shared_ptr<Shared> &shared, fz_context 
         // self-contained - it no longer reads the document - and the shared
         // store / glyph cache it does touch is covered by the lock callbacks,
         // so multiple workers may rasterize different pages simultaneously.
+        // The document can close meanwhile and free its pattern tiles from the
+        // store. The store.c patches in scripts/mupdf-patches keep a tile that a
+        // worker has just found or is storing valid (see "MuPDF patches" in
+        // design.md).
         fz_device *imgDev = nullptr;
         fz_var(imgDev);
         // Comfort only: raster-image bboxes + per-image treatment decisions.
