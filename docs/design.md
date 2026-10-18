@@ -1852,7 +1852,7 @@ outdated MuPDF. `tst_mupdf_store` fails when a patch is missing.
 
 Check every patch again when MuPDF is updated. Drop a patch that the new release
 makes unnecessary, rework one that no longer applies, and keep a test for each
-remaining patch. MuPDF's master branch of 15 October 2026 still has this defect.
+remaining patch. MuPDF's master branch of 15 October 2026 still has both defects.
 
 - `0001-fitz-read-found-store-values-under-the-lock.patch` changes
   `source/fitz/store.c`. `fz_find_item` and the duplicate branch of
@@ -1864,6 +1864,18 @@ remaining patch. MuPDF's master branch of 15 October 2026 still has this defect.
   while `~Document` can close the document on another thread. Without the patch, a
   worker can read a freed entry and crash or corrupt the heap. The patch reads the
   value while the lock is held.
+- `0002-pdf-keep-direct-store-keys-per-document.patch` changes
+  `source/pdf/pdf-store.c`. MuPDF stores inline colour spaces, shadings, functions
+  and fonts under the direct PDF object that defines them, and finds them with
+  `pdf_objcmp`, which compares indirect references by number and generation but
+  ignores the document. Two open documents with equal inline resources therefore
+  shared one store entry. A document rendered with another document's palette when
+  their inline `/Indexed` arrays named different objects with the same number, and
+  the other document's close freed the shared entry. Comparing two equal inline
+  dictionaries also read the other document's xref, which its close frees before it
+  removes the document's store entries, and a lookup in that gap crashed. The patch
+  treats keys of different documents as different, so each document keeps its own
+  entries.
 
 The Windows script also adds `#define FZ_HIDE_INTERNAL_JPEG` to MuPDF's
 `scripts/libjpeg/jconfig.h`, which renames MuPDF's bundled JPEG symbols (see

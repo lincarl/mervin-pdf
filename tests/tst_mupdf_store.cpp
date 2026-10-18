@@ -1,5 +1,13 @@
+#include "render/Document.h"
+#include "render/RenderEngine.h"
+
 #include <mupdf/fitz.h>
 
+#include <QByteArray>
+#include <QColor>
+#include <QFile>
+#include <QImage>
+#include <QTemporaryDir>
 #include <QTest>
 
 #include <chrono>
@@ -11,6 +19,8 @@
 #include <thread>
 #include <vector>
 
+using namespace mervin;
+
 // Mervin builds MuPDF with the patches in scripts/mupdf-patches (see "MuPDF patches"
 // in docs/design.md). Each test here fails against unpatched MuPDF 1.28.5, so a build
 // that lost a patch, or a MuPDF update that needs it reworked, shows up in CI.
@@ -21,6 +31,8 @@ class TstMupdfStore : public QObject
 private slots:
     void foundValueSurvivesEviction_data();
     void foundValueSurvivesEviction();
+    void documentsKeepTheirOwnInlineColourSpace_data();
+    void documentsKeepTheirOwnInlineColourSpace();
 };
 
 namespace {
@@ -241,6 +253,66 @@ const fz_store_type hashedType = {"mervin test hashed", &hashKey, &keepKey, &dro
 const fz_store_type scannedType = {"mervin test scanned", nullptr, &keepKey, &dropKey,
                                    &compareKeys, &formatKey, nullptr};
 
+QByteArray assemblePdf(const QList<QByteArray> &bodies)
+{
+    QByteArray pdf = "%PDF-1.7\n";
+    QList<int> offsets;
+    for (int i = 0; i < bodies.size(); ++i) {
+        offsets << pdf.size();
+        pdf += QByteArray::number(i + 1) + " 0 obj\n" + bodies[i] + "\nendobj\n";
+    }
+    const int xrefOff = pdf.size();
+    const int n = bodies.size() + 1;
+    pdf += "xref\n0 " + QByteArray::number(n) + "\n";
+    pdf += "0000000000 65535 f \n";
+    for (int off : offsets)
+        pdf += QByteArray::number(off).rightJustified(10, '0') + " 00000 n \n";
+    pdf += "trailer\n<< /Size " + QByteArray::number(n) + " /Root 1 0 R >>\nstartxref\n"
+           + QByteArray::number(xrefOff) + "\n%%EOF\n";
+    return pdf;
+}
+
+QByteArray stream(const QByteArray &data)
+{
+    return "<< /Length " + QByteArray::number(data.size()) + " >>\nstream\n" + data
+           + "\nendstream";
+}
+
+// A page filled with index 1 of the inline colour space [/Indexed /DeviceRGB 1 5 0 R].
+// Object 5 holds the two-entry palette: black, then `colour`.
+QByteArray indexedColourPdf(QColor colour)
+{
+    QByteArray palette(3, '\0');
+    palette.append(static_cast<char>(colour.red()));
+    palette.append(static_cast<char>(colour.green()));
+    palette.append(static_cast<char>(colour.blue()));
+    return assemblePdf({
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] "
+        "/Resources << /ColorSpace << /CS0 [/Indexed /DeviceRGB 1 5 0 R] >> >> "
+        "/Contents 4 0 R >>",
+        stream("/CS0 cs 1 sc 0 0 100 100 re f"),
+        stream(palette),
+    });
+}
+
+// The colour at the centre of `document`'s first page rendered at 100%, or an invalid
+// colour when it does not render.
+QColor centreColour(const Document &document)
+{
+    const QImage image = document.renderPage(0, 1.0, 0);
+    if (image.isNull())
+        return {};
+    return image.pixelColor(image.width() / 2, image.height() / 2);
+}
+
+bool sameColour(const QColor &a, const QColor &b)
+{
+    return a.isValid() && b.isValid() && std::abs(a.red() - b.red()) <= 8
+           && std::abs(a.green() - b.green()) <= 8 && std::abs(a.blue() - b.blue()) <= 8;
+}
+
 } // namespace
 
 void TstMupdfStore::foundValueSurvivesEviction_data()
@@ -325,6 +397,46 @@ void TstMupdfStore::foundValueSurvivesEviction()
     QVERIFY2(evicted, "fz_filter_store did not free the entry");
     QCOMPARE(found, static_cast<void *>(value));
     QCOMPARE(refsLeft, 2);
+}
+
+void TstMupdfStore::documentsKeepTheirOwnInlineColourSpace_data()
+{
+    QTest::addColumn<QColor>("first");
+    QTest::addColumn<QColor>("second");
+    QTest::newRow("red after blue") << QColor(Qt::blue) << QColor(Qt::red);
+    QTest::newRow("blue after red") << QColor(Qt::red) << QColor(Qt::blue);
+}
+
+// Two open documents that use the same inline colour space array each render with
+// their own palette. MuPDF stores the colour space under the array, and unpatched
+// MuPDF compares such keys without regard to their document, so the second document
+// rendered with the first one's palette.
+void TstMupdfStore::documentsKeepTheirOwnInlineColourSpace()
+{
+    QFETCH(QColor, first);
+    QFETCH(QColor, second);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto write = [&dir](const QString &name, const QByteArray &bytes) {
+        QFile file(dir.filePath(name));
+        return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size();
+    };
+    QVERIFY(write(QStringLiteral("first.pdf"), indexedColourPdf(first)));
+    QVERIFY(write(QStringLiteral("second.pdf"), indexedColourPdf(second)));
+
+    RenderEngine engine;
+    auto firstDocument = engine.openDocument(dir.filePath(QStringLiteral("first.pdf")));
+    QVERIFY(firstDocument);
+    const QColor firstShown = centreColour(*firstDocument);
+    QVERIFY2(sameColour(firstShown, first), qPrintable(firstShown.name()));
+
+    // The first document stays open, so its colour space stays in the shared store.
+    auto secondDocument = engine.openDocument(dir.filePath(QStringLiteral("second.pdf")));
+    QVERIFY(secondDocument);
+    const QColor secondShown = centreColour(*secondDocument);
+    QVERIFY2(sameColour(secondShown, second),
+             qPrintable(QStringLiteral("%1, expected %2").arg(secondShown.name(), second.name())));
+    QVERIFY(sameColour(centreColour(*firstDocument), first));
 }
 
 QTEST_GUILESS_MAIN(TstMupdfStore)
