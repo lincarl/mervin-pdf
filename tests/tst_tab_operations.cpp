@@ -147,6 +147,13 @@ QString took(const char *what, const QElapsedTimer &timer)
     return QStringLiteral("%1 took %2 ms").arg(QLatin1String(what)).arg(timer.elapsed());
 }
 
+// How long a stall that a test sets up lasts unless the test lets it go first. A step
+// that waited for the stalled resource could not return sooner, so where they can, the
+// tests check that the stall still holds after the step instead of timing it. A clock
+// would also count the dialogs the test answers and the window's restyling, which take
+// seconds on a busy machine.
+constexpr int kStallMs = 30000;
+
 // Waits until the background tasks are back to `tasks`, as when a job a test let go of
 // has returned. The render workers of a live engine count too, so this cannot wait for
 // none.
@@ -371,7 +378,8 @@ private slots:
     void copyAndExportDoNotWaitForDocumentAccess_data() { copyModes(); }
 
     // The still picture exists before another reader stalls access. Both commands
-    // return promptly, then their worker waits without making the GUI read the document.
+    // return without waiting for that reader, then their worker waits for it without
+    // making the GUI read the document.
     void copyAndExportDoNotWaitForDocumentAccess()
     {
         QFETCH(bool, flatten);
@@ -386,10 +394,13 @@ private slots:
         const auto lifetime = tab->viewer()->document()->lifetime();
         const QString output = files.filePath(QStringLiteral("copy.pdf"));
         std::unique_ptr<Stall<std::mutex>> access;
+        QElapsedTimer stalled; // since the reader took the access lock, for the messages
         const auto busy = connect(tab, &TabPage::stateChanged, this, [&] {
-            if (tab->isBusy() && !access)
+            if (tab->isBusy() && !access) {
                 access = std::make_unique<Stall<std::mutex>>(
-                    tab->viewer()->document()->accessMutex(), 5000);
+                    tab->viewer()->document()->accessMutex(), kStallMs);
+                stalled.start();
+            }
         });
         const auto restore = qScopeGuard([&] {
             disconnect(busy);
@@ -402,30 +413,32 @@ private slots:
         const int tasks = background::running();
         const int guiSteps = job::testing::stepsOnMainThread();
         const int refusals = Document::testing::refusals();
-        QElapsedTimer command;
-        command.start();
         copy(window, output, flatten);
-        QVERIFY2(command.elapsed() < 1000, qPrintable(took("Copy or Export", command)));
         QVERIFY(access);
+        // The reader stalls once the tab is busy. What the command does after that must
+        // not wait for it. The file dialog before it is the test driving the command.
+        QVERIFY2(access->holding(),
+                 qPrintable(took("Copy or Export after the reader stalled", stalled)));
         QTRY_COMPARE(job::testing::held(), 1);
         QCOMPARE(lifetime->holds.load(), 0);
         job::testing::release();
         QTRY_VERIFY(lifetime->holds.load() > 0);
 
+        // Nor may a resize of the busy tab, the event loop or Stop.
         QElapsedTimer screen;
         screen.start();
         window.resize(900, 700);
         bool ran = false;
         QTimer::singleShot(0, &window, [&ran] { ran = true; });
-        while (!ran && screen.elapsed() < 1000)
+        while (!ran && access->holding())
             QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-        QVERIFY2(ran && screen.elapsed() < 1000, qPrintable(took("the event loop", screen)));
+        QVERIFY2(ran && access->holding(), qPrintable(took("the event loop", screen)));
         QCOMPARE(Document::testing::refusals(), refusals);
         QCOMPARE(job::testing::stepsOnMainThread(), guiSteps);
         QElapsedTimer stop;
         stop.start();
         tab->stopWaiting();
-        QVERIFY2(stop.elapsed() < 1000, qPrintable(took("Stop", stop)));
+        QVERIFY2(stop.elapsed() < 1000 && access->holding(), qPrintable(took("Stop", stop)));
         QVERIFY(tab->isBusy() && !tab->isUsable() && tab->isOperationStopped());
         const Bar bar(*tab);
         QVERIFY(bar.valid() && bar.bar->isVisible() && bar.stop->isHidden());
@@ -677,16 +690,30 @@ private slots:
         // The open document keeps its file. The name now leads to a pipe.
         QVERIFY(QFile::remove(path));
         QCOMPARE(::mkfifo(QFile::encodeName(path).constData(), 0600), 0);
-        mervin::testing::PipeWriter writer(path, 5000);
+        mervin::testing::PipeWriter writer(path, kStallMs);
         QVERIFY(appfiles::flush(10000));
         const int tasks = background::running();
+        // Records when Rotate's reader reports reading the pipe, just before it opens
+        // it. The hook holds nothing.
+        const auto reading = std::make_shared<std::atomic<bool>>(false);
+        job::testing::holdWhen([reading, path](job::Step step, const QString &where) {
+            if (step == job::Step::Reading && where == path)
+                *reading = true;
+            return false;
+        });
+        const auto unhook = qScopeGuard([] { job::testing::release(); });
 
         QElapsedTimer timer;
         timer.start();
         rotate(window, out);
-        QVERIFY2(timer.elapsed() < 1000, qPrintable(took("Rotate Pages", timer)));
+        // The pipe answers only once the writer lets it, so a command that waited for
+        // it would return only after that.
+        QVERIFY2(writer.holding(), qPrintable(took("Rotate Pages", timer)));
         QVERIFY(tab->isBusy());
         QVERIFY(!tab->viewer()->isVisible());
+        // Its reader runs in the background and waits for the pipe.
+        QTRY_VERIFY(reading->load());
+        QVERIFY(writer.holding());
 
         // Stopped first, so letting the read through writes and says nothing.
         tab->stopWaiting();
@@ -717,12 +744,21 @@ private slots:
         QVERIFY(tab);
         holdAt(job::Step::Writing, folder);
         const int steps = job::testing::stepsOnMainThread();
+        QElapsedTimer busy; // since the tab became busy
+        const auto started = connect(tab, &TabPage::stateChanged, this, [&] {
+            if (tab->isBusy() && !busy.isValid())
+                busy.start();
+        });
 
-        QElapsedTimer timer;
-        timer.start();
         rotate(window, out);
-        QVERIFY2(timer.elapsed() < 1000, qPrintable(took("Rotate Pages", timer)));
+        disconnect(started);
         QVERIFY(tab->isBusy());
+        // Rotate returns at once. A command that waited for the held write would not
+        // return, and the bound catches a shorter wait. The clock starts once the tab is
+        // busy, so the dialogs the test answers before that do not count, and a third of
+        // a stall leaves a slow machine room.
+        QVERIFY2(busy.elapsed() < kStallMs / 3,
+                 qPrintable(took("Rotate Pages after the tab became busy", busy)));
         QTRY_COMPARE(job::testing::held(), 1);
         QCOMPARE(job::testing::stepsOnMainThread(), steps);
         QVERIFY(!QFileInfo::exists(out));
@@ -769,8 +805,10 @@ private slots:
         QVERIFY(bar.still->isVisible());
         QVERIFY(!tab->viewer()->isVisible());
         QTRY_COMPARE(job::testing::held(), 1);
-        // The clock starts after the timer, so a check that reads the timer below the
-        // delay cannot see the bar, however late a busy machine runs it.
+        QElapsedTimer quiet; // since the job last made progress, or a little later
+        quiet.start();
+        // The tab's clock starts after the timer, so a check that reads the timer below
+        // the delay cannot see the bar, however late a busy machine runs it.
         while (timer.elapsed() < TabPage::kSlowMs - 250) {
             QTest::qWait(50);
             const qint64 elapsed = timer.elapsed();
@@ -778,10 +816,14 @@ private slots:
                 QVERIFY2(!bar.bar->isVisible(),
                          qPrintable(QStringLiteral("shown after %1 ms").arg(elapsed)));
         }
-        QTRY_VERIFY_WITH_TIMEOUT(bar.bar->isVisible(), 3000);
-        // The poll runs every 250 ms. The rest is room for a busy machine.
-        QVERIFY2(timer.elapsed() >= TabPage::kSlowMs && timer.elapsed() < TabPage::kSlowMs + 1000,
+        QTRY_VERIFY_WITH_TIMEOUT(bar.bar->isVisible(), 2 * TabPage::kSlowMs);
+        QVERIFY2(timer.elapsed() >= TabPage::kSlowMs,
                  qPrintable(QStringLiteral("shown after %1 ms").arg(timer.elapsed())));
+        // The upper bound counts from the hold, so the dialogs the test answers before it
+        // do not count. The poll runs every 250 ms. The rest is room for a busy machine.
+        QVERIFY2(quiet.elapsed() < TabPage::kSlowMs + 1000,
+                 qPrintable(QStringLiteral("shown %1 ms after the job was held")
+                                .arg(quiet.elapsed())));
         QCOMPARE(withoutBreakMarks(bar.text->text()), savingTo(folder));
         QVERIFY(bar.stop->isVisible());
         // From the left edge to the scroll bar's column, over the still picture.
@@ -1134,7 +1176,8 @@ private slots:
 
     // While a test thread holds the busy tab's document, as a save job would, the
     // window answers switching tabs, the pointer over the tab, a resize, a theme change
-    // and the form highlight setting at once, and asks the document nothing.
+    // and the form highlight setting without waiting for that thread, and asks the
+    // document nothing.
     void busyTabMakesNoDocumentCalls()
     {
         QTemporaryDir files;
@@ -1169,18 +1212,26 @@ private slots:
         QVERIFY(tabs);
         const int refusals = Document::testing::refusals();
         SavingJob job{busy->viewer()->document()->lifetime()};
-        Stall<SavingJob> held(job, 5000);
+        // The steps restyle the window twice, which takes about 10 seconds on a heavily
+        // loaded machine, so this stall lasts longer than the others.
+        Stall<SavingJob> held(job, 2 * kStallMs);
         QVERIFY(job.answered);
-        // Each step returns, and the event loop runs a posted call, within a second.
+        // Each step returns, and the event loop runs a posted call, while the job still
+        // holds the document. Once a step failed, the stall may have ended, so the rest
+        // would fail too and say nothing new.
         const auto answers = [&](const char *what, const std::function<void()> &step) {
+            if (QTest::currentTestFailed())
+                return;
             QElapsedTimer timer;
             timer.start();
             step();
-            bool ran = false;
-            QTimer::singleShot(0, window, [&ran] { ran = true; });
-            while (!ran && timer.elapsed() < 1000)
+            // Shared, because a failed check below returns while the window, and with it
+            // the queued call, lives on.
+            const auto ran = std::make_shared<bool>(false);
+            QTimer::singleShot(0, window, [ran] { *ran = true; });
+            while (!*ran && held.holding())
                 QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-            QVERIFY2(ran && timer.elapsed() < 1000, qPrintable(took(what, timer)));
+            QVERIFY2(*ran && held.holding(), qPrintable(took(what, timer)));
             QVERIFY2(Document::testing::refusals() == refusals, what);
         };
         answers("switching to another tab", [&] { tabs->setCurrentIndex(0); });
