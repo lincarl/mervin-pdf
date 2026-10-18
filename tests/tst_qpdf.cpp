@@ -5,7 +5,11 @@
 #include "security/PageOps.h"
 #include "security/QpdfService.h"
 
+#include <qpdf/Buffer.hh>
 #include <qpdf/QPDF.hh>
+#include <qpdf/QPDFNameTreeObjectHelper.hh>
+#include <qpdf/QPDFFormFieldObjectHelper.hh>
+#include <qpdf/QPDFNumberTreeObjectHelper.hh>
 #include <qpdf/QPDFObjectHandle.hh>
 #include <qpdf/QPDFPageDocumentHelper.hh>
 #include <qpdf/QPDFPageObjectHelper.hh>
@@ -21,7 +25,11 @@
 
 #include <cctype>
 #include <functional>
+#include <map>
 #include <memory>
+#include <set>
+#include <string>
+#include <vector>
 
 using mervin::PageOps;
 using mervin::QpdfService;
@@ -30,6 +38,1156 @@ Q_DECLARE_METATYPE(QpdfService::Algorithm)
 Q_DECLARE_METATYPE(qpdf_r3_print_e)
 
 namespace {
+
+// Text that only page 2 of the delete fixtures carries, in its content and in whatever
+// refers to it.
+const std::string kSecret = "PAGE2SECRET";
+
+QPDFObjectHandle parse(const std::string &text)
+{
+    return QPDFObjectHandle::parse(text);
+}
+
+// What refers to page 2 of a delete fixture from outside the page tree. Each case on its
+// own kept page 2's content in a Delete Pages copy before the cleanup.
+enum class Reference {
+    Outline,         // a bookmark to page 2 whose title names the secret
+    NamedOutline,    // the same through a GoTo action and a named destination
+    NestedOutline,   // such a bookmark below one that stays, and one to page 2 above one that stays
+    Link,            // a link on page 1 to page 2
+    Reply,           // a reply on page 1 to a note on page 2, each with a popup
+    Field,           // a text field whose only widget is on page 2
+    CalculatedField, // a parent field in /CO whose only widget is on page 2
+    ChildField,      // a child field on page 2 beside a child field on page 1
+    SharedField,     // one field with widgets on pages 1 and 2
+    Xfa,             // a field on page 2 of a form that also carries XFA data
+    Structure,       // a figure element on page 2 with alternate text
+    NestedStructure, // a section only on page 2, and a paragraph across pages 2 and 3
+    TaggedWidget,    // an /OBJR structure element for the page 2 widget of a tagged form
+    ResetButton,     // a reset button on page 1 that names a field with a child on each page
+    ChildFieldNoForm, // ChildField in a file without /AcroForm, as Extract wrote before forms
+    SharedResources, // one /Resources for all pages, with the image that only page 2 draws
+    InheritedResources, // the same /Resources on /Pages instead of on the pages
+    OwnResources,    // a /Resources of its own on each page, each listing every page's image
+    DirectOutline,   // a bookmark to page 2, then a direct one to page 1, then one to page 3
+    ClosedOutline,   // closed bookmarks with children on pages 1 and 2, and only on page 2
+    SharedWidget,    // a field whose one widget pages 1 and 2 both list
+    WidgetlessField, // a field that no page shows, beside a field on page 2
+    ReplyInForm,     // Reply in a file with a form, so copies go through transformAnnotations
+    ResetByName,     // a reset button on page 1 that names its page's field by text
+    SubmitButtons,   // buttons on page 1 that submit or reset every field, or all but some
+    ActionChains,    // buttons on page 1 whose /Next chains are short, very long, or loop
+    CyclicOutline,   // a bookmark to page 2 and one to page 1 whose /Next goes back to it
+    DeepOutline,     // a bookmark to page 2 below 105 levels of bookmarks to page 1
+    DeepStructure,   // a figure on page 2 below 100 levels of sections
+    DeepField,       // a field with a widget on page 2, 104 levels below its top
+    DeepFieldNoForm, // DeepField in a file without /AcroForm
+    UnlistedField,   // a field of page 1 whose /Parent's /Kids does not list it, above a field on page 2
+    StrayOutline,    // outline links that lead to bookmarks of page 2 outside the outline
+    StrayChildOutline, // a bookmark whose /Last, without a /First, names one of page 2
+    InheritingField, // a field of page 1 that inherits from a /Parent whose /Kids lists only page 2's field
+    TargetButtons,   // buttons on page 1 that hide, play or show targets named by text or reference
+    OtherTargets,    // the other input of the TargetButtons merges, with its own targets of those names
+};
+
+// A page that shows `text` in two marked-content sequences, MCID 0 and 1.
+QPDFObjectHandle textPage(QPDF &q, const std::string &text, int width = 612)
+{
+    QPDFObjectHandle page = parse("<< /Type /Page /Resources << /Font << /F1 << /Type /Font "
+                                  "/Subtype /Type1 /BaseFont /Helvetica >> >> >> >>");
+    page.replaceKey("/MediaBox", parse("[0 0 " + std::to_string(width) + " 792]"));
+    page.replaceKey("/Contents",
+                    q.newStream("/P <</MCID 0>> BDC BT /F1 12 Tf 72 700 Td (" + text
+                                + ") Tj ET EMC /P <</MCID 1>> BDC BT /F1 12 Tf 72 680 Td ("
+                                + text + " again) Tj ET EMC"));
+    return q.makeIndirectObject(page);
+}
+
+// A normal appearance that shows `text`.
+QPDFObjectHandle appearance(QPDF &q, const std::string &text)
+{
+    QPDFObjectHandle stream = q.newStream("BT /F1 12 Tf 2 10 Td (" + text + ") Tj ET");
+    stream.getDict().replaceKey("/Type", QPDFObjectHandle::newName("/XObject"));
+    stream.getDict().replaceKey("/Subtype", QPDFObjectHandle::newName("/Form"));
+    stream.getDict().replaceKey("/BBox", parse("[0 0 228 30]"));
+    QPDFObjectHandle ap = QPDFObjectHandle::newDictionary();
+    ap.replaceKey("/N", stream);
+    return ap;
+}
+
+// Adds `annot` to the page's /Annots and points its /P at the page.
+void annotate(QPDFObjectHandle page, QPDFObjectHandle annot)
+{
+    QPDFObjectHandle annots = page.getKey("/Annots");
+    if (!annots.isArray())
+        annots = page.replaceKeyAndGetNew("/Annots", QPDFObjectHandle::newArray());
+    annots.appendItem(annot);
+    annot.replaceKey("/P", page);
+}
+
+// A widget on `page` with the given extra keys, listed in its /Annots.
+QPDFObjectHandle widget(QPDF &q, QPDFObjectHandle page, const std::string &keys = {})
+{
+    QPDFObjectHandle annot = q.makeIndirectObject(
+        parse("<< /Type /Annot /Subtype /Widget /Rect [72 600 300 630] /F 4 " + keys + " >>"));
+    annotate(page, annot);
+    return annot;
+}
+
+// Makes `kids` the field children of `parent`.
+void adopt(QPDFObjectHandle parent, const std::vector<QPDFObjectHandle> &kids)
+{
+    parent.replaceKey("/Kids", QPDFObjectHandle::newArray(kids));
+    for (QPDFObjectHandle kid : kids)
+        kid.replaceKey("/Parent", parent);
+}
+
+// Installs an AcroForm with `fields` that needs appearances, and returns it.
+QPDFObjectHandle installForm(QPDF &q, const std::vector<QPDFObjectHandle> &fields)
+{
+    QPDFObjectHandle form = q.makeIndirectObject(
+        parse("<< /NeedAppearances true /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv << /Type "
+              "/Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>"));
+    form.replaceKey("/Fields", QPDFObjectHandle::newArray(fields));
+    q.getRoot().replaceKey("/AcroForm", form);
+    return form;
+}
+
+// [page /Fit]
+QPDFObjectHandle fit(QPDFObjectHandle page)
+{
+    QPDFObjectHandle dest = QPDFObjectHandle::newArray();
+    dest.appendItem(page);
+    dest.appendItem(QPDFObjectHandle::newName("/Fit"));
+    return dest;
+}
+
+// An outline item with `title` that goes to `page`.
+QPDFObjectHandle bookmark(QPDF &q, const std::string &title, QPDFObjectHandle page)
+{
+    QPDFObjectHandle item = q.makeIndirectObject(QPDFObjectHandle::newDictionary());
+    item.replaceKey("/Title", QPDFObjectHandle::newString(title));
+    item.replaceKey("/Dest", fit(page));
+    return item;
+}
+
+// Links `items` below `parent`, open, with /Parent, /Prev, /Next and /Count. Link children
+// before their parents, as a parent's /Count includes theirs.
+void outline(QPDFObjectHandle parent, const std::vector<QPDFObjectHandle> &items)
+{
+    int count = 0;
+    for (size_t i = 0; i < items.size(); ++i) {
+        QPDFObjectHandle item = items[i];
+        item.replaceKey("/Parent", parent);
+        if (i > 0)
+            item.replaceKey("/Prev", items[i - 1]);
+        if (i + 1 < items.size())
+            item.replaceKey("/Next", items[i + 1]);
+        QPDFObjectHandle below = item.getKey("/Count");
+        count += 1 + (below.isInteger() ? std::max(0, below.getIntValueAsInt()) : 0);
+    }
+    parent.replaceKey("/First", items.front());
+    parent.replaceKey("/Last", items.back());
+    parent.replaceKey("/Count", QPDFObjectHandle::newInteger(count));
+}
+
+// A structure element of type `type` below `parent`.
+QPDFObjectHandle element(QPDF &q, const std::string &type, QPDFObjectHandle parent,
+                         const std::string &keys = {})
+{
+    QPDFObjectHandle elem = q.makeIndirectObject(parse("<< /Type /StructElem " + keys + " >>"));
+    elem.replaceKey("/S", QPDFObjectHandle::newName(type));
+    elem.replaceKey("/P", parent);
+    return elem;
+}
+
+// Builds three text pages, where only page 2 shows kSecret, and refers to page 2 as
+// `reference` says. Pages 1 and 3 show "page one" and "page three".
+void makeReferencedPdf(const QString &path, Reference reference)
+{
+    QPDF q;
+    q.emptyPDF();
+    QPDFPageDocumentHelper dh(q);
+    std::vector<QPDFObjectHandle> pages{textPage(q, "page one"), textPage(q, kSecret),
+                                        textPage(q, "page three")};
+    for (size_t i = 0; i < pages.size(); ++i) {
+        pages[i].replaceKey("/StructParents", QPDFObjectHandle::newInteger(int(i)));
+        dh.addPage(QPDFPageObjectHelper(pages[i]), false);
+    }
+    QPDFObjectHandle root = q.getRoot();
+    QPDFObjectHandle outlines = q.makeIndirectObject(parse("<< /Type /Outlines >>"));
+    // The tagged cases share a Document element with one element per page, each marking
+    // both of its page's sequences, and a ParentTree for them.
+    QPDFObjectHandle tree = q.makeIndirectObject(parse("<< /Type /StructTreeRoot >>"));
+    QPDFObjectHandle document = element(q, "/Document", tree);
+    std::vector<QPDFObjectHandle> perPage;
+    for (size_t i = 0; i < pages.size(); ++i) {
+        perPage.push_back(element(q, i == 1 ? "/Figure" : "/P", document, "/K [0 1]"));
+        perPage.back().replaceKey("/Pg", pages[i]);
+    }
+    std::map<int, QPDFObjectHandle> parents;
+    for (int i = 0; i < 3; ++i)
+        parents[i] = QPDFObjectHandle::newArray({perPage[i], perPage[i]});
+    std::vector<QPDFObjectHandle> documentKids = perPage;
+    bool tagged = false;
+
+    switch (reference) {
+    case Reference::Outline:
+        outline(outlines, {bookmark(q, "Page one", pages[0]),
+                           bookmark(q, kSecret + " bookmark", pages[1])});
+        root.replaceKey("/Outlines", outlines);
+        break;
+    case Reference::NamedOutline: {
+        // The destination names of page 2 name the secret, those of page 1 stay.
+        QPDFObjectHandle names = QPDFObjectHandle::newArray(
+            {QPDFObjectHandle::newString(kSecret + " chapter"), fit(pages[1]),
+             QPDFObjectHandle::newString("pageone"), fit(pages[0])});
+        root.replaceKey("/Names", parse("<< /Dests << >> >>"));
+        root.getKey("/Names").getKey("/Dests").replaceKey("/Names", names);
+        root.replaceKey("/Dests", q.makeIndirectObject(QPDFObjectHandle::newDictionary()));
+        root.getKey("/Dests").replaceKey("/" + kSecret + "dest", fit(pages[1]));
+        root.getKey("/Dests").replaceKey("/pageone", fit(pages[0]));
+        QPDFObjectHandle named = bookmark(q, kSecret + " bookmark", pages[1]);
+        named.removeKey("/Dest");
+        named.replaceKey("/A", parse("<< /S /GoTo >>"));
+        named.getKey("/A").replaceKey("/D", QPDFObjectHandle::newString(kSecret + " chapter"));
+        outline(outlines, {bookmark(q, "Page one", pages[0]), named});
+        root.replaceKey("/Outlines", outlines);
+        break;
+    }
+    case Reference::NestedOutline: {
+        QPDFObjectHandle chapter = bookmark(q, "Chapter", pages[1]);
+        QPDFObjectHandle section = bookmark(q, "Section", pages[0]);
+        outline(chapter, {bookmark(q, "Kept child", pages[0])});
+        outline(section, {bookmark(q, kSecret + " child", pages[1])});
+        outline(outlines, {chapter, section});
+        root.replaceKey("/Outlines", outlines);
+        break;
+    }
+    case Reference::Link: {
+        QPDFObjectHandle link = q.makeIndirectObject(
+            parse("<< /Type /Annot /Subtype /Link /Rect [72 600 300 630] /Border [0 0 0] >>"));
+        link.replaceKey("/Dest", fit(pages[1]));
+        annotate(pages[0], link);
+        break;
+    }
+    case Reference::Reply:
+    case Reference::ReplyInForm: {
+        QPDFObjectHandle note = q.makeIndirectObject(
+            parse("<< /Type /Annot /Subtype /Text /Rect [72 600 92 620] >>"));
+        note.replaceKey("/Contents", QPDFObjectHandle::newString(kSecret + " note"));
+        annotate(pages[1], note);
+        QPDFObjectHandle reply = q.makeIndirectObject(
+            parse("<< /Type /Annot /Subtype /Text /Rect [72 600 92 620] /Contents (Reply) >>"));
+        reply.replaceKey("/IRT", note);
+        annotate(pages[0], reply);
+        for (size_t i : {size_t(0), size_t(1)}) {
+            QPDFObjectHandle markup = i == 0 ? reply : note;
+            QPDFObjectHandle popup = q.makeIndirectObject(
+                parse("<< /Type /Annot /Subtype /Popup /Rect [100 600 300 700] >>"));
+            popup.replaceKey("/Parent", markup);
+            markup.replaceKey("/Popup", popup);
+            annotate(pages[i], popup);
+        }
+        if (reference == Reference::ReplyInForm)
+            installForm(q, {widget(q, pages[0], "/FT /Tx /T (name) /V (kept name)")});
+        break;
+    }
+    case Reference::Field:
+        installForm(q, {widget(q, pages[1], "/FT /Tx /T (secret) /V (" + kSecret + ")")});
+        break;
+    case Reference::CalculatedField: {
+        QPDFObjectHandle first = widget(q, pages[0], "/FT /Tx /T (first) /V (one)");
+        QPDFObjectHandle total = q.makeIndirectObject(parse("<< /FT /Tx /T (total) >>"));
+        total.replaceKey("/V", QPDFObjectHandle::newString(kSecret));
+        adopt(total, {widget(q, pages[1])});
+        installForm(q, {first, total}).replaceKey("/CO", QPDFObjectHandle::newArray({first, total}));
+        break;
+    }
+    case Reference::ChildField: {
+        QPDFObjectHandle address = q.makeIndirectObject(parse("<< /T (address) >>"));
+        QPDFObjectHandle street =
+            q.makeIndirectObject(parse("<< /FT /Tx /T (street) /V (kept street) >>"));
+        QPDFObjectHandle secret = q.makeIndirectObject(parse("<< /FT /Tx /T (secret) >>"));
+        secret.replaceKey("/V", QPDFObjectHandle::newString(kSecret));
+        adopt(street, {widget(q, pages[0])});
+        adopt(secret, {widget(q, pages[1])});
+        adopt(address, {street, secret});
+        installForm(q, {address});
+        break;
+    }
+    case Reference::SharedField: {
+        QPDFObjectHandle shared =
+            q.makeIndirectObject(parse("<< /FT /Tx /T (shared) /V (shared value) >>"));
+        QPDFObjectHandle first = widget(q, pages[0]);
+        first.replaceKey("/AP", appearance(q, "shared value"));
+        QPDFObjectHandle second = widget(q, pages[1]);
+        second.replaceKey("/AP", appearance(q, kSecret));
+        adopt(shared, {first, second});
+        installForm(q, {shared});
+        break;
+    }
+    case Reference::Xfa:
+        installForm(q, {widget(q, pages[0], "/FT /Tx /T (first) /V (one)"),
+                        widget(q, pages[1], "/FT /Tx /T (secret) /V (two)")})
+            .replaceKey("/XFA", q.newStream("<xdp><datasets>" + kSecret + "</datasets></xdp>"));
+        break;
+    case Reference::Structure:
+        perPage[1].replaceKey("/Alt", QPDFObjectHandle::newString(kSecret + " figure"));
+        tagged = true;
+        break;
+    case Reference::NestedStructure: {
+        // The section's figure marks page 2's first sequence; the paragraph marks the
+        // second sequence of pages 2 and 3.
+        QPDFObjectHandle section = element(q, "/Sect", document, "/ID (section-id)");
+        section.replaceKey("/T", QPDFObjectHandle::newString(kSecret + " section"));
+        QPDFObjectHandle figure = element(q, "/Figure", section, "/K 0 /Alt (figure)");
+        figure.replaceKey("/Pg", pages[1]);
+        section.replaceKey("/K", figure);
+        QPDFObjectHandle across = element(q, "/P", document);
+        across.replaceKey("/K", QPDFObjectHandle::newArray(
+            {parse("<< /Type /MCR /MCID 1 >>"), parse("<< /Type /MCR /MCID 1 >>")}));
+        across.getKey("/K").getArrayItem(0).replaceKey("/Pg", pages[1]);
+        across.getKey("/K").getArrayItem(1).replaceKey("/Pg", pages[2]);
+        perPage[2].replaceKey("/K", QPDFObjectHandle::newInteger(0));
+        documentKids = {perPage[0], section, across, perPage[2]};
+        parents[1] = QPDFObjectHandle::newArray({figure, across});
+        parents[2] = QPDFObjectHandle::newArray({perPage[2], across});
+        tree.replaceKey("/IDTree", parse("<< /Names [(section-id) null] >>"));
+        tree.getKey("/IDTree").getKey("/Names").setArrayItem(1, section);
+        tagged = true;
+        break;
+    }
+    case Reference::TaggedWidget: {
+        QPDFObjectHandle field = widget(q, pages[1], "/FT /Tx /T (secret) /StructParent 3");
+        field.replaceKey("/V", QPDFObjectHandle::newString(kSecret));
+        field.replaceKey("/AP", appearance(q, kSecret));
+        installForm(q, {field});
+        QPDFObjectHandle form = element(q, "/Form", document);
+        form.replaceKey("/Pg", pages[1]);
+        form.replaceKey("/K", parse("<< /Type /OBJR >>"));
+        form.getKey("/K").replaceKey("/Obj", field);
+        documentKids = {perPage[0], perPage[1], form, perPage[2]};
+        parents[3] = form;
+        tagged = true;
+        break;
+    }
+    case Reference::ResetButton: {
+        QPDFObjectHandle form1 = q.makeIndirectObject(parse("<< /FT /Tx /T (form1) >>"));
+        QPDFObjectHandle one = q.makeIndirectObject(parse("<< /T (p1) /V (kept one) >>"));
+        QPDFObjectHandle two = q.makeIndirectObject(parse("<< /T (p2) >>"));
+        two.replaceKey("/V", QPDFObjectHandle::newString(kSecret));
+        adopt(one, {widget(q, pages[0])});
+        adopt(two, {widget(q, pages[1])});
+        adopt(form1, {one, two});
+        QPDFObjectHandle reset = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (reset)");
+        reset.replaceKey("/A", parse("<< /S /ResetForm /Fields [] >>"));
+        reset.getKey("/A").getKey("/Fields").appendItem(form1);
+        installForm(q, {form1, reset});
+        break;
+    }
+    case Reference::SharedResources:
+    case Reference::InheritedResources:
+    case Reference::OwnResources: {
+        // Each page draws its own image, and only page 2's image data is the secret.
+        QPDFObjectHandle images = QPDFObjectHandle::newDictionary();
+        const std::string data[] = {"IMAGEONE", kSecret, "IMAGETHREE"};
+        for (size_t i = 0; i < pages.size(); ++i) {
+            QPDFObjectHandle image = q.newStream(data[i]);
+            image.replaceDict(parse("<< /Type /XObject /Subtype /Image /Height 1 /ColorSpace "
+                                    "/DeviceGray /BitsPerComponent 8 >>"));
+            image.getDict().replaceKey("/Width", QPDFObjectHandle::newInteger(int(data[i].size())));
+            const std::string name = "/Im" + std::to_string(i + 1);
+            images.replaceKey(name, image);
+            QPDFObjectHandle draw = q.newStream("q 200 0 0 20 72 400 cm " + name + " Do Q");
+            pages[i].replaceKey("/Contents",
+                                QPDFObjectHandle::newArray({pages[i].getKey("/Contents"), draw}));
+        }
+        QPDFObjectHandle resources = pages[0].getKey("/Resources").shallowCopy();
+        resources.replaceKey("/XObject", images);
+        resources = q.makeIndirectObject(resources);
+        for (QPDFObjectHandle page : pages) {
+            if (reference == Reference::SharedResources)
+                page.replaceKey("/Resources", resources);
+            else if (reference == Reference::OwnResources)
+                page.replaceKey("/Resources", resources.shallowCopy()); // direct, as copies
+            else
+                page.removeKey("/Resources");
+        }
+        if (reference == Reference::InheritedResources)
+            root.getKey("/Pages").replaceKey("/Resources", resources);
+        break;
+    }
+    case Reference::DirectOutline: {
+        // ISO 32000 wants indirect items, but viewers follow a direct /Next as well.
+        QPDFObjectHandle first = bookmark(q, kSecret + " bookmark", pages[1]);
+        QPDFObjectHandle last = bookmark(q, "Page three", pages[2]);
+        QPDFObjectHandle direct = QPDFObjectHandle::newDictionary();
+        direct.replaceKey("/Title", QPDFObjectHandle::newString("Direct one"));
+        direct.replaceKey("/Dest", fit(pages[0]));
+        direct.replaceKey("/Next", last);
+        for (QPDFObjectHandle item : {first, direct, last})
+            item.replaceKey("/Parent", outlines);
+        first.replaceKey("/Next", direct);
+        outlines.replaceKey("/First", first);
+        outlines.replaceKey("/Last", last);
+        outlines.replaceKey("/Count", QPDFObjectHandle::newInteger(3));
+        root.replaceKey("/Outlines", outlines);
+        break;
+    }
+    case Reference::ClosedOutline: {
+        // A closed chapter keeps one of its two children, a closed section loses its only one.
+        QPDFObjectHandle chapter = bookmark(q, "Chapter", pages[0]);
+        QPDFObjectHandle section = bookmark(q, "Section", pages[2]);
+        outline(chapter, {bookmark(q, "Kept child", pages[0]), bookmark(q, kSecret + " child", pages[1])});
+        outline(section, {bookmark(q, kSecret + " only child", pages[1])});
+        chapter.replaceKey("/Count", QPDFObjectHandle::newInteger(-2));
+        section.replaceKey("/Count", QPDFObjectHandle::newInteger(-1));
+        outline(outlines, {chapter, section});
+        root.replaceKey("/Outlines", outlines);
+        break;
+    }
+    case Reference::SharedWidget: {
+        // Extract wrote repeated pages before forms with one widget object on both copies.
+        // This file also has a form, so the field must keep the widget as well.
+        QPDFObjectHandle twice = widget(q, pages[0], "/FT /Tx /T (twice) /V (kept twice)");
+        pages[1].replaceKey("/Annots", QPDFObjectHandle::newArray({twice}));
+        installForm(q, {twice});
+        break;
+    }
+    case Reference::WidgetlessField: {
+        QPDFObjectHandle data = q.makeIndirectObject(parse("<< /FT /Tx /T (data) /V (kept data) >>"));
+        installForm(q, {data, widget(q, pages[1], "/FT /Tx /T (secret) /V (" + kSecret + ")")});
+        break;
+    }
+    case Reference::SubmitButtons: {
+        // Without /Fields, or with the Exclude flag (bit 1 of /Flags), an action acts on
+        // every field of the document, or on every field but the listed ones.
+        QPDFObjectHandle name = widget(q, pages[0], "/FT /Tx /T (name) /V (kept name)");
+        name.replaceKey("/AA", parse("<< /Bl << /S /ResetForm >> >>"));
+        QPDFObjectHandle other = widget(q, pages[0], "/FT /Tx /T (other) /V (kept other)");
+        const std::string all =
+            "[(name) (other) (submit) (except) (none) (group) (exceptchild) (emptylist) (resetlater)]";
+        other.replaceKey("/AA", parse("<< /Fo << /S /ResetForm /Fields " + all + " /Flags 1 >> >>"));
+        QPDFObjectHandle submit = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (submit)");
+        submit.replaceKey("/A", parse("<< /S /SubmitForm /F (https://example.invalid/form) /Flags 4 "
+                                      "/Next << /S /ResetForm >> >>"));
+        QPDFObjectHandle except = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (except)");
+        except.replaceKey("/A", parse("<< /S /SubmitForm /F (https://example.invalid/form) "
+                                      "/Fields [(name)] /Flags 1 /Next << /S /ResetForm /Fields " + all
+                                      + " /Flags 1 /Next << /S /SubmitForm /F (https://example.invalid/"
+                                        "form) /Fields [(other)] >> >> >>"));
+        QPDFObjectHandle none = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (none)");
+        none.replaceKey("/A", parse("<< /S /ResetForm /Fields " + all + " /Flags 1 /Next << /S "
+                                    "/SubmitForm /F (https://example.invalid/form) /Fields [(name)] >> >>"));
+        QPDFObjectHandle group = q.makeIndirectObject(parse("<< /FT /Tx /T (group) >>"));
+        QPDFObjectHandle a = q.makeIndirectObject(parse("<< /T (a) /V (kept a) >>"));
+        QPDFObjectHandle b = q.makeIndirectObject(parse("<< /T (b) /V (kept b) >>"));
+        adopt(a, {widget(q, pages[0])});
+        adopt(b, {widget(q, pages[0])});
+        adopt(group, {a, b});
+        QPDFObjectHandle exceptChild = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (exceptchild)");
+        exceptChild.replaceKey("/A", parse("<< /S /SubmitForm /F (https://example.invalid/form) "
+                                           "/Fields [(group.a)] /Flags 1 >>"));
+        // An empty list, which viewers read as every field, and a list of a field on page 2.
+        QPDFObjectHandle emptyList = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (emptylist)");
+        emptyList.replaceKey("/A", parse("<< /S /ResetForm /Fields [] >>"));
+        QPDFObjectHandle later = widget(q, pages[1], "/FT /Tx /T (later) /V (later value)");
+        QPDFObjectHandle resetLater = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (resetlater)");
+        resetLater.replaceKey("/A", parse("<< /S /ResetForm /Fields [(later)] >>"));
+        resetLater.getKey("/A").getKey("/Fields").appendItem(later);
+        installForm(q, {name, other, submit, except, none, group, exceptChild, emptyList, later,
+                        resetLater});
+        break;
+    }
+    case Reference::ActionChains: {
+        // The cleanup follows /Next for 100 actions. Only action 110 of the long chain acts
+        // on every field, and the loop's second action goes back to its first.
+        QPDFObjectHandle name = widget(q, pages[0], "/FT /Tx /T (name) /V (kept name)");
+        QPDFObjectHandle shortChain = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (short)");
+        shortChain.replaceKey("/A", parse("<< /S /SubmitForm /F (https://example.invalid/form) "
+                                          "/Next << /S /ResetForm >> >>"));
+        QPDFObjectHandle deep = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (deep)");
+        QPDFObjectHandle next;
+        for (int i = 119; i >= 0; --i) {
+            QPDFObjectHandle action = q.makeIndirectObject(
+                parse(i == 110 ? "<< /S /SubmitForm /F (https://example.invalid/deep-tail) >>"
+                               : "<< /S /ResetForm /Fields [(name)] >>"));
+            if (next.isInitialized())
+                action.replaceKey("/Next", next);
+            next = action;
+        }
+        deep.replaceKey("/A", next);
+        QPDFObjectHandle loop = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (loop)");
+        QPDFObjectHandle submit =
+            q.makeIndirectObject(parse("<< /S /SubmitForm /F (https://example.invalid/form) >>"));
+        QPDFObjectHandle reset = q.makeIndirectObject(parse("<< /S /ResetForm /Fields [(name)] >>"));
+        submit.replaceKey("/Next", reset);
+        reset.replaceKey("/Next", submit);
+        loop.replaceKey("/A", submit);
+        installForm(q, {name, shortChain, deep, loop});
+        break;
+    }
+    case Reference::CyclicOutline: {
+        QPDFObjectHandle first = bookmark(q, kSecret + " bookmark", pages[1]);
+        QPDFObjectHandle second = bookmark(q, "Page one", pages[0]);
+        outline(outlines, {first, second});
+        second.replaceKey("/Next", first);
+        root.replaceKey("/Outlines", outlines);
+        break;
+    }
+    case Reference::DeepOutline: {
+        // Each level has one item, "Level 0" to "Level 104", and the cleanup follows 100.
+        QPDFObjectHandle below = bookmark(q, kSecret + " bookmark", pages[1]);
+        for (int i = 104; i >= 0; --i) {
+            QPDFObjectHandle item = bookmark(q, "Level " + std::to_string(i), pages[0]);
+            outline(item, {below});
+            below = item;
+        }
+        outline(outlines, {below});
+        root.replaceKey("/Outlines", outlines);
+        break;
+    }
+    case Reference::DeepStructure: {
+        // The 100th section, on page 1, marks page 1's second sequence and holds a direct
+        // element at level 101 that names the secret. Below that element, a paragraph that the
+        // ParentTree lists for page 1 holds page 2's figure. The cleanup follows 100 levels.
+        QPDFObjectHandle parent = document;
+        QPDFObjectHandle head;
+        for (int i = 0; i < 100; ++i) {
+            QPDFObjectHandle section = element(q, "/Sect", parent);
+            if (head.isInitialized())
+                parent.replaceKey("/K", section);
+            else
+                head = section;
+            parent = section;
+        }
+        parent.replaceKey("/Pg", pages[0]);
+        QPDFObjectHandle paragraph = element(q, "/P", parent);
+        paragraph.replaceKey("/Pg", pages[0]);
+        QPDFObjectHandle figure = element(q, "/Figure", paragraph, "/K 0");
+        figure.replaceKey("/Pg", pages[1]);
+        figure.replaceKey("/Alt", QPDFObjectHandle::newString(kSecret + " figure"));
+        paragraph.replaceKey("/K", QPDFObjectHandle::newArray({QPDFObjectHandle::newInteger(1), figure}));
+        QPDFObjectHandle division = parse("<< /Type /StructElem /S /Div >>");
+        division.replaceKey("/Alt", QPDFObjectHandle::newString(kSecret + " division"));
+        division.replaceKey("/P", parent);
+        division.replaceKey("/K", QPDFObjectHandle::newArray({paragraph}));
+        parent.replaceKey("/K", QPDFObjectHandle::newArray({QPDFObjectHandle::newInteger(1), division}));
+        documentKids = {perPage[0], head, perPage[2]};
+        parents[0] = QPDFObjectHandle::newArray({perPage[0], paragraph});
+        parents[1] = QPDFObjectHandle::newArray({figure, figure});
+        tagged = true;
+        break;
+    }
+    case Reference::DeepField:
+    case Reference::DeepFieldNoForm: {
+        // Below "deep" and 103 levels of fields, the secret field with its page 2 widget sits
+        // beside a widget on page 1, and "upper", below "deep" itself, holds the secret too,
+        // with a widget on page 2 if the file has a form and none otherwise. Level 100 also
+        // lists "before" and "after", fields of page 1 that /Fields lists before and after
+        // "deep", as a damaged file can. "deep" resets every field on a keystroke. The
+        // cleanup follows 100 levels.
+        QPDFObjectHandle top = q.makeIndirectObject(parse("<< /FT /Tx /T (deep) >>"));
+        top.replaceKey("/AA", parse("<< /K << /S /ResetForm >> >>"));
+        QPDFObjectHandle parent = top;
+        QPDFObjectHandle level100;
+        for (int i = 1; i < 104; ++i) {
+            QPDFObjectHandle field =
+                q.makeIndirectObject(parse("<< /T (level" + std::to_string(i) + ") >>"));
+            adopt(parent, {field});
+            if (i == 100)
+                level100 = field;
+            parent = field;
+        }
+        QPDFObjectHandle secret = q.makeIndirectObject(parse("<< /T (secret) >>"));
+        secret.replaceKey("/V", QPDFObjectHandle::newString(kSecret));
+        adopt(secret, {widget(q, pages[1])});
+        adopt(parent, {widget(q, pages[0]), secret});
+        QPDFObjectHandle upper = q.makeIndirectObject(parse("<< /T (upper) >>"));
+        upper.replaceKey("/V", QPDFObjectHandle::newString(kSecret));
+        if (reference == Reference::DeepField)
+            adopt(upper, {widget(q, pages[1])});
+        adopt(top, {top.getKey("/Kids").getArrayItem(0), upper});
+        QPDFObjectHandle before = q.makeIndirectObject(parse("<< /FT /Tx /T (before) /V (kept before) >>"));
+        QPDFObjectHandle after = q.makeIndirectObject(parse("<< /FT /Tx /T (after) /V (kept after) >>"));
+        adopt(before, {widget(q, pages[0])});
+        adopt(after, {widget(q, pages[0])});
+        level100.getKey("/Kids").appendItem(before);
+        level100.getKey("/Kids").appendItem(after);
+        if (reference == Reference::DeepField)
+            installForm(q, {before, top, after});
+        break;
+    }
+    case Reference::UnlistedField: {
+        // "hidden" names "address" as its /Parent, but address's /Kids lists only "street", as
+        // a damaged file can. Below hidden, beside its page 1 widget, the secret field has
+        // its widget on page 2.
+        QPDFObjectHandle address = q.makeIndirectObject(parse("<< /T (address) >>"));
+        QPDFObjectHandle street = q.makeIndirectObject(parse("<< /FT /Tx /T (street) /V (kept street) >>"));
+        adopt(street, {widget(q, pages[0])});
+        QPDFObjectHandle hidden = q.makeIndirectObject(parse("<< /FT /Tx /T (hidden) >>"));
+        QPDFObjectHandle secret = q.makeIndirectObject(parse("<< /T (secret) >>"));
+        secret.replaceKey("/V", QPDFObjectHandle::newString(kSecret));
+        adopt(secret, {widget(q, pages[1])});
+        adopt(hidden, {widget(q, pages[0]), secret});
+        adopt(address, {street});
+        hidden.replaceKey("/Parent", address);
+        installForm(q, {address});
+        break;
+    }
+    case Reference::TargetButtons:
+    case Reference::OtherTargets: {
+        // Page 1 has the fields "name" and "clip", a note and a movie and a screen annotation,
+        // and page 2, which the copies leave out, has their counterparts. The buttons name them
+        // by text or by reference, and name "elsewhere", which only OtherTargets has.
+        // OtherTargets also has a field "clip", which a merge renames, and a movie annotation
+        // "clip", whose title nothing renames.
+        const auto media = [&](QPDFObjectHandle page, const char *subtype, const std::string &title) {
+            QPDFObjectHandle annot =
+                q.makeIndirectObject(parse("<< /Type /Annot /Rect [320 600 420 650] >>"));
+            annot.replaceKey("/Subtype", QPDFObjectHandle::newName(subtype));
+            annot.replaceKey("/T", QPDFObjectHandle::newString(title));
+            annotate(page, annot);
+            return annot;
+        };
+        QPDFObjectHandle clipField = widget(q, pages[0], "/FT /Tx /T (clip) /V (clip value)");
+        if (reference == Reference::OtherTargets) {
+            media(pages[0], "/Movie", "elsewhere clip");
+            media(pages[0], "/Movie", "clip");
+            QPDFObjectHandle play = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (othermovie)");
+            play.replaceKey("/A", parse("<< /S /Movie /T (clip) >>"));
+            installForm(q, {widget(q, pages[0], "/FT /Tx /T (elsewhere) /V (other value)"), clipField, play});
+            break;
+        }
+        QPDFObjectHandle name = widget(q, pages[0], "/FT /Tx /T (name) /V (kept name)");
+        name.replaceKey("/AA", parse("<< /Fo << /S /Hide /T (elsewhere) >> >>"));
+        QPDFObjectHandle later = widget(q, pages[1], "/FT /Tx /T (later) /V (later value)");
+        QPDFObjectHandle note = q.makeIndirectObject(
+            parse("<< /Type /Annot /Subtype /Text /Rect [72 500 92 520] /Contents (note) >>"));
+        annotate(pages[0], note);
+        QPDFObjectHandle clip = media(pages[0], "/Movie", "clip");
+        QPDFObjectHandle laterClip = media(pages[1], "/Movie", "later clip");
+        QPDFObjectHandle screen = media(pages[0], "/Screen", "screen");
+        QPDFObjectHandle laterScreen = media(pages[1], "/Screen", "later screen");
+        std::vector<QPDFObjectHandle> fields{name, later, clipField};
+        const auto button = [&](const std::string &title, QPDFObjectHandle action) {
+            QPDFObjectHandle button = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (" + title + ")");
+            button.replaceKey("/A", action);
+            fields.push_back(button);
+        };
+        button("hidename", parse("<< /S /Hide /T (name) >>"));
+        QPDFObjectHandle hideLater = parse("<< /S /Hide >>");
+        hideLater.replaceKey("/T", later);
+        button("hidelater", hideLater);
+        button("hideelsewhere", parse("<< /S /Hide /T (elsewhere) /Next << /S /Hide /T (name) /H false >> >>"));
+        QPDFObjectHandle mixed = parse("<< /S /Hide /T [(name) (elsewhere) (later)] >>");
+        mixed.getKey("/T").appendItem(note);
+        mixed.getKey("/T").appendItem(later);
+        button("hidemixed", mixed);
+        button("movietitle", parse("<< /S /Movie /T (clip) >>"));
+        button("movieelsewhere", parse("<< /S /Movie /T (elsewhere clip) >>"));
+        button("movielatertitle", parse("<< /S /Movie /T (later clip) >>"));
+        QPDFObjectHandle movie = parse("<< /S /Movie >>");
+        movie.replaceKey("/Annotation", clip);
+        button("movieref", movie);
+        QPDFObjectHandle movieLater = parse("<< /S /Movie >>");
+        movieLater.replaceKey("/Annotation", laterClip);
+        button("movielater", movieLater);
+        QPDFObjectHandle show = parse("<< /S /Rendition /OP 0 >>");
+        show.replaceKey("/AN", screen);
+        button("rendition", show);
+        QPDFObjectHandle showLater = parse("<< /S /Rendition /OP 0 >>");
+        showLater.replaceKey("/AN", laterScreen);
+        button("renditionlater", showLater);
+        installForm(q, fields);
+        break;
+    }
+    case Reference::InheritingField: {
+        // "hidden", on page 1, names "address" as its /Parent and inherits its type and flags,
+        // but address's /Kids lists only "secret", whose widget is on page 2, as a damaged
+        // file can.
+        QPDFObjectHandle address = q.makeIndirectObject(parse("<< /FT /Tx /Ff 4096 /T (address) >>"));
+        QPDFObjectHandle secret = q.makeIndirectObject(parse("<< /T (secret) >>"));
+        secret.replaceKey("/V", QPDFObjectHandle::newString(kSecret));
+        adopt(secret, {widget(q, pages[1])});
+        adopt(address, {secret});
+        widget(q, pages[0], "/T (hidden) /V (kept hidden)").replaceKey("/Parent", address);
+        installForm(q, {address});
+        break;
+    }
+    case Reference::StrayOutline:
+    case Reference::StrayChildOutline: {
+        // "Page one" is the only item that the outline's /First and /Next reach. In
+        // StrayOutline, the outline's /Last, which /Count counts, and the item's /Prev and
+        // /Parent name bookmarks to page 2 that no chain reaches, as a damaged file can. In
+        // StrayChildOutline, the item's /Last does, without a /First, and the catalog holds a
+        // direct copy of the outline dictionary, which ISO 32000 does not allow.
+        QPDFObjectHandle kept = bookmark(q, "Page one", pages[0]);
+        outline(outlines, {kept});
+        if (reference == Reference::StrayOutline) {
+            outlines.replaceKey("/Last", bookmark(q, kSecret + " last", pages[1]));
+            outlines.replaceKey("/Count", QPDFObjectHandle::newInteger(2));
+            kept.replaceKey("/Prev", bookmark(q, kSecret + " previous", pages[1]));
+            kept.replaceKey("/Parent", bookmark(q, kSecret + " parent", pages[1]));
+        } else {
+            kept.replaceKey("/Last", bookmark(q, kSecret + " child", pages[1]));
+        }
+        root.replaceKey("/Outlines",
+                        reference == Reference::StrayOutline ? outlines : outlines.shallowCopy());
+        break;
+    }
+    case Reference::ResetByName: {
+        // ISO 32000 lets /Fields and a hide action's /T name fields by text as well.
+        QPDFObjectHandle name = widget(q, pages[0], "/FT /Tx /T (name) /V (kept name)");
+        QPDFObjectHandle reset = widget(q, pages[0], "/FT /Btn /Ff 65536 /T (reset)");
+        reset.replaceKey("/A", parse("<< /S /ResetForm /Fields [(name)] /Next << /S /Hide /T (name) "
+                                     "/H false >> >>"));
+        installForm(q, {name, reset});
+        break;
+    }
+    case Reference::ChildFieldNoForm: {
+        QPDFObjectHandle address = q.makeIndirectObject(parse("<< /T (address) >>"));
+        QPDFObjectHandle street =
+            q.makeIndirectObject(parse("<< /FT /Tx /T (street) /V (kept street) >>"));
+        QPDFObjectHandle secret = q.makeIndirectObject(parse("<< /FT /Tx /T (secret) >>"));
+        secret.replaceKey("/V", QPDFObjectHandle::newString(kSecret));
+        adopt(street, {widget(q, pages[0])});
+        adopt(secret, {widget(q, pages[1])});
+        adopt(address, {street, secret});
+        break;
+    }
+    }
+
+    if (tagged) {
+        document.replaceKey("/K", QPDFObjectHandle::newArray(documentKids));
+        tree.replaceKey("/K", document);
+        QPDFObjectHandle nums = QPDFObjectHandle::newArray();
+        for (const auto &[key, value] : parents) {
+            nums.appendItem(QPDFObjectHandle::newInteger(key));
+            nums.appendItem(value);
+        }
+        QPDFObjectHandle parentTree = QPDFObjectHandle::newDictionary();
+        parentTree.replaceKey("/Nums", nums);
+        tree.replaceKey("/ParentTree", q.makeIndirectObject(parentTree));
+        tree.replaceKey("/ParentTreeNextKey", QPDFObjectHandle::newInteger(4));
+        root.replaceKey("/StructTreeRoot", tree);
+        root.replaceKey("/MarkInfo", parse("<< /Marked true >>"));
+    }
+    const QByteArray outputName = path.toUtf8();
+    QPDFWriter writer(q, outputName.constData());
+    writer.write();
+}
+
+// Whether `object`, its direct parts or its decoded stream data contain `needle`.
+bool holds(QPDFObjectHandle object, const std::string &needle)
+{
+    if (object.isString())
+        return object.getStringValue().find(needle) != std::string::npos;
+    if (object.isName())
+        return object.getName().find(needle) != std::string::npos;
+    if (object.isArray()) {
+        for (QPDFObjectHandle item : object.aitems())
+            if (!item.isIndirect() && holds(item, needle))
+                return true;
+        return false;
+    }
+    if (object.isStream()) {
+        std::shared_ptr<Buffer> data;
+        try {
+            data = object.getStreamData(qpdf_dl_all);
+        } catch (const std::exception &) {
+            data = object.getRawStreamData();
+        }
+        const std::string bytes(reinterpret_cast<const char *>(data->getBuffer()),
+                                data->getSize());
+        return bytes.find(needle) != std::string::npos || holds(object.getDict(), needle);
+    }
+    if (object.isDictionary()) {
+        for (const auto &[key, value] : object.ditems())
+            if (key.find(needle) != std::string::npos || (!value.isIndirect() && holds(value, needle)))
+                return true;
+    }
+    return false;
+}
+
+// Whether any object of `path` holds `needle` in a string, a name or decoded stream data.
+// This looks at every object the file has, reachable or not.
+bool pdfContains(const QString &path, const std::string &needle, const QString &password = {})
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    const QByteArray pw = password.toUtf8();
+    q.processFile(name.constData(), password.isEmpty() ? nullptr : pw.constData());
+    for (QPDFObjectHandle object : q.getAllObjects())
+        if (holds(object, needle))
+            return true;
+    return false;
+}
+
+// Builds a form with one text field per page, named `prefix` plus the page number, on
+// pages of the given widths. Its /AcroForm sets /NeedAppearances.
+void makeFormPdf(const QString &path, const QList<int> &widths, const std::string &prefix)
+{
+    QPDF q;
+    q.emptyPDF();
+    QPDFPageDocumentHelper dh(q);
+    std::vector<QPDFObjectHandle> fields;
+    for (int i = 0; i < widths.size(); ++i) {
+        QPDFObjectHandle page = textPage(q, "form page " + std::to_string(i + 1), widths.at(i));
+        dh.addPage(QPDFPageObjectHelper(page), false);
+        const std::string n = std::to_string(i + 1);
+        fields.push_back(widget(q, page, "/FT /Tx /T (" + prefix + n + ") /V (value " + n
+                                             + ") /DA (/Helv 12 Tf 0 g)"));
+    }
+    installForm(q, fields);
+    const QByteArray outputName = path.toUtf8();
+    QPDFWriter writer(q, outputName.constData());
+    writer.write();
+}
+
+// The first reason `path` has no fillable form with `widgets` widgets, or an empty string.
+// Each widget must belong to a field that /AcroForm /Fields reaches, point its /P at the
+// page that lists it, and have its own top-level field, as each field of makeFormPdf has
+// one widget. No two top-level fields may share a name, or they would fill in together.
+// /NeedAppearances must still be true, and MuPDF must see the form.
+QString formProblem(const QString &path, int widgets, const QString &password = {})
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    const QByteArray pw = password.toUtf8();
+    q.processFile(name.constData(), password.isEmpty() ? nullptr : pw.constData());
+    QPDFObjectHandle form = q.getRoot().getKey("/AcroForm");
+    if (!form.isDictionary())
+        return QStringLiteral("no /AcroForm");
+    QPDFObjectHandle fields = form.getKey("/Fields");
+    if (!fields.isArray() || fields.getArrayNItems() == 0)
+        return QStringLiteral("no /Fields");
+    if (!form.getKey("/NeedAppearances").isBool() || !form.getKey("/NeedAppearances").getBoolValue())
+        return QStringLiteral("/NeedAppearances lost");
+    std::set<std::string> names;
+    for (QPDFObjectHandle field : fields.aitems())
+        if (!names.insert(field.getKey("/T").getUTF8Value()).second)
+            return QStringLiteral("two fields share a name");
+    std::map<QPDFObjGen, QPDFObjGen> topOf; // every field and widget below /Fields
+    std::vector<std::pair<QPDFObjectHandle, QPDFObjGen>> queue;
+    for (QPDFObjectHandle field : fields.aitems())
+        queue.emplace_back(field, field.getObjGen());
+    while (!queue.empty()) {
+        auto [field, top] = queue.back();
+        queue.pop_back();
+        if (!topOf.emplace(field.getObjGen(), top).second)
+            continue;
+        QPDFObjectHandle kids = field.getKey("/Kids");
+        if (kids.isArray())
+            for (QPDFObjectHandle kid : kids.aitems())
+                queue.emplace_back(kid, top);
+    }
+    std::set<QPDFObjGen> seenWidgets, seenTops;
+    int count = 0;
+    for (QPDFObjectHandle page : q.getAllPages()) {
+        QPDFObjectHandle annots = page.getKey("/Annots");
+        if (!annots.isArray())
+            continue;
+        for (QPDFObjectHandle annot : annots.aitems()) {
+            if (!annot.getKey("/Subtype").isNameAndEquals("/Widget"))
+                continue;
+            ++count;
+            auto top = topOf.find(annot.getObjGen());
+            if (top == topOf.end())
+                return QStringLiteral("a widget is not below /Fields");
+            if (!seenWidgets.insert(annot.getObjGen()).second)
+                return QStringLiteral("two pages share a widget");
+            if (!seenTops.insert(top->second).second)
+                return QStringLiteral("two widgets share a field");
+            if (annot.getKey("/P").getObjGen() != page.getObjGen())
+                return QStringLiteral("a widget's /P is another page");
+        }
+    }
+    if (count != widgets)
+        return QStringLiteral("%1 widgets").arg(count);
+    mervin::RenderEngine engine;
+    QString err;
+    auto doc = engine.openDocument(path, password, &err, nullptr);
+    if (!doc)
+        return err;
+    if (!doc->hasForm())
+        return QStringLiteral("Document::hasForm() is false");
+    return {};
+}
+
+// Each top-level form field of `path` as its name and the pages that its widgets point at
+// with /P, for example "shared 1 2".
+QStringList fieldPages(const QString &path)
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    q.processFile(name.constData());
+    std::map<QPDFObjGen, int> pageNumber;
+    for (QPDFObjectHandle page : q.getAllPages())
+        pageNumber.emplace(page.getObjGen(), int(pageNumber.size()) + 1);
+    QStringList lines;
+    QPDFObjectHandle form = q.getRoot().getKey("/AcroForm");
+    if (!form.isDictionary())
+        return lines;
+    for (QPDFObjectHandle field : form.getKey("/Fields").aitems()) {
+        QString line = QString::fromStdString(field.getKey("/T").getUTF8Value());
+        QPDFObjectHandle kids = field.getKey("/Kids");
+        for (QPDFObjectHandle widget : kids.isArray() ? kids.getArrayAsVector()
+                                                      : std::vector<QPDFObjectHandle>{field})
+            line += QStringLiteral(" %1").arg(pageNumber[widget.getKey("/P").getObjGen()]);
+        lines << line;
+    }
+    return lines;
+}
+
+// The first reason the widget "hidden" of `path` no longer has the parent "address" that it
+// inherits its type and flags from (see Reference::InheritingField), or an empty string.
+QString inheritedFieldProblem(const QString &path)
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    q.processFile(name.constData());
+    for (QPDFObjectHandle page : q.getAllPages()) {
+        QPDFObjectHandle annots = page.getKey("/Annots");
+        if (!annots.isArray())
+            continue;
+        for (QPDFObjectHandle annot : annots.aitems()) {
+            if (!annot.getKey("/T").isString() || annot.getKey("/T").getUTF8Value() != "hidden")
+                continue;
+            if (!annot.getKey("/Parent").isDictionary())
+                return QStringLiteral("hidden lost its parent");
+            QPDFFormFieldObjectHelper field(annot);
+            if (field.getFullyQualifiedName() != "address.hidden")
+                return QStringLiteral("name ") + QString::fromStdString(field.getFullyQualifiedName());
+            if (field.getFieldType() != "/Tx")
+                return QStringLiteral("type ") + QString::fromStdString(field.getFieldType());
+            if (field.getFlags() != 4096)
+                return QStringLiteral("flags %1").arg(field.getFlags());
+            return {};
+        }
+    }
+    return QStringLiteral("no hidden widget");
+}
+
+// The first reason the comment "Reply" of page `index` of `path` is not a comment of its own
+// on that page, with its popup there too, or an empty string.
+QString replyProblem(const QString &path, int index)
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    q.processFile(name.constData());
+    QPDFObjectHandle page = q.getAllPages().at(size_t(index));
+    QPDFObjectHandle annots = page.getKey("/Annots");
+    if (!annots.isArray())
+        return QStringLiteral("no annotations");
+    std::set<QPDFObjGen> listed;
+    for (QPDFObjectHandle annot : annots.aitems())
+        listed.insert(annot.getObjGen());
+    for (QPDFObjectHandle annot : annots.aitems()) {
+        QPDFObjectHandle contents = annot.getKey("/Contents");
+        if (!contents.isString() || contents.getUTF8Value() != "Reply")
+            continue;
+        if (annot.getKey("/IRT").isDictionary())
+            return QStringLiteral("the reply still answers a note");
+        QPDFObjectHandle popup = annot.getKey("/Popup");
+        if (!popup.isDictionary() || !listed.count(popup.getObjGen()))
+            return QStringLiteral("the reply's popup is not on its page");
+        if (popup.getKey("/Parent").getObjGen() != annot.getObjGen())
+            return QStringLiteral("the popup belongs to another annotation");
+        return {};
+    }
+    return QStringLiteral("no reply");
+}
+
+// For each reset button of `path`, in page order, the first field that it names and the
+// field that the hide action in its /Next names, for example "name name".
+QStringList resetTargets(const QString &path)
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    q.processFile(name.constData());
+    QStringList targets;
+    for (QPDFObjectHandle page : q.getAllPages()) {
+        QPDFObjectHandle annots = page.getKey("/Annots");
+        if (!annots.isArray())
+            continue;
+        for (QPDFObjectHandle annot : annots.aitems()) {
+            QPDFObjectHandle action = annot.getKey("/A");
+            if (!action.isDictionary() || !action.getKey("/S").isNameAndEquals("/ResetForm"))
+                continue;
+            QPDFObjectHandle first = action.getKey("/Fields").getArrayItem(0);
+            QPDFObjectHandle hidden = action.getKey("/Next").getKey("/T");
+            targets << QStringLiteral("%1 %2").arg(
+                first.isString() ? QString::fromStdString(first.getUTF8Value()) : QStringLiteral("?"),
+                hidden.isString() ? QString::fromStdString(hidden.getUTF8Value()) : QStringLiteral("?"));
+        }
+    }
+    return targets;
+}
+
+// The type of the action under `keys` of top-level field `field` of `path`, and what it
+// acts on: "all" without /Fields, otherwise the fully qualified names that /Fields lists,
+// after "but" when the Exclude flag is set. For example "ResetForm: but name", or
+// "no action".
+QString actionScope(const QString &path, const std::string &field, const QStringList &keys)
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    q.processFile(name.constData());
+    for (QPDFObjectHandle top : q.getRoot().getKey("/AcroForm").getKey("/Fields").aitems()) {
+        if (!top.getKey("/T").isString() || top.getKey("/T").getUTF8Value() != field)
+            continue;
+        QPDFObjectHandle action = top;
+        for (const QString &key : keys)
+            action = action.isDictionary() ? action.getKey(key.toStdString())
+                                           : QPDFObjectHandle::newNull();
+        if (!action.isDictionary())
+            return QStringLiteral("no action");
+        const QString type = QString::fromStdString(action.getKey("/S").getName()).mid(1) + u": ";
+        QPDFObjectHandle fields = action.getKey("/Fields");
+        if (!fields.isArray())
+            return type + QStringLiteral("all");
+        QStringList names;
+        for (QPDFObjectHandle item : fields.aitems())
+            names << QString::fromStdString(
+                item.isString()       ? item.getUTF8Value()
+                : item.isDictionary() ? QPDFFormFieldObjectHelper(item).getFullyQualifiedName()
+                                      : std::string("null"));
+        QPDFObjectHandle flags = action.getKey("/Flags");
+        const bool exclude = flags.isInteger() && (flags.getIntValue() & 1);
+        return type + (exclude ? QStringLiteral("but ") : QString()) + names.join(u' ');
+    }
+    return QStringLiteral("no field");
+}
+
+// The actions that the /A of top-level field `field` of `path` runs through /Next, as a
+// count and the number of them that submit or reset every field or all but some, for
+// example "2 actions, 1 for every field". A chain that comes back to an action adds
+// ", then back".
+QString chainSummary(const QString &path, const std::string &field)
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    q.processFile(name.constData());
+    for (QPDFObjectHandle top : q.getRoot().getKey("/AcroForm").getKey("/Fields").aitems()) {
+        if (!top.getKey("/T").isString() || top.getKey("/T").getUTF8Value() != field)
+            continue;
+        int actions = 0;
+        int everyField = 0;
+        bool back = false;
+        std::set<QPDFObjGen> seen;
+        std::vector<QPDFObjectHandle> todo{top.getKey("/A")};
+        while (!todo.empty()) {
+            QPDFObjectHandle action = todo.back();
+            todo.pop_back();
+            if (action.isArray()) {
+                std::vector<QPDFObjectHandle> items = action.getArrayAsVector();
+                todo.insert(todo.end(), items.rbegin(), items.rend());
+                continue;
+            }
+            if (!action.isDictionary())
+                continue;
+            if (action.isIndirect() && !seen.insert(action.getObjGen()).second) {
+                back = true;
+                continue;
+            }
+            ++actions;
+            QPDFObjectHandle type = action.getKey("/S");
+            QPDFObjectHandle fields = action.getKey("/Fields");
+            QPDFObjectHandle flags = action.getKey("/Flags");
+            if ((type.isNameAndEquals("/SubmitForm") || type.isNameAndEquals("/ResetForm"))
+                && (!fields.isArray() || fields.getArrayNItems() == 0
+                    || (flags.isInteger() && (flags.getIntValue() & 1))))
+                ++everyField;
+            todo.push_back(action.getKey("/Next"));
+        }
+        return QStringLiteral("%1 actions, %2 for every field%3")
+            .arg(actions)
+            .arg(everyField)
+            .arg(back ? QStringLiteral(", then back") : QString());
+    }
+    return QStringLiteral("no field");
+}
+
+// The type of the action under `keys` of top-level field `field` of `path`, and the targets
+// that it names in /T, or for Movie, Rendition, GoTo3DView and RichMediaExecute in its
+// annotation entry, for example "Hide: name Text". Text shows as itself, a field as its fully
+// qualified name, and an annotation as its subtype, title and the page that its /P names,
+// after "unlisted" when no page lists it. Returns "no action" when there is none.
+QString actionTargets(const QString &path, const std::string &field, const QStringList &keys)
+{
+    QPDF q;
+    const QByteArray name = path.toUtf8();
+    q.processFile(name.constData());
+    std::set<QPDFObjGen> listed;
+    std::map<QPDFObjGen, int> pageNumber;
+    for (QPDFObjectHandle page : q.getAllPages()) {
+        pageNumber.emplace(page.getObjGen(), int(pageNumber.size()) + 1);
+        QPDFObjectHandle annots = page.getKey("/Annots");
+        if (annots.isArray())
+            for (QPDFObjectHandle annot : annots.aitems())
+                listed.insert(annot.getObjGen());
+    }
+    for (QPDFObjectHandle top : q.getRoot().getKey("/AcroForm").getKey("/Fields").aitems()) {
+        if (!top.getKey("/T").isString() || top.getKey("/T").getUTF8Value() != field)
+            continue;
+        QPDFObjectHandle action = top;
+        for (const QString &key : keys)
+            action = action.isDictionary() ? action.getKey(key.toStdString())
+                                           : QPDFObjectHandle::newNull();
+        if (!action.isDictionary())
+            return QStringLiteral("no action");
+        const std::string type = action.getKey("/S").getName();
+        QPDFObjectHandle targets = action.getKey(type == "/Hide"        ? "/T"
+                                                 : type == "/Rendition" ? "/AN"
+                                                 : type == "/Movie" && action.hasKey("/Annotation")
+                                                     ? "/Annotation"
+                                                     : type == "/Movie" ? "/T"
+                                                                        : "/TA");
+        QStringList names;
+        for (QPDFObjectHandle item : targets.isArray() ? targets.getArrayAsVector()
+                                                       : std::vector<QPDFObjectHandle>{targets}) {
+            if (item.isString()) {
+                names << QString::fromStdString(item.getUTF8Value());
+            } else if (!item.isDictionary()) {
+                names << QStringLiteral("null");
+            } else if (item.getKey("/Subtype").isName()
+                       && !item.getKey("/Subtype").isNameAndEquals("/Widget")) {
+                QString text = QString::fromStdString(item.getKey("/Subtype").getName()).mid(1);
+                if (item.getKey("/T").isString())
+                    text += u' ' + QString::fromStdString(item.getKey("/T").getUTF8Value());
+                const auto page = pageNumber.find(item.getKey("/P").getObjGen());
+                text += page == pageNumber.end() ? QStringLiteral(" on ?")
+                                                 : QStringLiteral(" on %1").arg(page->second);
+                names << (listed.count(item.getObjGen()) ? text : QStringLiteral("unlisted ") + text);
+            } else {
+                names << QString::fromStdString(QPDFFormFieldObjectHelper(item).getFullyQualifiedName());
+            }
+        }
+        return QString::fromStdString(type).mid(1) + u": " + names.join(u' ');
+    }
+    return QStringLiteral("no field");
+}
+
+// Rewrites `path` with `blob` as its /Mervin_Measurements, as a string or as the JSON of a
+// stream.
+void setMeasurementBlob(const QString &path, const std::string &blob, bool stream)
+{
+    const QString copy = path + QStringLiteral(".tmp");
+    {
+        QPDF q; // closes the source before it is replaced, which Windows needs
+        const QByteArray name = path.toUtf8();
+        q.processFile(name.constData());
+        q.getRoot().replaceKey("/Mervin_Measurements",
+                               stream ? q.newStream(blob) : QPDFObjectHandle::newString(blob));
+        const QByteArray copyName = copy.toUtf8();
+        QPDFWriter writer(q, copyName.constData());
+        writer.write();
+    }
+    QFile::remove(path);
+    QFile::rename(copy, path);
+}
 
 // Build a valid PDF whose pages have the given MediaBox widths (all 792 tall).
 // Distinct widths make each page identifiable after a copy, which is the only
@@ -173,6 +1331,30 @@ private slots:
     void cryptFilterNamesTheAlgorithm_data();
     void cryptFilterNamesTheAlgorithm();
     void deletePagesReducesCount();
+    void deleteLeavesOutDeletedContent_data();
+    void deleteLeavesOutDeletedContent();
+    void deleteKeepsEncryptionWithoutDeletedContent();
+    void copiesKeepFormFields();
+    void copiesLeaveOutFieldsOfOtherPages_data();
+    void copiesLeaveOutFieldsOfOtherPages();
+    void copiesKeepAFieldThatCopiedPagesShare();
+    void copiesLeaveOutResourcesOfOtherPages_data();
+    void copiesLeaveOutResourcesOfOtherPages();
+    void copiesLeaveOutCommentsOfOtherPages_data();
+    void copiesLeaveOutCommentsOfOtherPages();
+    void failedRetargetLeavesNoLinkToUnlistedComments();
+    void copiesPointButtonsAtRenamedFields();
+    void copiesScopeDocumentWideFormActions_data();
+    void copiesScopeDocumentWideFormActions();
+    void copiesCutLongAndLoopingActionChains_data();
+    void copiesCutLongAndLoopingActionChains();
+    void copiesScopeActionsAboveDeepWidgets();
+    void copiesKeepActionTargetsOfTheirOwnFile_data();
+    void copiesKeepActionTargetsOfTheirOwnFile();
+    void mergeNamesInputWithBadMeasurements_data();
+    void mergeNamesInputWithBadMeasurements();
+    void deleteNamesSourceWithBadMeasurements_data();
+    void deleteNamesSourceWithBadMeasurements();
     void mergeConcatenates();
     void mergeHonoursPerFileRanges();
     void mergeRepeatsAPage();
@@ -810,6 +1992,924 @@ void TstQpdf::deletePagesReducesCount()
     makePdf(src, 5);
     QCOMPARE(PageOps::deletePages(src, out, {1, 3}), PageOps::Status::Ok);
     QCOMPARE(PageOps::pageCount(out), 3);
+}
+
+/// One row per way a document can refer to the page that Delete Pages removes.
+void TstQpdf::deleteLeavesOutDeletedContent_data()
+{
+    QTest::addColumn<int>("reference");
+    QTest::newRow("bookmark") << int(Reference::Outline);
+    QTest::newRow("named bookmark") << int(Reference::NamedOutline);
+    QTest::newRow("nested bookmarks") << int(Reference::NestedOutline);
+    QTest::newRow("link") << int(Reference::Link);
+    QTest::newRow("reply") << int(Reference::Reply);
+    QTest::newRow("field") << int(Reference::Field);
+    QTest::newRow("calculated parent field") << int(Reference::CalculatedField);
+    QTest::newRow("child field") << int(Reference::ChildField);
+    QTest::newRow("shared field") << int(Reference::SharedField);
+    QTest::newRow("xfa") << int(Reference::Xfa);
+    QTest::newRow("structure element") << int(Reference::Structure);
+    QTest::newRow("nested structure") << int(Reference::NestedStructure);
+    QTest::newRow("tagged widget") << int(Reference::TaggedWidget);
+    QTest::newRow("reset button") << int(Reference::ResetButton);
+    QTest::newRow("shared resources") << int(Reference::SharedResources);
+    QTest::newRow("inherited resources") << int(Reference::InheritedResources);
+    QTest::newRow("own resources") << int(Reference::OwnResources);
+    QTest::newRow("direct bookmark") << int(Reference::DirectOutline);
+    QTest::newRow("closed bookmarks") << int(Reference::ClosedOutline);
+    QTest::newRow("widget on two pages") << int(Reference::SharedWidget);
+    QTest::newRow("field without widget") << int(Reference::WidgetlessField);
+    QTest::newRow("reply in a form") << int(Reference::ReplyInForm);
+    // Where the cleanup stops, at 100 levels or where a chain comes back, it cuts.
+    QTest::newRow("bookmarks that loop") << int(Reference::CyclicOutline);
+    QTest::newRow("bookmarks deeper than 100 levels") << int(Reference::DeepOutline);
+    QTest::newRow("structure deeper than 100 levels") << int(Reference::DeepStructure);
+    QTest::newRow("field deeper than 100 levels") << int(Reference::DeepField);
+    QTest::newRow("child field without a form") << int(Reference::ChildFieldNoForm);
+    QTest::newRow("field that its parent does not list") << int(Reference::UnlistedField);
+    QTest::newRow("bookmark links outside the outline") << int(Reference::StrayOutline);
+    QTest::newRow("bookmark /Last without /First") << int(Reference::StrayChildOutline);
+    QTest::newRow("field that inherits from a parent of page 2") << int(Reference::InheritingField);
+}
+
+/// Checks that no object of a Delete Pages copy holds the deleted page's content, or what
+/// only refers to that page, while the rest of the document stays.
+void TstQpdf::deleteLeavesOutDeletedContent()
+{
+    QFETCH(int, reference);
+    const auto ref = Reference(reference);
+    const QString src = in(QStringLiteral("ref_src_%1.pdf").arg(reference));
+    const QString out = in(QStringLiteral("ref_out_%1.pdf").arg(reference));
+    makeReferencedPdf(src, ref);
+    QVERIFY(pdfContains(src, kSecret)); // the scan finds what it looks for
+    QCOMPARE(PageOps::deletePages(src, out, {1}), PageOps::Status::Ok);
+    QCOMPARE(PageOps::pageCount(out), 2);
+    QVERIFY(!pdfContains(out, kSecret));
+    QVERIFY(pdfContains(out, "page one"));
+    QVERIFY(pdfContains(out, "page three"));
+
+    QPDF q;
+    const QByteArray name = out.toUtf8();
+    q.processFile(name.constData());
+    QPDFObjectHandle root = q.getRoot();
+    std::vector<QPDFObjectHandle> pages = q.getAllPages();
+    QPDFObjectHandle form = root.getKey("/AcroForm");
+    QPDFObjectHandle fields = form.isDictionary() ? form.getKey("/Fields") : QPDFObjectHandle::newArray();
+    QPDFObjectHandle outlines = root.getKey("/Outlines");
+    QPDFObjectHandle tree = root.getKey("/StructTreeRoot");
+    const auto parentKeys = [&tree, &q] {
+        QList<long long> keys;
+        for (const auto &entry : QPDFNumberTreeObjectHelper(tree.getKey("/ParentTree"), q).getAsMap())
+            keys << entry.first;
+        return keys;
+    };
+    const auto documentKids = [&tree] {
+        return tree.getKey("/K").getKey("/K").getArrayNItems();
+    };
+    switch (ref) {
+    case Reference::Outline:
+    case Reference::NamedOutline:
+    case Reference::CyclicOutline:
+        QCOMPARE(outlines.getKey("/Count").getIntValue(), 1LL);
+        QCOMPARE(outlines.getKey("/First").getObjGen(), outlines.getKey("/Last").getObjGen());
+        QVERIFY(!outlines.getKey("/First").hasKey("/Next"));
+        if (ref == Reference::NamedOutline) {
+            // The names of page 1 stay.
+            QCOMPARE(QPDFNameTreeObjectHelper(root.getKey("/Names").getKey("/Dests"), q).getAsMap().size(),
+                     size_t(1));
+            QVERIFY(QPDFNameTreeObjectHelper(root.getKey("/Names").getKey("/Dests"), q).hasName("pageone"));
+            QVERIFY(root.getKey("/Dests").getKeys() == std::set<std::string>({"/pageone"}));
+        }
+        break;
+    case Reference::DirectOutline: {
+        QCOMPARE(outlines.getKey("/Count").getIntValue(), 2LL);
+        QPDFObjectHandle first = outlines.getKey("/First");
+        QCOMPARE(QString::fromStdString(first.getKey("/Title").getUTF8Value()), QStringLiteral("Direct one"));
+        QCOMPARE(first.getKey("/Next").getObjGen(), outlines.getKey("/Last").getObjGen());
+        QCOMPARE(QString::fromStdString(outlines.getKey("/Last").getKey("/Title").getUTF8Value()),
+                 QStringLiteral("Page three"));
+        break;
+    }
+    case Reference::DeepOutline: {
+        // The items below level 100 go, and the counts above follow.
+        QCOMPARE(outlines.getKey("/Count").getIntValue(), 101LL);
+        QCOMPARE(outlines.getKey("/First").getKey("/Count").getIntValue(), 100LL);
+        QPDFObjectHandle item = outlines.getKey("/First");
+        for (int i = 0; i < 100; ++i)
+            item = item.getKey("/First");
+        QCOMPARE(QString::fromStdString(item.getKey("/Title").getUTF8Value()), QStringLiteral("Level 100"));
+        QVERIFY(!item.hasKey("/First") && !item.hasKey("/Last") && !item.hasKey("/Count"));
+        break;
+    }
+    case Reference::DeepStructure: {
+        // The sections stay for page 1, without what is below level 100.
+        QCOMPARE(documentKids(), 3);
+        QPDFObjectHandle section = tree.getKey("/K").getKey("/K").getArrayItem(1);
+        for (int i = 0; i < 99; ++i)
+            section = section.getKey("/K");
+        QCOMPARE(section.getKey("/K").getArrayNItems(), 1);
+        QCOMPARE(parentKeys(), QList<long long>({0, 2}));
+        break;
+    }
+    case Reference::DeepField:
+        // The deep field's tree goes. The fields that level 100 also lists stay.
+        QCOMPARE(fields.getArrayNItems(), 2);
+        QCOMPARE(QString::fromStdString(fields.getArrayItem(0).getKey("/T").getUTF8Value()),
+                 QStringLiteral("before"));
+        QCOMPARE(QString::fromStdString(fields.getArrayItem(1).getKey("/T").getUTF8Value()),
+                 QStringLiteral("after"));
+        QVERIFY(pdfContains(out, "kept before"));
+        QVERIFY(pdfContains(out, "kept after"));
+        break;
+    case Reference::StrayOutline:
+    case Reference::StrayChildOutline: {
+        // The links that led outside the outline now stay inside it, and the outline
+        // dictionary is indirect, so the item's /Parent can name it.
+        QVERIFY(outlines.isIndirect());
+        QPDFObjectHandle first = outlines.getKey("/First");
+        QCOMPARE(QString::fromStdString(first.getKey("/Title").getUTF8Value()), QStringLiteral("Page one"));
+        QCOMPARE(outlines.getKey("/Count").getIntValue(), 1LL);
+        QCOMPARE(outlines.getKey("/Last").getObjGen(), first.getObjGen());
+        QVERIFY(!first.hasKey("/Prev") && !first.hasKey("/Last"));
+        QCOMPARE(first.getKey("/Parent").getObjGen(), outlines.getObjGen());
+        break;
+    }
+    case Reference::InheritingField:
+        // address goes from /Fields with secret, but hidden still inherits from it.
+        QCOMPARE(inheritedFieldProblem(out), QString());
+        QVERIFY(pdfContains(out, "kept hidden"));
+        break;
+    case Reference::UnlistedField: {
+        // "street" stays below "address", and "hidden" keeps only its page 1 widget.
+        QCOMPARE(fields.getArrayNItems(), 1);
+        QCOMPARE(fields.getArrayItem(0).getKey("/Kids").getArrayNItems(), 1);
+        QPDFObjectHandle hidden = pages.at(0).getKey("/Annots").getArrayItem(1).getKey("/Parent");
+        QCOMPARE(QString::fromStdString(hidden.getKey("/T").getUTF8Value()), QStringLiteral("hidden"));
+        QCOMPARE(hidden.getKey("/Kids").getArrayNItems(), 1);
+        QVERIFY(pdfContains(out, "kept street"));
+        break;
+    }
+    case Reference::ClosedOutline: {
+        // Closed items count their remaining children as negative numbers.
+        QCOMPARE(outlines.getKey("/Count").getIntValue(), 2LL);
+        QPDFObjectHandle chapter = outlines.getKey("/First");
+        QPDFObjectHandle section = outlines.getKey("/Last");
+        QCOMPARE(chapter.getKey("/Count").getIntValue(), -1LL);
+        QCOMPARE(QString::fromStdString(chapter.getKey("/First").getKey("/Title").getUTF8Value()),
+                 QStringLiteral("Kept child"));
+        QVERIFY(!section.hasKey("/First") && !section.hasKey("/Count"));
+        break;
+    }
+    case Reference::SharedWidget: {
+        // Page 1 keeps the widget, and the field keeps it too.
+        QCOMPARE(pages.at(0).getKey("/Annots").getArrayNItems(), 1);
+        QPDFObjectHandle twice = pages.at(0).getKey("/Annots").getArrayItem(0);
+        QVERIFY(twice.isDictionary());
+        QCOMPARE(fields.getArrayNItems(), 1);
+        QCOMPARE(fields.getArrayItem(0).getObjGen(), twice.getObjGen());
+        QVERIFY(pdfContains(out, "kept twice"));
+        break;
+    }
+    case Reference::WidgetlessField:
+        QCOMPARE(fields.getArrayNItems(), 1);
+        QCOMPARE(QString::fromStdString(fields.getArrayItem(0).getKey("/T").getUTF8Value()),
+                 QStringLiteral("data"));
+        QVERIFY(pdfContains(out, "kept data"));
+        break;
+    case Reference::NestedOutline: {
+        // The chapter stays for its child, the section loses its only child.
+        QCOMPARE(outlines.getKey("/Count").getIntValue(), 3LL);
+        QPDFObjectHandle chapter = outlines.getKey("/First");
+        QPDFObjectHandle section = outlines.getKey("/Last");
+        QCOMPARE(QString::fromStdString(chapter.getKey("/First").getKey("/Title").getUTF8Value()),
+                 QStringLiteral("Kept child"));
+        QCOMPARE(QString::fromStdString(section.getKey("/Title").getUTF8Value()), QStringLiteral("Section"));
+        QVERIFY(!section.hasKey("/First") && !section.hasKey("/Last") && !section.hasKey("/Count"));
+        QCOMPARE(section.getKey("/Prev").getObjGen(), chapter.getObjGen());
+        break;
+    }
+    case Reference::Link:
+        QCOMPARE(pages.at(0).getKey("/Annots").getArrayNItems(), 1);
+        break;
+    case Reference::Reply:
+    case Reference::ReplyInForm:
+        // The reply and its popup stay, without the note they answered.
+        QCOMPARE(replyProblem(out, 0), QString());
+        break;
+    case Reference::Field:
+    case Reference::TaggedWidget:
+        QCOMPARE(fields.getArrayNItems(), 0);
+        break;
+    case Reference::CalculatedField:
+        QCOMPARE(fields.getArrayNItems(), 1);
+        QCOMPARE(form.getKey("/CO").getArrayNItems(), 1);
+        QCOMPARE(form.getKey("/CO").getArrayItem(0).getObjGen(), fields.getArrayItem(0).getObjGen());
+        break;
+    case Reference::ChildField: {
+        QCOMPARE(fields.getArrayNItems(), 1);
+        QPDFObjectHandle kids = fields.getArrayItem(0).getKey("/Kids");
+        QCOMPARE(kids.getArrayNItems(), 1);
+        QCOMPARE(QString::fromStdString(kids.getArrayItem(0).getKey("/T").getUTF8Value()),
+                 QStringLiteral("street"));
+        QVERIFY(pdfContains(out, "kept street"));
+        break;
+    }
+    case Reference::SharedField: {
+        // The field and its page 1 widget stay, without the widget of page 2.
+        QCOMPARE(fields.getArrayNItems(), 1);
+        QPDFObjectHandle kids = fields.getArrayItem(0).getKey("/Kids");
+        QCOMPARE(kids.getArrayNItems(), 1);
+        QCOMPARE(kids.getArrayItem(0).getKey("/P").getObjGen(), pages.at(0).getObjGen());
+        QVERIFY(pdfContains(out, "shared value"));
+        break;
+    }
+    case Reference::Xfa:
+        QCOMPARE(fields.getArrayNItems(), 1);
+        QVERIFY(!form.hasKey("/XFA"));
+        break;
+    case Reference::Structure:
+        QCOMPARE(documentKids(), 2);
+        QCOMPARE(parentKeys(), QList<long long>({0, 2}));
+        break;
+    case Reference::NestedStructure: {
+        // The section goes with its figure; the paragraph keeps its page 3 part.
+        QCOMPARE(documentKids(), 3);
+        QPDFObjectHandle across = tree.getKey("/K").getKey("/K").getArrayItem(1);
+        QCOMPARE(across.getKey("/K").getArrayNItems(), 1);
+        QCOMPARE(across.getKey("/K").getArrayItem(0).getKey("/Pg").getObjGen(),
+                 pages.at(1).getObjGen());
+        QCOMPARE(parentKeys(), QList<long long>({0, 2}));
+        QVERIFY(QPDFNameTreeObjectHelper(tree.getKey("/IDTree"), q).getAsMap().empty());
+        break;
+    }
+    case Reference::ResetButton: {
+        // The button and the field it names stay, without the child field of page 2.
+        QCOMPARE(fields.getArrayNItems(), 2);
+        QCOMPARE(fields.getArrayItem(0).getKey("/Kids").getArrayNItems(), 1);
+        QCOMPARE(fields.getArrayItem(1).getKey("/A").getKey("/Fields").getArrayItem(0).getObjGen(),
+                 fields.getArrayItem(0).getObjGen());
+        break;
+    }
+    case Reference::SharedResources:
+    case Reference::InheritedResources:
+    case Reference::OwnResources: {
+        // Page 1 keeps its own image, without the images of the other pages.
+        QPDFObjectHandle images =
+            QPDFPageObjectHelper(pages.at(0)).getAttribute("/Resources", false).getKey("/XObject");
+        QVERIFY(images.hasKey("/Im1"));
+        QVERIFY(!images.hasKey("/Im2"));
+        QVERIFY(pdfContains(out, "IMAGETHREE"));
+        break;
+    }
+    case Reference::ChildFieldNoForm: {
+        // Without /AcroForm, the tree of the street widget loses the field of page 2.
+        QPDFObjectHandle street = pages.at(0).getKey("/Annots").getArrayItem(0).getKey("/Parent");
+        QCOMPARE(QString::fromStdString(street.getKey("/T").getUTF8Value()), QStringLiteral("street"));
+        QCOMPARE(street.getKey("/Parent").getKey("/Kids").getArrayNItems(), 1);
+        QVERIFY(pdfContains(out, "kept street"));
+        break;
+    }
+    case Reference::ResetByName:
+    case Reference::SubmitButtons:
+    case Reference::ActionChains:
+    case Reference::DeepFieldNoForm:
+    case Reference::TargetButtons:
+    case Reference::OtherTargets:
+        break;
+    }
+    if (ref == Reference::TaggedWidget) {
+        QCOMPARE(documentKids(), 2);
+        QCOMPARE(parentKeys(), QList<long long>({0, 2}));
+    }
+}
+
+/// Checks that an encrypted source gives an encrypted copy without the deleted content.
+void TstQpdf::deleteKeepsEncryptionWithoutDeletedContent()
+{
+    const QString src = in(QStringLiteral("ref_enc_src.pdf"));
+    const QString enc = in(QStringLiteral("ref_enc.pdf"));
+    const QString out = in(QStringLiteral("ref_enc_out.pdf"));
+    makeReferencedPdf(src, Reference::SharedField);
+    QpdfService svc;
+    QCOMPARE(svc.encrypt(src, enc, QString(), QStringLiteral("secret"), QString(),
+                         QpdfService::Algorithm::AES256, {}, nullptr),
+             QpdfService::Status::Ok);
+    QVERIFY(pdfContains(enc, kSecret, QStringLiteral("secret")));
+    QCOMPARE(PageOps::deletePages(enc, out, {1}, QStringLiteral("secret")), PageOps::Status::Ok);
+    QpdfService::Info info;
+    QCOMPARE(svc.readInfo(out, QString(), info, nullptr), QpdfService::Status::NeedsPassword);
+    QCOMPARE(svc.readInfo(out, QStringLiteral("secret"), info, nullptr), QpdfService::Status::Ok);
+    QVERIFY(info.encrypted);
+    QVERIFY(!pdfContains(out, kSecret, QStringLiteral("secret")));
+    QVERIFY(pdfContains(out, "shared value", QStringLiteral("secret")));
+}
+
+/// Checks that Merge, Extract, a repeated page and Split write forms that can be filled.
+void TstQpdf::copiesKeepFormFields()
+{
+    const QString a = in(QStringLiteral("form_a.pdf"));
+    const QString b = in(QStringLiteral("form_b.pdf"));
+    const QString enc = in(QStringLiteral("form_enc.pdf"));
+    const QString out = in(QStringLiteral("form_out.pdf"));
+    // The same field names in both files, so the merge has to tell them apart.
+    makeFormPdf(a, {100, 200}, "field");
+    makeFormPdf(b, {300, 400}, "field");
+
+    QCOMPARE(PageOps::merge({a, b}, out), PageOps::Status::Ok);
+    QCOMPARE(widthsOf(out), QList<int>({100, 200, 300, 400}));
+    QCOMPARE(formProblem(out, 4), QString());
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{a, {1}, {}}}, out), PageOps::Status::Ok);
+    QCOMPARE(widthsOf(out), QList<int>({200}));
+    QCOMPARE(formProblem(out, 1), QString());
+
+    // A repeated page gets its own widget and field, so the copies fill in separately.
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{a, {0, 0}, {}}}, out), PageOps::Status::Ok);
+    QCOMPARE(widthsOf(out), QList<int>({100, 100}));
+    QCOMPARE(formProblem(out, 2), QString());
+
+    QpdfService svc;
+    QCOMPARE(svc.encrypt(a, enc, QString(), QStringLiteral("secret"), QString(),
+                         QpdfService::Algorithm::AES256, {}, nullptr),
+             QpdfService::Status::Ok);
+    QCOMPARE(PageOps::merge({{enc, {}, QStringLiteral("secret")}, {b, {0}, {}}}, out),
+             PageOps::Status::Ok);
+    QCOMPARE(widthsOf(out), QList<int>({100, 200, 300}));
+    QCOMPARE(formProblem(out, 3), QString());
+
+    QStringList parts;
+    QCOMPARE(PageOps::split(a, dir_.path(), QStringLiteral("form-part"), QString(), &parts),
+             PageOps::Status::Ok);
+    QCOMPARE(parts.size(), 2);
+    for (const QString &part : parts)
+        QCOMPARE(formProblem(part, 1), QString());
+
+    // Extract and Split of an encrypted form keep its encryption and its fields.
+    QpdfService::Info info;
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{enc, {1}, QStringLiteral("secret")}}, out),
+             PageOps::Status::Ok);
+    QCOMPARE(svc.readInfo(out, QString(), info, nullptr), QpdfService::Status::NeedsPassword);
+    QCOMPARE(formProblem(out, 1, QStringLiteral("secret")), QString());
+    parts.clear();
+    QCOMPARE(PageOps::split(enc, dir_.path(), QStringLiteral("form-enc-part"), QStringLiteral("secret"),
+                            &parts),
+             PageOps::Status::Ok);
+    QCOMPARE(parts.size(), 2);
+    for (const QString &part : parts) {
+        QCOMPARE(svc.readInfo(part, QString(), info, nullptr), QpdfService::Status::NeedsPassword);
+        QCOMPARE(formProblem(part, 1, QStringLiteral("secret")), QString());
+    }
+}
+
+/// Fixtures whose page 1 widget shares a field tree with a field or widget of page 2. The
+/// widget count is that of page 1, or 0 for a source without /AcroForm.
+void TstQpdf::copiesLeaveOutFieldsOfOtherPages_data()
+{
+    QTest::addColumn<int>("reference");
+    QTest::addColumn<QString>("kept");
+    QTest::addColumn<int>("widgets");
+    QTest::newRow("child field") << int(Reference::ChildField) << QStringLiteral("kept street") << 1;
+    QTest::newRow("shared field") << int(Reference::SharedField) << QStringLiteral("shared value") << 1;
+    QTest::newRow("reset button") << int(Reference::ResetButton) << QStringLiteral("kept one") << 2;
+    QTest::newRow("no form") << int(Reference::ChildFieldNoForm) << QStringLiteral("kept street") << 0;
+    // The page 1 widget below level 100 leaves the form, so the widget count is not checked.
+    QTest::newRow("field deeper than 100 levels") << int(Reference::DeepField)
+                                                   << QStringLiteral("kept after") << 0;
+    QTest::newRow("field deeper than 100 levels, no form") << int(Reference::DeepFieldNoForm)
+                                                            << QStringLiteral("kept after") << 0;
+    // The widget of the field that address does not list is outside the form.
+    QTest::newRow("field that its parent does not list") << int(Reference::UnlistedField)
+                                                          << QStringLiteral("kept street") << 0;
+    QTest::newRow("field that inherits from a parent of page 2") << int(Reference::InheritingField)
+                                                                  << QStringLiteral("kept hidden") << 0;
+}
+
+/// Checks that Extract, Merge and Split copy no form data of pages they leave out, and keep
+/// a value that a parent field shares with a widget they copy.
+void TstQpdf::copiesLeaveOutFieldsOfOtherPages()
+{
+    QFETCH(int, reference);
+    QFETCH(QString, kept);
+    QFETCH(int, widgets);
+    const QString src = in(QStringLiteral("other_src_%1.pdf").arg(reference));
+    const QString out = in(QStringLiteral("other_out_%1.pdf").arg(reference));
+    makeReferencedPdf(src, Reference(reference));
+    const std::string keptText = kept.toStdString();
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0}, {}}}, out), PageOps::Status::Ok);
+    QVERIFY(!pdfContains(out, kSecret));
+    QVERIFY(pdfContains(out, keptText));
+    if (widgets > 0)
+        QCOMPARE(formProblem(out, widgets), QString());
+    if (Reference(reference) == Reference::ResetButton) {
+        // The copied button resets the copied field, not a copy that no page shows.
+        QPDF q;
+        const QByteArray name = out.toUtf8();
+        q.processFile(name.constData());
+        QPDFObjectHandle fields = q.getRoot().getKey("/AcroForm").getKey("/Fields");
+        QCOMPARE(fields.getArrayNItems(), 2);
+        QCOMPARE(fields.getArrayItem(1).getKey("/A").getKey("/Fields").getArrayItem(0).getObjGen(),
+                 fields.getArrayItem(0).getObjGen());
+    }
+
+    const bool inheriting = Reference(reference) == Reference::InheritingField;
+    if (inheriting)
+        QCOMPARE(inheritedFieldProblem(out), QString());
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {2, 0}, {}}}, out), PageOps::Status::Ok);
+    QVERIFY(!pdfContains(out, kSecret));
+    QVERIFY(pdfContains(out, keptText));
+    if (inheriting)
+        QCOMPARE(inheritedFieldProblem(out), QString());
+
+    QStringList parts;
+    QCOMPARE(PageOps::split(src, dir_.path(), QStringLiteral("other-%1").arg(reference), QString(),
+                            &parts),
+             PageOps::Status::Ok);
+    QCOMPARE(parts.size(), 3);
+    QVERIFY(!pdfContains(parts.at(0), kSecret));
+    QVERIFY(pdfContains(parts.at(0), keptText));
+    if (inheriting)
+        QCOMPARE(inheritedFieldProblem(parts.at(0)), QString());
+    QVERIFY(!pdfContains(parts.at(2), kSecret));
+    QVERIFY(!pdfContains(parts.at(2), keptText));
+}
+
+/// Checks that a field shown on two copied pages stays one field, while a repeated page gets
+/// a field of its own.
+void TstQpdf::copiesKeepAFieldThatCopiedPagesShare()
+{
+    const QString src = in(QStringLiteral("shared_src.pdf"));
+    const QString out = in(QStringLiteral("shared_out.pdf"));
+    makeReferencedPdf(src, Reference::SharedField);
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0, 1}, {}}}, out), PageOps::Status::Ok);
+    QCOMPARE(fieldPages(out), QStringList({QStringLiteral("shared 1 2")}));
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0, 1, 0}, {}}}, out),
+             PageOps::Status::Ok);
+    QCOMPARE(fieldPages(out),
+             QStringList({QStringLiteral("shared 1 2"), QStringLiteral("shared+1 3")}));
+    mervin::RenderEngine engine;
+    QString err;
+    auto doc = engine.openDocument(out, QString(), &err, nullptr);
+    QVERIFY2(doc, qPrintable(err));
+    QVERIFY(doc->hasForm());
+}
+
+/// Sources whose pages list each other's images: through one resources dictionary, directly
+/// or through /Pages, or through dictionaries of their own that list the same images.
+void TstQpdf::copiesLeaveOutResourcesOfOtherPages_data()
+{
+    QTest::addColumn<int>("reference");
+    QTest::newRow("shared resources") << int(Reference::SharedResources);
+    QTest::newRow("inherited resources") << int(Reference::InheritedResources);
+    QTest::newRow("own resources") << int(Reference::OwnResources);
+}
+
+/// Checks that Extract, Merge and Split copy only the images that the copied pages draw.
+void TstQpdf::copiesLeaveOutResourcesOfOtherPages()
+{
+    QFETCH(int, reference);
+    const QString src = in(QStringLiteral("res_src_%1.pdf").arg(reference));
+    const QString out = in(QStringLiteral("res_out_%1.pdf").arg(reference));
+    makeReferencedPdf(src, Reference(reference));
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0}, {}}}, out), PageOps::Status::Ok);
+    QVERIFY(!pdfContains(out, kSecret));
+    QVERIFY(pdfContains(out, "IMAGEONE"));
+    QVERIFY(!pdfContains(out, "IMAGETHREE"));
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {2, 0}, {}}, {src, {0}, {}}}, out),
+             PageOps::Status::Ok);
+    QCOMPARE(PageOps::pageCount(out), 3);
+    QVERIFY(!pdfContains(out, kSecret));
+    QVERIFY(pdfContains(out, "IMAGEONE"));
+    QVERIFY(pdfContains(out, "IMAGETHREE"));
+
+    QStringList parts;
+    QCOMPARE(PageOps::split(src, dir_.path(), QStringLiteral("res-%1").arg(reference), QString(),
+                            &parts),
+             PageOps::Status::Ok);
+    QCOMPARE(parts.size(), 3);
+    QVERIFY(!pdfContains(parts.at(0), kSecret));
+    QVERIFY(!pdfContains(parts.at(0), "IMAGETHREE"));
+    QVERIFY(pdfContains(parts.at(1), kSecret));
+    QVERIFY(!pdfContains(parts.at(2), kSecret));
+    QVERIFY(pdfContains(parts.at(2), "IMAGETHREE"));
+}
+
+/// A reply to a note on page 2, in a file without and with a form.
+void TstQpdf::copiesLeaveOutCommentsOfOtherPages_data()
+{
+    QTest::addColumn<int>("reference");
+    QTest::newRow("reply") << int(Reference::Reply);
+    QTest::newRow("reply in a form") << int(Reference::ReplyInForm);
+}
+
+/// Checks that Extract, Merge and Split leave out the note that a copied reply answers when
+/// they leave out its page, as Delete Pages does, and keep the reply on its page.
+void TstQpdf::copiesLeaveOutCommentsOfOtherPages()
+{
+    QFETCH(int, reference);
+    const QString src = in(QStringLiteral("comments_src_%1.pdf").arg(reference));
+    const QString other = in(QStringLiteral("comments_other_%1.pdf").arg(reference));
+    const QString out = in(QStringLiteral("comments_out_%1.pdf").arg(reference));
+    makeReferencedPdf(src, Reference(reference));
+    makePdf(other, 1);
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0}, {}}}, out), PageOps::Status::Ok);
+    QVERIFY(!pdfContains(out, kSecret));
+    QCOMPARE(replyProblem(out, 0), QString());
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {2, 0}, {}}}, out), PageOps::Status::Ok);
+    QVERIFY(!pdfContains(out, kSecret));
+    QCOMPARE(replyProblem(out, 1), QString());
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{other, {}, {}}, {src, {0}, {}}}, out),
+             PageOps::Status::Ok);
+    QVERIFY(!pdfContains(out, kSecret));
+    QCOMPARE(replyProblem(out, 1), QString());
+
+    // With both pages, the reply still answers the note, the one that page 2 lists, and the
+    // note keeps the popup that page 2 lists.
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0, 1}, {}}}, out), PageOps::Status::Ok);
+    QVERIFY(pdfContains(out, kSecret));
+    QCOMPARE(replyProblem(out, 0), QStringLiteral("the reply still answers a note"));
+    {
+        QPDF q;
+        const QByteArray name = out.toUtf8();
+        q.processFile(name.constData());
+        std::vector<QPDFObjectHandle> pages = q.getAllPages();
+        const auto listed = [&pages](size_t page, const std::string &contents) {
+            for (QPDFObjectHandle annot : pages.at(page).getKey("/Annots").aitems())
+                if (annot.getKey("/Contents").isString()
+                    && annot.getKey("/Contents").getUTF8Value() == contents)
+                    return annot;
+            return QPDFObjectHandle::newNull();
+        };
+        QPDFObjectHandle reply = listed(0, "Reply");
+        QPDFObjectHandle note = listed(1, kSecret + " note");
+        QVERIFY(reply.isDictionary() && note.isDictionary());
+        QCOMPARE(reply.getKey("/IRT").getObjGen(), note.getObjGen());
+        std::set<QPDFObjGen> onPage2;
+        for (QPDFObjectHandle annot : pages.at(1).getKey("/Annots").aitems())
+            onPage2.insert(annot.getObjGen());
+        QVERIFY(onPage2.count(note.getKey("/Popup").getObjGen()));
+    }
+
+    QStringList parts;
+    QCOMPARE(PageOps::split(src, dir_.path(), QStringLiteral("comments-%1").arg(reference), QString(),
+                            &parts),
+             PageOps::Status::Ok);
+    QCOMPARE(parts.size(), 3);
+    QVERIFY(!pdfContains(parts.at(0), kSecret));
+    QCOMPARE(replyProblem(parts.at(0), 0), QString());
+    QVERIFY(pdfContains(parts.at(1), kSecret));
+}
+
+/// Checks that when pointing the copied comments at each other fails, as damaged input can
+/// make it, no copied reply or popup links to a first copy, which no page lists. The reply
+/// then answers nothing.
+void TstQpdf::failedRetargetLeavesNoLinkToUnlistedComments()
+{
+    const QString src = in(QStringLiteral("retarget_src.pdf"));
+    const QString out = in(QStringLiteral("retarget_out.pdf"));
+    makeReferencedPdf(src, Reference::ReplyInForm);
+    PageOps::testing::failNextRetarget();
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0, 1}, {}}}, out), PageOps::Status::Ok);
+
+    QPDF q;
+    const QByteArray name = out.toUtf8();
+    q.processFile(name.constData());
+    std::set<QPDFObjGen> listed;
+    std::vector<QPDFObjectHandle> annots;
+    for (QPDFObjectHandle page : q.getAllPages())
+        for (QPDFObjectHandle annot : page.getKey("/Annots").aitems()) {
+            listed.insert(annot.getObjGen());
+            annots.push_back(annot);
+        }
+    QPDFObjectHandle reply;
+    for (QPDFObjectHandle annot : annots) {
+        const bool popup = annot.getKey("/Subtype").isNameAndEquals("/Popup");
+        for (const char *key : {"/IRT", "/Popup", "/Parent"}) {
+            QPDFObjectHandle target = annot.getKey(key);
+            if ((popup || std::string(key) != "/Parent") && !target.isNull())
+                QVERIFY2(listed.count(target.getObjGen()), key);
+        }
+        if (annot.getKey("/Contents").isString() && annot.getKey("/Contents").getUTF8Value() == "Reply")
+            reply = annot;
+    }
+    QVERIFY(reply.isDictionary());
+    QVERIFY(!reply.hasKey("/IRT")); // with the copy step done, it answers the note on page 2
+    QCOMPARE(fieldPages(out), QStringList({QStringLiteral("name 1")}));
+}
+
+/// Checks that a copied button that names fields by text names the copies after a repeated
+/// page or a merged copy of the same form renames them.
+void TstQpdf::copiesPointButtonsAtRenamedFields()
+{
+    const QString src = in(QStringLiteral("byname_src.pdf"));
+    const QString again = in(QStringLiteral("byname_again.pdf"));
+    const QString out = in(QStringLiteral("byname_out.pdf"));
+    makeReferencedPdf(src, Reference::ResetByName);
+    makeReferencedPdf(again, Reference::ResetByName);
+    const QStringList renamed{QStringLiteral("name name"), QStringLiteral("name+1 name+1")};
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0, 0}, {}}}, out), PageOps::Status::Ok);
+    QCOMPARE(fieldPages(out), QStringList({QStringLiteral("name 1"), QStringLiteral("reset 1"),
+                                           QStringLiteral("name+1 2"), QStringLiteral("reset+1 2")}));
+    QCOMPARE(resetTargets(out), renamed);
+
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0}, {}}, {again, {0}, {}}}, out),
+             PageOps::Status::Ok);
+    QCOMPARE(resetTargets(out), renamed);
+
+    // Without a rename, the names stay.
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0}, {}}}, out), PageOps::Status::Ok);
+    QCOMPARE(resetTargets(out), QStringList({QStringLiteral("name name")}));
+}
+
+/// Actions that act on every field, or every field but some, in a merge of two forms and in
+/// a copy of one.
+void TstQpdf::copiesScopeDocumentWideFormActions_data()
+{
+    const QString own =
+        QStringLiteral("name other submit except none group exceptchild emptylist resetlater");
+    QTest::addColumn<bool>("merged");
+    QTest::addColumn<QString>("field");
+    QTest::addColumn<QStringList>("keys");
+    QTest::addColumn<QString>("scope");
+    QTest::newRow("merge, submit all") << true << "submit" << QStringList{"/A"}
+                                       << "SubmitForm: " + own;
+    QTest::newRow("merge, then reset all") << true << "submit" << QStringList{"/A", "/Next"}
+                                           << "ResetForm: " + own;
+    QTest::newRow("merge, reset all on blur") << true << "name" << QStringList{"/AA", "/Bl"}
+                                              << "ResetForm: " + own;
+    QTest::newRow("merge, all but one") << true << "except" << QStringList{"/A"}
+                                        << QStringLiteral("SubmitForm: other submit except none group "
+                                                          "exceptchild emptylist resetlater");
+    QTest::newRow("merge, all but a child") << true << "exceptchild" << QStringList{"/A"}
+                                            << QStringLiteral("SubmitForm: name other submit except none "
+                                                              "group.b exceptchild emptylist resetlater");
+    QTest::newRow("merge, empty list") << true << "emptylist" << QStringList{"/A"}
+                                       << "ResetForm: " + own;
+    // The page 2 field that it lists is left out, so it would act on none, or on every field.
+    QTest::newRow("merge, list of fields left out") << true << "resetlater" << QStringList{"/A"}
+                                                    << QStringLiteral("no action");
+    // An action left with no field goes, and the actions after it take its place, as
+    // viewers such as PDF.js read an empty /Fields as every field.
+    QTest::newRow("merge, all but all, then more") << true << "none" << QStringList{"/A"}
+                                                   << QStringLiteral("SubmitForm: name");
+    QTest::newRow("merge, all but all within a chain") << true << "except" << QStringList{"/A", "/Next"}
+                                                       << QStringLiteral("SubmitForm: other");
+    QTest::newRow("merge, all but all on focus") << true << "other" << QStringList{"/AA", "/Fo"}
+                                                 << QStringLiteral("no action");
+    QTest::newRow("one file, submit all") << false << "submit" << QStringList{"/A"}
+                                          << QStringLiteral("SubmitForm: all");
+    QTest::newRow("one file, all but one") << false << "except" << QStringList{"/A"}
+                                           << QStringLiteral("SubmitForm: but name");
+    QTest::newRow("one file, all but all") << false << "none" << QStringList{"/A"}
+                                           << "ResetForm: but " + own;
+    QTest::newRow("one file, all but all on focus") << false << "other" << QStringList{"/AA", "/Fo"}
+                                                    << "ResetForm: but " + own;
+    QTest::newRow("one file, empty list") << false << "emptylist" << QStringList{"/A"}
+                                          << QStringLiteral("ResetForm: ");
+    QTest::newRow("one file, list of fields left out") << false << "resetlater" << QStringList{"/A"}
+                                                       << QStringLiteral("no action");
+}
+
+/// Checks that a merge limits a copied submit or reset action that acts on every field, or
+/// every field but some, to the fields of its own file, and that a copy of one file keeps it.
+void TstQpdf::copiesScopeDocumentWideFormActions()
+{
+    QFETCH(bool, merged);
+    QFETCH(QString, field);
+    QFETCH(QStringList, keys);
+    QFETCH(QString, scope);
+    const QString src = in(QStringLiteral("scope_src.pdf"));
+    const QString other = in(QStringLiteral("scope_other.pdf"));
+    const QString out = in(QStringLiteral("scope_out.pdf"));
+    makeReferencedPdf(src, Reference::SubmitButtons);
+    makeFormPdf(other, {300}, "field");
+    QList<PageOps::MergeInput> inputs{{src, {0}, {}}};
+    if (merged)
+        inputs.append({other, {}, {}});
+    QCOMPARE(PageOps::merge(inputs, out), PageOps::Status::Ok);
+    QCOMPARE(actionScope(out, field.toStdString(), keys), scope);
+    if (merged)
+        QVERIFY(fieldPages(out).contains(QStringLiteral("field1 2")));
+}
+
+/// Action chains in a merge of two forms and in a copy of one: a short chain, one longer
+/// than the 100 actions that the cleanup follows, and one that loops.
+void TstQpdf::copiesCutLongAndLoopingActionChains_data()
+{
+    QTest::addColumn<bool>("merged");
+    QTest::addColumn<QString>("field");
+    QTest::addColumn<QString>("chain");
+    QTest::newRow("merge, long chain") << true << "deep" << "100 actions, 0 for every field";
+    QTest::newRow("merge, loop") << true << "loop" << "2 actions, 0 for every field";
+    QTest::newRow("merge, short chain") << true << "short" << "2 actions, 0 for every field";
+    QTest::newRow("one file, long chain") << false << "deep" << "100 actions, 0 for every field";
+    QTest::newRow("one file, loop") << false << "loop" << "2 actions, 1 for every field";
+    QTest::newRow("one file, short chain") << false << "short" << "2 actions, 2 for every field";
+}
+
+/// Checks that a copied action chain ends after 100 actions, or where it comes back to an
+/// action, so that no action past that point stays as it was. A short chain stays whole.
+void TstQpdf::copiesCutLongAndLoopingActionChains()
+{
+    QFETCH(bool, merged);
+    QFETCH(QString, field);
+    QFETCH(QString, chain);
+    const QString src = in(QStringLiteral("chains_src.pdf"));
+    const QString other = in(QStringLiteral("chains_other.pdf"));
+    const QString out = in(QStringLiteral("chains_out.pdf"));
+    makeReferencedPdf(src, Reference::ActionChains);
+    makeFormPdf(other, {300}, "field");
+    QList<PageOps::MergeInput> inputs{{src, {0}, {}}};
+    if (merged)
+        inputs.append({other, {}, {}});
+    QCOMPARE(PageOps::merge(inputs, out), PageOps::Status::Ok);
+    QCOMPARE(chainSummary(out, field.toStdString()), chain);
+    if (field == u"deep") {
+        QVERIFY(pdfContains(src, "deep-tail")); // the scan finds what it looks for
+        QVERIFY(!pdfContains(out, "deep-tail"));
+    }
+}
+
+/// Hide, Movie and Rendition actions whose targets belong to their own file, to the other
+/// file of a merge, to a page that the copy leaves out, or to no file.
+void TstQpdf::copiesKeepActionTargetsOfTheirOwnFile_data()
+{
+    QTest::addColumn<bool>("merged");
+    QTest::addColumn<QString>("field");
+    QTest::addColumn<QStringList>("keys");
+    QTest::addColumn<QString>("targets");
+    const QStringList a{QStringLiteral("/A")};
+    // "elsewhere" is a field of the other file only, so a merge must not hide it.
+    QTest::newRow("merge, hide a field of the other file") << true << "hideelsewhere" << a
+                                                           << QStringLiteral("Hide: name");
+    QTest::newRow("merge, hide one on focus") << true << "name" << QStringList{"/AA", "/Fo"}
+                                              << QStringLiteral("no action");
+    QTest::newRow("merge, hide own and other targets") << true << "hidemixed" << a
+                                                       << QStringLiteral("Hide: name Text on 1");
+    QTest::newRow("merge, hide a field left out") << true << "hidelater" << a << QStringLiteral("no action");
+    QTest::newRow("merge, movie title of the other file") << true << "movieelsewhere" << a
+                                                          << QStringLiteral("no action");
+    // Both files have a movie annotation "clip", so a merge names each one by reference.
+    QTest::newRow("merge, movie title that both files have") << true << "movietitle" << a
+                                                             << QStringLiteral("Movie: Movie clip on 1");
+    QTest::newRow("merge, the other file's movie title") << true << "othermovie" << a
+                                                         << QStringLiteral("Movie: Movie clip on 2");
+    QTest::newRow("merge, own movie") << true << "movieref" << a << QStringLiteral("Movie: Movie clip on 1");
+    QTest::newRow("merge, own screen") << true << "rendition" << a
+                                       << QStringLiteral("Rendition: Screen screen on 1");
+    QTest::newRow("merge, hide own field") << true << "hidename" << a << QStringLiteral("Hide: name");
+    // A single-file output drops only what it left out, and keeps a name that named nothing.
+    QTest::newRow("one file, hide own field") << false << "hidename" << a << QStringLiteral("Hide: name");
+    QTest::newRow("one file, hide a field no file has") << false << "hideelsewhere" << a
+                                                        << QStringLiteral("Hide: elsewhere");
+    QTest::newRow("one file, hide one on focus") << false << "name" << QStringList{"/AA", "/Fo"}
+                                                 << QStringLiteral("Hide: elsewhere");
+    QTest::newRow("one file, hide own and left-out targets") << false << "hidemixed" << a
+                                                             << QStringLiteral("Hide: name elsewhere Text on 1");
+    QTest::newRow("one file, hide a field left out") << false << "hidelater" << a
+                                                     << QStringLiteral("no action");
+    QTest::newRow("one file, own movie title") << false << "movietitle" << a << QStringLiteral("Movie: clip");
+    QTest::newRow("one file, movie title no file has") << false << "movieelsewhere" << a
+                                                       << QStringLiteral("Movie: elsewhere clip");
+    QTest::newRow("one file, movie title of a page left out") << false << "movielatertitle" << a
+                                                              << QStringLiteral("no action");
+    QTest::newRow("one file, movie of a page left out") << false << "movielater" << a
+                                                        << QStringLiteral("no action");
+    QTest::newRow("one file, screen of a page left out") << false << "renditionlater" << a
+                                                         << QStringLiteral("no action");
+}
+
+/// Checks that a copied Hide, Movie or Rendition action keeps only the targets of its own
+/// file, by text or by reference, and that it goes when none remains.
+void TstQpdf::copiesKeepActionTargetsOfTheirOwnFile()
+{
+    QFETCH(bool, merged);
+    QFETCH(QString, field);
+    QFETCH(QStringList, keys);
+    QFETCH(QString, targets);
+    const QString src = in(QStringLiteral("targets_src.pdf"));
+    const QString other = in(QStringLiteral("targets_other.pdf"));
+    const QString out = in(QStringLiteral("targets_out.pdf"));
+    makeReferencedPdf(src, Reference::TargetButtons);
+    makeReferencedPdf(other, Reference::OtherTargets);
+    QList<PageOps::MergeInput> inputs{{src, {0}, {}}};
+    if (merged)
+        inputs.append({other, {0}, {}});
+    QCOMPARE(PageOps::merge(inputs, out), PageOps::Status::Ok);
+    QCOMPARE(actionTargets(out, field.toStdString(), keys), targets);
+    if (merged)
+        QVERIFY(fieldPages(out).contains(QStringLiteral("elsewhere 2")));
+}
+
+/// Checks that a merge limits the document-wide actions of each field above a copied widget,
+/// however far above the widget the field is.
+void TstQpdf::copiesScopeActionsAboveDeepWidgets()
+{
+    const QString src = in(QStringLiteral("deepscope_src.pdf"));
+    const QString other = in(QStringLiteral("deepscope_other.pdf"));
+    const QString out = in(QStringLiteral("deepscope_out.pdf"));
+    makeReferencedPdf(src, Reference::DeepField);
+    makeFormPdf(other, {300}, "field");
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0}, {}}, {other, {}, {}}}, out),
+             PageOps::Status::Ok);
+    QPDF q;
+    const QByteArray name = out.toUtf8();
+    q.processFile(name.constData());
+    // The top of the page 1 widget that sits deepest, 104 levels below "deep".
+    QPDFObjectHandle top;
+    int levels = 0;
+    QPDFObjectHandle page = q.getAllPages().at(0); // qpdf 11 reads through non-const handles
+    for (QPDFObjectHandle annot : page.getKey("/Annots").aitems()) {
+        std::set<QPDFObjGen> seen;
+        int up = 0;
+        QPDFObjectHandle node = annot;
+        while (node.getKey("/Parent").isDictionary() && seen.insert(node.getObjGen()).second) {
+            node = node.getKey("/Parent");
+            ++up;
+        }
+        if (up > levels) {
+            levels = up;
+            top = node;
+        }
+    }
+    QCOMPARE(levels, 104);
+    QCOMPARE(QString::fromStdString(top.getKey("/T").getUTF8Value()), QStringLiteral("deep"));
+    QPDFObjectHandle reset = top.getKey("/AA").getKey("/K");
+    QVERIFY(reset.getKey("/S").isNameAndEquals("/ResetForm"));
+    QVERIFY(reset.getKey("/Fields").isArray());
+    QVERIFY(reset.getKey("/Fields").getArrayNItems() > 0);
+}
+
+/// A string blob and a stream from a newer measurement format.
+void TstQpdf::mergeNamesInputWithBadMeasurements_data()
+{
+    QTest::addColumn<bool>("stream");
+    QTest::addColumn<QString>("blob");
+    QTest::addColumn<QString>("message");
+    QTest::newRow("string") << false << QStringLiteral("measurements")
+                            << QStringLiteral("Invalid measurement metadata.");
+    QTest::newRow("version 2") << true << QStringLiteral("{\"mervinMeasureVersion\":2}")
+                               << QStringLiteral("Unsupported measurement metadata.");
+}
+
+/// Checks that a merge input whose measurements cannot be read is named by its index.
+void TstQpdf::mergeNamesInputWithBadMeasurements()
+{
+    QFETCH(bool, stream);
+    QFETCH(QString, blob);
+    QFETCH(QString, message);
+    const QString good = in(QStringLiteral("mb_good.pdf"));
+    const QString bad = in(QStringLiteral("mb_bad.pdf"));
+    const QString out = in(QStringLiteral("mb_out.pdf"));
+    makePdf(good, 2);
+    makePdf(bad, 2);
+    setMeasurementBlob(bad, blob.toStdString(), stream);
+    QString err;
+    int failed = -1;
+    QCOMPARE(PageOps::merge({{good, {}, {}}, {bad, {}, {}}}, out, &err, &failed),
+             PageOps::Status::Failed);
+    QCOMPARE(failed, 1);
+    QCOMPARE(err, message);
+    QVERIFY(!QFileInfo::exists(out));
+}
+
+/// The blobs of mergeNamesInputWithBadMeasurements.
+void TstQpdf::deleteNamesSourceWithBadMeasurements_data()
+{
+    mergeNamesInputWithBadMeasurements_data();
+}
+
+/// Checks that Delete Pages names its source when it cannot read the measurements, and not
+/// when the output cannot be written.
+void TstQpdf::deleteNamesSourceWithBadMeasurements()
+{
+    QFETCH(bool, stream);
+    QFETCH(QString, blob);
+    QFETCH(QString, message);
+    const QString good = in(QStringLiteral("db_good.pdf"));
+    const QString bad = in(QStringLiteral("db_bad.pdf"));
+    const QString out = in(QStringLiteral("db_out.pdf"));
+    makePdf(good, 2);
+    makePdf(bad, 2);
+    setMeasurementBlob(bad, blob.toStdString(), stream);
+    QString err;
+    int failed = -1;
+    QCOMPARE(PageOps::deletePages(bad, out, {0}, {}, &err, &failed), PageOps::Status::Failed);
+    QCOMPARE(failed, 0);
+    QCOMPARE(err, message);
+    QVERIFY(!QFileInfo::exists(out));
+    failed = 0;
+    QCOMPARE(PageOps::deletePages(good, in(QStringLiteral("missing/db_out.pdf")), {0}, {}, &err,
+                                  &failed),
+             PageOps::Status::Failed);
+    QCOMPARE(failed, -1);
 }
 
 void TstQpdf::mergeConcatenates()

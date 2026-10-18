@@ -646,7 +646,7 @@ void TstMeasureExport::mergeRefusesMeasurementsPastTheCap_data()
 }
 
 /// Merge writes no output whose measurements its readers would refuse, so they are never
-/// lost on the next open.
+/// lost on the next open. The refusal names no input, so the dialog shows its reason.
 void TstMeasureExport::mergeRefusesMeasurementsPastTheCap()
 {
     QFETCH(qsizetype, labelLength);
@@ -662,10 +662,13 @@ void TstMeasureExport::mergeRefusesMeasurementsPastTheCap()
              MeasureExport::Status::Ok);
     QVERIFY(MeasureExport::readMervinBlob(first).has_value());
 
-    const auto status = PageOps::merge({{first, {}, {}}, {second, {}, {}}}, merged, &err);
+    int failed = 0;
+    const auto status =
+        PageOps::merge({{first, {}, {}}, {second, {}, {}}}, merged, &err, &failed);
     if (!accepted) {
         QCOMPARE(status, PageOps::Status::Failed);
         QCOMPARE(err, tooLargeReason());
+        QCOMPARE(failed, -1);
         QVERIFY(!QFileInfo::exists(merged));
         return;
     }

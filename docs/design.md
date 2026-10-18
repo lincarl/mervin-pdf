@@ -920,6 +920,142 @@ that the result will not be encrypted. The window opens an Extract or Delete res
 or a one-file merge (`MergePlan::resultPassword`), with the password that read its
 source.
 
+They copy each page into that output with `QPDFPageDocumentHelper::addPage`, which copies
+a page but not its form fields. `FormCopy` records each copied page, and before writing,
+`FormCopy::finish` gives the pages private annotations and adds their fields to the
+output's `/AcroForm`, renaming a field whose name is taken. It calls
+`QPDFAcroFormDocumentHelper::transformAnnotations`, the function behind the
+`fixCopiedAnnotations` that qpdf's own page selection calls per page, once for all pages
+of a source. Each call copies the whole tree of every field it meets, so per page a
+200-page form with one top-level field took minutes and gigabytes, and a field shown on
+two pages became two fields. A page copied again goes in a later pass and gets fields of
+its own. If a pass throws, as qpdf before 12.4 can on damaged annotations, its pages are
+copied one at a time with `fixCopiedAnnotations`, and a page that still fails stays as
+`addPage` copied it. `FormCopy` then points each annotation's `/P` at its new page,
+because `transformAnnotations` leaves it on the page that `addPage` copied first, which
+is another page when a page is copied again, and `fixCopiedAnnotations` does the same
+before qpdf 12.3. A copied field tree comes along whole, so `finish` then removes the
+fields that have no widget on an output page, keeping a parent that a copied widget
+shares. The source helpers are built with the `QPDFAcroFormDocumentHelper` constructor,
+as `get` needs qpdf 12.3.
+
+`transformAnnotations` first copies each field tree whole with `copyForeignObject` and
+then copies that copy field by field, so the actions of the copied annotations, such as a
+reset button's `/Fields` or a hide action's `/T`, still name the first copy, with every
+page's values. `copyBatch` maps each node of the first copy to the node at the same place
+in the second and rewrites those references in `/A`, `/AA` and `/Next`. A field can also
+be named by its fully qualified name as text, so `copyBatch` records the names of the
+copied fields before `addAndRenameFormFields` and afterwards rewrites the text names that
+the rename changed, such as `name` to `name+1` in the second copy of a page. `finish` then
+climbs `/Parent` from every widget in the output, listed on a page or not, prunes each
+field tree it reaches and replaces the fields that go with null, except those above a
+widget that a page lists. That also covers a source without `/AcroForm`, whose widgets
+reach their field tree only through `/Parent`, and a reference that could not be
+rewritten. The output has no `/CO` or `/XFA`, as `transformAnnotations` copies neither.
+
+`addPage` also copies the annotations that a copied annotation names, so a reply's `/IRT`
+brings along the note it answers, with its contents and popup, from a page left out.
+`copyBatch` points `/IRT`, `/Popup` and a popup's `/Parent` of the copied annotations at
+the copies that the same pass made. `finish` then replaces with null every annotation that
+no output page lists and whose `/P` is not an output page, and every popup whose `/Parent`
+is such an annotation. This is the rule of Delete Pages below, so a copied reply stays and
+answers nothing.
+
+A SubmitForm or ResetForm action without `/Fields`, with an empty `/Fields`, which
+viewers such as PDF.js read as every field, or with the Exclude flag (bit 1 of `/Flags`)
+acts on every field of the document, or every field but the listed ones. When an output
+has pages from more than one file, `FormCopy::scopeFormActions` therefore gives each such
+action, in `/A`, `/AA` and `/Next` of the pages, their annotations and the fields above
+their widgets, an explicit `/Fields` list of the top-level fields copied from its own
+file, without the excluded fields and without the flag. Otherwise a submit button of one
+file would send the fields that came from another. In every output it also drops the
+entries that name a field the copy left out, or, in a merge, a field of another file. An
+action whose listed fields are all gone, or that would list no field, is removed instead
+of getting an empty `/Fields`. The actions in its `/Next` take its place, and a key whose
+only action goes is removed. An Exclude list whose fields are all gone excludes nothing.
+Repeated pages of one file and single-file outputs keep an action that names no fields as
+it was.
+
+Actions can also name their targets by text. A Hide action names fields by fully
+qualified name, or fields and annotations by reference, in `/T`. A Movie action names a
+movie annotation by reference in `/Annotation` or by title in `/T`, and Rendition,
+GoTo3DView and RichMediaExecute name an annotation by reference in `/AN` or `/TA`. In an
+output with pages from more than one file, a name could find a field or annotation of
+another file, so `scopeAction` keeps only the targets of the action's own file, which
+are its copied fields, by object and by name, and the annotations that its copied pages
+list. An action with no target left is removed like an emptied submit. A Movie title
+becomes a reference to the file's own movie annotation of that title, as nothing renames
+movie annotations. A single-file output drops only the targets it left out, and keeps a
+name that named nothing in the source. Before that, `mapAction` points these references
+at the copies that the pages list, as `transformAnnotations` copies each annotation
+twice, and it maps `/T` as field names only for Hide, since a Movie's `/T` is a title.
+JavaScript and ImportData actions cannot be limited this way and stay. ImportData fills
+the fields that an external FDF file names. GoToE, GoToR and Thread name pages by number
+or by reference, and SetOCGState names optional content groups, so they act on no field.
+
+Delete Pages removes pages from the source's own `QPDF` and writes it, so it keeps
+encryption, outlines and structure. `QPDFPageDocumentHelper::removePage` only takes a
+page out of `/Pages`, so `removeDeletedContent` then removes what only the deleted pages
+used. It removes the outline items that only go to a deleted page and have no items left
+below them, relinking their siblings and correcting `/Count`. A direct item, which
+ISO 32000 does not allow but viewers follow, is made indirect first, and an outline
+`/Last`, `/Prev` or `/Parent` that names something outside the chain of `/First` and
+`/Next` is set to the item the chain reached, so a stray bookmark is no longer
+referenced and the writer drops it. It removes the named destinations of deleted pages
+from `/Dests` and the `/Names /Dests` tree, after the outline, which looks some
+bookmarks up through them. It removes the structure elements whose content is only on
+deleted pages, with their `/ParentTree` and `/IDTree` entries, and the deleted pages'
+content items from the elements that stay. It removes the form fields whose widgets are
+all on deleted pages from `/Fields`, `/CO` and their parents' `/Kids`, and drops `/XFA`
+when it removes one. It also prunes the trees that the widgets of kept pages reach
+through `/Parent` when `/AcroForm` does not list them, as in files that Extract wrote
+before it copied forms. Finally it replaces the deleted pages, their annotations that no
+kept page lists and the removed fields with null (`QPDF::replaceObject`), so links and
+other references cannot keep their content in the output. Like the copies, it keeps a
+removed field that is above a widget of a kept page, which a damaged tree can have when
+the field's `/Kids` does not list the widget's branch, because the widget inherits its
+type, flags and name from it. The field's other kids that only deleted pages show still
+go. A reply on a kept page keeps its `/IRT`, which then names null, so it answers
+nothing. An outline or structure tree that qpdf cannot read is left as it was.
+
+The recursive walks in `PageOps.cpp` follow at most `kMaxDepth` (100) levels, as qpdf's
+own form traversal does, and fail closed there. They cut what lies deeper instead of
+keeping it unchecked. An outline item at that depth loses the items below it, and an
+outline chain that comes back to an item it has seen ends before it, with `/Count`
+corrected above. A structure element below that depth goes, with the elements below it.
+A field at that depth loses its `/Kids`, and the fields and widgets below it go, except
+widgets that an output or kept page lists, which keep their annotation and the fields
+above them, while the tree leaves `/Fields`. An action chain under `/A`, `/AA` or
+`/Next` ends after 100 actions, or where it comes back to an action it has seen, in the
+field mapping and the scoping of form actions of every Merge, Extract and Split output.
+Walks that do not recurse, such as the climb from a widget through `/Parent` and the
+gathering of a file's field names, reach each object once and have no depth limit, so
+they see whole trees and a field tree is always pruned from its top. Each field on the
+climb is then pruned on its own too, which costs a lookup for a field that the walk from
+the top reached, and checks a field whose parent's `/Kids` does not list it.
+
+Pages can share one resources dictionary, or inherit it from `/Pages`, and then list the
+images and fonts of every page. Some writers also give each page its own copy of such a
+dictionary. `sharesResources` makes the test of qpdf's own page selection
+(`QPDFJob::shouldRemoveUnreferencedResources`), a shared resources or `/XObject`
+dictionary or resources on a `/Pages` node, and adds one case: an indirect XObject or font
+that the resources of more than one page or form XObject list. That also holds for files
+that share a font or a logo, where it costs one content read per copied or kept page,
+and the walk itself visits each page and resource entry once. Only then does
+`trimResources` call `QPDFPageObjectHelper::removeUnreferencedResources`, which reads
+the page's content and gives the page its own resources without the ones it does not
+use. Delete Pages trims the kept pages after the cleanup, and `ResourceTrim` trims each
+source page before `addPage` first copies it for Extract, Split and Merge. Otherwise a deleted page's image
+would stay in the copy, and a copied page would bring the images of pages left out. The
+test runs before `removePage` or `addPage`, which move inherited resources onto the pages.
+
+In `PageOps::merge`, an exception while an input is read, such as unreadable
+measurement data, sets `failedIndex` to that input. `PageOps::deletePages` sets its
+`failedIndex` to 0 in the same cases, as it reads the measurement data before it removes
+anything. Extract and Delete map index 0 to their unreadable-source failure. Errors after
+the inputs are read keep -1. The dialogs report them as a failed write, except that Merge
+shows `PageOps::measurementsTooLargeError()` as its reason.
+
 Rotate Pages, Split, accepted Merge plans and Security run as their tab's operation
 (`TabPage::startOperation`), so only that tab waits for the file. Page tool prompts
 and file dialogs run first, as before.
@@ -1174,8 +1310,9 @@ the Output column and there are no moves. Nor is there a Remove button beside th
 rows, since each row's ✕ removes it. `ExtractPlan::cells()` returns every
 source page, unfolded, flagged `deleted`, and `deletePage()`/`keepPage()` turn a
 click on the strip into row edits, widening, joining or splitting ranges. The worker writes through
-`PageOps::deletePages`, which copies the whole document minus those pages, so the
-copy keeps the source's structure and encryption, and refuses to delete every page.
+`PageOps::deletePages`, which writes the source without those pages and without what
+only they used, so the copy keeps the source's structure and encryption, and refuses
+to delete every page.
 
 ## Save and print pipeline
 
