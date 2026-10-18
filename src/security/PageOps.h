@@ -110,6 +110,14 @@ public:
                         QString *error = nullptr,
                         const std::function<bool(const QStringList &)> &mayWrite = {},
                         const std::function<bool(const QString &)> &mayCommit = {});
+
+    // For tests only.
+    struct testing
+    {
+        // Makes the next form copy fail while it points the copied annotations and actions
+        // at their own copies, as damaged input can.
+        static void failNextRetarget();
+    };
 };
 
 } // namespace mervin

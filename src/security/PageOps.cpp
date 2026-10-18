@@ -18,6 +18,7 @@
 
 #include <QDir>
 
+#include <atomic>
 #include <exception>
 #include <map>
 #include <memory>
@@ -30,6 +31,8 @@ namespace mervin {
 namespace {
 
 using ObjectSet = std::set<QPDFObjGen>;
+
+std::atomic<bool> failRetarget{false}; // see PageOps::testing::failNextRetarget
 
 // How deep the recursive walks below follow form fields, outline items, structure elements
 // and action chains. qpdf's own form traversal stops at the same depth. A walk that removes
@@ -1562,6 +1565,8 @@ private:
     void retarget(QPDFObjectHandle annots, const std::vector<QPDFObjectHandle> &made,
                   std::map<std::string, std::string> names)
     {
+        if (failRetarget.exchange(false))
+            throw std::runtime_error("retarget failed for a test");
         Targets targets;
         targets.names = std::move(names);
         Copies &copies = targets.copies;
@@ -1596,6 +1601,26 @@ private:
             holders.emplace(copy.getObjGen(), copy);
         for (auto &[id, holder] : holders)
             mapActions(holder, targets);
+    }
+
+    // Removes /IRT, /Popup and a popup's /Parent from the annotations of `made` where they
+    // still name the first copy of an annotation in `annots`, after retarget failed. Such a
+    // reply then answers nothing, like one whose note is left out.
+    void dropFirstCopyLinks(QPDFObjectHandle annots, const std::vector<QPDFObjectHandle> &made)
+    {
+        ObjectSet firsts;
+        for (QPDFObjectHandle annot : annots.aitems())
+            if (annot.isIndirect())
+                firsts.insert(out_.copyForeignObject(annot).getObjGen());
+        for (QPDFObjectHandle annot : made) {
+            const bool popup = annot.getKey("/Subtype").isNameAndEquals("/Popup");
+            for (const char *key : {"/IRT", "/Popup", "/Parent"}) {
+                QPDFObjectHandle target = annot.getKey(key);
+                if ((popup || std::string(key) != "/Parent") && target.isIndirect()
+                    && firsts.count(target.getObjGen()))
+                    annot.removeKey(key);
+            }
+        }
     }
 
     /// A page that addPage copied into the output.
@@ -1680,8 +1705,10 @@ private:
             try {
                 retarget(annots, made, renamed(names));
             } catch (const std::exception &) {
-                // A reference that is not pointed at the copy keeps naming the first copy,
-                // which finish() empties.
+                // An action that still names a first copy's field acts on nothing once
+                // finish() empties it. The first copies of annotations stay, as their /P is
+                // an output page, so the links to them go.
+                dropFirstCopyLinks(annots, made);
             }
             return true;
         } catch (const std::exception &) {
@@ -1750,6 +1777,11 @@ int PageOps::pageCount(const QString &path, const QString &password)
 QString PageOps::measurementsTooLargeError()
 {
     return measurementPages::tooLargeError();
+}
+
+void PageOps::testing::failNextRetarget()
+{
+    failRetarget = true;
 }
 
 PageOps::Status PageOps::probe(const QString &path, int *count, const QString &password,

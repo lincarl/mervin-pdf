@@ -1342,6 +1342,7 @@ private slots:
     void copiesLeaveOutResourcesOfOtherPages();
     void copiesLeaveOutCommentsOfOtherPages_data();
     void copiesLeaveOutCommentsOfOtherPages();
+    void failedRetargetLeavesNoLinkToUnlistedComments();
     void copiesPointButtonsAtRenamedFields();
     void copiesScopeDocumentWideFormActions_data();
     void copiesScopeDocumentWideFormActions();
@@ -2563,6 +2564,43 @@ void TstQpdf::copiesLeaveOutCommentsOfOtherPages()
     QVERIFY(!pdfContains(parts.at(0), kSecret));
     QCOMPARE(replyProblem(parts.at(0), 0), QString());
     QVERIFY(pdfContains(parts.at(1), kSecret));
+}
+
+/// Checks that when pointing the copied comments at each other fails, as damaged input can
+/// make it, no copied reply or popup links to a first copy, which no page lists. The reply
+/// then answers nothing.
+void TstQpdf::failedRetargetLeavesNoLinkToUnlistedComments()
+{
+    const QString src = in(QStringLiteral("retarget_src.pdf"));
+    const QString out = in(QStringLiteral("retarget_out.pdf"));
+    makeReferencedPdf(src, Reference::ReplyInForm);
+    PageOps::testing::failNextRetarget();
+    QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0, 1}, {}}}, out), PageOps::Status::Ok);
+
+    QPDF q;
+    const QByteArray name = out.toUtf8();
+    q.processFile(name.constData());
+    std::set<QPDFObjGen> listed;
+    std::vector<QPDFObjectHandle> annots;
+    for (QPDFObjectHandle page : q.getAllPages())
+        for (QPDFObjectHandle annot : page.getKey("/Annots").aitems()) {
+            listed.insert(annot.getObjGen());
+            annots.push_back(annot);
+        }
+    QPDFObjectHandle reply;
+    for (QPDFObjectHandle annot : annots) {
+        const bool popup = annot.getKey("/Subtype").isNameAndEquals("/Popup");
+        for (const char *key : {"/IRT", "/Popup", "/Parent"}) {
+            QPDFObjectHandle target = annot.getKey(key);
+            if ((popup || std::string(key) != "/Parent") && !target.isNull())
+                QVERIFY2(listed.count(target.getObjGen()), key);
+        }
+        if (annot.getKey("/Contents").isString() && annot.getKey("/Contents").getUTF8Value() == "Reply")
+            reply = annot;
+    }
+    QVERIFY(reply.isDictionary());
+    QVERIFY(!reply.hasKey("/IRT")); // with the copy step done, it answers the note on page 2
+    QCOMPARE(fieldPages(out), QStringList({QStringLiteral("name 1")}));
 }
 
 /// Checks that a copied button that names fields by text names the copies after a repeated
