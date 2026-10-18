@@ -1848,11 +1848,22 @@ apply the patches with `git apply` to the source release they download and verif
 and record the patch set's SHA-256 in `mervin-patch-set.sha256` beside the
 libraries. `cmake/FindMuPDF.cmake` refuses libraries built without the current set,
 and the CI cache keys use the same identity, so no build links an unpatched or
-outdated MuPDF.
+outdated MuPDF. `tst_mupdf_store` fails when a patch is missing.
 
 Check every patch again when MuPDF is updated. Drop a patch that the new release
 makes unnecessary, rework one that no longer applies, and keep a test for each
-remaining patch.
+remaining patch. MuPDF's master branch of 15 October 2026 still has this defect.
+
+- `0001-fitz-read-found-store-values-under-the-lock.patch` changes
+  `source/fitz/store.c`. `fz_find_item` and the duplicate branch of
+  `fz_store_item` read the found entry's value after they release the store lock.
+  `fz_filter_store`, `fz_remove_item` and `fz_empty_store` free an entry whatever
+  its reference count, and MuPDF calls `fz_filter_store` itself when a PDF closes.
+  Render workers rasterise display lists after they release the document's lifetime
+  gate, and the draw device looks up and stores the document's pattern tiles there,
+  while `~Document` can close the document on another thread. Without the patch, a
+  worker can read a freed entry and crash or corrupt the heap. The patch reads the
+  value while the lock is held.
 
 The Windows script also adds `#define FZ_HIDE_INTERNAL_JPEG` to MuPDF's
 `scripts/libjpeg/jconfig.h`, which renames MuPDF's bundled JPEG symbols (see
