@@ -111,7 +111,7 @@ private:
                     kids.eraseItem(i);
             }
         } else if (kids.isArray()) {
-            // Deeper than the walk goes: what is below goes unread, and the field counts as
+            // Deeper than the walk goes. What is below goes unread, and the field counts as
             // holding a dropped widget, so it stays only when it is a kept widget itself.
             dropBelow(kids);
             field.removeKey("/Kids");
@@ -241,9 +241,9 @@ bool findDeadOutlines(QPDFObjectHandle parent, QPDFOutlineDocumentHelper &names,
     return stays;
 }
 
-/// Sets /Count of `parent` from `items`, the items now below it: every open item for the
-/// outline root at `depth` 0, and for an item its open descendants, negative while it is
-/// closed. An item without /Count stays without it.
+/// Sets /Count of `parent` from `items`, the items now below it. For the outline root at
+/// `depth` 0 the count is every open item, and for an item it is its open descendants,
+/// negative while the item is closed. An item without /Count stays without it.
 void recountOutline(QPDFObjectHandle parent, const std::vector<QPDFObjectHandle> &items, int depth)
 {
     long long visible = 0; // the items shown below `parent` while it is open
@@ -1138,8 +1138,8 @@ private:
     }
 
     // One action for a place that takes one, such as /A, that runs `actions` when it is an
-    // array of them: the first, with the others after its own /Next, which keeps the order
-    // in which a viewer runs them. Returns null for an empty array.
+    // array of them. It is the first action, with the others after its own /Next, which
+    // keeps the order in which a viewer runs them. Returns null for an empty array.
     static QPDFObjectHandle asOneAction(QPDFObjectHandle actions)
     {
         if (!actions.isArray())
@@ -1430,8 +1430,8 @@ private:
             for (int i = 0; i < listed; ++i)
                 if (own.has(fields.getArrayItem(i)))
                     kept.push_back(fields.getArrayItem(i));
-            // Every field of the document: no list, an empty one, or an Exclude list whose
-            // fields the copy all left out.
+            // The action covers every field of the document when it has no list, an empty
+            // one, or an Exclude list whose fields the copy all left out.
             const bool every = listed == 0 || (exclude && kept.empty());
             if (listed > 0 && kept.empty() && !exclude)
                 return scopedNext; // its fields are all left out, so it acts on none
@@ -1444,7 +1444,8 @@ private:
                 if (exclude)
                     change("/Flags", QPDFObjectHandle::newInteger(bits & ~1LL));
             } else if (listed > 0 && every) {
-                // One file, and the excluded fields are all left out: every field, as before.
+                // One file whose excluded fields are all left out. Without a list the copy
+                // acts on every field it has, which are the ones the source acted on.
                 change("/Fields", QPDFObjectHandle::newNull());
                 change("/Flags", QPDFObjectHandle::newInteger(bits & ~1LL));
             } else if (static_cast<int>(kept.size()) < listed) {

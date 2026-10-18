@@ -1053,7 +1053,8 @@ In `PageOps::merge`, an exception while an input is read, such as unreadable
 measurement data, sets `failedIndex` to that input. `PageOps::deletePages` sets its
 `failedIndex` to 0 in the same cases, as it reads the measurement data before it removes
 anything. Extract and Delete map index 0 to their unreadable-source failure. Errors after
-the inputs are read keep -1, which the dialogs report as a failed write.
+the inputs are read keep -1. The dialogs report them as a failed write, except that Merge
+shows `PageOps::measurementsTooLargeError()` as its reason.
 
 Rotate Pages, Split, accepted Merge plans and Security run as their tab's operation
 (`TabPage::startOperation`), so only that tab waits for the file. Page tool prompts
