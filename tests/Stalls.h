@@ -34,11 +34,12 @@ class Stall
 public:
     explicit Stall(Mutex &held, int ms = 3000)
         : thread_([this, &held, ms] {
-            std::lock_guard<Mutex> holding(held);
+            std::lock_guard<Mutex> taken(held);
             std::unique_lock<std::mutex> lock(mutex_);
             locked_ = true;
             changed_.notify_all();
             changed_.wait_for(lock, std::chrono::milliseconds(ms), [this] { return released_; });
+            released_ = true; // before `held` is unlocked, for holding()
         })
     {
         std::unique_lock<std::mutex> lock(mutex_);
@@ -59,8 +60,18 @@ public:
         changed_.notify_all();
     }
 
+    // Whether the stall still holds the lock it took in the constructor: neither
+    // released nor timed out. Nobody else gets the lock meanwhile, so a step that
+    // returns while this is true did not wait for it, and a test can check that without
+    // a clock.
+    bool holding() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return !released_;
+    }
+
 private:
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::condition_variable changed_;
     bool locked_ = false;
     bool released_ = false;
@@ -110,6 +121,7 @@ public:
         : thread_([this, path = QFile::encodeName(path), ms] {
             std::unique_lock<std::mutex> lock(mutex_);
             changed_.wait_for(lock, std::chrono::milliseconds(ms), [this] { return released_; });
+            released_ = true; // after a timeout too, for holding()
             while (!stopped_) {
                 lock.unlock();
                 const int fd = ::open(path.constData(), O_WRONLY | O_NONBLOCK);
@@ -157,8 +169,17 @@ public:
         changed_.notify_all();
     }
 
+    // Whether opens of the pipe still wait: neither released nor timed out. No open
+    // gets through meanwhile, so a step that returns while this is true did not wait
+    // for one, and a test can check that without a clock.
+    bool holding() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return !released_;
+    }
+
 private:
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::condition_variable changed_;
     bool released_ = false;
     bool letGo_ = false; // release() was called
