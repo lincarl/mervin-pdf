@@ -421,7 +421,7 @@ void TstMupdfStore::foundValueSurvivesEviction()
 // its document does, and the storing thread then links freed memory. The test stops
 // the storing thread while it frees the evicted value, looks for the new entry and
 // filters it out. It does not filter an entry it found, because unpatched MuPDF would
-// then corrupt the heap instead of failing the test.
+// then crash in fz_store_item instead of failing the test.
 void TstMupdfStore::newEntryStaysHiddenWhileStoreEvicts()
 {
     // Both outlive the contexts that use them.
