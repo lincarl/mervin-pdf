@@ -29,6 +29,8 @@
 
 #include <mupdf/fitz.h>
 
+#include <optional>
+
 using namespace mervin;
 
 namespace {
@@ -61,16 +63,20 @@ QStringList recoveryEntries()
 }
 
 /// Whether MuPDF's shared resource store lists an entry whose key contains `key`, as
-/// MuPDF's store dump describes it, for example "(image " for a decoded image. MuPDF
-/// formats each key after it releases the store lock, so call this only while no other
-/// thread trims or filters the store. Reaps wait until the dump has finished.
-bool storeLists(fz_context *base, const char *key)
+/// MuPDF's store dump describes it, for example "(image " for a decoded image, or no
+/// value when MuPDF could not write the dump. MuPDF formats each key after it releases
+/// the store lock, so call this only while no other thread trims or filters the store.
+/// Reaps wait until the dump has finished.
+std::optional<bool> storeLists(fz_context *base, const char *key)
 {
     fz_buffer *buffer = nullptr;
     fz_output *out = nullptr;
     bool found = false;
+    bool dumped = false;
     fz_var(buffer);
     fz_var(out);
+    fz_var(found);
+    fz_var(dumped);
     fz_defer_reap_start(base);
     fz_try(base) {
         // MuPDF writes the dump while holding its allocation lock, so the buffer must
@@ -84,6 +90,7 @@ bool storeLists(fz_context *base, const char *key)
         found = QByteArray::fromRawData(reinterpret_cast<const char *>(data),
                                         static_cast<qsizetype>(size))
                     .contains(key);
+        dumped = true;
     }
     fz_always(base) {
         fz_drop_output(base, out);
@@ -91,9 +98,9 @@ bool storeLists(fz_context *base, const char *key)
         fz_defer_reap_end(base);
     }
     fz_catch(base) {
-        found = false;
+        dumped = false;
     }
-    return found;
+    return dumped ? std::optional<bool>(found) : std::nullopt;
 }
 
 /// A value the test puts in MuPDF's shared store, keyed by its own address. Give it
@@ -732,7 +739,9 @@ private slots:
         // display list outlives the close, which would hide a missing trim, and the
         // worker drops its list before it delivers the result.
         QTRY_VERIFY(!rendered.isEmpty());
-        QVERIFY(storeLists(base, "(image "));
+        const std::optional<bool> decoded = storeLists(base, "(image ");
+        QVERIFY2(decoded.has_value(), "MuPDF could not dump its store");
+        QVERIFY(*decoded);
 
         window->hide();
         QVERIFY(testing::suspendAndWait(*tab));
@@ -741,7 +750,9 @@ private slots:
         // The fixture's one render was delivered before the unload, so no worker holds a
         // display list, and one check after the close frees the images.
         manager.checkDocumentActivity();
-        QVERIFY(!storeLists(base, "(image "));
+        const std::optional<bool> unloaded = storeLists(base, "(image ");
+        QVERIFY2(unloaded.has_value(), "MuPDF could not dump its store");
+        QVERIFY(!*unloaded);
     }
 };
 
