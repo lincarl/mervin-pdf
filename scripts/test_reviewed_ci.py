@@ -21,6 +21,7 @@ RUN_ID = "123"
 URL = f"https://github.com/{REPOSITORY}/actions/runs/{RUN_ID}"
 BOT = {"id": gate.BOT_ID, "login": gate.BOT_LOGIN, "type": "Bot"}
 SUMMARY_MARKER = "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->"
+VERSION_MARKER = "<!-- coderabbit-ai-generated:v1 -->"
 ENV = {
     "GITHUB_REF": "refs/heads/main",
     "GITHUB_EVENT_NAME": "workflow_dispatch",
@@ -203,6 +204,27 @@ class ReviewEvidenceTests(unittest.TestCase):
         reply["body"] = reply["body"].replace(SUMMARY_MARKER, "<!-- This is an auto-generated reply by CodeRabbit -->")
         with self.assertRaisesRegex(gate.GateError, "missing"):
             gate.validate_coderabbit([review_status()], [reply], SHA)
+
+    def test_summary_after_version_marker_is_review_completion(self):
+        versioned = summary()
+        versioned["body"] = VERSION_MARKER + "\n\n" + versioned["body"]
+        gate.validate_coderabbit([review_status()], [versioned], SHA)
+
+    def test_version_marker_does_not_turn_other_comments_into_summary(self):
+        reply_marker = "<!-- This is an auto-generated reply by CodeRabbit -->"
+        reply = summary()
+        reply["body"] = VERSION_MARKER + "\n\n" + reply["body"].replace(SUMMARY_MARKER, reply_marker)
+        quote = summary(id=21)
+        quote["body"] = VERSION_MARKER + "\nAs the summary said:\n" + quote["body"]
+        # Only one version marker may come before the summary marker, and nothing else.
+        prefixes = (VERSION_MARKER + VERSION_MARKER, reply_marker, reply_marker + VERSION_MARKER)
+        prefixed = [summary(id=22 + i) for i in range(len(prefixes))]
+        for comment, prefix in zip(prefixed, prefixes):
+            comment["body"] = prefix + "\n" + comment["body"]
+        for comment in (reply, quote, *prefixed):
+            with self.subTest(body=comment["body"][:80]), \
+                    self.assertRaisesRegex(gate.GateError, "missing"):
+                gate.validate_coderabbit([review_status()], [comment], SHA)
 
 
 class InspectionTests(GateFixture):

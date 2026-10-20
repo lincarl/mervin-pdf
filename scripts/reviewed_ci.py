@@ -19,6 +19,10 @@ CONTEXT = "reviewed-ci"
 WORKFLOW = "reviewed-ci.yml"
 BOT_ID = 136622811
 BOT_LOGIN = "coderabbitai[bot]"
+SUMMARY_MARKER = "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->"
+# Since 2026-10-20, CodeRabbit starts its comments with a version marker such as
+# <!-- coderabbit-ai-generated:v1 --> before the marker that names the comment kind.
+VERSION_MARKER = re.compile(r"\s*<!--\s*coderabbit-ai-generated:v[0-9]+\s*-->")
 RUN_TITLE = re.compile(r"reviewed-ci PR #([1-9][0-9]*) @ ([0-9a-f]{40})")
 ACTIVE_STATES = {"queued", "in_progress", "waiting", "pending", "requested"}
 REQUIRED_JOBS = {
@@ -80,6 +84,16 @@ def is_bot(user):
             and user.get("type") == "Bot")
 
 
+def is_summary(body):
+    """Whether a CodeRabbit comment body is the PR summary that the bot edits in place.
+
+    The summary marker must open the comment, after at most one version marker, so a
+    reply that quotes it does not count.
+    """
+    version = VERSION_MARKER.match(body)
+    return body[version.end() if version else 0:].lstrip().startswith(SUMMARY_MARKER)
+
+
 def latest_status(api, sha, context):
     statuses = api.pages(f"{api.root}/commits/{sha}/statuses")
     return next((item for item in statuses if item["context"] == context), None)
@@ -97,10 +111,8 @@ def validate_coderabbit(statuses, comments, sha):
     # The bot edits this summary in place. Select it before checking coverage so
     # a newer paused or incomplete summary cannot fall back to an older success.
     # One-off replies can retain expired throttling notices after review resumes.
-    summary_marker = "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->"
     summaries = [item for item in comments if is_bot(item.get("user"))
-                 and isinstance(item.get("body"), str)
-                 and item["body"].lstrip().startswith(summary_marker)]
+                 and isinstance(item.get("body"), str) and is_summary(item["body"])]
     if not summaries:
         raise GateError("CodeRabbit review coverage is missing from this PR")
     summary = max(summaries, key=lambda item: (item["updated_at"], item["id"]))
