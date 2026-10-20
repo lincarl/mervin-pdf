@@ -208,11 +208,12 @@ struct PlacementChoices
 class PlacementInteraction
 {
 public:
-    PlacementInteraction(MainWindow &window, QString output, PlacementChoices choices)
+    PlacementInteraction(MainWindow &window, QString output, PlacementChoices choices,
+                         std::function<void(PrintPreviewWidget &)> preview = {})
     {
         elapsed_.start();
         QObject::connect(&timer_, &QTimer::timeout, &window,
-                [this, output = std::move(output), choices] {
+                [this, output = std::move(output), choices, preview = std::move(preview)] {
             QWidget *modal = QApplication::activeModalWidget();
             if (errors.isEmpty() && elapsed_.elapsed() > 20000) {
                 const QString stage = !configured ? QStringLiteral("waiting for the print dialog")
@@ -234,6 +235,7 @@ public:
             }
             if (auto *dialog = qobject_cast<PrintDialog *>(modal)) {
                 auto *print = dialog->findChild<QPushButton *>("printConfirm");
+                auto *rendered = dialog->findChild<PrintPreviewWidget *>();
                 if (!configured) {
                     configured = true;
                     auto *toFile = dialog->findChild<QCheckBox *>("printToFile");
@@ -244,11 +246,15 @@ public:
                     auto *colourCombo = dialog->findChild<QComboBox *>("printColour");
                     auto *quality = dialog->findChild<QComboBox *>("printQuality");
                     if (!toFile || !paper || !align || !scale || !percentage || !colourCombo
-                        || !quality || !print) {
+                        || !quality || !print || (preview && !rendered)) {
                         errors.append(QStringLiteral("Print controls were missing"));
                         dialog->reject();
                         return;
                     }
+                    // Discard a render from the initial settings before changing them.
+                    // Print becomes enabled before the replacement raster arrives.
+                    if (preview)
+                        rendered->clear({});
                     toFile->setChecked(true);
                     for (int index = 0; index < paper->count(); ++index) {
                         if (paper->itemData(index).value<QPageSize>().id() == QPageSize::A4) {
@@ -262,11 +268,20 @@ public:
                     colourCombo->setCurrentIndex(choices.colour);
                     // Most checks probe placement, which raster quality does not affect,
                     // at 72 dpi, where one raster pixel is one printed point.
-                    quality->setItemData(quality->currentIndex(), choices.qualityDpi);
+                    // A new index schedules a refresh even when every other choice
+                    // already matches the initial settings.
+                    quality->addItem(QStringLiteral("Test (%1 dpi)").arg(choices.qualityDpi),
+                                     choices.qualityDpi);
+                    quality->setCurrentIndex(quality->count() - 1);
                 }
                 // Validation is debounced. Wait for its result instead of assuming
                 // it finished after a fixed delay on a busy machine.
                 if (!printQueued_ && print->isEnabled()) {
+                    if (preview) {
+                        if (!rendered->isReady())
+                            return;
+                        preview(*rendered);
+                    }
                     printQueued_ = true;
                     QTimer::singleShot(0, print, &QPushButton::click);
                 }
@@ -418,6 +433,8 @@ private slots:
     void cleanup();
     void applicationPrintPlacement_data();
     void applicationPrintPlacement();
+    void previewMatchesPrintedSheet_data();
+    void previewMatchesPrintedSheet();
     void printedRasterGeometry_data();
     void printedRasterGeometry();
     void unrenderablePageReportsFailure();
@@ -635,6 +652,100 @@ void TstPrintOutput::applicationPrintPlacement()
             hairline |= line;
         }
         QVERIFY(hairline);
+    }
+}
+
+void TstPrintOutput::previewMatchesPrintedSheet_data()
+{
+    QTest::addColumn<int>("scaleMode");
+    QTest::newRow("fit to page") << 0;
+    QTest::newRow("actual size") << 1;
+}
+
+// Compares the visible preview with the PDF produced by accepting those same settings.
+void TstPrintOutput::previewMatchesPrintedSheet()
+{
+    QFETCH(int, scaleMode);
+    const QString output = files_.filePath(
+        QStringLiteral("preview-%1.pdf").arg(scaleMode));
+    RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    QVERIFY(mervin::testing::openAndWait(window, sourcePath_));
+    auto *tab = window.findChild<TabPage *>();
+    QVERIFY(tab);
+
+    QImage previewImage;
+    PlacementInteraction dialogs(window, output, {0, scaleMode, 100, 0, 72},
+                                 [&](PrintPreviewWidget &preview) {
+        previewImage = preview.grab().toImage();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
+    QTRY_VERIFY_WITH_TIMEOUT(!tab->isBusy(), 10000);
+    dialogs.stop();
+    QVERIFY2(dialogs.errors.isEmpty(), qPrintable(dialogs.errors.join('\n')));
+    QVERIFY(dialogs.saved);
+    QVERIFY(!previewImage.isNull());
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(output), 10000);
+    auto printed = engine.openDocument(output);
+    QVERIFY(printed);
+    const QImage printedImage = engine.renderPageImage(printed.get(), 0, 1.0, 0);
+    QVERIFY(!printedImage.isNull());
+
+    // Find the white sheet and dashed printable boundary independently of the
+    // preview's layout calculations. Neither colour occurs in the red fixture.
+    QRect sheet;
+    QRect margins;
+    for (int y = 0; y < previewImage.height(); ++y) {
+        for (int x = 0; x < previewImage.width(); ++x) {
+            const QColor pixel = previewImage.pixelColor(x, y);
+            if (pixel == QColor(Qt::white))
+                sheet |= QRect(x, y, 1, 1);
+            if (pixel == QColor(160, 164, 170))
+                margins |= QRect(x, y, 1, 1);
+        }
+    }
+    QVERIFY(!sheet.isEmpty());
+    QVERIFY(!margins.isEmpty());
+    const QRect previewContent = redPageBounds(previewImage);
+    const QRect printedContent = redPageBounds(printedImage);
+    QVERIFY(!previewContent.isEmpty());
+    QVERIFY(!printedContent.isEmpty());
+
+    const QSizeF paper = printed->pageSize(0);
+    const double scale = sheet.width() / paper.width();
+    QVERIFY(std::abs(sheet.height() - paper.height() * scale) <= 2);
+    const QTransform onPreview(scale, 0, 0, scale, sheet.left(), sheet.top());
+    const QRectF expectedContent = onPreview.mapRect(QRectF(printedContent));
+    const QRectF expectedMargins = onPreview.mapRect(applicationPrintable());
+    // Allow raster rounding on the screenshot and on the 72 dpi printed page.
+    const double tolerance = 2 + 2 * scale;
+    const auto matches = [tolerance](const QRectF &actual, const QRectF &expected) {
+        return std::abs(actual.left() - expected.left()) <= tolerance
+            && std::abs(actual.top() - expected.top()) <= tolerance
+            && std::abs(actual.right() - expected.right()) <= tolerance
+            && std::abs(actual.bottom() - expected.bottom()) <= tolerance;
+    };
+    QVERIFY2(matches(QRectF(previewContent), expectedContent),
+             qPrintable(QStringLiteral("Preview content %1,%2 %3x%4, printed equivalent "
+                                       "%5,%6 %7x%8")
+                            .arg(previewContent.x()).arg(previewContent.y())
+                            .arg(previewContent.width()).arg(previewContent.height())
+                            .arg(expectedContent.x()).arg(expectedContent.y())
+                            .arg(expectedContent.width()).arg(expectedContent.height())));
+    QVERIFY(matches(QRectF(margins), expectedMargins));
+    if (QPrinterInfo::availablePrinters().isEmpty()) {
+        // Qt's PDF printer has nonzero margins. The sheet extends beyond them,
+        // while Fit to page fills their height for this tall source page.
+        QVERIFY(margins.left() > sheet.left());
+        QVERIFY(margins.top() > sheet.top());
+        QVERIFY(margins.right() < sheet.right());
+        QVERIFY(margins.bottom() < sheet.bottom());
+    }
+    if (scaleMode == 0) {
+        QVERIFY(std::abs(previewContent.height() - margins.height()) <= tolerance);
+    } else {
+        QVERIFY(std::abs(printedContent.width() - 100) <= 2);
+        QVERIFY(std::abs(printedContent.height() - 160) <= 2);
     }
 }
 

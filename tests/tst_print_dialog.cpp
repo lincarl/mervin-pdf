@@ -120,6 +120,9 @@ class TstPrintDialog : public QObject
 private slots:
     void initTestCase();
     void defaultsAndLiveSettings();
+    void printerChangesSelectDefaultPaper();
+    void systemHandoffKeepsSelectedPrinterDefault_data();
+    void systemHandoffKeepsSelectedPrinterDefault();
     void customOrderValidationAndStaleResults();
     void sheetAlwaysFitsAfterResizeAndOrientation();
     void blackAndWhitePreviewConvertsOnce();
@@ -216,6 +219,105 @@ void TstPrintDialog::defaultsAndLiveSettings()
     QTRY_VERIFY2(
         redPlacedAt(preview, expectedRed(paper, layout, printable.topLeft(), 0.5), &found),
         qPrintable(found));
+}
+
+void TstPrintDialog::printerChangesSelectDefaultPaper()
+{
+    RenderEngine engine;
+    auto document = engine.openDocument(sourcePath_);
+    QVERIFY(document);
+    QPrinter printer;
+    configurePrinter(printer);
+    const QPageSize custom(QSizeF(180, 260), QPageSize::Millimeter,
+                           QStringLiteral("Custom stock"), QPageSize::ExactMatch);
+    QVERIFY(printer.setPageSize(custom));
+    PrintDialog dialog(&printer, &engine, document.get(), 0, QPageLayout::Portrait, 1, "coloured");
+    auto *printers = dialog.findChild<QComboBox *>("printPrinter");
+    auto *paper = dialog.findChild<QComboBox *>("printPaperSize");
+    auto *colour = dialog.findChild<QComboBox *>("printColour");
+    auto *print = dialog.findChild<QPushButton *>("printConfirm");
+    QVERIFY(printers && paper && colour && print);
+    QCOMPARE(paper->currentData().value<QPageSize>(), custom);
+
+    // Supply device metadata without installed printers. PDF output still exercises
+    // the dialog's timer and QPrinter settings without sending a native print job.
+    const QList<QPageSize> defaults{QPageSize(QPageSize::A4), QPageSize(QPageSize::Letter),
+                                    custom, QPageSize()};
+    const int first = printers->count();
+    for (qsizetype i = 0; i < defaults.size(); ++i) {
+        printers->addItem(QStringLiteral("Test printer %1").arg(i), QString::number(i));
+        printers->setItemData(first + i, QVariant::fromValue(defaults.at(i)), Qt::UserRole + 1);
+    }
+    const auto selectedPaper = [paper] { return paper->currentData().value<QPageSize>(); };
+    for (int index : {0, 1, 2, 0}) {
+        printers->setCurrentIndex(first + index);
+        QCOMPARE(selectedPaper(), defaults.at(index)); // also before the preview timer fires
+        QTRY_VERIFY(print->isEnabled());
+        QCOMPARE(printer.pageLayout().pageSize(), defaults.at(index));
+    }
+
+    // Manual paper changes survive unrelated refreshes, then reset on a device switch.
+    int a3 = -1;
+    for (int i = 0; i < paper->count(); ++i) {
+        if (paper->itemData(i).value<QPageSize>().id() == QPageSize::A3)
+            a3 = i;
+    }
+    QVERIFY(a3 >= 0);
+    paper->setCurrentIndex(a3);
+    colour->setCurrentIndex(1);
+    QTRY_VERIFY(print->isEnabled());
+    QCOMPARE(printer.pageLayout().pageSize().id(), QPageSize::A3);
+    printers->setCurrentIndex(first + 1);
+    QCOMPARE(selectedPaper(), defaults.at(1));
+    QTRY_VERIFY(print->isEnabled());
+    QCOMPARE(printer.pageLayout().pageSize(), defaults.at(1));
+
+    // A device that reports no default cannot replace a valid selection with invalid paper.
+    printers->setCurrentIndex(first + 3);
+    QCOMPARE(selectedPaper(), defaults.at(1));
+    QTRY_VERIFY(print->isEnabled());
+    QCOMPARE(printer.pageLayout().pageSize(), defaults.at(1));
+}
+
+void TstPrintDialog::systemHandoffKeepsSelectedPrinterDefault_data()
+{
+    QTest::addColumn<int>("switches");
+    QTest::newRow("unchanged printer keeps initial layout") << 0;
+    QTest::newRow("new printer default") << 1;
+    QTest::newRow("original printer default after switching back") << 2;
+}
+
+void TstPrintDialog::systemHandoffKeepsSelectedPrinterDefault()
+{
+    QFETCH(int, switches);
+    RenderEngine engine;
+    auto document = engine.openDocument(sourcePath_);
+    QVERIFY(document);
+    QPrinter printer;
+    configurePrinter(printer);
+    QVERIFY(printer.setPageSize(QPageSize(QPageSize::A5)));
+    PrintDialog dialog(&printer, &engine, document.get(), 0, QPageLayout::Portrait, 1, "coloured");
+    auto *printers = dialog.findChild<QComboBox *>("printPrinter");
+    auto *system = dialog.findChild<QPushButton *>("printSystemDialog");
+    QVERIFY(printers && system);
+    const int initial = printers->currentIndex();
+    printers->setItemData(initial, QVariant::fromValue(QPageSize(QPageSize::A4)),
+                          Qt::UserRole + 1);
+    const QPageSize letter(QPageSize::Letter);
+    printers->addItem(QStringLiteral("Letter printer"), QStringLiteral("test-letter"));
+    printers->setItemData(printers->count() - 1, QVariant::fromValue(letter), Qt::UserRole + 1);
+    if (switches > 0)
+        printers->setCurrentIndex(printers->count() - 1);
+    if (switches > 1)
+        printers->setCurrentIndex(initial);
+    // Exercise the handoff callback even on hosts without a native print device.
+    system->setEnabled(true);
+    system->click();
+    QCOMPARE(dialog.result(), int(QDialog::Accepted));
+    QVERIFY(dialog.useSystemDialog());
+    QCOMPARE(printer.pageLayout().pageSize(),
+             switches == 0 ? QPageSize(QPageSize::A5)
+                 : switches == 1 ? letter : QPageSize(QPageSize::A4));
 }
 
 void TstPrintDialog::customOrderValidationAndStaleResults()

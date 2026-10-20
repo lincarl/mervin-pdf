@@ -39,6 +39,7 @@ using mervin::printing::ScaleMode;
 namespace {
 // The settings column fits English at this width. A longer translation widens it.
 constexpr int kSettingsWidth = 390;
+constexpr int kDefaultPaperSizeRole = Qt::UserRole + 1;
 } // namespace
 
 PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
@@ -94,6 +95,9 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
             label = tr("%1 (%2)").arg(info.printerName(), info.description());
         }
         printerCombo_->addItem(label, info.printerName());
+        printerCombo_->setItemData(printerCombo_->count() - 1,
+                                   QVariant::fromValue(info.defaultPageSize()),
+                                   kDefaultPaperSizeRole);
         if (info.printerName() == currentName)
             printerCombo_->setCurrentIndex(printerCombo_->count() - 1);
     }
@@ -112,19 +116,7 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     const QPageSize currentSize = printer_->pageLayout().pageSize();
     for (QPageSize::PageSizeId id : kCommonSizes)
         paperSizeCombo_->addItem(QPageSize(id).name(), QVariant::fromValue(QPageSize(id)));
-    int paperIndex = -1;
-    for (int index = 0; index < paperSizeCombo_->count(); ++index) {
-        if (paperSizeCombo_->itemData(index).value<QPageSize>() == currentSize) {
-            paperIndex = index;
-            break;
-        }
-    }
-    // Keep driver-provided custom paper dimensions instead of replacing them with A4.
-    if (paperIndex < 0 && currentSize.isValid()) {
-        paperSizeCombo_->insertItem(0, currentSize.name(), QVariant::fromValue(currentSize));
-        paperIndex = 0;
-    }
-    paperSizeCombo_->setCurrentIndex(paperIndex < 0 ? 1 : paperIndex);
+    selectPaperSize(currentSize.isValid() ? currentSize : QPageSize(QPageSize::A4));
     printerForm->addRow(tr("Paper size:"), paperSizeCombo_);
 
     printToFile_ = new QCheckBox(tr("Print to a PDF file instead"), printerBox);
@@ -376,6 +368,12 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
         printer_->setOutputFormat(QPrinter::NativeFormat);
         printer_->setPrinterName(printerCombo_->currentData().toString());
         printer_->setPageLayout(initialLayout);
+        if (printerSelectionChanged_) {
+            const QPageSize defaultSize =
+                printerCombo_->currentData(kDefaultPaperSizeRole).value<QPageSize>();
+            if (defaultSize.isValid())
+                printer_->setPageSize(defaultSize);
+        }
         printer_->setPageOrientation(initialOrientation);
         printer_->setCopyCount(initialCopies);
         printer_->setColorMode(initialColour);
@@ -392,7 +390,14 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     previewTimer_->setInterval(100);
     connect(previewTimer_, &QTimer::timeout, this, [this] { refreshPreview(); });
     connect(this, &QDialog::finished, previewTimer_, &QTimer::stop);
-    for (QComboBox *combo : {printerCombo_, paperSizeCombo_, colorCombo_, qualityCombo_,
+    connect(printerCombo_, &QComboBox::currentIndexChanged, this, [this] {
+        // QPrinter can carry the previous device's paper size across setPrinterName().
+        // Select the driver's default before any refresh applies the dialog's options.
+        printerSelectionChanged_ = true;
+        selectPaperSize(printerCombo_->currentData(kDefaultPaperSizeRole).value<QPageSize>());
+        schedulePreview();
+    });
+    for (QComboBox *combo : {paperSizeCombo_, colorCombo_, qualityCombo_,
                             scaleCombo_, alignmentCombo_})
         connect(combo, &QComboBox::currentIndexChanged, this, &PrintDialog::schedulePreview);
     for (QSpinBox *spin : {copiesSpin_, fromSpin_, toSpin_, scalePercentSpin_})
@@ -474,6 +479,21 @@ void PrintDialog::schedulePreview()
         return;
     }
     previewTimer_->start();
+}
+
+// Select a driver's paper definition without losing custom dimensions or its paper key.
+void PrintDialog::selectPaperSize(const QPageSize &size)
+{
+    if (!size.isValid())
+        return;
+    for (int index = 0; index < paperSizeCombo_->count(); ++index) {
+        if (paperSizeCombo_->itemData(index).value<QPageSize>() == size) {
+            paperSizeCombo_->setCurrentIndex(index);
+            return;
+        }
+    }
+    paperSizeCombo_->insertItem(0, size.name(), QVariant::fromValue(size));
+    paperSizeCombo_->setCurrentIndex(0);
 }
 
 bool PrintDialog::applyPrinterSettings(QString *error)
