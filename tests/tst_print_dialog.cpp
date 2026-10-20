@@ -315,9 +315,10 @@ void TstPrintDialog::systemHandoffKeepsSelectedPrinterDefault()
     system->click();
     QCOMPARE(dialog.result(), int(QDialog::Accepted));
     QVERIFY(dialog.useSystemDialog());
-    QCOMPARE(printer.pageLayout().pageSize(),
-             switches == 0 ? QPageSize(QPageSize::A5)
-                 : switches == 1 ? letter : QPageSize(QPageSize::A4));
+    const QPageSize expected = switches == 0 ? QPageSize(QPageSize::A5)
+        : switches == 1 ? letter : QPageSize(QPageSize::A4);
+    // Native drivers may give equivalent paper sizes different display names.
+    QVERIFY(printer.pageLayout().pageSize().isEquivalentTo(expected));
 }
 
 void TstPrintDialog::customOrderValidationAndStaleResults()
