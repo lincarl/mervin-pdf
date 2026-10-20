@@ -42,6 +42,7 @@
 #include <QPointer>
 #include <QPrintDialog>
 #include <QPrinter>
+#include <QPrinterInfo>
 #include <QScreen>
 #include <QSet>
 #include <QScopeGuard>
@@ -2193,6 +2194,11 @@ void MainWindow::showPrintDialog(TabPage *tab, const std::shared_ptr<PrintReques
     Document *document = request->prepared ? request->prepared->document.get()
                                            : tab->viewer()->document();
     auto printer = std::make_unique<QPrinter>(QPrinter::HighResolution);
+    if (printer->outputFormat() == QPrinter::NativeFormat) {
+        const QPageSize defaultSize = QPrinterInfo(*printer).defaultPageSize();
+        if (defaultSize.isValid())
+            printer->setPageSize(defaultSize);
+    }
     printer->setPageOrientation(request->orientation);
     const QPointer<PrintDialog> dialog(new PrintDialog(
         printer.get(), engine_, document, request->rotation, request->orientation,

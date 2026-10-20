@@ -12,6 +12,7 @@ class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
+class QPageSize;
 class QPrinter;
 class QPushButton;
 class QRadioButton;
@@ -45,6 +46,8 @@ public:
 private:
     void accept() override;
     QList<int> resolvePages(QString *error) const;
+    QPageSize selectedPrinterDefaultPageSize();
+    void selectPaperSize(const QPageSize &size);
     void schedulePreview();
     bool refreshPreview();
     bool applyPrinterSettings(QString *error);
@@ -58,6 +61,7 @@ private:
     QMarginsF preferredMargins_;
     QList<int> pages_;
     bool useSystemDialog_ = false;
+    bool printerSelectionChanged_ = false;
 
     QComboBox *printerCombo_ = nullptr;
     QComboBox *paperSizeCombo_ = nullptr;
