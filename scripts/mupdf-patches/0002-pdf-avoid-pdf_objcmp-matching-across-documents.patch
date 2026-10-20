@@ -1,0 +1,68 @@
+Keep PDF objects of different documents apart in pdf_objcmp (MuPDF commit 4ed1a6d, backported to 1.28.5)
+
+This file modifies MuPDF. It is Artifex's fix for MuPDF bug 709849,
+commit 4ed1a6dc3b65f25f88818f76f63f940dd7fed620 on MuPDF master ("Bug
+709849: Avoid pdf_objcmp matching across documents.", Robin Watts,
+committed on 2026-10-20), with its changed lines applied unchanged to
+source/pdf/pdf-object.c of the 1.28.5 source release. The Mervin PDF
+project added it on 2026-10-20 in place of its own patch of 2026-10-18.
+scripts/build-mupdf-linux.sh and scripts/build-mupdf-windows.ps1 apply
+it before building. Delete it when Mervin updates to a MuPDF release
+that contains 4ed1a6d.
+
+PDF resources such as inline colour spaces, shadings and fonts are
+stored under direct pdf_obj keys. pdf_make_hash_key does not hash those,
+so fz_find_item and fz_remove_item scan the store and compare keys with
+pdf_cmp_key, which is pdf_objcmp. pdf_objcmp ignored which document an
+object belongs to, and it compared indirect references by number and
+generation only. This had three effects when two documents share one
+context:
+
+- Wrong output. Two documents that both use the inline colour space
+  [/Indexed /DeviceRGB 1 5 0 R], where object 5 holds different
+  palettes, rendered with the palette of whichever document loaded first.
+- Freed entries. fz_find_item could return another document's entry.
+  When that document closes, pdf_empty_store frees the entry whatever its
+  reference count.
+- Freed xref reads. For equal dictionaries pdf_objcmp looks up both
+  documents' xref entries (pdf_get_xref_entry_no_change). The other
+  document may be closing on another thread, and pdf_drop_document_imp
+  frees the xref before pdf_empty_store removes that document's keys.
+
+The commit makes pdf_objcmp report indirect references and dictionaries
+of different documents as different before it compares anything else.
+This applies to every caller of pdf_objcmp. Mervin does not call it
+itself. Arrays still compare element by element, so an array with no
+indirect reference or dictionary in it can still match another
+document's equal array. Such a store value comes only from the array's
+own contents, and patch 0001 keeps a found value valid when the other
+document's close frees the shared entry.
+documentsKeepTheirOwnInlineColourSpace in tests/tst_mupdf_store.cpp
+checks it.
+
+diff --git a/source/pdf/pdf-object.c b/source/pdf/pdf-object.c
+index 452bebf..37c526a 100644
+--- a/source/pdf/pdf-object.c
++++ b/source/pdf/pdf-object.c
+@@ -620,6 +620,10 @@ do_objcmp(fz_context *ctx, pdf_obj *a, pdf_obj *b, int check_streams)
+ 		return strcmp(NAME(a)->n, NAME(b)->n);
+ 
+ 	case PDF_INDIRECT:
++		if (REF(a)->doc < REF(b)->doc)
++			return -1;
++		else if (REF(a)->doc > REF(b)->doc)
++			return 1;
+ 		if (REF(a)->num == REF(b)->num)
+ 			return REF(a)->gen - REF(b)->gen;
+ 		return REF(a)->num - REF(b)->num;
+@@ -633,6 +637,10 @@ do_objcmp(fz_context *ctx, pdf_obj *a, pdf_obj *b, int check_streams)
+ 		return 0;
+ 
+ 	case PDF_DICT:
++		if (REF(a)->doc < REF(b)->doc)
++			return -1;
++		else if (REF(a)->doc > REF(b)->doc)
++			return 1;
+ 		if (DICT(a)->len != DICT(b)->len)
+ 			return DICT(a)->len - DICT(b)->len;
+ 		if ((a->flags & b->flags) & PDF_FLAGS_SORTED)

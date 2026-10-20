@@ -755,9 +755,9 @@ hands out glyphs under its own lock. Both are safe while workers render. MuPDF i
 still frees entries in use when a PDF closes, because it filters the document's
 pattern tiles out of the store while that document's display lists may still
 rasterize. The first and third patches keep a tile that a worker has just found or is
-storing valid, and the second keeps the direct object keys of different documents
-apart, so one document no longer finds another document's entries or reads its
-cross-reference index (see [MuPDF patches](#mupdf-patches)).
+storing valid. The second keeps the direct object keys of different documents apart,
+so one document no longer finds another document's entries that depend on that
+document or reads its cross-reference index (see [MuPDF patches](#mupdf-patches)).
 
 A single MuPDF document handle is not safe for concurrent access. `Document`
 therefore provides an access mutex used while loading pages, parsing content,
@@ -1852,43 +1852,51 @@ libraries. `cmake/FindMuPDF.cmake` refuses libraries built without the current s
 and the CI cache keys use the same identity, so no build links an unpatched or
 outdated MuPDF. `tst_mupdf_store` fails when a patch is missing.
 
-Check every patch again when MuPDF is updated. Drop a patch that the new release
-makes unnecessary, rework one that no longer applies, and keep a test for each
-remaining patch. MuPDF's master branch of 15 October 2026 still has these defects.
+The three patches are Artifex's fixes for MuPDF bug 709849. Artifex committed them to
+MuPDF's master branch on 2026-10-20, but no release has them yet, so Mervin applies
+them to 1.28.5. Each one makes the same
+changes as its MuPDF commit. When MuPDF is updated, delete the patches whose commits
+the new release contains. Rework a remaining patch that no longer applies, and keep a
+test for each one.
 
-- `0001-fitz-read-found-store-values-under-the-lock.patch` changes
-  `source/fitz/store.c`. `fz_find_item` and the duplicate branch of
-  `fz_store_item` read the found entry's value after they release the store lock.
-  `fz_filter_store`, `fz_remove_item` and `fz_empty_store` free an entry whatever
-  its reference count, and MuPDF calls `fz_filter_store` itself when a PDF closes.
-  Render workers rasterise display lists after they release the document's lifetime
-  gate, and the draw device looks up and stores the document's pattern tiles there,
-  while `~Document` can close the document on another thread. Without the patch, a
-  worker can read a freed entry and crash or corrupt the heap. The patch reads the
-  value while the lock is held. Size-based eviction takes only entries that nothing
-  else holds, but it frees them with the lock released, which opens the window that
-  the third patch closes.
-- `0002-pdf-keep-direct-store-keys-per-document.patch` changes
-  `source/pdf/pdf-store.c`. MuPDF stores inline colour spaces, shadings, functions
-  and fonts under the direct PDF object that defines them, and finds them with
-  `pdf_objcmp`, which compares indirect references by number and generation but
-  ignores the document. Two open documents with equal inline resources therefore
-  shared one store entry. A document rendered with another document's palette when
-  their inline `/Indexed` arrays named different objects with the same number, and
-  the other document's close freed the shared entry. Comparing two equal inline
-  dictionaries also read the other document's xref, which its close frees before it
-  removes the document's store entries, and a lookup in that gap crashed. The patch
-  treats keys of different documents as different, so each document keeps its own
-  entries.
-- `0003-fitz-make-room-before-storing-a-new-entry.patch` changes
-  `source/fitz/store.c` again and applies after the first patch. `fz_store_item`
-  put a new entry into the hash table and only then made room, freeing evicted
-  values with the store lock released, before it linked the entry into the store's
-  list. Another thread could find the entry in that gap, link it and free it. Two
-  render workers that draw the same pattern tile while its document closes could
-  therefore leave the storing worker writing to freed memory. The patch makes room
-  first, so the entry becomes visible only once it is linked. A store that finds a
-  duplicate may now evict entries it did not need to.
+- `0001-fitz-read-found-store-values-under-the-lock.patch` is MuPDF commit
+  `5ba5c97` and changes `source/fitz/store.c`. `fz_find_item` and the duplicate
+  branch of `fz_store_item` read the found entry's value after they release the
+  store lock. `fz_filter_store`, `fz_remove_item` and `fz_empty_store` free an entry
+  whatever its reference count, and MuPDF calls `fz_filter_store` itself when a PDF
+  closes. Render workers rasterise display lists after they release the document's
+  lifetime gate, and the draw device looks up and stores the document's pattern
+  tiles there, while `~Document` can close the document on another thread. Without
+  the patch, a worker can read a freed entry and crash or corrupt the heap. The patch
+  reads the value while the lock is held. Size-based eviction takes only entries that
+  nothing else holds, but it frees them with the lock released, which opens the
+  window that the third patch closes.
+- `0002-pdf-avoid-pdf_objcmp-matching-across-documents.patch` is MuPDF commit
+  `4ed1a6d` and changes `source/pdf/pdf-object.c`. MuPDF stores inline colour
+  spaces, shadings, functions and fonts under the direct PDF object that defines
+  them, and finds them with `pdf_objcmp`, which compared indirect references by
+  number and generation but ignored the document. Two open documents with equal
+  inline resources therefore shared one store entry. A document rendered with
+  another document's palette when their inline `/Indexed` arrays named different
+  objects with the same number, and the other document's close freed the shared
+  entry. Comparing two equal inline dictionaries also read the other document's
+  xref, which its close frees before it removes the document's store entries, and a
+  lookup in that gap crashed. The patch makes `pdf_objcmp` treat indirect references
+  and dictionaries of different documents as different, for every caller. Arrays
+  still compare element by element, so an array without indirect references or
+  dictionaries can still share an entry with an equal array of another document.
+  That entry's value comes only from the array itself, and the first patch keeps a
+  found value valid when the other document's close frees the entry.
+- `0003-fitz-link-new-store-entries-before-making-room.patch` is MuPDF commit
+  `299d846`. It changes `source/fitz/store.c` again and applies after the first
+  patch. `fz_store_item` put a new entry into the hash table and only then made
+  room, freeing evicted values with the store lock released, before it linked the
+  entry into the store's list. Another thread could find the entry in that gap, link
+  it and free it. Two render workers that draw the same pattern tile while its
+  document closes could therefore leave the storing worker writing to freed memory.
+  The patch counts the entry and links it into the list before the lock can be
+  released, and `fz_store_item` does not touch it afterwards. Other threads can find
+  the new entry, and even free it, while the store makes room.
 
 The Windows script also adds `#define FZ_HIDE_INTERNAL_JPEG` to MuPDF's
 `scripts/libjpeg/jconfig.h`, which renames MuPDF's bundled JPEG symbols (see

@@ -10,6 +10,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -22,8 +23,8 @@
 using namespace mervin;
 
 // Mervin builds MuPDF with the patches in scripts/mupdf-patches (see "MuPDF patches"
-// in docs/design.md). Each test here fails against unpatched MuPDF 1.28.5, so a build
-// that lost a patch, or a MuPDF update that needs it reworked, shows up in CI.
+// in docs/design.md). Each test here fails or crashes against unpatched MuPDF 1.28.5, so
+// a build that lost a patch, or a MuPDF update that needs it reworked, shows up in CI.
 class TstMupdfStore : public QObject
 {
     Q_OBJECT
@@ -31,7 +32,7 @@ class TstMupdfStore : public QObject
 private slots:
     void foundValueSurvivesEviction_data();
     void foundValueSurvivesEviction();
-    void newEntryStaysHiddenWhileStoreEvicts();
+    void newEntryFreedWhileStoreEvicts();
     void documentsKeepTheirOwnInlineColourSpace_data();
     void documentsKeepTheirOwnInlineColourSpace();
 };
@@ -64,6 +65,22 @@ public:
     {
         std::lock_guard lock(mutex_);
         return freed_.size();
+    }
+
+    /// The number of freed blocks that no longer hold only 0xA5, that is, blocks
+    /// something wrote to after MuPDF freed them.
+    size_t writtenAfterFree()
+    {
+        std::lock_guard lock(mutex_);
+        size_t written = 0;
+        for (void *block : freed_) {
+            size_t size = 0;
+            std::memcpy(&size, block, sizeof size);
+            const auto *payload = static_cast<const unsigned char *>(block) + kHeader;
+            if (std::any_of(payload, payload + size, [](unsigned char b) { return b != 0xA5; }))
+                ++written;
+        }
+        return written;
     }
 
 private:
@@ -414,15 +431,15 @@ void TstMupdfStore::foundValueSurvivesEviction()
     QCOMPARE(refsLeft, 2);
 }
 
-// A store that has to make room keeps its new entry out of other threads' reach until
-// it has linked the entry. fz_store_item frees the entries it evicts with the store
-// lock released. Unpatched MuPDF has put the new entry into the hash table by then, so
-// another thread can find it, link it into the store's list and free it, as closing
-// its document does, and the storing thread then links freed memory. The test stops
-// the storing thread while it frees the evicted value, looks for the new entry and
-// filters it out. It does not filter an entry it found, because unpatched MuPDF would
-// then crash in fz_store_item instead of failing the test.
-void TstMupdfStore::newEntryStaysHiddenWhileStoreEvicts()
+// A store that has to make room leaves its new entry alone once another thread can
+// reach it. fz_store_item frees the entries it evicts with the store lock released.
+// Unpatched MuPDF has put the new entry into the hash table by then, but not into the
+// store's list, so another thread can find it, link it and free it, as closing its
+// document does, and the storing thread then links freed memory. The test stops the
+// storing thread while it frees the evicted value. If another thread can find the new
+// entry then, as patch 0003 allows, the test frees it the way closing a document does.
+// The storing thread must not touch it afterwards. Unpatched MuPDF crashes here.
+void TstMupdfStore::newEntryFreedWhileStoreEvicts()
 {
     // Both outlive the contexts that use them.
     PoisoningAllocator allocator;
@@ -454,14 +471,14 @@ void TstMupdfStore::newEntryStaysHiddenWhileStoreEvicts()
     });
 
     const bool reachedWindow = window.waitForWindow();
-    bool hidden = false;
+    bool visible = false;
     if (reachedWindow) {
         void *early = fz_find_item(ctx, &dropValue, &key, &hashedType);
-        hidden = !early;
+        visible = early != nullptr;
         if (early)
             fz_drop_storable(ctx, static_cast<fz_storable *>(early));
-        else
-            fz_filter_store(ctx, &isKey, &key, &hashedType);
+        // Frees the new entry if it is in the store, whatever its references.
+        fz_filter_store(ctx, &isKey, &key, &hashedType);
     }
     window.release();
     worker.join();
@@ -469,14 +486,19 @@ void TstMupdfStore::newEntryStaysHiddenWhileStoreEvicts()
     void *stored = fz_find_item(ctx, &dropValue, &key, &hashedType);
     if (stored)
         fz_drop_storable(ctx, static_cast<fz_storable *>(stored));
+    const int refsLeft = value->storable.refs;
+    const size_t written = allocator.writtenAfterFree();
     fz_drop_storable(ctx, &value->storable);
     fz_drop_context(workerCtx);
     fz_drop_context(ctx);
 
     QVERIFY2(reachedWindow, "the store did not evict the old entry");
-    QVERIFY2(hidden, "another thread found the new entry while the store was evicting");
     QVERIFY(!existing);
-    QCOMPARE(stored, static_cast<void *>(value));
+    QCOMPARE(written, size_t(0));
+    // A visible entry was freed in the window. A hidden one is stored after it, and the
+    // store keeps its reference beside ours.
+    QCOMPARE(stored, visible ? nullptr : static_cast<void *>(value));
+    QCOMPARE(refsLeft, visible ? 1 : 2);
 }
 
 void TstMupdfStore::documentsKeepTheirOwnInlineColourSpace_data()
