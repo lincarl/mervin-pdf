@@ -95,9 +95,6 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
             label = tr("%1 (%2)").arg(info.printerName(), info.description());
         }
         printerCombo_->addItem(label, info.printerName());
-        printerCombo_->setItemData(printerCombo_->count() - 1,
-                                   QVariant::fromValue(info.defaultPageSize()),
-                                   kDefaultPaperSizeRole);
         if (info.printerName() == currentName)
             printerCombo_->setCurrentIndex(printerCombo_->count() - 1);
     }
@@ -369,8 +366,7 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
         printer_->setPrinterName(printerCombo_->currentData().toString());
         printer_->setPageLayout(initialLayout);
         if (printerSelectionChanged_) {
-            const QPageSize defaultSize =
-                printerCombo_->currentData(kDefaultPaperSizeRole).value<QPageSize>();
+            const QPageSize defaultSize = selectedPrinterDefaultPageSize();
             if (defaultSize.isValid())
                 printer_->setPageSize(defaultSize);
         }
@@ -394,7 +390,7 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
         // QPrinter can carry the previous device's paper size across setPrinterName().
         // Select the driver's default before any refresh applies the dialog's options.
         printerSelectionChanged_ = true;
-        selectPaperSize(printerCombo_->currentData(kDefaultPaperSizeRole).value<QPageSize>());
+        selectPaperSize(selectedPrinterDefaultPageSize());
         schedulePreview();
     });
     for (QComboBox *combo : {paperSizeCombo_, colorCombo_, qualityCombo_,
@@ -481,13 +477,30 @@ void PrintDialog::schedulePreview()
     previewTimer_->start();
 }
 
-// Select a driver's paper definition without losing custom dimensions or its paper key.
+// Query only the selected device and cache even an unavailable default for this dialog.
+QPageSize PrintDialog::selectedPrinterDefaultPageSize()
+{
+    QVariant cached = printerCombo_->currentData(kDefaultPaperSizeRole);
+    if (!cached.isValid()) {
+        const QString name = printerCombo_->currentData().toString();
+        const QPageSize size = name.isEmpty() ? QPageSize()
+            : QPrinterInfo::printerInfo(name).defaultPageSize();
+        cached = QVariant::fromValue(size);
+        printerCombo_->setItemData(printerCombo_->currentIndex(), cached, kDefaultPaperSizeRole);
+    }
+    return cached.value<QPageSize>();
+}
+
+// Reuse equivalent paper keys while retaining the selected driver's exact definition.
 void PrintDialog::selectPaperSize(const QPageSize &size)
 {
     if (!size.isValid())
         return;
     for (int index = 0; index < paperSizeCombo_->count(); ++index) {
-        if (paperSizeCombo_->itemData(index).value<QPageSize>() == size) {
+        const QPageSize existing = paperSizeCombo_->itemData(index).value<QPageSize>();
+        if (existing.key() == size.key() && existing.isEquivalentTo(size)) {
+            paperSizeCombo_->setItemData(index, QVariant::fromValue(size));
+            paperSizeCombo_->setItemText(index, size.name());
             paperSizeCombo_->setCurrentIndex(index);
             return;
         }

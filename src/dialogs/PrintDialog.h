@@ -46,6 +46,7 @@ public:
 private:
     void accept() override;
     QList<int> resolvePages(QString *error) const;
+    QPageSize selectedPrinterDefaultPageSize();
     void selectPaperSize(const QPageSize &size);
     void schedulePreview();
     bool refreshPreview();

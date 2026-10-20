@@ -51,7 +51,8 @@ The measuring workflow is the main distinction. Mervin understands rectilinear P
 The print dialog shows a live preview of the selected pages, including current form,
 annotation, and measurement edits. The preview always fits the output sheet. Paper
 size, orientation, scale, alignment, and colour settings apply to both the preview
-and the printout. Switching printers selects the new printer's default paper size.
+and the printout. Switching printers selects the new printer's reported default
+paper size, keeping the current size if the driver reports no default.
 Alignment defaults to centering on both axes, with vertical-only,
 horizontal-only, and top-left placement available within the printable area.
 Grayscale keeps shades of gray; Black and white converts them to pure black or white.
