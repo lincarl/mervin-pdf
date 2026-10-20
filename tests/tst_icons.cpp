@@ -418,9 +418,9 @@ void TestIcons::fitGlyphRenderingHonoursOptions()
 void TestIcons::rotateArrowsMirrorEachOther()
 {
     const QImage cw = render(Glyph::RotateRight, 48);
-    const QImage ccw = render(Glyph::RotateLeft, 48).mirrored(true, false);
+    const QImage ccw = render(Glyph::RotateLeft, 48).flipped(Qt::Horizontal);
     const double same = agreement(cw, ccw);
-    QVERIFY2(same > 0.82, qPrintable(QStringLiteral("mirrored rotate arrows agree only %1%%")
+    QVERIFY2(same > 0.82, qPrintable(QStringLiteral("mirrored rotate arrows agree only %1%")
                                          .arg(same * 100, 0, 'f', 1)));
 }
 
@@ -620,7 +620,7 @@ void TestIcons::spinChevronsPointOppositeWays()
                             .convertToFormat(QImage::Format_ARGB32);
     QVERIFY(inkCount(up) > 0);
     QVERIFY2(agreement(up, down) < 0.5, "the up and down chevrons are the same drawing");
-    QVERIFY2(agreement(up, down.mirrored(false, true)) > 0.85,
+    QVERIFY2(agreement(up, down.flipped(Qt::Vertical)) > 0.85,
              "the down chevron is not the up chevron flipped");
     // The "down" one must actually point down. Both span the same rows, so look
     // where the arms meet: in the middle column the down chevron's ink sits in
