@@ -1855,9 +1855,10 @@ outdated MuPDF. `tst_mupdf_store` fails when a patch is missing.
 The three patches are Artifex's fixes for MuPDF bug 709849. Artifex committed them to
 MuPDF's master branch on 2026-10-20, but no release has them yet, so Mervin applies
 them to 1.28.5. Each one makes the same
-changes as its MuPDF commit. When MuPDF is updated, delete the patches whose commits
-the new release contains. Rework a remaining patch that no longer applies, and keep a
-test for each one.
+changes as its MuPDF commit. When MuPDF is updated, delete the patches whose fixes the
+new release has, either as the master commit or as a backport with the same title.
+Backports to a release branch get new commit IDs. Rework a remaining patch that no
+longer applies, and keep a test for each one.
 
 - `0001-fitz-read-found-store-values-under-the-lock.patch` is MuPDF commit
   `5ba5c97` and changes `source/fitz/store.c`. `fz_find_item` and the duplicate

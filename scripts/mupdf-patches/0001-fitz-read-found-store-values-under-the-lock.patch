@@ -8,7 +8,8 @@ source/fitz/store.c of the 1.28.5 source release. The Mervin PDF project
 added it on 2026-10-20 in place of its own patch of 2026-10-18.
 scripts/build-mupdf-linux.sh and scripts/build-mupdf-windows.ps1 apply
 it before building. Delete it when Mervin updates to a MuPDF release
-that contains 5ba5c97.
+that has this fix, either as master commit 5ba5c97 or as a backport
+titled "Bug 709849: Fix race condition on free/read".
 
 fz_find_item and the duplicate branch of fz_store_item take a reference
 to the value of the entry they found, release FZ_LOCK_ALLOC, and only

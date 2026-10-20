@@ -8,7 +8,8 @@ source/fitz/store.c of the 1.28.5 source release. The Mervin PDF project
 added it on 2026-10-20 in place of its own patch of 2026-10-18.
 scripts/build-mupdf-linux.sh and scripts/build-mupdf-windows.ps1 apply
 it after patch 0001 before building. Delete it when Mervin updates to a
-MuPDF release that contains 299d846.
+MuPDF release that has this fix, either as master commit 299d846 or as a
+backport titled "Bug 709849: Fix fz_store use after free".
 
 fz_store_item put a new fz_item into the hash table first, with
 item->next == item, so the item was not in the LRU list yet. When the

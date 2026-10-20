@@ -2,6 +2,7 @@
 #include "render/RenderEngine.h"
 
 #include <mupdf/fitz.h>
+#include <mupdf/pdf.h>
 
 #include <QByteArray>
 #include <QColor>
@@ -32,9 +33,11 @@ class TstMupdfStore : public QObject
 private slots:
     void foundValueSurvivesEviction_data();
     void foundValueSurvivesEviction();
-    void newEntryFreedWhileStoreEvicts();
     void documentsKeepTheirOwnInlineColourSpace_data();
     void documentsKeepTheirOwnInlineColourSpace();
+    void documentsKeepTheirOwnInlineDictionaryKeys();
+    // Last, because unpatched MuPDF crashes in it, which would hide later results.
+    void newEntryFreedWhileStoreEvicts();
 };
 
 namespace {
@@ -339,6 +342,23 @@ QByteArray indexedColourPdf(QColor colour)
     });
 }
 
+// A page filled with the inline colour space
+// [/Separation /Spot /DeviceRGB << /FunctionType 2 ... >>]. Its tint transform is a
+// direct dictionary, so MuPDF stores the colour space under a key that holds a
+// dictionary of this document and no indirect reference.
+QByteArray separationPdf()
+{
+    return assemblePdf({
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] "
+        "/Resources << /ColorSpace << /CS0 [/Separation /Spot /DeviceRGB "
+        "<< /FunctionType 2 /Domain [0 1] /C0 [1 1 1] /C1 [1 0 0] /N 1 >>] >> >> "
+        "/Contents 4 0 R >>",
+        stream("/CS0 cs 1 sc 0 0 100 100 re f"),
+    });
+}
+
 // The colour at the centre of `document`'s first page rendered at 100%, or an invalid
 // colour when it does not render.
 QColor centreColour(const Document &document)
@@ -482,11 +502,10 @@ void TstMupdfStore::newEntryFreedWhileStoreEvicts()
     });
 
     const bool reachedWindow = window.waitForWindow();
-    bool visible = false;
     if (reachedWindow) {
-        void *early = fz_find_item(ctx, &dropValue, &key, &hashedType);
-        visible = early != nullptr;
-        if (early)
+        // Looks the entry up as a render worker would. In unpatched MuPDF this links
+        // it into the store's list.
+        if (void *early = fz_find_item(ctx, &dropValue, &key, &hashedType))
             fz_drop_storable(ctx, static_cast<fz_storable *>(early));
         // Frees the new entry if it is in the store, whatever its references.
         fz_filter_store(ctx, &isKey, &key, &hashedType);
@@ -507,10 +526,11 @@ void TstMupdfStore::newEntryFreedWhileStoreEvicts()
     QVERIFY2(!window.gaveUp(), "the stopped thread went on before the test acted");
     QVERIFY(!existing);
     QCOMPARE(written, size_t(0));
-    // A visible entry was freed in the window. A hidden one is stored after it, and the
-    // store keeps its reference beside ours.
-    QCOMPARE(stored, visible ? nullptr : static_cast<void *>(value));
-    QCOMPARE(refsLeft, visible ? 1 : 2);
+    // Patch 0003 lets the filter free a visible entry in the window. A fix that hides
+    // the entry until it is linked stores it after the window instead, and the store
+    // then keeps its reference beside ours.
+    QVERIFY(!stored || stored == value);
+    QCOMPARE(refsLeft, stored ? 2 : 1);
 }
 
 void TstMupdfStore::documentsKeepTheirOwnInlineColourSpace_data()
@@ -551,6 +571,77 @@ void TstMupdfStore::documentsKeepTheirOwnInlineColourSpace()
     QVERIFY2(sameColour(secondShown, second),
              qPrintable(QStringLiteral("%1, expected %2").arg(secondShown.name(), second.name())));
     QVERIFY(sameColour(centreColour(*firstDocument), first));
+}
+
+// Two open documents with equal inline colour spaces that hold a dictionary keep
+// separate store entries. Unpatched MuPDF compares such keys without regard to their
+// document, so the second document got the first one's entry, and comparing the
+// dictionaries read the other document's xref, which that document's close frees
+// before it removes its store entries. The test loads the colour space through the
+// shared store: each document finds its own entry again, and the entries differ.
+void TstMupdfStore::documentsKeepTheirOwnInlineDictionaryKeys()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray pdf = separationPdf();
+    QByteArray paths[2];
+    for (int i = 0; i < 2; ++i) {
+        const QString path = dir.filePath(QStringLiteral("doc%1.pdf").arg(i));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly) && file.write(pdf) == pdf.size());
+        paths[i] = QFile::encodeName(path);
+    }
+
+    fz_context *ctx = fz_new_context(nullptr, nullptr, FZ_STORE_DEFAULT);
+    QVERIFY(ctx);
+    pdf_document *docs[2] = {};
+    fz_colorspace *first = nullptr;
+    fz_colorspace *firstAgain = nullptr;
+    fz_colorspace *second = nullptr;
+    bool loaded = false;
+    bool foundAgain = false;
+    bool shared = false;
+    fz_var(docs);
+    fz_var(first);
+    fz_var(firstAgain);
+    fz_var(second);
+    fz_var(loaded);
+    fz_var(foundAgain);
+    fz_var(shared);
+    // Both documents stay open, so the first one's entry stays in the shared store.
+    fz_try(ctx)
+    {
+        for (int i = 0; i < 2; ++i)
+            docs[i] = pdf_open_document(ctx, paths[i].constData());
+        const auto inlineColourSpace = [ctx](pdf_document *doc) {
+            return pdf_dict_getp(ctx, pdf_lookup_page_obj(ctx, doc, 0),
+                                 "Resources/ColorSpace/CS0");
+        };
+        first = pdf_load_colorspace(ctx, inlineColourSpace(docs[0]));
+        firstAgain = pdf_load_colorspace(ctx, inlineColourSpace(docs[0]));
+        second = pdf_load_colorspace(ctx, inlineColourSpace(docs[1]));
+        // Compared while all three are held, so no address can have been reused.
+        foundAgain = firstAgain == first;
+        shared = second == first;
+        loaded = true;
+    }
+    fz_always(ctx)
+    {
+        fz_drop_colorspace(ctx, second);
+        fz_drop_colorspace(ctx, firstAgain);
+        fz_drop_colorspace(ctx, first);
+        pdf_drop_document(ctx, docs[1]);
+        pdf_drop_document(ctx, docs[0]);
+    }
+    fz_catch(ctx)
+    {
+        qWarning("MuPDF: %s", fz_caught_message(ctx));
+    }
+    fz_drop_context(ctx);
+
+    QVERIFY2(loaded, "MuPDF could not load the colour spaces");
+    QVERIFY2(foundAgain, "the store did not keep the first document's colour space");
+    QVERIFY2(!shared, "the second document got the first document's entry");
 }
 
 QTEST_GUILESS_MAIN(TstMupdfStore)

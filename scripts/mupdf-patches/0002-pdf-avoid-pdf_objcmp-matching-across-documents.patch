@@ -8,7 +8,8 @@ source/pdf/pdf-object.c of the 1.28.5 source release. The Mervin PDF
 project added it on 2026-10-20 in place of its own patch of 2026-10-18.
 scripts/build-mupdf-linux.sh and scripts/build-mupdf-windows.ps1 apply
 it before building. Delete it when Mervin updates to a MuPDF release
-that contains 4ed1a6d.
+that has this fix, either as master commit 4ed1a6d or as a backport
+titled "Bug 709849: Avoid pdf_objcmp matching across documents".
 
 PDF resources such as inline colour spaces, shadings and fonts are
 stored under direct pdf_obj keys. pdf_make_hash_key does not hash those,
@@ -38,7 +39,8 @@ document's equal array. Such a store value comes only from the array's
 own contents, and patch 0001 keeps a found value valid when the other
 document's close frees the shared entry.
 documentsKeepTheirOwnInlineColourSpace in tests/tst_mupdf_store.cpp
-checks it.
+checks the indirect references, and
+documentsKeepTheirOwnInlineDictionaryKeys the dictionaries.
 
 diff --git a/source/pdf/pdf-object.c b/source/pdf/pdf-object.c
 index 452bebf..37c526a 100644
