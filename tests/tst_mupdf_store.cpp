@@ -179,12 +179,21 @@ public:
         changed_.notify_all();
     }
 
+    /// Whether the stopped thread stopped waiting for release() after kGiveUp. Its
+    /// store call then went on before the test acted, so the test proved nothing.
+    bool gaveUp()
+    {
+        std::lock_guard lock(mutex_);
+        return gaveUp_;
+    }
+
 private:
     void park(std::unique_lock<std::mutex> &guard)
     {
         inWindow_ = true;
         changed_.notify_all();
-        changed_.wait_for(guard, kGiveUp, [this] { return released_; });
+        if (!changed_.wait_for(guard, kGiveUp, [this] { return released_; }))
+            gaveUp_ = true;
     }
 
     static void lockCallback(void *self, int lock)
@@ -217,6 +226,7 @@ private:
     bool inWindow_ = false;
     bool finished_ = false;
     bool released_ = false;
+    bool gaveUp_ = false;
 };
 
 struct TestValue
@@ -426,6 +436,7 @@ void TstMupdfStore::foundValueSurvivesEviction()
     fz_drop_context(ctx);
 
     QVERIFY2(reachedWindow, "the store call returned without unlocking after its lookup");
+    QVERIFY2(!window.gaveUp(), "the stopped thread went on before the test acted");
     QVERIFY2(evicted, "fz_filter_store did not free the entry");
     QCOMPARE(found, static_cast<void *>(value));
     QCOMPARE(refsLeft, 2);
@@ -493,6 +504,7 @@ void TstMupdfStore::newEntryFreedWhileStoreEvicts()
     fz_drop_context(ctx);
 
     QVERIFY2(reachedWindow, "the store did not evict the old entry");
+    QVERIFY2(!window.gaveUp(), "the stopped thread went on before the test acted");
     QVERIFY(!existing);
     QCOMPARE(written, size_t(0));
     // A visible entry was freed in the window. A hidden one is stored after it, and the
