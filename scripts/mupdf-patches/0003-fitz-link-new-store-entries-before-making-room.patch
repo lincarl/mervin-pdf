@@ -1,0 +1,82 @@
+Link a new store entry before the store makes room (MuPDF commit 299d846, backported to 1.28.5)
+
+This file modifies MuPDF. It is Artifex's fix for MuPDF bug 709849,
+commit 299d8464f1a86df6d056e11d8850135fcac7eec7 on MuPDF master ("Bug
+709849: Fix fz_store use after free.", Robin Watts, committed on
+2026-10-20), with its changed lines applied unchanged to
+source/fitz/store.c of the 1.28.5 source release. The Mervin PDF project
+added it on 2026-10-20 in place of its own patch of 2026-10-18.
+scripts/build-mupdf-linux.sh and scripts/build-mupdf-windows.ps1 apply
+it after patch 0001 before building. Delete it when Mervin updates to a
+MuPDF release that has this fix, either as master commit 299d846 or as a
+backport titled "Bug 709849: Fix fz_store use after free".
+
+fz_store_item put a new fz_item into the hash table first, with
+item->next == item, so the item was not in the LRU list yet. When the
+store was full, it then made room. do_reap and ensure_space release
+FZ_LOCK_ALLOC while they free evicted values, and only afterwards did
+fz_store_item count the item's size and link it into the list with
+touch(). While the lock was released, another thread could find the
+item through the hash (fz_find_item, or the duplicate branch of another
+fz_store_item call), and its touch() linked the item into the list.
+fz_filter_store, fz_empty_store or fz_remove_item could then free it
+whatever its reference count. The storing thread then ran touch() on
+freed memory, or rewrote the removal chain of a filter that had not
+freed the item yet.
+
+In Mervin, two render workers can store and find the same pattern tile
+(its key names the pattern, the document, the transform and the colour
+space) while a closing tab filters the document's tiles out of the
+store.
+
+The commit counts the item's size and links it into the list before the
+store can release the lock, and fz_store_item does not touch the item
+after that. Another thread may now find the new entry, and even free it,
+while the store makes room. fz_hash_insert releases the lock only to
+resize the table, before it inserts the item.
+newEntryFreedWhileStoreEvicts in tests/tst_mupdf_store.cpp checks it.
+
+diff --git a/source/fitz/store.c b/source/fitz/store.c
+index 171548a..7509123 100644
+--- a/source/fitz/store.c
++++ b/source/fitz/store.c
+@@ -528,11 +528,18 @@ fz_store_item(fz_context *ctx, void *key, void *val_, size_t itemsize, const fz_
+ 		val->refs++;
+ 	}
+ 
++	/* It's in the store now, as the moment we unlock below it could be found from the
++	 * hash table. */
++	store->size += itemsize;
++
++	/* Regardless of whether it's indexed, it goes into the linked list */
++	touch(store, item);
++
+ 	/* If we haven't got an infinite store, check for space within it */
+ 	if (store->max != FZ_STORE_UNLIMITED)
+ 	{
+ 		/* FIXME: Overflow? */
+-		size = store->size + itemsize;
++		size = store->size;
+ 		if (size > store->max)
+ 		{
+ 			FZ_LOG_STORE(ctx, "Store size exceeded: item=%zu, size=%zu, max=%zu\n",
+@@ -547,7 +554,7 @@ fz_store_item(fz_context *ctx, void *key, void *val_, size_t itemsize, const fz_
+ 					do_reap(ctx); /* Drops alloc lock */
+ 					fz_lock(ctx, FZ_LOCK_ALLOC);
+ 				}
+-				size = store->size + itemsize;
++				size = store->size;
+ 				if (size <= store->max)
+ 					break;
+ 
+@@ -572,10 +579,6 @@ fz_store_item(fz_context *ctx, void *key, void *val_, size_t itemsize, const fz_
+ 			FZ_LOG_DUMP_STORE(ctx, "After eviction:\n");
+ 		}
+ 	}
+-	store->size += itemsize;
+-
+-	/* Regardless of whether it's indexed, it goes into the linked list */
+-	touch(store, item);
+ 	fz_unlock(ctx, FZ_LOCK_ALLOC);
+ 
+ 	return NULL;

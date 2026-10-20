@@ -1,9 +1,15 @@
-Read a found store value under the lock (Mervin PDF patch for MuPDF 1.28.5)
+Read a found store value under the lock (MuPDF commit 5ba5c97, backported to 1.28.5)
 
-This file modifies MuPDF. The Mervin PDF project changed
-source/fitz/store.c on 2026-10-18. scripts/build-mupdf-linux.sh and
-scripts/build-mupdf-windows.ps1 apply it to the verified 1.28.5 source
-release before building. Check it again on every MuPDF update.
+This file modifies MuPDF. It is Artifex's fix for MuPDF bug 709849,
+commit 5ba5c976427aa2c084d21e43e71f5f8d4eb87105 on MuPDF master ("Bug
+709849: Fix race condition on free/read.", Robin Watts, committed on
+2026-10-20), with its changed lines applied unchanged to
+source/fitz/store.c of the 1.28.5 source release. The Mervin PDF project
+added it on 2026-10-20 in place of its own patch of 2026-10-18.
+scripts/build-mupdf-linux.sh and scripts/build-mupdf-windows.ps1 apply
+it before building. Delete it when Mervin updates to a MuPDF release
+that has this fix, either as master commit 5ba5c97 or as a backport
+titled "Bug 709849: Fix race condition on free/read".
 
 fz_find_item and the duplicate branch of fz_store_item take a reference
 to the value of the entry they found, release FZ_LOCK_ALLOC, and only
@@ -20,55 +26,59 @@ lock, and the draw device looks up and stores pattern tiles there
 its document on another thread, which filters those tiles out of the
 store.
 
-This patch copies the value into a local while the lock is held and
+The commit copies the value into a local while the lock is held and
 returns the local. The reference taken under the lock keeps the value
 alive after the entry is freed. foundValueSurvivesEviction in
 tests/tst_mupdf_store.cpp checks it. fz_store_item has a second window,
 while it makes room for a new entry, which patch 0003 closes.
 
+diff --git a/source/fitz/store.c b/source/fitz/store.c
+index dd0640b..171548a 100644
 --- a/source/fitz/store.c
 +++ b/source/fitz/store.c
-@@ -501,7 +501,12 @@
- 		if (existing)
+@@ -502,6 +502,7 @@ fz_store_item(fz_context *ctx, void *key, void *val_, size_t itemsize, const fz_
  		{
  			/* There was one there already! Take a new reference
--			 * to the existing one, and drop our current one. */
-+			 * to the existing one, and drop our current one.
-+			 * Read the value while we hold the lock. Once we unlock,
-+			 * another thread may free 'existing' (fz_filter_store,
-+			 * fz_remove_item and fz_empty_store free items whatever
-+			 * their refs), but our new reference keeps the value. */
-+			fz_storable *existing_val = existing->val;
+ 			 * to the existing one, and drop our current one. */
++			fz_storable *existing_val;
  			fz_warn(ctx, "found duplicate %s in the store", type->name);
  			touch(store, existing);
  			if (existing->val->refs > 0)
-@@ -512,7 +517,7 @@
+@@ -509,10 +510,14 @@ fz_store_item(fz_context *ctx, void *key, void *val_, size_t itemsize, const fz_
+ 				(void)Memento_takeRef(existing->val);
+ 				existing->val->refs++;
+ 			}
++			/* Read existing_val while still locked. val is now protected by
++			 * our reference. existing is not, so item could be freed before
++			 * we return. */
++			existing_val = existing->val;
  			fz_unlock(ctx, FZ_LOCK_ALLOC);
  			fz_free(ctx, item);
  			type->drop_key(ctx, key);
 -			return existing->val;
-+			return existing_val;
++			return (void *)existing_val;
  		}
  	}
  
-@@ -613,6 +618,11 @@
- 	}
- 	if (item)
- 	{
-+		/* Read the value while we hold the lock. Once we unlock,
-+		 * another thread may free 'item' (fz_filter_store,
-+		 * fz_remove_item and fz_empty_store free items whatever
-+		 * their refs), but the reference we take keeps the value. */
-+		fz_storable *val = item->val;
- 		/* LRU the block. This also serves to ensure that any item
+@@ -617,6 +622,7 @@ fz_find_item(fz_context *ctx, fz_store_drop_fn *drop, void *key, const fz_store_
  		 * picked up from the hash before it has made it into the
  		 * linked list does not get whipped out again due to the
-@@ -625,7 +635,7 @@
+ 		 * store being full. */
++		fz_storable *item_val;
+ 		touch(store, item);
+ 		/* And bump the refcount before returning */
+ 		if (item->val->refs > 0)
+@@ -624,8 +630,12 @@ fz_find_item(fz_context *ctx, fz_store_drop_fn *drop, void *key, const fz_store_
+ 			(void)Memento_takeRef(item->val);
  			item->val->refs++;
  		}
++		/* Read item_val while still locked. val is now protected by
++		 * our reference. item is not, so item could be freed before
++		 * we return. */
++		item_val = item->val;
  		fz_unlock(ctx, FZ_LOCK_ALLOC);
 -		return (void *)item->val;
-+		return (void *)val;
++		return (void *)item_val;
  	}
  	fz_unlock(ctx, FZ_LOCK_ALLOC);
  

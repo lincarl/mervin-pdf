@@ -2,6 +2,7 @@
 #include "render/RenderEngine.h"
 
 #include <mupdf/fitz.h>
+#include <mupdf/pdf.h>
 
 #include <QByteArray>
 #include <QColor>
@@ -10,6 +11,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -22,8 +24,8 @@
 using namespace mervin;
 
 // Mervin builds MuPDF with the patches in scripts/mupdf-patches (see "MuPDF patches"
-// in docs/design.md). Each test here fails against unpatched MuPDF 1.28.5, so a build
-// that lost a patch, or a MuPDF update that needs it reworked, shows up in CI.
+// in docs/design.md). Each test here fails or crashes against unpatched MuPDF 1.28.5, so
+// a build that lost a patch, or a MuPDF update that needs it reworked, shows up in CI.
 class TstMupdfStore : public QObject
 {
     Q_OBJECT
@@ -31,9 +33,11 @@ class TstMupdfStore : public QObject
 private slots:
     void foundValueSurvivesEviction_data();
     void foundValueSurvivesEviction();
-    void newEntryStaysHiddenWhileStoreEvicts();
     void documentsKeepTheirOwnInlineColourSpace_data();
     void documentsKeepTheirOwnInlineColourSpace();
+    void documentsKeepTheirOwnInlineDictionaryKeys();
+    // Last, because unpatched MuPDF crashes in it, which would hide later results.
+    void newEntryFreedWhileStoreEvicts();
 };
 
 namespace {
@@ -64,6 +68,22 @@ public:
     {
         std::lock_guard lock(mutex_);
         return freed_.size();
+    }
+
+    /// The number of freed blocks that no longer hold only 0xA5, that is, blocks
+    /// something wrote to after MuPDF freed them.
+    size_t writtenAfterFree()
+    {
+        std::lock_guard lock(mutex_);
+        size_t written = 0;
+        for (void *block : freed_) {
+            size_t size = 0;
+            std::memcpy(&size, block, sizeof size);
+            const auto *payload = static_cast<const unsigned char *>(block) + kHeader;
+            if (std::any_of(payload, payload + size, [](unsigned char b) { return b != 0xA5; }))
+                ++written;
+        }
+        return written;
     }
 
 private:
@@ -162,12 +182,21 @@ public:
         changed_.notify_all();
     }
 
+    /// Whether the stopped thread stopped waiting for release() after kGiveUp. Its
+    /// store call then went on before the test acted, so the test proved nothing.
+    bool gaveUp()
+    {
+        std::lock_guard lock(mutex_);
+        return gaveUp_;
+    }
+
 private:
     void park(std::unique_lock<std::mutex> &guard)
     {
         inWindow_ = true;
         changed_.notify_all();
-        changed_.wait_for(guard, kGiveUp, [this] { return released_; });
+        if (!changed_.wait_for(guard, kGiveUp, [this] { return released_; }))
+            gaveUp_ = true;
     }
 
     static void lockCallback(void *self, int lock)
@@ -200,6 +229,7 @@ private:
     bool inWindow_ = false;
     bool finished_ = false;
     bool released_ = false;
+    bool gaveUp_ = false;
 };
 
 struct TestValue
@@ -312,6 +342,23 @@ QByteArray indexedColourPdf(QColor colour)
     });
 }
 
+// A page filled with the inline colour space
+// [/Separation /Spot /DeviceRGB << /FunctionType 2 ... >>]. Its tint transform is a
+// direct dictionary, so MuPDF stores the colour space under a key that holds a
+// dictionary of this document and no indirect reference.
+QByteArray separationPdf()
+{
+    return assemblePdf({
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] "
+        "/Resources << /ColorSpace << /CS0 [/Separation /Spot /DeviceRGB "
+        "<< /FunctionType 2 /Domain [0 1] /C0 [1 1 1] /C1 [1 0 0] /N 1 >>] >> >> "
+        "/Contents 4 0 R >>",
+        stream("/CS0 cs 1 sc 0 0 100 100 re f"),
+    });
+}
+
 // The colour at the centre of `document`'s first page rendered at 100%, or an invalid
 // colour when it does not render.
 QColor centreColour(const Document &document)
@@ -409,20 +456,21 @@ void TstMupdfStore::foundValueSurvivesEviction()
     fz_drop_context(ctx);
 
     QVERIFY2(reachedWindow, "the store call returned without unlocking after its lookup");
+    QVERIFY2(!window.gaveUp(), "the stopped thread went on before the test acted");
     QVERIFY2(evicted, "fz_filter_store did not free the entry");
     QCOMPARE(found, static_cast<void *>(value));
     QCOMPARE(refsLeft, 2);
 }
 
-// A store that has to make room keeps its new entry out of other threads' reach until
-// it has linked the entry. fz_store_item frees the entries it evicts with the store
-// lock released. Unpatched MuPDF has put the new entry into the hash table by then, so
-// another thread can find it, link it into the store's list and free it, as closing
-// its document does, and the storing thread then links freed memory. The test stops
-// the storing thread while it frees the evicted value, looks for the new entry and
-// filters it out. It does not filter an entry it found, because unpatched MuPDF would
-// then crash in fz_store_item instead of failing the test.
-void TstMupdfStore::newEntryStaysHiddenWhileStoreEvicts()
+// A store that has to make room leaves its new entry alone once another thread can
+// reach it. fz_store_item frees the entries it evicts with the store lock released.
+// Unpatched MuPDF has put the new entry into the hash table by then, but not into the
+// store's list, so another thread can find it, link it and free it, as closing its
+// document does, and the storing thread then links freed memory. The test stops the
+// storing thread while it frees the evicted value. If another thread can find the new
+// entry then, as patch 0003 allows, the test frees it the way closing a document does.
+// The storing thread must not touch it afterwards. Unpatched MuPDF crashes here.
+void TstMupdfStore::newEntryFreedWhileStoreEvicts()
 {
     // Both outlive the contexts that use them.
     PoisoningAllocator allocator;
@@ -454,14 +502,13 @@ void TstMupdfStore::newEntryStaysHiddenWhileStoreEvicts()
     });
 
     const bool reachedWindow = window.waitForWindow();
-    bool hidden = false;
     if (reachedWindow) {
-        void *early = fz_find_item(ctx, &dropValue, &key, &hashedType);
-        hidden = !early;
-        if (early)
+        // Looks the entry up as a render worker would. In unpatched MuPDF this links
+        // it into the store's list.
+        if (void *early = fz_find_item(ctx, &dropValue, &key, &hashedType))
             fz_drop_storable(ctx, static_cast<fz_storable *>(early));
-        else
-            fz_filter_store(ctx, &isKey, &key, &hashedType);
+        // Frees the new entry if it is in the store, whatever its references.
+        fz_filter_store(ctx, &isKey, &key, &hashedType);
     }
     window.release();
     worker.join();
@@ -469,14 +516,21 @@ void TstMupdfStore::newEntryStaysHiddenWhileStoreEvicts()
     void *stored = fz_find_item(ctx, &dropValue, &key, &hashedType);
     if (stored)
         fz_drop_storable(ctx, static_cast<fz_storable *>(stored));
+    const int refsLeft = value->storable.refs;
+    const size_t written = allocator.writtenAfterFree();
     fz_drop_storable(ctx, &value->storable);
     fz_drop_context(workerCtx);
     fz_drop_context(ctx);
 
     QVERIFY2(reachedWindow, "the store did not evict the old entry");
-    QVERIFY2(hidden, "another thread found the new entry while the store was evicting");
+    QVERIFY2(!window.gaveUp(), "the stopped thread went on before the test acted");
     QVERIFY(!existing);
-    QCOMPARE(stored, static_cast<void *>(value));
+    QCOMPARE(written, size_t(0));
+    // Patch 0003 lets the filter free a visible entry in the window. A fix that hides
+    // the entry until it is linked stores it after the window instead, and the store
+    // then keeps its reference beside ours.
+    QVERIFY(!stored || stored == value);
+    QCOMPARE(refsLeft, stored ? 2 : 1);
 }
 
 void TstMupdfStore::documentsKeepTheirOwnInlineColourSpace_data()
@@ -517,6 +571,77 @@ void TstMupdfStore::documentsKeepTheirOwnInlineColourSpace()
     QVERIFY2(sameColour(secondShown, second),
              qPrintable(QStringLiteral("%1, expected %2").arg(secondShown.name(), second.name())));
     QVERIFY(sameColour(centreColour(*firstDocument), first));
+}
+
+// Two open documents with equal inline colour spaces that hold a dictionary keep
+// separate store entries. Unpatched MuPDF compares such keys without regard to their
+// document, so the second document got the first one's entry, and comparing the
+// dictionaries read the other document's xref, which that document's close frees
+// before it removes its store entries. The test loads the colour space through the
+// shared store: each document finds its own entry again, and the entries differ.
+void TstMupdfStore::documentsKeepTheirOwnInlineDictionaryKeys()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray pdf = separationPdf();
+    QByteArray paths[2];
+    for (int i = 0; i < 2; ++i) {
+        const QString path = dir.filePath(QStringLiteral("doc%1.pdf").arg(i));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly) && file.write(pdf) == pdf.size());
+        paths[i] = QFile::encodeName(path);
+    }
+
+    fz_context *ctx = fz_new_context(nullptr, nullptr, FZ_STORE_DEFAULT);
+    QVERIFY(ctx);
+    pdf_document *docs[2] = {};
+    fz_colorspace *first = nullptr;
+    fz_colorspace *firstAgain = nullptr;
+    fz_colorspace *second = nullptr;
+    bool loaded = false;
+    bool foundAgain = false;
+    bool shared = false;
+    fz_var(docs);
+    fz_var(first);
+    fz_var(firstAgain);
+    fz_var(second);
+    fz_var(loaded);
+    fz_var(foundAgain);
+    fz_var(shared);
+    // Both documents stay open, so the first one's entry stays in the shared store.
+    fz_try(ctx)
+    {
+        for (int i = 0; i < 2; ++i)
+            docs[i] = pdf_open_document(ctx, paths[i].constData());
+        const auto inlineColourSpace = [ctx](pdf_document *doc) {
+            return pdf_dict_getp(ctx, pdf_lookup_page_obj(ctx, doc, 0),
+                                 "Resources/ColorSpace/CS0");
+        };
+        first = pdf_load_colorspace(ctx, inlineColourSpace(docs[0]));
+        firstAgain = pdf_load_colorspace(ctx, inlineColourSpace(docs[0]));
+        second = pdf_load_colorspace(ctx, inlineColourSpace(docs[1]));
+        // Compared while all three are held, so no address can have been reused.
+        foundAgain = firstAgain == first;
+        shared = second == first;
+        loaded = true;
+    }
+    fz_always(ctx)
+    {
+        fz_drop_colorspace(ctx, second);
+        fz_drop_colorspace(ctx, firstAgain);
+        fz_drop_colorspace(ctx, first);
+        pdf_drop_document(ctx, docs[1]);
+        pdf_drop_document(ctx, docs[0]);
+    }
+    fz_catch(ctx)
+    {
+        qWarning("MuPDF: %s", fz_caught_message(ctx));
+    }
+    fz_drop_context(ctx);
+
+    QVERIFY2(loaded, "MuPDF could not load the colour spaces");
+    QVERIFY2(foundAgain, "the store did not keep the first document's colour space");
+    QVERIFY2(!shared, "the second document got the first document's entry");
 }
 
 QTEST_GUILESS_MAIN(TstMupdfStore)
