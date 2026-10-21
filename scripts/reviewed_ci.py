@@ -100,6 +100,11 @@ def latest_status(api, sha, context):
 
 
 def validate_coderabbit(statuses, comments, sha):
+    """Return the IDs of CodeRabbit's status and summary that prove a completed review of sha.
+
+    Raise GateError for the first check that fails, such as an untrusted status, an
+    unfinished review, no recognised summary, or coverage of another commit.
+    """
     # Inspect the newest context, including an unexpected publisher. An older
     # success must never hide a pending, failed, or spoofed replacement.
     status = next((item for item in statuses if item["context"] == "CodeRabbit"), None)
