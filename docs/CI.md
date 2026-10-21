@@ -86,8 +86,8 @@ as the head that passed `reviewed-ci`, and this prints the same hash twice:
 git rev-parse "$merge_sha^{tree}" "$task_reviewed_sha^{tree}"
 ```
 
-Only the release candidate is missing, and the next merge to `main` publishes one
-that includes the change.
+Only the release candidate is missing. The next push to `main` whose CI passes
+publishes one that includes the change.
 
 ## When the gate rejects its own fix
 
