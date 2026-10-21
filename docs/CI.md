@@ -77,10 +77,11 @@ API outage prevents cleanup, the required status stays unsuccessful until the
 controller can verify a result.
 
 After a merge, GitHub's push event starts the `ci` workflow on `main`, which repeats
-the full CI and publishes a release candidate. If GitHub drops that event, as it
-did for `310f6f1` in October 2026, no run starts, and no new CI run is needed. The
-PR was up to date with `main` when it merged, so the merge commit has the same tree
-as the head that passed `reviewed-ci`, and this prints the same hash twice:
+the full CI and, if it passes, publishes a release candidate. If GitHub drops that
+event, as it did for `310f6f1` in October 2026, no run starts, and no new CI run is
+needed. The PR was up to date with `main` when it merged, so the merge commit has
+the same tree as the head that passed `reviewed-ci`, and this prints the same hash
+twice:
 
 ```sh
 git rev-parse "$merge_sha^{tree}" "$task_reviewed_sha^{tree}"
