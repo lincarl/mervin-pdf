@@ -78,9 +78,9 @@ controller can verify a result.
 
 ## When the gate rejects its own fix
 
-Start CI always uses the gate in `scripts/reviewed_ci.py` and the full CI workflow
-from `main`, not the versions in the PR. So the old gate, not the new one, judges a
-PR that changes the gate. If the gate on `main` wrongly rejects every PR, the PR
+Start CI, dispatched on `main` as described above, uses the gate in
+`scripts/reviewed_ci.py` and the full CI workflow from `main`, not the versions in
+the PR. So the old gate, not the new one, judges a PR that changes the gate. If the gate on `main` wrongly rejects every PR, the PR
 that fixes it cannot get `reviewed-ci` either, and branch protection blocks the
 merge for administrators too. This happened in October 2026, when CodeRabbit began
 starting its comments with a `<!-- coderabbit-ai-generated:v1 -->` line and the
@@ -128,12 +128,13 @@ that PR, such as an incomplete review, fix the PR instead.
    `bash merge-gate-fix.sh "$fix_pr_number" "$fix_head_sha" "$merge_subject"` there.
 
    Before it changes anything, the script checks its arguments, that `reviewed-ci`
-   is required, that auto-merge is off, that the PR is ahead of `main`, that
-   `repository-checks` passed on the head, and that the PR changes only the files
-   listed above, including the old names of renamed files. It then saves the
-   protection settings, removes only `reviewed-ci` from the required checks, merges
-   the PR, and puts the saved checks back, even if the merge fails or the script is
-   interrupted. It logs each step with the time in `merge-gate-fix.log`. It reports
+   from GitHub Actions is required, that auto-merge is off, that the PR is open,
+   targets `main` and has the given head, that the head is ahead of `main`, that
+   `repository-checks` passed on it, and that the PR changes only the files listed
+   above, including the old names of renamed files. It then saves the protection
+   settings, removes only that `reviewed-ci` check, stops if `main` has moved,
+   merges the PR, and puts the saved checks back, even if the merge fails or the
+   script is interrupted. It logs each step with the time in `merge-gate-fix.log`. It reports
    `Protection restored` only when the settings match the saved copy, and otherwise
    exits with status 1.
 
@@ -154,16 +155,20 @@ that PR, such as an incomplete review, fix the PR instead.
    }
    stop() { note "$1"; exit 1; }
    before=$(gh api "$checks" --jq '{strict, checks}')
-   grep -q '"context":"reviewed-ci"' <<< "$before" ||
+   grep -q -F '{"app_id":15368,"context":"reviewed-ci"}' <<< "$before" ||
      stop "reviewed-ci is not required. If an earlier run lifted it, restore checks-before.json first."
    auto_merge=$(gh api "repos/$repo" --jq .allow_auto_merge)
    [[ $auto_merge == false ]] || stop "Auto-merge is on, so another PR could merge while reviewed-ci is lifted."
-   status=$(gh api "repos/$repo/compare/main...$sha" --jq .status)
+   pr_state=$(gh pr view "$pr" --repo "$repo" --json state,isDraft,baseRefName,headRefOid \
+     --jq '"\(.state) \(.isDraft) \(.baseRefName) \(.headRefOid)"')
+   [[ $pr_state == "OPEN false main $sha" ]] || stop "PR $pr is not an open PR into main at $sha: $pr_state"
+   main_sha=$(gh api "repos/$repo/git/ref/heads/main" --jq .object.sha)
+   status=$(gh api "repos/$repo/compare/$main_sha...$sha" --jq .status)
    [[ $status == ahead ]] || stop "The PR is $status relative to main. Update it and repeat steps 1 to 3."
    tests=$(gh api "repos/$repo/commits/$sha/check-runs?check_name=repository-checks" \
      --jq '[.check_runs[] | select(.app.id == 15368)][0].conclusion')
    [[ $tests == success ]] || stop "repository-checks has not passed on $sha."
-   files=$(gh api "repos/$repo/compare/main...$sha" --jq \
+   files=$(gh api "repos/$repo/compare/$main_sha...$sha" --jq \
      'if (.files | length) < 300 then .files[] | .filename, (.previous_filename // empty) else error("too many files") end')
    outside=$(grep -v -E '^(scripts/(test_)?reviewed_ci\.py|\.github/workflows/[^/]+|docs/CI\.md)$' <<< "$files" || true)
    if [[ -z $files || -n $outside ]]; then
@@ -187,17 +192,21 @@ that PR, such as an incomplete review, fix the PR instead.
    trap restore EXIT
    trap 'exit 130' INT TERM HUP PIPE
    note "Lifting reviewed-ci for PR $pr at $sha"
-   gh api "$checks" --jq '{strict, checks: [.checks[] | select(.context != "reviewed-ci")]}' |
+   gh api "$checks" --jq '{strict, checks: [.checks[] | select(.context != "reviewed-ci" or .app_id != 15368)]}' |
      gh api -X PATCH "$checks" --input - > /dev/null
+   main_now=$(gh api "repos/$repo/git/ref/heads/main" --jq .object.sha)
+   [[ $main_now == "$main_sha" ]] || stop "main moved while reviewed-ci was lifted. Repeat steps 1 to 3."
    gh pr merge "$pr" --repo "$repo" --merge --subject "$subject" --match-head-commit "$sha"
-   merged=$(gh pr view "$pr" --repo "$repo" --json mergeCommit --jq .mergeCommit.oid)
+   merged=$(gh pr view "$pr" --repo "$repo" --json mergeCommit --jq .mergeCommit.oid) ||
+     merged="a commit the script could not read. Check the PR on GitHub"
    note "Merged PR $pr as $merged"
    ```
 
-   If the merge fails, the script still restores the checks and exits with a
+   If `gh pr merge` fails, the script still restores the checks and exits with a
    nonzero status. Fix the cause and run the script again for the same approved
    head, never with `--admin` or `--auto`. A new head SHA needs a new approval in
-   step 3.
+   step 3. If the log shows the merge, check the PR on GitHub instead of running
+   the script again.
 
    If the script reports that protection does not match, or the session ends before
    it restores the checks, run the commands below in the directory where the script
