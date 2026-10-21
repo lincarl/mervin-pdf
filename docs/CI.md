@@ -76,6 +76,167 @@ workflow cancels obsolete PR runs without canceling builds for `main`. If a GitH
 API outage prevents cleanup, the required status stays unsuccessful until the
 controller can verify a result.
 
+## When the gate rejects its own fix
+
+Start CI always uses the gate in `scripts/reviewed_ci.py` and the full CI workflow
+from `main`, not the versions in the PR. So the old gate, not the new one, judges a
+PR that changes the gate. If the gate on `main` wrongly rejects every PR, the PR
+that fixes it cannot get `reviewed-ci` either, and branch protection blocks the
+merge for administrators too. This happened in October 2026, when CodeRabbit began
+starting its comments with a `<!-- coderabbit-ai-generated:v1 -->` line and the
+gate no longer found the summary.
+
+The steps below apply only to a PR that fixes a fault on `main` in the gate or its
+workflows that also blocks that PR, and only with the repository owner's approval
+for that PR and head. Because the PR merges without full CI, it may change only
+`scripts/reviewed_ci.py`, `scripts/test_reviewed_ci.py`, files in
+`.github/workflows/`, and `docs/CI.md`. When the gate rejects a PR for a reason in
+that PR, such as an incomplete review, fix the PR instead.
+
+1. Finish the fix PR's review as usual. CodeRabbit must cover its head SHA, every
+   review thread must be resolved, and `repository-checks`, which runs the gate's
+   tests, must pass.
+2. Collect the evidence for the final head. Set `fix_pr_number` and `fix_head_sha`
+   to the fix PR's number and full head SHA, dispatch Start CI for that head, and
+   keep the failing run. Fetch `origin/main` and read the PR's change to
+   `scripts/reviewed_ci.py`, because the next command runs it with your GitHub
+   login, which can change branch protection. Then run the read-only `inspect`
+   command below once from a checkout of `origin/main` and once from a checkout of
+   the PR's head.
+
+   ```sh
+   python3 -I -B scripts/reviewed_ci.py inspect --pr "$fix_pr_number" --sha "$fix_head_sha"
+   ```
+
+   From the PR's head, it must print the authorization evidence, which shows that
+   the review is complete and the branch is up to date. When the fault is in the
+   gate's review checks, the run from `origin/main` must fail with the same error as
+   the failing Start CI run. A fault elsewhere, such as in the gate's `start` or
+   `finish` commands or in a workflow, does not show in `inspect`, so the failing run
+   is its evidence.
+3. Ask the owner to approve the exception for the PR number and full head SHA. Send
+   the failing run, both `inspect` results, the `repository-checks` result, the PR's
+   diff, and the merge commit subject. A general request to merge is not this
+   approval, and a new head SHA needs a new approval. When you start step 4, tell
+   the owner and name the directory you run it in. If no report from step 5
+   follows, the owner can then check the required checks.
+4. Copy the script below from `main`'s version of this document, for example with
+   `git show origin/main:docs/CI.md`, not from the fix PR. Save it as
+   `merge-gate-fix.sh` in an empty directory outside the checkout, so that cleaning
+   up the checkout cannot delete the files it saves. Set `merge_subject` to the
+   merge commit subject that the project's rules require, then run
+   `bash merge-gate-fix.sh "$fix_pr_number" "$fix_head_sha" "$merge_subject"` there.
+
+   Before it changes anything, the script checks its arguments, that `reviewed-ci`
+   is required, that auto-merge is off, that the PR is ahead of `main`, that
+   `repository-checks` passed on the head, and that the PR changes only the files
+   listed above, including the old names of renamed files. It then saves the
+   protection settings, removes only `reviewed-ci` from the required checks, merges
+   the PR, and puts the saved checks back, even if the merge fails or the script is
+   interrupted. It logs each step with the time in `merge-gate-fix.log`. It reports
+   `Protection restored` only when the settings match the saved copy, and otherwise
+   exits with status 1.
+
+   ```sh
+   set -euo pipefail
+   pr=${1-} sha=${2-} subject=${3-}
+   if [[ ! $pr =~ ^[1-9][0-9]*$ || ! $sha =~ ^[0-9a-f]{40}$ || -z $subject ]]; then
+     echo "Usage: bash merge-gate-fix.sh PR_NUMBER FULL_HEAD_SHA MERGE_SUBJECT" >&2
+     exit 2
+   fi
+   repo=lincarl/mervin-pdf
+   protection="repos/$repo/branches/main/protection"
+   checks="$protection/required_status_checks"
+   unset GH_FORCE_TTY CLICOLOR_FORCE
+   note() {
+     printf '%s %s\n' "$(date -u +%FT%TZ)" "$1" >> merge-gate-fix.log
+     printf '%s %s\n' "$(date -u +%FT%TZ)" "$1" >&2 || true
+   }
+   stop() { note "$1"; exit 1; }
+   before=$(gh api "$checks" --jq '{strict, checks}')
+   grep -q '"context":"reviewed-ci"' <<< "$before" ||
+     stop "reviewed-ci is not required. If an earlier run lifted it, restore checks-before.json first."
+   auto_merge=$(gh api "repos/$repo" --jq .allow_auto_merge)
+   [[ $auto_merge == false ]] || stop "Auto-merge is on, so another PR could merge while reviewed-ci is lifted."
+   status=$(gh api "repos/$repo/compare/main...$sha" --jq .status)
+   [[ $status == ahead ]] || stop "The PR is $status relative to main. Update it and repeat steps 1 to 3."
+   tests=$(gh api "repos/$repo/commits/$sha/check-runs?check_name=repository-checks" \
+     --jq '[.check_runs[] | select(.app.id == 15368)][0].conclusion')
+   [[ $tests == success ]] || stop "repository-checks has not passed on $sha."
+   files=$(gh api "repos/$repo/compare/main...$sha" --jq \
+     'if (.files | length) < 300 then .files[] | .filename, (.previous_filename // empty) else error("too many files") end')
+   outside=$(grep -v -E '^(scripts/(test_)?reviewed_ci\.py|\.github/workflows/[^/]+|docs/CI\.md)$' <<< "$files" || true)
+   if [[ -z $files || -n $outside ]]; then
+     stop "The PR changes files outside the gate: ${outside:-none listed}"
+   fi
+   gh api "$protection" > protection-before.json
+   printf '%s\n' "$before" > checks-before.json
+   restore() {
+     trap '' INT TERM HUP PIPE
+     for _ in 1 2 3; do
+       if gh api -X PATCH "$checks" --input checks-before.json > /dev/null &&
+         gh api "$protection" > protection-after.json &&
+         diff protection-before.json protection-after.json; then
+         note "Protection restored"
+         return
+       fi
+       sleep 5
+     done
+     stop "Protection does not match protection-before.json. Check that reviewed-ci is required, then compare the settings."
+   }
+   trap restore EXIT
+   trap 'exit 130' INT TERM HUP PIPE
+   note "Lifting reviewed-ci for PR $pr at $sha"
+   gh api "$checks" --jq '{strict, checks: [.checks[] | select(.context != "reviewed-ci")]}' |
+     gh api -X PATCH "$checks" --input - > /dev/null
+   gh pr merge "$pr" --repo "$repo" --merge --subject "$subject" --match-head-commit "$sha"
+   merged=$(gh pr view "$pr" --repo "$repo" --json mergeCommit --jq .mergeCommit.oid)
+   note "Merged PR $pr as $merged"
+   ```
+
+   If the merge fails, the script still restores the checks and exits with a
+   nonzero status. Fix the cause and run the script again for the same approved
+   head, never with `--admin` or `--auto`. A new head SHA needs a new approval in
+   step 3.
+
+   If the script reports that protection does not match, or the session ends before
+   it restores the checks, run the commands below in the directory where the script
+   ran. They put the saved checks back and compare the settings with the saved
+   copy. You can also add `reviewed-ci` back under **Settings → Branches**, with
+   GitHub Actions as its source.
+
+   ```sh
+   gh api -X PATCH repos/lincarl/mervin-pdf/branches/main/protection/required_status_checks \
+     --input checks-before.json
+   gh api repos/lincarl/mervin-pdf/branches/main/protection > protection-after.json
+   diff protection-before.json protection-after.json
+   ```
+
+5. Check that `reviewed-ci` from GitHub Actions, app ID 15368, is required again and
+   that `main` gained only the merge commit. Report the merge commit and the result
+   to the owner. Keep `merge-gate-fix.log`, both protection files, and the owner's
+   approval with the task's records.
+
+   ```sh
+   gh api repos/lincarl/mervin-pdf/branches/main/protection/required_status_checks --jq .checks
+   git fetch origin && git log --first-parent --oneline -2 origin/main
+   ```
+
+6. The fix PR got no full CI before it merged, and `main`'s CI builds and tests the
+   merge commit without running Start CI. Rebase each PR that the old gate blocked.
+   Wait until CodeRabbit covers the new head, and request a full review if the
+   incremental review skips the rebase. Then dispatch Start CI for the new head.
+   This dispatch is the first Start CI run with the fixed gate. If it rejects a PR
+   that should pass, or a PR CI lifecycle run or `main`'s CI fails, stop and tell
+   the owner. If no PR was waiting, tell the owner that Start CI with the fixed gate
+   stays untested until the next PR. Do not repeat the exception without a new
+   approval.
+
+Only workflows on `main` publish `reviewed-ci`, and only Start CI publishes a
+success. Do not add a branch workflow that publishes it, and do not edit
+CodeRabbit's comments so that the old gate accepts them, because that changes the
+evidence the gate checks.
+
 ## Repository settings
 
 Protect `main`, including administrators, with a pull request requirement, strict
