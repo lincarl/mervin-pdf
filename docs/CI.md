@@ -76,6 +76,21 @@ workflow cancels obsolete PR runs without canceling builds for `main`. If a GitH
 API outage prevents cleanup, the required status stays unsuccessful until the
 controller can verify a result.
 
+After a merge, GitHub's push event starts the `ci` workflow on `main`, which repeats
+the full CI and, if it passes, publishes a release candidate. If GitHub drops that
+event, as it did for `310f6f1` in October 2026, no run starts, and no new CI run is
+needed. The PR was up to date with `main` when it merged, so the merge commit has
+the same tree as the head that passed `reviewed-ci`. With `merge_sha` set to the
+merge commit's full SHA and `task_reviewed_sha` to that head, this prints the same
+hash twice:
+
+```sh
+git rev-parse "$merge_sha^{tree}" "$task_reviewed_sha^{tree}"
+```
+
+Only the release candidate is missing. The next push to `main` whose CI passes
+publishes one that includes the change.
+
 ## When the gate rejects its own fix
 
 Start CI, dispatched on `main` as described above, uses the gate in
