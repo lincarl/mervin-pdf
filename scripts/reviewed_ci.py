@@ -118,8 +118,8 @@ def validate_coderabbit(statuses, comments, sha):
         # changed its comment format, as in October 2026. Say so instead of
         # reporting that coverage is missing.
         if any(is_bot(item.get("user")) for item in comments):
-            raise GateError("CodeRabbit has comments on this PR, but none starts with the "
-                            "summary marker. Check whether its comment format changed")
+            raise GateError("CodeRabbit has comments on this PR, but the gate found no "
+                            "summary among them. Check whether its comment format changed")
         raise GateError("CodeRabbit review coverage is missing from this PR")
     summary = max(summaries, key=lambda item: (item["updated_at"], item["id"]))
     body = summary["body"]

@@ -202,7 +202,7 @@ class ReviewEvidenceTests(unittest.TestCase):
     def test_coverage_inside_one_off_bot_reply_is_not_review_completion(self):
         reply = summary()
         reply["body"] = reply["body"].replace(SUMMARY_MARKER, "<!-- This is an auto-generated reply by CodeRabbit -->")
-        with self.assertRaisesRegex(gate.GateError, "none starts with the summary marker"):
+        with self.assertRaisesRegex(gate.GateError, "found no summary"):
             gate.validate_coderabbit([review_status()], [reply], SHA)
 
     def test_missing_summary_error_says_whether_coderabbit_commented(self):
@@ -212,12 +212,13 @@ class ReviewEvidenceTests(unittest.TestCase):
         no_body["body"] = None
         no_user = summary()
         del no_user["user"]
-        for comments in ([unknown], [no_body], [unknown, summary(user={**BOT, "id": 1})]):
+        untrusted = summary(user={**BOT, "id": 1})
+        for comments in ([unknown], [no_body], [untrusted, unknown, untrusted]):
             with self.subTest(comments=comments), \
                     self.assertRaisesRegex(gate.GateError, "comment format changed"):
                 gate.validate_coderabbit([review_status()], comments, SHA)
         for comments in ([], [no_user], [summary(user="coderabbitai[bot]")],
-                         [summary(user={**BOT, "id": 1})], [summary(user=None)]):
+                         [untrusted], [summary(user=None)]):
             with self.subTest(comments=comments), \
                     self.assertRaisesRegex(gate.GateError, "coverage is missing from this PR"):
                 gate.validate_coderabbit([review_status()], comments, SHA)
@@ -240,7 +241,7 @@ class ReviewEvidenceTests(unittest.TestCase):
             comment["body"] = prefix + "\n" + comment["body"]
         for comment in (reply, quote, *prefixed):
             with self.subTest(body=comment["body"][:80]), \
-                    self.assertRaisesRegex(gate.GateError, "none starts with the summary marker"):
+                    self.assertRaisesRegex(gate.GateError, "found no summary"):
                 gate.validate_coderabbit([review_status()], [comment], SHA)
 
 
