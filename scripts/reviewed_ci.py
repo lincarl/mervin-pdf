@@ -100,6 +100,11 @@ def latest_status(api, sha, context):
 
 
 def validate_coderabbit(statuses, comments, sha):
+    """Return the IDs of CodeRabbit's status and summary that prove a completed review of sha.
+
+    Raise GateError for the first check that fails, such as an untrusted status, an
+    unfinished review, no recognised summary, or coverage of another commit.
+    """
     # Inspect the newest context, including an unexpected publisher. An older
     # success must never hide a pending, failed, or spoofed replacement.
     status = next((item for item in statuses if item["context"] == "CodeRabbit"), None)
@@ -114,6 +119,12 @@ def validate_coderabbit(statuses, comments, sha):
     summaries = [item for item in comments if is_bot(item.get("user"))
                  and isinstance(item.get("body"), str) and is_summary(item["body"])]
     if not summaries:
+        # Bot comments without a recognised summary usually mean that CodeRabbit
+        # changed its comment format, as in October 2026. Say so instead of
+        # reporting that coverage is missing.
+        if any(is_bot(item.get("user")) for item in comments):
+            raise GateError("CodeRabbit has comments on this PR, but the gate found no "
+                            "summary among them. Check whether its comment format changed")
         raise GateError("CodeRabbit review coverage is missing from this PR")
     summary = max(summaries, key=lambda item: (item["updated_at"], item["id"]))
     body = summary["body"]
