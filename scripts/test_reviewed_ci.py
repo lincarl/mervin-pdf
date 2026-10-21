@@ -208,11 +208,16 @@ class ReviewEvidenceTests(unittest.TestCase):
     def test_missing_summary_error_says_whether_coderabbit_commented(self):
         unknown = summary()
         unknown["body"] = "<!-- coderabbit-ai-generated:next -->\n" + unknown["body"]
-        for comments in ([unknown], [unknown, summary(user={**BOT, "id": 1})]):
+        no_body = summary()
+        no_body["body"] = None
+        no_user = summary()
+        del no_user["user"]
+        for comments in ([unknown], [no_body], [unknown, summary(user={**BOT, "id": 1})]):
             with self.subTest(comments=comments), \
                     self.assertRaisesRegex(gate.GateError, "comment format changed"):
                 gate.validate_coderabbit([review_status()], comments, SHA)
-        for comments in ([], [summary(user={**BOT, "id": 1})], [summary(user=None)]):
+        for comments in ([], [no_user], [summary(user="coderabbitai[bot]")],
+                         [summary(user={**BOT, "id": 1})], [summary(user=None)]):
             with self.subTest(comments=comments), \
                     self.assertRaisesRegex(gate.GateError, "coverage is missing from this PR"):
                 gate.validate_coderabbit([review_status()], comments, SHA)
