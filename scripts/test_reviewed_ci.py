@@ -169,6 +169,23 @@ class ReviewEvidenceTests(unittest.TestCase):
             with self.subTest(comments=comments), self.assertRaises(gate.GateError):
                 gate.validate_coderabbit([review_status()], comments, SHA)
 
+    def test_status_error_says_whether_coderabbit_reported_success(self):
+        for description in ("Review skipped", "Review complete", None):
+            with self.subTest(description=description), \
+                    self.assertRaisesRegex(gate.GateError, "status text changed"):
+                gate.validate_coderabbit([review_status(description=description)], [summary()], SHA)
+        for state in ("pending", "failure", "error"):
+            with self.subTest(state=state), self.assertRaisesRegex(gate.GateError, "not complete"):
+                gate.validate_coderabbit([review_status(state=state)], [summary()], SHA)
+
+    def test_coverage_error_says_whether_the_marker_is_missing_or_repeated(self):
+        renamed = summary()
+        renamed["body"] = renamed["body"].replace("final_review_risk_coverage", "review_coverage")
+        with self.assertRaisesRegex(gate.GateError, "summary format changed"):
+            gate.validate_coderabbit([review_status()], [renamed], SHA)
+        with self.assertRaisesRegex(gate.GateError, "ambiguous"):
+            gate.validate_coderabbit([review_status()], [summary(body=summary()["body"] * 2)], SHA)
+
     def test_newer_skip_summary_overrides_older_completed_summary(self):
         skipped = summary(
             id=21, updated_at="2026-10-13T11:00:00Z",
