@@ -313,14 +313,14 @@ void warnInstallerNotStarted(const QString &file)
 }
 
 // Closes every window the way the user would, so unsaved work gets its prompt.
-// False when one stayed open (the user cancelled a save prompt).
-bool closeAllWindows()
+// Declined when one stayed open (the user cancelled a save prompt).
+Updater::CloseResult closeAllWindows()
 {
     QApplication::closeAllWindows();
     for (QWidget *w : QApplication::topLevelWidgets())
         if (w->isWindow() && w->isVisible())
-            return false;
-    return true;
+            return Updater::CloseResult::Declined;
+    return Updater::CloseResult::Closed;
 }
 
 } // namespace
@@ -904,8 +904,9 @@ void Updater::install(const QString &file, const QString &version, const QString
 void Updater::handOffToInstaller(const QString &file, const QString &version,
                                  const QString &sha256)
 {
-    if (!closeWindows()) {
+    if (const CloseResult closed = closeWindows(); closed != CloseResult::Closed) {
         putBackPending(kind_, version, file, sha256);
+        reportCloseRefused(closed);
         endOperation();
         return;
     }
@@ -984,14 +985,14 @@ void Updater::runPackageManager(const QStringList &command, const QString &file,
 void Updater::restart(const QString &exe)
 {
     // The new version is already in place, so an automatic update can wait here
-    // for a dialog opened meanwhile, as during the AppImage copy. If the user
-    // keeps a window open by cancelling a save prompt, the next launch simply
-    // runs the new version.
+    // for a dialog opened meanwhile, as during the AppImage copy. If a window
+    // stays open, the next launch simply runs the new version.
     if (shouldWaitForDialogs()) {
         QTimer::singleShot(1000, this, [this, exe] { restart(exe); });
         return;
     }
-    if (!closeWindows()) {
+    if (const CloseResult closed = closeWindows(); closed != CloseResult::Closed) {
+        reportCloseRefused(closed);
         endOperation();
         return;
     }
@@ -1008,8 +1009,28 @@ void Updater::endOperation()
     installing_ = false;
 }
 
-bool Updater::closeWindows()
+Updater::CloseResult Updater::closeWindows()
 {
     return closeWindows_ ? closeWindows_() : closeAllWindows();
+}
+
+void Updater::reportCloseRefused(CloseResult result) const
+{
+    if (result == CloseResult::Busy && manual_)
+        warn(closeRefusedText());
+}
+
+QString Updater::closeRefusedText()
+{
+    //: Shown over the Settings window after Check for Updates downloaded an
+    //: update, when Mervin could not close to install it or to restart into it,
+    //: because an operation such as saving a file was still running or another
+    //: dialog was open. A save chosen in the save prompt only starts once Settings
+    //: closes, so the user closes Settings first. The download is kept. Settings
+    //: is that window's title, and Check for Updates is its button in Settings >
+    //: Updates; use their translations.
+    return tr("Couldn't close Mervin to complete the update.\n\n"
+              "Close Settings and other dialogs and wait for running operations to "
+              "finish. Then choose Check for Updates again.");
 }
 } // namespace mervin

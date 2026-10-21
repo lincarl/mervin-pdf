@@ -75,8 +75,22 @@ public:
     // operation, or an installation step already running, runs to its end.
     void onAutoUpdateChanged(bool on);
 
+    // How the windows answered the request to close them for an installation.
+    enum class CloseResult {
+        Closed,   // the windows are closing, and the updater quits next
+        Declined, // the user chose Cancel in a save prompt
+        Busy,     // an operation, a chosen save or another dialog keeps a window open
+    };
+    Q_ENUM(CloseResult)
+
     // The application supplies its explicit quit path, which bypasses close-to-tray.
-    void setCloseWindowsHandler(std::function<bool()> handler) { closeWindows_ = std::move(handler); }
+    void setCloseWindowsHandler(std::function<CloseResult()> handler)
+    {
+        closeWindows_ = std::move(handler);
+    }
+
+    // What a manual installation says when Mervin is too busy to close for it.
+    static QString closeRefusedText();
 
     // Waits up to `ms` milliseconds for the disk work asked for so far, such as a
     // pending update put back as the app quits. For the end of the process; works
@@ -119,7 +133,10 @@ private:
     void runPackageManager(const QStringList &command, const QString &file, const QString &version);
     void restart(const QString &exe);
     void endOperation();
-    bool closeWindows();
+    CloseResult closeWindows();
+    // After closeWindows() did not close, a manual operation that found Mervin
+    // busy says so. A declined save prompt needs no message.
+    void reportCloseRefused(CloseResult result) const;
     void markChecked();
     void startDownload(); // the network part of download(), once the .part file is open
 
@@ -138,7 +155,7 @@ private:
     update::ReleaseAsset asset_;
     QString downloadVersion_;
     QPointer<QProgressDialog> progress_;
-    std::function<bool()> closeWindows_;
+    std::function<CloseResult()> closeWindows_;
     QDateTime lastCheck_;
     bool lastCheckKnown_ = false; // read at start, or set by a check
     quint64 operation_ = 0;       // bumped by endOperation(), see onDisk()

@@ -607,8 +607,9 @@ void CloseFlow::finish()
     }
 }
 
-bool CloseFlow::tryCloseForUpdate(WindowManager *manager)
+Updater::CloseResult CloseFlow::tryCloseForUpdate(WindowManager *manager)
 {
+    using Result = Updater::CloseResult;
     const QPointer<WindowManager> liveManager(manager);
     const auto pending = [liveManager] {
         if (!liveManager || liveManager->quitting_)
@@ -619,7 +620,7 @@ bool CloseFlow::tryCloseForUpdate(WindowManager *manager)
         return false;
     };
     if (pending())
-        return false;
+        return Result::Busy;
     // Launches that arrive while this asks about unsaved edits wait, as the update would
     // close their windows again. If it does not go ahead, they open.
     manager->holdingOpens_ = true;
@@ -668,14 +669,14 @@ bool CloseFlow::tryCloseForUpdate(WindowManager *manager)
         // A window-modal question can start Quit or Restart in another window.
         // Its posted continuation may not have joined a window queue yet.
         if (pending())
-            return false;
+            return Result::Busy;
         QList<QPointer<MainWindow>> targets(manager->windows_.cbegin(), manager->windows_.cend());
         for (const QPointer<MainWindow> &window : targets) {
-            if (!window || !window->canChangeTabs() || !window->tabChanges_.empty())
-                return false;
+            if (!window || !window->canCloseForUpdate() || !window->tabChanges_.empty())
+                return Result::Busy;
             for (int i = 0; i < window->tabs_->count(); ++i)
                 if (auto *tab = qobject_cast<TabPage *>(window->tabs_->widget(i)); tab && tab->isBusy())
-                    return false;
+                    return Result::Busy;
         }
         QPointer<TabPage> next;
         for (const QPointer<MainWindow> &window : targets) {
@@ -688,12 +689,12 @@ bool CloseFlow::tryCloseForUpdate(WindowManager *manager)
                 if (tab->isUsable()) {
                     tab->viewer()->commitActiveFormEditor();
                     if (!liveManager)
-                        return false;
+                        return Result::Busy;
                     if (!window || !tab)
                         continue;
                     tab->viewer()->commitActiveAnnotEditor();
                     if (!liveManager)
-                        return false;
+                        return Result::Busy;
                     if (!window || !tab)
                         continue;
                 }
@@ -714,7 +715,7 @@ bool CloseFlow::tryCloseForUpdate(WindowManager *manager)
         MainWindow *window = owner(next);
         const int answer = window->askClose(next);
         if (!liveManager)
-            return false;
+            return Result::Busy;
         if (answer == QMessageBox::Cancel) {
             approved = false;
             break;
@@ -725,12 +726,11 @@ bool CloseFlow::tryCloseForUpdate(WindowManager *manager)
                 saves.append(next);
         }
     }
-    if (!saves.isEmpty())
-        return false;
+    // Cancel answers for the user, also after an earlier Save.
     if (!approved)
-        return false;
-    if (pending())
-        return false;
+        return Result::Declined;
+    if (!saves.isEmpty() || pending())
+        return Result::Busy;
     const QList<QPointer<MainWindow>> targets(manager->windows_.cbegin(), manager->windows_.cend());
     manager->quitting_ = true;
     manager->updateSession();
@@ -741,7 +741,7 @@ bool CloseFlow::tryCloseForUpdate(WindowManager *manager)
             window->closeForQuit();
     if (targets.isEmpty())
         QCoreApplication::quit();
-    return true;
+    return Result::Closed;
 }
 
 } // namespace mervin

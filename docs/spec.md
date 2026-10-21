@@ -474,9 +474,9 @@ Network access follows an explicit action or the automatic update setting:
 
 - opening or downloading an explicit web URL;
 - loading the OCR language catalog or downloading a chosen language model; or
-- checking for updates, manually from Settings > General or automatically on
+- checking for updates, manually from Settings > Updates or automatically on
   startup when at least 30 days have passed since the last successful check (on by
-  default, off in Settings > General). A profile without a saved check date checks on its next start.
+  default, off in Settings > Updates). A profile without a saved check date checks on its next start.
   Successful manual checks also reset the interval. Failed scheduled checks retry
   on the next start after network or download transfer errors, or when the update
   server's answer cannot be read, as when a network filter returns its own page.
@@ -494,9 +494,13 @@ Network access follows an explicit action or the automatic update setting:
   with automatic updates off.
   This applies to both Check for Updates and scheduled checks, with no separate
   install confirmation. The usual save prompts protect unsaved documents, and
-  cancelling a save prompt cancels the restart. Operating system permission
-  prompts still apply. Linux systems without the required package installation
-  tools open the desktop installer and require manual completion and restart.
+  cancelling a save prompt cancels the restart. Check for Updates finishes over the
+  open Settings window. When a running operation, a chosen save or another open
+  dialog keeps Mervin from closing, it says so and keeps the download for the next
+  attempt. A save chosen in that prompt starts once Settings closes. Operating
+  system permission prompts still apply. Linux systems without the required package
+  installation tools open the desktop installer and require manual completion and
+  restart.
   Turning automatic updates off prevents automatic checks
   and installation, including a previously downloaded update. Check for Updates
   still downloads, installs and restarts when an update exists. Copies that

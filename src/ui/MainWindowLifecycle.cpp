@@ -21,9 +21,40 @@
 #include <QTabWidget>
 #include <QTimer>
 
+#include <algorithm>
 #include <utility>
 
 using mervin::TabPage;
+
+namespace {
+
+// No mouse button is held and no tab is dragged. A held button can be an in-bar
+// tab move, and a tab drag can end on the bar of any window, so a drag from any
+// window counts.
+bool tabInputIdle()
+{
+    return QGuiApplication::mouseButtons() == Qt::NoButton
+        && !mervin::DetachableTabBar::dragInProgress();
+}
+
+// No popup is open, and every modal window, including the one on top, is the
+// Settings dialog.
+bool onlySettingsIsOpen()
+{
+    if (QApplication::activePopupWidget())
+        return false;
+    const auto isSettings = [](const QWidget *w) {
+        return qobject_cast<const SettingsDialog *>(w) != nullptr;
+    };
+    if (const QWidget *top = QApplication::activeModalWidget(); top && !isSettings(top))
+        return false;
+    const QWidgetList windows = QApplication::topLevelWidgets();
+    return std::all_of(windows.cbegin(), windows.cend(), [&](const QWidget *w) {
+        return !w->isVisible() || !w->isModal() || isSettings(w);
+    });
+}
+
+} // namespace
 
 /// Routes a tab's load, operation and unload events through its owning window.
 void MainWindow::wireTabLifecycle(TabPage *tab)
@@ -315,21 +346,33 @@ void MainWindow::scheduleCurrentResume()
     });
 }
 
+bool MainWindow::documentsFree() const
+{
+    return !closeConfirmed_ && !suspending_ && documentOperationDepth_ == 0
+        && !mervin::sessionend::active();
+}
+
 bool MainWindow::canSuspendDocuments() const
 {
     // Nested dialogs and document operations may hold raw document pointers. Defer until
     // their event loops return, including native print and save dialogs.
-    return !closeConfirmed_ && !suspending_ && documentOperationDepth_ == 0
-        && !mervin::sessionend::active()
-        && !QApplication::activeModalWidget() && !QApplication::activePopupWidget();
+    return documentsFree() && !QApplication::activeModalWidget()
+        && !QApplication::activePopupWidget();
 }
 
 bool MainWindow::canChangeTabs() const
 {
-    // A held button can be an in-bar tab move, and a tab drag can end on the bar
-    // of any window, so a drag from any window counts.
-    return canSuspendDocuments() && QGuiApplication::mouseButtons() == Qt::NoButton
-        && !mervin::DetachableTabBar::dragInProgress();
+    return canSuspendDocuments() && tabInputIdle();
+}
+
+bool MainWindow::canCloseForUpdate() const
+{
+    // Check for Updates runs from the modal Settings dialog, which holds no
+    // document. The update quits in the same call that closes the windows
+    // (Updater::handOffToInstaller and Updater::restart), so Settings never
+    // returns into a closed window. Any other dialog still waits, including one
+    // that Settings opened.
+    return documentsFree() && onlySettingsIsOpen() && tabInputIdle();
 }
 
 void MainWindow::whenTabsCanChange(std::function<void()> change)

@@ -1169,10 +1169,14 @@ application records it in Recent after Retry succeeds.
 The relaunch flag is set only after restart approval, before its windows close.
 
 The updater keeps a separate synchronous `tryCloseAllForUpdate` adapter. A running
-user operation or another pending close makes it return false immediately. A chosen
-Save starts as the tab's background job after the callback returns false, for loaded
-and unloaded tabs alike, and never triggers a later shutdown. The adapter returns
-true only when approved windows close in that call.
+user operation, another pending close or an open dialog makes it answer `Busy`
+immediately. The Settings dialog is the exception, because Check for Updates runs
+from it. The windows close under it, and the updater quits in the same call, before
+Settings' event loop can return into a closed window. A dialog that Settings opens
+still counts. A chosen Save starts as the tab's background job after the callback
+answers `Busy`, once no dialog is open, for loaded and unloaded tabs alike, and
+never triggers a later shutdown. Cancel in a save prompt answers `Declined`. The
+adapter answers `Closed` only when approved windows close in that call.
 
 Security first reads the document's encryption and permission information as a
 tab operation, including any retry with a newly entered password. `SecurityDialog`
@@ -1740,7 +1744,8 @@ shows it without reading the profile. Handing off to the Windows installer consu
 the pending update first, then closes the windows, starts the installer and quits in
 one step, as a quit that came later would let an open dialog's event loop delete the
 closed windows under it. The handoff goes ahead only once the consumed state is
-written. Quitting waits for the updater's writes, such as an update put back after
+written. When the windows do not close, a manual installation that found Mervin busy
+says so, and Cancel in a save prompt ends it without a message. Quitting waits for the updater's writes, such as an update put back after
 the installer did not start, within the same 5 s it gives the app files. An automatic
 installation checks again for other open dialogs after each disk step and waits for
 them before it closes any window. Windows file-handler registration uses the per-user registry. A profile redirects the Qt

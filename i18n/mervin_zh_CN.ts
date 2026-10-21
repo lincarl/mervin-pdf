@@ -4259,6 +4259,15 @@ Mervin PDF %1 is the latest version.</source>
         <translation>无法保存更新。</translation>
     </message>
     <message>
+        <source>Couldn&apos;t close Mervin to complete the update.
+
+Close Settings and other dialogs and wait for running operations to finish. Then choose Check for Updates again.</source>
+        <extracomment>Shown over the Settings window after Check for Updates downloaded an update, when Mervin could not close to install it or to restart into it, because an operation such as saving a file was still running or another dialog was open. A save chosen in the save prompt only starts once Settings closes, so the user closes Settings first. The download is kept. Settings is that window&apos;s title, and Check for Updates is its button in Settings &gt; Updates; use their translations.</extracomment>
+        <translation>无法关闭 Mervin 以完成更新。
+
+请关闭“设置”和其他对话框，并等待正在进行的操作完成。然后再次选择“检查更新”。</translation>
+    </message>
+    <message>
         <source>Couldn&apos;t start the installer. It is saved at:
 
 %1

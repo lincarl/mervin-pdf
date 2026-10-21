@@ -264,6 +264,8 @@ private slots:
     void toolPanels();
     void updateCheckWarning_data() { addLanguageMatrix(); }
     void updateCheckWarning();
+    void updateCloseWarning_data() { addLanguageMatrix(); }
+    void updateCloseWarning();
     void waitBar_data() { addLanguageMatrix(); }
     void waitBar();
 
@@ -589,6 +591,14 @@ void TstTranslationLayout::updateCheckWarning()
             .arg(mervin::Updater::tr("The update server's answer couldn't be read.")),
         QMessageBox::Ok);
     inspect(warning, QStringLiteral("Update check answer not readable"));
+}
+
+/// Checks the warning a manual update shows when Mervin is too busy to close for it.
+void TstTranslationLayout::updateCloseWarning()
+{
+    QMessageBox warning(QMessageBox::Warning, mervin::Updater::tr("Update"),
+                        mervin::Updater::closeRefusedText(), QMessageBox::Ok);
+    inspect(warning, QStringLiteral("Mervin too busy to close for an update"));
 }
 
 // The bar over a tab whose operation waits for a drive that stopped answering, saving

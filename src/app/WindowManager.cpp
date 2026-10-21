@@ -1376,7 +1376,7 @@ void WindowManager::restart()
     CloseFlow::requestQuit(this, true);
 }
 
-bool WindowManager::tryCloseAllForUpdate()
+Updater::CloseResult WindowManager::tryCloseAllForUpdate()
 {
     return CloseFlow::tryCloseForUpdate(this);
 }

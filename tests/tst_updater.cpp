@@ -299,6 +299,8 @@ private slots:
     void invalidDownloadDoesNotInstall_data();
     void invalidDownloadDoesNotInstall();
     void closeVetoRetainsPendingUpdate();
+    void busyCloseExplainsManualInstall_data();
+    void busyCloseExplainsManualInstall();
     void failedInstallerLaunchRetainsPendingUpdate();
     void installingIgnoresDuplicateCheckAndDisable();
     void cancelStillAborts_data();
@@ -489,7 +491,7 @@ QString TestUpdater::downloadedPath(PackageKind kind)
 DownloadReply *TestUpdater::prepareDownload(Updater &updater, bool manual,
                                            QNetworkReply::NetworkError error)
 {
-    updater.setCloseWindowsHandler([] { return true; });
+    updater.setCloseWindowsHandler([] { return Updater::CloseResult::Closed; });
     updater.busy_ = true;
     updater.manual_ = manual;
     updater.downloadVersion_ = kVersion;
@@ -586,7 +588,7 @@ void TestUpdater::handoffQuitsBeforeSettingsLosesItsWindow()
     updater.setCloseWindowsHandler([alive] {
         if (alive)
             alive->close();
-        return true;
+        return Updater::CloseResult::Closed;
     });
     auto *network = useLocalNetwork(updater);
     network->hasUpdate = true;
@@ -621,7 +623,7 @@ void TestUpdater::automaticHandoffWaitsForADialogOpenedMeanwhile()
 {
     QVERIFY(savePending());
     Updater updater;
-    updater.setCloseWindowsHandler([] { return true; });
+    updater.setCloseWindowsHandler([] { return Updater::CloseResult::Closed; });
     QVERIFY(settled());
     updater.busy_ = true;
     updater.installing_ = true;
@@ -665,7 +667,7 @@ void TestUpdater::unwrittenConsumeStopsTheHandoff()
     int closes = 0;
     updater.setCloseWindowsHandler([&] {
         ++closes;
-        return true;
+        return Updater::CloseResult::Closed;
     });
     PromptObserver observer;
     updater.busy_ = true;
@@ -698,7 +700,7 @@ void TestUpdater::automaticRestartWaitsForADialogOpenedDuringTheCopy()
     updater.setCloseWindowsHandler([&] {
         ++closes;
         dialogOpenAtClose = QApplication::activeModalWidget() != nullptr;
-        return false; // the user keeps a window, which ends the operation
+        return Updater::CloseResult::Declined; // the user keeps a window, which ends the operation
     });
     updater.onStartup();
     QTRY_VERIFY(updater.installing_);
@@ -727,7 +729,7 @@ void TestUpdater::quittingWaitsForTheDiskWithinItsTime()
     appImageReplaced = true;
     appImageCopyHeld = true;
     Updater updater;
-    updater.setCloseWindowsHandler([] { return false; });
+    updater.setCloseWindowsHandler([] { return Updater::CloseResult::Declined; });
     updater.busy_ = true;
     updater.installing_ = true;
     // The copy holds the disk thread.
@@ -771,7 +773,7 @@ void TestUpdater::queuedAutomaticInstallCanBecomeManual()
 {
     Updater updater;
     auto *network = useLocalNetwork(updater);
-    updater.setCloseWindowsHandler([] { return true; });
+    updater.setCloseWindowsHandler([] { return Updater::CloseResult::Closed; });
     QDialog settingsDialog;
     settingsDialog.setAttribute(Qt::WA_DontShowOnScreen);
     settingsDialog.setModal(true);
@@ -923,7 +925,7 @@ void TestUpdater::startupRespectsSetting()
     if (!pendingVersion.isEmpty())
         QVERIFY(savePending(installedKind, pendingVersion));
     Updater updater;
-    updater.setCloseWindowsHandler([] { return true; });
+    updater.setCloseWindowsHandler([] { return Updater::CloseResult::Closed; });
     auto *network = useLocalNetwork(updater);
     PromptObserver observer;
     updater.onStartup();
@@ -983,7 +985,7 @@ void TestUpdater::pendingUpdateOfThisKindOnly()
     const QString fileKey = legacy ? kLegacyPendingFile : stateKey(u"pendingFile", recordKind);
 
     Updater updater;
-    updater.setCloseWindowsHandler([] { return false; }); // the restart ends the operation
+    updater.setCloseWindowsHandler([] { return Updater::CloseResult::Declined; }); // the restart ends the operation
     auto *network = useLocalNetwork(updater);
     network->hasUpdate = true;
     network->offeredAsset = assetName(copyKind);
@@ -1042,7 +1044,7 @@ void TestUpdater::alteredDownloadIsNotInstalled()
     }
     {
         Updater updater;
-        updater.setCloseWindowsHandler([] { return true; });
+        updater.setCloseWindowsHandler([] { return Updater::CloseResult::Closed; });
         auto *network = useLocalNetwork(updater);
         network->hasUpdate = true;
         PromptObserver observer;
@@ -1197,7 +1199,7 @@ void TestUpdater::installRefusesAnotherKindsPackage()
     appImageReplaced = true;
     QVERIFY(savePending(fileKind));
     Updater updater;
-    updater.setCloseWindowsHandler([] { return false; });
+    updater.setCloseWindowsHandler([] { return Updater::CloseResult::Declined; });
     QDesktopServices::setUrlHandler(QStringLiteral("file"), this, "recordOpenedFile");
     PromptObserver observer;
     QVERIFY(settled());
@@ -1237,7 +1239,7 @@ void TestUpdater::releaseInstallsWithoutConfirmation()
     }
     {
         Updater updater;
-        updater.setCloseWindowsHandler([] { return true; });
+        updater.setCloseWindowsHandler([] { return Updater::CloseResult::Closed; });
         auto *network = useLocalNetwork(updater);
         network->hasUpdate = true;
         PromptObserver observer;
@@ -1371,7 +1373,7 @@ void TestUpdater::closeVetoRetainsPendingUpdate()
     int closeAttempts = 0;
     updater.setCloseWindowsHandler([&] {
         ++closeAttempts;
-        return false; // the user cancels an unsaved-document prompt
+        return Updater::CloseResult::Declined; // the user cancels an unsaved-document prompt
     });
     PromptObserver observer;
     reply->finish();
@@ -1387,10 +1389,60 @@ void TestUpdater::closeVetoRetainsPendingUpdate()
     // An explicit retry can use the same download without another transfer.
     auto *network = useLocalNetwork(updater);
     network->hasUpdate = true;
-    updater.setCloseWindowsHandler([] { return true; });
+    updater.setCloseWindowsHandler([] { return Updater::CloseResult::Closed; });
     updater.checkNow();
     QTRY_COMPARE(installerFiles.size(), 1);
     QCOMPARE(network->requests, 1);
+}
+
+void TestUpdater::busyCloseExplainsManualInstall_data()
+{
+    QTest::addColumn<PackageKind>("kind");
+    QTest::addColumn<bool>("manual");
+    QTest::addColumn<Updater::CloseResult>("answer");
+    QTest::addColumn<bool>("explained");
+    for (const PackageKind kind : {PackageKind::Msi, PackageKind::AppImage}) {
+        const char *name = kind == PackageKind::Msi ? "MSI handoff" : "AppImage restart";
+        QTest::addRow("%s, manual, busy", name) << kind << true << Updater::CloseResult::Busy << true;
+        QTest::addRow("%s, manual, declined", name)
+            << kind << true << Updater::CloseResult::Declined << false;
+        QTest::addRow("%s, automatic, busy", name)
+            << kind << false << Updater::CloseResult::Busy << false;
+    }
+}
+
+// A manual installation that finds Mervin too busy to close says so, as nothing
+// else would happen. Cancel in a save prompt and automatic updates stay quiet.
+void TestUpdater::busyCloseExplainsManualInstall()
+{
+    QFETCH(PackageKind, kind);
+    QFETCH(bool, manual);
+    QFETCH(Updater::CloseResult, answer);
+    QFETCH(bool, explained);
+    installedKind = kind;
+    appImageReplaced = true;
+    Updater updater;
+    DownloadReply *reply = prepareDownload(updater, manual);
+    QVERIFY(reply);
+    int closeAttempts = 0;
+    updater.setCloseWindowsHandler([&] {
+        ++closeAttempts;
+        return answer;
+    });
+    PromptObserver observer;
+    reply->finish();
+    QTRY_COMPARE(closeAttempts, 1);
+    QTRY_VERIFY(!updater.busy_);
+    QVERIFY(settled());
+    QVERIFY(!updater.installing_);
+    QVERIFY(installerFiles.isEmpty());
+    QCOMPARE(quitRequests_, 0);
+    // The download stays for the next attempt.
+    QVERIFY(QFile::exists(downloadedPath()));
+    QCOMPARE(QSettings().value(stateKey(u"pendingVersion")).toString(), kVersion);
+    QCOMPARE(appImageReplacements.size(), kind == PackageKind::AppImage ? 1 : 0);
+    QCOMPARE(observer.messages,
+             explained ? QStringList{Updater::closeRefusedText()} : QStringList{});
 }
 
 void TestUpdater::failedInstallerLaunchRetainsPendingUpdate()

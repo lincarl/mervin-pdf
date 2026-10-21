@@ -286,7 +286,7 @@ void TstInstanceHandoff::finalQuitStopsHandoffs()
         manager.quitAll();
         break;
     case 1:
-        QVERIFY(manager.tryCloseAllForUpdate());
+        QCOMPARE(manager.tryCloseAllForUpdate(), Updater::CloseResult::Closed);
         break;
     case 2:
         first->close();
@@ -484,7 +484,7 @@ void TstInstanceHandoff::launchBeforeFinalQuitGoesToNextCopy()
         manager->quitAll();
         break;
     case 1:
-        QVERIFY(manager->tryCloseAllForUpdate());
+        QCOMPARE(manager->tryCloseAllForUpdate(), Updater::CloseResult::Closed);
         break;
     case 2:
         manager.reset();
@@ -800,7 +800,7 @@ void TstInstanceHandoff::cancelledQuitOpensHeldLaunch()
     });
     dialogs.start(5);
     if (update)
-        QVERIFY(!manager.tryCloseAllForUpdate());
+        QCOMPARE(manager.tryCloseAllForUpdate(), Updater::CloseResult::Declined);
     else
         manager.quitAll();
     QTRY_VERIFY_WITH_TIMEOUT(shownWhileAsking.has_value(), 10000);

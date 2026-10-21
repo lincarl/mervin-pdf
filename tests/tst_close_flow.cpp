@@ -1143,7 +1143,7 @@ private slots:
         QTRY_COMPARE(job::testing::held(), 1);
         QElapsedTimer timer;
         timer.start();
-        QVERIFY(!manager.tryCloseAllForUpdate());
+        QCOMPARE(manager.tryCloseAllForUpdate(), Updater::CloseResult::Busy);
         QVERIFY(timer.elapsed() < 1000);
         QVERIFY(!tab->isClosing());
         job::testing::release();
@@ -1185,7 +1185,7 @@ private slots:
             });
         }
         answers_ << QMessageBox::Save;
-        QVERIFY(!manager.tryCloseAllForUpdate());
+        QCOMPARE(manager.tryCloseAllForUpdate(), Updater::CloseResult::Busy);
         // The adapter must return before any save or recovery read starts.
         QVERIFY(tab->hasUnsavedEdits());
         QVERIFY(!tab->isLoading());
@@ -1220,7 +1220,7 @@ private slots:
         const QPointer<TabPage> secondTab = currentTab(window);
         QVERIFY(addNote(secondTab, "Kept edit") >= 0);
         answers_ << QMessageBox::Save << QMessageBox::Cancel;
-        QVERIFY(!manager.tryCloseAllForUpdate());
+        QCOMPARE(manager.tryCloseAllForUpdate(), Updater::CloseResult::Declined);
         QVERIFY(firstTab->hasUnsavedEdits());
         QTRY_VERIFY(!firstTab->hasUnsavedEdits());
         QVERIFY(secondTab->hasUnsavedEdits());
@@ -1245,12 +1245,99 @@ private slots:
             }
         };
         answers_ << QMessageBox::Discard << QMessageBox::Cancel;
-        QVERIFY(!manager.tryCloseAllForUpdate());
+        QCOMPARE(manager.tryCloseAllForUpdate(), Updater::CloseResult::Busy);
         QVERIFY(started && window && tab);
         QVERIFY(!relaunch::requested());
         QTRY_VERIFY(answers_.isEmpty());
         QTRY_VERIFY(!tab->isClosing());
         QVERIFY(window && !relaunch::requested());
+    }
+
+    // Checks that Check for Updates, which runs from the modal Settings dialog,
+    // closes the windows under it. The update quits in the same call, as the
+    // updater does, so Settings returns before its window is deleted.
+    void updaterClosesWindowsUnderSettings()
+    {
+        QTemporaryDir files;
+        const QString path = copy(files, "plan.pdf");
+        WindowManager manager;
+        const QPointer<MainWindow> window = manager.createWindow();
+        QVERIFY(testing::openAndWait(*window, path));
+        std::optional<Updater::CloseResult> result;
+        bool settingsOpen = false;
+        bool deletedUnderSettings = false;
+        QObject context;
+        connect(window, &QObject::destroyed, &context, [&] { deletedUnderSettings = settingsOpen; });
+        QTimer::singleShot(0, window, [&] {
+            // On the heap, so a window deleted under it fails the test, not the process.
+            const QPointer<SettingsDialog> settings = new SettingsDialog(
+                Settings::load(), {}, SettingsDialog::Page::Updates, window);
+            QTimer::singleShot(0, settings, [&] {
+                result = manager.tryCloseAllForUpdate();
+                QCoreApplication::quit(); // as Updater::handOffToInstaller does next
+            });
+            settingsOpen = true;
+            settings->exec();
+            settingsOpen = false;
+            delete settings;
+        });
+        QTimer timeout;
+        timeout.setSingleShot(true);
+        connect(&timeout, &QTimer::timeout, qApp, [] { QCoreApplication::exit(42); });
+        timeout.start(10000);
+        QCOMPARE(QApplication::exec(), 0);
+        QCOMPARE(result, std::optional(Updater::CloseResult::Closed));
+        QTRY_VERIFY(!window);
+        QVERIFY(!deletedUnderSettings);
+        QVERIFY(questions_.isEmpty());
+    }
+
+    // Supplies the dialogs that still keep the updater from closing the windows.
+    void updaterWaitsForDialogsBesideSettings_data()
+    {
+        QTest::addColumn<int>("dialog");
+        QTest::newRow("a message box from Settings") << 0;
+        QTest::newRow("a modal dialog other than Settings") << 1;
+        QTest::newRow("a window-modal dialog below Settings") << 2;
+    }
+
+    // Checks that only Settings may stay open when the updater closes the windows.
+    void updaterWaitsForDialogsBesideSettings()
+    {
+        QFETCH(int, dialog);
+        WindowManager manager;
+        const QPointer<MainWindow> window = manager.createWindow();
+        const QPointer<MainWindow> other = manager.createWindow();
+        std::optional<Updater::CloseResult> result;
+        QTimer::singleShot(0, window, [&] {
+            std::unique_ptr<QDialog> top;
+            if (dialog == 1)
+                top = std::make_unique<QDialog>(window);
+            else
+                top = std::make_unique<SettingsDialog>(Settings::load(), SettingsDialog::UpdateInfo{},
+                                                       SettingsDialog::Page::Updates, window);
+            QMessageBox box(QMessageBox::Information, QStringLiteral("Settings"),
+                            QStringLiteral("A question from Settings"), QMessageBox::Ok, top.get());
+            box.setWindowModality(Qt::ApplicationModal);
+            QDialog sheet(other);
+            sheet.setWindowModality(Qt::WindowModal);
+            if (dialog == 2)
+                sheet.show(); // Settings opens over it
+            QTimer::singleShot(0, top.get(), [&] {
+                if (dialog == 0)
+                    box.show();
+                result = manager.tryCloseAllForUpdate();
+                box.hide();
+                sheet.hide();
+                top->done(QDialog::Rejected);
+            });
+            top->exec();
+        });
+        QTRY_VERIFY(result.has_value());
+        QCOMPARE(*result, Updater::CloseResult::Busy);
+        QVERIFY(window && other);
+        QVERIFY(window->isVisible() && other->isVisible());
+        QVERIFY(questions_.isEmpty());
     }
 
 private:
