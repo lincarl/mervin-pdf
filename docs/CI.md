@@ -134,9 +134,10 @@ that PR, such as an incomplete review, fix the PR instead.
    above, including the old names of renamed files. It then saves the protection
    settings, removes only that `reviewed-ci` check, stops if `main` has moved,
    merges the PR, and puts the saved checks back, even if the merge fails or the
-   script is interrupted. It logs each step with the time in `merge-gate-fix.log`. It reports
-   `Protection restored` only when the settings match the saved copy, and otherwise
-   exits with status 1.
+   script is interrupted. The lift, the merge, the restore, and every failed check
+   after the argument check go to `merge-gate-fix.log` with the time.
+   `Protection restored` appears only when the settings match the saved copy.
+   Otherwise the script exits with status 1.
 
    ```sh
    set -euo pipefail
@@ -155,7 +156,8 @@ that PR, such as an incomplete review, fix the PR instead.
    }
    stop() { note "$1"; exit 1; }
    before=$(gh api "$checks" --jq '{strict, checks}')
-   grep -q -F '{"app_id":15368,"context":"reviewed-ci"}' <<< "$before" ||
+   required=$(gh api "$checks" --jq 'any(.checks[]; .context == "reviewed-ci" and .app_id == 15368)')
+   [[ $required == true ]] ||
      stop "reviewed-ci is not required. If an earlier run lifted it, restore checks-before.json first."
    auto_merge=$(gh api "repos/$repo" --jq .allow_auto_merge)
    [[ $auto_merge == false ]] || stop "Auto-merge is on, so another PR could merge while reviewed-ci is lifted."
