@@ -110,8 +110,13 @@ def validate_coderabbit(statuses, comments, sha):
     status = next((item for item in statuses if item["context"] == "CodeRabbit"), None)
     if not status or not is_bot(status.get("creator", {})):
         raise GateError("CodeRabbit has not published a trusted status for this commit")
-    if status["state"] != "success" or status.get("description") != "Review completed":
+    if status["state"] != "success":
         raise GateError("CodeRabbit review is not complete")
+    # Like the summary checks below, name a likely format change when the evidence
+    # is present but not in the form the gate expects.
+    if status.get("description") != "Review completed":
+        raise GateError('CodeRabbit reported success without "Review completed". It may have '
+                        "skipped the review, or its status text changed")
 
     # The bot edits this summary in place. Select it before checking coverage so
     # a newer paused or incomplete summary cannot fall back to an older success.
@@ -132,8 +137,11 @@ def validate_coderabbit(statuses, comments, sha):
                  body, re.IGNORECASE):
         raise GateError("CodeRabbit skipped, paused, or has not finished this review")
     markers = re.findall(r"<!--\s*final_review_risk_coverage:(\{[^\n]+?\})\s*-->", body)
-    if len(markers) != 1:
-        raise GateError("CodeRabbit review coverage is missing or ambiguous")
+    if not markers:
+        raise GateError("The gate found no final_review_risk_coverage marker in CodeRabbit's "
+                        "summary. Check whether its summary format changed")
+    if len(markers) > 1:
+        raise GateError("CodeRabbit review coverage is ambiguous")
     try:
         coverage = json.loads(markers[0])
     except json.JSONDecodeError as error:
