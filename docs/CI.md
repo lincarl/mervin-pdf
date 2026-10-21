@@ -186,15 +186,15 @@ that PR, such as an incomplete review, fix the PR instead.
    restore() {
      trap '' INT TERM HUP PIPE
      for _ in 1 2 3; do
-       if current=$(gh api "$checks" --jq '{strict, checks}') &&
-         [[ $current != "$before" && $current != "$lifted" ]]; then
-         stop "The required checks changed while reviewed-ci was lifted. Add reviewed-ci back by hand."
-       fi
-       if gh api -X PATCH "$checks" --input checks-before.json > /dev/null &&
-         gh api "$protection" > protection-after.json &&
-         diff protection-before.json protection-after.json; then
-         note "Protection restored"
-         return
+       if current=$(gh api "$checks" --jq '{strict, checks}'); then
+         [[ $current == "$before" || $current == "$lifted" ]] ||
+           stop "The required checks changed while reviewed-ci was lifted. Add reviewed-ci back by hand."
+         if gh api -X PATCH "$checks" --input checks-before.json > /dev/null &&
+           gh api "$protection" > protection-after.json &&
+           diff protection-before.json protection-after.json; then
+           note "Protection restored"
+           return
+         fi
        fi
        sleep 5
      done
