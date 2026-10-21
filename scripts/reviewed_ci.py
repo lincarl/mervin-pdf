@@ -114,6 +114,12 @@ def validate_coderabbit(statuses, comments, sha):
     summaries = [item for item in comments if is_bot(item.get("user"))
                  and isinstance(item.get("body"), str) and is_summary(item["body"])]
     if not summaries:
+        # Bot comments without a recognised summary usually mean that CodeRabbit
+        # changed its comment format, as in October 2026. Say so instead of
+        # reporting that coverage is missing.
+        if any(is_bot(item.get("user")) for item in comments):
+            raise GateError("CodeRabbit has comments on this PR, but none starts with the "
+                            "summary marker. Check whether its comment format changed")
         raise GateError("CodeRabbit review coverage is missing from this PR")
     summary = max(summaries, key=lambda item: (item["updated_at"], item["id"]))
     body = summary["body"]
