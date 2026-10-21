@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QPointer>
 #include "ui/TabPage.h"
+#include "update/Updater.h"
 
 #include <optional>
 
@@ -27,8 +28,10 @@ public:
     // Requests process-wide close approval, optionally followed by relaunch.
     static void requestQuit(WindowManager *manager, bool restart = false);
     // The updater needs a synchronous answer. Chosen saves run later without
-    // closing windows. A false answer never schedules a later shutdown.
-    static bool tryCloseForUpdate(WindowManager *manager);
+    // closing windows, and answer Busy. Only Closed closes the windows; the other
+    // answers never schedule a later shutdown. The Settings dialog may stay open,
+    // see MainWindow::canCloseForUpdate.
+    static Updater::CloseResult tryCloseForUpdate(WindowManager *manager);
 
     // Disconnects waiting signals and releases tab claims when the flow is destroyed.
     ~CloseFlow() override;

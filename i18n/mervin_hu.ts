@@ -1034,7 +1034,7 @@ Button: starts printing.</extracomment>
     </message>
     <message>
         <source>Settings</source>
-        <translation>Beállítások elemre</translation>
+        <translation>Beállítások</translation>
     </message>
     <message>
         <source>General</source>
@@ -4257,6 +4257,15 @@ Mervin PDF %1 a legújabb verzió.</translation>
     <message>
         <source>Couldn&apos;t save the update.</source>
         <translation>Nem sikerült menteni a frissítést.</translation>
+    </message>
+    <message>
+        <source>Couldn&apos;t close Mervin to complete the update.
+
+Close Settings and other dialogs and wait for running operations to finish. Then choose Check for Updates again.</source>
+        <extracomment>Shown over the Settings window after Check for Updates downloaded an update, when Mervin could not close to install it or to restart into it, because an operation such as saving a file was still running or another dialog was open. A save chosen in the save prompt only starts once Settings closes, so the user closes Settings first. The download is kept. Settings is that window&apos;s title, and Check for Updates is its button in Settings &gt; Updates; use their translations.</extracomment>
+        <translation>A frissítés befejezéséhez nem sikerült bezárni a Mervint.
+
+Zárja be a Beállításokat és a többi párbeszédpanelt, és várja meg, amíg a futó műveletek befejeződnek. Ezután válassza ismét az „Ellenőrizze a frissítéseket” lehetőséget.</translation>
     </message>
     <message>
         <source>Couldn&apos;t start the installer. It is saved at:

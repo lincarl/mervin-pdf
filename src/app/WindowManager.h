@@ -10,6 +10,7 @@
 #include "session/SessionStore.h"
 #include "session/SessionEnd.h"
 #include "session/StartupPlan.h"
+#include "update/Updater.h"
 
 #include <QList>
 #include <QAbstractNativeEventFilter>
@@ -117,9 +118,9 @@ public:
     // only takes effect at startup. Cancel keeps the windows open, and the change
     // waits for the next start.
     void restart();
-    // The updater closes windows only if no wait or Save is required. A false
-    // answer may queue chosen saves, but never schedules a later shutdown.
-    bool tryCloseAllForUpdate();
+    // The updater closes windows only if no wait or Save is required. Any answer
+    // but Closed may queue chosen saves, but never schedules a later shutdown.
+    Updater::CloseResult tryCloseAllForUpdate();
     // Whether closing `window` hides it in the tray instead of closing it. A window
     // without documents closes for real while another window remains.
     bool canCloseToTray(const MainWindow *window) const;

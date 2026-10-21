@@ -4281,6 +4281,15 @@ Mervin PDF %1 соңғы нұсқасы.</translation>
         <translation>Жаңартуды сақтау мүмкін болмады.</translation>
     </message>
     <message>
+        <source>Couldn&apos;t close Mervin to complete the update.
+
+Close Settings and other dialogs and wait for running operations to finish. Then choose Check for Updates again.</source>
+        <extracomment>Shown over the Settings window after Check for Updates downloaded an update, when Mervin could not close to install it or to restart into it, because an operation such as saving a file was still running or another dialog was open. A save chosen in the save prompt only starts once Settings closes, so the user closes Settings first. The download is kept. Settings is that window&apos;s title, and Check for Updates is its button in Settings &gt; Updates; use their translations.</extracomment>
+        <translation>Жаңартуды аяқтау үшін Mervin-ді жабу мүмкін болмады.
+
+Параметрлерді және басқа диалогтарды жабыңыз да, орындалып жатқан әрекеттердің аяқталуын күтіңіз. Содан кейін «Жаңартуларды тексеріңіз» дегенді қайта таңдаңыз.</translation>
+    </message>
+    <message>
         <source>Couldn&apos;t start the installer. It is saved at:
 
 %1

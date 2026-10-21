@@ -4259,6 +4259,15 @@ Mervin PDF %1이(가) 최신 버전입니다.</translation>
         <translation>업데이트를 저장할 수 없습니다.</translation>
     </message>
     <message>
+        <source>Couldn&apos;t close Mervin to complete the update.
+
+Close Settings and other dialogs and wait for running operations to finish. Then choose Check for Updates again.</source>
+        <extracomment>Shown over the Settings window after Check for Updates downloaded an update, when Mervin could not close to install it or to restart into it, because an operation such as saving a file was still running or another dialog was open. A save chosen in the save prompt only starts once Settings closes, so the user closes Settings first. The download is kept. Settings is that window&apos;s title, and Check for Updates is its button in Settings &gt; Updates; use their translations.</extracomment>
+        <translation>업데이트를 완료하기 위해 Mervin을 닫지 못했습니다.
+
+설정과 다른 대화 상자를 닫고 실행 중인 작업이 끝날 때까지 기다리세요. 그런 다음 ‘업데이트 확인’을 다시 선택하세요.</translation>
+    </message>
+    <message>
         <source>Couldn&apos;t start the installer. It is saved at:
 
 %1

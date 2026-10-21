@@ -4303,6 +4303,15 @@ Mervin PDF %1 to najnowsza wersja.</translation>
         <translation>Nie udało się zapisać aktualizacji.</translation>
     </message>
     <message>
+        <source>Couldn&apos;t close Mervin to complete the update.
+
+Close Settings and other dialogs and wait for running operations to finish. Then choose Check for Updates again.</source>
+        <extracomment>Shown over the Settings window after Check for Updates downloaded an update, when Mervin could not close to install it or to restart into it, because an operation such as saving a file was still running or another dialog was open. A save chosen in the save prompt only starts once Settings closes, so the user closes Settings first. The download is kept. Settings is that window&apos;s title, and Check for Updates is its button in Settings &gt; Updates; use their translations.</extracomment>
+        <translation>Nie udało się zamknąć programu Mervin, aby dokończyć aktualizację.
+
+Zamknij Ustawienia i inne okna dialogowe, a następnie poczekaj na zakończenie trwających operacji. Potem ponownie wybierz „Sprawdź aktualizacje”.</translation>
+    </message>
+    <message>
         <source>Couldn&apos;t start the installer. It is saved at:
 
 %1
