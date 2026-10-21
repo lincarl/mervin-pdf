@@ -80,11 +80,11 @@ controller can verify a result.
 
 Start CI, dispatched on `main` as described above, uses the gate in
 `scripts/reviewed_ci.py` and the full CI workflow from `main`, not the versions in
-the PR. So the old gate, not the new one, judges a PR that changes the gate. If the gate on `main` wrongly rejects every PR, the PR
-that fixes it cannot get `reviewed-ci` either, and branch protection blocks the
-merge for administrators too. This happened in October 2026, when CodeRabbit began
-starting its comments with a `<!-- coderabbit-ai-generated:v1 -->` line and the
-gate no longer found the summary.
+the PR. So the old gate, not the new one, judges a PR that changes the gate. If the
+gate on `main` wrongly rejects every PR, the PR that fixes it cannot get
+`reviewed-ci` either, and branch protection blocks the merge for administrators too.
+This happened in October 2026, when CodeRabbit began starting its comments with a
+`<!-- coderabbit-ai-generated:v1 -->` line and the gate no longer found the summary.
 
 The steps below apply only to a PR that fixes a fault on `main` in the gate or its
 workflows that also blocks that PR, and only with the repository owner's approval
@@ -134,9 +134,10 @@ that PR, such as an incomplete review, fix the PR instead.
    above, including the old names of renamed files. It then saves the protection
    settings, removes only that `reviewed-ci` check, stops if `main` has moved,
    merges the PR, and puts the saved checks back, even if the merge fails or the
-   script is interrupted. The lift, the merge, the restore, and every failed check
-   after the argument check go to `merge-gate-fix.log` with the time.
-   `Protection restored` appears only when the settings match the saved copy.
+   script is interrupted. If someone else changes the required checks meanwhile,
+   it stops instead of overwriting them. The lift, the merge, the restore, and
+   every failed check after the argument check go to `merge-gate-fix.log` with the
+   time. `Protection restored` appears only when the settings match the saved copy.
    Otherwise the script exits with status 1.
 
    ```sh
@@ -178,9 +179,17 @@ that PR, such as an incomplete review, fix the PR instead.
    fi
    gh api "$protection" > protection-before.json
    printf '%s\n' "$before" > checks-before.json
+   lifted=$(gh api "$checks" --jq \
+     '{strict, checks: [.checks[] | select(.context != "reviewed-ci" or .app_id != 15368)]}')
+   current=$(gh api "$checks" --jq '{strict, checks}')
+   [[ $current == "$before" ]] || stop "The required checks changed while the script ran. Run it again."
    restore() {
      trap '' INT TERM HUP PIPE
      for _ in 1 2 3; do
+       if current=$(gh api "$checks" --jq '{strict, checks}') &&
+         [[ $current != "$before" && $current != "$lifted" ]]; then
+         stop "The required checks changed while reviewed-ci was lifted. Add reviewed-ci back by hand."
+       fi
        if gh api -X PATCH "$checks" --input checks-before.json > /dev/null &&
          gh api "$protection" > protection-after.json &&
          diff protection-before.json protection-after.json; then
@@ -194,8 +203,7 @@ that PR, such as an incomplete review, fix the PR instead.
    trap restore EXIT
    trap 'exit 130' INT TERM HUP PIPE
    note "Lifting reviewed-ci for PR $pr at $sha"
-   gh api "$checks" --jq '{strict, checks: [.checks[] | select(.context != "reviewed-ci" or .app_id != 15368)]}' |
-     gh api -X PATCH "$checks" --input - > /dev/null
+   printf '%s\n' "$lifted" | gh api -X PATCH "$checks" --input - > /dev/null
    main_now=$(gh api "repos/$repo/git/ref/heads/main" --jq .object.sha)
    [[ $main_now == "$main_sha" ]] || stop "main moved while reviewed-ci was lifted. Repeat steps 1 to 3."
    gh pr merge "$pr" --repo "$repo" --merge --subject "$subject" --match-head-commit "$sha"
@@ -212,9 +220,10 @@ that PR, such as an incomplete review, fix the PR instead.
 
    If the script reports that protection does not match, or the session ends before
    it restores the checks, run the commands below in the directory where the script
-   ran. They put the saved checks back and compare the settings with the saved
-   copy. You can also add `reviewed-ci` back under **Settings → Branches**, with
-   GitHub Actions as its source.
+   ran. They put the saved checks back and compare the settings with the saved copy.
+   You can also add `reviewed-ci` back under **Settings → Branches**, with GitHub
+   Actions as its source. If the script reports that the required checks changed,
+   use only the Settings page, so that the newer checks stay.
 
    ```sh
    gh api -X PATCH repos/lincarl/mervin-pdf/branches/main/protection/required_status_checks \
