@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-"""Authorize and report explicit PR builds using trusted GitHub review evidence.
-
-Write operations run only from the default-branch workflow. PR code runs in
-separate jobs without this controller's write token. The inspect command is
-read-only and also supports the initial workflow installation.
-"""
+"""Select immutable PR sources and verify full CI results using read-only APIs."""
 
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -15,352 +11,341 @@ import subprocess
 import sys
 
 
-CONTEXT = "reviewed-ci"
-WORKFLOW = "reviewed-ci.yml"
-BOT_ID = 136622811
-BOT_LOGIN = "coderabbitai[bot]"
-SUMMARY_MARKER = "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->"
-# Since 2026-10-20, CodeRabbit starts its comments with a version marker such as
-# <!-- coderabbit-ai-generated:v1 --> before the marker that names the comment kind.
-VERSION_MARKER = re.compile(r"\s*<!--\s*coderabbit-ai-generated:v[0-9]+\s*-->")
-RUN_TITLE = re.compile(r"reviewed-ci PR #([1-9][0-9]*) @ ([0-9a-f]{40})")
-ACTIVE_STATES = {"queued", "in_progress", "waiting", "pending", "requested"}
+WORKFLOW = ".github/workflows/pr-ci.yml"
+FULL_WORKFLOW = ".github/workflows/full-ci.yml"
 REQUIRED_JOBS = {
     "repository-checks", "linux-tests (release)", "linux-tests (sanitize)",
-    "linux-system-qt-tests", "windows-tests", "windows-msix-tests",
+    "linux-system-qt-tests", "windows-tests", "windows-msix-tests", "required-jobs",
+}
+RESULT_VARIABLES = (
+    "CI_REPOSITORY_RESULT", "CI_LINUX_RESULT", "CI_LINUX_SYSTEM_RESULT",
+    "CI_WINDOWS_RESULT", "CI_MSIX_RESULT",
+)
+DIAGNOSTIC_STEPS = {
+    "Build", "Test", "Upload Windows verification artifacts",
+    "Stage app and build MSI", "Verify MSI install, upgrade, repair, and uninstall",
+    "Verify MSI wizard and launch after Finish",
 }
 
 
-class GateError(RuntimeError):
-    """A request lacks the evidence needed to run or approve CI."""
+class CIError(RuntimeError):
+    """The event or job results do not satisfy the CI contract."""
+
+
+def validate_repository(value):
+    """Require a repository name safe for API paths and workflow outputs."""
+    if (not isinstance(value, str)
+            or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value)
+            or any(part in (".", "..") for part in value.split("/"))):
+        raise CIError("Invalid repository name")
+    return value
+
+
+def validate_sha(value):
+    """Require a full immutable lowercase commit SHA."""
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value):
+        raise CIError("Expected a full lowercase commit SHA")
+    return value
+
+
+def validate_number(value):
+    """Require a positive decimal identifier without aliases or leading zeros."""
+    if isinstance(value, bool) or not re.fullmatch(r"[1-9][0-9]*", str(value)):
+        raise CIError("Expected a positive decimal identifier")
+    return str(value)
+
+
+def validate_branch(value):
+    """Accept branch names without Git ref hazards or output control characters."""
+    if (not isinstance(value, str) or not value or value == "@"
+            or value.startswith(("-", "/")) or value.endswith(("/", "."))
+            or any(part in value for part in ("..", "//", "@{"))
+            or re.search(r"[\x00-\x20\x7f~^:?*\[\\]", value)
+            or any(part.startswith(".") or part.endswith(".lock") for part in value.split("/"))):
+        raise CIError("Invalid PR head branch")
+    return value
 
 
 class GitHub:
+    """Read Actions and pull request evidence through the runner's gh token."""
+
     def __init__(self, repository):
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
-            raise GateError("Invalid repository")
-        self.repository = repository
+        self.repository = validate_repository(repository)
         self.root = f"repos/{repository}"
 
-    def api(self, path, method="GET", data=None):
-        command = ["gh", "api", path, "--method", method]
-        if data is not None:
-            command += ["--input", "-"]
-        result = subprocess.run(
-            command, input=json.dumps(data) if data is not None else None,
-            text=True, capture_output=True, check=False,
-        )
+    def api(self, path):
+        """Read one JSON response without permitting API writes."""
+        try:
+            result = subprocess.run(
+                ["gh", "api", path, "--method", "GET"],
+                text=True, capture_output=True, check=False, timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise CIError("GitHub evidence is unavailable") from error
         if result.returncode:
-            raise GateError(f"GitHub request failed for {path}: {result.stderr.strip()}")
-        return json.loads(result.stdout) if result.stdout.strip() else None
+            raise CIError(f"GitHub request failed for {path}")
+        try:
+            return json.loads(result.stdout)
+        except ValueError as error:
+            raise CIError("GitHub returned invalid JSON evidence") from error
 
-    def pages(self, path, key=None):
+    def pages(self, path, key):
+        """Read every page, refusing malformed or incomplete evidence."""
         items = []
         separator = "&" if "?" in path else "?"
         for page in range(1, 101):
             response = self.api(f"{path}{separator}per_page=100&page={page}")
-            batch = response[key] if key else response
+            batch = response.get(key) if isinstance(response, dict) else None
+            if not isinstance(batch, list) or not all(isinstance(item, dict) for item in batch):
+                raise CIError("GitHub returned malformed paginated evidence")
             items.extend(batch)
             if len(batch) < 100:
                 return items
-        raise GateError("GitHub pagination limit reached; refusing incomplete evidence")
-
-    def status(self, sha, state, description, target_url):
-        self.api(f"{self.root}/statuses/{sha}", "POST", {
-            "context": CONTEXT, "state": state,
-            "description": description[:140], "target_url": target_url,
-        })
+        raise CIError("GitHub pagination limit reached")
 
 
-def validate_inputs(number, sha):
-    if not re.fullmatch(r"[1-9][0-9]*", str(number)):
-        raise GateError("PR number must be a positive decimal without leading zeros")
-    if not re.fullmatch(r"[0-9a-f]{40}", sha):
-        raise GateError("Expected SHA must be a full lowercase commit SHA")
-
-
-def is_bot(user):
-    return (isinstance(user, dict) and user.get("id") == BOT_ID and user.get("login") == BOT_LOGIN
-            and user.get("type") == "Bot")
-
-
-def is_summary(body):
-    """Whether a CodeRabbit comment body is the PR summary that the bot edits in place.
-
-    The summary marker must open the comment, after at most one version marker, so a
-    reply that quotes it does not count.
-    """
-    version = VERSION_MARKER.match(body)
-    return body[version.end() if version else 0:].lstrip().startswith(SUMMARY_MARKER)
-
-
-def latest_status(api, sha, context):
-    statuses = api.pages(f"{api.root}/commits/{sha}/statuses")
-    return next((item for item in statuses if item["context"] == context), None)
-
-
-def validate_coderabbit(statuses, comments, sha):
-    """Return the IDs of CodeRabbit's status and summary that prove a completed review of sha.
-
-    Raise GateError for the first check that fails, such as an untrusted status, an
-    unfinished review, no recognised summary, or coverage of another commit.
-    """
-    # Inspect the newest context, including an unexpected publisher. An older
-    # success must never hide a pending, failed, or spoofed replacement.
-    status = next((item for item in statuses if item["context"] == "CodeRabbit"), None)
-    if not status or not is_bot(status.get("creator", {})):
-        raise GateError("CodeRabbit has not published a trusted status for this commit")
-    if status["state"] != "success":
-        raise GateError("CodeRabbit review is not complete")
-    # Like the summary checks below, name a likely format change when the evidence
-    # is present but not in the form the gate expects.
-    if status.get("description") != "Review completed":
-        raise GateError('CodeRabbit reported success without "Review completed". It may have '
-                        "skipped the review, or its status text changed")
-
-    # The bot edits this summary in place. Select it before checking coverage so
-    # a newer paused or incomplete summary cannot fall back to an older success.
-    # One-off replies can retain expired throttling notices after review resumes.
-    summaries = [item for item in comments if is_bot(item.get("user"))
-                 and isinstance(item.get("body"), str) and is_summary(item["body"])]
-    if not summaries:
-        # Bot comments without a recognised summary usually mean that CodeRabbit
-        # changed its comment format, as in October 2026. Say so instead of
-        # reporting that coverage is missing.
-        if any(is_bot(item.get("user")) for item in comments):
-            raise GateError("CodeRabbit has comments on this PR, but the gate found no "
-                            "summary among them. Check whether its comment format changed")
-        raise GateError("CodeRabbit review coverage is missing from this PR")
-    summary = max(summaries, key=lambda item: (item["updated_at"], item["id"]))
-    body = summary["body"]
-    if re.search(r"<!--[^>]*(?:skip review|reviews? paused|pause review|review in progress|rate[ _-]limit)",
-                 body, re.IGNORECASE):
-        raise GateError("CodeRabbit skipped, paused, or has not finished this review")
-    markers = re.findall(r"<!--\s*final_review_risk_coverage:(\{[^\n]+?\})\s*-->", body)
-    if not markers:
-        raise GateError("The gate found no final_review_risk_coverage marker in CodeRabbit's "
-                        "summary. Check whether its summary format changed")
-    if len(markers) > 1:
-        raise GateError("CodeRabbit review coverage is ambiguous")
+def select_source(event, environment):
+    """Select the event's PR head, never the synthetic merge commit in GITHUB_SHA."""
+    if environment.get("GITHUB_EVENT_NAME") != "pull_request":
+        raise CIError("prepare requires a pull_request event")
+    repository = validate_repository(environment.get("GITHUB_REPOSITORY"))
     try:
-        coverage = json.loads(markers[0])
-    except json.JSONDecodeError as error:
-        raise GateError("Invalid CodeRabbit review coverage") from error
-    if coverage.get("kind") != "reviewed" or coverage.get("coveredCommitId") != sha:
-        raise GateError("CodeRabbit has not reviewed the current PR commit")
-    return {"status_id": status["id"], "summary_id": summary["id"]}
-
-
-def review_policy(api, number):
-    """Read all threads and GitHub's effective approval decision, including rulesets."""
-    owner, name = api.repository.split("/")
-    query = """
-      query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
-        repository(owner: $owner, name: $name) {
-          pullRequest(number: $number) {
-            reviewDecision
-            reviewThreads(first: 100, after: $cursor) {
-              nodes { id isResolved isOutdated }
-              pageInfo { hasNextPage endCursor }
-            }
-          }
+        number = validate_number(event["number"])
+        pr = event["pull_request"]
+        if (event["repository"]["full_name"] != repository
+                or pr["base"]["repo"]["full_name"] != repository
+                or pr["base"]["ref"] != "main" or pr["state"] != "open" or pr["draft"] is not False
+                or ("number" in pr and validate_number(pr["number"]) != number)):
+            raise CIError("Expected an open, ready pull request targeting this repository's main")
+        source = {
+            "head_sha": validate_sha(pr["head"]["sha"]),
+            "head_repository": validate_repository(pr["head"]["repo"]["full_name"]),
+            "head_branch": validate_branch(pr["head"]["ref"]),
+            "pr_number": number,
         }
-      }
-    """
-    cursor = None
-    for _ in range(100):
-        response = api.api("graphql", "POST", {"query": query, "variables": {
-            "owner": owner, "name": name, "number": int(number), "cursor": cursor,
-        }})
-        if response.get("errors"):
-            raise GateError("Could not read the effective review policy")
-        pr = response["data"]["repository"]["pullRequest"]
-        if pr["reviewDecision"] not in (None, "APPROVED"):
-            raise GateError("Repository policy requires further formal review approval")
-        if any(not thread["isResolved"] for thread in pr["reviewThreads"]["nodes"]):
-            raise GateError("Unresolved review threads remain, including outdated threads")
-        page = pr["reviewThreads"]["pageInfo"]
-        if not page["hasNextPage"]:
-            return pr["reviewDecision"]
-        cursor = page["endCursor"]
-    raise GateError("Review thread pagination limit reached")
+    except (KeyError, TypeError) as error:
+        raise CIError("Incomplete pull request event") from error
+    if environment.get("GITHUB_REF") != f"refs/pull/{number}/merge":
+        raise CIError("Runner ref does not match the pull request event")
+    validate_sha(environment.get("CI_WORKFLOW_SHA"))
+    if (environment.get("GITHUB_WORKFLOW_SHA") is not None
+            and environment["GITHUB_WORKFLOW_SHA"] != environment["CI_WORKFLOW_SHA"]):
+        raise CIError("CI_WORKFLOW_SHA must be github.workflow_sha")
+    validate_number(environment.get("GITHUB_RUN_ID"))
+    return source
 
 
-def inspect(api, number, sha):
-    validate_inputs(number, sha)
-    pr = api.api(f"{api.root}/pulls/{number}")
-    if pr["state"] != "open" or pr["draft"]:
-        raise GateError("CI requires an open, regular PR")
-    if pr["head"]["sha"] != sha:
-        raise GateError("Expected SHA no longer matches the PR head")
-    if pr["base"]["ref"] != "main":
-        raise GateError("This CI gate supports PRs targeting main")
-    base = api.api(f"{api.root}/git/ref/heads/main")["object"]["sha"]
-    comparison = api.api(f"{api.root}/compare/{base}...{sha}")
-    if comparison["status"] not in ("ahead", "identical"):
-        raise GateError("Update the PR with main, then obtain a fresh review")
-    evidence = validate_coderabbit(
-        api.pages(f"{api.root}/commits/{sha}/statuses"),
-        api.pages(f"{api.root}/issues/{number}/comments"), sha,
-    )
-    decision = review_policy(api, number)
-    reviews = api.pages(f"{api.root}/pulls/{number}/reviews")
-    formal = [review for review in reviews if is_bot(review.get("user", {}))
-              and review["state"] in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED")]
-    latest = max(formal, key=lambda item: item["id"], default=None)
-    if latest and latest["state"] == "CHANGES_REQUESTED":
-        raise GateError("CodeRabbit still requests changes")
-    if decision == "APPROVED" and (not latest or latest["state"] != "APPROVED"
-                                    or latest["commit_id"] != sha):
-        raise GateError("Policy requires CodeRabbit's formal approval on this commit")
-    # Check once more after pagination so a push during validation is rejected.
-    current = api.api(f"{api.root}/pulls/{number}")
-    if current["head"]["sha"] != sha or current["state"] != "open" or current["draft"]:
-        raise GateError("PR changed during review validation")
-    return {"pr_number": str(number), "sha": sha, "base_sha": base, **evidence}
-
-
-def run_url(api, run_id):
-    return f"https://github.com/{api.repository}/actions/runs/{run_id}"
-
-
-def trusted_dispatch():
-    if os.environ.get("GITHUB_REF") != "refs/heads/main":
-        raise GateError("Start CI must use the workflow on main")
-    if os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch":
-        raise GateError("CI authorization requires an explicit workflow dispatch")
-    if os.environ.get("GITHUB_RUN_ATTEMPT") != "1":
-        raise GateError("Use a new Start CI dispatch with retry=true instead of rerunning jobs")
-
-
-def start(api, number, sha, retry=False):
-    trusted_dispatch()
-    actor = os.environ["GITHUB_ACTOR"]
-    permission = api.api(f"{api.root}/collaborators/{actor}/permission")["permission"]
-    if permission not in ("admin", "write", "maintain"):
-        raise GateError("CI authorization requires repository write permission")
-    evidence = inspect(api, number, sha)
-    previous = latest_status(api, sha, CONTEXT)
-    if previous and not retry:
-        print("This revision already has an attempt. Use retry=true for an explicit retry.")
-        return None
-    if previous:
-        request = api.api(f"{api.root}/actions/runs/{os.environ['GITHUB_RUN_ID']}")
-        if previous["state"] == "pending" or request["created_at"] <= previous["created_at"]:
-            print("An overlapping request already handled this revision. Skipping duplicate.")
-            return None
-    evidence = inspect(api, number, sha)
-    api.status(sha, "pending", "Authorized revision is running full CI",
-               run_url(api, os.environ["GITHUB_RUN_ID"]))
-    return evidence
-
-
-def finish(api, number, sha, build_result):
-    trusted_dispatch()
-    url = run_url(api, os.environ["GITHUB_RUN_ID"])
-    previous = latest_status(api, sha, CONTEXT)
-    if not previous or previous.get("target_url") != url or previous["state"] != "pending":
-        raise GateError("This run no longer owns the pending CI status")
+def reusable_run(run, source, repository, workflow_sha, current_run):
+    """Check the actual run and exact reusable workflow revision, not search filters."""
+    if not isinstance(run, dict):
+        return False
     try:
-        if build_result != "success":
-            raise GateError(f"Full CI did not succeed ({build_result})")
-        jobs = api.pages(f"{api.root}/actions/runs/{os.environ['GITHUB_RUN_ID']}/jobs?filter=latest", "jobs")
-        successful = {job["name"].rsplit(" / ", 1)[-1] for job in jobs
-                      if job["status"] == "completed" and job["conclusion"] == "success"}
-        if not REQUIRED_JOBS.issubset(successful):
-            raise GateError("Required full CI jobs are missing, skipped, or unsuccessful")
-        inspect(api, number, sha)
-    except GateError as error:
-        api.status(sha, "failure", str(error), url)
-        raise
-    api.status(sha, "success", "Reviewed commit passed all required full CI jobs", url)
+        if (validate_number(run["id"]) == current_run
+                or run["event"] != "pull_request" or run["path"] != WORKFLOW
+                or run["status"] != "completed" or run["conclusion"] != "success"
+                or run["repository"]["full_name"] != repository
+                or run["display_title"] != f"PR CI #{source['pr_number']} @ {source['head_sha']}"
+                or run["head_sha"] != source["head_sha"]
+                or run["head_repository"]["full_name"] != source["head_repository"]
+                or run["head_branch"] != source["head_branch"]):
+            return False
+        pull_requests = run.get("pull_requests", [])
+        if not isinstance(pull_requests, list):
+            return False
+        if pull_requests:
+            if len(pull_requests) != 1:
+                return False
+            pr = pull_requests[0]
+            if (validate_number(pr["number"]) != source["pr_number"]
+                    or pr["head"]["sha"] != source["head_sha"]
+                    or pr["head"]["ref"] != source["head_branch"] or pr["base"]["ref"] != "main"):
+                return False
+            for side, expected in (("head", source["head_repository"]), ("base", repository)):
+                repo = pr[side]["repo"]
+                if (repo["url"] != f"https://api.github.com/repos/{expected}"
+                        or repo.get("full_name", expected) != expected):
+                    return False
+        references = run["referenced_workflows"]
+        if not isinstance(references, list) or not all(isinstance(item, dict) for item in references):
+            return False
+        full_ci = [item for item in references if isinstance(item.get("path"), str)
+                   and item["path"].startswith(f"{repository}/{FULL_WORKFLOW}@")
+                   and item["path"].rsplit("@", 1)[-1]]
+        return len(full_ci) == 1 and full_ci[0].get("sha") == workflow_sha
+    except (CIError, KeyError, TypeError):
+        return False
 
 
-def run_revision(run):
-    if run.get("event") != "workflow_dispatch":
+def successful_jobs(jobs):
+    """Require every full-build job and the native gate once in the latest jobs."""
+    required = {f"full-ci / {name}" for name in REQUIRED_JOBS} | {"reviewed-ci"}
+    found = set()
+    for job in jobs:
+        if not isinstance(job, dict) or not isinstance(job.get("name"), str):
+            return False
+        name = job["name"].rsplit(" / ", 1)[-1]
+        if name not in REQUIRED_JOBS | {"reviewed-ci"}:
+            continue
+        if (job["name"] in found or job["name"] not in required
+                or job.get("status") != "completed" or job.get("conclusion") != "success"):
+            return False
+        found.add(job["name"])
+    return found == required
+
+
+def find_reuse(api, source, workflow_sha, current_run):
+    """Reuse only proven same-repository PR builds, falling back to a fresh build."""
+    if source["head_repository"] != api.repository:
+        return ""
+    try:
+        runs = api.pages(f"{api.root}/actions/workflows/pr-ci.yml/runs"
+                         f"?event=pull_request&status=success&head_sha={source['head_sha']}",
+                         "workflow_runs")
+        for candidate in runs:
+            identifier = validate_number(candidate["id"])
+            if identifier == current_run:
+                continue
+            run = api.api(f"{api.root}/actions/runs/{identifier}")
+            if (str(run.get("id")) != identifier
+                    or not reusable_run(run, source, api.repository, workflow_sha, current_run)):
+                continue
+            jobs = api.pages(f"{api.root}/actions/runs/{identifier}/jobs?filter=latest", "jobs")
+            # A rerun starting during pagination must not reuse the previous attempt.
+            if successful_jobs(jobs) and api.api(f"{api.root}/actions/runs/{identifier}") == run:
+                return identifier
+    except (CIError, KeyError, TypeError, AttributeError):
+        print("CI reuse evidence is unavailable. Building fresh.", file=sys.stderr)
+    return ""
+
+
+def validate_current_head(event, environment, source, current):
+    """Reject a PR that changed, closed, or became a draft after the event."""
+    current_event = {"number": event["number"], "repository": event["repository"],
+                     "pull_request": current}
+    if select_source(current_event, environment) != source:
+        raise CIError("Pull request head changed since this event")
+
+
+def verify_head(event, environment, api):
+    """Require the event head to remain the current open, ready PR on main."""
+    source = select_source(event, environment)
+    validate_current_head(event, environment, source, api.api(f"{api.root}/pulls/{source['pr_number']}"))
+    return source
+
+
+def prepare(event, environment, api):
+    """Prepare immutable checkout outputs, rejecting a known stale or unready PR."""
+    source = select_source(event, environment)
+    try:
+        current = api.api(f"{api.root}/pulls/{source['pr_number']}")
+    except CIError:
+        # A fresh immutable build remains safe when optional API evidence is unavailable.
+        return {**source, "reuse_run": ""}
+    validate_current_head(event, environment, source, current)
+    return {**source, "reuse_run": find_reuse(
+        api, source, environment["CI_WORKFLOW_SHA"], environment["GITHUB_RUN_ID"],
+    )}
+
+
+def diagnostic(environment, api):
+    """Validate a retained Windows payload from a trusted completed main-push run."""
+    if (environment.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+            or environment.get("GITHUB_REF") != "refs/heads/main"):
+        raise CIError("Diagnostics require a workflow dispatch on main")
+    identifier = validate_number(environment.get("DIAGNOSTIC_RUN_ID"))
+    run_path = f"{api.root}/actions/runs/{identifier}"
+    try:
+        run = api.api(run_path)
+        if (validate_number(run["id"]) != identifier or run["status"] != "completed"
+                or run["event"] != "push" or run["path"] != ".github/workflows/ci.yml"
+                or run["head_branch"] != "main" or run["repository"]["full_name"] != api.repository
+                or run["head_repository"]["full_name"] != api.repository):
+            raise CIError("Diagnostic producer must be a completed same-repository main-push CI run")
+        validate_sha(run["head_sha"])
+        jobs = api.pages(f"{run_path}/jobs?filter=latest", "jobs")
+        windows = [job for job in jobs if job["name"].rsplit(" / ", 1)[-1] == "windows-tests"]
+        if (len(windows) != 1 or windows[0]["name"] != "full-ci / windows-tests"
+                or windows[0]["status"] != "completed"):
+            raise CIError("Diagnostic producer requires one completed latest Windows job")
+        # MSIX packaging can fail after valid binaries, tests, and MSI checks.
+        # Check those phases and their retained upload rather than the whole job.
+        steps = [step for step in windows[0]["steps"] if step["name"] in DIAGNOSTIC_STEPS]
+        if (len(steps) != len(DIAGNOSTIC_STEPS) or {step["name"] for step in steps} != DIAGNOSTIC_STEPS
+                or any(step["status"] != "completed" or step["conclusion"] != "success" for step in steps)):
+            raise CIError("Diagnostic producer requires successful build, test, MSI, and upload steps")
+        artifacts = api.pages(f"{run_path}/artifacts", "artifacts")
+        payloads = [artifact for artifact in artifacts if artifact["name"] == "windows-verification"]
+        if len(payloads) != 1:
+            raise CIError("Diagnostic producer requires one windows-verification artifact")
+        artifact = payloads[0]
+        validate_number(artifact["id"])
+        expires = datetime.fromisoformat(artifact["expires_at"].replace("Z", "+00:00"))
+        if (artifact["expired"] is not False or type(artifact["size_in_bytes"]) is not int
+                or artifact["size_in_bytes"] <= 0 or expires.tzinfo is None
+                or expires <= datetime.now(timezone.utc)):
+            raise CIError("Diagnostic artifact must be retained, nonexpired, and nonempty")
+        if api.api(run_path) != run:
+            raise CIError("Diagnostic producer changed during validation")
+    except (KeyError, TypeError, ValueError, AttributeError) as error:
+        raise CIError("Incomplete diagnostic producer evidence") from error
+
+
+def check_results(environment):
+    """Reject incomplete builds and keep MSIX-only diagnostics separate from full CI."""
+    diagnostic = environment.get("CI_DIAGNOSTIC")
+    if diagnostic not in ("true", "false"):
+        raise CIError("CI_DIAGNOSTIC must be true or false")
+    expected = ("success", "skipped", "skipped", "skipped", "success") if diagnostic == "true" else (
+        "success", "success", "success", "success", "success",
+    )
+    for variable, result in zip(RESULT_VARIABLES, expected):
+        actual = environment.get(variable)
+        if actual != result:
+            raise CIError(f"{variable} must be {result}, got {actual or 'missing'}")
+
+
+def runner_file(environment, name, required=True):
+    """Validate runner file paths before appending single-line outputs or summaries."""
+    value = environment.get(name)
+    if not value and not required:
         return None
-    match = RUN_TITLE.fullmatch(run.get("display_title", ""))
-    return match.groups() if match else None
-
-
-def invalidate(api, number):
-    """Cancel only obsolete PR runs. Fetch current state, not a stale event head."""
-    pr = api.api(f"{api.root}/pulls/{number}")
-    current = pr["head"]["sha"] if pr["state"] == "open" and not pr["draft"] else None
-    runs = {}
-    for state in sorted(ACTIVE_STATES):
-        for run in api.pages(f"{api.root}/actions/workflows/{WORKFLOW}/runs"
-                             f"?event=workflow_dispatch&status={state}", "workflow_runs"):
-            runs[run["id"]] = run
-    for run in runs.values():
-        revision = run_revision(run)
-        if not revision or revision[0] != str(number) or revision[1] == current:
-            continue
-        if run["status"] not in ACTIVE_STATES:
-            continue
-        previous = latest_status(api, revision[1], CONTEXT)
-        url = run_url(api, run["id"])
-        if previous and previous.get("target_url") == url and previous["state"] == "pending":
-            api.status(revision[1], "failure", "PR revision changed or PR is no longer ready", url)
-        try:
-            api.api(f"{api.root}/actions/runs/{run['id']}/cancel", "POST")
-        except GateError:
-            if api.api(f"{api.root}/actions/runs/{run['id']}")["status"] != "completed":
-                raise
-
-
-def reconcile(api, run_id):
-    """Close an abandoned pending status after cancellation or controller failure.
-
-    Only finish can publish success. Overall workflow success can also mean that
-    all expensive jobs were skipped, so this fallback can only publish failure.
-    """
-    run = api.api(f"{api.root}/actions/runs/{run_id}")
-    if run["path"] != f".github/workflows/{WORKFLOW}" or run["head_branch"] != "main":
-        return
-    revision = run_revision(run)
-    if not revision or run["status"] != "completed":
-        return
-    previous = latest_status(api, revision[1], CONTEXT)
-    url = run_url(api, run_id)
-    if previous and previous.get("target_url") == url and previous["state"] == "pending":
-        api.status(revision[1], "failure", "CI ended without a verified successful result", url)
+    if (not isinstance(value, str) or not value or re.search(r"[\x00\r\n]", value)
+            or not Path(value).is_absolute()):
+        raise CIError(f"{name} must be an absolute runner file path")
+    return Path(value)
 
 
 def main():
+    """Run a read-only CI selection or validation command."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("inspect", "start", "finish", "invalidate", "reconcile"))
-    parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY", "lincarl/mervin-pdf"))
-    parser.add_argument("--pr", default=os.environ.get("PR_NUMBER"))
-    parser.add_argument("--sha", default=os.environ.get("EXPECTED_SHA"))
-    parser.add_argument("--run-id", default=os.environ.get("RECONCILE_RUN_ID"))
+    parser.add_argument("command", choices=("prepare", "verify-head", "diagnostic", "check-results"))
     args = parser.parse_args()
-    api = GitHub(args.repository)
-    if args.command == "inspect":
-        print(json.dumps(inspect(api, args.pr, args.sha), indent=2))
-    elif args.command == "start":
-        evidence = start(api, args.pr, args.sha, os.environ.get("RETRY") == "true")
-        if evidence:
-            with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
-                output.write(f"authorized=true\nsha={evidence['sha']}\n")
-            with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
-                summary.write("Authorized review evidence\n\n```json\n"
-                              + json.dumps(evidence, indent=2) + "\n```\n")
-    elif args.command == "finish":
-        finish(api, args.pr, args.sha, os.environ["BUILD_RESULT"])
-    elif args.command == "invalidate":
-        if not args.pr or not re.fullmatch(r"[1-9][0-9]*", args.pr):
-            raise GateError("Invalid PR number")
-        invalidate(api, args.pr)
-    else:
-        if not args.run_id or not re.fullmatch(r"[1-9][0-9]*", args.run_id):
-            raise GateError("Invalid run ID")
-        reconcile(api, args.run_id)
+    if args.command == "check-results":
+        check_results(os.environ)
+        return
+    api = GitHub(os.environ.get("GITHUB_REPOSITORY"))
+    if args.command == "diagnostic":
+        diagnostic(os.environ, api)
+        return
+    event_path = runner_file(os.environ, "GITHUB_EVENT_PATH")
+    event = json.loads(event_path.read_text())
+    if args.command == "verify-head":
+        verify_head(event, os.environ, api)
+        return
+    output = runner_file(os.environ, "GITHUB_OUTPUT")
+    summary = runner_file(os.environ, "GITHUB_STEP_SUMMARY", required=False)
+    values = prepare(event, os.environ, api)
+    if values["reuse_run"] and summary:
+        url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{values['reuse_run']}"
+        with summary.open("a") as stream:
+            stream.write(f"Reusing successful full PR CI from [run {values['reuse_run']}]({url}).\n")
+    with output.open("a") as stream:
+        stream.write("".join(f"{key}={value}\n" for key, value in values.items()))
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (GateError, KeyError, TypeError, ValueError) as error:
-        print(f"CI gate rejected the request. {error}", file=sys.stderr)
+    except (CIError, OSError, ValueError) as error:
+        print(f"CI validation failed. {error}", file=sys.stderr)
         sys.exit(1)

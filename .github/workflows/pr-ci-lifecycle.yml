@@ -4,34 +4,29 @@ on:
   pull_request_target:
     types: [synchronize, closed, converted_to_draft, reopened, ready_for_review]
   workflow_run:
-    workflows: ['Start CI']
-    types: [completed]
+    workflows: [PR CI]
+    # requested is not emitted for reruns, including reruns of failed jobs only.
+    types: [in_progress]
 
 permissions:
   contents: read
-  pull-requests: read
-  actions: write
-  statuses: write
 
 jobs:
-  reconcile:
+  cancel-obsolete:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
     steps:
-      # This job never checks out or executes PR code or build artifacts.
+      # Always load default-branch controls, including for starting PR attempts.
+      # This job never loads PR code or artifacts and cannot publish statuses.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: refs/heads/main
+          ref: refs/heads/${{ github.event.repository.default_branch }}
           persist-credentials: false
-      - name: Cancel builds for obsolete PR revisions
-        if: github.event_name == 'pull_request_target'
+      - name: Cancel obsolete, closed, or draft PR builds
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: python3 -B scripts/reviewed_ci.py invalidate
-      - name: Fail an unfinished result after workflow termination
-        if: github.event_name == 'workflow_run'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RECONCILE_RUN_ID: ${{ github.event.workflow_run.id }}
-        run: python3 -B scripts/reviewed_ci.py reconcile
+        run: python3 -B scripts/cancel_pr_ci.py

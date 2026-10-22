@@ -1,0 +1,91 @@
+name: PR CI
+run-name: 'PR CI #${{ github.event.pull_request.number }} @ ${{ github.event.pull_request.head.sha }}'
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+# Keep stale reruns in their own revision group. The trusted lifecycle job
+# cancels obsolete revisions and closed or draft PRs using current server state.
+concurrency:
+  group: pr-ci-auto-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    name: Select PR revision
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      head_sha: ${{ steps.revision.outputs.head_sha }}
+      head_repository: ${{ steps.revision.outputs.head_repository }}
+      head_branch: ${{ steps.revision.outputs.head_branch }}
+      pr_number: ${{ steps.revision.outputs.pr_number }}
+      reuse_run: ${{ steps.revision.outputs.reuse_run }}
+    steps:
+      # The PR head can predate this workflow. Its merge revision supplies the
+      # controls, while the reusable workflow builds the immutable event head.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Select source and verify any existing successful CI evidence
+        id: revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: python3 -B scripts/reviewed_ci.py prepare
+
+  full-ci:
+    needs: prepare
+    if: needs.prepare.outputs.reuse_run == ''
+    permissions:
+      actions: read
+      contents: read
+    cache-mode: read
+    uses: ./.github/workflows/full-ci.yml
+    with:
+      sha: ${{ needs.prepare.outputs.head_sha }}
+      repository: ${{ needs.prepare.outputs.head_repository }}
+
+  reviewed-ci:
+    name: reviewed-ci
+    needs: [prepare, full-ci]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Verify the PR still uses this head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: python3 -B scripts/reviewed_ci.py verify-head
+      - name: Require full CI or verified successful evidence for this revision
+        env:
+          PREPARE_RESULT: ${{ needs.prepare.result }}
+          BUILD_RESULT: ${{ needs.full-ci.result }}
+          REUSED_RUN: ${{ needs.prepare.outputs.reuse_run }}
+        run: |
+          set -euo pipefail
+          test "$PREPARE_RESULT" = success
+          if [[ -n "$REUSED_RUN" ]]; then
+            [[ "$REUSED_RUN" =~ ^[1-9][0-9]*$ ]]
+            test "$BUILD_RESULT" = skipped
+          else
+            test "$BUILD_RESULT" = success
+          fi
