@@ -1,544 +1,555 @@
 #!/usr/bin/env python3
-"""Exercise review authorization and CI status transitions without GitHub writes."""
+"""Exercise immutable PR selection, conservative CI reuse, and result aggregation."""
 
 from copy import deepcopy
-import contextlib
-import io
 import json
 import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
-from unittest.mock import Mock, patch
 
-import reviewed_ci as gate
+import reviewed_ci as ci
 
 
 SHA = "a" * 40
-OLD_SHA = "b" * 40
-BASE_SHA = "c" * 40
+CONTROL_SHA = "b" * 40
+OTHER_SHA = "c" * 40
 REPOSITORY = "owner/project"
 ROOT = f"repos/{REPOSITORY}"
 RUN_ID = "123"
-URL = f"https://github.com/{REPOSITORY}/actions/runs/{RUN_ID}"
-BOT = {"id": gate.BOT_ID, "login": gate.BOT_LOGIN, "type": "Bot"}
-SUMMARY_MARKER = "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->"
-VERSION_MARKER = "<!-- coderabbit-ai-generated:v1 -->"
+PRIOR_RUN = "81"
 ENV = {
-    "GITHUB_REF": "refs/heads/main",
-    "GITHUB_EVENT_NAME": "workflow_dispatch",
-    "GITHUB_RUN_ATTEMPT": "1",
-    "GITHUB_RUN_ID": RUN_ID,
-    "GITHUB_ACTOR": "maintainer",
+    "GITHUB_EVENT_NAME": "pull_request", "GITHUB_REPOSITORY": REPOSITORY,
+    "GITHUB_REF": "refs/pull/7/merge", "GITHUB_RUN_ID": RUN_ID,
+    "CI_WORKFLOW_SHA": CONTROL_SHA, "GITHUB_WORKFLOW_SHA": CONTROL_SHA,
+    "GITHUB_SHA": OTHER_SHA,
 }
 
 
-def review_status(**changes):
-    value = {
-        "id": 10, "context": "CodeRabbit", "state": "success",
-        "description": "Review completed", "creator": deepcopy(BOT),
-    }
-    value.update(changes)
-    return value
+def changed(document, path, value):
+    """Copy a fixture and replace one nested field."""
+    result = deepcopy(document)
+    target = result
+    parts = path.split(".")
+    for part in parts[:-1]:
+        target = target[part]
+    target[parts[-1]] = value
+    return result
 
 
-def summary(sha=SHA, **changes):
-    coverage = json.dumps({"kind": "reviewed", "coveredCommitId": sha})
-    value = {
-        "id": 20, "user": deepcopy(BOT), "updated_at": "2026-10-13T10:00:00Z",
-        "body": f"<!-- final_review_risk_coverage:{coverage} -->",
-    }
-    value.update(changes)
-    value["body"] = SUMMARY_MARKER + "\n" + value["body"]
-    return value
-
-
-def ci_status(state="pending", target_url=URL):
+def event(repository=REPOSITORY):
+    """Create a realistic open PR event with distinct source and control commits."""
     return {
-        "context": gate.CONTEXT, "state": state, "target_url": target_url,
-        "created_at": "2026-10-13T10:00:00Z",
+        "number": 7, "repository": {"full_name": REPOSITORY},
+        "pull_request": {
+            "number": 7, "state": "open", "draft": False,
+            "base": {"ref": "main", "repo": {"full_name": REPOSITORY}},
+            "head": {"sha": SHA, "ref": "feature/fix", "repo": {"full_name": repository}},
+        },
     }
 
 
-def workflow_run(identifier=123, sha=SHA, number="7", **changes):
-    value = {
-        "id": identifier, "event": "workflow_dispatch", "status": "in_progress",
-        "display_title": f"reviewed-ci PR #{number} @ {sha}",
-        "path": f".github/workflows/{gate.WORKFLOW}", "head_branch": "main",
-        "created_at": "2026-10-13T11:00:00Z",
+def workflow_run():
+    """Create successful run metadata with resolved full-ci control evidence."""
+    return {
+        "id": int(PRIOR_RUN), "event": "pull_request", "path": ci.WORKFLOW,
+        "display_title": f"PR CI #7 @ {SHA}", "pull_requests": [],
+        "status": "completed", "conclusion": "success", "head_sha": SHA,
+        "head_repository": {"full_name": REPOSITORY}, "head_branch": "feature/fix",
+        "repository": {"full_name": REPOSITORY}, "run_attempt": 1,
+        "referenced_workflows": [{
+            "path": f"{REPOSITORY}/{ci.FULL_WORKFLOW}@{CONTROL_SHA}", "sha": CONTROL_SHA,
+        }],
     }
-    value.update(changes)
-    return value
 
 
-class GateFixture(unittest.TestCase):
+def full_jobs():
+    """Create the seven full-CI jobs and the separate native required gate."""
+    names = ["repository-checks", "linux-tests (release)", "linux-tests (sanitize)",
+             "linux-system-qt-tests", "windows-tests", "windows-msix-tests", "required-jobs"]
+    return [{"name": f"full-ci / {name}", "status": "completed", "conclusion": "success"}
+            for name in names] + [
+                {"name": "reviewed-ci", "status": "completed", "conclusion": "success"},
+            ]
+
+
+class EvidenceAPI(ci.GitHub):
+    """Serve JSON-shaped GET fixtures through the production pagination code."""
+
+    def __init__(self, pr_event=None):
+        super().__init__(REPOSITORY)
+        self.calls = []
+        self.responses = {
+            f"{ROOT}/pulls/7": deepcopy((pr_event or event())["pull_request"]),
+            f"{ROOT}/actions/workflows/pr-ci.yml/runs?event=pull_request&status=success"
+            f"&head_sha={SHA}&per_page=100&page=1": {"workflow_runs": [workflow_run()]},
+            f"{ROOT}/actions/runs/{PRIOR_RUN}": workflow_run(),
+            f"{ROOT}/actions/runs/{PRIOR_RUN}/jobs?filter=latest&per_page=100&page=1": {
+                "jobs": full_jobs(),
+            },
+        }
+
+    def api(self, path):
+        """Return fixture data or the requested API failure."""
+        self.calls.append(path)
+        if path not in self.responses:
+            raise AssertionError(f"Unexpected GET {path}")
+        value = self.responses[path]
+        if isinstance(value, Exception):
+            raise value
+        return deepcopy(value)
+
+
+class PrepareTests(unittest.TestCase):
+    def test_source_is_exact_event_head_for_same_repository_and_fork(self):
+        for repository in (REPOSITORY, "contributor/project"):
+            with self.subTest(repository=repository):
+                payload = event(repository)
+                api = EvidenceAPI(payload)
+                api.responses[next(path for path in api.responses if "/workflows/" in path)] = {
+                    "workflow_runs": [],
+                }
+                self.assertEqual(ci.prepare(payload, ENV, api), {
+                    "head_sha": SHA, "head_repository": repository, "head_branch": "feature/fix",
+                    "pr_number": "7", "reuse_run": "",
+                })
+                if repository != REPOSITORY:
+                    self.assertEqual(api.calls, [f"{ROOT}/pulls/7"])
+
+    def test_rejects_wrong_runner_event_ref_repository_or_control_revision(self):
+        changes = [
+            {"GITHUB_EVENT_NAME": name} for name in ("push", "pull_request_target", "workflow_dispatch")
+        ] + [
+            {"GITHUB_REF": "refs/heads/main"}, {"GITHUB_REF": "refs/pull/8/merge"},
+            {"GITHUB_REPOSITORY": "other/project"}, {"GITHUB_REPOSITORY": "owner/../project"},
+            {"CI_WORKFLOW_SHA": "main"}, {"CI_WORKFLOW_SHA": OTHER_SHA},
+            {"GITHUB_RUN_ID": "0123"}, {"GITHUB_RUN_ID": "123\nreuse_run=81"},
+        ]
+        for change in changes:
+            with self.subTest(change=change), self.assertRaises(ci.CIError):
+                ci.prepare(event(), {**ENV, **change}, EvidenceAPI())
+
+    def test_rejects_invalid_event_inputs_before_api_reads(self):
+        cases = [None, {}, []] + [changed(event(), "number", value)
+                                  for value in (True, 0, "07", "7;exit 0", 7.0)]
+        fields = {
+            "pull_request.number": [8], "pull_request.state": ["closed"],
+            "pull_request.draft": [True, None],
+            "pull_request.base.ref": ["release"],
+            "pull_request.base.repo.full_name": ["other/project"],
+            "pull_request.head.sha": ["main", SHA[:7], SHA.upper(), SHA + "\n"],
+            "pull_request.head.repo.full_name": [None, "../project", "a/b/c", "a/b\nx=y"],
+            "pull_request.head.ref": [None, "", "-option", "fix\nreuse_run=81", "fix space",
+                                      "fix..bad", "fix.lock", ".hidden", "fix/.hidden", "fix@{1}",
+                                      "fix//bad", "fix\\bad", "fix/", "fix."],
+        }
+        cases += [changed(event(), field, value)
+                  for field, values in fields.items() for value in values]
+        for payload in cases:
+            api = EvidenceAPI()
+            with self.subTest(payload=payload), self.assertRaises(ci.CIError):
+                ci.prepare(payload, ENV, api)
+            self.assertEqual(api.calls, [])
+
+    def test_rejects_events_when_current_pr_closed_or_source_changed(self):
+        for field, value in (
+            ("state", "closed"), ("draft", True), ("head.sha", OTHER_SHA),
+            ("head.repo.full_name", "contributor/project"), ("head.ref", "renamed"),
+            ("base.ref", "release"),
+        ):
+            api = EvidenceAPI()
+            api.responses[f"{ROOT}/pulls/7"] = changed(event()["pull_request"], field, value)
+            with self.subTest(field=field), self.assertRaises(ci.CIError):
+                ci.prepare(event(), ENV, api)
+
+
+class ReuseTests(unittest.TestCase):
+    def test_valid_run_reuses_original_after_reading_run_and_latest_jobs(self):
+        api = EvidenceAPI()
+        self.assertEqual(ci.prepare(event(), ENV, api)["reuse_run"], PRIOR_RUN)
+        self.assertIn(f"{ROOT}/actions/runs/{PRIOR_RUN}", api.calls)
+        self.assertTrue(any("/jobs?filter=latest" in path for path in api.calls))
+
+    def test_run_details_override_optimistic_search_results(self):
+        fields = {
+            "id": [999], "event": ["push", "workflow_dispatch", "workflow_run"],
+            "path": [".github/workflows/ci.yml", ".github/workflows/reviewed-ci.yml"],
+            "status": ["in_progress", None], "conclusion": ["failure", "cancelled", None],
+            "head_sha": [OTHER_SHA], "head_repository.full_name": ["contributor/project"],
+            "head_branch": ["other", None], "repository.full_name": ["other/project"],
+            "display_title": [f"PR CI #8 @ {SHA}", f"PR CI #7 @ {OTHER_SHA}", "PR CI"],
+            "pull_requests": [None],
+            "referenced_workflows": [None, [], [{"path": "other/full-ci.yml", "sha": CONTROL_SHA}],
+                                     [{"path": f"{REPOSITORY}/{ci.FULL_WORKFLOW}", "sha": CONTROL_SHA}],
+                                     [{"path": f"{REPOSITORY}/{ci.FULL_WORKFLOW}@", "sha": CONTROL_SHA}],
+                                     [{"path": f"{REPOSITORY}/{ci.FULL_WORKFLOW}@main",
+                                       "sha": OTHER_SHA}],
+                                     [{"path": f"other/project/{ci.FULL_WORKFLOW}@main",
+                                       "sha": CONTROL_SHA}],
+                                     workflow_run()["referenced_workflows"] * 2],
+        }
+        for field, values in fields.items():
+            for value in values:
+                api = EvidenceAPI()
+                api.responses[f"{ROOT}/actions/runs/{PRIOR_RUN}"] = changed(workflow_run(), field, value)
+                with self.subTest(field=field, value=value):
+                    self.assertEqual(ci.prepare(event(), ENV, api)["reuse_run"], "")
+
+    def test_current_run_is_excluded_without_fetching_its_details(self):
+        api = EvidenceAPI()
+        search = next(path for path in api.responses if "/workflows/" in path)
+        api.responses[search] = {"workflow_runs": [changed(workflow_run(), "id", int(RUN_ID))]}
+        self.assertEqual(ci.prepare(event(), ENV, api)["reuse_run"], "")
+        self.assertFalse(any(f"/runs/{RUN_ID}" in path for path in api.calls))
+
+    def test_every_required_job_and_native_gate_must_succeed_exactly_once(self):
+        for index in range(8):
+            original = full_jobs()
+            variants = [original[:index] + original[index + 1:], original + [original[index]]]
+            variants += [original[:index] + [{**original[index], "conclusion": result}]
+                         + original[index + 1:] for result in ("failure", "cancelled", "skipped", None)]
+            variants.append(original[:index] + [{**original[index], "status": "in_progress"}]
+                            + original[index + 1:])
+            for jobs in variants:
+                with self.subTest(index=index, jobs=jobs):
+                    self.assertFalse(ci.successful_jobs(jobs))
+        self.assertFalse(ci.successful_jobs(full_jobs()[:-1] + [
+            {**full_jobs()[-1], "name": "build / reviewed-ci"},
+        ]))
+        self.assertFalse(ci.successful_jobs([{**job, "name": job["name"].rsplit(" / ", 1)[-1]}
+                                             for job in full_jobs()]))
+
+    def test_failed_missing_or_ambiguous_jobs_build_fresh(self):
+        for jobs in (full_jobs()[:-1], [*full_jobs(), full_jobs()[0]],
+                     [full_jobs()[-1], {"name": "full-ci", "status": "completed", "conclusion": "skipped"}],
+                     [{**job, "conclusion": "skipped"} for job in full_jobs()]):
+            api = EvidenceAPI()
+            path = next(path for path in api.responses if "/jobs?" in path)
+            api.responses[path] = {"jobs": jobs}
+            with self.subTest(jobs=jobs):
+                self.assertEqual(ci.prepare(event(), ENV, api)["reuse_run"], "")
+
+    def test_api_errors_at_each_stage_build_fresh(self):
+        for path in EvidenceAPI().responses:
+            api = EvidenceAPI()
+            api.responses[path] = ci.CIError("API unavailable")
+            with self.subTest(path=path):
+                self.assertEqual(ci.prepare(event(), ENV, api)["reuse_run"], "")
+
+    def test_missing_reference_or_malformed_pagination_builds_fresh(self):
+        api = EvidenceAPI()
+        del api.responses[f"{ROOT}/actions/runs/{PRIOR_RUN}"]["referenced_workflows"]
+        self.assertEqual(ci.prepare(event(), ENV, api)["reuse_run"], "")
+        api = EvidenceAPI()
+        search = next(path for path in api.responses if "/workflows/" in path)
+        api.responses[search] = {"workflow_runs": None}
+        self.assertEqual(ci.prepare(event(), ENV, api)["reuse_run"], "")
+
+    def test_incomplete_current_pr_evidence_rejects_preparation(self):
+        for response in (None, {}, changed(event()["pull_request"], "head.repo", None)):
+            api = EvidenceAPI()
+            api.responses[f"{ROOT}/pulls/7"] = response
+            with self.subTest(response=response), self.assertRaises(ci.CIError):
+                ci.prepare(event(), ENV, api)
+                self.assertEqual(api.calls, [f"{ROOT}/pulls/7"])
+
+    def test_rerun_starting_during_jobs_read_builds_fresh(self):
+        api = EvidenceAPI()
+        original_read = api.api
+        metadata_reads = 0
+
+        def read(path):
+            """Simulate an external rerun after the job evidence was read."""
+            nonlocal metadata_reads
+            response = original_read(path)
+            if path == f"{ROOT}/actions/runs/{PRIOR_RUN}":
+                metadata_reads += 1
+                if metadata_reads == 2:
+                    response.update(status="in_progress", conclusion=None, run_attempt=2)
+            return response
+
+        api.api = read
+        self.assertEqual(ci.prepare(event(), ENV, api)["reuse_run"], "")
+
+    def test_linked_pull_request_identity_must_match_when_present(self):
+        pr = {
+            "number": 7,
+            "head": {"sha": SHA, "ref": "feature/fix", "repo": {
+                "url": f"https://api.github.com/repos/{REPOSITORY}",
+            }},
+            "base": {"ref": "main", "repo": {
+                "url": f"https://api.github.com/repos/{REPOSITORY}",
+            }},
+        }
+        api = EvidenceAPI()
+        run_path = f"{ROOT}/actions/runs/{PRIOR_RUN}"
+        api.responses[run_path]["pull_requests"] = [pr]
+        self.assertEqual(ci.prepare(event(), ENV, api)["reuse_run"], PRIOR_RUN)
+        invalid = [[pr, pr], [{}]]
+        invalid += [[changed(pr, field, value)] for field, value in (
+            ("number", 8), ("head.sha", OTHER_SHA), ("head.ref", "renamed"),
+            ("head.repo.url", "https://api.github.com/repos/contributor/project"),
+            ("base.repo.url", "https://api.github.com/repos/other/project"), ("base.ref", "release"),
+        )]
+        for links in invalid:
+            api.responses[run_path]["pull_requests"] = links
+            with self.subTest(links=links):
+                self.assertEqual(ci.prepare(event(), ENV, api)["reuse_run"], "")
+
+
+class VerifyHeadTests(unittest.TestCase):
+    def test_current_open_ready_head_requires_only_one_pr_read(self):
+        api = EvidenceAPI()
+        self.assertEqual(ci.verify_head(event(), ENV, api), ci.select_source(event(), ENV))
+        self.assertEqual(api.calls, [f"{ROOT}/pulls/7"])
+
+    def test_stale_closed_draft_or_unavailable_head_cannot_pass(self):
+        for response in (changed(event()["pull_request"], "head.sha", OTHER_SHA),
+                         changed(event()["pull_request"], "state", "closed"),
+                         changed(event()["pull_request"], "draft", True),
+                         changed(event()["pull_request"], "base.ref", "release"),
+                         {}, ci.CIError("API unavailable")):
+            api = EvidenceAPI()
+            api.responses[f"{ROOT}/pulls/7"] = response
+            with self.subTest(response=response), self.assertRaises(ci.CIError):
+                ci.verify_head(event(), ENV, api)
+
+
+def diagnostic_api():
+    """Create a failed main producer with verified Windows/MSI tests and its payload."""
+    api = EvidenceAPI()
+    run_path = f"{ROOT}/actions/runs/{PRIOR_RUN}"
+    run = {**workflow_run(), "event": "push", "path": ".github/workflows/ci.yml",
+           "head_branch": "main", "conclusion": "failure", "pull_requests": []}
+    windows = {"name": "full-ci / windows-tests", "status": "completed", "conclusion": "success",
+               "steps": [{"name": name, "status": "completed", "conclusion": "success"}
+                         for name in ("Stage app and build MSI",
+                                      "Verify MSI install, upgrade, repair, and uninstall",
+                                      "Verify MSI wizard and launch after Finish")]}
+    api.responses = {
+        run_path: run,
+        f"{run_path}/jobs?filter=latest&per_page=100&page=1": {"jobs": [windows, {
+            "name": "full-ci / windows-msix-tests", "status": "completed", "conclusion": "failure",
+        }]},
+        f"{run_path}/artifacts?per_page=100&page=1": {"artifacts": [{
+            "id": 200, "name": "windows-verification", "expired": False,
+            "size_in_bytes": 12345, "expires_at": "2099-01-01T00:00:00Z",
+        }]},
+    }
+    return api
+
+
+DIAGNOSTIC_ENV = {**ENV, "GITHUB_EVENT_NAME": "workflow_dispatch",
+                  "GITHUB_REF": "refs/heads/main", "DIAGNOSTIC_RUN_ID": PRIOR_RUN}
+
+
+class DiagnosticTests(unittest.TestCase):
+    def test_failed_overall_and_msix_results_allow_verified_windows_payload(self):
+        ci.diagnostic(DIAGNOSTIC_ENV, diagnostic_api())
+
+    def test_only_main_dispatch_accepts_positive_run_identifiers(self):
+        for change in ({"DIAGNOSTIC_RUN_ID": "0"}, {"DIAGNOSTIC_RUN_ID": "081"},
+                       {"DIAGNOSTIC_RUN_ID": "81/../2"}, {"DIAGNOSTIC_RUN_ID": ""},
+                       {"GITHUB_EVENT_NAME": "pull_request"}, {"GITHUB_EVENT_NAME": "push"},
+                       {"GITHUB_REF": "refs/heads/feature"}):
+            with self.subTest(change=change), self.assertRaises(ci.CIError):
+                ci.diagnostic({**DIAGNOSTIC_ENV, **change}, diagnostic_api())
+
+    def test_rejects_pr_fork_diagnostic_unrelated_or_unfinished_producers(self):
+        for field, values in {
+            "id": [999], "status": ["in_progress"],
+            "event": ["pull_request", "workflow_dispatch", "workflow_run"],
+            "path": [ci.WORKFLOW, ".github/workflows/release.yml"], "head_branch": ["feature", None],
+            "head_repository.full_name": ["contributor/project"],
+            "repository.full_name": ["other/project"], "head_sha": ["main", None],
+        }.items():
+            for value in values:
+                api = diagnostic_api()
+                path = f"{ROOT}/actions/runs/{PRIOR_RUN}"
+                api.responses[path] = changed(api.responses[path], field, value)
+                with self.subTest(field=field, value=value), self.assertRaises(ci.CIError):
+                    ci.diagnostic(DIAGNOSTIC_ENV, api)
+
+    def test_windows_job_and_msi_flows_must_be_successful_and_unambiguous(self):
+        original = diagnostic_api()
+        path = next(path for path in original.responses if "/jobs?" in path)
+        windows = original.responses[path]["jobs"][0]
+        variants = [[], [windows, windows], [{**windows, "name": "windows-tests"}],
+                    [{**windows, "status": "in_progress"}]]
+        variants += [[{**windows, "conclusion": result}] for result in ("failure", "cancelled", "skipped", None)]
+        variants += [[{**windows, "steps": steps}] for steps in (
+            [], windows["steps"][:-1], windows["steps"] + [windows["steps"][0]],
+            [{**step, "conclusion": "skipped"} for step in windows["steps"]],
+        )]
+        for jobs in variants:
+            api = diagnostic_api()
+            api.responses[path] = {"jobs": jobs}
+            with self.subTest(jobs=jobs), self.assertRaises(ci.CIError):
+                ci.diagnostic(DIAGNOSTIC_ENV, api)
+
+    def test_artifact_must_be_one_retained_nonempty_unexpired_payload(self):
+        original = diagnostic_api()
+        path = next(path for path in original.responses if "/artifacts?" in path)
+        artifact = original.responses[path]["artifacts"][0]
+        variants = [[], [artifact, artifact], [{**artifact, "name": "unrelated"}]]
+        variants += [[changed(artifact, field, value)] for field, values in {
+            "expired": [True, None], "size_in_bytes": [0, -1, True, "123"], "id": [0],
+            "expires_at": ["2000-01-01T00:00:00Z", "2099-01-01", "bad", None],
+        }.items() for value in values]
+        for artifacts in variants:
+            api = diagnostic_api()
+            api.responses[path] = {"artifacts": artifacts}
+            with self.subTest(artifacts=artifacts), self.assertRaises(ci.CIError):
+                ci.diagnostic(DIAGNOSTIC_ENV, api)
+
+    def test_missing_or_unavailable_producer_evidence_fails(self):
+        for path in diagnostic_api().responses:
+            for response in ({}, ci.CIError("API unavailable")):
+                api = diagnostic_api()
+                api.responses[path] = response
+                with self.subTest(path=path, response=response), self.assertRaises(ci.CIError):
+                    ci.diagnostic(DIAGNOSTIC_ENV, api)
+
+
+class AggregateTests(unittest.TestCase):
+    def test_normal_full_build_requires_all_five_aggregates(self):
+        results = {name: "success" for name in ci.RESULT_VARIABLES}
+        ci.check_results({**results, "CI_DIAGNOSTIC": "false"})
+        for name in ci.RESULT_VARIABLES:
+            for result in ("failure", "cancelled", "skipped", "", None):
+                with self.subTest(name=name, result=result), self.assertRaises(ci.CIError):
+                    ci.check_results({**results, name: result, "CI_DIAGNOSTIC": "false"})
+            missing = {key: value for key, value in results.items() if key != name}
+            with self.subTest(missing=name), self.assertRaises(ci.CIError):
+                ci.check_results({**missing, "CI_DIAGNOSTIC": "false"})
+
+    def test_diagnostic_requires_repository_and_msix_success_and_only_expected_skips(self):
+        diagnostic = dict(zip(ci.RESULT_VARIABLES, ("success", "skipped", "skipped", "skipped", "success")))
+        ci.check_results({**diagnostic, "CI_DIAGNOSTIC": "true"})
+        with self.assertRaises(ci.CIError):
+            ci.check_results({**diagnostic, "CI_DIAGNOSTIC": "false"})
+        for name in ci.RESULT_VARIABLES:
+            for result in ("failure", "cancelled", "", None,
+                           "skipped" if diagnostic[name] == "success" else "success"):
+                with self.subTest(name=name, result=result), self.assertRaises(ci.CIError):
+                    ci.check_results({**diagnostic, name: result, "CI_DIAGNOSTIC": "true"})
+        jobs = [job for job in full_jobs() if job["name"].rsplit(" / ", 1)[-1] in (
+            "repository-checks", "windows-msix-tests", "required-jobs", "reviewed-ci",
+        )]
+        self.assertFalse(ci.successful_jobs(jobs))
+
+    def test_diagnostic_flag_must_be_explicit(self):
+        for flag in (None, "", "TRUE", "1"):
+            with self.subTest(flag=flag), self.assertRaises(ci.CIError):
+                ci.check_results({**dict.fromkeys(ci.RESULT_VARIABLES, "success"), "CI_DIAGNOSTIC": flag})
+
+
+class CLITests(unittest.TestCase):
     def setUp(self):
-        self.api = Mock(spec=gate.GitHub)
-        self.api.repository = REPOSITORY
-        self.api.root = ROOT
-        self.pr = {
-            "state": "open", "draft": False,
-            "head": {"sha": SHA}, "base": {"ref": "main"},
+        temporary_root = Path(os.environ.get("REVIEWED_CI_TEST_TEMP", Path(__file__).resolve().parents[1] / "dev-temp"))
+        temporary_root.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(prefix="reviewed-ci-", dir=temporary_root)
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.payload = self.root / "event.json"
+        self.output = self.root / "output"
+        self.summary = self.root / "summary"
+        self.fixtures = self.root / "responses.json"
+        self.payload.write_text(json.dumps(event()))
+        self.fixtures.write_text(json.dumps(EvidenceAPI().responses))
+        gh = self.root / "gh"
+        gh.write_text(f"#!{sys.executable}\n" + '''
+"""Serve read-only GitHub CLI fixtures for subprocess integration tests."""
+import json
+import os
+from pathlib import Path
+import sys
+
+if len(sys.argv) != 5 or sys.argv[1] != "api" or sys.argv[3:] != ["--method", "GET"]:
+    sys.exit(2)
+responses = json.loads(Path(os.environ["GH_FIXTURES"]).read_text())
+response = responses.get(sys.argv[2])
+if response is None:
+    sys.exit(1)
+print(json.dumps(response))
+''')
+        gh.chmod(0o755)
+        self.environment = {
+            **os.environ, **ENV, "PATH": str(self.root) + os.pathsep + os.environ.get("PATH", ""),
+            "GH_FIXTURES": str(self.fixtures), "GITHUB_EVENT_PATH": str(self.payload),
+            "GITHUB_OUTPUT": str(self.output), "GITHUB_STEP_SUMMARY": str(self.summary),
         }
-        self.statuses = {SHA: [review_status()], OLD_SHA: []}
-        self.comments = [summary()]
-        self.reviews = []
-        self.threads = []
-        self.decision = None
-        self.permission = "write"
-        self.comparison = "ahead"
-        self.runs = [workflow_run()]
-        self.jobs = [
-            {"name": f"build / {name}", "status": "completed", "conclusion": "success"}
-            for name in ("repository-checks", "linux-tests (release)", "linux-tests (sanitize)",
-                         "linux-system-qt-tests", "windows-tests", "windows-msix-tests")
-        ]
-        self.api.api.side_effect = self.request
-        self.api.pages.side_effect = self.pages
 
-    def request(self, path, method="GET", data=None):
-        if path == f"{ROOT}/pulls/7":
-            return deepcopy(self.pr)
-        if path == f"{ROOT}/git/ref/heads/main":
-            return {"object": {"sha": BASE_SHA}}
-        if path == f"{ROOT}/compare/{BASE_SHA}...{SHA}":
-            return {"status": self.comparison}
-        if path == f"{ROOT}/collaborators/maintainer/permission":
-            return {"permission": self.permission}
-        if path == "graphql":
-            return {"data": {"repository": {"pullRequest": {
-                "reviewDecision": self.decision,
-                "reviewThreads": {
-                    "nodes": deepcopy(self.threads),
-                    "pageInfo": {"hasNextPage": False, "endCursor": None},
-                },
-            }}}}
-        for run in self.runs:
-            if path == f"{ROOT}/actions/runs/{run['id']}":
-                return deepcopy(run)
-            if path == f"{ROOT}/actions/runs/{run['id']}/cancel" and method == "POST":
-                return None
-        self.fail(f"Unexpected GitHub request {method} {path}")
-
-    def pages(self, path, key=None):
-        for sha, statuses in self.statuses.items():
-            if path == f"{ROOT}/commits/{sha}/statuses":
-                return deepcopy(statuses)
-        if path == f"{ROOT}/issues/7/comments":
-            return deepcopy(self.comments)
-        if path == f"{ROOT}/pulls/7/reviews":
-            return deepcopy(self.reviews)
-        if path.startswith(f"{ROOT}/actions/workflows/{gate.WORKFLOW}/runs?event=workflow_dispatch&status="):
-            self.assertEqual(key, "workflow_runs")
-            state = path.rsplit("=", 1)[-1]
-            return deepcopy([run for run in self.runs if run["status"] == state])
-        if path == f"{ROOT}/actions/runs/{RUN_ID}/jobs?filter=latest":
-            self.assertEqual(key, "jobs")
-            return deepcopy(self.jobs)
-        self.fail(f"Unexpected paginated request {path}")
-
-
-class ReviewEvidenceTests(unittest.TestCase):
-    def test_completed_review_identifies_current_revision_and_evidence(self):
-        self.assertEqual(
-            gate.validate_coderabbit([review_status()], [summary()], SHA),
-            {"status_id": 10, "summary_id": 20},
+    def run_cli(self, command="prepare", **environment):
+        """Execute the actual CLI with event files and a separate gh process."""
+        return subprocess.run(
+            [sys.executable, "-B", str(Path(ci.__file__).resolve()), command],
+            env={**self.environment, **environment}, text=True, capture_output=True, check=False,
         )
 
-    def test_pending_failed_missing_or_untrusted_status_never_uses_older_success(self):
-        cases = [
-            [],
-            [review_status(state="pending"), review_status()],
-            [review_status(state="failure"), review_status()],
-            [review_status(state="error"), review_status()],
-            [review_status(description="Review skipped")],
-            [review_status(creator={**BOT, "id": 1}), review_status()],
-            [review_status(creator={**BOT, "type": "User"})],
-            [review_status(creator=None)],
-        ]
-        for statuses in cases:
-            with self.subTest(statuses=statuses), self.assertRaises(gate.GateError):
-                gate.validate_coderabbit(statuses, [summary()], SHA)
+    def test_prepare_emits_exact_outputs_and_original_run_summary_link(self):
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.output.read_text(), f"head_sha={SHA}\nhead_repository={REPOSITORY}\n"
+                         f"head_branch=feature/fix\npr_number=7\nreuse_run={PRIOR_RUN}\n")
+        self.assertIn(f"https://github.com/{REPOSITORY}/actions/runs/{PRIOR_RUN}", self.summary.read_text())
 
-    def test_coverage_must_be_trusted_current_unambiguous_and_reviewed(self):
-        cases = [
-            [], [summary(OLD_SHA)], [summary(user={**BOT, "id": 1})], [summary(user=None)],
-            [summary(body="<!-- final_review_risk_coverage:{bad} -->")],
-            [summary(body=summary()["body"] * 2)],
-            [summary(body=summary()["body"].replace('"reviewed"', '"skipped"'))],
-        ]
-        for comments in cases:
-            with self.subTest(comments=comments), self.assertRaises(gate.GateError):
-                gate.validate_coderabbit([review_status()], comments, SHA)
+    def test_fork_cli_builds_event_head_fresh_and_summary_is_optional(self):
+        self.payload.write_text(json.dumps(event("contributor/project")))
+        self.fixtures.write_text(json.dumps(EvidenceAPI(event("contributor/project")).responses))
+        result = self.run_cli(GITHUB_STEP_SUMMARY="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.output.read_text(), f"head_sha={SHA}\nhead_repository=contributor/project\n"
+                         "head_branch=feature/fix\npr_number=7\nreuse_run=\n")
+        self.assertFalse(self.summary.exists())
 
-    def test_status_error_says_whether_coderabbit_reported_success(self):
-        for description in ("Review skipped", "Review complete", None):
-            with self.subTest(description=description), \
-                    self.assertRaisesRegex(gate.GateError, "status text changed"):
-                gate.validate_coderabbit([review_status(description=description)], [summary()], SHA)
-        for state in ("pending", "failure", "error"):
-            with self.subTest(state=state), self.assertRaisesRegex(gate.GateError, "not complete"):
-                gate.validate_coderabbit([review_status(state=state)], [summary()], SHA)
+    def test_invalid_event_or_output_path_fails_without_emitting_outputs(self):
+        for environment in ({"GITHUB_REF": "refs/heads/main"}, {"GITHUB_OUTPUT": "relative"},
+                            {"GITHUB_OUTPUT": str(self.output) + "\ninjected=value"}):
+            result = self.run_cli(**environment)
+            with self.subTest(environment=environment):
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.output.exists())
+        self.payload.write_text("not json")
+        self.assertNotEqual(self.run_cli().returncode, 0)
+        self.assertFalse(self.output.exists())
 
-    def test_coverage_error_says_whether_the_marker_is_missing_or_repeated(self):
-        renamed = summary()
-        renamed["body"] = renamed["body"].replace("final_review_risk_coverage", "review_coverage")
-        with self.assertRaisesRegex(gate.GateError, "summary format changed"):
-            gate.validate_coderabbit([review_status()], [renamed], SHA)
-        with self.assertRaisesRegex(gate.GateError, "ambiguous"):
-            gate.validate_coderabbit([review_status()], [summary(body=summary()["body"] * 2)], SHA)
+    def test_cli_api_failure_emits_fresh_build_outputs(self):
+        self.fixtures.write_text("{}")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.output.read_text().endswith("reuse_run=\n"))
 
-    def test_newer_skip_summary_overrides_older_completed_summary(self):
-        skipped = summary(
-            id=21, updated_at="2026-10-13T11:00:00Z",
-            body="<!-- This is an auto-generated comment: skip review by coderabbit.ai -->",
-        )
-        with self.assertRaisesRegex(gate.GateError, "skipped"):
-            gate.validate_coderabbit([review_status()], [summary(), skipped], SHA)
+    def test_verify_head_cli_validates_current_head_without_any_output_files(self):
+        self.fixtures.write_text(json.dumps({f"{ROOT}/pulls/7": event()["pull_request"]}))
+        result = self.run_cli("verify-head", GITHUB_OUTPUT="", GITHUB_STEP_SUMMARY="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.output.exists())
+        self.assertFalse(self.summary.exists())
+        self.fixtures.write_text(json.dumps({f"{ROOT}/pulls/7": changed(event()["pull_request"], "draft", True)}))
+        result = self.run_cli("verify-head", GITHUB_OUTPUT="", GITHUB_STEP_SUMMARY="")
+        self.assertNotEqual(result.returncode, 0)
 
-    def test_active_review_markers_reject_even_matching_coverage(self):
-        for marker in ("skip review", "review paused", "reviews paused", "pause review",
-                       "review in progress", "rate limited by coderabbit.ai", "rate_limit_exceeded"):
-            with self.subTest(marker=marker), self.assertRaises(gate.GateError):
-                gate.validate_coderabbit(
-                    [review_status()], [summary(body=f"<!-- {marker} -->" + summary()["body"])], SHA,
-                )
+    def test_diagnostic_cli_validates_payload_without_event_or_output_files(self):
+        self.fixtures.write_text(json.dumps(diagnostic_api().responses))
+        environment = {**DIAGNOSTIC_ENV, "GITHUB_EVENT_PATH": "", "GITHUB_OUTPUT": "",
+                       "GITHUB_STEP_SUMMARY": ""}
+        result = self.run_cli("diagnostic", **environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.output.exists())
+        self.assertFalse(self.summary.exists())
+        self.assertNotEqual(self.run_cli("diagnostic", **{**environment, "DIAGNOSTIC_RUN_ID": "0"}).returncode, 0)
 
-    def test_newer_incomplete_summary_cannot_reuse_older_successful_coverage(self):
-        for marker in ("review in progress", "pause review", "rate limited"):
-            latest = summary(
-                id=21, updated_at="2026-10-13T11:00:00Z",
-                body=f"<!-- This is an auto-generated comment: {marker} by coderabbit.ai -->",
-            )
-            with self.subTest(marker=marker), self.assertRaisesRegex(gate.GateError, "skipped, paused"):
-                gate.validate_coderabbit([review_status()], [summary(), latest], SHA)
-
-    def test_expired_notice_reply_does_not_invalidate_completed_summary(self):
-        reply = summary(id=21, updated_at="2026-10-13T11:00:00Z")
-        reply["body"] = "<!-- This is an auto-generated reply by CodeRabbit -->\nReview was rate limited earlier."
-        gate.validate_coderabbit([review_status()], [reply, summary()], SHA)
-
-    def test_coverage_inside_one_off_bot_reply_is_not_review_completion(self):
-        reply = summary()
-        reply["body"] = reply["body"].replace(SUMMARY_MARKER, "<!-- This is an auto-generated reply by CodeRabbit -->")
-        with self.assertRaisesRegex(gate.GateError, "found no summary"):
-            gate.validate_coderabbit([review_status()], [reply], SHA)
-
-    def test_missing_summary_error_says_whether_coderabbit_commented(self):
-        unknown = summary()
-        unknown["body"] = "<!-- coderabbit-ai-generated:next -->\n" + unknown["body"]
-        no_body = summary()
-        no_body["body"] = None
-        no_user = summary()
-        del no_user["user"]
-        untrusted = summary(user={**BOT, "id": 1})
-        for comments in ([unknown], [no_body], [untrusted, unknown, untrusted]):
-            with self.subTest(comments=comments), \
-                    self.assertRaisesRegex(gate.GateError, "comment format changed"):
-                gate.validate_coderabbit([review_status()], comments, SHA)
-        for comments in ([], [no_user], [summary(user="coderabbitai[bot]")],
-                         [untrusted], [summary(user=None)]):
-            with self.subTest(comments=comments), \
-                    self.assertRaisesRegex(gate.GateError, "coverage is missing from this PR"):
-                gate.validate_coderabbit([review_status()], comments, SHA)
-
-    def test_summary_after_version_marker_is_review_completion(self):
-        versioned = summary()
-        versioned["body"] = VERSION_MARKER + "\n\n" + versioned["body"]
-        gate.validate_coderabbit([review_status()], [versioned], SHA)
-
-    def test_version_marker_does_not_turn_other_comments_into_summary(self):
-        reply_marker = "<!-- This is an auto-generated reply by CodeRabbit -->"
-        reply = summary()
-        reply["body"] = VERSION_MARKER + "\n\n" + reply["body"].replace(SUMMARY_MARKER, reply_marker)
-        quote = summary(id=21)
-        quote["body"] = VERSION_MARKER + "\nAs the summary said:\n" + quote["body"]
-        # Only one version marker may come before the summary marker, and nothing else.
-        prefixes = (VERSION_MARKER + VERSION_MARKER, reply_marker, reply_marker + VERSION_MARKER)
-        prefixed = [summary(id=22 + i) for i in range(len(prefixes))]
-        for comment, prefix in zip(prefixed, prefixes):
-            comment["body"] = prefix + "\n" + comment["body"]
-        for comment in (reply, quote, *prefixed):
-            with self.subTest(body=comment["body"][:80]), \
-                    self.assertRaisesRegex(gate.GateError, "found no summary"):
-                gate.validate_coderabbit([review_status()], [comment], SHA)
-
-
-class InspectionTests(GateFixture):
-    def test_complete_current_review_authorizes_regular_fresh_pr(self):
-        self.assertEqual(gate.inspect(self.api, "7", SHA), {
-            "pr_number": "7", "sha": SHA, "base_sha": BASE_SHA,
-            "status_id": 10, "summary_id": 20,
-        })
-        self.api.status.assert_not_called()
-
-    def test_inputs_reject_aliases_short_shas_and_shell_fragments(self):
-        for number, sha in (("07", SHA), ("0", SHA), ("7;echo x", SHA),
-                            ("7", SHA[:7]), ("7", SHA.upper())):
-            with self.subTest(number=number, sha=sha), self.assertRaises(gate.GateError):
-                gate.inspect(self.api, number, sha)
-        self.api.api.assert_not_called()
-
-    def test_closed_draft_stale_head_and_other_base_are_rejected(self):
-        for replacement in ({"state": "closed"}, {"draft": True},
-                            {"head": {"sha": OLD_SHA}}, {"base": {"ref": "release"}}):
-            original = deepcopy(self.pr)
-            self.pr.update(replacement)
-            with self.subTest(replacement=replacement), self.assertRaises(gate.GateError):
-                gate.inspect(self.api, "7", SHA)
-            self.pr = original
-
-    def test_behind_or_diverged_branches_require_fresh_review_after_update(self):
-        for state in ("behind", "diverged"):
-            self.comparison = state
-            with self.subTest(state=state), self.assertRaisesRegex(gate.GateError, "main"):
-                gate.inspect(self.api, "7", SHA)
-
-    def test_head_change_during_paginated_review_reads_invalidates_authorization(self):
-        original = self.api.pages.side_effect
-
-        def pages(path, key=None):
-            result = original(path, key)
-            if path.endswith("/reviews"):
-                self.pr["head"]["sha"] = OLD_SHA
-            return result
-
-        self.api.pages.side_effect = pages
-        with self.assertRaisesRegex(gate.GateError, "changed during"):
-            gate.inspect(self.api, "7", SHA)
-
-    def test_unresolved_outdated_threads_still_block(self):
-        for outdated in (False, True):
-            self.threads = [{"id": "thread", "isResolved": False, "isOutdated": outdated}]
-            with self.subTest(outdated=outdated), self.assertRaisesRegex(gate.GateError, "Unresolved"):
-                gate.inspect(self.api, "7", SHA)
-        self.threads[0]["isResolved"] = True
-        gate.inspect(self.api, "7", SHA)
-
-    def test_formal_approval_policy_requires_current_bot_approval(self):
-        self.decision = "REVIEW_REQUIRED"
-        with self.assertRaisesRegex(gate.GateError, "formal review"):
-            gate.inspect(self.api, "7", SHA)
-        self.decision = "APPROVED"
-        for reviews in ([], [{"id": 30, "user": BOT, "state": "APPROVED", "commit_id": OLD_SHA}]):
-            self.reviews = reviews
-            with self.subTest(reviews=reviews), self.assertRaisesRegex(gate.GateError, "formal approval"):
-                gate.inspect(self.api, "7", SHA)
-        self.reviews[0]["commit_id"] = SHA
-        gate.inspect(self.api, "7", SHA)
-
-    def test_changes_requested_remains_blocking_until_approved_or_dismissed(self):
-        self.reviews = [{"id": 30, "user": BOT, "state": "CHANGES_REQUESTED", "commit_id": OLD_SHA}]
-        with self.assertRaisesRegex(gate.GateError, "requests changes"):
-            gate.inspect(self.api, "7", SHA)
-        self.reviews.append({"id": 31, "user": BOT, "state": "DISMISSED", "commit_id": SHA})
-        gate.inspect(self.api, "7", SHA)
-
-    def test_all_thread_pages_are_checked_and_graphql_errors_fail_closed(self):
-        first = self.request("graphql")
-        first["data"]["repository"]["pullRequest"]["reviewThreads"]["pageInfo"] = {
-            "hasNextPage": True, "endCursor": "next",
-        }
-        second = self.request("graphql")
-        second["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"] = [
-            {"id": "late", "isResolved": False, "isOutdated": True},
-        ]
-        self.api.api.side_effect = [first, second]
-        with self.assertRaisesRegex(gate.GateError, "Unresolved"):
-            gate.review_policy(self.api, "7")
-        self.assertEqual(self.api.api.call_args.args[2]["variables"]["cursor"], "next")
-        self.api.api.side_effect = [{"errors": [{"message": "Access denied"}]}]
-        with self.assertRaises(gate.GateError):
-            gate.review_policy(self.api, "7")
-
-
-@patch.dict(os.environ, ENV)
-class LifecycleTests(GateFixture):
-    def test_changed_eligibility_during_deduplication_rejects_authorization(self):
-        def previous_status(*_args):
-            self.comments = [summary(OLD_SHA)]
-            return None
-
-        with patch.object(gate, "latest_status", side_effect=previous_status):
-            with self.assertRaisesRegex(gate.GateError, "current PR commit"):
-                gate.start(self.api, "7", SHA)
-        self.api.status.assert_not_called()
-
-    def test_authorized_dispatch_publishes_pending_on_pr_sha(self):
-        self.assertEqual(gate.start(self.api, "7", SHA)["sha"], SHA)
-        self.api.status.assert_called_once_with(
-            SHA, "pending", "Authorized revision is running full CI", URL,
-        )
-
-    def test_non_main_automatic_events_native_reruns_and_readers_are_rejected(self):
-        for env in ({"GITHUB_REF": "refs/heads/feature"},
-                    {"GITHUB_EVENT_NAME": "pull_request"}, {"GITHUB_RUN_ATTEMPT": "2"}):
-            with self.subTest(env=env), patch.dict(os.environ, env), self.assertRaises(gate.GateError):
-                gate.start(self.api, "7", SHA)
-        self.permission = "read"
-        with self.assertRaisesRegex(gate.GateError, "write permission"):
-            gate.start(self.api, "7", SHA)
-        self.api.status.assert_not_called()
-
-    def test_duplicate_requests_do_not_start_another_build(self):
-        for state in ("pending", "success", "failure", "error"):
-            self.statuses[SHA] = [ci_status(state), review_status()]
-            with self.subTest(state=state), contextlib.redirect_stdout(io.StringIO()):
-                self.assertIsNone(gate.start(self.api, "7", SHA))
-        self.api.status.assert_not_called()
-
-    def test_explicit_retry_revalidates_reviews_then_claims_failed_attempt(self):
-        self.statuses[SHA] = [ci_status("failure", URL + "0"), review_status()]
-        self.assertIsNotNone(gate.start(self.api, "7", SHA, retry=True))
-        self.api.status.assert_called_once_with(
-            SHA, "pending", "Authorized revision is running full CI", URL,
-        )
-        self.api.status.reset_mock()
-        self.comments = [summary(OLD_SHA)]
-        with self.assertRaises(gate.GateError):
-            gate.start(self.api, "7", SHA, retry=True)
-        self.api.status.assert_not_called()
-
-    def test_overlapping_explicit_retries_are_deduplicated(self):
-        for state in ("pending", "success", "failure"):
-            previous = ci_status(state, URL + "0")
-            previous["created_at"] = "2026-10-13T11:30:00Z"
-            self.statuses[SHA] = [previous, review_status()]
-            with self.subTest(state=state), contextlib.redirect_stdout(io.StringIO()):
-                self.assertIsNone(gate.start(self.api, "7", SHA, retry=True))
-        self.api.status.assert_not_called()
-
-    def test_explicit_retry_does_not_replace_active_pending_attempt(self):
-        self.statuses[SHA].insert(0, ci_status(target_url=URL + "0"))
-        with contextlib.redirect_stdout(io.StringIO()):
-            self.assertIsNone(gate.start(self.api, "7", SHA, retry=True))
-        self.api.status.assert_not_called()
-
-    def test_success_requires_owned_pending_status_and_fresh_evidence(self):
-        self.statuses[SHA].insert(0, ci_status())
-        gate.finish(self.api, "7", SHA, "success")
-        self.api.status.assert_called_once_with(
-            SHA, "success", "Reviewed commit passed all required full CI jobs", URL,
-        )
-
-    def test_failed_cancelled_or_skipped_builds_never_succeed(self):
-        self.statuses[SHA].insert(0, ci_status())
-        for result in ("failure", "cancelled", "skipped", ""):
-            self.api.status.reset_mock()
-            with self.subTest(result=result), self.assertRaises(gate.GateError):
-                gate.finish(self.api, "7", SHA, result)
-            self.assertEqual(self.api.status.call_args.args[:2], (SHA, "failure"))
-
-    def test_aggregate_success_cannot_hide_skipped_missing_or_failed_required_jobs(self):
-        self.statuses[SHA].insert(0, ci_status())
-        originals = deepcopy(self.jobs)
-        for index, job in enumerate(originals):
-            for replacement in (None, {"status": "completed", "conclusion": "skipped"},
-                                {"status": "completed", "conclusion": "failure"},
-                                {"status": "in_progress", "conclusion": None}):
-                self.jobs = deepcopy(originals)
-                if replacement is None:
-                    del self.jobs[index]
-                else:
-                    self.jobs[index].update(replacement)
-                self.api.status.reset_mock()
-                with self.subTest(job=job["name"], replacement=replacement), \
-                        self.assertRaisesRegex(gate.GateError, "jobs"):
-                    gate.finish(self.api, "7", SHA, "success")
-                self.assertEqual(self.api.status.call_args.args[:2], (SHA, "failure"))
-
-    def test_push_after_start_turns_previous_revision_failure(self):
-        self.statuses[SHA].insert(0, ci_status())
-        self.pr["head"]["sha"] = OLD_SHA
-        with self.assertRaisesRegex(gate.GateError, "no longer matches"):
-            gate.finish(self.api, "7", SHA, "success")
-        self.assertEqual(self.api.status.call_args.args[:2], (SHA, "failure"))
-
-    def test_late_finish_cannot_overwrite_newer_attempt_or_terminal_status(self):
-        for previous in (ci_status(target_url=URL + "0"), ci_status("success"), ci_status("failure")):
-            self.statuses[SHA] = [previous, review_status()]
-            with self.subTest(previous=previous), self.assertRaisesRegex(gate.GateError, "owns"):
-                gate.finish(self.api, "7", SHA, "success")
-        self.api.status.assert_not_called()
-
-    def test_invalidation_cancels_only_obsolete_active_runs_for_this_pr(self):
-        self.runs = [
-            workflow_run(123, OLD_SHA), workflow_run(124),
-            workflow_run(125, OLD_SHA, number="8"),
-            workflow_run(126, OLD_SHA, status="completed"),
-            workflow_run(127, OLD_SHA, event="push"),
-        ]
-        self.statuses[OLD_SHA] = [ci_status()]
-        gate.invalidate(self.api, "7")
-        self.api.status.assert_called_once_with(
-            OLD_SHA, "failure", "PR revision changed or PR is no longer ready", URL,
-        )
-        cancellations = [call.args[0] for call in self.api.api.call_args_list
-                         if call.args[0].endswith("/cancel")]
-        self.assertEqual(cancellations, [f"{ROOT}/actions/runs/123/cancel"])
-
-    def test_draft_or_closed_pr_cancels_current_run_without_clobbering_newer_status(self):
-        self.runs = [workflow_run()]
-        self.statuses[SHA].insert(0, ci_status(target_url=URL + "0"))
-        for change in ({"draft": True}, {"state": "closed"}):
-            self.pr.update(change)
-            self.api.api.reset_mock()
-            gate.invalidate(self.api, "7")
-            self.api.api.assert_any_call(f"{ROOT}/actions/runs/123/cancel", "POST")
-        self.api.status.assert_not_called()
-
-    def test_cancel_race_is_ignored_only_if_run_has_finished(self):
-        self.runs = [workflow_run(123, OLD_SHA)]
-        original = self.api.api.side_effect
-        completed = False
-
-        def request(path, method="GET", data=None):
-            if path.endswith("/cancel"):
-                raise gate.GateError("Cannot cancel this run")
-            if path == f"{ROOT}/actions/runs/123" and completed:
-                return workflow_run(123, OLD_SHA, status="completed")
-            return original(path, method, data)
-
-        self.api.api.side_effect = request
-        with self.assertRaisesRegex(gate.GateError, "Cannot cancel"):
-            gate.invalidate(self.api, "7")
-        completed = True
-        gate.invalidate(self.api, "7")
-
-    def test_reconcile_closes_abandoned_pending_even_when_overall_run_succeeded(self):
-        self.statuses[SHA].insert(0, ci_status())
-        for conclusion in ("success", "failure", "cancelled", "skipped"):
-            self.api.status.reset_mock()
-            self.runs = [workflow_run(status="completed", conclusion=conclusion)]
-            gate.reconcile(self.api, RUN_ID)
-            self.api.status.assert_called_once_with(
-                SHA, "failure", "CI ended without a verified successful result", URL,
-            )
-
-    def test_reconcile_does_not_touch_success_newer_run_or_untrusted_workflow(self):
-        self.runs = [workflow_run(status="completed")]
-        for previous in (ci_status("success"), ci_status(target_url=URL + "0")):
-            self.statuses[SHA] = [previous]
-            gate.reconcile(self.api, RUN_ID)
-        self.statuses[SHA] = [ci_status()]
-        for change in ({"head_branch": "feature"}, {"event": "push"},
-                       {"path": ".github/workflows/ci.yml"}, {"status": "in_progress"},
-                       {"display_title": "reviewed-ci PR #07 @ " + SHA}):
-            self.runs = [workflow_run(**{"status": "completed", **change})]
-            gate.reconcile(self.api, RUN_ID)
-        self.api.status.assert_not_called()
-
-
-class PaginationTests(unittest.TestCase):
-    def test_pages_preserves_query_and_reads_past_first_page(self):
-        api = gate.GitHub(REPOSITORY)
-        with patch.object(api, "api", side_effect=[{"items": list(range(100))}, {"items": [100]}]) as request:
-            self.assertEqual(api.pages("items?status=active", "items"), list(range(101)))
-        self.assertEqual(request.call_args.args[0], "items?status=active&per_page=100&page=2")
-
-    def test_pagination_limit_fails_instead_of_authorizing_partial_evidence(self):
-        api = gate.GitHub(REPOSITORY)
-        with patch.object(api, "api", return_value=list(range(100))):
-            with self.assertRaisesRegex(gate.GateError, "incomplete evidence"):
-                api.pages("items")
+    def test_check_results_executes_without_event_or_api_dependencies(self):
+        results = dict.fromkeys(ci.RESULT_VARIABLES, "success")
+        result = self.run_cli("check-results", **results, CI_DIAGNOSTIC="false", GITHUB_EVENT_PATH="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.run_cli("check-results", **{**results, "CI_LINUX_RESULT": "cancelled"}, CI_DIAGNOSTIC="false")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CI_LINUX_RESULT", result.stderr)
+        self.assertFalse(self.output.exists())
 
 
 if __name__ == "__main__":

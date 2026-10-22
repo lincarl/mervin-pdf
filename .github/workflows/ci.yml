@@ -27,19 +27,31 @@ jobs:
           WORKFLOW_REF: ${{ github.ref }}
         run: |
           if [ "$WORKFLOW_REF" != refs/heads/main ]; then
-            echo 'Use Start CI for pull requests. This workflow accepts only main.' >&2
+            echo 'This workflow accepts only main. Pull requests run PR CI automatically.' >&2
             exit 1
           fi
 
   full-ci:
     needs: validate-trigger
+    if: inputs.msix_artifact_run == ''
     permissions:
       actions: read
       contents: read
     uses: ./.github/workflows/full-ci.yml
     with:
       sha: ${{ github.sha }}
-      msix_artifact_run: ${{ inputs.msix_artifact_run || '' }}
+
+  msix-diagnostic:
+    needs: validate-trigger
+    if: github.event_name == 'workflow_dispatch' && inputs.msix_artifact_run != ''
+    permissions:
+      actions: read
+      contents: read
+    cache-mode: read
+    uses: ./.github/workflows/full-ci.yml
+    with:
+      sha: ${{ github.sha }}
+      msix_artifact_run: ${{ inputs.msix_artifact_run }}
 
   prerelease:
     needs: full-ci

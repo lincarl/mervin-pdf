@@ -12,11 +12,11 @@ on:
         required: false
         default: ''
         type: string
-      reviewed_pr:
-        description: 'Require a new authorization instead of native job reruns.'
+      repository:
+        description: Source repository for the immutable commit
         required: false
-        type: boolean
-        default: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -25,15 +25,17 @@ jobs:
   repository-checks:
     runs-on: ubuntu-latest
     steps:
-      - name: Reject native reruns of reviewed PR builds
-        if: inputs.reviewed_pr && github.run_attempt != 1
-        run: |
-          echo 'Reviewed PR builds require a new Start CI authorization.' >&2
-          exit 1
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.sha }}
+          persist-credentials: false
+
+      - name: Check out workflow controls for their script tests
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: dev-temp/workflow-controls
           persist-credentials: false
 
       - name: Validate metadata and scripts
@@ -165,7 +167,8 @@ jobs:
 
       - name: Test repository scripts
         run: |
-          python3 -B scripts/test_reviewed_ci.py
+          python3 -B dev-temp/workflow-controls/scripts/test_reviewed_ci.py
+          python3 -B dev-temp/workflow-controls/scripts/test_cancel_pr_ci.py
           python3 -B scripts/test_linux_exports.py
           python3 -B scripts/test_prepare_prerelease.py
           python3 -B scripts/test_release_versions.py
@@ -174,7 +177,7 @@ jobs:
           python3 -B scripts/test_msix_manifest.py
 
   linux-tests:
-    if: inputs.msix_artifact_run == '' && (!inputs.reviewed_pr || github.run_attempt == 1)
+    if: inputs.msix_artifact_run == ''
     runs-on: ubuntu-24.04
     strategy:
       matrix:
@@ -188,6 +191,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.sha }}
           persist-credentials: false
       - name: Install build dependencies
@@ -240,7 +244,7 @@ jobs:
   # libqpdf load the system libjpeg. The .rpm builds on Fedora 44 and gets only
   # the exported-symbol check in release.yml.
   linux-system-qt-tests:
-    if: inputs.msix_artifact_run == '' && (!inputs.reviewed_pr || github.run_attempt == 1)
+    if: inputs.msix_artifact_run == ''
     runs-on: ubuntu-26.04
     env:
       QT_QPA_PLATFORM: offscreen
@@ -249,6 +253,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.sha }}
           persist-credentials: false
       - name: Install build dependencies
@@ -286,7 +291,7 @@ jobs:
           python3 scripts/check-test-results.py build/ci/results.xml
 
   windows-tests:
-    if: inputs.msix_artifact_run == '' && (!inputs.reviewed_pr || github.run_attempt == 1)
+    if: inputs.msix_artifact_run == ''
     runs-on: windows-2022
     env:
       # Store manifests require a nonzero major version. Verification packages
@@ -300,6 +305,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.sha }}
           persist-credentials: false
       - name: Set up MSVC (x64)
@@ -353,7 +359,7 @@ jobs:
           "MUPDF_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Save MuPDF cache
-        if: steps.mupdf-cache.outputs.cache-hit != 'true'
+        if: github.event_name != 'pull_request' && steps.mupdf-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: C:\dev\src\mupdf-${{ env.MUPDF_VERSION }}-tests-source
@@ -393,7 +399,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Configuring failed" }
 
       - name: Save vcpkg cache
-        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        if: github.event_name != 'pull_request' && steps.vcpkg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ~\AppData\Local\vcpkg\archives
@@ -442,6 +448,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows-installer-diagnostics
+          overwrite: true
           path: ${{ env.MERVIN_INSTALLER_TEST_DIR }}/
           if-no-files-found: error
           retention-days: 7
@@ -455,6 +462,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows-verification
+          overwrite: true
           path: |
             build/x64-release/deploy/
             build/x64-release/MervinPDF-*.msi
@@ -469,7 +477,7 @@ jobs:
 
   windows-msix-tests:
     needs: windows-tests
-    if: always() && !cancelled() && (!inputs.reviewed_pr || github.run_attempt == 1) && (needs.windows-tests.result == 'success' || inputs.msix_artifact_run != '')
+    if: always() && !cancelled() && (needs.windows-tests.result == 'success' || inputs.msix_artifact_run != '')
     # Server 2025 can install the package's Windows 11 minimum build. The
     # compiler job retains its existing Server 2022 toolchain and MSI tests.
     runs-on: windows-2025
@@ -479,8 +487,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.sha }}
           persist-credentials: false
+      - name: Validate diagnostic artifact provenance
+        if: inputs.msix_artifact_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIAGNOSTIC_RUN_ID: ${{ inputs.msix_artifact_run }}
+        run: python -B scripts/reviewed_ci.py diagnostic
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: windows-verification
@@ -505,6 +520,29 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows-msix-diagnostics
+          overwrite: true
           path: ${{ env.MERVIN_MSIX_TEST_DIR }}/
           if-no-files-found: error
           retention-days: 7
+
+  required-jobs:
+    needs: [repository-checks, linux-tests, linux-system-qt-tests, windows-tests, windows-msix-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Older PR heads may contain the old helper. Use the workflow's controls
+      # when checking job results, independently of the application revision.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Require every expected test job to succeed
+        env:
+          CI_REPOSITORY_RESULT: ${{ needs.repository-checks.result }}
+          CI_LINUX_RESULT: ${{ needs.linux-tests.result }}
+          CI_LINUX_SYSTEM_RESULT: ${{ needs.linux-system-qt-tests.result }}
+          CI_WINDOWS_RESULT: ${{ needs.windows-tests.result }}
+          CI_MSIX_RESULT: ${{ needs.windows-msix-tests.result }}
+          CI_DIAGNOSTIC: ${{ inputs.msix_artifact_run != '' }}
+        run: python3 -B scripts/reviewed_ci.py check-results
