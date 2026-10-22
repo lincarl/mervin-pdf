@@ -3,6 +3,10 @@ name: PR CI lifecycle
 on:
   pull_request_target:
     types: [synchronize, closed, converted_to_draft, reopened, ready_for_review]
+  workflow_run:
+    workflows: [PR CI]
+    # requested is not emitted for reruns, including reruns of failed jobs only.
+    types: [in_progress]
 
 permissions:
   contents: read
@@ -16,11 +20,11 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      # Only default-branch controls run with this cancellation token. The job
-      # never loads PR code or artifacts and cannot publish commit statuses.
+      # Always load default-branch controls, including for starting PR attempts.
+      # This job never loads PR code or artifacts and cannot publish statuses.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.workflow_sha }}
+          ref: refs/heads/${{ github.event.repository.default_branch }}
           persist-credentials: false
       - name: Cancel obsolete, closed, or draft PR builds
         env:

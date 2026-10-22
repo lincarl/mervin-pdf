@@ -325,9 +325,10 @@ def diagnostic_api():
            "head_branch": "main", "conclusion": "failure", "pull_requests": []}
     windows = {"name": "full-ci / windows-tests", "status": "completed", "conclusion": "success",
                "steps": [{"name": name, "status": "completed", "conclusion": "success"}
-                         for name in ("Stage app and build MSI",
+                         for name in ("Build", "Test", "Stage app and build MSI",
                                       "Verify MSI install, upgrade, repair, and uninstall",
-                                      "Verify MSI wizard and launch after Finish")]}
+                                      "Verify MSI wizard and launch after Finish",
+                                      "Build unsigned MSIX", "Upload Windows verification artifacts")]}
     api.responses = {
         run_path: run,
         f"{run_path}/jobs?filter=latest&per_page=100&page=1": {"jobs": [windows, {
@@ -348,6 +349,16 @@ DIAGNOSTIC_ENV = {**ENV, "GITHUB_EVENT_NAME": "workflow_dispatch",
 class DiagnosticTests(unittest.TestCase):
     def test_failed_overall_and_msix_results_allow_verified_windows_payload(self):
         ci.diagnostic(DIAGNOSTIC_ENV, diagnostic_api())
+
+    def test_msix_packaging_failure_keeps_valid_verified_payload_eligible(self):
+        api = diagnostic_api()
+        path = next(path for path in api.responses if "/jobs?" in path)
+        windows = api.responses[path]["jobs"][0]
+        windows["conclusion"] = "failure"
+        for step in windows["steps"]:
+            if step["name"] == "Build unsigned MSIX":
+                step["conclusion"] = "failure"
+        ci.diagnostic(DIAGNOSTIC_ENV, api)
 
     def test_only_main_dispatch_accepts_positive_run_identifiers(self):
         for change in ({"DIAGNOSTIC_RUN_ID": "0"}, {"DIAGNOSTIC_RUN_ID": "081"},
@@ -372,17 +383,23 @@ class DiagnosticTests(unittest.TestCase):
                 with self.subTest(field=field, value=value), self.assertRaises(ci.CIError):
                     ci.diagnostic(DIAGNOSTIC_ENV, api)
 
-    def test_windows_job_and_msi_flows_must_be_successful_and_unambiguous(self):
+    def test_windows_build_test_msi_and_upload_steps_must_succeed(self):
         original = diagnostic_api()
         path = next(path for path in original.responses if "/jobs?" in path)
         windows = original.responses[path]["jobs"][0]
         variants = [[], [windows, windows], [{**windows, "name": "windows-tests"}],
                     [{**windows, "status": "in_progress"}]]
-        variants += [[{**windows, "conclusion": result}] for result in ("failure", "cancelled", "skipped", None)]
         variants += [[{**windows, "steps": steps}] for steps in (
             [], windows["steps"][:-1], windows["steps"] + [windows["steps"][0]],
             [{**step, "conclusion": "skipped"} for step in windows["steps"]],
         )]
+        for name in ("Build", "Test", "Stage app and build MSI",
+                     "Verify MSI install, upgrade, repair, and uninstall",
+                     "Verify MSI wizard and launch after Finish", "Upload Windows verification artifacts"):
+            for result in ("failure", "cancelled", "skipped", None):
+                steps = [{**step, "conclusion": result} if step["name"] == name else step
+                         for step in windows["steps"]]
+                variants.append([{**windows, "steps": steps}])
         for jobs in variants:
             api = diagnostic_api()
             api.responses[path] = {"jobs": jobs}

@@ -20,6 +20,7 @@ HEAD = "a" * 40
 OLD_HEAD = "b" * 40
 NEW_HEAD = "c" * 40
 ENV = {"GITHUB_EVENT_NAME": "pull_request_target", "GITHUB_REPOSITORY": REPOSITORY}
+RUN_ENV = {**ENV, "GITHUB_EVENT_NAME": "workflow_run"}
 
 
 def event(action="synchronize"):
@@ -39,6 +40,17 @@ def pull_request(sha=HEAD, state="open", draft=False):
     return {
         **event()["pull_request"], "state": state, "draft": draft,
         "head": {"sha": sha, "ref": "feature/fix"},
+    }
+
+
+def started_event(identifier=81, action="in_progress"):
+    """Create a starting-attempt notification without a title or PR associations."""
+    return {
+        "action": action, "repository": {"full_name": REPOSITORY, "default_branch": "main"},
+        "workflow_run": {
+            "id": identifier, "name": "PR CI", "event": "pull_request", "path": ci.WORKFLOW,
+            "head_sha": OLD_HEAD, "head_branch": "feature/fix", "run_attempt": 1,
+        },
     }
 
 
@@ -200,9 +212,9 @@ class CancellationTests(unittest.TestCase):
         api = FakeGitHub(runs)
         self.assertEqual(self.execute(api), ["81"])
 
-    def test_populated_pr_identities_must_agree_with_title(self):
+    def test_malformed_associations_and_conflicting_matching_entries_are_rejected(self):
         references = [
-            [{"number": 8}], [None], [{}],
+            [None], [{}],
             [{"number": True}], [{"number": "07"}], "7", {"number": 7},
             [{"number": 7, "base": {"repo": {"full_name": "other/project"}}}],
             [{"number": 7, "base": None}],
@@ -216,6 +228,28 @@ class CancellationTests(unittest.TestCase):
         run = {**workflow_run(), "pull_requests": [{"number": 8}, {"number": 7}]}
         api = FakeGitHub([run])
         self.assertEqual(self.execute(api), ["81"])
+
+    def test_closed_triggering_pr_can_be_absent_while_another_pr_stays_open(self):
+        old = {**workflow_run(), "pull_requests": [{"number": 8}]}
+        other = workflow_run(82, number=8)
+        api = FakeGitHub([old, other], pull_request(state="closed"))
+        self.assertEqual(self.execute(api, event("closed")), ["81"])
+        self.assertEqual(api.cancellations, ["81"])
+        self.assertNotIn(("GET", f"{ROOT}/pulls/8"), api.calls)
+
+    def test_live_branch_associations_do_not_replace_title_or_immutable_source(self):
+        references = [
+            [{"number": 8}],
+            [{"number": 8, "head": {"sha": NEW_HEAD, "ref": "feature/fix"}}],
+            [{"number": 7, "head": {"sha": NEW_HEAD, "ref": "renamed"}}],
+        ]
+        for associations in references:
+            old = {**workflow_run(), "pull_requests": associations}
+            live = {**workflow_run(82, sha=HEAD), "pull_requests": [{"number": 8}]}
+            other = {**workflow_run(83, number=8), "pull_requests": [{"number": 7}]}
+            api = FakeGitHub([old, live, other])
+            with self.subTest(associations=associations):
+                self.assertEqual(self.execute(api), ["81"])
 
     def test_minimal_github_pr_association_schema_does_not_require_full_name(self):
         reference = {
@@ -246,7 +280,7 @@ class CancellationTests(unittest.TestCase):
 
     def test_run_details_are_checked_again_before_cancellation(self):
         for override in ({"id": 999}, {"head_sha": HEAD}, {"event": "push"},
-                         {"pull_requests": [{"number": 8}]}, {"status": "completed"}):
+                         {"status": "completed"}):
             api = FakeGitHub([workflow_run()])
             api.details["81"].update(override)
             with self.subTest(override=override):
@@ -343,6 +377,128 @@ class CancellationTests(unittest.TestCase):
             self.assertEqual(api.cancellations, ["81"])
 
 
+class StartedRunTests(unittest.TestCase):
+    def execute(self, api, payload=None):
+        """Reconcile one mocked starting run through the runner-facing dispatch."""
+        with redirect_stdout(StringIO()):
+            return ci.cancel_obsolete(payload if payload is not None else started_event(), RUN_ENV, api)
+
+    def test_partial_rerun_after_lifecycle_processing_does_not_need_prepare_again(self):
+        original = workflow_run(status="completed")
+        api = FakeGitHub([original])
+        with redirect_stdout(StringIO()):
+            self.assertEqual(ci.cancel_obsolete(event(), ENV, api), [])
+        # The old successful prepare remains from attempt 1, while failed jobs rerun.
+        api.responses[f"{ROOT}/actions/runs/81/jobs"] = {"jobs": [
+            {"name": "Select PR revision", "conclusion": "success", "run_attempt": 1},
+            {"name": "build / linux-tests", "status": "in_progress", "run_attempt": 2},
+        ]}
+        api.details["81"] = {**original, "status": "in_progress", "run_attempt": 2}
+        api.calls.clear()
+        self.assertEqual(self.execute(api), ["81"])
+        self.assertEqual(api.cancellations, ["81"])
+        self.assertFalse(any("/jobs" in path or "/workflows/" in path for _, path in api.calls))
+
+    def test_closed_and_draft_reruns_cancel_even_for_the_current_source(self):
+        rerun = {**workflow_run(sha=HEAD), "run_attempt": 2}
+        for current in (pull_request(state="closed"), pull_request(draft=True)):
+            api = FakeGitHub([rerun], current)
+            with self.subTest(current=current):
+                self.assertEqual(self.execute(api), ["81"])
+
+    def test_active_rerun_of_the_current_live_source_is_preserved(self):
+        api = FakeGitHub([{**workflow_run(sha=HEAD), "run_attempt": 2}])
+        self.assertEqual(self.execute(api), [])
+        self.assertEqual(api.cancellations, [])
+        self.assertIn(("GET", f"{ROOT}/pulls/7"), api.calls)
+
+    def test_delayed_old_attempt_notification_cannot_cancel_a_newer_run(self):
+        old = {**workflow_run(), "run_attempt": 3}
+        current = workflow_run(82, sha=HEAD)
+        api = FakeGitHub([old, current])
+        self.assertEqual(self.execute(api), ["81"])
+        self.assertEqual(api.cancellations, ["81"])
+        self.assertNotIn(("GET", f"{ROOT}/actions/runs/82"), api.calls)
+
+    def test_notification_source_and_associations_do_not_override_actual_api_run(self):
+        api = FakeGitHub([{**workflow_run(sha=HEAD), "run_attempt": 2}])
+        payload = started_event()
+        payload["workflow_run"]["pull_requests"] = [{"number": 8}]
+        payload["workflow_run"]["display_title"] = f"PR CI #8 @ {OLD_HEAD}"
+        self.assertEqual(self.execute(api, payload), [])
+        self.assertEqual(api.cancellations, [])
+        self.assertIn(("GET", f"{ROOT}/pulls/7"), api.calls)
+
+    def test_current_pr_is_refreshed_after_run_metadata_inspection(self):
+        api = FakeGitHub([workflow_run()])
+
+        def restore_source(path):
+            """Make the notified run the live source before the PR API read."""
+            if path == f"{ROOT}/pulls/7":
+                api.current = pull_request(sha=OLD_HEAD)
+
+        api.before_read = restore_source
+        self.assertEqual(self.execute(api), [])
+        self.assertEqual(api.cancellations, [])
+
+    def test_fork_attempts_without_pr_arrays_are_reconciled(self):
+        for value in ([], None, "missing"):
+            run = {**workflow_run(), "head_repository": {"full_name": "fork/project"}}
+            if value == "missing":
+                del run["pull_requests"]
+            else:
+                run["pull_requests"] = value
+            api = FakeGitHub([run])
+            with self.subTest(associations=value):
+                self.assertEqual(self.execute(api), ["81"])
+
+    def test_closed_triggering_pr_is_not_required_in_open_associations(self):
+        run = {**workflow_run(), "pull_requests": [{"number": 8}], "run_attempt": 2}
+        api = FakeGitHub([run], pull_request(state="closed"))
+        self.assertEqual(self.execute(api), ["81"])
+        self.assertNotIn(("GET", f"{ROOT}/pulls/8"), api.calls)
+
+    def test_only_in_progress_notifications_are_accepted(self):
+        for action in ("requested", "completed", "synchronize", None):
+            api = FakeGitHub([workflow_run()])
+            with self.subTest(action=action), self.assertRaises(ci.CIError):
+                self.execute(api, started_event(action=action))
+            self.assertEqual(api.calls, [])
+
+    def test_invalid_notification_identity_fails_before_api_reads(self):
+        payloads = [{}, [], {**started_event(), "repository": {"full_name": "other/project"}},
+                    {**started_event(), "workflow_run": None}]
+        payloads += [started_event(identifier=value) for value in (None, True, "081", "81/cancel")]
+        for payload in payloads:
+            api = FakeGitHub([workflow_run()])
+            with self.subTest(payload=payload), self.assertRaises(ci.CIError):
+                self.execute(api, payload)
+            self.assertEqual(api.calls, [])
+        api = FakeGitHub([workflow_run()])
+        with self.assertRaises(ci.CIError):
+            ci.cancel_obsolete(started_event(), {**RUN_ENV, "GITHUB_REPOSITORY": "other/project"}, api)
+        self.assertEqual(api.calls, [])
+
+    def test_invalid_or_unrelated_actual_run_metadata_cannot_authorize_cancellation(self):
+        variants = [None, {}, {**workflow_run(), "id": 99}]
+        changes = {
+            "name": ["CI", None], "path": [".github/workflows/release.yml", ci.WORKFLOW + "@main"],
+            "event": ["push", "workflow_dispatch", "pull_request_target"],
+            "head_sha": [HEAD, "main", None],
+            "display_title": [None, "PR CI", f"PR CI #07 @ {OLD_HEAD}", f"PR CI #7 @ {HEAD}"],
+            "repository": [{"full_name": "other/project"}, None],
+            "status": ["completed", "unknown"],
+        }
+        variants += [{**workflow_run(), field: value} for field, values in changes.items() for value in values]
+        for run in variants:
+            api = FakeGitHub([workflow_run()])
+            api.details["81"] = run
+            with self.subTest(run=run):
+                self.assertEqual(self.execute(api), [])
+                self.assertEqual(api.cancellations, [])
+                self.assertEqual(api.calls, [("GET", f"{ROOT}/actions/runs/81")])
+
+
 class TransportTests(unittest.TestCase):
     def test_transport_exposes_only_exact_gets_and_cancellation_post(self):
         api = ci.CancellationGitHub(REPOSITORY)
@@ -381,6 +537,15 @@ class TransportTests(unittest.TestCase):
             ci.main()
         read.assert_called_once_with()
         client.assert_called_once_with(REPOSITORY)
+        self.assertEqual(api.cancellations, ["81"])
+
+    def test_runner_cli_accepts_starting_attempt_events(self):
+        api = FakeGitHub([{**workflow_run(), "run_attempt": 2}])
+        environment = {**RUN_ENV, "GITHUB_EVENT_PATH": "/runner/event.json", "GH_TOKEN": "mock-token"}
+        with patch.dict(os.environ, environment, clear=True), patch.object(ci.sys, "argv", ["cancel_pr_ci.py"]), \
+                patch.object(Path, "read_text", return_value=json.dumps(started_event())), \
+                patch.object(ci, "CancellationGitHub", return_value=api), redirect_stdout(StringIO()):
+            ci.main()
         self.assertEqual(api.cancellations, ["81"])
 
 

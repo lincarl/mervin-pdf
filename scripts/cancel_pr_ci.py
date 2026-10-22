@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Cancel obsolete PR CI runs using trusted controls and current GitHub state.
 
-Run only from a default-branch checkout for pull_request_target lifecycle events.
+Run only from a default-branch checkout for pull_request_target lifecycle events
+or workflow_run in_progress notifications, including reruns.
 The only write this command permits is cancellation of an identified PR CI run.
 It never reads PR files, downloads artifacts, or publishes commit statuses.
 """
@@ -98,7 +99,7 @@ def active_runs(api):
 
 
 def identified_run(run, number, repository):
-    """Require exact workflow, title, source SHA, and any supplied PR identity."""
+    """Require immutable run identity and validate matching live PR associations."""
     if not isinstance(run, dict):
         return False
     try:
@@ -114,9 +115,8 @@ def identified_run(run, number, repository):
         if references is not None:
             if not isinstance(references, list):
                 return False
-            numbers = [validate_number(pr["number"]) for pr in references]
-            if references and number not in numbers:
-                return False
+            # These are matching open PRs, not the PR that triggered the run.
+            # Closing the triggering PR can remove its entry from this list.
             for pr in references:
                 if validate_number(pr["number"]) != number:
                     continue
@@ -130,11 +130,8 @@ def identified_run(run, number, repository):
     return True
 
 
-def cancel_obsolete(event, environment, api):
-    """Cancel only identified runs obsolete according to a fresh PR API read."""
-    number = event_number(event, environment, api.repository)
-    current_pr(api, number)
-    runs = active_runs(api)
+def cancel_runs(api, number, runs):
+    """Recheck run metadata and current PR state before each cancellation."""
     cancelled = []
     for candidate in runs:
         if not identified_run(candidate, number, api.repository):
@@ -160,6 +157,36 @@ def cancel_obsolete(event, environment, api):
         cancelled.append(identifier)
         print(f"Requested cancellation of PR CI run {identifier}.")
     return cancelled
+
+
+def reconcile_started_run(event, environment, api):
+    """Reconcile the actual starting attempt without depending on prepare reruns."""
+    if environment.get("GITHUB_REPOSITORY") != api.repository:
+        raise CIError("Cancellation client does not match the runner repository")
+    try:
+        if (event["action"] != "in_progress"
+                or event["repository"]["full_name"] != api.repository):
+            raise CIError("Unexpected workflow_run notification")
+        identifier = validate_number(event["workflow_run"]["id"])
+    except (KeyError, TypeError) as error:
+        raise CIError("Incomplete workflow_run notification") from error
+    # The notification selects an API run, not a branch or a PR payload entry.
+    run = api.api(f"{api.root}/actions/runs/{identifier}")
+    title = run.get("display_title") if isinstance(run, dict) else None
+    match = RUN_TITLE.fullmatch(title) if isinstance(title, str) else None
+    if (not match or not identified_run(run, match.group(1), api.repository)
+            or validate_number(run["id"]) != identifier):
+        return []
+    return cancel_runs(api, match.group(1), [run])
+
+
+def cancel_obsolete(event, environment, api):
+    """Reconcile lifecycle changes or a starting attempt using current PR state."""
+    if environment.get("GITHUB_EVENT_NAME") == "workflow_run":
+        return reconcile_started_run(event, environment, api)
+    number = event_number(event, environment, api.repository)
+    current_pr(api, number)
+    return cancel_runs(api, number, active_runs(api))
 
 
 def main():

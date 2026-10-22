@@ -21,7 +21,8 @@ RESULT_VARIABLES = (
     "CI_REPOSITORY_RESULT", "CI_LINUX_RESULT", "CI_LINUX_SYSTEM_RESULT",
     "CI_WINDOWS_RESULT", "CI_MSIX_RESULT",
 )
-MSI_STEPS = {
+DIAGNOSTIC_STEPS = {
+    "Build", "Test", "Upload Windows verification artifacts",
     "Stage app and build MSI", "Verify MSI install, upgrade, repair, and uninstall",
     "Verify MSI wizard and launch after Finish",
 }
@@ -264,12 +265,14 @@ def diagnostic(environment, api):
         jobs = api.pages(f"{run_path}/jobs?filter=latest", "jobs")
         windows = [job for job in jobs if job["name"].rsplit(" / ", 1)[-1] == "windows-tests"]
         if (len(windows) != 1 or windows[0]["name"] != "full-ci / windows-tests"
-                or windows[0]["status"] != "completed" or windows[0]["conclusion"] != "success"):
-            raise CIError("Diagnostic producer requires successful latest Windows tests")
-        steps = [step for step in windows[0]["steps"] if step["name"] in MSI_STEPS]
-        if (len(steps) != len(MSI_STEPS) or {step["name"] for step in steps} != MSI_STEPS
+                or windows[0]["status"] != "completed"):
+            raise CIError("Diagnostic producer requires one completed latest Windows job")
+        # MSIX packaging can fail after valid binaries, tests, and MSI checks.
+        # Check those phases and their retained upload rather than the whole job.
+        steps = [step for step in windows[0]["steps"] if step["name"] in DIAGNOSTIC_STEPS]
+        if (len(steps) != len(DIAGNOSTIC_STEPS) or {step["name"] for step in steps} != DIAGNOSTIC_STEPS
                 or any(step["status"] != "completed" or step["conclusion"] != "success" for step in steps)):
-            raise CIError("Diagnostic producer requires successful MSI verification flows")
+            raise CIError("Diagnostic producer requires successful build, test, MSI, and upload steps")
         artifacts = api.pages(f"{run_path}/artifacts", "artifacts")
         payloads = [artifact for artifact in artifacts if artifact["name"] == "windows-verification"]
         if len(payloads) != 1:

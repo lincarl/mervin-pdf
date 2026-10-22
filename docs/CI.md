@@ -47,9 +47,9 @@ check requires that job and the rest of full CI to succeed. The optional MSIX
 artifact diagnostic remains a separate manual `main` run. Its reduced set of
 checks cannot satisfy the PR gate or provide reusable full CI evidence. Diagnostic
 runs have read-only caches and accept only retained Windows verification artifacts
-from a completed main-push CI run with successful Windows tests and MSI checks.
-The producer's MSIX test may have failed, since that can be the reason to diagnose
-its package.
+from a completed main-push CI run with successful Windows build, test, MSI
+verification, and artifact-upload steps. MSIX packaging or testing may have
+failed, since that can be the reason to diagnose the package.
 
 The Fedora RPM retains its exported-symbol check in the release workflow.
 Verification artifacts remain on the run that produced them, with their existing
@@ -60,11 +60,12 @@ retention periods.
 A trusted default-branch controller cancels superseded revisions and builds for
 closed or draft PRs. The controller uses Actions write permission only to request
 cancellation. It reads current PR state, executes no PR code or artifacts, and
-publishes no statuses. Revision-specific concurrency groups prevent an old
+publishes no statuses. It reconciles PR lifecycle changes and attempts entering
+`in_progress`, including partial reruns that retain a successful preparation job.
+Revision-specific concurrency groups prevent an old
 rerun from canceling a newer head and replace duplicate queued runs. CI rejects known
 obsolete heads before building and verifies the current head before passing the
-aggregate. Cancellation
-never makes a required check pass. Inspect a failure and
+aggregate. Cancellation never makes a required check pass. Inspect a failure and
 use GitHub Actions to rerun failed jobs or the complete run. A rerun keeps the
 immutable source revision. A code fix needs a new commit, local reviews, and CI on
 that revision.
