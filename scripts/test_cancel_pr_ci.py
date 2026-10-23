@@ -21,6 +21,10 @@ OLD_HEAD = "b" * 40
 NEW_HEAD = "c" * 40
 ENV = {"GITHUB_EVENT_NAME": "pull_request_target", "GITHUB_REPOSITORY": REPOSITORY}
 RUN_ENV = {**ENV, "GITHUB_EVENT_NAME": "workflow_run"}
+# Keep the supported lifecycle events and active statuses independent of the
+# controller's lists so removing one cannot remove its fixture and assertions.
+EXPECTED_ACTIONS = ("synchronize", "closed", "converted_to_draft", "reopened", "ready_for_review")
+EXPECTED_ACTIVE_STATUSES = ("queued", "in_progress", "waiting", "pending", "requested")
 
 
 def event(action="synchronize"):
@@ -79,7 +83,7 @@ class FakeGitHub(ci.CancellationGitHub):
         self.current = deepcopy(current if current is not None else pull_request())
         self.details = {str(run["id"]): deepcopy(run) for run in runs}
         self.responses = {}
-        for status in ci.ACTIVE_STATUSES:
+        for status in EXPECTED_ACTIVE_STATUSES:
             matches = [deepcopy(run) for run in runs if run["status"] == status]
             # Always include the empty last page for exact multiples of 100.
             for offset in range(0, len(matches) + 1, 100):
@@ -135,7 +139,7 @@ class CancellationTests(unittest.TestCase):
 
     def test_stale_event_and_obsolete_rerun_preserve_current_live_head(self):
         runs = [workflow_run(), {**workflow_run(82, sha=HEAD), "run_attempt": 3}]
-        for action in ci.ACTIONS:
+        for action in EXPECTED_ACTIONS:
             with self.subTest(action=action):
                 payload = event(action)
                 payload["pull_request"]["state"] = "closed"
@@ -289,9 +293,12 @@ class CancellationTests(unittest.TestCase):
     def test_every_active_status_and_page_are_collected_before_writes(self):
         runs = [workflow_run(identifier=index, status="queued") for index in range(1, 102)]
         runs += [workflow_run(identifier=200 + index, status=status)
-                 for index, status in enumerate(ci.ACTIVE_STATUSES[1:])]
+                 for index, status in enumerate(EXPECTED_ACTIVE_STATUSES) if status != "queued"]
         api = FakeGitHub(runs)
-        self.assertEqual(len(self.execute(api)), len(runs))
+        expected_ids = {str(run["id"]) for run in runs}
+        # Each run must occur exactly once in both the result and actual POSTs.
+        self.assertCountEqual(self.execute(api), expected_ids)
+        self.assertCountEqual(api.cancellations, expected_ids)
         self.assertIn(("GET", api.page_path("queued", 2)), api.calls)
         first_write = next(index for index, call in enumerate(api.calls) if call[0] == "POST")
         self.assertTrue(all("/workflows/" not in path for _, path in api.calls[first_write:]))

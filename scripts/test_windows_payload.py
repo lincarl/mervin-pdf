@@ -4,9 +4,8 @@
 import importlib.util
 import os
 from pathlib import Path
-import secrets
-import string
 import struct
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -15,6 +14,19 @@ spec = importlib.util.spec_from_file_location(
     "windows_payload", Path(__file__).with_name("check-windows-payload.py"))
 payload = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(payload)
+
+
+# Keep the package contract independent of the checker's lists so removing a
+# required runtime or a forbidden dependency from the checker fails these tests.
+REQUIRED_RUNTIME_FILES = (
+    "MervinPDF.exe", "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll",
+    "dxcompiler.dll", "dxil.dll", "opengl32sw.dll", "platforms/qwindows.dll",
+    "tls/qschannelbackend.dll",
+)
+FORBIDDEN_DEPENDENCY_DLLS = (
+    "tomlplusplus-3.dll", "qpdf30.dll", "jpeg62.dll", "turbojpeg.dll",
+    "spng.dll", "z.dll",
+)
 
 
 def pe_binary(imports=(), delayed=()):
@@ -52,21 +64,19 @@ def pe_binary(imports=(), delayed=()):
 
 
 class WindowsPayloadTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        suffix = "".join(secrets.choice(string.ascii_lowercase) for _ in range(4))
-        temporary_root = Path("C:/dev-temp") if os.name == "nt" else Path.home() / "dev-temp"
-        cls.session = temporary_root / f"mervin-payload-check-{suffix}"
-        cls.session.mkdir(parents=True)
-
     def setUp(self):
-        self.work = self.session / self._testMethodName
+        """Build an isolated package and System32 inventory for each test."""
+        temporary_root = Path(__file__).resolve().parents[1] / "dev-temp"
+        temporary_root.mkdir(parents=True, exist_ok=True)
+        directory = tempfile.TemporaryDirectory(prefix="windows-payload-", dir=temporary_root)
+        self.addCleanup(directory.cleanup)
+        self.work = Path(directory.name)
         self.directory = self.work / "payload"
         self.directory.mkdir(parents=True)
         self.system = self.work / "System32"
         self.system.mkdir()
         (self.system / "KERNEL32.dll").write_bytes(b"Windows supplies system DLLs")
-        for name in payload.REQUIRED_FILES:
+        for name in REQUIRED_RUNTIME_FILES:
             self.write(name)
 
     def write(self, name, imports=(), delayed=()):
@@ -87,19 +97,22 @@ class WindowsPayloadTests(unittest.TestCase):
         })
         report = self.check()
         self.assertEqual(report["errors"], [])
-        self.assertEqual(len(report["binaries"]), len(payload.REQUIRED_FILES) + 1)
+        self.assertCountEqual([binary["file"] for binary in report["binaries"]],
+                              (*REQUIRED_RUNTIME_FILES, "Qt6Core.dll"))
         self.assertIn("kernel32.dll", report["system_imports"])
 
     def test_forbidden_dlls_fail_in_inventory_and_both_import_tables(self):
-        for name in payload.FORBIDDEN_DLLS:
+        for name in FORBIDDEN_DEPENDENCY_DLLS:
             with self.subTest(name=name):
                 dll = self.write(name.upper())
                 self.write("MervinPDF.exe", (name,), (name.upper(),))
-                errors = self.check()["errors"]
-                self.assertTrue(any("Forbidden dependency DLL in payload" in error for error in errors))
-                self.assertTrue(any(" imports forbidden dependency" in error for error in errors))
-                self.assertTrue(any(" delay_imports forbidden dependency" in error for error in errors))
-                dll.unlink()
+                try:
+                    errors = self.check()["errors"]
+                    self.assertIn(f"Forbidden dependency DLL in payload {name}", errors)
+                    self.assertIn(f"mervinpdf.exe imports forbidden dependency {name}", errors)
+                    self.assertIn(f"mervinpdf.exe delay_imports forbidden dependency {name.upper()}", errors)
+                finally:
+                    dll.unlink()
 
     def test_missing_imports_ignore_path_and_unrelated_plugin_directories(self):
         self.write("MervinPDF.exe", ("Qt6Core.dll",))
@@ -118,11 +131,14 @@ class WindowsPayloadTests(unittest.TestCase):
         self.write("msvcp140_2.dll")
         self.assertEqual(self.check()["errors"], [])
 
-    def test_explicitly_loaded_qt_runtime_files_are_required(self):
-        for name in ("dxil.dll", "platforms/qwindows.dll", "tls/qschannelbackend.dll"):
-            (self.directory / name).unlink()
-            self.assertIn(f"Missing required runtime file {name}", self.check()["errors"])
-            self.write(name)
+    def test_missing_required_runtime_files_fail(self):
+        for name in REQUIRED_RUNTIME_FILES:
+            with self.subTest(name=name):
+                (self.directory / name).unlink()
+                try:
+                    self.assertIn(f"Missing required runtime file {name}", self.check()["errors"])
+                finally:
+                    self.write(name)
 
     def test_invalid_binary_and_unmapped_import_fail_closed(self):
         path = self.directory / "MervinPDF.exe"
