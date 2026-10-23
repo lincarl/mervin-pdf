@@ -27,6 +27,9 @@ public:
                         bool remember = true);
     // Requests process-wide close approval, optionally followed by relaunch.
     static void requestQuit(WindowManager *manager, bool restart = false);
+    // Whether every current window has an active window-wide close request.
+    // Incoming launches wait until cancellation or handoff to the next process.
+    static bool closesEveryWindow(const WindowManager *manager);
     // The updater needs a synchronous answer. Chosen saves run later without
     // closing windows, and answer Busy. Only Closed closes the windows; the other
     // answers never schedule a later shutdown. The Settings dialog may stay open,

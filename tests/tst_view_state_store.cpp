@@ -1,6 +1,8 @@
 #include "recent/ViewState.h"
 #include "recent/ViewStateStore.h"
 
+#include <QFile>
+#include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -25,7 +27,38 @@ private slots:
     void loadKeepsKeptStates();
     void removeDeletesEntry();
     void jsonRoundTrip();
+    void stableJsonAndMalformedFiles();
 };
+
+// Literal persisted keys protect compatibility independently of this version's writer.
+void TstViewStateStore::stableJsonAndMalformedFiles()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("views.json"));
+    const QByteArray literal = R"({"/records/a.pdf":{"pg":7,"zm":"custom","sc":1.75,"rot":270,"ox":0.25,"oy":0.75,"upd":12345}})";
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(literal), literal.size());
+    file.close();
+    ViewStateStore store;
+    QVERIFY(store.load(path));
+    const auto state = store.get(QStringLiteral("/records/a.pdf"));
+    QVERIFY(state.has_value());
+    QCOMPARE(state->page, 7);
+    QCOMPARE(state->zoomMode, QStringLiteral("custom"));
+    QCOMPARE(state->scale, 1.75);
+    QCOMPARE(state->rotation, 270);
+    QCOMPARE(state->offsetX, 0.25);
+    QCOMPARE(state->offsetY, 0.75);
+    QCOMPARE(QJsonDocument::fromJson(store.toJson()), QJsonDocument::fromJson(literal));
+    for (const QByteArray invalid : {QByteArray("[]"), QByteArray("{broken")}) {
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        QCOMPARE(file.write(invalid), invalid.size());
+        file.close();
+        QVERIFY(!store.load(path));
+        QCOMPARE(store.count(), 0);
+    }
+}
 
 static ViewState makeState(int page, const QString &zoom, double scale, int rot,
                            double ox = 0.0, double oy = 0.0)

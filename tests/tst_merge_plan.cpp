@@ -39,12 +39,13 @@ private slots:
     void summaryTextCountsDistinctFiles();
     void inputsAreZeroBasedInTypedOrder();
     void defaultOutputPathAvoidsExistingAndInputFiles();
-    void rowTextsMatchesThePerRowGetters();
+    void rowTextsUseIndependentExpectedRows();
     void dropGapsMapToTheRightRow();
     void readingBlocksUnknownOutputPositions();
     void readingReasonFollowsOrderAndCompletion();
     void probeResolutionFollowsPendingCopies();
     void encryptionFollowsTheFilesRead();
+    void aliasesUseWorkerIdentity();
 
 private:
     static MergePlan::Entry ok(const QString &path, int pages, const QString &spec = QString())
@@ -184,6 +185,41 @@ void TstMergePlan::encryptionFollowsTheFilesRead()
     plain.append(restricted);
     QVERIFY(plain.losesEncryption());
     QCOMPARE(plain.resultPassword(), QString());
+}
+
+/// Uses supplied probe identities even for paths that the UI cannot resolve itself.
+void TstMergePlan::aliasesUseWorkerIdentity()
+{
+    MergePlan plan;
+    auto first = ok(QStringLiteral("/unavailable/source.pdf"), 3, QStringLiteral("3"));
+    first.encrypted = true;
+    first.password = QStringLiteral("secret");
+    first.sourceKey = QStringLiteral("/resolved/source.pdf");
+    plan.append(first);
+    auto alias = first;
+    alias.path = QStringLiteral("/unavailable/link.pdf");
+    alias.sourceKey.clear();
+    alias.spec = QStringLiteral("1,3");
+    alias.load = MergePlan::Load::Reading;
+    alias.probeTicket = 9;
+    plan.append(alias);
+    auto result = first;
+    result.path = alias.path;
+    QVERIFY(plan.resolveProbe(9, result));
+    QCOMPARE(plan.at(1).sourceKey, first.sourceKey);
+    QVERIFY(!plan.losesEncryption());
+    QCOMPARE(plan.resultPassword(), QStringLiteral("secret"));
+    QCOMPARE(plan.summaryText(), QStringLiteral("Result: 3 pages from 1 file, in the order shown."));
+    QCOMPARE(plan.inputs().at(1).path, alias.path);
+    QCOMPARE(plan.inputs().at(1).pages, (QList<int>{0, 2}));
+    plan.duplicate(1);
+    plan.move(2, -2);
+    QVERIFY(!plan.losesEncryption());
+    auto other = first;
+    other.sourceKey = QStringLiteral("/resolved/other.pdf");
+    plan.append(other);
+    QVERIFY(plan.losesEncryption());
+    QVERIFY(plan.resultPassword().isEmpty());
 }
 
 void TstMergePlan::appendAndCount()
@@ -452,28 +488,37 @@ void TstMergePlan::defaultOutputPathAvoidsExistingAndInputFiles()
     QVERIFY(MergePlan().defaultOutputPath().isEmpty());
 }
 
-void TstMergePlan::rowTextsMatchesThePerRowGetters()
+void TstMergePlan::rowTextsUseIndependentExpectedRows()
 {
-    // The dialog reads rowTexts() (one pass) while the per-row getters are what
-    // the rest of these cases assert; the two must not drift apart.
+    // Both APIs must match the planned counts and output positions. outputText()
+    // delegates to rowTexts(), so comparing the APIs cannot verify those values.
     MergePlan p;
     p.append(ok(QStringLiteral("/a/one.pdf"), 12));
     p.append(ok(QStringLiteral("/a/two.pdf"), 31, QStringLiteral("1-3, 7")));
     p.append(ok(QStringLiteral("/a/three.pdf"), 8));
     p.append(ok(QStringLiteral("/a/one.pdf"), 12, QStringLiteral("12")));
+    const QList<MergePlan::RowText> expected[] = {
+        {{QStringLiteral("12"), QStringLiteral("1-12")},
+         {QStringLiteral("4 of 31"), QStringLiteral("13-16")},
+         {QStringLiteral("8"), QStringLiteral("17-24")},
+         {QStringLiteral("1 of 12"), QStringLiteral("25")}},
+        {{QStringLiteral("12"), QStringLiteral("1-12")},
+         {QStringLiteral("-"), QString()},
+         {QStringLiteral("8"), QString()},
+         {QStringLiteral("1 of 12"), QString()}},
+    };
+    QCOMPARE(p.count(), 4);
     for (int pass = 0; pass < 2; ++pass) {
-        const QList<MergePlan::RowText> t = p.rowTexts();
-        QCOMPARE(t.size(), p.count());
-        for (int i = 0; i < p.count(); ++i) {
-            QCOMPARE(t.at(i).count, p.countText(i));
-            QCOMPARE(t.at(i).output, p.outputText(i));
-        }
-        // Second pass with a broken row in the middle: everything from there down
-        // must lose its Output in both code paths alike.
-        if (pass == 0) {
+        // A broken row leaves later counts intact but their output unknown.
+        if (pass == 1)
             p.setSpec(1, QStringLiteral("99"));
-            QVERIFY(p.rowTexts().at(2).output.isEmpty());
-            QCOMPARE(p.rowTexts().at(0).output, QStringLiteral("1-12"));
+        const QList<MergePlan::RowText> t = p.rowTexts();
+        QCOMPARE(t.size(), 4);
+        for (int i = 0; i < 4; ++i) {
+            QCOMPARE(t.at(i).count, expected[pass].at(i).count);
+            QCOMPARE(t.at(i).output, expected[pass].at(i).output);
+            QCOMPARE(p.countText(i), expected[pass].at(i).count);
+            QCOMPARE(p.outputText(i), expected[pass].at(i).output);
         }
     }
 }

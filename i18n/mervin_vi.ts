@@ -236,6 +236,7 @@ Tài liệu đã chỉnh sửa được lưu giữ tại %2.
     </message>
     <message>
         <source>Split Pages</source>
+        <extracomment>Title of the action that saves each PDF page as a separate file. Split is an action, not an adjective describing pages that have already been split.</extracomment>
         <translation>Chia trang</translation>
     </message>
     <message>
@@ -2971,7 +2972,7 @@ Mở Cài đặt của hệ thống → Ứng dụng mặc định (hoặc nhấ
     </message>
     <message>
         <source>A password contains characters that AES-128 and RC4-128 cannot use. Choose AES-256.</source>
-        <extracomment>Reason shown after &quot;The operation failed.&quot; when encrypting. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
+        <extracomment>Shown in the security dialog or after an encryption failure. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
         <translation>Một mật khẩu có ký tự mà AES-128 và RC4-128 không dùng được. Hãy chọn AES-256.</translation>
     </message>
 </context>

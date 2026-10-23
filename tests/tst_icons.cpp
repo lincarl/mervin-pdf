@@ -134,6 +134,7 @@ private slots:
     void everyGlyphPaints_data();
     void everyGlyphPaints();
     void inkColourIsHonoured();
+    void translucentInkAndRequestBounds();
     void relatedGlyphsAreDistinct_data();
     void relatedGlyphsAreDistinct();
     void fitArrowsStayInsideSquare();
@@ -210,14 +211,15 @@ void TestIcons::applicationIconSelectsScaledFrames()
 // The roster in IconList.h drives the contact-sheet tool and the cases below, so
 // a Glyph added to the enum without a roster entry must fail loudly rather than
 // quietly go unrendered and untested. The enum is contiguous from 0, so its size
-// is the last enumerator plus one - keep this naming whichever glyph is last.
+// is the Count sentinel. New glyphs belong before it.
 void TestIcons::rosterCoversTheEnum()
 {
     const auto &roster = mervin::icons::allGlyphs();
-    QCOMPARE(int(roster.size()), int(Glyph::Restore) + 1);
+    QCOMPARE(int(roster.size()), int(Glyph::Count));
 
     QSet<int> seen;
     for (const auto &e : roster) {
+        QVERIFY(int(e.id) >= 0 && int(e.id) < int(Glyph::Count));
         QVERIFY2(!seen.contains(int(e.id)),
                  qPrintable(QStringLiteral("duplicate roster entry: %1").arg(e.name)));
         seen.insert(int(e.id));
@@ -304,6 +306,36 @@ void TestIcons::inkColourIsHonoured()
         QVERIFY2(sawRed && sawBlue,
                  qPrintable(QStringLiteral("%1 does not take the requested ink").arg(e.name)));
     }
+}
+
+// Alpha survives SVG tinting, and rectangular or empty requests keep their bounds.
+void TestIcons::translucentInkAndRequestBounds()
+{
+    const QColor ink(37, 109, 211, 96);
+    const QIcon icon = mervin::icons::glyph(Glyph::ZoomOut, ink);
+    const QImage image = icon.pixmap(QSize(48, 24), 1.0).toImage()
+                            .convertToFormat(QImage::Format_ARGB32);
+    QCOMPARE(image.size(), QSize(24, 24));
+    int peakAlpha = 0;
+    QColor peak;
+    for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x)
+            if (const QColor pixel = image.pixelColor(x, y); pixel.alpha() > peakAlpha) {
+                peakAlpha = pixel.alpha();
+                peak = pixel;
+            }
+    QVERIFY(peakAlpha > 0 && peakAlpha <= 96);
+    const QImage opaque = render(Glyph::ZoomOut, 24, QColor(ink.red(), ink.green(), ink.blue()));
+    for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x)
+            QVERIFY(std::abs(qAlpha(image.pixel(x, y))
+                             - qRound(qAlpha(opaque.pixel(x, y)) * 96.0 / 255.0)) <= 2);
+    QVERIFY(std::abs(peak.red() - ink.red()) <= 3);
+    QVERIFY(std::abs(peak.green() - ink.green()) <= 3);
+    QVERIFY(std::abs(peak.blue() - ink.blue()) <= 3);
+    QCOMPARE(icon.pixmap(QSize(24, 48), 1.0).toImage().convertToFormat(QImage::Format_ARGB32), image);
+    for (const QSize size : {QSize(), QSize(0, 24), QSize(24, 0)})
+        QVERIFY(icon.pixmap(size, 1.0).isNull());
 }
 
 void TestIcons::relatedGlyphsAreDistinct_data()

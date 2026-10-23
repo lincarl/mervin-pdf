@@ -236,7 +236,8 @@ A szerkesztett dokumentum megőrizve: %2.
     </message>
     <message>
         <source>Split Pages</source>
-        <translation>Felosztott oldalak</translation>
+        <extracomment>Title of the action that saves each PDF page as a separate file. Split is an action, not an adjective describing pages that have already been split.</extracomment>
+        <translation>Oldalak felosztása</translation>
     </message>
     <message>
         <source>Print</source>
@@ -2971,7 +2972,7 @@ Nyissa meg a rendszer Beállítások → Alapértelmezett alkalmazások menüpon
     </message>
     <message>
         <source>A password contains characters that AES-128 and RC4-128 cannot use. Choose AES-256.</source>
-        <extracomment>Reason shown after &quot;The operation failed.&quot; when encrypting. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
+        <extracomment>Shown in the security dialog or after an encryption failure. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
         <translation>Egy jelszó olyan karaktereket tartalmaz, amelyeket az AES-128 és az RC4-128 nem tud használni. Válassza az AES-256-ot.</translation>
     </message>
 </context>

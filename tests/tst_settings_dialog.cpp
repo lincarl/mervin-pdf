@@ -79,6 +79,7 @@ private slots:
     void wheelOverInputsScrollsThePage();
     void generalFitsWhenScreenSpaceAllows();
     void applyHandsOverPendingChanges();
+    void editedChoicesReachApplyAndCancelKeepsTheAppliedValues();
     void okAppliesPendingChangesAndCancelDropsThem();
     void everyKindOfControlEnablesApply();
     void handEditedMeasureValuesLandOnOfferedChoices();
@@ -89,6 +90,7 @@ private slots:
     void removingAnOcrLanguageAsksFirst();
     void theLastOcrLanguageStays();
     void oneOcrRemovalAtATime();
+    void failedOcrRemovalShowsFailureAndRefreshesList();
     void newUiLanguageRestartsOnApply();
     void untouchedUiLanguageKeepsTheStoredValue();
     void pendingUiLanguageShowsUntilChanged();
@@ -198,6 +200,12 @@ void TstSettingsDialog::defaultPdfControlIsWindowsOnly()
 #ifdef Q_OS_WIN
     QVERIFY(button);
     QCOMPARE(button->text(), QStringLiteral("Set as Default PDF App"));
+    QVERIFY(!mervin::ConfigPaths::overrideDir().isEmpty());
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    QVERIFY(button->isVisible());
+    QVERIFY(!button->isEnabled());
+    QCOMPARE(button->toolTip(), QStringLiteral("Disabled while running with --profile"));
 #else
     QVERIFY(!button);
 #endif
@@ -844,6 +852,69 @@ void TstSettingsDialog::okAppliesPendingChangesAndCancelDropsThem()
     }
 }
 
+/// Real editor choices reach Apply; Cancel discards only the subsequent changes.
+void TstSettingsDialog::editedChoicesReachApplyAndCancelKeepsTheAppliedValues()
+{
+    SettingsDialog dialog(mervin::Settings{});
+    QList<mervin::Settings> applied;
+    connect(&dialog, &SettingsDialog::applyRequested, this,
+            [&applied](const mervin::Settings &settings) { applied.append(settings); });
+    QSignalSpy rejected(&dialog, &QDialog::rejected);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    auto *nav = dialog.findChild<QListWidget *>(QStringLiteral("settingsNav"));
+    QVERIFY(nav);
+    const auto selectPage = [nav](Page page) {
+        for (int row = 0; row < nav->count(); ++row)
+            if (nav->item(row)->data(Qt::UserRole).value<Page>() == page) {
+                nav->setCurrentRow(row);
+                QCoreApplication::processEvents();
+                return;
+            }
+    };
+    const auto comboWithValue = [&dialog](const QString &value) -> QComboBox * {
+        for (auto *combo : dialog.findChildren<QComboBox *>())
+            if (combo->findData(value) >= 0)
+                return combo;
+        return nullptr;
+    };
+    auto *scope = comboWithValue(QStringLiteral("contents"));
+    QVERIFY(scope && scope->isVisible());
+    scope->setFocus();
+    QTest::keyClick(scope, Qt::Key_End);
+    // Select the required value through the same keyboard path in either item order.
+    while (scope->currentData().toString() != QStringLiteral("contents") && scope->currentIndex() > 0)
+        QTest::keyClick(scope, Qt::Key_Up);
+    QCOMPARE(scope->currentData().toString(), QStringLiteral("contents"));
+
+    selectPage(Page::Viewing);
+    auto *mode = comboWithValue(QStringLiteral("single"));
+    auto *spread = checkBox(&dialog, QStringLiteral("Show pages as two-page spreads"));
+    QVERIFY(mode && spread && mode->isVisible() && spread->isVisible());
+    QTest::keyClick(mode, Qt::Key_End);
+    QTest::mouseClick(spread, Qt::LeftButton, {}, QPoint(4, spread->height() / 2));
+    selectPage(Page::Measuring);
+    auto *unit = comboWithValue(QStringLiteral("ft"));
+    QVERIFY(unit && unit->isVisible());
+    QTest::keyClick(unit, Qt::Key_End);
+    dialogButton(&dialog, QDialogButtonBox::Apply)->click();
+    QCOMPARE(applied.size(), 1);
+    QCOMPARE(applied.first().pageMode, QStringLiteral("single"));
+    QVERIFY(applied.first().twoPageSpread);
+    QCOMPARE(applied.first().recentSearchScope, QStringLiteral("contents"));
+    QCOMPARE(applied.first().measurementUnit, QStringLiteral("ft"));
+    QVERIFY(dialog.isVisible());
+    QVERIFY(!dialogButton(&dialog, QDialogButtonBox::Apply)->isEnabled());
+
+    QTest::keyClick(unit, Qt::Key_Home);
+    QVERIFY(dialogButton(&dialog, QDialogButtonBox::Apply)->isEnabled());
+    dialogButton(&dialog, QDialogButtonBox::Cancel)->click();
+    QCOMPARE(rejected.count(), 1);
+    QVERIFY(!dialog.isVisible());
+    QCOMPARE(applied.size(), 1);
+    QCOMPARE(applied.first().measurementUnit, QStringLiteral("ft"));
+}
+
 // Every kind of control turns Apply on, including the values the dialog keeps
 // outside a widget: the accent, the highlight swatches and the OCR language.
 void TstSettingsDialog::everyKindOfControlEnablesApply()
@@ -1142,6 +1213,51 @@ void TstSettingsDialog::oneOcrRemovalAtATime()
     QVERIFY(!buttons.first()->isEnabled()); // the last one stays
 }
 
+/// A failed filesystem removal reports the failure and refreshes the actual installed models.
+void TstSettingsDialog::failedOcrRemovalShowsFailureAndRefreshesList()
+{
+    SettingsDialog dialog(mervin::Settings{}, {}, Page::Ocr);
+    QVERIFY(ocrListed());
+    QToolButton *removeSwe = removeButtonFor(&dialog, QStringLiteral("Swedish"));
+    QVERIFY(removeSwe);
+    const QString blocked = tessdataPath("swe");
+    QVERIFY(QFile::remove(blocked));
+    QVERIFY(QDir().mkdir(blocked));
+    const auto restore = qScopeGuard([&] { QDir(blocked).removeRecursively(); });
+    QFile sentinel(QDir(blocked).filePath(QStringLiteral("keep.txt")));
+    QVERIFY(sentinel.open(QIODevice::WriteOnly));
+    QCOMPARE(sentinel.write("keep"), 4);
+    sentinel.close();
+
+    QString warning;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, this, [&] {
+        if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+            if (auto *yes = box->button(QMessageBox::Yes))
+                yes->click();
+            else {
+                warning = box->text();
+                box->accept();
+            }
+        }
+    });
+    answer.start(10);
+    removeSwe->click();
+    QTRY_VERIFY(!warning.isEmpty());
+    QCOMPARE(warning, QStringLiteral("Could not remove Swedish from the OCR language folder."));
+    QVERIFY(ocrListed());
+    QVERIFY(sentinel.open(QIODevice::ReadOnly));
+    QCOMPARE(sentinel.readAll(), QByteArrayLiteral("keep"));
+    sentinel.close();
+    auto *combo = dialog.findChild<QComboBox *>(QStringLiteral("ocrDefaultLanguage"));
+    QCOMPARE(combo->count(), 1);
+    QCOMPARE(combo->currentData().toString(), QStringLiteral("eng"));
+    QCOMPARE(dialog.settings().ocrDefaultLanguage, QStringLiteral("eng"));
+    const auto remaining = dialog.findChildren<QToolButton *>(QStringLiteral("settingsListRemove"));
+    QCOMPARE(remaining.size(), 1);
+    QVERIFY(!remaining.first()->isEnabled());
+}
+
 // Picking a language other than the one Mervin shows says "Mervin will restart.";
 // Apply then hands it over and closes the dialog like OK, so the caller restarts.
 void TstSettingsDialog::newUiLanguageRestartsOnApply()
@@ -1181,10 +1297,23 @@ void TstSettingsDialog::newUiLanguageRestartsOnApply()
 // empty one (no choice yet) and not one this build doesn't ship.
 void TstSettingsDialog::untouchedUiLanguageKeepsTheStoredValue()
 {
-    for (const QString &stored : {QString(), QStringLiteral("pt_BR"), QStringLiteral("sv")}) {
+    const QString unknown = QStringLiteral("zz_ZZ");
+    QVERIFY(!mervin::i18n::availableLanguages().contains(unknown));
+    for (const QString &stored : {QString(), unknown, QStringLiteral("sv")}) {
         mervin::Settings in;
         in.uiLanguage = stored;
         SettingsDialog dialog(in);
+        auto *combo = dialog.findChild<mervin::LanguageCombo *>(QStringLiteral("uiLanguage"));
+        QVERIFY(combo);
+        QCOMPARE(combo->language(), stored == QStringLiteral("sv") ? stored : QStringLiteral("en"));
+        QSignalSpy applied(&dialog, &SettingsDialog::applyRequested);
+        QSignalSpy accepted(&dialog, &QDialog::accepted);
+        // A saved Swedish choice still offers the pending restart from English.
+        QCOMPARE(dialogButton(&dialog, QDialogButtonBox::Apply)->isEnabled(),
+                 stored == QStringLiteral("sv"));
+        dialogButton(&dialog, QDialogButtonBox::Ok)->click();
+        QCOMPARE(accepted.count(), 1);
+        QVERIFY(applied.isEmpty());
         QCOMPARE(dialog.settings().uiLanguage, stored);
     }
 }
@@ -1206,11 +1335,24 @@ void TstSettingsDialog::failedSaveKeepsTheDialogOpen()
             });
     QSignalSpy accepted(&dialog, &QDialog::accepted);
     QString shown;
-    const auto readNextBox = [this, &shown] {
+    bool unexpectedBox = false;
+    bool timedOut = false;
+    QTimer watchdog;
+    watchdog.setInterval(2000);
+    connect(&watchdog, &QTimer::timeout, &dialog, [&] {
+        timedOut = true;
+        if (auto *modal = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+            modal->reject();
+    });
+    const auto readNextBox = [&] {
         shown.clear();
-        QTimer::singleShot(0, this, [&shown] {
+        watchdog.start();
+        QTimer::singleShot(0, &watchdog, [&] {
             auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
-            QVERIFY(box);
+            if (!box || !box->button(QMessageBox::Ok)) {
+                unexpectedBox = true;
+                return; // The scope-owned watchdog still dismisses a later modal.
+            }
             shown = box->text();
             box->button(QMessageBox::Ok)->click();
         });
@@ -1219,6 +1361,9 @@ void TstSettingsDialog::failedSaveKeepsTheDialogOpen()
     combo->setLanguage(QStringLiteral("sv"));
     readNextBox();
     dialogButton(&dialog, QDialogButtonBox::Apply)->click();
+    watchdog.stop();
+    QVERIFY(!timedOut);
+    QVERIFY(!unexpectedBox);
     QVERIFY(shown.contains(QStringLiteral("Permission denied")));
     QCOMPARE(accepted.size(), 0);
     QVERIFY(dialog.restartNeeded());
@@ -1226,6 +1371,9 @@ void TstSettingsDialog::failedSaveKeepsTheDialogOpen()
 
     readNextBox();
     dialogButton(&dialog, QDialogButtonBox::Ok)->click();
+    watchdog.stop();
+    QVERIFY(!timedOut);
+    QVERIFY(!unexpectedBox);
     QVERIFY(shown.contains(QStringLiteral("Permission denied")));
     QCOMPARE(accepted.size(), 0);
 

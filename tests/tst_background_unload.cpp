@@ -103,6 +103,39 @@ std::optional<bool> storeLists(fz_context *base, const char *key)
     return dumped ? std::optional<bool>(found) : std::nullopt;
 }
 
+/// Reads MuPDF's glyph byte counter while no worker is rasterizing.
+std::optional<quint64> glyphBytes(fz_context *ctx)
+{
+    fz_buffer *buffer = nullptr;
+    fz_output *out = nullptr;
+    quint64 bytes = 0;
+    bool parsed = false;
+    fz_var(buffer);
+    fz_var(out);
+    fz_var(bytes);
+    fz_var(parsed);
+    fz_try(ctx) {
+        buffer = fz_new_buffer(ctx, 1024);
+        out = fz_new_output_with_buffer(ctx, buffer);
+        fz_dump_glyph_cache_stats(ctx, out);
+        fz_close_output(ctx, out);
+        unsigned char *data = nullptr;
+        const size_t size = fz_buffer_storage(ctx, buffer, &data);
+        const QByteArray dump(reinterpret_cast<const char *>(data), qsizetype(size));
+        const QByteArray prefix("Glyph Cache Size: ");
+        if (dump.startsWith(prefix))
+            bytes = dump.mid(prefix.size()).split('\n').first().toULongLong(&parsed);
+    }
+    fz_always(ctx) {
+        fz_drop_output(ctx, out);
+        fz_drop_buffer(ctx, buffer);
+    }
+    fz_catch(ctx) {
+        parsed = false;
+    }
+    return parsed ? std::optional<quint64>(bytes) : std::nullopt;
+}
+
 /// A value the test puts in MuPDF's shared store, keyed by its own address. Give it
 /// static storage, since the store can outlive the test that filled it.
 struct StoreProbe
@@ -719,9 +752,104 @@ private slots:
         QVERIFY(!storeHolds(base, unheld));
     }
 
-    /// Frees the decoded images that an unloaded document leaves in MuPDF's shared
-    /// store. MuPDF keeps them after the document closes, so a scanned document kept its
-    /// page images in memory while its window sat in the tray.
+    /// A completed close can reclaim images while another document stays open.
+    /// Queue/worker retirement prevents late rasters from refilling the just-trimmed store.
+    void completedCloseTrimWaitsForWorkersAndCoalesces()
+    {
+        RenderEngine engine;
+        auto scan = engine.openDocument(QStringLiteral(MERVIN_SCAN_PDF));
+        auto survivor = engine.openDocument(QStringLiteral(MERVIN_FIXTURE_PDF));
+        QVERIFY(scan && survivor);
+        const QImage decoded = engine.renderPageImage(scan.get(), 0, 1, 0);
+        QVERIFY(!decoded.isNull());
+        fz_context *base = engine.baseContext().get();
+        QCOMPARE(storeLists(base, "(image "), std::optional<bool>(true));
+        const QImage expected = engine.renderPageImage(survivor.get(), 0, 1, 0);
+        QVERIFY(!expected.isNull());
+        const quint64 before = Document::completedCloses();
+        {
+            testing::Stall closeStall(scan->lifetime()->mutex);
+            Document::closeInBackground(std::move(scan));
+            QCOMPARE(Document::completedCloses(), before);
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(Document::completedCloses(), before + 1, 10000);
+        QCOMPARE(storeLists(base, "(image "), std::optional<bool>(true));
+
+        QSignalSpy results(&engine, &RenderEngine::resultReady);
+        {
+            testing::Stall renderStall(survivor->lifetime()->mutex);
+            RenderRequest request;
+            request.document = survivor.get();
+            request.requester = 1;
+            engine.submit(request);
+            QTRY_COMPARE_WITH_TIMEOUT(RenderEngine::testing::activeRequests(engine, 1), 1, 5000);
+            engine.scheduleCacheTrim();
+            engine.scheduleCacheTrim();
+            QCoreApplication::processEvents();
+            QCOMPARE(RenderEngine::testing::cacheTrims(engine), 0);
+            QCOMPARE(storeLists(base, "(image "), std::optional<bool>(true));
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(results.size(), 1, 10000);
+        QTRY_COMPARE_WITH_TIMEOUT(RenderEngine::testing::cacheTrims(engine), 1, 10000);
+        QCOMPARE(storeLists(base, "(image "), std::optional<bool>(false));
+        QVERIFY(results.front().front().value<RenderResult>().ok);
+        QCOMPARE(results.front().front().value<RenderResult>().image, expected);
+        // Warm resources of the open document can be recreated without changing pixels.
+        QCOMPARE(engine.renderPageImage(survivor.get(), 0, 1, 0), expected);
+        QCoreApplication::processEvents();
+        QCOMPARE(RenderEngine::testing::cacheTrims(engine), 1);
+    }
+
+    /// Shrinking the resource store alone does not purge MuPDF's separate glyph cache.
+    void cacheTrimPurgesPopulatedGlyphs()
+    {
+        RenderEngine engine;
+        auto document = engine.openDocument(QStringLiteral(MERVIN_FIXTURE_PDF));
+        QVERIFY(document);
+        fz_context *base = engine.baseContext().get();
+        fz_page *page = nullptr;
+        fz_display_list *list = nullptr;
+        fz_pixmap *pixmap = nullptr;
+        fz_var(page);
+        fz_var(list);
+        fz_var(pixmap);
+        const auto cleanup = qScopeGuard([&] {
+            fz_drop_pixmap(base, pixmap);
+            fz_drop_display_list(base, list);
+        });
+        fz_try(base) {
+            page = fz_load_page(base, document->handle(), 0);
+            list = fz_new_display_list_from_page(base, page);
+        }
+        fz_always(base) {
+            fz_drop_page(base, page);
+        }
+        fz_catch(base) {}
+        QVERIFY(list);
+        // MuPDF purges glyphs during PDF close. A worker's independent display list
+        // can rasterize afterwards and repopulate them. Reproduce that exact order.
+        document.reset();
+        fz_try(base) {
+            pixmap = fz_new_pixmap_from_display_list(base, list, fz_identity, fz_device_rgb(base), 0);
+        }
+        fz_catch(base) {}
+        QVERIFY(pixmap);
+        fz_drop_pixmap(base, pixmap);
+        pixmap = nullptr;
+        fz_drop_display_list(base, list);
+        list = nullptr;
+        const auto populated = glyphBytes(base);
+        QVERIFY(populated.has_value());
+        QVERIFY(*populated > 0);
+        // The negative control pins why the glyph purge is needed in addition to shrink.
+        fz_shrink_store(base, 0);
+        QCOMPARE(glyphBytes(base), populated);
+        engine.trimCache();
+        QCOMPARE(glyphBytes(base), std::optional<quint64>(0));
+    }
+
+    /// Frees decoded images from the shared store after every document unloads.
+    /// Closing a PDF alone does not release these cached page images.
     void unloadingEveryDocumentFreesItsDecodedImages()
     {
         QTemporaryDir files;

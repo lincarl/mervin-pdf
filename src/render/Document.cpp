@@ -1,6 +1,7 @@
 #include "render/Document.h"
 
 #include "io/Background.h"
+#include "io/JobContext.h"
 #include "render/MeasureContent.h"
 #include "render/RenderTypes.h"
 
@@ -23,6 +24,75 @@
 #include <unordered_map>
 
 namespace mervin {
+namespace {
+
+thread_local std::function<void()> rasterObserver;
+std::atomic<quint64> constructedDocuments{0};
+
+// Poll the atomic job state on the rendering thread. MuPDF's cookie fields are
+// plain integers, so neither Stop nor any other thread writes this cookie.
+struct CancellableDrawDevice
+{
+    fz_device base;
+    fz_cookie *cookie;
+};
+
+bool continueRaster(fz_device *device)
+{
+    if (rasterObserver)
+        rasterObserver();
+    auto *draw = reinterpret_cast<CancellableDrawDevice *>(device);
+    if (job::stopped())
+        draw->cookie->abort = 1;
+    return !draw->cookie->abort;
+}
+
+// Forward painting unchanged until Stop. Container operations still balance on
+// the real draw device; the parser sees abort at its next cookie checkpoint.
+fz_device *cancellableDrawDevice(fz_context *ctx, fz_device *target, fz_cookie *cookie)
+{
+    auto *draw = fz_new_derived_passthrough_device(ctx, target, CancellableDrawDevice);
+    draw->cookie = cookie;
+    draw->base.fill_path = [](fz_context *c, fz_device *d, const fz_path *p, int evenOdd,
+                              fz_matrix m, fz_colorspace *cs, const float *color,
+                              float alpha, fz_color_params params) {
+        if (continueRaster(d)) fz_fill_path(c, d->passthrough, p, evenOdd, m, cs, color, alpha, params);
+    };
+    draw->base.stroke_path = [](fz_context *c, fz_device *d, const fz_path *p,
+                                const fz_stroke_state *stroke, fz_matrix m, fz_colorspace *cs,
+                                const float *color, float alpha, fz_color_params params) {
+        if (continueRaster(d)) fz_stroke_path(c, d->passthrough, p, stroke, m, cs, color, alpha, params);
+    };
+    draw->base.fill_text = [](fz_context *c, fz_device *d, const fz_text *text, fz_matrix m,
+                              fz_colorspace *cs, const float *color, float alpha, fz_color_params params) {
+        if (continueRaster(d)) fz_fill_text(c, d->passthrough, text, m, cs, color, alpha, params);
+    };
+    draw->base.stroke_text = [](fz_context *c, fz_device *d, const fz_text *text,
+                                const fz_stroke_state *stroke, fz_matrix m, fz_colorspace *cs,
+                                const float *color, float alpha, fz_color_params params) {
+        if (continueRaster(d)) fz_stroke_text(c, d->passthrough, text, stroke, m, cs, color, alpha, params);
+    };
+    draw->base.fill_shade = [](fz_context *c, fz_device *d, fz_shade *shade, fz_matrix m,
+                               float alpha, fz_color_params params) {
+        if (continueRaster(d)) fz_fill_shade(c, d->passthrough, shade, m, alpha, params);
+    };
+    draw->base.fill_image = [](fz_context *c, fz_device *d, fz_image *image, fz_matrix m,
+                               float alpha, fz_color_params params) {
+        if (continueRaster(d)) fz_fill_image(c, d->passthrough, image, m, alpha, params);
+    };
+    draw->base.fill_image_mask = [](fz_context *c, fz_device *d, fz_image *image, fz_matrix m,
+                                    fz_colorspace *cs, const float *color, float alpha, fz_color_params params) {
+        if (continueRaster(d)) fz_fill_image_mask(c, d->passthrough, image, m, cs, color, alpha, params);
+    };
+    return &draw->base;
+}
+
+} // namespace
+
+void Document::testing::setRasterObserver(std::function<void()> observer)
+{
+    rasterObserver = std::move(observer);
+}
 
 Document::Document(fz_context *ctx, fz_document *doc, bool ownsContext,
                    std::shared_ptr<fz_context> base)
@@ -67,7 +137,7 @@ Document::Document(fz_context *ctx, fz_document *doc, bool ownsContext,
             }
         }
 
-        if (w <= 0.0 || h <= 0.0) {
+        if (!(w > 0.0 && h > 0.0 && std::isfinite(w) && std::isfinite(h))) {
             fz_page *page = nullptr;
             fz_var(page);
             fz_try(ctx_) {
@@ -85,7 +155,8 @@ Document::Document(fz_context *ctx, fz_document *doc, bool ownsContext,
             }
         }
 
-        if (w <= 0.0 || h <= 0.0) { // US Letter fallback if a page won't load at all
+        if (!(w > 0.0 && h > 0.0 && std::isfinite(w) && std::isfinite(h))) {
+            // US Letter fallback if the page has no usable finite bounds.
             w = 612.0;
             h = 792.0;
         }
@@ -98,6 +169,7 @@ Document::Document(fz_context *ctx, fz_document *doc, bool ownsContext,
 
     measureCache_.resize(pageSizes_.size());
     geomCache_.resize(pageSizes_.size());
+    ++constructedDocuments;
 }
 
 Document::~Document()
@@ -116,13 +188,19 @@ QImage Document::renderPage(int pageNo, double scale, int rotation, const QRect 
     const ScreenQuery query(*lifetime_, "Document::renderPage");
     if (query.refused())
         return {};
+    if (job::stopped())
+        return {};
     std::lock_guard<std::mutex> lock(access_);
     fz_page *page = nullptr;
     fz_pixmap *pixmap = nullptr;
     fz_device *device = nullptr;
+    fz_device *drawDevice = nullptr;
+    fz_cookie cookie{};
     fz_var(page);
     fz_var(pixmap);
     fz_var(device);
+    fz_var(drawDevice);
+    fz_var(cookie);
     const fz_matrix transform = fz_pre_rotate(
         fz_scale(static_cast<float>(scale), static_cast<float>(scale)),
         static_cast<float>(rotation));
@@ -133,6 +211,7 @@ QImage Document::renderPage(int pageNo, double scale, int rotation, const QRect 
     }
     fz_catch(ctx_) {
         fz_drop_page(ctx_, page);
+        (void)fz_convert_error(ctx_, nullptr);
         return {};
     }
     // Beyond MuPDF's edge clamp the result would be blank or distorted, not an error.
@@ -174,12 +253,14 @@ QImage Document::renderPage(int pageNo, double scale, int rotation, const QRect 
         pixmap->x = bbox.x0;
         pixmap->y = bbox.y0;
         fz_clear_pixmap_with_value(ctx_, pixmap, 0xFF);
-        device = fz_new_draw_device(ctx_, transform, pixmap);
-        fz_run_page(ctx_, page, device, fz_identity, nullptr);
+        drawDevice = fz_new_draw_device(ctx_, transform, pixmap);
+        device = cancellableDrawDevice(ctx_, drawDevice, &cookie);
+        fz_run_page(ctx_, page, device, fz_identity, &cookie);
         fz_close_device(ctx_, device);
     }
     fz_always(ctx_) {
         fz_drop_device(ctx_, device);
+        fz_drop_device(ctx_, drawDevice);
         fz_drop_pixmap(ctx_, pixmap);
         fz_drop_page(ctx_, page);
         fz_set_text_aa_level(ctx_, textLevel);
@@ -187,12 +268,18 @@ QImage Document::renderPage(int pageNo, double scale, int rotation, const QRect 
     }
     fz_catch(ctx_) {
         image = {};
+        (void)fz_convert_error(ctx_, nullptr);
     }
+    // A cookie may stop normally and leave a partially painted pixmap. Never
+    // return it to printing, and honor Stop that arrived during the last call.
+    if (cookie.abort || job::stopped())
+        image = {};
     return image;
 }
 
 namespace {
 std::atomic<int> closesInFlight{0};
+std::atomic<quint64> completedBackgroundCloses{0};
 std::mutex followUpsMutex;
 std::condition_variable followUpsDone;
 int followUps = 0; // guarded by followUpsMutex: closes with a `then` not finished
@@ -209,7 +296,10 @@ void Document::closeInBackground(std::unique_ptr<Document> document, std::functi
     }
     background::start([document = std::shared_ptr<Document>(std::move(document)),
                        then = std::move(then)]() mutable {
+        const bool hadDocument = bool(document);
         document.reset();
+        if (hadDocument)
+            ++completedBackgroundCloses;
         --closesInFlight;
         if (!then)
             return;
@@ -228,6 +318,11 @@ void Document::CloseInBackground::operator()(Document *document) const
 int Document::closing()
 {
     return closesInFlight.load();
+}
+
+quint64 Document::completedCloses()
+{
+    return completedBackgroundCloses.load();
 }
 
 bool Document::waitForCloses(int ms)
@@ -317,6 +412,12 @@ Document::ScreenQuery::~ScreenQuery()
         screenQueriesInside.pop_back();
     if (counted_)
         counted_->screenQueries.fetch_sub(1);
+}
+
+// Counts completed construction even when a canceled delivery discards its document.
+quint64 Document::testing::constructions()
+{
+    return constructedDocuments.load();
 }
 
 int Document::testing::refusals()

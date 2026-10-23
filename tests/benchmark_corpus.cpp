@@ -69,6 +69,8 @@ static QJsonObject benchmark(const QString &path)
             for (auto theme : {PageTheme::Light, PageTheme::Comfort}) {
                 std::vector<double> renderTimes;
                 QString expectedHash;
+                QSize expectedSize;
+                QImage::Format expectedFormat = QImage::Format_Invalid;
                 for (int run = 0; run < 5; ++run) {
                     RenderRequest request;
                     request.document = doc.get();
@@ -100,16 +102,23 @@ static QJsonObject benchmark(const QString &path)
                     if (!rendered.ok)
                         throw std::runtime_error("Render failed or timed out");
                     const QString currentHash = imageHash(rendered.image);
-                    if (run == 0)
+                    if (run == 0) {
                         expectedHash = currentHash;
-                    else if (currentHash != expectedHash)
-                        throw std::runtime_error("Repeated render changed pixels");
+                        expectedSize = rendered.image.size();
+                        expectedFormat = rendered.image.format();
+                    } else if (currentHash != expectedHash || rendered.image.size() != expectedSize
+                               || rendered.image.format() != expectedFormat) {
+                        throw std::runtime_error("Repeated render changed pixels, dimensions or format");
+                    }
                 }
                 auto entry = timings(renderTimes);
                 entry["page"] = page;
                 entry["clip"] = clipped;
                 entry["theme"] = theme == PageTheme::Light ? "light" : "comfort";
                 entry["pixels_sha256"] = expectedHash;
+                entry["width"] = expectedSize.width();
+                entry["height"] = expectedSize.height();
+                entry["format"] = int(expectedFormat);
                 renders.append(entry);
             }
     result["renders"] = renders;

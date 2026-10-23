@@ -1,6 +1,7 @@
 #include "ipc/PipeName.h"
 
 #include "config/ConfigPaths.h"
+#include "ipc/Handoff.h"
 #include "platform/PlatformIntegration.h"
 
 #include <QCryptographicHash>
@@ -10,10 +11,17 @@
 #include <QFileInfo>
 #include <QLockFile>
 #include <QSaveFile>
+#include <QScopeGuard>
+#include <QSysInfo>
+
+#ifdef Q_OS_WIN
+#  define WIN32_LEAN_AND_MEAN
+#  define NOMINMAX
+#  include <windows.h>
+#  include <aclapi.h>
+#endif
 
 #ifdef Q_OS_UNIX
-#  include <QSysInfo>
-
 #  include <csignal>
 
 #  include <sys/stat.h>
@@ -51,17 +59,32 @@ QByteArray userName()
 // The token identifying the current user.
 QString userToken()
 {
-#ifdef Q_OS_UNIX
-    // The uid, as anyone can set $USER to another user's name.
-    return tokenOf(QByteArray::number(uint(::getuid())));
-#else
-    return tokenOf(userName());
-#endif
+    // The OS identity, not a username supplied by the launching environment.
+    const QByteArray user = currentUser();
+    return user.isEmpty() ? QString() : tokenOf(user);
+}
+
+// Resolve links in the existing part of a profile, including before its first creation.
+QString profileIdentity(const QString &profile)
+{
+    QFileInfo ancestor(profile);
+    QStringList missing;
+    for (;;) {
+        if (const QString canonical = ancestor.canonicalFilePath(); !canonical.isEmpty())
+            return QDir::cleanPath(canonical + QLatin1Char('/') + missing.join(QLatin1Char('/')));
+        const QString parent = ancestor.absolutePath();
+        if (parent == ancestor.absoluteFilePath())
+            return QDir::cleanPath(profile);
+        missing.prepend(ancestor.fileName());
+        ancestor.setFile(parent);
+    }
 }
 
 // The single-instance group of the user with `token`.
-QString groupName(const QString &token)
+QString groupName(const QString &token, bool canonicalProfile = true)
 {
+    if (token.isEmpty())
+        return {};
     QString name = QStringLiteral("MervinPDF-") + token;
     // Store and MSI copies can coexist. A Store activation must not hand its
     // document to an MSI process with a different updater and default-app identity.
@@ -74,7 +97,7 @@ QString groupName(const QString &token)
     // profile still coordinate normally.
     const QString profile = ConfigPaths::overrideDir();
     if (!profile.isEmpty()) {
-        QString key = QDir::cleanPath(profile);
+        QString key = canonicalProfile ? profileIdentity(profile) : QDir::cleanPath(profile);
 #ifdef Q_OS_WIN
         key = key.toLower(); // Windows paths are case-insensitive
 #endif
@@ -83,39 +106,6 @@ QString groupName(const QString &token)
         name += QLatin1Char('-') + QString::fromLatin1(digest.left(16));
     }
     return name;
-}
-
-#ifdef Q_OS_UNIX
-// The bytes of sockaddr_un that QLocalServer and QLocalSocket keep free behind a socket
-// path. One is for the terminating zero, and Linux, which has abstract socket names,
-// needs one more. Qt refuses a longer path in listen and connect.
-#  ifdef Q_OS_LINUX
-constexpr qsizetype kQtSpareBytes = 2;
-#  else
-constexpr qsizetype kQtSpareBytes = 1;
-#  endif
-
-// Whether Qt takes the socket path of `group` in `dir`.
-bool socketFits(const QString &dir, const QString &group)
-{
-    return QFile::encodeName(QDir(dir).filePath(group)).size() + kQtSpareBytes
-        <= qsizetype(sizeof(sockaddr_un::sun_path));
-}
-
-// The folder that holds the users' runtime folders, as systemd-logind makes them.
-QString g_userRuntimeRoot = QStringLiteral("/run/user");
-
-// The folder that holds this user's socket folder when the profile folder makes the
-// socket path too long. Fixed, unlike $TMPDIR, so that every launch finds the same one.
-QString g_socketRoot = QStringLiteral("/tmp");
-
-// This user's runtime folder from the file system, when it is this user's own 0700 folder
-// and not a link, else empty. Unlike $XDG_RUNTIME_DIR it is the same for every launch of
-// this user, from a desktop session, ssh, cron or `sudo -u`.
-QString userRuntimeDir()
-{
-    const QString dir = QDir(g_userRuntimeRoot).filePath(QString::number(uint(::geteuid())));
-    return isPrivateDir(dir, uint(::geteuid())) ? dir : QString();
 }
 
 // A short token for this machine. QLockFile names the host of a lock the same way.
@@ -133,6 +123,161 @@ QString hostToken()
 QString profileInstanceDirPath()
 {
     return QDir(ConfigPaths::configDirPath()).filePath(QStringLiteral("instance-") + hostToken());
+}
+
+#ifdef Q_OS_WIN
+// Validate the opened legacy object, including inherited per-user TEMP ACLs.
+// Unlike new instance directories, these may also grant Administrators access.
+bool trustedLegacyObject(HANDLE handle, bool directory)
+{
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (!GetFileInformationByHandle(handle, &info)
+        || bool(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != directory
+        || (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+        return false;
+    const QByteArray userBytes = currentUser();
+    if (userBytes.isEmpty())
+        return false;
+    const PSID user = const_cast<char *>(userBytes.constData());
+    BYTE system[SECURITY_MAX_SID_SIZE];
+    BYTE administrators[SECURITY_MAX_SID_SIZE];
+    DWORD systemSize = sizeof(system);
+    DWORD administratorsSize = sizeof(administrators);
+    if (!CreateWellKnownSid(WinLocalSystemSid, nullptr, system, &systemSize)
+        || !CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr,
+                               administrators, &administratorsSize))
+        return false;
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    PSID owner = nullptr;
+    PACL acl = nullptr;
+    if (GetSecurityInfo(handle, SE_FILE_OBJECT,
+                        OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                        &owner, nullptr, &acl, nullptr, &descriptor) != ERROR_SUCCESS)
+        return false;
+    const auto freeDescriptor = qScopeGuard([&] { LocalFree(descriptor); });
+    if (!owner || !EqualSid(owner, user) || !acl)
+        return false;
+    for (DWORD index = 0; index < acl->AceCount; ++index) {
+        void *raw = nullptr;
+        if (!GetAce(acl, index, &raw))
+            return false;
+        const auto *ace = static_cast<const ACCESS_ALLOWED_ACE *>(raw);
+        if (ace->Header.AceType != ACCESS_ALLOWED_ACE_TYPE)
+            return false;
+        PSID sid = const_cast<DWORD *>(&ace->SidStart);
+        if (!IsValidSid(sid) || (!EqualSid(sid, user) && !EqualSid(sid, system)
+                                && !EqualSid(sid, administrators)))
+            return false;
+    }
+    return true;
+}
+
+// Inspect a legacy file without following a reparse point or blocking its removal.
+bool trustedLegacyFile(const QString &path, bool allowMissing)
+{
+    const std::wstring native = QDir::toNativeSeparators(path).toStdWString();
+    const HANDLE handle = CreateFileW(native.c_str(), READ_CONTROL | FILE_READ_ATTRIBUTES,
+                                      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                      nullptr, OPEN_EXISTING,
+                                      FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+                                      nullptr);
+    if (handle == INVALID_HANDLE_VALUE)
+        return allowMissing && GetLastError() == ERROR_FILE_NOT_FOUND;
+    const auto close = qScopeGuard([&] { CloseHandle(handle); });
+    return trustedLegacyObject(handle, false);
+}
+
+// Create an owner-and-SYSTEM folder, or accept an existing private folder.
+// Never repair a preexisting directory's permissions or follow a reparse point.
+bool privateInstanceDirectory(const QString &path)
+{
+    const QByteArray userBytes = currentUser();
+    if (userBytes.isEmpty())
+        return false;
+    const PSID user = const_cast<char *>(userBytes.constData());
+    BYTE system[SECURITY_MAX_SID_SIZE];
+    DWORD systemSize = sizeof(system);
+    if (!CreateWellKnownSid(WinLocalSystemSid, nullptr, system, &systemSize))
+        return false;
+    EXPLICIT_ACCESSW entries[2]{};
+    entries[0].grfAccessPermissions = FILE_ALL_ACCESS;
+    entries[0].grfAccessMode = SET_ACCESS;
+    entries[0].grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+    entries[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+    entries[0].Trustee.ptstrName = static_cast<LPWSTR>(user);
+    entries[1] = entries[0];
+    entries[1].Trustee.ptstrName = reinterpret_cast<LPWSTR>(system);
+    PACL acl = nullptr;
+    if (SetEntriesInAclW(2, entries, nullptr, &acl) != ERROR_SUCCESS)
+        return false;
+    const auto freeAcl = qScopeGuard([&] { LocalFree(acl); });
+    SECURITY_DESCRIPTOR descriptor{};
+    if (!InitializeSecurityDescriptor(&descriptor, SECURITY_DESCRIPTOR_REVISION)
+        || !SetSecurityDescriptorOwner(&descriptor, user, FALSE)
+        || !SetSecurityDescriptorDacl(&descriptor, TRUE, acl, FALSE)
+        || !SetSecurityDescriptorControl(&descriptor, SE_DACL_PROTECTED, SE_DACL_PROTECTED))
+        return false;
+    SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), &descriptor, FALSE};
+    const std::wstring native = QDir::toNativeSeparators(path).toStdWString();
+    if (!CreateDirectoryW(native.c_str(), &security) && GetLastError() != ERROR_ALREADY_EXISTS)
+        return false;
+    const DWORD attributes = GetFileAttributesW(native.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_DIRECTORY)
+        || (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
+        return false;
+    PSECURITY_DESCRIPTOR actual = nullptr;
+    PSID owner = nullptr;
+    PACL actualAcl = nullptr;
+    if (GetNamedSecurityInfoW(native.c_str(), SE_FILE_OBJECT,
+                             OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                             &owner, nullptr, &actualAcl, nullptr, &actual) != ERROR_SUCCESS)
+        return false;
+    const auto freeActual = qScopeGuard([&] { LocalFree(actual); });
+    SECURITY_DESCRIPTOR_CONTROL control = 0;
+    DWORD revision = 0;
+    if (!owner || !EqualSid(owner, user) || !actualAcl
+        || !GetSecurityDescriptorControl(actual, &control, &revision)
+        || !(control & SE_DACL_PROTECTED))
+        return false;
+    for (DWORD index = 0; index < actualAcl->AceCount; ++index) {
+        void *raw = nullptr;
+        if (!GetAce(actualAcl, index, &raw))
+            return false;
+        const auto *ace = static_cast<const ACCESS_ALLOWED_ACE *>(raw);
+        if (ace->Header.AceType != ACCESS_ALLOWED_ACE_TYPE)
+            return false;
+        PSID sid = const_cast<DWORD *>(&ace->SidStart);
+        if (!IsValidSid(sid) || (!EqualSid(sid, user) && !EqualSid(sid, system)))
+            return false;
+    }
+    return true;
+}
+#endif
+
+#ifdef Q_OS_UNIX
+// Qt reserves a terminator and, on Linux, the abstract-socket prefix byte.
+#  ifdef Q_OS_LINUX
+constexpr qsizetype kQtSpareBytes = 2;
+#  else
+constexpr qsizetype kQtSpareBytes = 1;
+#  endif
+
+// Whether Qt takes the socket path of `group` in `dir`.
+bool socketFits(const QString &dir, const QString &group)
+{
+    return QFile::encodeName(QDir(dir).filePath(group)).size() + kQtSpareBytes
+        <= qsizetype(sizeof(sockaddr_un::sun_path));
+}
+
+// Fixed roots keep the lock and socket independent of each launch's environment.
+QString g_userRuntimeRoot = QStringLiteral("/run/user");
+QString g_socketRoot = QStringLiteral("/tmp");
+
+// Use the OS runtime folder only when this user owns it and its mode is 0700.
+QString userRuntimeDir()
+{
+    const QString dir = QDir(g_userRuntimeRoot).filePath(QString::number(uint(::geteuid())));
+    return isPrivateDir(dir, uint(::geteuid())) ? dir : QString();
 }
 
 // This user's folder in the socket root, for a socket the profile folder cannot hold.
@@ -193,9 +338,63 @@ QString hostPipeName()
     return groupName(userToken());
 }
 
+#ifdef Q_OS_WIN
+// The directory stays pinned until after the legacy QLockFile releases its handle.
+class LegacyCarryGuard
+{
+public:
+    ~LegacyCarryGuard()
+    {
+        lock.reset();
+        if (directory != INVALID_HANDLE_VALUE)
+            CloseHandle(directory);
+    }
+
+    HANDLE directory = INVALID_HANDLE_VALUE;
+    std::unique_ptr<QLockFile> lock;
+};
+
+InstancePaths legacyInstancePaths(const QString &name)
+{
+    const QString group = legacyEndpoint(name);
+    const QDir folder(QDir::tempPath());
+    return {folder.filePath(group + QStringLiteral(".lock")), group,
+            folder.filePath(group + QStringLiteral(".carried")), QString()};
+}
+
+std::shared_ptr<LegacyCarryGuard> guardLegacyCarry(const InstancePaths &paths)
+{
+    const QString parent = QFileInfo(paths.carriedFile).absolutePath();
+    if (paths.carriedFile.isEmpty() || paths.lockFile.isEmpty()
+        || QFileInfo(paths.lockFile).absolutePath() != parent)
+        return {};
+    auto guard = std::make_shared<LegacyCarryGuard>();
+    const std::wstring native = QDir::toNativeSeparators(parent).toStdWString();
+    guard->directory = CreateFileW(native.c_str(), READ_CONTROL | FILE_READ_ATTRIBUTES,
+                                   FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                                   FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+                                   nullptr);
+    if (guard->directory == INVALID_HANDLE_VALUE || !trustedLegacyObject(guard->directory, true)
+        || !trustedLegacyFile(paths.carriedFile, false)
+        || !trustedLegacyFile(paths.lockFile, true))
+        return {};
+    guard->lock = std::make_unique<QLockFile>(paths.lockFile);
+    guard->lock->setStaleLockTime(0);
+    bool locked = guard->lock->tryLock(0);
+    if (!locked && guard->lock->error() == QLockFile::LockFailedError
+        && lockLeftUnwritten(paths.lockFile) && guard->lock->removeStaleLockFile())
+        locked = guard->lock->tryLock(0);
+    if (!locked || !trustedLegacyFile(paths.carriedFile, false))
+        return {};
+    return guard;
+}
+#endif
+
 InstancePaths instancePaths(const QString &name)
 {
     const QString group = name.isEmpty() ? hostPipeName() : name;
+    if (group.isEmpty())
+        return {};
 #ifdef Q_OS_UNIX
     // Chosen from what is on disk, not from the environment, so that every launch of
     // this user and group on this host takes the same lock.
@@ -210,9 +409,13 @@ InstancePaths instancePaths(const QString &name)
         return {};
     return instanceFolderPaths(instance, group, true);
 #else
-    // The lock is in the per-user %TEMP%. The pipe namespace is shared by the machine,
-    // so a launch checks whose process answers (see peerIsCurrentUser).
-    const QDir folder(QDir::tempPath());
+    // Keep the lock with the profile it guards, independent of TEMP or TMP.
+    // The machine token separates roaming profiles used on different computers.
+    ConfigPaths::configDir();
+    const QString instance = profileInstanceDirPath();
+    if (!privateInstanceDirectory(instance))
+        return {};
+    const QDir folder(instance);
     return {folder.filePath(group + QStringLiteral(".lock")), group,
             folder.filePath(group + QStringLiteral(".carried")), QString()};
 #endif
@@ -251,18 +454,29 @@ QList<InstancePaths> otherInstancePaths(const QString &name)
     const QString group = name.isEmpty() ? hostPipeName() : name;
     const QString own = instancePaths(name).lockFile;
     QList<InstancePaths> others;
+    QStringList groups{group};
+    // The preceding UID-based version hashed the path as supplied. A launch using
+    // that same profile alias must still find its lock before taking ownership.
+    if (name.isEmpty()) {
+        const QString previous = groupName(userToken(), false);
+        if (previous != group)
+            groups.append(previous);
+    }
     // Each folder is only checked with lstat. Nothing is created in any of them.
     const QString runtime = userRuntimeDir();
-    if (!runtime.isEmpty() && socketFits(runtime, group)) {
-        const InstancePaths paths = pathsIn(runtime, group);
-        if (paths.lockFile != own)
-            others.append(paths);
-    }
     const QString instance = profileInstanceDirPath();
-    if (isPrivateDir(instance, uint(::geteuid()))) {
-        const InstancePaths paths = instanceFolderPaths(instance, group, false);
-        if (paths.lockFile != own)
-            others.append(paths);
+    const bool privateInstance = isPrivateDir(instance, uint(::geteuid()));
+    for (const QString &candidate : groups) {
+        if (!runtime.isEmpty() && socketFits(runtime, candidate)) {
+            const InstancePaths paths = pathsIn(runtime, candidate);
+            if (paths.lockFile != own)
+                others.append(paths);
+        }
+        if (privateInstance) {
+            const InstancePaths paths = instanceFolderPaths(instance, candidate, false);
+            if (paths.lockFile != own)
+                others.append(paths);
+        }
     }
     return others;
 }
@@ -337,13 +551,17 @@ bool lockLeftUnwritten(const QString &lockFile)
     return age < -kUnwrittenLockMs || age >= kUnwrittenLockMs;
 }
 
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_WIN)
 QString legacyEndpoint(const QString &name)
 {
     // Older copies hashed the name from the environment, and Qt put a name that is not
     // an absolute path in the temp folder.
-    const QString group = name.isEmpty() ? groupName(tokenOf(userName())) : name;
+    const QString group = name.isEmpty() ? groupName(tokenOf(userName()), false) : name;
+#ifdef Q_OS_WIN
+    return group;
+#else
     return QDir::cleanPath(QDir::tempPath()) + QLatin1Char('/') + group;
+#endif
 }
 #endif
 

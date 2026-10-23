@@ -15,6 +15,7 @@
 #include <QSaveFile>
 
 #include <cstdio>
+#include <optional>
 #include <utility>
 
 #ifdef Q_OS_WIN
@@ -32,18 +33,30 @@ QList<ipc::Message> g_carried; // not in a carry file yet
 std::function<bool(const QStringList &)> g_starter;
 
 // The launches in a carry file, oldest first: {"written": msecs since the epoch,
-// "launches": [Open messages]}. Empty when the file is missing or unreadable, or dated
-// outside the bounds (see takeCarried).
-QList<ipc::Message> readCarried(const QString &file)
+// "launches": [Open messages]}. A missing or expired file holds no launches.
+// Read or format failures are distinct so callers do not discard unread data.
+std::optional<QList<ipc::Message>> readCarried(const QString &file)
 {
     QFile in(file);
+    if (!in.exists())
+        return QList<ipc::Message>{};
     if (!in.open(QIODevice::ReadOnly))
-        return {};
-    const QJsonObject root = QJsonDocument::fromJson(in.readAll()).object();
-    const qint64 written = qint64(root.value(QStringLiteral("written")).toDouble());
-    const qint64 age = QDateTime::currentMSecsSinceEpoch() - written;
-    if (age < -kCarriedMaxAheadMs || age > kCarriedMaxAgeMs)
-        return {};
+        return std::nullopt;
+    const QByteArray bytes = in.readAll();
+    if (in.error() != QFileDevice::NoError)
+        return std::nullopt;
+    QJsonParseError error;
+    const QJsonDocument document = QJsonDocument::fromJson(bytes, &error);
+    if (error.error != QJsonParseError::NoError || !document.isObject())
+        return std::nullopt;
+    const QJsonObject root = document.object();
+    if (!root.value(QStringLiteral("written")).isDouble()
+        || !root.value(QStringLiteral("launches")).isArray())
+        return std::nullopt;
+    const qint64 written = root.value(QStringLiteral("written")).toInteger();
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (written < now - kCarriedMaxAgeMs || written > now + kCarriedMaxAheadMs)
+        return QList<ipc::Message>{};
     QList<ipc::Message> launches;
     for (const QJsonValue &value : root.value(QStringLiteral("launches")).toArray()) {
         const ipc::Message open = ipc::Message::fromJson(value.toObject());
@@ -104,9 +117,12 @@ bool writeCarried(const QString &file)
         return true;
     if (file.isEmpty())
         return false;
+    const auto previous = readCarried(file);
+    if (!previous)
+        return false;
     // Launches carried by a primary whose next copy has not started yet go first.
     QJsonArray launches;
-    for (const ipc::Message &open : readCarried(file) + g_carried)
+    for (const ipc::Message &open : *previous + g_carried)
         launches.append(open.toJson());
     QJsonObject root;
     root.insert(QStringLiteral("written"), double(QDateTime::currentMSecsSinceEpoch()));
@@ -116,8 +132,10 @@ bool writeCarried(const QString &file)
         return false;
     // The folder is this user's own already. The file's mode says so as well, from before
     // it takes its name.
-    out.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    if (out.write(QJsonDocument(root).toJson(QJsonDocument::Compact)) < 0 || !out.commit())
+    if (!out.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner))
+        return false;
+    const QByteArray bytes = QJsonDocument(root).toJson(QJsonDocument::Compact);
+    if (out.write(bytes) != bytes.size() || !out.commit())
         return false;
     // Only now does the file hold them. Until then they stay for startIfDue.
     g_carried.clear();
@@ -128,28 +146,38 @@ QList<ipc::Message> takeCarried(const QString &file)
 {
     if (file.isEmpty() || !QFile::exists(file))
         return {};
-    const QList<ipc::Message> launches = readCarried(file);
-    QFile::remove(file);
-    return launches;
+    const auto launches = readCarried(file);
+    if (!launches || !QFile::remove(file)) {
+        std::fprintf(stderr, "MervinPDF: could not consume carried launches from %s\n",
+                     qUtf8Printable(QDir::toNativeSeparators(file)));
+        return {};
+    }
+    return *launches;
 }
 
 bool startIfDue(bool restart)
 {
     // Carried launches that no carry file holds, because writing it failed.
     const QStringList paths = unwrittenPaths();
-    g_carried.clear();
     if (!(restart && g_requested) && !g_due) {
         // An update started the next copy before the carry file failed.
         for (const QString &path : paths)
             std::fprintf(stderr, "MervinPDF: could not pass on %s\n",
                          qUtf8Printable(QDir::toNativeSeparators(path)));
-        return true;
+        return g_carried.isEmpty();
     }
-    g_due = false;
+    const bool due = g_due;
     if (!paths.isEmpty())
         std::fprintf(stderr, "MervinPDF: passing the files opened during the quit to the "
                              "next copy as arguments\n");
-    return g_starter ? g_starter(paths) : start(paths);
+    if (!(g_starter ? g_starter(paths) : start(paths))) {
+        g_due = due;
+        return false;
+    }
+    g_carried.clear();
+    g_due = false;
+    g_requested = false;
+    return true;
 }
 
 void setStarterForTests(std::function<bool(const QStringList &paths)> starter)

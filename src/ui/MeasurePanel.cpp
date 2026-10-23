@@ -714,6 +714,16 @@ void MeasurePanel::changeEvent(QEvent *event)
 
 bool MeasurePanel::eventFilter(QObject *watched, QEvent *event)
 {
+    if (event->type() == QEvent::Resize || event->type() == QEvent::Show) {
+        const auto it = rowHoverIndex_.constFind(watched);
+        if (it != rowHoverIndex_.constEnd() && measureLabels_.value(it.value()) == watched) {
+            // A list lays out its row labels after the panel's own resize. Use the
+            // final label allocation, including a scroll bar appearing or going away.
+            QLabel *label = measureLabels_.at(it.value());
+            label->setText(elidedLabelText(label->fontMetrics(), measureItems_.at(it.value()),
+                                          Qt::ElideRight, label->width()));
+        }
+    }
     if (event->type() == QEvent::Enter || event->type() == QEvent::Leave) {
         const auto it = rowHoverIndex_.constFind(watched);
         if (it != rowHoverIndex_.constEnd()) {

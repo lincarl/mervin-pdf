@@ -257,6 +257,14 @@ public:
     // after an unloaded tab fails to load.
     void closeRemovedTabs();
 
+    struct testing {
+        // UI-thread observation of the removed-file scan, including queued completion.
+        static bool removedTabScanRunning(const WindowManager &manager)
+        {
+            return manager.tabScanRunning_;
+        }
+    };
+
     // The document that was on screen when the session was recorded. Valid once
     // restoreSession() has called back; empty when the session predates the field,
     // recorded no current document, or that document is not restored.
@@ -416,6 +424,7 @@ private:
     bool shuttingDown_ = false;
     bool quitting_ = false;
     bool checkingActivity_ = false;
+    quint64 observedDocumentCloses_ = 0;
     int unloadInactiveMinutes_ = 30;
     bool closeToTray_ = true;
     QElapsedTimer activityClock_;
@@ -443,7 +452,8 @@ private:
     QSet<QString> restoreWaiting_; // session documents, while the restore waits
     QSet<QString> restoreLate_;    // ...still unanswered when it stopped waiting
     QSet<QString> mountWanted_;    // recordOpen: record the mount if the file is there
-    QSet<QString> pruneWanted_;    // pruneMissingRecent: forget it if removed from disk
+    QHash<QString, QString> pruneWanted_; // request key to normalized entry path
+    quint64 pruneGeneration_ = 0;
     QSet<QString> clearWanted_;    // clearMissingRecent: forget it if missing
     bool restorePending_ = false;  // restoreSession is waiting for its checks
     bool sessionHeld_ = false;     // see holdSession

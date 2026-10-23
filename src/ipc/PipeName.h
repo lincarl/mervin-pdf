@@ -3,6 +3,8 @@
 #include <QList>
 #include <QString>
 
+#include <memory>
+
 namespace mervin::ipc {
 
 // Stable per-user pipe name hashed to avoid Windows charset/length issues.
@@ -32,8 +34,10 @@ struct InstancePaths
 //   file system holds no sockets (see SingleInstanceServer::start). With no usable
 //   folder for it, `server` is empty, and the lock alone keeps the profile's files to
 //   one copy.
-// All are empty when no folder takes the lock. On Windows the lock is in %TEMP% and
-// `server` is the pipe name.
+// All are empty when no folder takes the lock. Windows keeps the lock in the
+// profile's instance-<host> folder with an owner-and-SYSTEM DACL. Existing
+// nonprivate folders and reparse points are refused. `server` is the SID-based
+// pipe name. Profile links resolve to the same group.
 InstancePaths instancePaths(const QString &name = QString());
 
 // Where the primary of `paths` listens: the path it recorded in `paths.endpointFile`, or
@@ -45,13 +49,28 @@ QString endpointOf(const InstancePaths &paths);
 // removes the record when it listens nowhere. Does nothing without an endpoint file.
 void recordEndpoint(const InstancePaths &paths);
 
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_WIN)
 // Upgrade support for copies built before the lock and socket left the temp folder, which
 // a launch offers its files to while one runs (see claimOrHandOff). Remove it once such
-// copies are no longer expected to run. Returns the socket that such a copy of the group
-// `name`, or of its own group when `name` is empty, listens on. That is the group name in
-// the temp folder, with the user token hashed from $USERNAME or $USER instead of the uid.
+// copies are no longer expected to run. Returns the endpoint that such a copy of the group
+// `name`, or of its own group when `name` is empty, listens on. Windows returns its
+// pipe name; Linux returns the socket in the temp folder. Both use the token
+// hashed from USERNAME or USER instead of the OS identity.
 QString legacyEndpoint(const QString &name = QString());
+#endif
+
+#ifdef Q_OS_WIN
+// The old username-based group's paths in this launch's TEMP. Creates nothing.
+InstancePaths legacyInstancePaths(const QString &name = QString());
+
+class LegacyCarryGuard;
+
+// Locks a legacy carry file's group while its current-user-owned TEMP folder is
+// pinned against renames. Refuses reparse points and ACLs granting access beyond
+// this user, SYSTEM and Administrators. Inherited legacy ACLs are accepted without
+// changing the stricter policy for new instance folders. Empty if unsafe or held.
+// Keep the guard alive until takeCarried() has finished consuming paths.carriedFile.
+std::shared_ptr<LegacyCarryGuard> guardLegacyCarry(const InstancePaths &paths);
 #endif
 
 // Whether `lockFile` holds no lock information and is older than QLockFile needs to write
@@ -60,10 +79,10 @@ QString legacyEndpoint(const QString &name = QString());
 bool lockLeftUnwritten(const QString &lockFile);
 
 #ifdef Q_OS_UNIX
-// The paths of the group `name` in the other folder that instancePaths() can choose, for
-// when /run/user/<uid> appeared or went away while a primary ran. Only folders that
-// already are this user's private folders count, and nothing is created in them. The
-// launch's own folder, which instancePaths() makes, is left out.
+// The group's other paths, including the preceding noncanonical profile identity when
+// `name` is empty, for upgrades or when /run/user/<uid> changed while a primary ran.
+// Only existing private folders count. No alternate folder is created, and the launch's
+// own lock path, which instancePaths() chooses, is left out.
 QList<InstancePaths> otherInstancePaths(const QString &name = QString());
 
 // Whether a live process holds the lock file `lockFile`, which lies in one of this user's

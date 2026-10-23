@@ -124,9 +124,8 @@ target_sources(tst_settings_dialog PRIVATE
     ${CMAKE_SOURCE_DIR}/src/ui/LanguageCombo.h)
 target_link_libraries(tst_settings_dialog PRIVATE mervin_icons Qt6::Widgets)
 
-# Real picker-path guard rail: enter a URL into the visible file-name field and
-# press its Open button. This catches regressions where the native Windows shell
-# downloads the URL before Mervin can show progress or apply URL compatibility.
+# Exercise URL and file selection through the Qt picker on Linux. Windows checks
+# native-dialog selection; shell URL-entry behavior still needs native interaction.
 qt_add_executable(tst_open_pdf_dialog tst_open_pdf_dialog.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/OpenPdfDialog.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/OpenPdfDialog.h)
@@ -197,6 +196,25 @@ target_link_libraries(tst_update_plan PRIVATE Qt6::Core Qt6::Test)
 set_target_properties(tst_update_plan PROPERTIES WIN32_EXECUTABLE OFF)
 add_test(NAME tst_update_plan COMMAND tst_update_plan)
 set_tests_properties(tst_update_plan PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+
+# Carry-file failure recovery and the native Windows helper's actual argv and cleanup.
+# Only package identity is substituted; the Windows process fixture never runs MSI.
+qt_add_executable(tst_relaunch tst_relaunch.cpp
+    ${CMAKE_SOURCE_DIR}/src/app/Relaunch.cpp
+    ${CMAKE_SOURCE_DIR}/src/update/Installer.cpp
+    ${CMAKE_SOURCE_DIR}/src/update/UpdatePlan.cpp
+    ${CMAKE_SOURCE_DIR}/src/config/ConfigPaths.cpp
+    ${CMAKE_SOURCE_DIR}/src/ipc/Message.cpp)
+target_include_directories(tst_relaunch PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(tst_relaunch PRIVATE Qt6::Core Qt6::Test)
+if(WIN32)
+    target_link_libraries(tst_relaunch PRIVATE user32)
+endif()
+set_target_properties(tst_relaunch PROPERTIES WIN32_EXECUTABLE OFF)
+add_test(NAME tst_relaunch COMMAND tst_relaunch)
+set_tests_properties(tst_relaunch PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
@@ -351,6 +369,8 @@ target_compile_definitions(tst_document PRIVATE
 # tst_mupdf_store checks the patches in scripts/mupdf-patches through MuPDF's store
 # API, with its own allocator and lock callbacks, so it needs MuPDF's headers too.
 target_link_libraries(tst_mupdf_store PRIVATE MuPDF::MuPDF)
+# Inspect the synchronous render context after an error has been returned.
+target_link_libraries(tst_render_lifetime PRIVATE MuPDF::MuPDF)
 
 # tst_view_layout builds its own /MediaBox-only fixtures, with exact integer page
 # sizes so the layout arithmetic can be checked by hand.
@@ -498,7 +518,7 @@ set_tests_properties(tst_document_suspension PROPERTIES
 # Rotate Pages and Split as their tab's operation, with the wait bar, Stop waiting and
 # a window that stays usable while one tab waits.
 qt_add_executable(tst_tab_operations tst_tab_operations.cpp Stalls.h)
-target_link_libraries(tst_tab_operations PRIVATE mervin_app Qt6::Test)
+target_link_libraries(tst_tab_operations PRIVATE mervin_app Qt6::Test qpdf::libqpdf)
 set_target_properties(tst_tab_operations PROPERTIES WIN32_EXECUTABLE OFF)
 target_compile_definitions(tst_tab_operations PRIVATE MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
 add_test(NAME tst_tab_operations COMMAND tst_tab_operations)
@@ -532,7 +552,9 @@ qt_add_executable(tst_instance_handoff tst_instance_handoff.cpp)
 target_link_libraries(tst_instance_handoff PRIVATE mervin_app Qt6::Test)
 set_target_properties(tst_instance_handoff PROPERTIES WIN32_EXECUTABLE OFF)
 target_compile_definitions(tst_instance_handoff PRIVATE
+    MERVIN_APP_EXE="$<TARGET_FILE:MervinPDF>"
     MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
+add_dependencies(tst_instance_handoff MervinPDF)
 add_test(NAME tst_instance_handoff COMMAND tst_instance_handoff)
 set_tests_properties(tst_instance_handoff PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
@@ -652,3 +674,13 @@ add_test(NAME i18n_content
             "${CMAKE_SOURCE_DIR}/i18n")
 add_test(NAME tst_translation_content
     COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/scripts/test_translation_content.py")
+
+# File dialogs persist Qt history independently of Mervin's isolated profile.
+# Give every Linux test its own configuration folder, including parallel runs.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    get_property(_mervin_registered_tests DIRECTORY PROPERTY TESTS)
+    foreach(_t IN LISTS _mervin_registered_tests)
+        set_property(TEST ${_t} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+            "XDG_CONFIG_HOME=set:${CMAKE_CURRENT_BINARY_DIR}/test-config/${_t}")
+    endforeach()
+endif()

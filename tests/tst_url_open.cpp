@@ -79,7 +79,12 @@ void TstUrlOpen::buildsCompatibleRequest()
     const QUrl url(QStringLiteral("https://www.onsemi.com/example.pdf"));
     const QNetworkRequest request = urlopen::makeRequest(url);
     QCOMPARE(request.url(), url);
-    QVERIFY(request.rawHeader("User-Agent").contains("Chrome/151"));
+    const QString agent = QString::fromLatin1(request.rawHeader("User-Agent"));
+    const auto browser = QRegularExpression(QStringLiteral("Chrome/([0-9]+)\\.")).match(agent);
+    QVERIFY(browser.hasMatch());
+    QVERIFY(browser.captured(1).toInt() > 0);
+    const QByteArray hintedVersion = "v=\"" + browser.captured(1).toLatin1() + '\"';
+    QVERIFY(request.rawHeader("sec-ch-ua").contains(hintedVersion));
     QVERIFY(!request.rawHeader("User-Agent").contains("HeadlessChrome"));
     QCOMPARE(request.rawHeader("Accept-Language"), QByteArray("en-US,en;q=0.9"));
     QCOMPARE(request.rawHeader("Upgrade-Insecure-Requests"), QByteArray("1"));
@@ -131,8 +136,8 @@ void TstUrlOpen::choosesDownloadDirectory()
 
 void TstUrlOpen::downloadsConfiguredUrl()
 {
-    // Normal ctest runs stay hermetic. Set this explicitly to check public
-    // document CDNs, including Littelfuse, Analog Devices, and onsemi.
+    // Normal CTest runs do not exercise a remote service. An explicit URL probes
+    // only that response's HTTP success and PDF signature, not parsing or all CDNs.
     const QString input = qEnvironmentVariable("MERVIN_URL_OPEN_TEST_URL");
     if (input.isEmpty())
         return;

@@ -80,6 +80,7 @@ enum class Glyph {
     Check,           // check: menu check marks and the checkbox tick
     Star,            // star: favourite files in the Recent list (filled when set)
     Restore,         // undo-2: keep a page marked for deletion (Delete pages strip)
+    Count,           // number of real glyphs; keep last
 };
 
 // The pictograph tinted to `color` (the palette's WindowText, Theme::iconInk, or

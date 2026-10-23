@@ -36,6 +36,17 @@ bool ThemeCard::hitButton(const QPoint &point) const
     return rect().contains(point);
 }
 
+QRectF ThemeCard::captionRect() const
+{
+    const int textHeight = std::max(25, fontMetrics().height());
+    return QRectF(11, height() - 9 - textHeight, width() - 43, textHeight);
+}
+
+QRectF ThemeCard::indicatorRect() const
+{
+    return QRectF(width() - 24.5, captionRect().center().y() - 6, 13, 13);
+}
+
 void ThemeCard::enterEvent(QEnterEvent *event)
 {
     QRadioButton::enterEvent(event);
@@ -72,7 +83,7 @@ void ThemeCard::paintEvent(QPaintEvent *)
     painter.setPen(QPen(isChecked() ? colors.accent : colors.borderPush, 1));
     painter.drawRoundedRect(card, 6, 6);
 
-    const QRectF well(6.5, 6.5, width() - 13.0, height() - 44.0);
+    const QRectF well(6.5, 6.5, width() - 13.0, captionRect().top() - 10.0);
     painter.setPen(QPen(colors.border, 1));
     painter.setBrush(colors.well);
     painter.drawRoundedRect(well, 3, 3);
@@ -83,13 +94,13 @@ void ThemeCard::paintEvent(QPaintEvent *)
     }
 
     painter.setPen(colors.inkPrimary);
-    painter.drawText(QRectF(11, height() - 34, width() - 43, 25),
+    painter.drawText(captionRect(),
                      Qt::AlignVCenter | Qt::AlignLeft, text());
 
-    const QPointF radioCenter(width() - 18, height() - 21);
+    const QPointF radioCenter = indicatorRect().center();
     painter.setPen(QPen(isChecked() ? colors.accent : colors.inkSoft, 1));
     painter.setBrush(isChecked() ? colors.accent : Qt::transparent);
-    painter.drawEllipse(radioCenter, 6.5, 6.5);
+    painter.drawEllipse(indicatorRect());
     if (isChecked()) {
         painter.setBrush(Qt::NoBrush);
         painter.setPen(QPen(colors.onAccent, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));

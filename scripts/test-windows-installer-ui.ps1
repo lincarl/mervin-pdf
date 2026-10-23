@@ -2,8 +2,8 @@
 .SYNOPSIS
   Exercise the native MSI wizard and its launch option on a disposable GitHub runner.
 .DESCRIPTION
-  Uses native controls rather than screen coordinates. Captures every wizard page
-  and the application window, then removes the installation created by this test.
+  Uses native controls rather than screen coordinates. Exercises Back, Cancel,
+  maintenance Repair and both Finish launch choices, then removes its installation.
   The runner account must have no existing Mervin installation or application data.
 #>
 param(
@@ -24,9 +24,15 @@ if (-not $OutputDir.StartsWith('C:\dev-temp\', [StringComparison]::OrdinalIgnore
 $installDir = Join-Path $OutputDir 'installed app'
 $appDataDir = Join-Path $env:APPDATA 'MervinPDF'
 $appExe = Join-Path $installDir 'MervinPDF.exe'
+$msiEngine = New-Object -ComObject WindowsInstaller.Installer
+function Get-MervinProducts {
+    foreach ($product in $msiEngine.ProductsEx('', '', 7)) {
+        if ($product.InstallProperty('ProductName') -like 'Mervin PDF*') { $product }
+    }
+}
 $registeredInstall = Get-ItemPropertyValue 'HKCU:\Software\Mervin PDF' -Name InstallDir -ErrorAction SilentlyContinue
 if ((Test-Path $installDir) -or (Test-Path $appDataDir) -or
-    $registeredInstall -or (Get-Process MervinPDF -ErrorAction SilentlyContinue)) {
+    $registeredInstall -or @(Get-MervinProducts).Count -ne 0 -or (Get-Process MervinPDF -ErrorAction SilentlyContinue)) {
     throw 'The UI test requires an unused install directory and no existing Mervin state.'
 }
 New-Item -ItemType Directory -Force $OutputDir | Out-Null
@@ -238,7 +244,7 @@ function Wait-InstallerPage([string]$Name, [string]$TextPattern, [string]$Button
         $candidate = $null
         foreach ($state in @(Get-InstallerState)) {
             $script:currentDialog = $state.Window
-            if ($state.Text -match $TextPattern -and @(Get-EnabledButtons $state $ButtonPattern).Count -eq 1) {
+            if ($state.Window.Enabled -and $state.Text -match $TextPattern -and @(Get-EnabledButtons $state $ButtonPattern).Count -eq 1) {
                 $candidate = $state
                 break
             }
@@ -269,6 +275,76 @@ function Click-Control($State, [string]$TextPattern) {
     }
 }
 
+function Start-InstallerSession([string]$Name) {
+    if ($script:setup) {
+        if (-not $script:setup.HasExited) { throw 'The previous installer session is still running.' }
+        $script:setup.Dispose()
+        $script:setup = $null
+    }
+    $script:log = Join-Path $OutputDir "$Name.log"
+    $script:currentDialog = $null
+    $script:setup = Start-Process $msiexec -ArgumentList "/i `"$Msi`" /norestart /l*v `"$script:log`"" -PassThru
+    $script:installAttempted = $true
+    Write-Host "$Name installer process $($script:setup.Id)."
+}
+
+function Get-DestinationField($State) {
+    $edits = @($State.Controls | Where-Object { $_.ClassName -in @('Edit', 'RichEdit20W') -and $_.Enabled })
+    if ($edits.Count -ne 1) { throw "Expected one destination field, found $($edits.Count)." }
+    $edits[0]
+}
+
+function Set-Destination($State) {
+    # MSI commits PathEdit on focus loss. Keep real focus and edit notifications.
+    $edit = Get-DestinationField $State
+    [MervinInstallerUi]::FocusControl($State.Window.Handle, $edit.Handle)
+    [MervinInstallerUi]::SetText($edit.Handle, "$installDir\")
+    $written = [MervinInstallerUi]::Children($State.Window.Handle) | Where-Object { $_.Handle -eq $edit.Handle }
+    if ($written.Text.TrimEnd('\') -ne $installDir) { throw 'The destination field did not retain the chosen path.' }
+}
+
+function Complete-InstallerSession([int]$ExpectedCode = 0) {
+    if (-not $setup.WaitForExit(30000)) { throw 'The installer did not exit after Finish.' }
+    if ($setup.ExitCode -ne $ExpectedCode) { throw "Installer returned $($setup.ExitCode), expected $ExpectedCode. See $log" }
+}
+
+function Assert-NoLaunch {
+    # Poll for delayed launches and check the action log for short-lived ones.
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while ($watch.Elapsed.TotalSeconds -lt 3) {
+        if (Get-Process MervinPDF -ErrorAction SilentlyContinue) { throw "Unexpected application launch. See $log" }
+        Start-Sleep -Milliseconds 100
+    }
+    if (Select-String -LiteralPath $log -Quiet -Pattern 'Doing action: LaunchMervin\b|Action start [^\r\n]*: LaunchMervin\.') {
+        throw "The installer executed LaunchMervin in a no-launch scenario. See $log"
+    }
+}
+
+function Wait-SuccessfulFinish([string]$EvidencePrefix) {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $capturedProgress = $false
+    while ($watch.Elapsed.TotalSeconds -lt 180) {
+        foreach ($state in @(Get-InstallerState)) {
+            $script:currentDialog = $state.Window
+            if ($state.Window.Enabled -and $state.Text -match 'Completed the .+ Setup Wizard' -and
+                @(Get-EnabledButtons $state '^Finish$').Count -eq 1) {
+                return $state
+            }
+            if (-not $capturedProgress -and $state.Text -match 'Installing Mervin|Please wait while') {
+                Save-WindowEvidence $state.Window "$EvidencePrefix-progress"
+                $capturedProgress = $true
+                $script:progressSeen = $true
+            }
+            if ($state.Text -match 'ended prematurely|installation failed|Could not|Error [0-9]') {
+                throw "Installation failed. $($state.Text)"
+            }
+        }
+        if ($setup.HasExited) { throw "Installer exited before successful Finish with $($setup.ExitCode)." }
+        Start-Sleep -Milliseconds 100
+    }
+    throw 'Timed out waiting for the successful Finish page.'
+}
+
 try {
     # The test job uses Qt's offscreen plugin and a compiler PATH for unit tests.
     # Exercise the installed Windows GUI using only its deployed dependencies.
@@ -286,25 +362,125 @@ close_to_tray = false
 '@ | Set-Content (Join-Path $appDataDir 'config.toml')
 
     $msiexec = Join-Path $env:SystemRoot 'System32\msiexec.exe'
-    $log = Join-Path $OutputDir 'interactive-install.log'
-    $setup = Start-Process $msiexec -ArgumentList "/i `"$Msi`" /norestart /l*v `"$log`"" -PassThru
-    $installAttempted = $true
-    Write-Host "Installer process $($setup.Id), session $($setup.SessionId)."
+    Start-InstallerSession 'cancel-install'
+    $state = Wait-InstallerPage 'Welcome' 'Welcome to' '^Next\s*>?$'
+    Click-Control $state '^Next\s*>?$'
+    $state = Wait-InstallerPage 'Destination folder' 'Destination Folder' '^Next\s*>?$'
+    Set-Destination $state
+    Click-Control $state '^Next\s*>?$'
+    $state = Wait-InstallerPage 'Ready to install' 'Ready to install' '^Install$'
+    Click-Control $state '^<?\s*Back$'
+    $state = Wait-InstallerPage 'Destination after Back' 'Destination Folder' '^Next\s*>?$'
+    if ((Get-DestinationField $state).Text.TrimEnd('\') -ne $installDir) { throw 'Back lost the chosen destination.' }
+    Click-Control $state '^<?\s*Back$'
+    $state = Wait-InstallerPage 'Welcome after Back' 'Welcome to' '^Next\s*>?$'
+    Click-Control $state '^Next\s*>?$'
+    $state = Wait-InstallerPage 'Destination after Welcome' 'Destination Folder' '^Next\s*>?$'
+    if ((Get-DestinationField $state).Text.TrimEnd('\') -ne $installDir) { throw 'Returning through Welcome lost the destination.' }
+    Save-WindowEvidence $state.Window 'cancel-destination-retained'
+    Click-Control $state '^Next\s*>?$'
+    $state = Wait-InstallerPage 'Ready before cancellation' 'Ready to install' '^Install$'
+    Click-Control $state '^Cancel$'
+    $state = Wait-InstallerPage 'Cancel confirmation' 'Are you sure you want to cancel' '^No$'
+    Click-Control $state '^No$'
+    $state = Wait-InstallerPage 'Ready after declining cancellation' 'Ready to install' '^Install$'
+    Click-Control $state '^Cancel$'
+    $state = Wait-InstallerPage 'Cancel confirmation' 'Are you sure you want to cancel' '^Yes$'
+    Click-Control $state '^Yes$'
+    $state = Wait-InstallerPage 'Cancelled installation' 'Setup Wizard was interrupted' '^Finish$'
+    Save-WindowEvidence $state.Window 'cancel-finish'
+    Click-Control $state '^Finish$'
+    Complete-InstallerSession 1602
+    Assert-NoLaunch
+    if ((Test-Path $appExe) -or @(Get-MervinProducts).Count -ne 0 -or
+        (Get-ItemPropertyValue 'HKCU:\Software\Mervin PDF' -Name InstallDir -ErrorAction SilentlyContinue) -or
+        (Test-Path (Join-Path ([Environment]::GetFolderPath('Programs')) 'Mervin PDF.lnk'))) {
+        throw 'Cancelling before Install left an installation or shortcut.'
+    }
+
+    Start-InstallerSession 'unchecked-install'
+    $state = Wait-InstallerPage 'Welcome' 'Welcome to' '^Next\s*>?$'
+    Click-Control $state '^Next\s*>?$'
+    $state = Wait-InstallerPage 'Destination folder' 'Destination Folder' '^Next\s*>?$'
+    Set-Destination $state
+    Click-Control $state '^Next\s*>?$'
+    $state = Wait-InstallerPage 'Ready to install' 'Ready to install' '^Install$'
+    Click-Control $state '^Install$'
+    $finish = Wait-SuccessfulFinish 'unchecked'
+    $checkbox = @(Get-EnabledButtons $finish '^Launch Mervin PDF$')
+    if ($checkbox.Count -ne 1 -or [MervinInstallerUi]::CheckState($checkbox[0].Handle) -ne 1) {
+        throw 'Launch Mervin PDF must be checked by default.'
+    }
+    Click-Control $finish '^Launch Mervin PDF$'
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while ([MervinInstallerUi]::CheckState($checkbox[0].Handle) -ne 0 -and $watch.Elapsed.TotalSeconds -lt 5) {
+        Start-Sleep -Milliseconds 100
+    }
+    if ([MervinInstallerUi]::CheckState($checkbox[0].Handle) -ne 0) { throw 'The launch checkbox did not become unchecked.' }
+    Save-WindowEvidence $finish.Window 'unchecked-finish'
+    Assert-NoLaunch
+    Click-Control $finish '^Finish$'
+    Complete-InstallerSession
+    Assert-NoLaunch
+    if (-not (Test-Path $appExe) -or @(Get-MervinProducts).Count -ne 1) { throw 'Unchecked Finish did not leave one installed application.' }
+    if ((Get-ItemPropertyValue 'HKCU:\Software\Mervin PDF' -Name InstallDir).TrimEnd('\') -ne $installDir) {
+        throw 'Unchecked installation registered the wrong directory.'
+    }
+
+    Start-InstallerSession 'maintenance-repair'
+    $state = Wait-InstallerPage 'Maintenance welcome' 'Welcome' '^Next\s*>?$'
+    Click-Control $state '^Next\s*>?$'
+    $state = Wait-InstallerPage 'Maintenance choices' 'Change, repair, or remove' '^Repair$'
+    $change = @($state.Controls | Where-Object { $_.ClassName -eq 'Button' -and ($_.Text -replace '&', '') -eq 'Change' })
+    if ($change.Count -ne 1 -or $change[0].Enabled) { throw 'Maintenance must disable Change for this package.' }
+    Click-Control $state '^<?\s*Back$'
+    $state = Wait-InstallerPage 'Maintenance welcome after Back' 'Welcome' '^Next\s*>?$'
+    Click-Control $state '^Next\s*>?$'
+    $state = Wait-InstallerPage 'Maintenance choices' 'Change, repair, or remove' '^Remove$'
+    Click-Control $state '^Remove$'
+    $state = Wait-InstallerPage 'Ready to remove' 'Ready to remove' '^Remove$'
+    Save-WindowEvidence $state.Window 'maintenance-remove-confirmation'
+    Click-Control $state '^<?\s*Back$'
+    $state = Wait-InstallerPage 'Maintenance choices after Back' 'Change, repair, or remove' '^Repair$'
+    Click-Control $state '^Repair$'
+    $state = Wait-InstallerPage 'Ready to repair' 'Ready to repair' '^Repair$'
+    Save-WindowEvidence $state.Window 'maintenance-repair-confirmation'
+    Click-Control $state '^Repair$'
+    $finish = Wait-SuccessfulFinish 'maintenance'
+    if (@($finish.Controls | Where-Object { ($_.Text -replace '&', '') -eq 'Launch Mervin PDF' }).Count -ne 0) {
+        throw 'Maintenance Finish must hide the launch checkbox.'
+    }
+    Save-WindowEvidence $finish.Window 'maintenance-finish'
+    Click-Control $finish '^Finish$'
+    Complete-InstallerSession
+    Assert-NoLaunch
+    if (-not (Test-Path $appExe) -or @(Get-MervinProducts).Count -ne 1) { throw 'Maintenance repair did not preserve the installed product.' }
+    if ((Get-ItemPropertyValue 'HKCU:\Software\Mervin PDF' -Name InstallDir).TrimEnd('\') -ne $installDir) {
+        throw 'Maintenance repair changed the installation directory.'
+    }
+
+    # A second fresh installation is needed to exercise checked Finish. Running
+    # the same installed product again would test maintenance instead.
+    $uninstallLog = Join-Path $OutputDir 'between-cases-uninstall.log'
+    $uninstall = Start-Process $msiexec -ArgumentList "/x `"$Msi`" /qn /norestart /l*v `"$uninstallLog`"" -PassThru
+    Write-Host "Between-cases uninstaller process $($uninstall.Id)."
+    try {
+        if (-not $uninstall.WaitForExit(120000)) {
+            $uninstall.Kill(); $uninstall.WaitForExit(10000) | Out-Null
+            throw 'Uninstall between UI cases timed out.'
+        }
+        if ($uninstall.ExitCode -ne 0 -or (Test-Path $appExe) -or @(Get-MervinProducts).Count -ne 0) { throw 'Uninstall between UI cases failed.' }
+    } finally { $uninstall.Dispose() }
+
+    $progressSeen = $false
+    Start-InstallerSession 'interactive-install'
 
     $state = Wait-InstallerPage 'Welcome' 'Welcome to' '^Next\s*>?$'
     Save-WindowEvidence $state.Window '01-welcome'
     Click-Control $state '^Next\s*>?$'
 
     $state = Wait-InstallerPage 'Destination folder' 'Destination Folder' '^Next\s*>?$'
-    $edits = @($state.Controls | Where-Object { $_.ClassName -in @('Edit', 'RichEdit20W') -and $_.Enabled })
-    if ($edits.Count -ne 1) { throw "Expected one destination field, found $($edits.Count)." }
-    # MSI commits PathEdit on focus loss. Editing a field that never received
-    # focus changes its displayed text without updating the directory property.
-    [MervinInstallerUi]::FocusControl($state.Window.Handle, $edits[0].Handle)
-    [MervinInstallerUi]::SetText($edits[0].Handle, "$installDir\")
-    $writtenField = [MervinInstallerUi]::Children($state.Window.Handle) |
-        Where-Object { $_.Handle -eq $edits[0].Handle }
-    if ($writtenField.Text.TrimEnd('\') -ne $installDir) { throw 'The destination field did not retain the chosen path.' }
+    Set-Destination $state
     Save-WindowEvidence $state.Window '02-destination'
     Click-Control $state '^Next\s*>?$'
 
@@ -312,27 +488,7 @@ close_to_tray = false
     Save-WindowEvidence $state.Window '03-ready'
     Click-Control $state '^Install$'
 
-    $watch = [Diagnostics.Stopwatch]::StartNew()
-    $finish = $null
-    while ($watch.Elapsed.TotalSeconds -lt 180 -and -not $finish) {
-        foreach ($state in @(Get-InstallerState)) {
-            $currentDialog = $state.Window
-            if ($state.Text -match 'Launch Mervin PDF' -and @(Get-EnabledButtons $state '^Finish$').Count -eq 1) {
-                $finish = $state
-                break
-            }
-            if (-not $progressSeen -and $state.Text -match 'Installing Mervin|Please wait while') {
-                Save-WindowEvidence $state.Window '04-progress'
-                $progressSeen = $true
-            }
-            if ($state.Text -match 'ended prematurely|installation failed|Could not|Error [0-9]') {
-                throw "Installation failed. $($state.Text)"
-            }
-        }
-        if ($setup.HasExited) { throw "Installer exited before Finish with $($setup.ExitCode)." }
-        Start-Sleep -Milliseconds 100
-    }
-    if (-not $finish) { throw 'Timed out waiting for the successful Finish page.' }
+    $finish = Wait-SuccessfulFinish '04'
     $checkbox = @($finish.Controls | Where-Object { ($_.Text -replace '&', '') -eq 'Launch Mervin PDF' })
     if ($checkbox.Count -ne 1 -or [MervinInstallerUi]::CheckState($checkbox[0].Handle) -ne 1) {
         throw 'Launch Mervin PDF must be checked by default.'
@@ -341,10 +497,12 @@ close_to_tray = false
     if (Get-Process MervinPDF -ErrorAction SilentlyContinue) { throw 'Mervin launched before Finish was clicked.' }
     Save-WindowEvidence $finish.Window '05-finish-launch-checked'
     Click-Control $finish '^Finish$'
-    if (-not $setup.WaitForExit(30000)) { throw 'The installer did not exit after Finish.' }
-    if ($setup.ExitCode -ne 0) { throw "Interactive installation returned $($setup.ExitCode)." }
+    Complete-InstallerSession
+    if (-not (Select-String -LiteralPath $log -Quiet -Pattern 'Doing action: LaunchMervin\b|Action start [^\r\n]*: LaunchMervin\.')) {
+        throw 'Checked Finish did not log LaunchMervin. The negative launch-log oracle cannot be trusted.'
+    }
 
-    $watch.Restart()
+    $watch = [Diagnostics.Stopwatch]::StartNew()
     $appWindow = $null
     while ($watch.Elapsed.TotalSeconds -lt 45 -and -not $appWindow) {
         $launchedApp = Get-Process MervinPDF -ErrorAction SilentlyContinue |
@@ -370,13 +528,17 @@ close_to_tray = false
         installDirectory = $installDir
         installerExitCode = $setup.ExitCode
         launchChecked = $true
+        uncheckedFinishNoLaunch = $true
+        cancelledBeforeInstall = $true
+        destinationSurvivesBack = $true
+        maintenanceRepairNoLaunch = $true
         launchedExecutable = $launchedApp.Path
         launchedProcessId = $launchedApp.Id
         runtimeModules = @($runtimeModules)
         progressObserved = $progressSeen
         windowTitle = $appWindow.Text
     } | ConvertTo-Json | Set-Content (Join-Path $OutputDir 'result.json')
-    Write-Host 'Native wizard navigation, destination selection, checked launch option and application launch passed.'
+    Write-Host 'Native Back/Cancel, unchecked Finish, maintenance Repair, checked Finish and application launch passed.'
 } catch {
     if ($setup -and -not $setup.HasExited) {
         $visibleState = Get-InstallerState | Select-Object -First 1
@@ -395,15 +557,20 @@ close_to_tray = false
     # installed executable path, can be stopped during teardown.
     foreach ($process in @(Get-Process MervinPDF -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $appExe })) {
         $process.CloseMainWindow() | Out-Null
-        if (-not $process.WaitForExit(5000)) { Stop-Process -Id $process.Id -Force }
+        if (-not $process.WaitForExit(5000)) { $process.Kill(); $process.WaitForExit(10000) | Out-Null }
+        $process.Dispose()
     }
-    if ($setup -and -not $setup.HasExited) { Stop-Process -Id $setup.Id -Force }
+    if ($launchedApp) { $launchedApp.Dispose() }
+    if ($setup) {
+        if (-not $setup.HasExited) { $setup.Kill(); $setup.WaitForExit(10000) | Out-Null }
+        $setup.Dispose()
+    }
     if ($installAttempted) {
         $log = Join-Path $OutputDir 'ui-test-uninstall.log'
         $uninstall = Start-Process $msiexec -ArgumentList "/x `"$Msi`" /qn /norestart /l*v `"$log`"" -PassThru
         Write-Host "Uninstaller process $($uninstall.Id)."
         if (-not $uninstall.WaitForExit(120000)) {
-            Stop-Process -Id $uninstall.Id -Force
+            $uninstall.Kill(); $uninstall.WaitForExit(10000) | Out-Null
             throw 'UI test cleanup timed out.'
         }
         if ($uninstall.ExitCode -notin @(0, 1605)) { throw "UI test uninstall returned $($uninstall.ExitCode)." }

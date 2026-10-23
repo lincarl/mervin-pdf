@@ -8,6 +8,7 @@
 #include "io/Background.h"
 #include "io/JobContext.h"
 #include "render/Document.h"
+#include "render/AnnotModel.h"
 #include "render/RenderEngine.h"
 #include "ui/MainWindow.h"
 #include "ui/TabPage.h"
@@ -243,7 +244,7 @@ private slots:
         profile_.reset();
     }
 
-    /// Checks that metadata reads return promptly and keep another tab editable.
+    /// Checks GUI progress and editing in another tab while metadata work is held.
     void securityInformationRunsOnAWorker()
     {
         QTemporaryDir files;
@@ -265,13 +266,31 @@ private slots:
             QCOMPARE(dialog.windowModality(), Qt::WindowModal);
             dialog.reject();
         };
-        QElapsedTimer elapsed;
-        elapsed.start();
         QVERIFY(QMetaObject::invokeMethod(&window, "openSecurity"));
-        QVERIFY(elapsed.elapsed() < 1000);
         QTRY_COMPARE(job::testing::held(), 1);
         QVERIFY(page->isBusy());
         QCOMPARE(dialogs.securityCount, 0);
+        int heartbeats = 0;
+        QTimer heartbeat;
+        connect(&heartbeat, &QTimer::timeout, this, [&] { ++heartbeats; });
+        heartbeat.start(0);
+        QTRY_VERIFY(heartbeats > 0);
+        const QString secondPath = files.filePath(QStringLiteral("second.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), secondPath));
+        QVERIFY(testing::openAndWait(window, secondPath));
+        auto *tabs = window.findChild<QTabWidget *>();
+        QVERIFY(tabs);
+        auto *second = qobject_cast<TabPage *>(tabs->currentWidget());
+        QVERIFY(second && second != page && second->isUsable());
+        const int note = second->viewer()->annotModel()->addTextNote(
+            0, {40, 40}, Qt::yellow, {}, QStringLiteral("Edited while Security waits"));
+        QVERIFY(note >= 0);
+        QVERIFY(second->hasUnsavedEdits());
+        const auto created = second->viewer()->annotModel()->annot(0, note);
+        QVERIFY(created.has_value());
+        QCOMPARE(created->contents, QStringLiteral("Edited while Security waits"));
+        QCOMPARE(job::testing::held(), 1);
+        tabs->setCurrentWidget(page);
         job::testing::release();
         QTRY_COMPARE(dialogs.securityCount, 1);
         QTRY_VERIFY(page->isUsable());
@@ -678,6 +697,18 @@ private slots:
         QTest::newRow("same first 127 bytes, AES-256")
             << bytes127 + QStringLiteral("read") << bytes127 + QStringLiteral("admin") << 0 << true
             << first127;
+        const QString unsupported = QString::fromUtf8("密码");
+        for (const int algorithm : {1, 2}) {
+            const QByteArray prefix = algorithm == 1 ? "AES-128" : "RC4-128";
+            QTest::newRow((prefix + " unencodable open password").constData())
+                << unsupported << QString() << algorithm << false
+                << QpdfService::passwordEncodingError();
+            QTest::newRow((prefix + " unencodable owner password").constData())
+                << QString() << unsupported << algorithm << false
+                << QpdfService::passwordEncodingError();
+        }
+        QTest::newRow("AES-256 accepts non-Latin passwords")
+            << unsupported << QString() << 0 << false << QString();
     }
 
     /// Checks that restrictions the open password would lift are refused inside the form.
@@ -716,6 +747,7 @@ private slots:
                 return ownerEdit->mapTo(&dialog, QPoint()).y();
             };
             const int top = ownerTop();
+            const int originalHeight = dialog.height();
             dialog.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
             if (!refused)
                 return;
@@ -729,6 +761,7 @@ private slots:
             ownerEdit->setText(QStringLiteral("other"));
             QVERIFY(error->isHidden());
             QCOMPARE(ownerTop(), top);
+            QTRY_COMPARE(dialog.height(), originalHeight);
             checked = true;
             dialog.reject();
         };
@@ -1874,15 +1907,21 @@ private slots:
             }
         });
         reject.start(5);
-        QElapsedTimer elapsed;
-        elapsed.start();
         QVERIFY(QMetaObject::invokeMethod(&window, "openSecurity"));
-        QVERIFY2(elapsed.elapsed() < 1000, qPrintable(QStringLiteral("Security took %1 ms").arg(elapsed.elapsed())));
+        QVERIFY(writer.holding());
         QVERIFY(page->isBusy());
+        int heartbeats = 0;
+        QTimer heartbeat;
+        connect(&heartbeat, &QTimer::timeout, this, [&] { ++heartbeats; });
+        heartbeat.start(0);
+        QTRY_VERIFY(heartbeats > 0);
+        QVERIFY(writer.holding());
         page->stopWaiting();
         writer.release();
-        QTRY_VERIFY_WITH_TIMEOUT(background::running() <= running, 10000);
-        QTest::qWait(50);
+        QTRY_VERIFY(background::running() <= running);
+        // The operation posts its result before retiring. Drain that delivery while
+        // the engine's persistent render workers remain alive.
+        QCoreApplication::processEvents();
         QCOMPARE(dialogs, 0);
         QVERIFY(page->isUsable());
     }

@@ -49,7 +49,7 @@ private:
     /// Refuses below the owner field, before the picker, an owner password keyed with the
     /// same bytes as the open password (QpdfService::keyBytes) while a permission is
     /// restricted. Passwords that differ only after the keyed part get a reason that names
-    /// the algorithm's limit.
+    /// the algorithm's limit. Refuses unencodable passwords before opening the picker.
     void doEncrypt();
     /// Confirms restriction removal when needed and accepts a decrypted-copy request.
     void doDecrypt(bool stripRestrictions); // false = remove password, true = strip
@@ -66,6 +66,7 @@ private:
     QLabel *infoLabel_ = nullptr;
     QFormLayout *encryptForm_ = nullptr;
     QLabel *error_ = nullptr;
+    int heightBeforeError_ = 0;
     QLineEdit *userEdit_ = nullptr;
     QLineEdit *ownerEdit_ = nullptr;
     QComboBox *algoCombo_ = nullptr;

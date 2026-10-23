@@ -4,10 +4,12 @@
 #include <QStringList>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <vector>
 
 class QNetworkAccessManager;
+class QSaveFile;
 
 namespace mervin::ocr {
 
@@ -22,6 +24,8 @@ class OcrProvisioner final : public QObject
 public:
     explicit OcrProvisioner(QObject *parent = nullptr, QNetworkAccessManager *network = nullptr,
                             int inactivityTimeoutMs = 30000);
+    // Aborts outstanding downloads. Already queued installations may finish; use
+    // cancel() first to prevent installations that have not started.
     ~OcrProvisioner() override;
 
     // Existing files are replaced only after the best model validates. Each
@@ -30,6 +34,12 @@ public:
     // Stops the downloads, and the installation of any that finished but whose
     // file the folder's thread has not started to install.
     void cancel();
+
+    enum class InstallPhase { BeforeWrite, BeforeCommit };
+    using InstallHook = std::function<void(QSaveFile &, InstallPhase)>;
+    // Set before start() for tests. Runs on the folder's thread with an open
+    // destination. Queued installations retain their own copy of the hook.
+    void setInstallHookForTesting(InstallHook hook);
 
 signals:
     void modelInstalled(const QString &model);
@@ -50,6 +60,7 @@ private:
     bool started_ = false;
     bool finished_ = false;
     int installing_ = 0; // completed downloads whose file is still being installed
+    InstallHook installHook_;
     // Read by the installations waiting on the folder's thread.
     std::shared_ptr<std::atomic<bool>> canceled_ = std::make_shared<std::atomic<bool>>(false);
     std::vector<std::unique_ptr<Download>> downloads_;

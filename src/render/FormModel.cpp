@@ -8,6 +8,7 @@
 #include <QByteArray>
 #include <QObject>
 
+#include <array>
 #include <functional>
 
 namespace mervin {
@@ -27,16 +28,58 @@ FormFieldType mapType(int wt)
     }
 }
 
-// Walk to the `idx`-th widget on `page` under the document lock and apply `op`
-// (which returns whether it changed the value). On a real change, resynthesise
-// the page's widget appearances. Returns true iff something changed.
+// MuPDF writes /V at the nearest ancestor with /T. Object identity, rather than
+// the displayed name, keeps independent fields with duplicate names separate.
+pdf_obj *fieldGroup(fz_context *ctx, pdf_obj *widget)
+{
+    // pdf_cycle imposes MuPDF's own depth bound. Stack storage also avoids
+    // leaking C++ allocations if a PDF lookup throws through fz_try.
+    std::array<pdf_cycle_list, 256> ancestors;
+    pdf_cycle_list *previous = nullptr;
+    size_t depth = 0;
+    for (pdf_obj *obj = widget; obj; obj = pdf_dict_get(ctx, obj, PDF_NAME(Parent))) {
+        if (depth == ancestors.size() || pdf_cycle(ctx, &ancestors[depth], previous, obj))
+            fz_throw(ctx, FZ_ERROR_FORMAT, "cyclic or excessive form field parent chain");
+        previous = &ancestors[depth++];
+        if (pdf_dict_get(ctx, obj, PDF_NAME(T)))
+            return obj;
+    }
+    return widget;
+}
+
+// A malformed candidate is not a sibling. Keep target validation and failures
+// unrelated to PDF format outside this recovery path.
+bool sharesFieldGroup(fz_context *ctx, pdf_obj *widget, pdf_obj *group)
+{
+    bool matches = false;
+    fz_var(matches);
+    fz_try(ctx) {
+        matches = pdf_objcmp(ctx, fieldGroup(ctx, widget), group) == 0;
+    }
+    fz_catch(ctx) {
+        fz_rethrow_unless(ctx, FZ_ERROR_FORMAT);
+        fz_report_error(ctx);
+    }
+    return matches;
+}
+
+// Keep every sibling page open during the edit. MuPDF resynthesises open pages
+// together and then clears its document flag, so opening siblings afterwards can
+// leave their saved /AP stale. Page dictionaries also cover widgets without /P.
 bool applyToWidget(const Document &doc, int page, int idx,
+                   std::vector<std::pair<int, int>> &affected,
+                   const QString *value,
                    const std::function<bool(fz_context *, pdf_annot *)> &op)
 {
+    affected.clear();
+    if (page < 0 || page >= doc.pageCount() || idx < 0)
+        return false;
     bool changed = false;
-    const bool ran = doc.withPdfDocument([&](fz_context *ctx, pdf_document *) {
+    const bool ran = doc.withPdfDocument([&](fz_context *ctx, pdf_document *pdf) {
         fz_page *fzpage = nullptr;
+        std::vector<fz_page *> siblings;
         fz_var(fzpage);
+        fz_var(siblings);
         fz_try(ctx) {
             fzpage = fz_load_page(ctx, doc.handle(), page);
             pdf_page *ppage = pdf_page_from_fz_page(ctx, fzpage);
@@ -45,6 +88,33 @@ bool applyToWidget(const Document &doc, int page, int idx,
                  w = pdf_next_widget(ctx, w), ++i) {
                 if (i != idx)
                     continue;
+                if (value && *value == QString::fromUtf8(pdf_annot_field_value(ctx, w)))
+                    break;
+                pdf_obj *group = fieldGroup(ctx, pdf_annot_obj(ctx, w));
+                for (int p = 0; p < doc.pageCount(); ++p) {
+                    pdf_obj *annots = pdf_dict_get(ctx, pdf_lookup_page_obj(ctx, pdf, p),
+                                                  PDF_NAME(Annots));
+                    bool sharesField = false;
+                    for (int a = 0; a < pdf_array_len(ctx, annots); ++a) {
+                        pdf_obj *annot = pdf_array_get(ctx, annots, a);
+                        if (pdf_name_eq(ctx, pdf_dict_get(ctx, annot, PDF_NAME(Subtype)),
+                                        PDF_NAME(Widget))
+                            && sharesFieldGroup(ctx, annot, group)) {
+                            sharesField = true;
+                            break;
+                        }
+                    }
+                    if (!sharesField)
+                        continue;
+                    fz_page *loaded = p == page ? fzpage : fz_load_page(ctx, doc.handle(), p);
+                    if (p != page)
+                        siblings.push_back(loaded);
+                    int field = 0;
+                    for (pdf_annot *s = pdf_first_widget(ctx, pdf_page_from_fz_page(ctx, loaded));
+                         s; s = pdf_next_widget(ctx, s), ++field)
+                        if (sharesFieldGroup(ctx, pdf_annot_obj(ctx, s), group))
+                            affected.emplace_back(p, field);
+                }
                 changed = op(ctx, w);
                 if (changed)
                     pdf_update_page(ctx, ppage);
@@ -52,6 +122,8 @@ bool applyToWidget(const Document &doc, int page, int idx,
             }
         }
         fz_always(ctx) {
+            for (fz_page *sibling : siblings)
+                fz_drop_page(ctx, sibling);
             if (fzpage)
                 fz_drop_page(ctx, fzpage);
         }
@@ -59,6 +131,8 @@ bool applyToWidget(const Document &doc, int page, int idx,
             fz_rethrow(ctx); // propagate so withPdfDocument reports failure
         }
     });
+    if (!ran || !changed)
+        affected.clear();
     return ran && changed;
 }
 
@@ -193,16 +267,14 @@ const std::vector<FormField> &FormModel::pageFields(int pageNo) const
 
 bool FormModel::setTextValue(int page, int fieldIndex, const QString &value)
 {
-    const bool changed = applyToWidget(doc_, page, fieldIndex, [&](fz_context *ctx, pdf_annot *w) {
-        const char *cur = pdf_annot_field_value(ctx, w);
-        if (value == QString::fromUtf8(cur ? cur : ""))
-            return false;
+    const bool changed = applyToWidget(doc_, page, fieldIndex, changedFields_, &value,
+                                      [&](fz_context *ctx, pdf_annot *w) {
         const QByteArray v = value.toUtf8();
-        pdf_set_text_field_value(ctx, w, v.constData());
-        return true;
+        return pdf_set_text_field_value(ctx, w, v.constData()) != 0;
     });
     if (changed) {
-        invalidatePage(page);
+        for (const auto &[p, field] : changedFields_)
+            invalidatePage(p);
         dirty_ = true;
     }
     return changed;
@@ -210,16 +282,14 @@ bool FormModel::setTextValue(int page, int fieldIndex, const QString &value)
 
 bool FormModel::setChoiceValue(int page, int fieldIndex, const QString &value)
 {
-    const bool changed = applyToWidget(doc_, page, fieldIndex, [&](fz_context *ctx, pdf_annot *w) {
-        const char *cur = pdf_annot_field_value(ctx, w);
-        if (value == QString::fromUtf8(cur ? cur : ""))
-            return false;
+    const bool changed = applyToWidget(doc_, page, fieldIndex, changedFields_, &value,
+                                      [&](fz_context *ctx, pdf_annot *w) {
         const QByteArray v = value.toUtf8();
-        pdf_set_choice_field_value(ctx, w, v.constData());
-        return true;
+        return pdf_set_choice_field_value(ctx, w, v.constData()) != 0;
     });
     if (changed) {
-        invalidatePage(page);
+        for (const auto &[p, field] : changedFields_)
+            invalidatePage(p);
         dirty_ = true;
     }
     return changed;
@@ -227,11 +297,19 @@ bool FormModel::setChoiceValue(int page, int fieldIndex, const QString &value)
 
 bool FormModel::toggle(int page, int fieldIndex)
 {
-    const bool changed = applyToWidget(doc_, page, fieldIndex, [&](fz_context *ctx, pdf_annot *w) {
-        return pdf_toggle_widget(ctx, w) != 0;
+    const bool changed = applyToWidget(doc_, page, fieldIndex, changedFields_, nullptr,
+                                      [&](fz_context *ctx, pdf_annot *w) {
+        const QString before = QString::fromUtf8(pdf_annot_field_value(ctx, w));
+        const QString appearance = QString::fromUtf8(
+            pdf_to_name(ctx, pdf_dict_get(ctx, pdf_annot_obj(ctx, w), PDF_NAME(AS))));
+        return pdf_toggle_widget(ctx, w) != 0
+               && (before != QString::fromUtf8(pdf_annot_field_value(ctx, w))
+                   || appearance != QString::fromUtf8(
+                       pdf_to_name(ctx, pdf_dict_get(ctx, pdf_annot_obj(ctx, w), PDF_NAME(AS)))));
     });
     if (changed) {
-        invalidatePage(page);
+        for (const auto &[p, field] : changedFields_)
+            invalidatePage(p);
         dirty_ = true;
     }
     return changed;
@@ -248,6 +326,7 @@ bool FormModel::saveTo(const QString &tmpPath, QString *error) const
 
 void FormModel::reset()
 {
+    changedFields_.clear();
     for (auto &c : cache_)
         c.reset();
 }

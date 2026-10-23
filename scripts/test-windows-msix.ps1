@@ -5,16 +5,20 @@
   Run under Windows PowerShell 5.1 on a disposable GitHub-hosted runner. The
   unsigned submission package stays unchanged. A temporary certificate signs
   only diagnostic copies and is removed from both certificate stores afterward.
-  Logs, screenshots, and an isolated profile remain under C:\dev-temp.
+  Tests accepted and corrupt documents in fresh profiles. Also checks package
+  data during upgrade and coexistence with the sibling MSI verification artifact.
+  Logs, screenshots, and isolated profiles remain under C:\dev-temp.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$Msix,
-    [string]$Fixture
+    [string]$Fixture,
+    [string]$Msi
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'windows-document-test-helpers.ps1')
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows' -or
     $env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
     throw 'MSIX lifecycle tests require a disposable GitHub-hosted Windows runner.'
@@ -40,6 +44,9 @@ $userChoice = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts
 $certificate = $null
 $app = $null
 $installedByTest = $false
+$msiAttempted = $false
+$normalData = Join-Path $env:APPDATA 'MervinPDF'
+$packageData = Join-Path $env:LOCALAPPDATA "Packages\$family"
 
 function Assert-Msix([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
@@ -54,6 +61,20 @@ function Get-PdfDefault {
 Assert-Msix (Test-Path -LiteralPath $fixturePath) 'The PDF fixture is missing. Supply -Fixture or configure with MERVIN_BUILD_TESTS=ON.'
 Assert-Msix (@(Get-AppxPackage -Name $name).Count -eq 0) 'An existing Mervin MSIX prevents lifecycle testing.'
 Assert-Msix (-not (Get-Process MervinPDF -ErrorAction SilentlyContinue)) 'Mervin is already running.'
+foreach ($path in @($normalData, $packageData, 'HKCU:\Software\MervinPDF',
+                    'HKCU:\Software\Classes\MervinPDF.Document',
+                    (Join-Path $env:LOCALAPPDATA 'Mervin PDF'),
+                    (Join-Path ([Environment]::GetFolderPath('Programs')) 'Mervin PDF.lnk'))) {
+    Assert-Msix (-not (Test-Path -LiteralPath $path)) "Existing Mervin state prevents coexistence testing: $path"
+}
+$msiEngine = New-Object -ComObject WindowsInstaller.Installer
+foreach ($product in $msiEngine.ProductsEx('', '', 7)) {
+    Assert-Msix ($product.InstallProperty('ProductName') -notlike 'Mervin PDF*') 'An existing Mervin MSI prevents coexistence testing.'
+}
+Assert-Msix (-not (Get-ItemPropertyValue 'HKCU:\Software\Mervin PDF' -Name InstallDir -ErrorAction SilentlyContinue)) 'An existing MSI installation directory prevents coexistence testing.'
+$msiCandidates = @(if ($Msi) { Get-Item -LiteralPath $Msi } else { Get-ChildItem -LiteralPath $build -Filter 'MervinPDF-*.msi' })
+Assert-Msix ($msiCandidates.Count -eq 1) 'Coexistence needs one sibling MSI artifact or an explicit -Msi.'
+$msiPath = $msiCandidates[0].FullName
 $originalHash = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash
 $beforeDefault = Get-PdfDefault
 
@@ -63,6 +84,23 @@ Assert-Msix (-not (Test-Path -LiteralPath $work)) 'MSIX test directory already e
 New-Item -ItemType Directory -Path $work | Out-Null
 if ($env:GITHUB_ENV) { "MERVIN_MSIX_TEST_DIR=$work" | Out-File $env:GITHUB_ENV -Append -Encoding utf8 }
 Start-Transcript -Path (Join-Path $work 'test.log') | Out-Null
+$msiDirectory = Join-Path $work 'MSI coexistence application'
+
+function Invoke-CoexistenceMsi([string]$Step, [string[]]$Options, [int[]]$ExpectedCodes = @(0, 3010)) {
+    $log = Join-Path $work "$Step.log"
+    $process = Start-Process "$env:SystemRoot\System32\msiexec.exe" -PassThru -ArgumentList (
+        $Options + @('/qn', '/norestart', '/L*v', "`"$log`""))
+    Write-Host "$Step process $($process.Id), log $log"
+    try {
+        if (-not $process.WaitForExit(300000)) {
+            $process.Kill()
+            $process.WaitForExit(10000) | Out-Null
+            throw "$Step timed out. See $log"
+        }
+        Assert-Msix ($process.ExitCode -in $ExpectedCodes) "$Step returned $($process.ExitCode). See $log"
+        Assert-Msix (-not (Select-String -LiteralPath $log -Quiet -Pattern 'Doing action: LaunchMervin\b|Action start [^\r\n]*: LaunchMervin\.')) "$Step executed the full-UI launch action. See $log"
+    } finally { $process.Dispose() }
+}
 
 # Locate one SDK containing both tools so packaging and signing use matching SDKs.
 $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
@@ -237,7 +275,13 @@ function Save-AppScreenshot([Diagnostics.Process]$Process, [string]$FileName) {
 function Start-PackagedApp([string]$Arguments, [string]$ExpectedPackageName) {
     $process = [MervinMsixTest]::Activate($aumid, $Arguments)
     Write-Output "Activated packaged application process $($process.Id)" | Out-Host
-    Assert-Msix ([MervinMsixTest]::PackageName($process) -eq $ExpectedPackageName) 'The activated process did not receive the expected package identity.'
+    try {
+        Assert-Msix ([MervinMsixTest]::PackageName($process) -eq $ExpectedPackageName) 'The activated process did not receive the expected package identity.'
+    } catch {
+        if (-not $process.HasExited) { $process.Kill(); $process.WaitForExit(10000) | Out-Null }
+        $process.Dispose()
+        throw
+    }
     $process
 }
 
@@ -307,14 +351,7 @@ try {
     Assert-Msix ((Get-PdfDefault) -eq $beforeDefault) 'MSIX installation changed the default PDF application.'
 
     $profile = Join-Path $work 'profile'
-    New-Item -ItemType Directory -Path $profile | Out-Null
-    @'
-ui_language = "en"
-auto_update = false
-close_to_tray = false
-restore_session = false
-default_zoom = "fit-page"
-'@ | Set-Content -LiteralPath (Join-Path $profile 'config.toml') -Encoding utf8
+    New-DocumentTestProfile $profile
     $sentinel = Join-Path $profile 'retained-user-data.txt'
     'Preserve isolated user data across package upgrade and removal.' |
         Set-Content -LiteralPath $sentinel -Encoding utf8
@@ -325,26 +362,45 @@ default_zoom = "fit-page"
 
     $app = Start-PackagedApp $arguments $package.PackageFullName
     Wait-DocumentWindow $app
+    Wait-DocumentLoad $app $profile $testPdf
     Save-AppScreenshot $app 'installed-application.png'
     Assert-Msix ($app.CloseMainWindow()) 'The packaged application did not accept close.'
     Assert-Msix ($app.WaitForExit(60000)) 'Packaged application did not exit after closing its window.'
     Assert-Msix ($app.ExitCode -eq 0) 'Packaged application returned an error.'
+    Assert-DocumentLoad $profile $testPdf
     $app.Dispose()
     $app = $null
 
+    $corruptPdf = Join-Path $work 'corrupt-test.pdf'
+    [IO.File]::WriteAllText($corruptPdf, "%PDF-1.7`nnot a valid document`n")
+    $corruptProfile = Join-Path $work 'profile-corrupt'
+    New-DocumentTestProfile $corruptProfile
+    $app = Start-PackagedApp "--profile `"$corruptProfile`" --language en --quit-after-startup `"$corruptPdf`"" $package.PackageFullName
+    Assert-Msix ($app.WaitForExit(60000)) 'Corrupt document load did not finish.'
+    Assert-Msix ($app.ExitCode -eq 0) 'Corrupt document crashed the packaged application.'
+    Assert-DocumentLoad $corruptProfile $corruptPdf $false
+    $app.Dispose()
+    $app = $null
+
+    # LocalState belongs to the installed package. Check its preservation during
+    # upgrade and MSI removal without assuming it survives MSIX uninstallation.
+    $localState = Join-Path $packageData 'LocalState'
+    New-Item -ItemType Directory -Path $localState -Force | Out-Null
+    $storeSentinel = Join-Path $localState 'installer-test-user-data.txt'
+    'Preserve package user data during upgrade and MSI coexistence.' | Set-Content -LiteralPath $storeSentinel -Encoding utf8
+    $storeSentinelHash = (Get-FileHash -LiteralPath $storeSentinel).Hash
+    $msiAttempted = $true
+    Invoke-CoexistenceMsi 'coexistence-install' @('/i', "`"$msiPath`"", "INSTALLFOLDER=`"$msiDirectory`"")
+    Assert-Msix (Test-Path -LiteralPath (Join-Path $msiDirectory 'MervinPDF.exe')) 'Coexisting MSI application is missing.'
+    Assert-Msix (-not (Get-Process MervinPDF -ErrorAction SilentlyContinue)) 'Coexisting silent MSI installation launched Mervin.'
+    $null = Get-TestPackage $version.ToString()
+    Assert-Msix ((Get-FileHash -LiteralPath $storeSentinel).Hash -eq $storeSentinelHash) 'MSI installation changed package user data.'
+    Assert-Msix ((Get-PdfDefault) -eq $beforeDefault) 'MSI coexistence changed the default PDF application.'
+
     # File activation supplies only the document path, as Explorer does. Seed the
     # unused disposable account so no welcome dialog or default-app prompt blocks it.
-    $normalData = Join-Path $env:APPDATA 'MervinPDF'
     Assert-Msix (-not (Test-Path -LiteralPath $normalData)) 'File activation needs an unused disposable application profile.'
-    New-Item -ItemType Directory -Path $normalData | Out-Null
-    @'
-ui_language = "en"
-auto_update = false
-close_to_tray = false
-restore_session = false
-prompted_set_default_app = true
-default_zoom = "fit-page"
-'@ | Set-Content -LiteralPath (Join-Path $normalData 'config.toml') -Encoding utf8
+    New-DocumentTestProfile $normalData
     $pdfProgId = Get-PackagePdfProgId
     Write-Output "Invoking registered PDF handler $pdfProgId"
     [MervinMsixTest]::OpenWithHandler($pdfProgId, $testPdf)
@@ -382,13 +438,26 @@ default_zoom = "fit-page"
     $package = Get-TestPackage $upgradeVersion
     Assert-Msix ((Get-PdfDefault) -eq $beforeDefault) 'MSIX upgrade changed the default PDF application.'
     Assert-Msix ((Get-FileHash -LiteralPath $sentinel).Hash -eq $sentinelHash) 'MSIX upgrade changed isolated user data.'
+    Assert-Msix ((Get-FileHash -LiteralPath $storeSentinel).Hash -eq $storeSentinelHash) 'MSIX upgrade changed package user data.'
+    Assert-Msix (Test-Path -LiteralPath (Join-Path $msiDirectory 'MervinPDF.exe')) 'MSIX upgrade removed the coexisting MSI application.'
+    Invoke-CoexistenceMsi 'coexistence-uninstall' @('/x', "`"$msiPath`"")
+    $msiAttempted = $false
+    Assert-Msix (-not (Test-Path -LiteralPath $msiDirectory)) 'MSI uninstall left its installed payload.'
+    $package = Get-TestPackage $upgradeVersion
+    Assert-Msix ((Get-FileHash -LiteralPath $storeSentinel).Hash -eq $storeSentinelHash) 'MSI uninstall changed package user data.'
+    $null = Get-PackagePdfProgId
 
+    $upgradedProfile = Join-Path $work 'profile-upgraded'
+    New-DocumentTestProfile $upgradedProfile
+    $arguments = "--profile `"$upgradedProfile`" --language en `"$testPdf`""
     $app = Start-PackagedApp $arguments $package.PackageFullName
     Wait-DocumentWindow $app
+    Wait-DocumentLoad $app $upgradedProfile $testPdf
     Save-AppScreenshot $app 'upgraded-application.png'
     Assert-Msix ($app.CloseMainWindow()) 'Upgraded application did not accept close.'
     Assert-Msix ($app.WaitForExit(60000)) 'Upgraded application did not exit.'
     Assert-Msix ($app.ExitCode -eq 0) 'Upgraded application returned an error.'
+    Assert-DocumentLoad $upgradedProfile $testPdf
     $app.Dispose()
     $app = $null
     # Appx properties can become unavailable as soon as the package is removed.
@@ -402,7 +471,7 @@ default_zoom = "fit-page"
     Assert-Msix ((Get-FileHash -LiteralPath $sentinel).Hash -eq $sentinelHash) 'Uninstall removed isolated user data outside the package.'
     Assert-Msix ((Get-PdfDefault) -eq $beforeDefault) 'MSIX uninstall changed the default PDF application.'
     Assert-Msix ((Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash -eq $originalHash) 'Test changed the unsigned submission package.'
-    Write-Output "MSIX install, package identity, document startup, file activation, upgrade, and uninstall passed. Diagnostics remain in $work"
+    Write-Output "MSIX document acceptance, corrupt document rejection, file activation, upgrade, MSI coexistence, and uninstall passed. Diagnostics remain in $work"
 } catch {
     $_ | Format-List -Property Exception, ScriptStackTrace -Force | Out-Host
     throw
@@ -410,6 +479,10 @@ default_zoom = "fit-page"
     if ($null -ne $app) {
         if (-not $app.HasExited) { $app.Kill(); $app.WaitForExit(10000) | Out-Null }
         $app.Dispose()
+    }
+    if ($msiAttempted) {
+        try { Invoke-CoexistenceMsi 'coexistence-cleanup' @('/x', "`"$msiPath`"") @(0, 3010, 1605) }
+        catch { Write-Warning "Coexistence MSI cleanup failed. $_" }
     }
     if ($installedByTest) {
         Get-AppxPackage -Name $name | Remove-AppxPackage -ErrorAction Continue

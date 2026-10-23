@@ -57,8 +57,10 @@ CloseFlow::~CloseFlow()
 {
     clearWait();
     releaseClaims();
-    if (!ended_ && global(intent_) && manager_ && manager_->closeFlows_.contains(this)) {
-        manager_->quitting_ = false;
+    if (!ended_ && manager_ && manager_->closeFlows_.contains(this)) {
+        if (global(intent_))
+            manager_->quitting_ = false;
+        ended_ = true;
         manager_->resumeInstanceOpens();
     }
 }
@@ -80,6 +82,21 @@ void CloseFlow::requestQuit(WindowManager *manager, bool restart)
 {
     if (manager)
         start(manager, nullptr, restart ? Intent::Restart : Intent::Quit);
+}
+
+bool CloseFlow::closesEveryWindow(const WindowManager *manager)
+{
+    if (!manager || manager->windows_.isEmpty())
+        return false;
+    return std::all_of(manager->windows_.cbegin(), manager->windows_.cend(),
+        [manager](MainWindow *window) {
+            return std::any_of(manager->closeFlows_.cbegin(), manager->closeFlows_.cend(),
+                [window](const QPointer<CloseFlow> &flow) {
+                    return flow && !flow->ended_
+                        && (global(flow->intent_)
+                            || (flow->intent_ == Intent::Window && flow->origin_ == window));
+                });
+        });
 }
 
 // Coalesces compatible close requests and begins collecting their current tab owners.
@@ -574,8 +591,9 @@ void CloseFlow::cancel()
     ended_ = true;
     clearWait();
     releaseClaims();
-    if (global(intent_) && manager_) {
-        manager_->quitting_ = false;
+    if (manager_) {
+        if (global(intent_))
+            manager_->quitting_ = false;
         manager_->resumeInstanceOpens();
     }
     deleteLater();
@@ -602,6 +620,12 @@ void CloseFlow::finish()
         if (targets.isEmpty())
             QCoreApplication::quit();
     } else if (intent == Intent::Window) {
+        if (manager && manager->windows_.size() == 1
+            && !targets.isEmpty() && targets.front() == manager->windows_.front()) {
+            manager->updateSession();
+            manager->sessionFinal_ = true;
+            manager->endHandoffs();
+        }
         if (!targets.isEmpty() && targets.front())
             targets.front()->closeForQuit();
     }

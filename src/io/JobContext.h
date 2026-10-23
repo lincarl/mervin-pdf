@@ -229,6 +229,8 @@ private:
 // but the GUI thread, which it would freeze. The functions given here run under the
 // hooks' own lock and must not call them.
 namespace testing {
+// Whether this callback runs inside a tab job, rather than a dialog's file probe.
+bool hasScope();
 // Blocks each step whose report `match` accepts until release(), as on a disk that
 // stopped answering. A commit is held before it begins, so a stop meanwhile refuses it.
 // DestinationLock's own report of the folder skips the hooks, so a writer held at its

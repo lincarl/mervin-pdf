@@ -27,6 +27,7 @@ private slots:
     void distanceReducesToPointDistanceWhenSquare();
     void areaOfUnitSquare();
     void rightAngleIsNinety();
+    void anisotropicGeometryUsesBothAxes();
     void ratioLabels();
     void formatters();
     void autoSiBrackets();
@@ -82,6 +83,20 @@ void TstMeasure::rightAngleIsNinety()
     QVERIFY(std::abs(a - 90.0) < 1e-6);
     const double straight = angleDeg(QPointF(0, 0), QPointF(1, 0), QPointF(-1, 0), s);
     QVERIFY(std::abs(straight - 180.0) < 1e-6);
+}
+
+void TstMeasure::anisotropicGeometryUsesBothAxes()
+{
+    MeasureScale scale;
+    scale.mmPerPointX = 2;
+    scale.mmPerPointY = 3;
+    scale.source = MeasureSource::Manual;
+    QCOMPARE(segmentMm({1, 2}, {4, 6}, scale), std::sqrt(180.0));
+    const std::vector<QPointF> rectangle{{1, 2}, {5, 2}, {5, 4}, {1, 4}};
+    QCOMPARE(areaMm2(rectangle, scale), 48.0);
+    QCOMPARE(perimeterMm(rectangle, scale), 28.0);
+    // These 45-degree page-space arms become (2,3) and (2,-3) in millimetres.
+    QVERIFY(std::abs(angleDeg({0, 0}, {1, 1}, {1, -1}, scale) - 112.61986494804043) < 1e-9);
 }
 
 void TstMeasure::ratioLabels()
@@ -156,14 +171,26 @@ void TstMeasure::resolveScalePicksInnermostViewport()
 
 void TstMeasure::resolveScaleHonoursOverride()
 {
-    PageMeasurement pm; // no embedded data
+    PageMeasurement pm;
+    pm.hasEmbedded = true;
+    MeasureViewport embedded;
+    embedded.bbox = QRectF(0, 0, 100, 100);
+    embedded.cx = 2;
+    embedded.cy = 3;
+    pm.viewports.push_back(embedded);
     MeasureScale ov = MeasureModel::fromRatio(50);
     const MeasureScale r = resolveScale(pm, QPointF(10, 10), ov);
     QCOMPARE(r.source, MeasureSource::Manual);
     QCOMPARE(r.label, QStringLiteral("1:50"));
+    QCOMPARE(r.mmPerPointX, kMmPerPoint * 50);
+    QCOMPARE(r.mmPerPointY, kMmPerPoint * 50);
+    const auto withoutOverride = resolveScale(pm, QPointF(10, 10), MeasureScale{});
+    QCOMPARE(withoutOverride.source, MeasureSource::Embedded);
+    QCOMPARE(withoutOverride.mmPerPointX, 2.0);
+    QCOMPARE(withoutOverride.mmPerPointY, 3.0);
 
     // With no embedded data and no override -> None.
-    const MeasureScale none = resolveScale(pm, QPointF(10, 10), MeasureScale{});
+    const MeasureScale none = resolveScale(PageMeasurement{}, QPointF(10, 10), MeasureScale{});
     QVERIFY(!none.valid());
 }
 

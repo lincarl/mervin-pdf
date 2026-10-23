@@ -5,6 +5,7 @@
 #include <QStringList>
 
 #include <memory>
+#include <functional>
 
 typedef struct fz_context fz_context;
 
@@ -35,6 +36,13 @@ public:
     void cancel();
 
     bool isRunning() const { return running_; }
+
+    struct testing {
+        enum class Phase { Started, Opening };
+        // Observes actual worker phases. Set before start; callbacks run off the UI thread.
+        static void observe(ContentSearch &search,
+                            std::function<void(Phase, const QString &)> observer);
+    };
 
 signals:
     // The first page (1-based) of `path` that contains the query, together with

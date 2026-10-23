@@ -148,8 +148,13 @@ public:
     // For tests only.
     struct testing
     {
+        // Fully constructed Documents so far, including those already destroyed.
+        static quint64 constructions();
         // ScreenQuery refusals so far in the process.
         static int refusals();
+        // Observes paint operations on the calling thread, before cancellation is checked.
+        // Install and clear on the render thread; the callback must not throw.
+        static void setRasterObserver(std::function<void()> observer);
     };
 
     // Own the document and, when requested, the independently cloned context.
@@ -174,6 +179,8 @@ public:
     };
     // Closes closeInBackground() has not finished.
     static int closing();
+    // Monotonic count of actual document closes completed by closeInBackground().
+    static quint64 completedCloses();
     // Waits up to `ms` milliseconds for the closes with a `then`, for the end of the
     // process: a `then` removes files the next copy must not find, such as a recovery
     // copy. True when none is left. Closes without one are not waited for.
@@ -271,6 +278,8 @@ public:
     // wide, so a black and white threshold acts on colours rather than on partial
     // coverage. The result is the part of `clip` inside the page, as RGB888, or null
     // on failure or when the page's raster reaches beyond kMaxDevicePixel.
+    // A stopped job returns null, including after partial painting. Cancellation
+    // is checked between paint operations and cannot interrupt one native call.
     QImage renderPage(int page, double scale, int rotation, const QRect &clip = {},
                       bool antialias = true) const;
 

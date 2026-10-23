@@ -724,15 +724,22 @@ private slots:
             QVERIFY(tab->isUnloading());
         }
         QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+        QVERIFY(tab->hasPendingRecoveryWrite());
         const int guiSteps = job::testing::stepsOnMainThread();
-        std::jthread releaseWorker([] {
-            QThread::msleep(80);
+        std::atomic<bool> observedSessionWait{false};
+        std::jthread releaseWorker([&] {
+            QDeadlineTimer deadline(5000);
+            while (!sessionend::active() && !deadline.hasExpired())
+                QThread::msleep(1);
+            observedSessionWait = sessionend::active();
             job::testing::release();
         });
         QElapsedTimer grace;
         grace.start();
         QCOMPARE(manager.prepareSessionEnd(1000), sessionend::Result::Settled);
-        QVERIFY(grace.elapsed() >= 60);
+        QVERIFY(!tab->hasPendingRecoveryWrite());
+        releaseWorker.join();
+        QVERIFY(observedSessionWait.load());
         QVERIFY(grace.elapsed() < 1000);
         QVERIFY(tab->isBusy());
         QCOMPARE(job::testing::stepsOnMainThread(), guiSteps);

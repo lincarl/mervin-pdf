@@ -19,14 +19,14 @@
         <source>%n file(s) in %1 already exist. Replace them?</source>
         <extracomment>Asked after Split found that some of the files it would write, such as plan-002.pdf, already exist. %n is the number of those files, %1 the folder Split writes to. Nothing has been replaced yet. Yes replaces those files and writes the others; No writes no file.</extracomment>
         <translation>
-            <numerusform>%n fichier dans %1 existe déjà. Voulez-vous le remplacer ?</numerusform>
-            <numerusform>%n fichiers dans %1 existent déjà. Voulez-vous les remplacer ?</numerusform>
+            <numerusform>%n fichier dans %1 existe déjà. Voulez-vous le remplacer&#xa0;?</numerusform>
+            <numerusform>%n fichiers dans %1 existent déjà. Voulez-vous les remplacer&#xa0;?</numerusform>
         </translation>
     </message>
     <message>
         <source>&quot;%1&quot; changed after Split checked it, so Split stopped without replacing it.</source>
         <extracomment>Split checked each of its files before writing. %1 is the name of one that another program changed, created or removed before Split replaced it. Split left that file as it is and wrote none of the files after it. The files with lower numbers that Split wrote before stay.</extracomment>
-        <translation>« %1 » a été modifié après la vérification, la séparation s&apos;est donc arrêtée sans le remplacer.</translation>
+        <translation>«&#xa0;%1&#xa0;» a été modifié après la vérification, la séparation s&apos;est donc arrêtée sans le remplacer.</translation>
     </message>
     <message>
         <source>Operation failed</source>
@@ -47,7 +47,7 @@
     <message>
         <source>Pages (e.g. &quot;%1&quot;, &quot;1-%2&quot;, &quot;1,3,5-9&quot;):</source>
         <extracomment>%1 is the word for every page (PageRange &quot;All&quot;), %2 the page count.</extracomment>
-        <translation>Pages (par ex. « %1 », « 1-%2 », « 1,3,5-9 ») :</translation>
+        <translation>Pages (par ex. «&#xa0;%1&#xa0;», «&#xa0;1-%2&#xa0;», «&#xa0;1,3,5-9&#xa0;») :</translation>
     </message>
     <message>
         <source>Done</source>
@@ -62,7 +62,7 @@ Open it now?</source>
         <translation>Enregistré dans&#xa0;:
 %1
 
-L&apos;ouvrir maintenant ?</translation>
+L&apos;ouvrir maintenant&#xa0;?</translation>
     </message>
     <message>
         <source>&amp;Rotate Pages</source>
@@ -240,6 +240,7 @@ Document modifié conservé à %2.
     </message>
     <message>
         <source>Split Pages</source>
+        <extracomment>Title of the action that saves each PDF page as a separate file. Split is an action, not an adjective describing pages that have already been split.</extracomment>
         <translation>Séparer les pages</translation>
     </message>
     <message>
@@ -614,7 +615,7 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
 Open the language manager to add a language (e.g. English)?</source>
         <translation>Aucune donnée de langue OCR n&apos;est installée.
 
-Ouvrir le gestionnaire de langues pour ajouter une langue (par exemple l&apos;anglais) ?</translation>
+Ouvrir le gestionnaire de langues pour ajouter une langue (par exemple l&apos;anglais)&#xa0;?</translation>
     </message>
     <message>
         <source>Recognizing…</source>
@@ -663,12 +664,12 @@ Ouvrir le gestionnaire de langues pour ajouter une langue (par exemple l&apos;an
     <message>
         <source>Range &quot;%1&quot; is out of range (1-%2).</source>
         <extracomment>%1 is the range typed, like &quot;30-40&quot;, %2 the document&apos;s last page.</extracomment>
-        <translation>La plage « %1 » est hors plage (1-%2).</translation>
+        <translation>La plage «&#xa0;%1&#xa0;» est hors plage (1-%2).</translation>
     </message>
     <message>
         <source>Range &quot;%1&quot; is backwards - write it as low-high.</source>
         <extracomment>%1 is the range typed, like &quot;12-1&quot;.</extracomment>
-        <translation>La plage « %1 » est inversée – écrivez-la comme bas-haut.</translation>
+        <translation>La plage «&#xa0;%1&#xa0;» est inversée – écrivez-la comme bas-haut.</translation>
     </message>
     <message>
         <source>All</source>
@@ -2078,7 +2079,7 @@ Le fichier exporté est visible dans n&apos;importe quel visualiseur PDF.</trans
     <message>
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
-        <translation>«&#xa0;%1&#xa0;» existe déjà. Le remplacer ?</translation>
+        <translation>«&#xa0;%1&#xa0;» existe déjà. Le remplacer&#xa0;?</translation>
     </message>
     <message>
         <source>Could not write &quot;%1&quot;. If another program has it open, close it and press Delete pages again, or choose another name.</source>
@@ -2241,7 +2242,7 @@ Le fichier exporté est visible dans n&apos;importe quel visualiseur PDF.</trans
     <message>
         <source>Could not copy &quot;%1&quot;: the file no longer exists.</source>
         <extracomment>%1 is the file&apos;s path.</extracomment>
-        <translation>Impossible de copier « %1 » : le fichier n&apos;existe plus.</translation>
+        <translation>Impossible de copier «&#xa0;%1&#xa0;» : le fichier n&apos;existe plus.</translation>
     </message>
 </context>
 <context>
@@ -2657,12 +2658,12 @@ Ouvrez les paramètres de votre système → Applications par défaut (ou clique
     <message>
         <source>The destination changed. Press Merge again to review it.</source>
         <extracomment>The output contents or target changed after this merge was approved. Nothing was replaced. Merge is the action button; pressing it checks the destination and asks before replacing an existing file.</extracomment>
-        <translation>La destination a changé. Cliquez à nouveau sur « Fusionner » pour la vérifier.</translation>
+        <translation>La destination a changé. Cliquez à nouveau sur «&#xa0;Fusionner&#xa0;» pour la vérifier.</translation>
     </message>
     <message>
         <source>Could not check the destination. Press Merge to try again, or choose another name.</source>
         <extracomment>The destination could not be read to verify replacement consent. Merge remains available to retry. Save as can choose another output. Technical I/O details are shown separately.</extracomment>
-        <translation>Impossible de vérifier la destination. Cliquez sur « Fusionner » pour réessayer ou choisissez un autre nom.</translation>
+        <translation>Impossible de vérifier la destination. Cliquez sur «&#xa0;Fusionner&#xa0;» pour réessayer ou choisissez un autre nom.</translation>
     </message>
     <message>
         <source>The file contains no pages.</source>
@@ -2730,7 +2731,7 @@ Ouvrez les paramètres de votre système → Applications par défaut (ou clique
     <message>
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is a file path.</extracomment>
-        <translation>«&#xa0;%1&#xa0;» existe déjà. Le remplacer ?</translation>
+        <translation>«&#xa0;%1&#xa0;» existe déjà. Le remplacer&#xa0;?</translation>
     </message>
     <message>
         <source>The merge failed on &quot;%1&quot;.</source>
@@ -2763,7 +2764,7 @@ Ouvrez les paramètres de votre système → Applications par défaut (ou clique
     <message>
         <source>&quot;%1&quot; has no pages.</source>
         <extracomment>%1 is a file name.</extracomment>
-        <translation>« %1 » n’a aucune page.</translation>
+        <translation>«&#xa0;%1&#xa0;» n’a aucune page.</translation>
     </message>
     <message>
         <source>Enter pages like 1-3, 5, 8-10.</source>
@@ -2987,7 +2988,7 @@ Ouvrez les paramètres de votre système → Applications par défaut (ou clique
     </message>
     <message>
         <source>A password contains characters that AES-128 and RC4-128 cannot use. Choose AES-256.</source>
-        <extracomment>Reason shown after &quot;The operation failed.&quot; when encrypting. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
+        <extracomment>Shown in the security dialog or after an encryption failure. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
         <translation>Un mot de passe contient des caractères qu&apos;AES-128 et RC4-128 ne peuvent pas utiliser. Choisissez AES-256.</translation>
     </message>
 </context>
@@ -3131,7 +3132,7 @@ Ce fichier n&apos;est plus sur le disque.</translation>
     <message>
         <source>&quot;%1&quot; could not be found.</source>
         <extracomment>%1 is the file&apos;s path.</extracomment>
-        <translation>« %1 » est introuvable.</translation>
+        <translation>«&#xa0;%1&#xa0;» est introuvable.</translation>
     </message>
     <message>
         <source>It may have been moved, renamed, or deleted.</source>
@@ -3415,7 +3416,7 @@ Ce fichier n&apos;est plus sur le disque.</translation>
 Continue?</source>
         <translation>Ceci écrit une copie avec toutes les restrictions de mot de passe du propriétaire supprimées (l&apos;impression, la copie et l&apos;édition deviennent autorisées).
 
-Continuer ?</translation>
+Continuer&#xa0;?</translation>
     </message>
     <message>
         <source>Operation failed</source>
@@ -3428,7 +3429,7 @@ Continuer ?</translation>
     <message>
         <source>&quot;%1&quot; already exists. Replace it?</source>
         <extracomment>%1 is the destination filename. The background check captured its contents before this question. Yes approves replacing that version; nothing has been replaced yet. A changed file will require another decision.</extracomment>
-        <translation>« %1 » existe déjà. Voulez-vous le remplacer ?</translation>
+        <translation>«&#xa0;%1&#xa0;» existe déjà. Voulez-vous le remplacer&#xa0;?</translation>
     </message>
     <message>
         <source>The destination changed. Try again to review it.</source>
@@ -3543,7 +3544,7 @@ Continuer ?</translation>
     <message>
         <source>component %1 lists the unichar &quot;%2&quot; twice</source>
         <extracomment>Detail for the damaged language data message. %1 is a component number, %2 the repeated character.</extracomment>
-        <translation>le composant %1 contient deux fois le caractère unichar « %2 »</translation>
+        <translation>le composant %1 contient deux fois le caractère unichar «&#xa0;%2&#xa0;»</translation>
     </message>
     <message>
         <source>Cannot read %1: %2</source>
@@ -4287,7 +4288,7 @@ Close Settings and other dialogs and wait for running operations to finish. Then
         <extracomment>Shown over the Settings window after Check for Updates downloaded an update, when Mervin could not close to install it or to restart into it, because an operation such as saving a file was still running or another dialog was open. A save chosen in the save prompt only starts once Settings closes, so the user closes Settings first. The download is kept. Settings is that window&apos;s title, and Check for Updates is its button in Settings &gt; Updates; use their translations.</extracomment>
         <translation>Impossible de fermer Mervin pour terminer la mise à jour.
 
-Fermez les Paramètres et les autres boîtes de dialogue, puis attendez la fin des opérations en cours. Choisissez ensuite à nouveau « Vérifier les mises à jour ».</translation>
+Fermez les Paramètres et les autres boîtes de dialogue, puis attendez la fin des opérations en cours. Choisissez ensuite à nouveau «&#xa0;Vérifier les mises à jour&#xa0;».</translation>
     </message>
     <message>
         <source>Couldn&apos;t start the installer. It is saved at:

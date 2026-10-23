@@ -52,7 +52,8 @@ namespace {
 
 // Validates the complete staging file, then copies it over `target` with QSaveFile,
 // which keeps the existing model intact if writing or committing fails.
-bool installStaged(Staging &staging, const QString &target)
+bool installStaged(Staging &staging, const QString &target,
+                   const OcrProvisioner::InstallHook &hook)
 {
     if (staging.failed.load() || !staging.file.flush()
         || !TessdataFile::validate(staging.file.fileName())
@@ -64,9 +65,13 @@ bool installStaged(Staging &staging, const QString &target)
         return false;
     while (!staging.file.atEnd()) {
         const QByteArray chunk = staging.file.read(kBufferSize);
+        if (hook)
+            hook(output, OcrProvisioner::InstallPhase::BeforeWrite);
         if (chunk.isEmpty() || output.write(chunk) != chunk.size())
             return false;
     }
+    if (hook)
+        hook(output, OcrProvisioner::InstallPhase::BeforeCommit);
     return output.commit();
 }
 
@@ -85,6 +90,11 @@ OcrProvisioner::OcrProvisioner(QObject *parent, QNetworkAccessManager *network,
 OcrProvisioner::~OcrProvisioner()
 {
     abortDownloads();
+}
+
+void OcrProvisioner::setInstallHookForTesting(InstallHook hook)
+{
+    installHook_ = std::move(hook);
 }
 
 void OcrProvisioner::start(const QStringList &models, const QString &directory)
@@ -197,8 +207,8 @@ void OcrProvisioner::complete(Download *download)
     ++installing_;
     TessdataManager::runInFolder(
         [staging = download->staging, target = download->target, received, installed,
-         canceled = canceled_] {
-            *installed = received && !canceled->load() && installStaged(*staging, target);
+         canceled = canceled_, hook = installHook_] {
+            *installed = received && !canceled->load() && installStaged(*staging, target, hook);
         },
         this, [this, model, installed] { finishInstall(model, *installed); });
     download->reply->disconnect(this);

@@ -21,9 +21,81 @@ private slots:
     }
     void cleanup()
     {
+        mervin::Settings::setPersistenceEnabled(true);
         QVERIFY(mervin::appfiles::flush(10000)); // before the test's folder goes
         mervin::ConfigPaths::setOverrideDir({});
         profile_.reset();
+    }
+
+    void authoredTomlLoadsWithoutRewriting_data()
+    {
+        QTest::addColumn<QByteArray>("bytes");
+        QTest::addColumn<bool>("valid");
+        QTest::newRow("valid nondefault values")
+            << QByteArray("annotation_author = 'Authored fixture'\n"
+                          "default_zoom = 'fit-page'\nclose_to_tray = false\n"
+                          "unload_inactive_minutes = 17\n") << true;
+        QTest::newRow("unterminated string")
+            << QByteArray("close_to_tray = false\nannotation_author = 'broken\n") << false;
+        QTest::newRow("duplicate key")
+            << QByteArray("close_to_tray = false\nclose_to_tray = true\n") << false;
+        QTest::newRow("invalid table") << QByteArray("[unfinished\n") << false;
+    }
+
+    // Load a fresh profile from authored bytes, before any cached or saved values.
+    void authoredTomlLoadsWithoutRewriting()
+    {
+        QFETCH(QByteArray, bytes);
+        QFETCH(bool, valid);
+        QFile file(mervin::ConfigPaths::configFile());
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(bytes), bytes.size());
+        file.close();
+        auto expected = mervin::Settings{};
+        if (valid) {
+            expected.annotationAuthor = QStringLiteral("Authored fixture");
+            expected.defaultZoom = QStringLiteral("fit-page");
+            expected.closeToTray = false;
+            expected.unloadInactiveMinutes = 17;
+        }
+        QVERIFY(mervin::Settings::load() == expected);
+        QVERIFY(mervin::appfiles::flush(10000));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), bytes);
+    }
+
+    // A standalone copy keeps local changes while preserving a primary's newer bytes.
+    void standaloneSettingsNeverWrite_data()
+    {
+        QTest::addColumn<bool>("ordered");
+        QTest::newRow("queued save") << false;
+        QTest::newRow("save with result") << true;
+    }
+
+    void standaloneSettingsNeverWrite()
+    {
+        QFETCH(bool, ordered);
+        auto settings = mervin::Settings::load();
+        settings.annotationAuthor = QStringLiteral("Before standalone launch");
+        QVERIFY(settings.save());
+        QVERIFY(mervin::appfiles::flush(10000));
+        mervin::Settings::setPersistenceEnabled(false);
+        QFile primary(mervin::ConfigPaths::configFile());
+        QVERIFY(primary.open(QIODevice::WriteOnly));
+        const QByteArray primaryBytes = "annotation_author = 'Updated by primary'\n";
+        QCOMPARE(primary.write(primaryBytes), primaryBytes.size());
+        primary.close();
+
+        settings.annotationAuthor = QStringLiteral("Standalone preference");
+        settings.windowGeometry = "standalone geometry";
+        QString error;
+        QVERIFY(settings.save(ordered ? &error : nullptr));
+        QVERIFY(error.isEmpty());
+        QCOMPARE(mervin::Settings::load().annotationAuthor, settings.annotationAuthor);
+        QCOMPARE(mervin::Settings::load().windowGeometry, settings.windowGeometry);
+        QVERIFY(mervin::appfiles::flush(10000));
+        QVERIFY(primary.open(QIODevice::ReadOnly));
+        QCOMPARE(primary.readAll(), primaryBytes);
     }
 
     void staleWindowPreservesNewPreferences()

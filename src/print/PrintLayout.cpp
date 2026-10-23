@@ -6,8 +6,32 @@
 
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 
 namespace mervin::printing {
+
+namespace testing {
+namespace {
+std::mutex hookMutex;
+std::function<bool(const Event &, const PrinterCall &)> workerHook;
+}
+
+void setHook(std::function<bool(const Event &, const PrinterCall &)> hook)
+{
+    std::lock_guard lock(hookMutex);
+    workerHook = std::move(hook);
+}
+
+bool checkpoint(const Event &event, const PrinterCall &call)
+{
+    std::function<bool(const Event &, const PrinterCall &)> hook;
+    {
+        std::lock_guard lock(hookMutex);
+        hook = workerHook;
+    }
+    return hook ? hook(event, call) : !call || call();
+}
+} // namespace testing
 
 namespace {
 

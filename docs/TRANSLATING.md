@@ -110,6 +110,13 @@ temporarily unavailable for use, rather than password-protected. Preserve the
 condition that it becomes usable when the drive responds. Follow the source note
 for each notice instead of implying that Stop immediately releases the document.
 
+Action titles such as "Split Pages" describe what a tool does. Do not translate
+them as completed-result adjectives such as "split pages" or "separated pages".
+Use the action form and grammatical case appropriate to the language. Keep
+drawing-scale terminology consistent between calibration, tooltips and readouts.
+French text uses nonbreaking spaces before question marks and inside guillemets
+so punctuation stays with the neighboring word or placeholder.
+
 A printer wait notice names the printer system, which can continue handling a call
 after Stop waiting. Distinguish a failure to finish submitting a print job from a
 failure to open the document. Earlier pages may already have reached the printer.
@@ -303,6 +310,16 @@ that Qt reports 1536 by 864 logical pixels and device pixel ratio 1.25. An avail
 physical area of 1920 by 1032 becomes approximately 1536 by 826 logical pixels. This emulates geometry; native checks still
 verify the visible taskbar and window decorations.
 
+For a desktop acceptance run, set `MERVIN_LAYOUT_DESKTOP=baseline` and run the
+executable on a real or isolated desktop with a window manager and visible taskbar.
+The suite requires 1536 by 864 logical screen pixels at device pixel ratio 1.25,
+checks window frames against the actual available work area, and checks footer
+actions. At the default font and window size, Settings General must show every
+group without scrolling. `MERVIN_LAYOUT_DESKTOP=compact` checks smaller work areas
+and verifies that scrolling reaches each General control. These modes show the
+windows instead of hiding them. Run desktop cases serially so concurrent windows
+do not affect placement. Linux runs do not establish Windows-only control fit.
+
 GitHub Actions supplies the same pinned Noto Sans fonts on Linux and Windows.
 The fetch script verifies every font and its SIL OFL license by SHA-256. The set
 covers extended Latin, Greek, Cyrillic, Armenian, Georgian, Arabic, Devanagari,
@@ -320,8 +337,9 @@ app uses installed system fonts. Linux installations need fonts covering the
 selected language, such as Noto Sans and the corresponding Noto CJK families.
 
 `tst_translation_layout` opens the ten custom dialogs in `src/dialogs/`, plus the
-measurement and annotation panels and a tab's slow load notice and wait bar in the
-main window, using real Qt widgets and the default dark stylesheet. It discovers every
+measurement and annotation panels, the permanent Recent/document tab row, and a
+tab's slow load notice and wait bar in the main window, using real Qt widgets and
+the default dark stylesheet. It discovers every
 compiled language through `i18n::availableLanguages()` and repeats each scenario at
 the default size and at the smallest size a user can resize each dialog to, with
 10-point and 15-point base fonts. CTest runs a separate
@@ -336,6 +354,8 @@ warning, print range validation and selected input, file and network errors. The
 load notice and the wait bar are checked at the main window's narrowest width, with a
 long folder and a file name that cannot wrap. The OCR language catalog uses a fake
 network reply so the test exercises the real dialog without external requests.
+Theme cards use their actual painted caption and indicator rectangles for font
+fit and overlap checks. Their caption height follows the current font metrics.
 `tst_text_fit` checks that the fitting helper accepts valid layouts and rejects
 deliberate clipping. Both tests run through CTest in GitHub Actions without AI.
 
@@ -359,8 +379,8 @@ A message that appears in an open dialog, such as Security's refusal below the o
 password, needs that minimum too, or Qt squeezes the message and the controls below
 it. Show the dialog in the layout scenario before the message appears, as the user
 sees it, because growing an open window takes a different path from sizing a new
-one. Put the spare height that remains after the message goes away where it does not
-move the field the user is correcting, for example in a stretch above the buttons.
+one. After the message clears, recompute the layout before removing height that
+was added for the error. Preserve deliberate user resizing.
 
 Wrapped labels need enough height at the dialog's minimum width, including after
 their text changes. Check sibling overlap as well as each label's own text area.

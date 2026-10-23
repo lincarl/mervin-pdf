@@ -5,6 +5,7 @@
 #include <QSize>
 
 #include <vector>
+#include <limits>
 
 namespace mervin {
 
@@ -69,6 +70,9 @@ public:
     int pageCount() const { return static_cast<int>(rects_.size()); }
 
     double scale() const { return scale_; }
+    // One document-wide limit keeps every row and both spread columns representable
+    // in Qt's integer canvas coordinates, under either page orientation.
+    double maximumScale() const { return maximumScale_; }
     int rotation() const { return rotation_; }
 
 private:
@@ -86,6 +90,8 @@ private:
     void rebuildSpreadPlan();
     void relayout();
     QSize displaySize(int pageNo) const;
+    void rebuildScaleLimit();
+    double boundedScale(double scale) const;
     // The rows a given mode actually lays out: the spread plan or one row per
     // page (the spread axis), narrowed to the row holding currentPage when the
     // scroll axis is Single. One definition, shared by relayout() and all three
@@ -116,6 +122,7 @@ private:
 
     const Document *doc_ = nullptr;
     double scale_ = 1.0;
+    double maximumScale_ = std::numeric_limits<double>::max();
     int rotation_ = 0;
     Mode mode_;
     int current_ = 0;

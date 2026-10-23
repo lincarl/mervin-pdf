@@ -2,8 +2,9 @@
 .SYNOPSIS
   Verify a built MSI on a disposable Windows user account or hosted CI runner.
 .DESCRIPTION
-  Refuses existing Mervin installations and data. Exercises silent installation,
-  installed application startup, upgrade, downgrade refusal, repair, and uninstall.
+  Refuses existing Mervin installations and data. Exercises passive installation,
+  accepted and rejected documents, silent upgrades, downgrade refusal, repair,
+  and uninstall while preserving user files.
   The MSI must come from scripts/deploy.ps1 with its staging tree still present.
   Retains logs and the
   isolated application profile under C:\dev-temp. Failures retain their state.
@@ -17,6 +18,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'windows-document-test-helpers.ps1')
 if (-not $IsWindows) { throw 'This test requires PowerShell 7 on Windows.' }
 if (-not $DisposableUser -and
     -not ($env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_ENVIRONMENT -eq 'github-hosted')) {
@@ -92,33 +94,81 @@ Start-Transcript -Path (Join-Path $work 'test.log') | Out-Null
 $installDir = Join-Path $work 'Installed application'
 $exe = Join-Path $installDir 'MervinPDF.exe'
 
-function Invoke-Msi([string]$Step, [string[]]$Options, [int[]]$ExpectedCodes = @(0, 3010)) {
+function Invoke-Msi([string]$Step, [string[]]$Options, [int[]]$ExpectedCodes = @(0, 3010),
+                    [ValidateSet('/qn', '/passive')][string]$UiMode = '/qn') {
     $log = Join-Path $work "$Step.log"
     $process = Start-Process "$env:SystemRoot\System32\msiexec.exe" -PassThru -ArgumentList (
-        $Options + @('/qn', '/norestart', '/L*v', "`"$log`""))
+        $Options + @($UiMode, '/norestart', '/L*v', "`"$log`""))
     Write-Output "$Step process $($process.Id), log $log"
-    if (-not $process.WaitForExit(300000)) {
-        $process.Kill($true)
-        throw "$Step timed out after five minutes. See $log"
+    try {
+        if (-not $process.WaitForExit(300000)) {
+            $process.Kill($true)
+            $process.WaitForExit(10000) | Out-Null
+            throw "$Step timed out after five minutes. See $log"
+        }
+        Assert-Installer ($process.ExitCode -in $ExpectedCodes) "$Step returned unexpected exit code $($process.ExitCode). See $log"
+        Assert-Installer (-not (Select-String -LiteralPath $log -Quiet -Pattern 'Doing action: LaunchMervin\b|Action start [^\r\n]*: LaunchMervin\.')) "$Step executed the full-UI launch action. See $log"
+    } finally { $process.Dispose() }
+}
+
+function Test-InstalledDocument([string]$Document, [string]$Case, [bool]$ExpectedLoaded) {
+    $profile = Join-Path $work "profile-$Case"
+    New-DocumentTestProfile $profile
+    $launchEnvironment = @{}
+    foreach ($name in @('PATH', 'QT_QPA_PLATFORM', 'QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH')) {
+        $launchEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
     }
-    Assert-Installer ($process.ExitCode -in $ExpectedCodes) "$Step returned unexpected exit code $($process.ExitCode). See $log"
+    $app = $null
+    try {
+        $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+        $env:QT_QPA_PLATFORM = 'windows'
+        $env:QT_PLUGIN_PATH = ''
+        $env:QT_QPA_PLATFORM_PLUGIN_PATH = ''
+        $app = Start-Process $exe -PassThru -WorkingDirectory $work `
+            -RedirectStandardOutput (Join-Path $work "$Case-stdout.log") `
+            -RedirectStandardError (Join-Path $work "$Case-stderr.log") `
+            -ArgumentList @('--profile', "`"$profile`"", '--language', 'en', '--quit-after-startup', "`"$Document`"")
+        Write-Output "$Case application process $($app.Id)"
+        Assert-Installer ($app.WaitForExit(60000)) "$Case application did not finish its load attempt."
+        Assert-Installer ($app.ExitCode -eq 0) "$Case application failed with exit code $($app.ExitCode)."
+        Assert-DocumentLoad $profile $Document $ExpectedLoaded
+    } finally {
+        foreach ($name in $launchEnvironment.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $launchEnvironment[$name], 'Process')
+        }
+        if ($null -ne $app) {
+            if (-not $app.HasExited) { $app.Kill($true); $app.WaitForExit(10000) | Out-Null }
+            $app.Dispose()
+        }
+    }
 }
 
 try {
-    # A verification-only newer product uses the same payload and never enters
-    # the release artifact directory. Its app binary retains its real version.
+    # Synthetic versions retain the real application binary. The intermediate
+    # payload owns an extra file so the next upgrade must remove obsolete files.
     $repository = Split-Path $PSScriptRoot -Parent
     $metadata = Get-Content (Join-Path $build 'generated\package-version.json') -Raw | ConvertFrom-Json
     $version = [Version]$metadata.msi_version
-    Assert-Installer ($version.Build -lt 65535) 'The test needs room for a higher MSI version.'
+    Assert-Installer ($version.Build -lt 65534) 'The test needs room for two higher MSI versions.'
     $upgradeVersion = '{0}.{1}.{2}' -f $version.Major, $version.Minor, ($version.Build + 1)
+    $explicitVersion = '{0}.{1}.{2}' -f $version.Major, $version.Minor, ($version.Build + 2)
     $upgradeMsi = Join-Path $work 'MervinPDF-upgrade-test.msi'
-    & wix build -arch x64 -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext `
-        -d "Version=$upgradeVersion" -d "DisplayVersion=$($metadata.version) upgrade verification" `
-        -d "DeployDir=$build\deploy" -d "IconFile=$repository\resources\icons\mervin-icon.ico" `
-        -d "DirectoryCleanup=$build\generated\installer-remove-folders.wxi" `
-        -o $upgradeMsi "$repository\packaging\wix\mervin.wxs"
-    Assert-Installer ($LASTEXITCODE -eq 0) 'Building the verification-only upgrade MSI failed.'
+    $explicitMsi = Join-Path $work 'MervinPDF-explicit-upgrade-test.msi'
+    $oldPayload = Join-Path $work 'intermediate-payload'
+    Copy-Item -LiteralPath (Join-Path $build 'deploy') -Destination $oldPayload -Recurse
+    $obsoleteName = 'installer-test-obsolete.txt'
+    'Owned only by the intermediate MSI.' | Set-Content -LiteralPath (Join-Path $oldPayload $obsoleteName)
+    foreach ($package in @(
+        @{ Version = $upgradeVersion; Path = $upgradeMsi; Payload = $oldPayload },
+        @{ Version = $explicitVersion; Path = $explicitMsi; Payload = (Join-Path $build 'deploy') }
+    )) {
+        & wix build -arch x64 -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext `
+            -d "Version=$($package.Version)" -d "DisplayVersion=$($metadata.version) upgrade verification" `
+            -d "DeployDir=$($package.Payload)" -d "IconFile=$repository\resources\icons\mervin-icon.ico" `
+            -d "DirectoryCleanup=$build\generated\installer-remove-folders.wxi" `
+            -o $package.Path "$repository\packaging\wix\mervin.wxs"
+        Assert-Installer ($LASTEXITCODE -eq 0) 'Building the verification-only upgrade MSI failed.'
+    }
 
     $beforeDefault = Read-RegistryValue $userChoice 'ProgId'
     $otherHandler = "InstallerTest.OtherPdf.$suffix"
@@ -142,9 +192,9 @@ restore_session = true
     $settingsHash = (Get-FileHash -LiteralPath $settings).Hash
     $modelHash = (Get-FileHash -LiteralPath $extraModel).Hash
 
-    Invoke-Msi 'install' @('/i', "`"$msiPath`"", "INSTALLFOLDER=`"$installDir`"")
+    Invoke-Msi 'install' @('/i', "`"$msiPath`"", "INSTALLFOLDER=`"$installDir`"") -UiMode '/passive'
     Start-Sleep -Seconds 1
-    Assert-Installer (-not (Get-Process MervinPDF -ErrorAction SilentlyContinue)) 'Silent installation launched Mervin.'
+    Assert-Installer (-not (Get-Process MervinPDF -ErrorAction SilentlyContinue)) 'Passive installation launched Mervin.'
     Assert-Installer (Test-Path -LiteralPath $exe) 'Installed application is missing.'
     & python (Join-Path $PSScriptRoot 'check-windows-payload.py') --directory $installDir `
         --report (Join-Path $work 'installed-payload.json')
@@ -166,31 +216,22 @@ restore_session = true
     Assert-Installer (-not (Test-Path -LiteralPath $englishModel)) 'Installer unexpectedly supplied an English OCR model.'
     Assert-Installer (@(Get-ChildItem -LiteralPath $installDir -Filter '*.traineddata' -Recurse).Count -eq 0) 'Application payload contains an OCR model.'
 
-    # Open a generated document with isolated state, no development DLL search
-    # directories, and a bounded exit after the selected document has loaded.
+    # Startup completion includes failed loads. Check fresh history after each
+    # bounded run instead of treating --quit-after-startup as a success signal.
     $testPdf = Join-Path $work 'generated-test.pdf'
     Copy-Item -LiteralPath $fixture -Destination $testPdf
-    $launchEnvironment = @{}
-    foreach ($name in @('PATH', 'QT_QPA_PLATFORM', 'QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH')) {
-        $launchEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    $corruptPdf = Join-Path $work 'corrupt-test.pdf'
+    [IO.File]::WriteAllText($corruptPdf, "%PDF-1.7`nnot a valid document`n")
+    Test-InstalledDocument $testPdf 'loaded-document' $true
+    Test-InstalledDocument $corruptPdf 'corrupt-document' $false
+
+    $retainedFiles = @{}
+    foreach ($relative in @('user-notes.txt', 'platforms\user-notes.txt')) {
+        $path = Join-Path $installDir $relative
+        Assert-Installer (-not (Test-Path -LiteralPath $path)) "User preservation fixture collides with payload: $path"
+        'Keep user bytes inside an installation directory.' | Set-Content -LiteralPath $path
+        $retainedFiles[$path] = (Get-FileHash -LiteralPath $path).Hash
     }
-    try {
-        $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
-        $env:QT_QPA_PLATFORM = 'windows'
-        $env:QT_PLUGIN_PATH = ''
-        $env:QT_QPA_PLATFORM_PLUGIN_PATH = ''
-        $app = Start-Process $exe -PassThru -WorkingDirectory $work `
-            -RedirectStandardOutput (Join-Path $work 'app-stdout.log') `
-            -RedirectStandardError (Join-Path $work 'app-stderr.log') `
-            -ArgumentList @('--profile', "`"$work\profile`"", '--language', 'en', '--quit-after-startup', "`"$testPdf`"")
-    } finally {
-        foreach ($name in $launchEnvironment.Keys) {
-            [Environment]::SetEnvironmentVariable($name, $launchEnvironment[$name], 'Process')
-        }
-    }
-    Write-Output "Application process $($app.Id)"
-    if (-not $app.WaitForExit(60000)) { $app.Kill($true); throw 'Installed application failed to exit after startup.' }
-    Assert-Installer ($app.ExitCode -eq 0) "Installed application failed with exit code $($app.ExitCode)."
 
     # Simulate an existing English model and preserve its bytes and timestamp.
     Copy-Item -LiteralPath $extraModel -Destination $englishModel
@@ -203,17 +244,38 @@ restore_session = true
     $registration = @(Find-MervinRegistration)
     Assert-Installer ($registration.Count -eq 1 -and $registration[0].Version -eq $upgradeVersion) 'Upgrade left an incorrect product registration.'
     Assert-Installer ((Get-Item -LiteralPath $englishModel).LastWriteTimeUtc -eq $modelTimestamp) 'Upgrade overwrote the existing OCR model.'
+    Assert-Installer (Test-Path -LiteralPath (Join-Path $installDir $obsoleteName)) 'Intermediate package did not install its distinct payload.'
+    foreach ($path in $retainedFiles.Keys) {
+        Assert-Installer ((Get-FileHash -LiteralPath $path).Hash -eq $retainedFiles[$path]) 'Upgrade changed a user file inside the installation.'
+    }
+    $previousDir = $installDir
+    $installDir = Join-Path $work 'Explicit upgrade destination'
+    $exe = Join-Path $installDir 'MervinPDF.exe'
+    Invoke-Msi 'explicit-upgrade' @('/i', "`"$explicitMsi`"", "INSTALLFOLDER=`"$installDir`"")
+    Assert-Installer ((Read-RegistryValue $installKey 'InstallDir').TrimEnd('\') -eq $installDir) 'Explicit upgrade destination did not override the previous folder.'
+    Assert-Installer (Test-Path -LiteralPath $exe) 'Explicit upgrade did not install the application.'
+    Assert-Installer (@(Get-ChildItem -LiteralPath $previousDir -File -Recurse).Count -eq $retainedFiles.Count) 'Explicit upgrade left old payload files beside retained user files.'
+    Assert-Installer (-not (Test-Path -LiteralPath (Join-Path $installDir $obsoleteName))) 'Explicit upgrade retained an obsolete payload file.'
+    $registration = @(Find-MervinRegistration)
+    Assert-Installer ($registration.Count -eq 1 -and $registration[0].Version -eq $explicitVersion) 'Explicit upgrade left an incorrect product registration.'
+    $link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
+    Assert-Installer ($link.TargetPath -eq $exe) 'Explicit upgrade did not retarget the Start menu shortcut.'
+    Assert-Installer ((Read-RegistryValue "$progIdKey\shell\open\command" '') -eq "`"$exe`" `"%1`"") 'Explicit upgrade did not retarget PDF activation.'
+    Assert-Installer (-not (Get-Process MervinPDF -ErrorAction SilentlyContinue)) 'Silent upgrade launched Mervin.'
+    $newUserFile = Join-Path $installDir 'platforms\user-notes.txt'
+    'Keep this user file after uninstall.' | Set-Content -LiteralPath $newUserFile
+    $retainedFiles[$newUserFile] = (Get-FileHash -LiteralPath $newUserFile).Hash
     Invoke-Msi 'downgrade' @('/i', "`"$msiPath`"") @(1603, 1638)
     Assert-Installer (Select-String -LiteralPath "$work\downgrade.log" -SimpleMatch -Quiet `
         'A newer version of Mervin PDF is already installed.') 'Downgrade failed for an unexpected reason.'
 
     Remove-Item -LiteralPath $exe, $shortcut
-    Invoke-Msi 'repair' @('/famus', "`"$upgradeMsi`"")
+    Invoke-Msi 'repair' @('/famus', "`"$explicitMsi`"")
     Assert-Installer (Test-Path -LiteralPath $exe) 'Repair did not restore the application.'
     Assert-Installer (Test-Path -LiteralPath $shortcut) 'Repair did not restore the shortcut.'
-    Invoke-Msi 'uninstall' @('/x', "`"$upgradeMsi`"")
+    Invoke-Msi 'uninstall' @('/x', "`"$explicitMsi`"")
     Assert-Installer (-not (Get-Process MervinPDF -ErrorAction SilentlyContinue)) 'Repair or uninstall launched Mervin.'
-    foreach ($path in @($installDir, $shortcut, $capabilitiesKey, $progIdKey)) {
+    foreach ($path in @($exe, $shortcut, $capabilitiesKey, $progIdKey)) {
         Assert-Installer (-not (Test-Path -LiteralPath $path)) "Uninstall left an owned resource: $path"
     }
     Assert-Installer ($null -eq (Read-RegistryValue $installKey 'InstallDir')) 'Uninstall left its install directory registration.'
@@ -229,6 +291,13 @@ restore_session = true
     }
     Assert-Installer ((Get-Item -LiteralPath $englishModel).LastWriteTimeUtc -eq $modelTimestamp) 'Repair or uninstall overwrote the existing OCR model.'
     Assert-Installer ((Read-RegistryValue $userChoice 'ProgId') -eq $beforeDefault) 'Uninstall changed the default PDF handler.'
+    foreach ($path in $retainedFiles.Keys) {
+        Assert-Installer ((Get-FileHash -LiteralPath $path).Hash -eq $retainedFiles[$path]) "Upgrade, repair or uninstall changed a user file: $path"
+    }
+    $remaining = @(Get-ChildItem -LiteralPath $previousDir, $installDir -File -Recurse)
+    Assert-Installer ($remaining.Count -eq $retainedFiles.Count) 'Uninstall left application files in a directory containing user data.'
+    $remainingDirectories = @(Get-ChildItem -LiteralPath $previousDir, $installDir -Directory -Recurse)
+    Assert-Installer ($remainingDirectories.Count -eq 2 -and @($remainingDirectories | Where-Object { $_.Name -ne 'platforms' }).Count -eq 0) 'Uninstall left empty payload directories.'
 
     # Remove only synthetic user data and neighboring values after success.
     foreach ($key in @($registeredApps, $openWith)) { Remove-ItemProperty -LiteralPath $key -Name $otherHandler }

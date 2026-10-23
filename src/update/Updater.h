@@ -16,6 +16,7 @@ QT_BEGIN_NAMESPACE
 class QNetworkAccessManager;
 class QNetworkReply;
 class QProgressDialog;
+class QTemporaryDir;
 QT_END_NAMESPACE
 
 namespace mervin {
@@ -124,10 +125,12 @@ private:
     void installWhenIdle(); // manual checks can finish over Settings
     void pollInstall();
     bool shouldWaitForDialogs() const;
-    // Installs `file`, a verified download of `version` whose SHA-256 is `sha256`
-    // (empty if an older version recorded it). Ends the operation instead when
-    // the file is not this kind's package.
+    // Copies and verifies `file` into private staging before installation.
+    // Requires the expected SHA-256 obtained from the HTTPS release API.
     void install(const QString &file, const QString &version, const QString &sha256);
+    void installStaged(const QString &file, const QString &version, const QString &sha256);
+    void offerManualDownload(const QString &version, const QString &pageUrl);
+    void clearStaging();
     void handOffToInstaller(const QString &file, const QString &version, const QString &sha256);
     void installWithPackageManager(const QString &file, const QString &version);
     void runPackageManager(const QStringList &command, const QString &file, const QString &version);
@@ -154,6 +157,11 @@ private:
     QCryptographicHash hash_{QCryptographicHash::Sha256};
     update::ReleaseAsset asset_;
     QString downloadVersion_;
+    QString releasePageUrl_;
+    // Only this independent, verified copy reaches an installer. The original
+    // cache file remains pending for retries. Cleared on the disk thread.
+    std::shared_ptr<QTemporaryDir> staging_;
+    QString stagedFile_;
     QPointer<QProgressDialog> progress_;
     std::function<CloseResult()> closeWindows_;
     QDateTime lastCheck_;

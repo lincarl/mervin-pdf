@@ -10,6 +10,7 @@
 
 #include <QByteArray>
 #include <QPointer>
+#include <QScopeGuard>
 #include <QtGlobal>
 
 #include <algorithm>
@@ -362,6 +363,7 @@ ImageProbe embeddedImageProbe(fz_context *ctx, fz_image *img)
         // no ink evidence", i.e. leave the picture alone - and a scanned page
         // still inverts, because pageCoverage does not depend on decoding.
         out = ImageProbe{};
+        (void)fz_convert_error(ctx, nullptr);
     }
     return out;
 }
@@ -428,6 +430,7 @@ struct RenderEngine::Shared
         RenderRequest request;
         std::shared_ptr<DocumentLifetime> lifetime;
         std::atomic<bool> canceled{false};
+        bool active = false; // guarded by queueMutex
     };
 
     std::mutex queueMutex;
@@ -435,6 +438,11 @@ struct RenderEngine::Shared
     std::deque<std::shared_ptr<Job>> queue; // guarded by queueMutex
     std::vector<std::weak_ptr<Job>> jobs;   // includes active jobs; guarded by queueMutex
     std::atomic<bool> stop{false};
+    std::atomic<int> rasterizations{0};
+    std::atomic<int> cacheTrims{0};
+    int activeWorkers = 0; // guarded by queueMutex, as are the trim flags
+    bool trimPending = false;
+    bool trimPosted = false;
     QPointer<QObject> owner; // the engine, which results go to on its thread
 };
 
@@ -671,9 +679,9 @@ QImage RenderEngine::renderPageImage(Document *doc, int pageNo, double scale, in
     if (query.refused())
         return {};
 
-    // Serialize against the worker pool / TextIndex: a single fz_document's
-    // object cache is not thread-safe (see Document). We render on the base
-    // context, which is only ever touched from this (the UI) thread.
+    // Serialize this document's object cache against worker and TextIndex reads.
+    // This synchronous path uses the base context on the engine's thread. Shared
+    // MuPDF cache and lcms allocator callbacks also reach it from worker threads.
     std::lock_guard<std::mutex> docLk(doc->accessMutex());
 
     fz_document *fdoc = doc->handle();
@@ -702,6 +710,7 @@ QImage RenderEngine::renderPageImage(Document *doc, int pageNo, double scale, in
     }
     fz_catch(base) {
         out = QImage();
+        (void)fz_convert_error(base, nullptr);
     }
     return out;
 }
@@ -736,15 +745,78 @@ void RenderEngine::submit(const RenderRequest &req)
 
 void RenderEngine::cancelRequests(quint64 requester)
 {
-    std::lock_guard<std::mutex> lk(shared_->queueMutex);
-    for (auto &weak : shared_->jobs)
-        if (auto job = weak.lock(); job && job->request.requester == requester)
-            job->canceled.store(true);
-    std::erase_if(shared_->queue, [](const auto &job) { return job->canceled.load(); });
+    {
+        std::lock_guard<std::mutex> lk(shared_->queueMutex);
+        for (auto &weak : shared_->jobs)
+            if (auto job = weak.lock(); job && job->request.requester == requester)
+                job->canceled.store(true);
+        std::erase_if(shared_->queue, [](const auto &job) { return job->canceled.load(); });
+    }
+    postCacheTrimIfIdle(shared_);
+}
+
+int RenderEngine::testing::pendingRequests(const RenderEngine &engine, quint64 requester)
+{
+    std::lock_guard lock(engine.shared_->queueMutex);
+    return std::count_if(engine.shared_->jobs.begin(), engine.shared_->jobs.end(),
+                         [requester](const auto &weak) {
+        const auto job = weak.lock();
+        return job && job->request.requester == requester;
+    });
+}
+
+int RenderEngine::testing::activeRequests(const RenderEngine &engine, quint64 requester)
+{
+    std::lock_guard lock(engine.shared_->queueMutex);
+    return std::count_if(engine.shared_->jobs.begin(), engine.shared_->jobs.end(),
+                         [requester](const auto &weak) {
+        const auto job = weak.lock();
+        return job && job->active && job->request.requester == requester;
+    });
+}
+
+int RenderEngine::testing::rasterizations(const RenderEngine &engine)
+{
+    return engine.shared_->rasterizations.load();
+}
+
+int RenderEngine::testing::cacheTrims(const RenderEngine &engine)
+{
+    return engine.shared_->cacheTrims.load();
+}
+
+void RenderEngine::scheduleCacheTrim()
+{
+    {
+        std::lock_guard lock(shared_->queueMutex);
+        shared_->trimPending = true;
+    }
+    postCacheTrimIfIdle(shared_);
+}
+
+void RenderEngine::postCacheTrimIfIdle(const std::shared_ptr<Shared> &shared)
+{
+    std::lock_guard lock(shared->queueMutex);
+    if (!shared->trimPending || shared->trimPosted || shared->stop.load()
+        || shared->activeWorkers || !shared->queue.empty())
+        return;
+    shared->trimPosted = true;
+    background::post(shared->owner, [shared] {
+        {
+            std::lock_guard lock(shared->queueMutex);
+            shared->trimPosted = false;
+            if (shared->stop.load() || !shared->trimPending
+                || shared->activeWorkers || !shared->queue.empty())
+                return;
+            shared->trimPending = false;
+        }
+        static_cast<RenderEngine *>(shared->owner.data())->trimCache();
+    });
 }
 
 void RenderEngine::trimCache()
 {
+    ++shared_->cacheTrims;
     // Each eviction makes fz_shrink_store scan the store again for the entries it still
     // has to free, so one call that frees everything takes time quadratic in the number
     // of entries. Lowering the target by 1% of the store's limit at a time keeps each
@@ -773,7 +845,19 @@ void RenderEngine::workerLoop(const std::shared_ptr<Shared> &shared, fz_context 
             // Most-recently-requested first: keeps the visible viewport responsive.
             job = shared->queue.back();
             shared->queue.pop_back();
+            job->active = true;
+            ++shared->activeWorkers;
         }
+
+        // Release late display-list resources before a requested close-time trim.
+        const auto retire = qScopeGuard([&] {
+            job.reset();
+            {
+                std::lock_guard lock(shared->queueMutex);
+                --shared->activeWorkers;
+            }
+            postCacheTrimIfIdle(shared);
+        });
 
         if (job->canceled.load())
             continue;
@@ -825,6 +909,7 @@ void RenderEngine::workerLoop(const std::shared_ptr<Shared> &shared, fz_context 
             fz_catch(ctx) {
                 res.ok = false;
                 res.error = QString::fromUtf8(fz_caught_message(ctx));
+                (void)fz_convert_error(ctx, nullptr);
             }
         }
 
@@ -845,6 +930,7 @@ void RenderEngine::workerLoop(const std::shared_ptr<Shared> &shared, fz_context 
         // store. The store.c patches in scripts/mupdf-patches keep a tile that a
         // worker has just found or is storing valid (see "MuPDF patches" in
         // design.md).
+        ++shared->rasterizations;
         fz_device *imgDev = nullptr;
         fz_var(imgDev);
         // Comfort only: raster-image bboxes + per-image treatment decisions.
@@ -1065,6 +1151,7 @@ void RenderEngine::workerLoop(const std::shared_ptr<Shared> &shared, fz_context 
         fz_catch(ctx) {
             res.ok = false;
             res.error = QString::fromUtf8(fz_caught_message(ctx));
+            (void)fz_convert_error(ctx, nullptr);
         }
 
         // The transform is per-pixel (switching treatment at image-rect

@@ -13,7 +13,9 @@
 
 namespace {
 
-std::array<QDockWidget *, 3> makeSidebars(QMainWindow &window)
+std::array<QDockWidget *, 3> makeSidebars(
+    QMainWindow &window, Qt::DockWidgetArea area = Qt::LeftDockWidgetArea,
+    const std::array<int, 3> &order = {0, 1, 2})
 {
     window.setAttribute(Qt::WA_DontShowOnScreen);
     window.resize(1100, 820);
@@ -29,11 +31,11 @@ std::array<QDockWidget *, 3> makeSidebars(QMainWindow &window)
         auto *dock = new QDockWidget(QLatin1String(names[i]), &window);
         dock->setObjectName(QLatin1String(names[i]));
         dock->setWidget(new QLabel(QStringLiteral("Sidebar")));
-        window.addDockWidget(Qt::LeftDockWidgetArea, dock);
+        window.addDockWidget(area, dock);
         docks[i] = dock;
     }
-    window.tabifyDockWidget(docks[0], docks[1]);
-    window.tabifyDockWidget(docks[1], docks[2]);
+    window.tabifyDockWidget(docks[size_t(order[0])], docks[size_t(order[1])]);
+    window.tabifyDockWidget(docks[size_t(order[0])], docks[size_t(order[2])]);
     return docks;
 }
 
@@ -98,7 +100,52 @@ private slots:
     void sidebarsStillOpenCloseAndSwitch();
     void restoredSidebarsStayInMainWindow_data();
     void restoredSidebarsStayInMainWindow();
+    void migrationKeepsValidOrder_data();
+    void migrationKeepsValidOrder();
 };
+
+void TstSidebarLayout::migrationKeepsValidOrder_data()
+{
+    QTest::addColumn<Qt::DockWidgetArea>("area");
+    QTest::newRow("left order retained") << Qt::LeftDockWidgetArea;
+    QTest::newRow("right migrated") << Qt::RightDockWidgetArea;
+    QTest::newRow("bottom migrated") << Qt::BottomDockWidgetArea;
+}
+
+// Valid left-side order survives, while unsupported areas use the repair order.
+void TstSidebarLayout::migrationKeepsValidOrder()
+{
+    QFETCH(Qt::DockWidgetArea, area);
+    QMainWindow window;
+    const auto docks = makeSidebars(window, area, {2, 0, 1});
+    window.show();
+    QTRY_VERIFY(sidebarTabBar(window, QStringLiteral("commentsDock")));
+    const auto orderOf = [&window] {
+        QStringList result;
+        if (auto *bar = sidebarTabBar(window, QStringLiteral("commentsDock")))
+            for (int i = 0; i < bar->count(); ++i)
+                result.append(bar->tabText(i));
+        return result;
+    };
+    const QStringList originalOrder{QStringLiteral("commentsDock"),
+                                    QStringLiteral("thumbnailDock"),
+                                    QStringLiteral("outlineDock")};
+    QCOMPARE(orderOf(), originalOrder);
+    for (QDockWidget *dock : docks)
+        QCOMPARE(window.dockWidgetArea(dock), area);
+
+    mervin::dockSidebarsOnLeft(window, {docks[0], docks[1], docks[2]});
+    const QStringList expected = area == Qt::LeftDockWidgetArea
+        ? originalOrder
+        : QStringList{QStringLiteral("thumbnailDock"), QStringLiteral("outlineDock"),
+                      QStringLiteral("commentsDock")};
+    QTRY_COMPARE(orderOf(), expected);
+    for (QDockWidget *dock : docks) {
+        QCOMPARE(window.dockWidgetArea(dock), Qt::LeftDockWidgetArea);
+        QVERIFY(!dock->isFloating());
+        QCOMPARE(window.tabifiedDockWidgets(dock).size(), 2);
+    }
+}
 
 void TstSidebarLayout::sidebarDetachingIsBlocked_data()
 {

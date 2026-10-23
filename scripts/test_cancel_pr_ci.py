@@ -8,6 +8,8 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -52,7 +54,7 @@ def started_event(identifier=81, action="in_progress"):
     return {
         "action": action, "repository": {"full_name": REPOSITORY, "default_branch": "main"},
         "workflow_run": {
-            "id": identifier, "name": "PR CI", "event": "pull_request", "path": ci.WORKFLOW,
+            "id": identifier, "name": "PR CI", "event": "pull_request", "path": ".github/workflows/pr-ci.yml",
             "head_sha": OLD_HEAD, "head_branch": "feature/fix", "run_attempt": 1,
         },
     }
@@ -63,7 +65,7 @@ def workflow_run(identifier=81, sha=OLD_HEAD, number=7, status="in_progress"):
     return {
         "id": identifier, "name": "PR CI", "display_title": f"PR CI #{number} @ {sha}",
         "head_sha": sha, "head_branch": "feature/fix", "event": "pull_request",
-        "path": ci.WORKFLOW, "status": status, "run_attempt": 1,
+        "path": ".github/workflows/pr-ci.yml", "status": status, "run_attempt": 1,
         "repository": {"full_name": REPOSITORY},
         "head_repository": {"full_name": REPOSITORY},
         "pull_requests": [{"number": number}],
@@ -128,7 +130,21 @@ class CancellationTests(unittest.TestCase):
     def execute(self, api, payload=None, environment=None):
         """Exercise the real controller without writing routine output."""
         with redirect_stdout(StringIO()):
-            return ci.cancel_obsolete(payload or event(), environment or ENV, api)
+            return ci.cancel_obsolete(event() if payload is None else payload,
+                                      ENV if environment is None else environment, api)
+
+    def test_second_candidate_uses_live_head_after_first_cancellation(self):
+        api = FakeGitHub([workflow_run(), workflow_run(82, sha=NEW_HEAD)])
+        original_cancel = api.cancel
+
+        def cancel_then_advance(identifier):
+            """Make the second candidate current after canceling the first."""
+            original_cancel(identifier)
+            api.current = pull_request(sha=NEW_HEAD)
+
+        api.cancel = cancel_then_advance
+        self.assertEqual(self.execute(api), ["81"])
+        self.assertEqual(api.cancellations, ["81"])
 
     def test_cancels_only_older_heads_for_the_same_pr(self):
         runs = [workflow_run(), workflow_run(82, sha=HEAD), workflow_run(83, number=8)]
@@ -395,11 +411,7 @@ class StartedRunTests(unittest.TestCase):
         api = FakeGitHub([original])
         with redirect_stdout(StringIO()):
             self.assertEqual(ci.cancel_obsolete(event(), ENV, api), [])
-        # The old successful prepare remains from attempt 1, while failed jobs rerun.
-        api.responses[f"{ROOT}/actions/runs/81/jobs"] = {"jobs": [
-            {"name": "Select PR revision", "conclusion": "success", "run_attempt": 1},
-            {"name": "build / linux-tests", "status": "in_progress", "run_attempt": 2},
-        ]}
+        # A later attempt is reconciled without querying any job state.
         api.details["81"] = {**original, "status": "in_progress", "run_attempt": 2}
         api.calls.clear()
         self.assertEqual(self.execute(api), ["81"])
@@ -534,26 +546,104 @@ class TransportTests(unittest.TestCase):
                     ci.CancellationGitHub(REPOSITORY).cancel(identifier)
                 run.assert_not_called()
 
-    def test_runner_cli_reads_event_file_and_uses_environment(self):
-        path = Path("/runner/event.json")
-        api = FakeGitHub([workflow_run()])
-        environment = {**ENV, "GITHUB_EVENT_PATH": str(path), "GH_TOKEN": "mock-token"}
-        with patch.dict(os.environ, environment, clear=True), patch.object(ci.sys, "argv", ["cancel_pr_ci.py"]), \
-                patch.object(Path, "read_text", return_value=json.dumps(event())) as read, \
-                patch.object(ci, "CancellationGitHub", return_value=api) as client, redirect_stdout(StringIO()):
-            ci.main()
-        read.assert_called_once_with()
-        client.assert_called_once_with(REPOSITORY)
-        self.assertEqual(api.cancellations, ["81"])
 
-    def test_runner_cli_accepts_starting_attempt_events(self):
-        api = FakeGitHub([{**workflow_run(), "run_attempt": 2}])
-        environment = {**RUN_ENV, "GITHUB_EVENT_PATH": "/runner/event.json", "GH_TOKEN": "mock-token"}
-        with patch.dict(os.environ, environment, clear=True), patch.object(ci.sys, "argv", ["cancel_pr_ci.py"]), \
-                patch.object(Path, "read_text", return_value=json.dumps(started_event())), \
-                patch.object(ci, "CancellationGitHub", return_value=api), redirect_stdout(StringIO()):
-            ci.main()
-        self.assertEqual(api.cancellations, ["81"])
+
+class CLITests(unittest.TestCase):
+    """Run real event-file and process-exit handling with an isolated fake gh."""
+
+    def setUp(self):
+        temporary_root = Path(__file__).resolve().parents[1] / "dev-temp"
+        temporary_root.mkdir(exist_ok=True)
+        directory = tempfile.TemporaryDirectory(prefix="cancel-cli-", dir=temporary_root)
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.event = self.root / "specific-event.json"
+        self.event.write_text(json.dumps(event()), encoding="utf-8")
+        self.calls = self.root / "calls.jsonl"
+        api = FakeGitHub([workflow_run()])
+        responses = {**api.responses, f"{ROOT}/pulls/7": pull_request(),
+                     f"{ROOT}/actions/runs/81": workflow_run()}
+        self.fixtures = self.root / "responses.json"
+        self.fixtures.write_text(json.dumps(responses), encoding="utf-8")
+        gh = self.root / "gh"
+        gh.write_text(f"#!{sys.executable}\n" + '''
+"""Serve only the exact fixture GETs and one isolated cancellation POST."""
+import json
+import os
+from pathlib import Path
+import sys
+
+args = sys.argv[1:]
+with Path(os.environ["GH_CALLS"]).open("a") as output:
+    output.write(json.dumps(args) + "\\n")
+if len(args) != 4 or args[0] != "api" or args[2] != "--method":
+    sys.exit(2)
+path, method = args[1], args[3]
+responses = json.loads(Path(os.environ["GH_FIXTURES"]).read_text())
+if method == "GET" and path in responses:
+    print(json.dumps(responses[path]))
+elif method == "POST" and path == "repos/owner/project/actions/runs/81/cancel":
+    if os.environ.get("GH_CANCEL_FAIL"):
+        print("private transport diagnostic", file=sys.stderr)
+        sys.exit(1)
+else:
+    sys.exit(2)
+''', encoding="utf-8")
+        gh.chmod(0o755)
+        # No fallback executable search can reach a real gh, even after a test fault.
+        self.environment = {**os.environ, **ENV, "PATH": str(self.root),
+                            "GITHUB_EVENT_PATH": str(self.event), "GH_CALLS": str(self.calls),
+                            "GH_FIXTURES": str(self.fixtures)}
+
+    def run_cli(self, **environment):
+        """Launch the production entry point using the requested event and fake transport."""
+        return subprocess.run([sys.executable, "-B", str(Path(ci.__file__).resolve())],
+            env={**self.environment, **environment}, capture_output=True, text=True, check=False)
+
+    def read_calls(self):
+        """Return the exact transport requests, including their order and multiplicity."""
+        return [json.loads(line) for line in self.calls.read_text().splitlines()] if self.calls.exists() else []
+
+    @staticmethod
+    def expected_calls(kind):
+        """Name every permitted request in a successful fixture run."""
+        reads = ([f"{ROOT}/actions/runs/81"] if kind == "workflow_run" else [
+            f"{ROOT}/pulls/7",
+            f"{ROOT}/actions/workflows/pr-ci.yml/runs?event=pull_request&status=queued&per_page=100&page=1",
+            f"{ROOT}/actions/workflows/pr-ci.yml/runs?event=pull_request&status=in_progress&per_page=100&page=1",
+            f"{ROOT}/actions/workflows/pr-ci.yml/runs?event=pull_request&status=waiting&per_page=100&page=1",
+            f"{ROOT}/actions/workflows/pr-ci.yml/runs?event=pull_request&status=pending&per_page=100&page=1",
+            f"{ROOT}/actions/workflows/pr-ci.yml/runs?event=pull_request&status=requested&per_page=100&page=1",
+        ])
+        reads += [f"{ROOT}/actions/runs/81", f"{ROOT}/pulls/7"]
+        return [["api", path, "--method", "GET"] for path in reads] + [
+            ["api", f"{ROOT}/actions/runs/81/cancel", "--method", "POST"],
+        ]
+
+    def test_lifecycle_and_starting_attempt_cancel_only_expected_run(self):
+        for payload, kind in ((event(), "pull_request_target"), (started_event(), "workflow_run")):
+            with self.subTest(kind=kind):
+                self.calls.unlink(missing_ok=True)
+                self.event.write_text(json.dumps(payload), encoding="utf-8")
+                result = self.run_cli(GITHUB_EVENT_NAME=kind)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.read_calls(), self.expected_calls(kind))
+
+    def test_actual_event_file_and_malformed_input_fail_before_transport(self):
+        result = self.run_cli(GITHUB_EVENT_PATH=str(self.root / "missing-event.json"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.read_calls(), [])
+        self.event.write_text("not JSON", encoding="utf-8")
+        self.assertNotEqual(self.run_cli().returncode, 0)
+        self.assertEqual(self.read_calls(), [])
+
+    def test_failed_active_cancellation_exits_nonzero_without_extra_writes(self):
+        result = self.run_cli(GH_CANCEL_FAIL="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("private transport diagnostic", result.stderr)
+        self.assertEqual(self.read_calls(), self.expected_calls("pull_request_target") + [
+            ["api", f"{ROOT}/actions/runs/81", "--method", "GET"],
+        ])
 
 
 if __name__ == "__main__":

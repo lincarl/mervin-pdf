@@ -38,6 +38,13 @@
 using namespace mervin;
 
 namespace {
+/// Reads complete bytes to check that a page-copy command leaves its input untouched.
+QByteArray bytes(const QString &path)
+{
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+
 /// Finds the current tab through the real window's tab widget.
 TabPage *current(MainWindow &window)
 {
@@ -455,22 +462,41 @@ private slots:
     }
 #endif
 
-    /// Opens a completed extracted copy through the normal placeholder flow.
-    void successfulExtractOpensItsBackgroundResult()
+    /// Exercises both page-copy commands through their real dialogs and dispatch paths.
+    void successfulPageCopyOpensItsBackgroundResult_data()
     {
+        QTest::addColumn<bool>("deleting");
+        QTest::newRow("extract preserves order and repetitions") << false;
+        QTest::newRow("delete leaves the complement") << true;
+    }
+
+    /// Opens the result and checks exact page identity as well as source preservation.
+    void successfulPageCopyOpensItsBackgroundResult()
+    {
+        QFETCH(bool, deleting);
         QTemporaryDir files;
         const QString path = copy(files);
+        const QByteArray before = bytes(path);
+        QVERIFY(!before.isEmpty());
         const QString out = files.filePath(QStringLiteral("chosen.pdf"));
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showWindow(window);
         QVERIFY(testing::openAndWait(window, path));
-        choices_ << [out](ExtractDialog &dialog) { choose(dialog, out, QStringLiteral("1,3"), true); };
-        QVERIFY(QMetaObject::invokeMethod(&window, "extractPagesOp"));
+        choices_ << [out, deleting](ExtractDialog &dialog) {
+            choose(dialog, out, deleting ? QStringLiteral("1,3") : QStringLiteral("3,1,3"), true);
+        };
+        QVERIFY(QMetaObject::invokeMethod(&window, deleting ? "deletePagesOp" : "extractPagesOp"));
         QTRY_COMPARE(window.tabCount(), 2);
         QTRY_VERIFY(current(window)->isLoaded());
         QCOMPARE(current(window)->path(), out);
-        QCOMPARE(current(window)->viewer()->pageCount(), 2);
+        const auto result = engine.openDocument(out);
+        QVERIFY(result);
+        QList<int> widths;
+        for (int i = 0; i < result->pageCount(); ++i)
+            widths.append(qRound(result->pageSize(i).width()));
+        QCOMPARE(widths, deleting ? QList<int>({602, 604}) : QList<int>({603, 601, 603}));
+        QCOMPARE(bytes(path), before);
     }
 
     /// Opens an encrypted tab's extract with the tab's password, which the copy keeps.
@@ -553,7 +579,19 @@ private:
     QString copy(QTemporaryDir &files, const QString &name = QStringLiteral("plan.pdf"))
     {
         const QString path = files.filePath(name);
-        return QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path) ? path : QString();
+        QByteArray data = bytes(QStringLiteral(MERVIN_FIXTURE_PDF));
+        // Keep the fixture's objects, streams and xref offsets, but give its four
+        // otherwise identical pages distinct geometry for persisted identity checks.
+        const QByteArray box("/MediaBox [0 0 612 792]");
+        for (int i = 1; i <= 4; ++i) {
+            const qsizetype at = data.indexOf(box);
+            if (at < 0)
+                return {};
+            data.replace(at, box.size(), "/MediaBox [0 0 " + QByteArray::number(600 + i) + " 792]");
+        }
+        QFile output(path);
+        return output.open(QIODevice::WriteOnly) && output.write(data) == data.size()
+            ? path : QString();
     }
 
     std::unique_ptr<QTemporaryDir> profile_;

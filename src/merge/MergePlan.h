@@ -35,6 +35,7 @@ public:
         QString password;   // only ever non-empty once a caller unlocks the row
         bool encrypted = false; // opened, but has a password or owner restrictions
         quint64 probeTicket = 0; // pending duplicates share their probe's identity
+        QString sourceKey; // canonical comparison key returned by the worker probe
     };
 
     int count() const { return entries_.size(); }

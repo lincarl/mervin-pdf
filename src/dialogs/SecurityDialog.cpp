@@ -17,7 +17,10 @@
 #include <QMessageBox>
 #include <QPointer>
 #include <QPushButton>
+#include <QTimer>
 #include <QVBoxLayout>
+
+#include <utility>
 
 namespace mervin {
 
@@ -129,8 +132,7 @@ SecurityDialog::SecurityDialog(const QString &documentPath, const QpdfService::I
     remLay->addWidget(stripBtn);
     layout->addWidget(remBox);
 
-    // Spare height gathers above Close, so the fields stay in place when a refusal
-    // that made the dialog taller goes away.
+    // Spare height gathers above Close, keeping the fields in place during resizing.
     layout->addStretch();
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -167,8 +169,23 @@ SecurityDialog::SecurityDialog(const QString &documentPath, const QpdfService::I
 
 void SecurityDialog::setError(const QString &text)
 {
+    const bool wasHidden = error_->isHidden();
+    if (!text.isEmpty() && wasHidden && isVisible())
+        heightBeforeError_ = height();
     error_->setText(text);
     encryptForm_->setRowVisible(error_, !text.isEmpty());
+    if (text.isEmpty() && !wasHidden && heightBeforeError_ > 0) {
+        const int previousHeight = std::exchange(heightBeforeError_, 0);
+        // Qt updates the form's minimum asynchronously after hiding its error row.
+        QTimer::singleShot(0, this, [this, previousHeight] {
+            if (!error_->isHidden())
+                return;
+            encryptForm_->activate();
+            layout()->activate();
+            setMinimumHeight(minimumSizeHint().height());
+            resize(width(), qMin(height(), previousHeight));
+        });
+    }
 }
 
 void SecurityDialog::showInfo(const QpdfService::Info &info, const QString &error)
@@ -255,10 +272,17 @@ void SecurityDialog::doEncrypt()
     // An owner password keyed with the same bytes as the open password gives anyone with
     // the open password owner rights, which ignore the restrictions. AES-128 and RC4-128
     // key only the first 32 characters, so longer passwords can match without being equal.
-    // A password the algorithm cannot store fails later with its own message.
     const auto userKey = QpdfService::keyBytes(chosen.userPassword, chosen.algorithm);
-    if (!chosen.permissions.allowsEverything() && !chosen.ownerPassword.isEmpty() && userKey
-        && userKey == QpdfService::keyBytes(chosen.ownerPassword, chosen.algorithm)) {
+    const auto ownerKey = QpdfService::keyBytes(chosen.ownerPassword, chosen.algorithm);
+    if (!userKey || !ownerKey) {
+        setError(QpdfService::passwordEncodingError());
+        QLineEdit *invalid = userKey ? ownerEdit_ : userEdit_;
+        invalid->setFocus();
+        invalid->selectAll();
+        return;
+    }
+    if (!chosen.permissions.allowsEverything() && !chosen.ownerPassword.isEmpty()
+        && userKey == ownerKey) {
         if (chosen.ownerPassword == chosen.userPassword) {
             //: Shown below the owner-password field when it is the same as the open
             //: password while a permission is not allowed. Anyone with the open password

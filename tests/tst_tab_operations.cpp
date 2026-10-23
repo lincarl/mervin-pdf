@@ -1,4 +1,5 @@
 #include "TestWaits.h"
+#include "TextFit.h"
 // Rotate Pages and Split run as their tab's operation. Only the tab waits, a bar names
 // what it waits for after a few seconds, Stop waiting gives up at once, and nothing
 // the screen thread does meanwhile reads the tab's document.
@@ -20,6 +21,10 @@
 #include "ui/ViewerWidget.h"
 #include "Stalls.h"
 
+#include <qpdf/QPDF.hh>
+#include <qpdf/QPDFPageDocumentHelper.hh>
+#include <qpdf/QPDFPageObjectHelper.hh>
+
 #include <QAction>
 #include <QApplication>
 #include <QDir>
@@ -31,9 +36,13 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPointer>
+#include <QPainter>
+#include <QPdfWriter>
 #include <QPushButton>
 #include <QScopeGuard>
+#include <QScreen>
 #include <QScrollBar>
+#include <QSystemTrayIcon>
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QThread>
@@ -42,6 +51,7 @@
 #include <QtTest>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 
 #ifdef Q_OS_UNIX
@@ -54,12 +64,63 @@ using mervin::testing::Stall;
 
 namespace {
 
+// Writes four distinct asymmetric pages so page tools cannot pass with duplicates.
+bool writeIdentityPages(const QString &path)
+{
+    QPdfWriter writer(path);
+    writer.setResolution(72);
+    writer.setPageSize(QPageSize(QSizeF(612, 792), QPageSize::Point));
+    writer.setPageMargins({});
+    QPainter painter(&writer);
+    if (!painter.isActive())
+        return false;
+    const QColor colours[] = {Qt::red, Qt::green, Qt::blue, Qt::magenta};
+    for (int page = 0; page < 4; ++page) {
+        if (page && !writer.newPage())
+            return false;
+        painter.fillRect(QRect(30 + 25 * page, 50, 100, 180), colours[page]);
+    }
+    return painter.end();
+}
+
 void showForLayout(QWidget &widget)
 {
-    widget.setAttribute(Qt::WA_DontShowOnScreen);
+    widget.setAttribute(Qt::WA_DontShowOnScreen,
+                        qEnvironmentVariableIsEmpty("MERVIN_LAYOUT_DESKTOP"));
     widget.resize(1000, 800);
     widget.show();
     QCoreApplication::processEvents();
+}
+
+// Records real messages in the explicit Linux desktop run, without replacing their text.
+void inspectDesktopMessage(QWidget &widget, const QString &state, bool tray = false)
+{
+    if (qEnvironmentVariableIsEmpty("MERVIN_LAYOUT_DESKTOP"))
+        return;
+    const QPointer<QWidget> alive(&widget);
+    QVERIFY(QTest::qWaitForWindowExposed(&widget));
+    QVERIFY(alive);
+    QScreen *screen = widget.screen();
+    QCOMPARE(screen->devicePixelRatio(), 1.25);
+    QCOMPARE(screen->size(), QSize(1536, 864));
+    QVERIFY(screen->availableGeometry().height() < screen->geometry().height());
+    const QStringList problems = textfit::check(widget);
+    QVERIFY2(problems.isEmpty(), qPrintable(problems.join(u'\n')));
+    qInfo() << state << "work area" << screen->availableGeometry()
+            << "message geometry" << widget.frameGeometry();
+    const QString directory = qEnvironmentVariable("MERVIN_LAYOUT_SCREENSHOTS");
+    if (!directory.isEmpty()) {
+        QVERIFY(QDir().mkpath(directory));
+        QTest::qWait(80); // Let the X server paint the actual mapped message before capture.
+        QVERIFY(alive);
+        QVERIFY(widget.grab().save(QDir(directory).filePath(state + QStringLiteral(".png"))));
+        QVERIFY(screen->grabWindow(0).save(
+            QDir(directory).filePath(state + QStringLiteral("-desktop.png"))));
+    }
+    // A tray balloon's pointer reaches the tray inside the reserved taskbar area.
+    // Ordinary message boxes must fit the available work area including their frame.
+    QVERIFY((tray ? screen->geometry() : screen->availableGeometry())
+                .contains(widget.frameGeometry()));
 }
 
 // The tab a window shows.
@@ -191,6 +252,8 @@ public:
                     box->reject();
                     return;
                 }
+                if (observeMessage_)
+                    observeMessage_(*box);
                 button->click();
             } else if (auto *exportDialog = qobject_cast<ExportMeasureDialog *>(modal)) {
                 exportDialog->accept();
@@ -248,6 +311,7 @@ private slots:
         Settings settings;
         settings.autoUpdate = false;
         QVERIFY(settings.save());
+        observeMessage_ = {};
         answers_.clear();
         inputs_.clear();
         files_.clear();
@@ -264,6 +328,7 @@ private slots:
     {
         // A test that holds a job lets it go here too, so no job outlives its test.
         job::testing::release();
+        job::testing::failWhen({});
         TabPage::setSlowDelayForTesting(TabPage::kSlowMs);
         QVERIFY(background::settle(10000));
         QCoreApplication::processEvents();
@@ -319,7 +384,28 @@ private slots:
             QVERIFY(!blob);
             const QImage before = engine.renderPageImage(tab->viewer()->document(), 0, 1, 0);
             const QImage after = engine.renderPageImage(saved.get(), 0, 1, 0);
-            QVERIFY(!after.isNull() && before != after);
+            QVERIFY(!after.isNull());
+            // The distance is from (50, 100) to (150, 100) in page coordinates.
+            // Inspect its blue stroke independently of the export renderer, away
+            // from endpoints and its label. An unrelated image change cannot pass.
+            const auto blueStroke = [](const QImage &image, int left) {
+                int blue = 0;
+                for (int y = 98; y <= 102; ++y)
+                    for (int x = left; x < left + 10; ++x) {
+                        const QColor colour = image.pixelColor(x, y);
+                        if (colour.blue() > colour.red() + 40
+                            && colour.blue() > colour.green() + 20)
+                            ++blue;
+                    }
+                return blue;
+            };
+            // The centered label covers the middle of the line. Check both
+            // exposed segments and the white space immediately below each one.
+            for (int left : {55, 135}) {
+                QVERIFY(blueStroke(after, left) >= 15);
+                QCOMPARE(blueStroke(before, left), 0);
+                QCOMPARE(after.pixelColor(left + 5, 108), QColor(Qt::white));
+            }
         } else {
             QVERIFY(blob);
             MeasureDoc measurements;
@@ -562,12 +648,21 @@ private slots:
     }
 
     // Selects successful and failed copy reports across an owner move.
-    void queuedCopyResultSurvivesItsPreviousOwner_data() { copyModes(); }
+    void queuedCopyResultSurvivesItsPreviousOwner_data()
+    {
+        QTest::addColumn<bool>("flatten");
+        QTest::addColumn<bool>("failure");
+        QTest::newRow("copy success") << false << false;
+        QTest::newRow("export success") << true << false;
+        QTest::newRow("copy failure") << false << true;
+        QTest::newRow("export failure") << true << true;
+    }
 
     // Checks delivery after an earlier queued move destroys the old window.
     void queuedCopyResultSurvivesItsPreviousOwner()
     {
         QFETCH(bool, flatten);
+        QFETCH(bool, failure);
         QTemporaryDir files;
         const QString source = files.filePath(QStringLiteral("plan.pdf"));
         const QString output = files.filePath(QStringLiteral("copy.pdf"));
@@ -581,6 +676,11 @@ private slots:
         TabPage *tab = currentTab(*first);
         prepareCopy(*tab);
         holdAt(job::Step::Commit, output);
+        if (failure) {
+            job::testing::failWhen([output](job::Step step, const QString &path) {
+                return step == job::Step::Commit && path == output;
+            });
+        }
         QSignalSpy finished(tab, &TabPage::operationFinished);
         copy(*first, output, flatten);
         QTRY_COMPARE(job::testing::held(), 1);
@@ -594,12 +694,15 @@ private slots:
         manager.mergeTab(first, 0, second, 0);
         QTRY_VERIFY(first.isNull());
         QCOMPARE(currentTab(*second), tab);
-        answers_ << QMessageBox::No;
+        answers_ << (failure ? QMessageBox::Ok : QMessageBox::No);
         blocker.reject();
         QTRY_VERIFY(answers_.isEmpty());
         QCOMPARE(toldIn_.size(), 1);
         QCOMPARE(toldIn_.first().data(), second);
-        QVERIFY(QFile::exists(output));
+        QCOMPARE(QFile::exists(output), !failure);
+        if (failure)
+            QVERIFY2(told_.first().contains(QStringLiteral("This step was not run.")),
+                     qPrintable(told_.first()));
         QVERIFY(tab->hasUnsavedEdits());
     }
 
@@ -735,7 +838,7 @@ private slots:
         const QString path = files.filePath(QStringLiteral("plan.pdf"));
         const QString folder = files.filePath(QStringLiteral("out"));
         const QString out = files.filePath(QStringLiteral("out/plan-rotated.pdf"));
-        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        QVERIFY(writeIdentityPages(path));
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
         showForLayout(window);
@@ -777,6 +880,25 @@ private slots:
         auto rotated = engine.openDocument(out); // a step on this thread
         QVERIFY(rotated);
         QCOMPARE(rotated->pageCount(), 4);
+        QPDF originalPdf;
+        originalPdf.processFile(path.toUtf8().constData());
+        QPDF rotatedPdf;
+        rotatedPdf.processFile(out.toUtf8().constData());
+        const auto originalPages = QPDFPageDocumentHelper(originalPdf).getAllPages();
+        const auto rotatedPages = QPDFPageDocumentHelper(rotatedPdf).getAllPages();
+        for (size_t page = 0; page < originalPages.size(); ++page) {
+            auto originalPage = originalPages[page];
+            auto rotatedPage = rotatedPages[page];
+            auto originalRotation = originalPage.getAttribute("/Rotate", false);
+            auto rotatedRotation = rotatedPage.getAttribute("/Rotate", false);
+            QVERIFY(originalRotation.isNull() || originalRotation.isInteger());
+            QVERIFY(rotatedRotation.isInteger());
+            const int beforeAngle = originalRotation.isInteger() ? int(originalRotation.getIntValue()) : 0;
+            const int afterAngle = int(rotatedRotation.getIntValue());
+            QCOMPARE((afterAngle % 360 + 360) % 360, (beforeAngle + 90) % 360);
+            QCOMPARE(rotated->renderPage(int(page), 0.5, 0),
+                     tab->viewer()->document()->renderPage(int(page), 0.5, 90));
+        }
     }
 
     // The bar shows after two seconds without progress, not before, and names the
@@ -1350,7 +1472,7 @@ private slots:
         const QString folder = files.filePath(QStringLiteral("out"));
         const QString existing = QDir(folder).filePath(QStringLiteral("plan-002.pdf"));
         const QByteArray before("Not a page of plan.pdf");
-        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        QVERIFY(writeIdentityPages(path));
         QVERIFY(writeBytes(existing, before));
         RenderEngine engine;
         MainWindow window(&engine, nullptr);
@@ -1378,7 +1500,21 @@ private slots:
         QCOMPARE(filesIn(folder),
                  (QStringList{QStringLiteral("plan-001.pdf"), QStringLiteral("plan-002.pdf"),
                               QStringLiteral("plan-003.pdf"), QStringLiteral("plan-004.pdf")}));
-        QVERIFY(bytesOf(existing).startsWith("%PDF-"));
+        QList<QImage> sourcePages;
+        for (int page = 0; page < 4; ++page) {
+            const QString part = QDir(folder).filePath(
+                QStringLiteral("plan-%1.pdf").arg(page + 1, 3, 10, QLatin1Char('0')));
+            auto splitPage = engine.openDocument(part);
+            QVERIFY(splitPage);
+            QCOMPARE(splitPage->pageCount(), 1);
+            const QImage source = tab->viewer()->document()->renderPage(page, 0.5, 0);
+            QVERIFY(!source.isNull());
+            // Ensure this fixture can distinguish swapped or repeated split pages.
+            for (const QImage &earlier : sourcePages)
+                QVERIFY(source != earlier);
+            sourcePages.append(source);
+            QCOMPARE(splitPage->renderPage(0, 0.5, 0), source);
+        }
     }
 
     void splitKeepsAFileThatChangesAfterTheQuestion_data()
@@ -1413,8 +1549,8 @@ private slots:
         const QByteArray after("Saved by another program");
         QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
         QVERIFY(writeBytes(existing, before));
-        RenderEngine engine;
-        MainWindow window(&engine, nullptr);
+        WindowManager manager;
+        MainWindow &window = *manager.createWindow();
         showForLayout(window);
         QVERIFY(mervin::testing::openAndWait(window, path));
         TabPage *tab = currentTab(window);
@@ -1430,6 +1566,10 @@ private slots:
         } else {
             holdAt(job::Step::Commit, QDir(folder).filePath(QStringLiteral("plan-001.pdf")));
         }
+        observeMessage_ = [](QMessageBox &box) {
+            if (box.icon() == QMessageBox::Warning)
+                inspectDesktopMessage(box, QStringLiteral("split-changed-destination"));
+        };
         answers_ << QMessageBox::Yes << QMessageBox::Ok;
         split(window, folder);
         QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
@@ -1438,6 +1578,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 2, 10000);
         QTRY_VERIFY(answers_.isEmpty());
         QCOMPARE(told_.size(), 2);
+        QCOMPARE(toldIn_.last(), &window);
         QCOMPARE(withoutBreakMarks(told_.last()),
                  QStringLiteral("Split Pages: \"%1\" changed after Split checked it, so Split "
                                 "stopped without replacing it.").arg(isolated(name)));
@@ -1458,8 +1599,20 @@ private slots:
     }
 
     // A window in the tray cannot ask, so Split writes nothing over an existing file.
+    void splitInTheTrayReplacesNothing_data()
+    {
+        QTest::addColumn<bool>("managed");
+        QTest::newRow("standalone") << false;
+        if (!qEnvironmentVariableIsEmpty("MERVIN_LAYOUT_DESKTOP"))
+            QTest::newRow("window-manager") << true;
+    }
+
+    // Offscreen platforms retain the standalone safety case but cannot host a real tray.
     void splitInTheTrayReplacesNothing()
     {
+        QFETCH(bool, managed);
+        if (managed)
+            QVERIFY(QSystemTrayIcon::isSystemTrayAvailable());
         QTemporaryDir files;
         QVERIFY(QDir(files.path()).mkpath(QStringLiteral("out")));
         const QString path = files.filePath(QStringLiteral("plan.pdf"));
@@ -1468,9 +1621,17 @@ private slots:
         const QByteArray before("Not a page of plan.pdf");
         QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
         QVERIFY(writeBytes(existing, before));
-        RenderEngine engine;
-        MainWindow window(&engine, nullptr);
+        WindowManager manager;
+        std::unique_ptr<MainWindow> standalone;
+        if (!managed)
+            standalone = std::make_unique<MainWindow>(manager.engine(), nullptr);
+        MainWindow &window = managed ? *manager.createWindow() : *standalone;
+        manager.applyMemorySettings(0, true);
         showForLayout(window);
+        if (managed) {
+            QVERIFY(QSystemTrayIcon::isSystemTrayAvailable());
+            QVERIFY(manager.canCloseToTray(&window));
+        }
         QVERIFY(mervin::testing::openAndWait(window, path));
         TabPage *tab = currentTab(window);
         QVERIFY(tab);
@@ -1486,7 +1647,35 @@ private slots:
         QVERIFY(told_.isEmpty());
         QCOMPARE(filesIn(folder), QStringList{QStringLiteral("plan-002.pdf")});
         QCOMPARE(bytesOf(existing), before);
-        window.restoreFromTray();
+        if (managed && !qEnvironmentVariableIsEmpty("MERVIN_LAYOUT_DESKTOP")) {
+            // Xcb's real tray balloon exposes labels. Native OS notifications are
+            // verified separately, since their widgets do not belong to this process.
+            const QString expected = QStringLiteral("1 file(s) in %1 already exist. Split wrote nothing.")
+                .arg(isolated(QDir::toNativeSeparators(folder)));
+            const auto notification = [&]() -> QWidget * {
+                for (QWidget *widget : QApplication::topLevelWidgets()) {
+                    if (!widget->isVisible() || widget == &window)
+                        continue;
+                    for (QLabel *label : widget->findChildren<QLabel *>())
+                        if (label->isVisible() && label->text() == expected)
+                            return widget;
+                }
+                return nullptr;
+            };
+            QTRY_VERIFY_WITH_TIMEOUT(notification(), 5000);
+            QWidget *balloon = notification();
+            bool hasTitle = false;
+            for (QLabel *label : balloon->findChildren<QLabel *>())
+                hasTitle = hasTitle || label->text() == QStringLiteral("Split Pages");
+            QVERIFY(hasTitle);
+            QVERIFY(!window.isVisible());
+            inspectDesktopMessage(*balloon, QStringLiteral("split-hidden-tray"), true);
+        }
+        if (managed)
+            manager.restoreFromTray();
+        else
+            window.restoreFromTray();
+        QTRY_VERIFY(window.isVisible());
     }
 
     // Split checks every file before it writes the first. One it cannot check, here a
@@ -2135,6 +2324,7 @@ private:
         QVERIFY(files_.isEmpty());
     }
 
+    std::function<void(QMessageBox &)> observeMessage_;
     std::unique_ptr<QTemporaryDir> profile_;
     QTimer dialogs_;
     QPointer<QWidget> answeredModal_;

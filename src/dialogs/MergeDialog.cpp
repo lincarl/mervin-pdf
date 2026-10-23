@@ -415,9 +415,9 @@ MergePlan::Entry MergeDialog::probeEntry(const QString &path, const QString &pas
     int n = 0;
     bool encrypted = false;
     QString err;
-    PageOps::Status st = PageOps::probe(path, &n, QString(), &err, &encrypted);
+    PageOps::Status st = PageOps::probe(path, &n, QString(), &err, &encrypted, &e.sourceKey);
     if (st == PageOps::Status::NeedsPassword && !password.isEmpty()) {
-        st = PageOps::probe(path, &n, password, &err, &encrypted);
+        st = PageOps::probe(path, &n, password, &err, &encrypted, &e.sourceKey);
         if (st == PageOps::Status::Ok)
             e.password = password; // MergePlan::inputs() hands it to the merge
     }

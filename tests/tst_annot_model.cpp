@@ -218,17 +218,50 @@ void TstAnnotModel::editContentsColorAndDelete()
     const int id = am.addTextMarkup(0, AnnotType::Highlight, {QRectF(20, 30, 100, 12)},
                                     QColor(255, 242, 0), QStringLiteral("tester"));
     QVERIFY(id >= 0);
+    const int survivor = am.addTextNote(0, {180, 160}, Qt::blue, QStringLiteral("other"),
+                                       QStringLiteral("Keep this note"));
+    QVERIFY(survivor >= 0);
 
-    QVERIFY(am.setContents(0, id, QStringLiteral("added later")));
-    QVERIFY(!am.setContents(0, id, QStringLiteral("added later"))); // no-op second time
-    QCOMPARE(am.annot(0, id)->contents, QStringLiteral("added later"));
+    const QString contents = QString::fromUtf8("Edited \xC3\xA5\xC3\xA4\xC3\xB6 \xE2\x82\xAC "
+                                             "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E");
+    QVERIFY(am.setContents(0, id, contents));
+    QVERIFY(!am.setContents(0, id, contents));
+    QCOMPARE(am.annot(0, id)->contents, contents);
 
     QVERIFY(am.setColor(0, id, QColor(0, 200, 0)));
-    QVERIFY(am.annot(0, id)->color.green() > 150);
+    QCOMPARE(am.annot(0, id)->color.toRgb(), QColor(0, 200, 0));
 
-    QVERIFY(am.remove(0, id));
-    QVERIFY(am.pageAnnots(0).empty());
-    QVERIFY(!am.annot(0, id).has_value());
+    const QString editedPath = dir.filePath(QStringLiteral("edited.pdf"));
+    QVERIFY2(doc->savePdfTo(editedPath, &err), qPrintable(err));
+    auto editedDoc = engine.openDocument(editedPath);
+    QVERIFY(editedDoc);
+    AnnotModel edited(*editedDoc);
+    const auto editedAnnots = edited.pageAnnots(0);
+    QCOMPARE(editedAnnots.size(), size_t(2));
+    QCOMPARE(editedAnnots[0].type, AnnotType::Highlight);
+    QCOMPARE(editedAnnots[0].contents, contents);
+    QCOMPARE(editedAnnots[0].author, QStringLiteral("tester"));
+    QCOMPARE(editedAnnots[0].color.toRgb(), QColor(0, 200, 0));
+    const QImage green = engine.renderPageImage(editedDoc.get(), 0, 1, 0);
+    QVERIFY(!green.isNull());
+    const QColor ink = green.pixelColor(70, 36);
+    QVERIFY(ink.green() > ink.red() + 100 && ink.green() > ink.blue() + 100);
+
+    QVERIFY(edited.remove(0, editedAnnots[0].id));
+    QCOMPARE(edited.pageAnnots(0).size(), size_t(1));
+    const QString deletedPath = dir.filePath(QStringLiteral("deleted.pdf"));
+    QVERIFY2(editedDoc->savePdfTo(deletedPath, &err), qPrintable(err));
+    auto deletedDoc = engine.openDocument(deletedPath);
+    QVERIFY(deletedDoc);
+    const auto remaining = AnnotModel(*deletedDoc).pageAnnots(0);
+    QCOMPARE(remaining.size(), size_t(1));
+    QCOMPARE(remaining[0].type, AnnotType::Text);
+    QCOMPARE(remaining[0].contents, QStringLiteral("Keep this note"));
+    QCOMPARE(remaining[0].author, QStringLiteral("other"));
+    QCOMPARE(remaining[0].color.toRgb(), QColor(Qt::blue));
+    const QImage deletedImage = engine.renderPageImage(deletedDoc.get(), 0, 1, 0);
+    QVERIFY(!deletedImage.isNull());
+    QCOMPARE(deletedImage.pixelColor(70, 36), QColor(Qt::white));
 }
 
 void TstAnnotModel::nonLatinCommentSurvivesSave()

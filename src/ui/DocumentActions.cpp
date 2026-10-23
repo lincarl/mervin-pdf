@@ -191,8 +191,10 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
                 pagePoints.transpose();
             plan = printing::rasterPlan(pagePoints, printable, settings, renderDpi);
             bands = printing::rasterBands(plan.source, kPrintBandPixels);
-            if (!bands.isEmpty())
+            if (!bands.isEmpty()) {
+                printing::testing::checkpoint({printing::testing::Phase::RenderBand, page, 0});
                 band = document.renderPage(page - 1, plan.scale, rotation, clip(0), antialias);
+            }
         });
         if (bands.isEmpty() && !mervin::job::stopped()) {
             result.failure = PrintResult::Failure::Render;
@@ -202,6 +204,8 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
         for (qsizetype index = 0; index < bands.size(); ++index) {
             if (index > 0) {
                 withDocument([&](const Document &document) {
+                    printing::testing::checkpoint(
+                        {printing::testing::Phase::RenderBand, page, int(index)});
                     band = document.renderPage(page - 1, plan.scale, rotation, clip(index),
                                                antialias);
                 });
@@ -221,13 +225,17 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
                     return;
                 }
                 if (!painter.isActive()) {
-                    if (!painter.begin(&printer)) {
+                    if (!printing::testing::checkpoint({printing::testing::Phase::Begin, page},
+                                                       [&] { return painter.begin(&printer); })) {
                         result.failure = PrintResult::Failure::Start;
                         return;
                     }
-                } else if (!printer.newPage()) {
-                    result.failure = PrintResult::Failure::NextPage;
-                    return;
+                } else {
+                    if (!printing::testing::checkpoint({printing::testing::Phase::NewPage, page},
+                                                       [&] { return printer.newPage(); })) {
+                        result.failure = PrintResult::Failure::NextPage;
+                        return;
+                    }
                 }
             }
             const QRectF target = printing::rasterTarget(
@@ -239,6 +247,7 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
                 painter.translate(-printable.topLeft());
             printing::drawImage(painter, prepared, target, printable, settings.colourMode);
             painter.restore();
+            printing::testing::checkpoint({printing::testing::Phase::BandDrawn, page, int(index)});
             mervin::job::progressed();
         }
     }
@@ -246,7 +255,8 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
         result.failure = PrintResult::Failure::End;
         return;
     }
-    const bool ended = painter.end();
+    const bool ended = printing::testing::checkpoint({printing::testing::Phase::FinishJob},
+                                                     [&] { return painter.end(); });
     mervin::job::endCommit();
     if (!ended)
         result.failure = PrintResult::Failure::End;
@@ -1786,6 +1796,8 @@ void MainWindow::splitDocument()
     // Only the tab waits. qpdf reads the file on disk and writes the pages in the
     // background.
     auto tool = std::make_shared<PageTool>();
+    //: Title of the action that saves each PDF page as a separate file. Split is
+    //: an action, not an adjective describing pages that have already been split.
     tool->title = tr("Split Pages");
     tool->destination = dir;
     tool->work = [in = t->path(), dir, base = QFileInfo(t->path()).completeBaseName(),
@@ -1859,6 +1871,8 @@ void MainWindow::splitDocument()
     };
     tool->succeeded = [dir](MainWindow &window, TabPage &, const PageToolResult &result) {
         // The English catalog supplies "file" and "files" for "%n file(s)".
+        //: Title of the action that saves each PDF page as a separate file. Split is
+        //: an action, not an adjective describing pages that have already been split.
         tellInWindow(&window, QMessageBox::Information, tr("Split Pages"),
                      //: %1 is the folder the files were written to.
                      tr("Wrote %n file(s) to:\n%1", nullptr, int(result.written.size()))
@@ -2288,6 +2302,10 @@ void MainWindow::showPrintDialog(TabPage *tab, const std::shared_ptr<PrintReques
                    !request->prepared, *result);
         // QPrinter can keep the PDF engine's file open until destruction on Windows.
         printer.reset();
+        mervin::printing::testing::checkpoint({mervin::printing::testing::Phase::PrinterClosed,
+            0, 0, stage ? stage->filePath(QStringLiteral("printed.pdf")) : QString()});
+        mervin::printing::testing::checkpoint({mervin::printing::testing::Phase::PublishFile,
+                                               0, 0, output});
         if (!output.isEmpty() && result->failure == PrintResult::Failure::None
             && !mervin::job::stopped()
             && !mervin::DocumentOutput::replace(stage->filePath(QStringLiteral("printed.pdf")),

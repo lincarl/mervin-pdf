@@ -89,7 +89,9 @@ private slots:
     void clickBesideAShortPageStaysOnThatPage();
     void deepZoomStopsAtTheRasteriserRange();
     void deepZoomFollowsTheDevicePixelRatio();
-    void aGiantPageLeavesTheZoomRangeToTheOthers();
+    void aGiantPageRespectsTheCanvasLimit();
+    void extremeDocumentsKeepNavigationReachable_data();
+    void extremeDocumentsKeepNavigationReachable();
     void deviceRatioChangeKeepsTheReadingPoint();
 
 private:
@@ -143,7 +145,7 @@ QByteArray mediaBoxPdf(const QList<QSizeF> &sizes)
                     + "] >>";
     for (const QSizeF &s : sizes)
         bodies << "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 "
-                        + QByteArray::number(s.width()) + " " + QByteArray::number(s.height())
+                        + QByteArray::number(s.width(), 'f', 0) + " " + QByteArray::number(s.height(), 'f', 0)
                         + "] >>";
     return assemblePdf(bodies);
 }
@@ -647,8 +649,8 @@ void TstViewerFit::lonePageIsNotHalfSize()
     QCOMPARE(viewer_->horizontalScrollBar()->maximum(), 0);
 }
 
-// Navigating to the shorter half of a spread must show the whole row. Aiming at
-// the page's own top cut the head off its taller partner.
+// Navigation must bring each row into view, including later rows and a zoomed
+// right-hand sheet. The two sheets currently share the same top edge.
 void TstViewerFit::goToPageLandsOnTheRowTop()
 {
     use(unequal_.get(), 1000, 400); // short, so every row needs scrolling to reach
@@ -671,8 +673,23 @@ void TstViewerFit::goToPageLandsOnTheRowTop()
                  qPrintable(QStringLiteral("page %1: scrolled to %2, past the top of its row at %3 "
                                            "- the taller sheet is clipped")
                                 .arg(p + 1).arg(viewer_->verticalScrollBar()->value()).arg(rowTop)));
+        QCOMPARE(viewer_->verticalScrollBar()->value(),
+                 std::clamp(rowTop - 8, 0, viewer_->verticalScrollBar()->maximum()));
+        QVERIFY(rowTop < viewer_->verticalScrollBar()->value() + viewer_->viewport()->height());
         QCOMPARE(viewer_->currentPage(), p);
     }
+
+    viewer_->setScale(3.0);
+    viewer_->goToPage(0);
+    viewer_->horizontalScrollBar()->setValue(0);
+    viewer_->goToPage(1);
+    QVERIFY(viewer_->horizontalScrollBar()->value() > 0);
+    const ViewLayout zoomed = mirror(unequal_.get(), kSpread);
+    const QRect shown = zoomed.pageRect(1).translated(-viewer_->horizontalScrollBar()->value(),
+                                                       -viewer_->verticalScrollBar()->value());
+    const QRect visible = shown.intersected(viewer_->viewport()->rect());
+    QVERIFY(!visible.isEmpty());
+    QCOMPARE(viewer_->pageUnder(visible.center()), 1);
 }
 
 // goToPage's own scrollbar write reaches updateCurrentPage synchronously, which
@@ -830,9 +847,9 @@ void TstViewerFit::deepZoomFollowsTheDevicePixelRatio()
     QVERIFY(viewer.scale() <= viewer.maximumScale());
 }
 
-// One malformed page too large to render at any zoom must not shrink the zoom range
-// of the rest of the document. That page shows plain paper, as a failed render does.
-void TstViewerFit::aGiantPageLeavesTheZoomRangeToTheOthers()
+// A malformed page does not impose its impossible raster limit on other pages,
+// but the entire document must still obey the integer canvas limit.
+void TstViewerFit::aGiantPageRespectsTheCanvasLimit()
 {
     // A 20 million point wide page, then an A4 page. Written out by hand, because
     // QByteArray::number would write the width as 2e+07, which PDF does not accept.
@@ -861,7 +878,8 @@ void TstViewerFit::aGiantPageLeavesTheZoomRangeToTheOthers()
     viewer.show();
     QCoreApplication::processEvents();
 
-    QCOMPARE(viewer.maximumScale(), 100.0);
+    QVERIFY(viewer.maximumScale() > 1.0);
+    QVERIFY(viewer.maximumScale() < 100.0);
     viewer.setScale(1.0);
     QCOMPARE(viewer.scale(), 1.0);
     viewer.setScale(0.01);
@@ -882,6 +900,75 @@ void TstViewerFit::aGiantPageLeavesTheZoomRangeToTheOthers()
     viewer.goToPage(1);
     QTRY_VERIFY_WITH_TIMEOUT(rendered(1, true), 15000);
     QVERIFY(!rendered(0, true));
+}
+
+void TstViewerFit::extremeDocumentsKeepNavigationReachable_data()
+{
+    QTest::addColumn<QList<QSizeF>>("pages");
+    QTest::newRow("mixed") << QList<QSizeF>{{1e12, 2e12}, {400, 300}, {400, 300}};
+    QTest::newRow("many") << QList<QSizeF>(3000, QSizeF(10000, 10000));
+}
+
+void TstViewerFit::extremeDocumentsKeepNavigationReachable()
+{
+    QFETCH(QList<QSizeF>, pages);
+    const QString path = dir_->filePath(QStringLiteral("extreme.pdf"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    const QByteArray pdf = mediaBoxPdf(pages);
+    QCOMPARE(file.write(pdf), pdf.size());
+    file.close();
+    mervin::RenderEngine engine;
+    auto document = engine.openDocument(path);
+    QVERIFY(document);
+    QCOMPARE(document->pageCount(), pages.size());
+    ViewerWidget viewer(&engine);
+    viewer.setAttribute(Qt::WA_DontShowOnScreen, true);
+    viewer.resize(800, 600);
+    viewer.setZoomEaseMs(0);
+    viewer.setDocument(document.get());
+    viewer.show();
+    for (double ratio : {1.0, 2.0, 16.0}) {
+        viewer.setDevicePixelRatioForTest(ratio);
+        for (const ViewLayout::Mode mode : {kContinuous, kSpread, kSingle, kSingleSpread}) {
+            viewer.setLayoutMode(mode);
+            for (int rotation = 0; rotation < 4; ++rotation) {
+                viewer.setScale(100);
+                QCOMPARE(viewer.scale(), viewer.maximumScale());
+                QVERIFY(viewer.scale() > 0);
+                if (pages.size() == 3)
+                    QVERIFY(viewer.scale() < 0.08);
+                ViewLayout layout;
+                layout.setDocument(document.get());
+                layout.setMode(mode);
+                layout.setRotation(viewer.rotation());
+                layout.setScale(viewer.scale());
+                for (int page : {0, document->pageCount() / 2, document->pageCount() - 1}) {
+                    viewer.goToPage(page);
+                    layout.setCurrentPage(page);
+                    const QSize vp = viewer.viewport()->size();
+                    const QSize total = layout.totalSize();
+                    const QPoint centre(std::max(0, (vp.width() - total.width()) / 2),
+                                        std::max(0, (vp.height() - total.height()) / 2));
+                    const QPoint scroll(viewer.horizontalScrollBar()->value(),
+                                        viewer.verticalScrollBar()->value());
+                    const QRect target = layout.pageRect(page).translated(centre - scroll);
+                    const QRect visible = target.intersected(QRect(QPoint(0, 0), vp));
+                    QVERIFY2(!visible.isEmpty(), "navigation left the requested page outside the viewport");
+                    QCOMPARE(viewer.pageUnder(visible.center()), page);
+                    // Exercise painting and render-region conversion at the same extreme state.
+                    QVERIFY(!viewer.viewport()->grab().isNull());
+                }
+                if (pages.size() == 3 && mode.scroll == ViewLayout::Scroll::Continuous) {
+                    // Near the far edge of a giant page, logical offsets can still
+                    // overflow an int after multiplication by an extreme device ratio.
+                    viewer.verticalScrollBar()->setValue(viewer.verticalScrollBar()->maximum() - 100);
+                    QVERIFY(!viewer.viewport()->grab().isNull());
+                }
+                viewer.rotateRight();
+            }
+        }
+    }
 }
 
 // When a ratio change lowers the zoom through the cap, the scroll range shrinks. The

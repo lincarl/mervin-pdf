@@ -32,6 +32,7 @@
 #include "ui/TabPage.h"
 #include "ui/TextLayout.h"
 #include "ui/Theme.h"
+#include "ui/ThemeCard.h"
 #include "ui/ThemeTokens.h"
 #include "ui/ViewerWidget.h"
 #include "ui/WaitBar.h"
@@ -40,6 +41,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QContextMenuEvent>
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -50,6 +52,7 @@
 #include <QFontDatabase>
 #include <QFontMetrics>
 #include <QGroupBox>
+#include <QHelpEvent>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -60,10 +63,12 @@
 #include <QListWidget>
 #include <QLocale>
 #include <QMessageBox>
+#include <QMenu>
 #include <QMetaEnum>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QPrinter>
+#include <QPointer>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QRegularExpression>
@@ -71,6 +76,7 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSpinBox>
+#include <QStackedWidget>
 #include <QStyleHints>
 #include <QTabWidget>
 #include <QTemporaryDir>
@@ -79,6 +85,7 @@
 #include <QTimeZone>
 #include <QTimer>
 #include <QToolButton>
+#include <QToolTip>
 #include <QXmlStreamReader>
 
 #include <atomic>
@@ -243,6 +250,8 @@ private slots:
     void languagePicker();
     void loadPlaceholder_data() { addLanguageMatrix(); }
     void loadPlaceholder();
+    void recentTabRow_data() { addLanguageMatrix(); }
+    void recentTabRow();
     void manageLanguages_data() { addLanguageMatrix(); }
     void manageLanguages();
     void merge_data() { addLanguageMatrix(); }
@@ -262,6 +271,8 @@ private slots:
     void splitMessages();
     void toolPanels_data() { addLanguageMatrix(); }
     void toolPanels();
+    void measurePopups_data() { addLanguageMatrix(); }
+    void measurePopups();
     void updateCheckWarning_data() { addLanguageMatrix(); }
     void updateCheckWarning();
     void updateCloseWarning_data() { addLanguageMatrix(); }
@@ -273,6 +284,7 @@ private:
     // Shows `widget`, at its minimum size in the minimum-size rows, and checks the text
     // in `part` of it, or in all of it.
     void inspect(QWidget &widget, const QString &state, QWidget *part = nullptr);
+    void inspectPopup(QWidget &widget, const QString &state);
     void inspectMessage(QWidget &parent, const QString &state, const std::function<void()> &action);
     QString modelPath(const char *code) const;
     QTemporaryDir profile_;
@@ -292,6 +304,26 @@ private:
 void TstTranslationLayout::initTestCase()
 {
     QVERIFY(profile_.isValid());
+    // Explicit desktop acceptance runs need a window manager and a visible taskbar.
+    // Ordinary offscreen catalog checks cannot establish this environment.
+    const QString desktop = qEnvironmentVariable("MERVIN_LAYOUT_DESKTOP");
+    if (!desktop.isEmpty()) {
+        QVERIFY(desktop == QStringLiteral("baseline") || desktop == QStringLiteral("compact"));
+        QVERIFY(QGuiApplication::platformName() != QStringLiteral("offscreen"));
+        QScreen *screen = QGuiApplication::primaryScreen();
+        QVERIFY(screen);
+        const QRect available = screen->availableGeometry();
+        QVERIFY(screen->geometry().contains(available));
+        QVERIFY2(available.height() < screen->geometry().height(), "A visible taskbar must reserve work area");
+        if (desktop == QStringLiteral("baseline")) {
+            QCOMPARE(screen->devicePixelRatio(), 1.25);
+            QCOMPARE(screen->size(), QSize(1536, 864));
+        } else {
+            QVERIFY(available.width() < 1536 || available.height() < 800);
+        }
+        qInfo() << "Desktop geometry" << screen->geometry() << "work area" << available
+                << "scale" << screen->devicePixelRatio();
+    }
     originalProfile_ = mervin::ConfigPaths::overrideDir();
     originalFont_ = QApplication::font();
     originalStyleSheet_ = qApp->styleSheet();
@@ -504,6 +536,18 @@ void TstTranslationLayout::languagePicker()
     combo.hidePopup();
 }
 
+// The permanent tab row must accommodate the current font in both Recent states.
+void TstTranslationLayout::recentTabRow()
+{
+    mervin::RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    auto *row = window.findChild<QWidget *>(QStringLiteral("tabRowWidget"));
+    QVERIFY(row);
+    inspect(window, QStringLiteral("Recent tab row"), row);
+    QVERIFY(mervin::testing::openAndWait(window, plain_));
+    inspect(window, QStringLiteral("Document tab row"), row);
+}
+
 // The notice a tab shows in place of its pages when the drive stops answering while
 // the document loads, with a long file name in a long folder. The main window sets the
 // tab's size, down to the narrowest the window gets. Its own minimum height leaves
@@ -651,7 +695,7 @@ void TstTranslationLayout::waitBar()
     reading.work = [unbroken] { mervin::job::reading(unbroken); };
     tab->startOperation(reading);
     QTRY_VERIFY(stop->isVisible());
-    QVERIFY(stop->parentWidget()->findChild<QLabel *>()->text().contains(QStringLiteral("Revision")));
+    QTRY_VERIFY(stop->parentWidget()->findChild<QLabel *>()->text().contains(QStringLiteral("Revision")));
     inspect(window, QStringLiteral("Wait bar reading an unbroken file name"), tab);
     tab->stopWaiting();
     mervin::job::testing::release();
@@ -666,7 +710,7 @@ void TstTranslationLayout::waitBar()
     printing.work = [printer] { mervin::job::printing(printer); };
     tab->startOperation(std::move(printing));
     QTRY_VERIFY(stop->isVisible());
-    QVERIFY(stop->parentWidget()->findChild<QLabel *>()->text().contains(QStringLiteral("Office")));
+    QTRY_VERIFY(stop->parentWidget()->findChild<QLabel *>()->text().contains(QStringLiteral("Office")));
     inspect(window, QStringLiteral("Wait bar for a long printer name"), tab);
     tab->stopWaiting();
     mervin::job::testing::release();
@@ -718,7 +762,8 @@ void TstTranslationLayout::waitBar()
 
 void TstTranslationLayout::inspect(QWidget &widget, const QString &state, QWidget *part)
 {
-    widget.setAttribute(Qt::WA_DontShowOnScreen);
+    const bool desktop = !qEnvironmentVariableIsEmpty("MERVIN_LAYOUT_DESKTOP");
+    widget.setAttribute(Qt::WA_DontShowOnScreen, !desktop);
     widget.ensurePolished();
     widget.show();
     settle();
@@ -742,7 +787,75 @@ void TstTranslationLayout::inspect(QWidget &widget, const QString &state, QWidge
         QVERIFY2(widget.size() == minimum(),
                  qPrintable(state + QStringLiteral(" did not settle at its minimum size")));
     }
+    if (qobject_cast<SettingsDialog *>(&widget)) {
+        auto *footer = widget.findChild<QWidget *>(QStringLiteral("settingsFooter"));
+        auto *nav = widget.findChild<QListWidget *>(QStringLiteral("settingsNav"));
+        auto *stack = widget.findChild<QStackedWidget *>();
+        QVERIFY(footer);
+        QVERIFY(nav);
+        QVERIFY(stack);
+        QVERIFY(stack->currentWidget());
+        const auto bounds = [&widget](QWidget *child) {
+            return QRect(child->mapTo(&widget, QPoint()), child->size());
+        };
+        for (QWidget *region : {footer, static_cast<QWidget *>(nav),
+                                stack->currentWidget()}) {
+            QVERIFY2(region->isVisibleTo(&widget), qPrintable(state));
+            QVERIFY2(!bounds(region).isEmpty(), qPrintable(state));
+            QVERIFY2(widget.rect().contains(bounds(region)), qPrintable(state));
+        }
+        QVERIFY(!bounds(nav).intersects(bounds(stack->currentWidget())));
+        QVERIFY(!bounds(nav).intersects(bounds(footer)));
+        QVERIFY(!bounds(stack->currentWidget()).intersects(bounds(footer)));
+        auto *buttons = footer->findChild<QDialogButtonBox *>();
+        QVERIFY(buttons);
+        for (const auto which : {QDialogButtonBox::Ok, QDialogButtonBox::Cancel,
+                                 QDialogButtonBox::Apply}) {
+            auto *button = buttons->button(which);
+            QVERIFY(button);
+            QVERIFY2(button->isVisibleTo(&widget), qPrintable(state));
+            QVERIFY2(bounds(footer).contains(bounds(button)), qPrintable(state));
+            if (desktop) {
+                QVERIFY2(widget.screen()->availableGeometry().contains(
+                             QRect(button->mapToGlobal(QPoint()), button->size())),
+                         qPrintable(state));
+            }
+        }
+    }
+    if (desktop && widget.isWindow()) {
+        QTRY_VERIFY(widget.windowHandle());
+        QTRY_VERIFY2(widget.screen()->availableGeometry().contains(widget.frameGeometry()),
+                     qPrintable(state + QStringLiteral(" window extends beyond the work area (%1,%2 %3x%4)")
+                         .arg(widget.frameGeometry().x()).arg(widget.frameGeometry().y())
+                         .arg(widget.frameGeometry().width()).arg(widget.frameGeometry().height())));
+        for (QDialogButtonBox *box : widget.findChildren<QDialogButtonBox *>()) {
+            if (!box->isVisibleTo(&widget))
+                continue;
+            for (QAbstractButton *button : box->buttons()) {
+                if (!button->isVisibleTo(&widget))
+                    continue;
+                const QRect buttonRect(button->mapToGlobal(QPoint()), button->size());
+                QVERIFY2(widget.screen()->availableGeometry().contains(buttonRect), qPrintable(state));
+                QVERIFY2(widget.rect().contains(QRect(button->mapTo(&widget, QPoint()), button->size())),
+                         qPrintable(state + QStringLiteral(" footer action is clipped")));
+            }
+        }
+    }
     const QStringList problems = textfit::check(part ? *part : widget);
+    for (QRadioButton *radio : widget.findChildren<QRadioButton *>()) {
+        const auto *card = dynamic_cast<const mervin::ThemeCard *>(radio);
+        if (!card || !card->isVisibleTo(&widget))
+            continue;
+        const QRectF caption = card->captionRect();
+        const QRectF indicator = card->indicatorRect();
+        QVERIFY2(card->fontMetrics().horizontalAdvance(card->text()) <= caption.width(),
+                 qPrintable(state + QStringLiteral(" theme caption is too wide: ") + card->text()));
+        QVERIFY2(card->fontMetrics().height() <= caption.height(),
+                 qPrintable(state + QStringLiteral(" theme caption is too tall: ") + card->text()));
+        QVERIFY(QRectF(card->rect()).contains(caption));
+        QVERIFY(QRectF(card->rect()).contains(indicator));
+        QVERIFY(!caption.intersects(indicator));
+    }
     const QString details = state + QLatin1Char('\n') + problems.join(QLatin1Char('\n'));
     const QPixmap capture = widget.grab();
     QVERIFY2(!capture.isNull(), qPrintable(state));
@@ -754,8 +867,45 @@ void TstTranslationLayout::inspect(QWidget &widget, const QString &state, QWidge
                                 QLatin1String(QTest::currentDataTag()), state);
         name.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9._-]+")), QStringLiteral("-"));
         QVERIFY(capture.save(QDir(screenshotDirectory).filePath(name)));
+        if (desktop) {
+            const QPixmap screen = widget.screen()->grabWindow(0);
+            QVERIFY(!screen.isNull());
+            QVERIFY(screen.save(QDir(screenshotDirectory).filePath(QStringLiteral("desktop-") + name)));
+        }
     }
     QVERIFY2(problems.isEmpty(), qPrintable(details));
+}
+
+// Reads an already settled popup without changing its visibility or running another event loop.
+void TstTranslationLayout::inspectPopup(QWidget &widget, const QString &state)
+{
+    QVERIFY(widget.isVisible());
+    if (!qEnvironmentVariableIsEmpty("MERVIN_LAYOUT_DESKTOP"))
+        QVERIFY2(widget.screen()->availableGeometry().contains(widget.frameGeometry()),
+                 qPrintable(state));
+    const QStringList problems = textfit::check(widget);
+    QVERIFY2(problems.isEmpty(), qPrintable(state + QLatin1Char('\n') + problems.join(u'\n')));
+    if (auto *menu = qobject_cast<QMenu *>(&widget)) {
+        for (QAction *action : menu->actions()) {
+            if (action->isSeparator())
+                continue;
+            const QRect rect = menu->actionGeometry(action);
+            QVERIFY(menu->rect().contains(rect));
+            QVERIFY(menu->fontMetrics().horizontalAdvance(action->text()) <= rect.width());
+            QVERIFY(menu->fontMetrics().height() <= rect.height());
+        }
+    }
+    const QString directory = qEnvironmentVariable("MERVIN_LAYOUT_SCREENSHOTS");
+    if (!directory.isEmpty()) {
+        QVERIFY(QDir().mkpath(directory));
+        QString name = QStringLiteral("%1-%2-%3.png")
+            .arg(QLatin1String(QTest::currentTestFunction()), QLatin1String(QTest::currentDataTag()), state);
+        name.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9._-]+")), QStringLiteral("-"));
+        QVERIFY(widget.grab().save(QDir(directory).filePath(name)));
+        if (!qEnvironmentVariableIsEmpty("MERVIN_LAYOUT_DESKTOP"))
+            QVERIFY(widget.screen()->grabWindow(0).save(
+                QDir(directory).filePath(QStringLiteral("desktop-") + name)));
+    }
 }
 
 // Inspect the real message shown by an action, then dismiss it. The watchdog
@@ -814,9 +964,12 @@ void TstTranslationLayout::saveRecoveryWarning()
         mervin::job::testing::release();
         mervin::job::testing::failWhen({});
     });
-    mervin::job::testing::failWhen([path, &reopenFailed, reads = 0]
+    mervin::job::testing::failWhen([path, &reopenFailed, opensAtCommit = -1]
                                 (mervin::job::Step step, const QString &file) mutable {
-        if (step == mervin::job::Step::Reading && file == path && ++reads >= 3) {
+        if (step == mervin::job::Step::Commit && file == path)
+            opensAtCommit = mervin::RenderEngine::testing::opens();
+        if (opensAtCommit >= 0 && mervin::RenderEngine::testing::opens() > opensAtCommit
+            && step == mervin::job::Step::Reading && file == path) {
             reopenFailed = true;
             return true;
         }
@@ -1386,6 +1539,45 @@ void TstTranslationLayout::settings()
         inspect(dialog, QStringLiteral("Settings %1").arg(QLatin1String(pages.key(i))));
         for (auto *scroll : dialog.findChildren<QScrollArea *>()) {
             if (scroll->isVisibleTo(&dialog)) {
+                const QString desktop = qEnvironmentVariable("MERVIN_LAYOUT_DESKTOP");
+                if (page == SettingsDialog::Page::General && !desktop.isEmpty()) {
+                    if (desktop == QStringLiteral("baseline") && !minimumSize_
+                        && QApplication::font().pointSizeF() == 10) {
+                        QCOMPARE(scroll->verticalScrollBar()->maximum(), 0);
+                        for (QGroupBox *group : scroll->widget()->findChildren<QGroupBox *>()) {
+                            QVERIFY(group->isVisibleTo(&dialog));
+                            QVERIFY(scroll->viewport()->rect().contains(
+                                QRect(group->mapTo(scroll->viewport(), QPoint()), group->size())));
+                        }
+                    }
+                    // Every control must remain reachable when the page scrolls.
+                    for (QWidget *control : scroll->widget()->findChildren<QWidget *>()) {
+                        if (!control->isVisibleTo(&dialog)
+                            || !(qobject_cast<QAbstractButton *>(control)
+                                 || qobject_cast<QComboBox *>(control)
+                                 || qobject_cast<QSpinBox *>(control)))
+                            continue;
+                        // Scroll to the complete control. ensureWidgetVisible can
+                        // target only an editor's cursor rectangle, leaving its
+                        // outer frame partly clipped even when it is reachable.
+                        const QPoint contentPosition = control->mapTo(scroll->widget(), QPoint());
+                        scroll->horizontalScrollBar()->setValue(contentPosition.x());
+                        scroll->verticalScrollBar()->setValue(contentPosition.y());
+                        settle();
+                        if (!scroll->viewport()->rect().contains(
+                                QRect(control->mapTo(scroll->viewport(), QPoint()), control->size())))
+                            qInfo() << control->metaObject()->className() << control->objectName()
+                                    << "control" << QRect(control->mapTo(scroll->viewport(), QPoint()), control->size())
+                                    << "viewport" << scroll->viewport()->rect()
+                                    << "scroll" << scroll->horizontalScrollBar()->value()
+                                    << scroll->horizontalScrollBar()->maximum()
+                                    << scroll->verticalScrollBar()->value()
+                                    << scroll->verticalScrollBar()->maximum();
+                        QVERIFY2(scroll->viewport()->rect().contains(
+                                     QRect(control->mapTo(scroll->viewport(), QPoint()), control->size())),
+                                 qPrintable(control->objectName()));
+                    }
+                }
                 scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());
                 inspect(dialog, QStringLiteral("Settings %1 scrolled to bottom")
                                     .arg(QLatin1String(pages.key(i))));
@@ -1435,6 +1627,114 @@ void TstTranslationLayout::settings()
     });
 }
 
+// Opens the tool's actual help and context-menu widgets through Qt input events.
+void TstTranslationLayout::measurePopups()
+{
+    const auto hideTooltip = qScopeGuard([] { QToolTip::hideText(); });
+    mervin::MeasurePanel panel;
+    panel.setResetVisible(true);
+    panel.setMeasurements({QStringLiteral("123456.789 m²")});
+    inspect(panel, QStringLiteral("Measure popup host"));
+    if (!qEnvironmentVariableIsEmpty("MERVIN_LAYOUT_DESKTOP"))
+        QVERIFY(QTest::qWaitForWindowActive(&panel));
+    int seen = 0;
+    for (QWidget *control : panel.findChildren<QWidget *>()) {
+        if (!control->isVisible() || control->toolTip().isEmpty())
+            continue;
+        const QPoint pos = control->rect().center();
+        QTest::mouseMove(control, pos);
+        settle();
+        QHelpEvent help(QEvent::ToolTip, pos, control->mapToGlobal(pos));
+        QApplication::sendEvent(control, &help);
+        if (!qEnvironmentVariableIsEmpty("MERVIN_LAYOUT_DESKTOP"))
+            QTest::qWait(80); // Let the X server map and paint before acquiring the transient label.
+        else
+            settle();
+        QTRY_VERIFY(QToolTip::isVisible());
+        QCOMPARE(QToolTip::text(), control->toolTip());
+        QPointer<QLabel> tip;
+        for (QWidget *widget : QApplication::topLevelWidgets()) {
+            auto *label = qobject_cast<QLabel *>(widget);
+            if (label && label->isVisible() && label->windowType() == Qt::ToolTip)
+                tip = label;
+        }
+        QVERIFY(tip);
+        QCOMPARE(tip->text(), control->toolTip());
+        inspectPopup(*tip, QStringLiteral("Measure tooltip %1").arg(++seen));
+    }
+    QVERIFY(seen > 0);
+    QToolTip::hideText();
+    auto *list = panel.findChild<QListWidget *>(QStringLiteral("measureList"));
+    QVERIFY(list && list->count() == 1);
+    const auto inspectContext = [&](QWidget &receiver, const QPoint &pos, const char *context,
+                                    const QString &state) {
+        bool inspected = false;
+        QTimer dismiss;
+        QElapsedTimer waiting;
+        waiting.start();
+        connect(&dismiss, &QTimer::timeout, this, [&] {
+            QPointer<QMenu> menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            if (!menu) {
+                if (waiting.elapsed() >= 5000) {
+                    dismiss.stop();
+                    if (QWidget *popup = QApplication::activePopupWidget())
+                        popup->close();
+                    if (QWidget *modal = QApplication::activeModalWidget())
+                        modal->close();
+                }
+                return;
+            }
+            dismiss.stop();
+            const auto close = qScopeGuard([menu] { if (menu) menu->close(); });
+            if (!qEnvironmentVariableIsEmpty("MERVIN_LAYOUT_DESKTOP"))
+                QTest::qWait(80);
+            else
+                settle();
+            QVERIFY(menu && menu->isVisible());
+            QStringList actions;
+            for (QAction *action : menu->actions())
+                if (!action->isSeparator())
+                    actions.append(action->text());
+            QCOMPARE(actions, (QStringList{QCoreApplication::translate(context, "Copy value"),
+                                          QCoreApplication::translate(context, "Delete measurement")}));
+            inspectPopup(*menu, state);
+            inspected = true;
+        });
+        dismiss.start(10);
+        QContextMenuEvent event(QContextMenuEvent::Mouse, pos, receiver.mapToGlobal(pos));
+        QApplication::sendEvent(&receiver, &event);
+        QVERIFY(inspected);
+    };
+    inspectContext(*list->viewport(), list->visualItemRect(list->item(0)).center(),
+                   "mervin::MeasurePanel", QStringLiteral("Measure list context menu"));
+    panel.hide();
+
+    // The on-page menu has a separate translation context and a real measurement hit test.
+    mervin::RenderEngine engine;
+    auto document = engine.openDocument(plain_);
+    QVERIFY(document);
+    mervin::ViewerWidget viewer(&engine);
+    viewer.setAttribute(Qt::WA_DontShowOnScreen,
+                        qEnvironmentVariableIsEmpty("MERVIN_LAYOUT_DESKTOP"));
+    viewer.resize(900, 650);
+    viewer.show();
+    viewer.setDocument(document.get());
+    viewer.setZoomEaseMs(0);
+    viewer.setZoomMode(mervin::ViewerWidget::ZoomMode::FitPage);
+    viewer.setPageScaleOverride(0, mervin::MeasureModel::fromRatio(100));
+    viewer.setMeasureMode(true);
+    viewer.setMeasureSnap(false);
+    settle();
+    const QPoint first = viewer.viewport()->rect().center() - QPoint(40, 0);
+    const QPoint second = first + QPoint(80, 0);
+    QCOMPARE(viewer.pageUnder(first), 0);
+    QTest::mouseClick(viewer.viewport(), Qt::LeftButton, Qt::NoModifier, first);
+    QTest::mouseClick(viewer.viewport(), Qt::LeftButton, Qt::NoModifier, second);
+    QVERIFY(viewer.hasMeasurements());
+    inspectContext(*viewer.viewport(), first, "mervin::ViewerWidget",
+                   QStringLiteral("Measure page context menu"));
+}
+
 void TstTranslationLayout::toolPanels()
 {
     mervin::MeasurePanel measure;
@@ -1443,6 +1743,18 @@ void TstTranslationLayout::toolPanels()
     measure.setResetVisible(true);
     measure.setMeasurements({QStringLiteral("123456.789 m²"), QStringLiteral("98765.432 mm")});
     inspect(measure, QStringLiteral("Measurement tools with reset and results"));
+    const auto labels = measure.findChildren<QLabel *>(QStringLiteral("measureRowText"));
+    QCOMPARE(labels.size(), 2);
+    for (QLabel *label : labels)
+        QVERIFY(!label->text().isEmpty());
+    // Child row allocation can settle after both the immediate and deferred panel
+    // fits. A later usable width must recover text elided at zero width.
+    QLabel *first = labels.front();
+    const int originalWidth = first->width();
+    first->setFixedWidth(0);
+    QTRY_VERIFY(first->text().isEmpty());
+    first->setFixedWidth(originalWidth);
+    QTRY_VERIFY(!first->text().isEmpty());
     mervin::AnnotPanel annotations;
     inspect(annotations, QStringLiteral("Annotation tools"));
     // The comment card of a highlight without an author: the translated

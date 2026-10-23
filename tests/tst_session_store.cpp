@@ -68,6 +68,7 @@ class TstSessionStore : public QObject
 
 private slots:
     void roundTrip();
+    void stableJsonAndMalformedFiles();
     void loadMissingIsEmpty();
     void emptyClears();
     void activePathRoundTrip();
@@ -89,6 +90,37 @@ private slots:
     void unavailableRoundTrip();
     void mountsRoundTrip();
 };
+
+// Stable literal keys include active selection and retained unavailable mounts.
+void TstSessionStore::stableJsonAndMalformedFiles()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("session.json"));
+    const QByteArray literal = R"({"open":["/records/a.pdf","/records/b.pdf"],"active":"/records/b.pdf","unavailable":[{"path":"/away/c.pdf","since":"2026-10-01"}],"mounts":{"/records/a.pdf":"/records","/away/c.pdf":"/away"}})";
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(literal), literal.size());
+    file.close();
+    SessionStore store;
+    QVERIFY(store.load(path));
+    QCOMPARE(store.paths(), QStringList({QStringLiteral("/records/a.pdf"), QStringLiteral("/records/b.pdf")}));
+    QCOMPARE(store.activePath(), QStringLiteral("/records/b.pdf"));
+    QCOMPARE(store.unavailable().size(), 1);
+    QCOMPARE(store.unavailable().front().path, QStringLiteral("/away/c.pdf"));
+    QCOMPARE(store.unavailable().front().since, QDate(2026, 10, 1));
+    QCOMPARE(store.mount(QStringLiteral("/away/c.pdf")), QStringLiteral("/away"));
+    QCOMPARE(QJsonDocument::fromJson(store.toJson()), QJsonDocument::fromJson(literal));
+    for (const QByteArray invalid : {QByteArray("[]"), QByteArray("{broken")}) {
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        QCOMPARE(file.write(invalid), invalid.size());
+        file.close();
+        QVERIFY(!store.load(path));
+        QVERIFY(store.paths().isEmpty());
+        QVERIFY(store.activePath().isEmpty());
+        QVERIFY(store.unavailable().isEmpty());
+        QVERIFY(store.mount(QStringLiteral("/away/c.pdf")).isEmpty());
+    }
+}
 
 void TstSessionStore::roundTrip()
 {

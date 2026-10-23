@@ -3,9 +3,7 @@
 
 import json
 from pathlib import Path
-import secrets
 import shutil
-import string
 import subprocess
 import sys
 import tempfile
@@ -90,9 +88,11 @@ class InstallerVersionTests(unittest.TestCase):
         if cls.cmake is None:
             raise RuntimeError("CMake is required to verify installer version mapping")
         cls.dpkg = shutil.which("dpkg")
-        suffix = "".join(secrets.choice(string.ascii_lowercase) for _ in range(4))
-        cls.session_dir = Path.home() / "dev-temp" / f"mervin-release-versions-{suffix}"
-        cls.session_dir.mkdir(parents=True)
+        temporary_root = ROOT / "dev-temp"
+        temporary_root.mkdir(exist_ok=True)
+        directory = tempfile.TemporaryDirectory(prefix="release-versions-", dir=temporary_root)
+        cls.addClassCleanup(directory.cleanup)
+        cls.session_dir = Path(directory.name)
 
     def configure(self, version):
         with tempfile.TemporaryDirectory(prefix="cmake-", dir=self.session_dir) as temporary:

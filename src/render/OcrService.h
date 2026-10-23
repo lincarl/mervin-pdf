@@ -5,6 +5,7 @@
 #include <QStringList>
 #include <atomic>
 #include <memory>
+#include <functional>
 
 typedef struct fz_context fz_context;
 
@@ -42,7 +43,14 @@ public:
     // The DPI the selection is re-rendered at before OCR.
     static constexpr int kOcrDpi = 300;
 
+    struct testing {
+        enum class Phase { WaitingForTurn, NativeProgress };
+        // Set only while this service is idle. Called on the recognition thread.
+        static void observe(OcrService &service, std::function<void(Phase)> observer);
+    };
+
 private:
+    std::function<void(testing::Phase)> observer_;
     std::shared_ptr<fz_context> base_; // see RenderEngine::baseContext()
     fz_context *ctx_ = nullptr; // private context; calls must be serial
 };

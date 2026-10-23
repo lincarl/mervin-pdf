@@ -4,6 +4,8 @@
 #include "io/SaveCheck.h"
 #include "security/PageOps.h"
 #include "security/QpdfService.h"
+#include "render/Document.h"
+#include "render/RenderEngine.h"
 
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFObjectHandle.hh>
@@ -24,6 +26,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScopeGuard>
+#include <QSignalSpy>
 #include <QScrollBar>
 #include <QTemporaryDir>
 #include <QTest>
@@ -51,8 +54,8 @@ using mervin::QpdfService;
 //
 // As in tst_merge_dialog, the dialog is flagged WA_DontShowOnScreen and never
 // exec()d, so it never appears and nothing blocks; only the "Replace it?" box
-// does, and answerReplaceWithYes() closes it. Source::doc and ::engine stay
-// null: thumbnails are out of scope, and the strip must cope without them.
+// does, and answerReplaceWithYes() closes it. Most cases leave Source::doc and
+// ::engine null. The thumbnail case uses a real rendered document.
 namespace {
 
 void makePdf(const QString &path, int n)
@@ -130,6 +133,9 @@ private slots:
     void deleteStripKeysToggleThePage();
     void deletingEveryPageIsRefused();
     void deleteWritesTheRemainingPages();
+    void changedPagesCancelPendingAcceptance_data();
+    void changedPagesCancelPendingAcceptance();
+    void realThumbnailsFadeDeletedPagesAndRecover();
 
 private:
     QTemporaryDir dir_;
@@ -1054,6 +1060,103 @@ void TstExtractDialog::deleteWritesTheRemainingPages()
     QCOMPARE(PageOps::probe(locked, &count, QStringLiteral("secret"), &err), PageOps::Status::Ok);
     QCOMPARE(count, 30);
     QCOMPARE(sourcePages(locked, QStringLiteral("secret")).value(6), 7); // page 7 went
+}
+
+void TstExtractDialog::changedPagesCancelPendingAcceptance_data()
+{
+    QTest::addColumn<bool>("reorder");
+    QTest::newRow("range edit") << false;
+    QTest::newRow("row reorder") << true;
+}
+
+/// A late destination answer must not accept the page order from an earlier press.
+void TstExtractDialog::changedPagesCancelPendingAcceptance()
+{
+    QFETCH(bool, reorder);
+    ExtractDialog d(source(plain_));
+    prepare(d);
+    type(rows(d).first(), QStringLiteral("1,3"));
+    QTRY_COMPARE(rows(d).size(), 2);
+    settle(&d);
+    QSignalSpy acceptedSignal(&d, &QDialog::accepted);
+    const auto release = qScopeGuard([] { SaveCheck::holdForTesting(false); });
+    SaveCheck::holdForTesting(true);
+    extract(d)->click();
+    QVERIFY(d.findChild<SaveCheck *>()->pending());
+    if (reorder) {
+        list(d)->setCurrentRow(1);
+        QPushButton *up = nullptr;
+        for (auto *button : d.findChildren<QPushButton *>())
+            if (button->text() == QStringLiteral("Move &Up"))
+                up = button;
+        QVERIFY(up);
+        up->click();
+    } else {
+        rows(d).first()->selectAll();
+        QTest::keyClicks(rows(d).first(), QStringLiteral("2"));
+    }
+    SaveCheck::holdForTesting(false);
+    settle(&d);
+    QVERIFY(acceptedSignal.isEmpty());
+    QVERIFY(d.isVisible());
+    press(d);
+    QCOMPARE(acceptedSignal.count(), 1);
+    QCOMPARE(d.job().pages, reorder ? QList<int>({2, 0}) : QList<int>({1, 2}));
+}
+
+/// Rendered page pixels remain in order, fade on deletion, and recover when kept again.
+void TstExtractDialog::realThumbnailsFadeDeletedPagesAndRecover()
+{
+    const QString path = dir_.filePath(QStringLiteral("thumbnail-colors.pdf"));
+    QPDF pdf;
+    pdf.emptyPDF();
+    QPDFPageDocumentHelper pages(pdf);
+    for (const char *color : {"1 0 0", "0 0 1"}) {
+        auto page = QPDFObjectHandle::newDictionary();
+        page.replaceKey("/Type", QPDFObjectHandle::newName("/Page"));
+        page.replaceKey("/MediaBox", QPDFObjectHandle::parse("[0 0 200 300]"));
+        page.replaceKey("/Resources", QPDFObjectHandle::newDictionary());
+        page.replaceKey("/Contents", pdf.newStream(std::string(color) + " rg 0 0 200 300 re f"));
+        pages.addPage(QPDFPageObjectHelper(pdf.makeIndirectObject(page)), false);
+    }
+    const QByteArray filename = path.toUtf8();
+    QPDFWriter writer(pdf, filename.constData());
+    writer.write();
+    mervin::RenderEngine engine;
+    auto document = engine.openDocument(path);
+    QVERIFY(document);
+    ExtractDialog::Source input = source(path);
+    input.mode = ExtractPlan::Mode::Delete;
+    input.seedPage.reset();
+    input.viewerPageCount = 2;
+    input.doc = document.get();
+    input.engine = &engine;
+    ExtractDialog dialog(input);
+    prepare(dialog);
+    ExtractStrip *thumbnails = strip(dialog);
+    QCOMPARE(thumbnails->model()->rowCount(), 2);
+    const auto centerColor = [thumbnails](int row) {
+        const QRect cell = thumbnails->visualRect(thumbnails->model()->index(row, 0));
+        const QImage image = thumbnails->viewport()->grab().toImage();
+        const qreal dpr = image.devicePixelRatio();
+        return image.pixelColor(QPoint(qRound(cell.center().x() * dpr),
+                                       qRound(cell.center().y() * dpr)));
+    };
+    QTRY_VERIFY(centerColor(0).red() > 240 && centerColor(0).blue() < 15);
+    QTRY_VERIFY(centerColor(1).blue() > 240 && centerColor(1).red() < 15);
+    const QColor original = centerColor(0);
+    const QColor neighbor = centerColor(1);
+    clickCell(dialog, 0);
+    QTRY_COMPARE(dialog.choices().specs, QStringList{QStringLiteral("1")});
+    const QColor faded = centerColor(0);
+    QVERIFY(faded != original);
+    QVERIFY(faded.red() > faded.blue());
+    QCOMPARE(centerColor(1), neighbor);
+    QCOMPARE(tip(dialog, 0), QStringLiteral("Page 1 will be deleted. Click to keep it."));
+    clickCell(dialog, 0);
+    QTRY_VERIFY(dialog.choices().specs.isEmpty());
+    QCOMPARE(centerColor(0), original);
+    QCOMPARE(centerColor(1), neighbor);
 }
 
 QTEST_MAIN(TstExtractDialog)

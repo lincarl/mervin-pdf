@@ -3,6 +3,7 @@
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
 #include "io/AppFiles.h"
+#include "io/Background.h"
 #include "ocr/TessdataManager.h"
 #include "dialogs/ExtractDialog.h"
 #include "dialogs/SettingsDialog.h"
@@ -10,16 +11,19 @@
 #include "render/MeasureContent.h"
 #include "recent/RecentStore.h"
 #include "render/RenderEngine.h"
+#include "render/DocumentSearch.h"
 #include "security/MeasureExport.h"
 #include "session/SessionStore.h"
 #include "ui/DetachableTabBar.h"
 #include "ui/MainWindow.h"
 #include "ui/TabPage.h"
+#include "ui/FindCard.h"
 #include "ui/ThemeTokens.h"
 #include "ui/ViewerWidget.h"
 
 #include <QAction>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QContextMenuEvent>
 #include <QDateTime>
 #include <QDialog>
@@ -35,6 +39,7 @@
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QSignalSpy>
+#include <QSemaphore>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
@@ -52,6 +57,23 @@
 using namespace mervin;
 
 namespace {
+
+// Wait for this suite's search results without dispatching their queued GUI callbacks.
+class SearchDeliveries
+{
+public:
+    SearchDeliveries()
+    {
+        DocumentSearch::testing::observe([queued = queued_](auto phase, const QString &) {
+            if (phase == DocumentSearch::testing::Phase::CompletionQueued)
+                queued->release();
+        });
+    }
+    ~SearchDeliveries() { DocumentSearch::testing::observe({}); }
+    bool wait() { return queued_->tryAcquire(1, 10000); }
+private:
+    std::shared_ptr<QSemaphore> queued_ = std::make_shared<QSemaphore>();
+};
 
 // Loads what the app saved, once its background writes are done.
 bool loadSaved(SessionStore &store)
@@ -159,7 +181,12 @@ private slots:
     void init()
     {
         QVERIFY(mervin::appfiles::flush(10000)); // the previous test's writes land first
-        ConfigPaths::setOverrideDir(profile_.path());
+        profile_ = std::make_unique<QTemporaryDir>();
+        QVERIFY(profile_->isValid());
+        ConfigPaths::setOverrideDir(profile_->path());
+        Settings settings;
+        settings.autoUpdate = false;
+        QVERIFY(settings.save());
         answers_.clear();
         clicked_.clear();
         unexpectedDialogs_.clear();
@@ -681,19 +708,22 @@ private slots:
         window.setAttribute(Qt::WA_DontShowOnScreen);
         window.show();
         QVERIFY(mervin::testing::openAndWait(window, path));
-        std::atomic<bool> held{true};
-        mervin::TessdataManager::runInFolder([&held] {
-            for (int i = 0; held.load() && i < 2000; ++i)
-                QThread::msleep(5);
+        auto entered = std::make_shared<QSemaphore>();
+        auto release = std::make_shared<QSemaphore>();
+        mervin::TessdataManager::runInFolder([entered, release] {
+            entered->release();
+            release->tryAcquire(1, 10000);
         });
+        const auto unblock = qScopeGuard([release] { release->release(); });
+        QVERIFY(entered->tryAcquire(1, 5000));
         QVERIFY(QMetaObject::invokeMethod(&window, "onOcrRegionSelected", Q_ARG(int, 0),
                                           Q_ARG(QRectF, QRectF(10, 10, 100, 40))));
         auto *recent = window.findChild<QPushButton *>(QStringLiteral("recentPillBtn"));
         QVERIFY(recent);
         QTest::mouseClick(recent, Qt::LeftButton);
-        held = false;
+        release->release();
         QTRY_VERIFY(!mervin::TessdataManager::busy());
-        QTest::qWait(50);
+        QCoreApplication::processEvents();
     }
 
     // Checks that Cancel retains an edited tab and Don't save closes it through the queued flow.
@@ -1475,7 +1505,10 @@ private slots:
         dialog.show();
         QTRY_COMPARE(QApplication::activeModalWidget(), &dialog);
         manager.closeRemovedTabs();
-        QTest::qWait(1500); // the check, and an activity tick, which must keep the tab
+        QTRY_VERIFY(!WindowManager::testing::removedTabScanRunning(manager));
+        QCoreApplication::processEvents();
+        manager.checkDocumentActivity();
+        QCoreApplication::processEvents();
         QCOMPARE(window->tabCount(), 3);
         QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), back));
         dialog.close();
@@ -1753,28 +1786,196 @@ private slots:
         QCOMPARE(AnnotModel(*saved).pageAnnots(0)[0].contents, QStringLiteral("retained"));
     }
 
+    // The completed worker has posted its result before the query is superseded.
+    void documentSearchDiscardsQueuedCompletion_data()
+    {
+        QTest::addColumn<QString>("action");
+        for (const char *action : {"replace", "cancel", "clear", "destroy"})
+            QTest::newRow(action) << QString::fromLatin1(action);
+    }
+
+    void documentSearchDiscardsQueuedCompletion()
+    {
+        QFETCH(QString, action);
+        SearchDeliveries deliveries;
+        RenderEngine engine;
+        auto doc = engine.openDocument(QStringLiteral(MERVIN_FIXTURE_PDF));
+        QVERIFY(doc);
+        auto search = std::make_unique<DocumentSearch>(&engine);
+        int oldDeliveries = 0;
+        search->start(doc.get(), "STANDARD", false, false,
+                      [&](const auto &) { ++oldDeliveries; });
+        QVERIFY(deliveries.wait());
+        QCOMPARE(oldDeliveries, 0);
+        int newDeliveries = 0;
+        size_t newMatches = 0;
+        if (action == QLatin1String("destroy"))
+            search.reset();
+        else if (action == QLatin1String("cancel")) {
+            search->cancel();
+            search->cancel();
+        } else if (action == QLatin1String("clear"))
+            search->clear();
+        else
+            search->start(doc.get(), "STANDARD", false, false, [&](const auto &matches) {
+                ++newDeliveries;
+                newMatches = matches.size();
+            });
+        if (action == QLatin1String("replace"))
+            QVERIFY(deliveries.wait());
+        QCoreApplication::processEvents();
+        QCOMPARE(oldDeliveries, 0);
+        QCOMPARE(newDeliveries, action == QLatin1String("replace") ? 1 : 0);
+        if (!search)
+            search = std::make_unique<DocumentSearch>(&engine);
+        if (action != QLatin1String("replace")) {
+            search->start(doc.get(), "STANDARD", false, false, [&](const auto &matches) {
+                ++newDeliveries;
+                newMatches = matches.size();
+            });
+            QTRY_COMPARE(newDeliveries, 1);
+        }
+        QCOMPARE(newMatches, size_t(doc->pageCount()));
+    }
+
+    // Replacement removes intermediate jobs before the serial search worker starts them.
+    void documentSearchKeepsOnlyLatestPendingQuery()
+    {
+        RenderEngine engine;
+        auto doc = engine.openDocument(QStringLiteral(MERVIN_FIXTURE_PDF));
+        QVERIFY(doc);
+        auto entered = std::make_shared<QSemaphore>();
+        auto release = std::make_shared<QSemaphore>();
+        auto queued = std::make_shared<QSemaphore>();
+        auto started = std::make_shared<QStringList>();
+        DocumentSearch::testing::observe([entered, release, started, queued](auto phase, const QString &query) {
+            if (phase == DocumentSearch::testing::Phase::CompletionQueued) {
+                queued->release();
+                return;
+            }
+            started->append(query);
+            if (query == QLatin1String("held")) {
+                entered->release();
+                release->tryAcquire(1, 10000);
+            }
+        });
+        const auto reset = qScopeGuard([release] {
+            release->release();
+            DocumentSearch::testing::observe({});
+        });
+        DocumentSearch search(&engine);
+        int completions = 0;
+        size_t count = 0;
+        const auto completed = [&](const auto &matches) { ++completions; count = matches.size(); };
+        search.start(doc.get(), "held", false, false, completed);
+        QVERIFY(entered->tryAcquire(1, 5000));
+        search.start(doc.get(), "intermediate", false, false, completed);
+        search.start(doc.get(), "STANDARD", false, false, completed);
+        release->release();
+        QVERIFY(queued->tryAcquire(2, 10000));
+        QCoreApplication::processEvents();
+        QCOMPARE(*started, QStringList({"held", "STANDARD"}));
+        QCOMPARE(completions, 1);
+        QCOMPARE(count, size_t(doc->pageCount()));
+    }
+
     void documentSearchReplacedAndClosed()
     {
+        SearchDeliveries deliveries;
         RenderEngine engine;
         auto doc = engine.openDocument(QStringLiteral(MERVIN_FIXTURE_PDF));
         QVERIFY(doc);
         ViewerWidget viewer(&engine);
         viewer.setDocument(doc.get());
         viewer.startFind("STANDARD", false, false);
+        QVERIFY(deliveries.wait());
+        QSignalSpy changed(&viewer, &ViewerWidget::findStatusChanged);
         viewer.startFind("absent", false, false);
-        QTest::qWait(100);
+        QVERIFY(deliveries.wait());
+        QCoreApplication::processEvents();
         QCOMPARE(viewer.matchCount(), 0);
+        for (const auto &status : changed)
+            QCOMPARE(status[1].toInt(), 0);
         viewer.startFind("STANDARD", false, false);
-        QTRY_COMPARE(viewer.matchCount(), doc->pageCount());
+        QVERIFY(deliveries.wait());
+        QCoreApplication::processEvents();
+        QCOMPARE(viewer.matchCount(), doc->pageCount());
         viewer.startFind("The", false, false);
+        QVERIFY(deliveries.wait());
         viewer.setDocument(nullptr);
         doc.reset();
-        QTest::qWait(100);
+        QCoreApplication::processEvents();
         QCOMPARE(viewer.matchCount(), 0);
+        auto replacement = engine.openDocument(QStringLiteral(MERVIN_FIXTURE_PDF));
+        QVERIFY(replacement);
+        viewer.setDocument(replacement.get());
+        viewer.startFind("STANDARD", false, false);
+        QTRY_COMPARE(viewer.matchCount(), replacement->pageCount());
+        viewer.setDocument(nullptr);
+    }
+
+    // Each tab keeps its own field, result count and navigation; dismiss clears only its viewer.
+    void tabFindStateAndClearAreIndependent()
+    {
+        SearchDeliveries deliveries;
+        RenderEngine engine;
+        QTabWidget tabs;
+        auto *first = new TabPage(&engine);
+        auto *second = new TabPage(&engine);
+        tabs.addTab(first, "first");
+        tabs.addTab(second, "second");
+        tabs.resize(900, 700);
+        tabs.show();
+        QVERIFY(first->open(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(second->open(QStringLiteral(MERVIN_FIXTURE_PDF)));
+        const auto options = first->findCard()->findChildren<QCheckBox *>();
+        QCOMPARE(options.size(), 2);
+        for (auto *option : options)
+            option->setChecked(true);
+        first->findCard()->open(QStringLiteral("STANDARD"));
+        QVERIFY(deliveries.wait());
+        QCoreApplication::processEvents();
+        QCOMPARE(first->viewer()->matchCount(), 4);
+        QCOMPARE(first->viewer()->currentMatchNumber(), 1);
+        QVERIFY(first->viewer()->findCaseSensitive());
+        QVERIFY(first->viewer()->findWholeWord());
+        first->findCard()->next();
+        QCOMPARE(first->viewer()->currentMatchNumber(), 2);
+        QCOMPARE(first->findCard()->findChild<QLabel *>("findCount")->text(), QStringLiteral("2 of 4"));
+        tabs.setCurrentWidget(second);
+        second->findCard()->open(QStringLiteral("absent"));
+        QVERIFY(deliveries.wait());
+        QCoreApplication::processEvents();
+        QCOMPARE(second->viewer()->matchCount(), 0);
+        QVERIFY(!second->viewer()->findCaseSensitive());
+        QVERIFY(!second->viewer()->findWholeWord());
+        QCOMPARE(second->findCard()->findChild<QLabel *>("findCount")->text(), QStringLiteral("No results"));
+        QCOMPARE(first->findCard()->query(), QStringLiteral("STANDARD"));
+        QVERIFY(first->findCard()->isOpen());
+        QVERIFY(first->findCard()->caseSensitive());
+        QVERIFY(first->findCard()->wholeWord());
+        QCOMPARE(first->viewer()->currentMatchNumber(), 2);
+        second->findCard()->dismiss();
+        QVERIFY(second->viewer()->findQuery().isEmpty());
+        QCOMPARE(second->viewer()->matchCount(), 0);
+        QCOMPARE(first->viewer()->matchCount(), 4);
+        tabs.setCurrentWidget(first);
+        first->findCard()->prev();
+        QCOMPARE(first->viewer()->currentMatchNumber(), 1);
+        first->findCard()->dismiss();
+        QVERIFY(first->viewer()->findQuery().isEmpty());
+        QCOMPARE(first->viewer()->matchCount(), 0);
+        QCOMPARE(first->findCard()->query(), QStringLiteral("STANDARD"));
+        first->findCard()->open();
+        QVERIFY(deliveries.wait());
+        QCoreApplication::processEvents();
+        QCOMPARE(first->viewer()->matchCount(), 4);
+        QCOMPARE(second->findCard()->query(), QStringLiteral("absent"));
+        QVERIFY(!second->findCard()->isOpen());
     }
 
 private:
-    QTemporaryDir profile_;
+    std::unique_ptr<QTemporaryDir> profile_;
     QTimer dialogs_;
     QList<QMessageBox::StandardButton> answers_;
     QStringList clicked_; // the text of each button the dialog handler clicked

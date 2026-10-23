@@ -153,7 +153,11 @@ inline void button(QStringList &errors, const QAbstractButton &button)
         if (tool->popupMode() == QToolButton::MenuButtonPopup)
             option.features |= QStyleOptionToolButton::MenuButtonPopup;
         needed = tool->style()->sizeFromContents(QStyle::CT_ToolButton, &option, needed, tool);
-        compare(errors, button, button.text(), needed, button.size());
+        // Split menu buttons paint their indicator beside the action. Its width
+        // is absent from sizeFromContents() on Fusion, so use the action's bounds.
+        const QRect area = tool->style()->subControlRect(
+            QStyle::CC_ToolButton, &option, QStyle::SC_ToolButton, tool);
+        compare(errors, button, button.text(), needed, area.size());
         return;
     }
 

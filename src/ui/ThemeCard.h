@@ -23,6 +23,10 @@ public:
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
 
+    // The painted caption and radio indicator, in card coordinates.
+    QRectF captionRect() const;
+    QRectF indicatorRect() const;
+
 protected:
     bool hitButton(const QPoint &point) const override;
     void enterEvent(QEnterEvent *event) override;

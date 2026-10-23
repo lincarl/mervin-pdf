@@ -3,10 +3,14 @@
 #include "print/PrintLayout.h"
 
 #include <QDialog>
+#include <QHash>
 #include <QList>
 #include <QMarginsF>
 #include <QPageLayout>
+#include <QPageSize>
 #include <QString>
+
+#include <functional>
 
 class QCheckBox;
 class QComboBox;
@@ -32,9 +36,25 @@ class PrintDialog : public QDialog
     Q_OBJECT
 
 public:
+    // Mirrors QPrinterInfo's media metadata without reducing driver media to an ID.
+    struct PaperCapabilities
+    {
+        QList<QPageSize> supported;
+        bool custom = false;
+        QPageSize minimum;
+        QPageSize maximum;
+
+        // Returns the driver's exact definition, valid custom paper, or invalid paper.
+        // An empty list without custom support means metadata is unavailable. In that
+        // case QPrinter::setPageSize remains the final best-effort validation.
+        QPageSize acceptedPaper(const QPageSize &paper) const;
+    };
+    using PaperQuery = std::function<PaperCapabilities(const QString &)>;
+
     PrintDialog(QPrinter *printer, mervin::RenderEngine *engine, mervin::Document *document,
                 int rotation, QPageLayout::Orientation initialOrientation, int currentPage,
-                const QString &suggestedFileName, QWidget *parent = nullptr);
+                const QString &suggestedFileName, QWidget *parent = nullptr,
+                PaperQuery paperQuery = {});
 
     // Valid after exec() == Accepted, when useSystemDialog() == false.
     QList<int> selectedPages() const { return pages_; } // 1-based, in print order
@@ -47,6 +67,8 @@ private:
     void accept() override;
     QList<int> resolvePages(QString *error) const;
     QPageSize selectedPrinterDefaultPageSize();
+    const PaperCapabilities &selectedPaperCapabilities();
+    void refreshPaperSizes(const QPageSize &preferred);
     void selectPaperSize(const QPageSize &size);
     void schedulePreview();
     bool refreshPreview();
@@ -62,6 +84,8 @@ private:
     QList<int> pages_;
     bool useSystemDialog_ = false;
     bool printerSelectionChanged_ = false;
+    PaperQuery paperQuery_;
+    QHash<QString, PaperCapabilities> paperCapabilities_;
 
     QComboBox *printerCombo_ = nullptr;
     QComboBox *paperSizeCombo_ = nullptr;

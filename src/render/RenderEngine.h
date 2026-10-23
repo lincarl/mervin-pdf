@@ -16,7 +16,8 @@ class DocumentOpener;
 // Owns the worker pool and the base MuPDF context, which lives on while any context
 // cloned from it does (see baseContext()). Each worker uses a cloned context; mutex
 // callbacks protect shared MuPDF caches. Contexts themselves are not thread-safe.
-// All contexts share one MuPDF resource store. Unpatched MuPDF 1.28 reads a store entry
+// The engine's contexts share one MuPDF resource store. ContentSearch has a separate
+// store and shares only the locks. Unpatched MuPDF 1.28 reads a store entry
 // it has found after it releases the store lock (fz_find_item, and fz_store_item when
 // the entry already exists), and makes a new entry findable before it links it.
 // Mervin's MuPDF patches close both windows (see "MuPDF patches" in docs/design.md).
@@ -52,6 +53,11 @@ public:
     struct testing {
         // PDF/document opens attempted by this process, on any thread.
         static int opens();
+        // Live queued/active requests and attempted worker rasters for cancellation checks.
+        static int pendingRequests(const RenderEngine &engine, quint64 requester);
+        static int activeRequests(const RenderEngine &engine, quint64 requester);
+        static int rasterizations(const RenderEngine &engine);
+        static int cacheTrims(const RenderEngine &engine);
     };
 
     // Thread-safe. Workers process requests; resultReady() follows on this
@@ -67,17 +73,20 @@ public:
     // safe while workers render. fz_shrink_store evicts only store entries that nothing
     // else holds, and a lookup takes its reference before it releases the store lock.
     // fz_purge_glyph_cache is safe because a glyph lookup takes its reference under the
-    // glyph cache's own lock. Call it on the engine's thread when no document is
-    // loaded, since it also evicts what loaded documents would reuse.
+    // glyph cache's own lock. Call it on the engine's thread. It also evicts what
+    // loaded documents would reuse, so scheduleCacheTrim coalesces close-time trims.
     void trimCache();
+    // Coalesces completed-close notifications into one trim after the render queue
+    // and active workers become idle. Call on the engine thread, including when
+    // other documents remain open. There is no recurring trim timer.
+    void scheduleCacheTrim();
 
     // Stops the workers without waiting for them (idempotent). A worker stuck reading
     // a document on a drive that stopped answering ends once the read returns.
     void shutdown();
 
-    // Synchronous, on-the-calling-thread render of a single page (used by Print,
-    // which needs page pixmaps at the printer's resolution). Renders on the base
-    // context under the document's access lock, so it is safe alongside the
+    // Synchronous render for thumbnails and the extract strip on the engine's thread.
+    // Renders on the base context under the document's access lock, alongside the
     // worker pool. Returns a null QImage on failure, and on the screen thread while a
     // job holds the document or waits for it (see Document::ScreenQuery). scale maps
     // points->pixels (e.g. dpi/72); rotation is 0/90/180/270.
@@ -102,6 +111,7 @@ private:
                                           QString *error, bool *needsPassword);
     // Runs on a background::start task until the engine stops, then drops `ctx`.
     static void workerLoop(const std::shared_ptr<Shared> &shared, fz_context *ctx);
+    static void postCacheTrimIfIdle(const std::shared_ptr<Shared> &shared);
 
     std::shared_ptr<fz_context> base_; // locked with sharedMuPdfLocks()
     std::shared_ptr<Shared> shared_;

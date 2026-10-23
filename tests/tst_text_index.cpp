@@ -19,6 +19,7 @@ private slots:
     void searchRespectsOptions_data();
     void searchRespectsOptions();
     void plainWebTextHitTestNormalizesWww();
+    void selectionGeometryUsesPageOriginAndUtf16();
     void pdfLinkAnnotationHitTestReturnsUri();
     void pdfInternalLinkAnnotationResolvesTargetPage();
     void pdfJavaScriptPropertiesHitTestReturnsValues();
@@ -202,6 +203,72 @@ void TstTextIndex::searchRespectsOptions()
         QCOMPARE(matches[i].start, starts.at(qsizetype(i)));
         QCOMPARE(matches[i].length, query.size());
     }
+}
+
+// Authored Courier cells give independent hit-test coordinates and widths.
+void TstTextIndex::selectionGeometryUsesPageOriginAndUtf16()
+{
+    const QByteArray content = "BT /F1 20 Tf 120 450 Td (ABCD) Tj 0 -50 Td (www.inet.se) Tj ET";
+    const QByteArray cmap = "/CIDInit /ProcSet findresource begin 12 dict begin begincmap "
+        "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def "
+        "/CMapName /Test def /CMapType 2 def 1 begincodespacerange <00> <FF> endcodespacerange "
+        "1 beginbfchar <41> <D83DDE00> endbfchar endcmap CMapName currentdict /CMap defineresource pop end end";
+    const QList<QByteArray> objects{
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [100 200 400 500] "
+        "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+        "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content + "\nendstream",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /ToUnicode 6 0 R >>",
+        "<< /Length " + QByteArray::number(cmap.size()) + " >>\nstream\n" + cmap + "\nendstream"};
+    QTemporaryDir files;
+    RenderEngine engine;
+    auto doc = openTempPdf(engine, files, QStringLiteral("geometry.pdf"), assemblePdf(objects));
+    QVERIFY(doc);
+    TextIndex index(engine.baseContext(), doc.get());
+    const QString smile = QString::fromUcs4(U"\U0001f600");
+    QCOMPARE(index.pageText(0), smile + QStringLiteral("BCD\nwww.inet.se\n"));
+    QCOMPARE(index.textRange(0, 0, 2), smile);
+    const auto high = index.rangeRects(0, 0, 1);
+    const auto low = index.rangeRects(0, 1, 1);
+    const auto next = index.rangeRects(0, 2, 1);
+    QCOMPARE(high.size(), size_t(1));
+    QCOMPARE(low.size(), size_t(1));
+    QCOMPARE(next.size(), size_t(1));
+    for (const QRectF &rect : {high[0], low[0]}) {
+        QVERIFY(qAbs(rect.left() - 20.0) < 0.1);
+        QVERIFY(qAbs(rect.width() - 12.0) < 0.1);
+        QVERIFY(rect.top() > 30 && rect.top() < 35);
+        QVERIFY(rect.bottom() > 55 && rect.bottom() < 58);
+    }
+    QVERIFY(qAbs(next[0].left() - 32.0) < 0.1);
+    QVERIFY(qAbs(next[0].width() - 12.0) < 0.1);
+    QCOMPARE(index.offsetAt(0, {21, 45}), 0);
+    QCOMPARE(index.offsetAt(0, {33, 45}), 2);
+    QCOMPARE(index.offsetAt(0, {100, 45}), 5); // before the first newline
+    int start = -1;
+    int end = -1;
+    index.wordBoundsAt(0, 3, &start, &end);
+    QCOMPARE(start, 2);
+    QCOMPARE(end, 5);
+    const auto lines = index.rangeRects(0, 0, 18);
+    QCOMPARE(lines.size(), size_t(2));
+    QVERIFY(qAbs(lines[0].left() - 20.0) < 0.1);
+    QVERIFY(qAbs(lines[0].width() - 48.0) < 0.1);
+    QVERIFY(qAbs(lines[1].left() - 20.0) < 0.1);
+    QVERIFY(qAbs(lines[1].width() - 132.0) < 0.1);
+    QVERIFY(qAbs(lines[1].top() - lines[0].top() - 50.0) < 0.1);
+    QVERIFY(index.rangeRects(0, 5, 1).empty()); // newline carries no selection box
+    const auto link = index.linkAt(0, {33, 95});
+    QVERIFY(link);
+    QCOMPARE(link->start, 6);
+    QCOMPARE(link->length, 11);
+    QCOMPARE(link->url, QStringLiteral("https://www.inet.se"));
+    QVERIFY(!index.linkAt(0, {160, 95}));
+    const auto match = index.search(smile, true, false);
+    QCOMPARE(match.size(), size_t(1));
+    QCOMPARE(match[0].start, 0);
+    QCOMPARE(match[0].length, 2);
 }
 
 void TstTextIndex::plainWebTextHitTestNormalizesWww()

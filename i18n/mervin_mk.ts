@@ -244,6 +244,7 @@ Edited document retained at %2.
     </message>
     <message>
         <source>Split Pages</source>
+        <extracomment>Title of the action that saves each PDF page as a separate file. Split is an action, not an adjective describing pages that have already been split.</extracomment>
         <translation>Поделете страници</translation>
     </message>
     <message>
@@ -1802,7 +1803,7 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     </message>
     <message>
         <source>Enter the real length of the line you drew to set the drawing scale.</source>
-        <translation>Внесете ја вистинската должина на линијата што ја нацртавте за да ја поставите скалата на цртежот.</translation>
+        <translation>Внесете ја вистинската должина на линијата што ја нацртавте за да го поставите размерот на цртежот.</translation>
     </message>
     <message>
         <source>Known length:</source>
@@ -1816,7 +1817,7 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     </message>
     <message>
         <source>Set the drawing scale by typing a scale ratio.</source>
-        <translation>Поставете ја скалата за цртање со впишување на сооднос на скалата.</translation>
+        <translation>Поставете го размерот на цртежот со внесување сооднос.</translation>
     </message>
     <message>
         <source>Scale ratio 1 :</source>
@@ -2525,7 +2526,7 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     <message>
         <source>Scale -</source>
         <extracomment>Placeholder until the drawing scale is known. The dash means &quot;no value yet&quot;.</extracomment>
-        <translation>Скала -</translation>
+        <translation>Размер -</translation>
     </message>
     <message>
         <source>Unit</source>
@@ -2557,7 +2558,7 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     </message>
     <message>
         <source>Set the scale by drawing a line of known length</source>
-        <translation>Поставете ја скалата со цртање линија со позната должина</translation>
+        <translation>Поставете го размерот со цртање линија со позната должина</translation>
     </message>
     <message>
         <source>Set Scale</source>
@@ -2566,7 +2567,7 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     </message>
     <message>
         <source>Set the scale manually by typing a ratio (1 : N)</source>
-        <translation>Рачно поставете ја скалата со внесување сооднос (1 : N)</translation>
+        <translation>Рачно поставете го размерот со внесување сооднос (1 : N)</translation>
     </message>
     <message>
         <source>Reset</source>
@@ -3003,7 +3004,7 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     </message>
     <message>
         <source>A password contains characters that AES-128 and RC4-128 cannot use. Choose AES-256.</source>
-        <extracomment>Reason shown after &quot;The operation failed.&quot; when encrypting. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
+        <extracomment>Shown in the security dialog or after an encryption failure. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
         <translation>Лозинката содржи знаци што AES-128 и RC4-128 не можат да ги користат. Изберете AES-256.</translation>
     </message>
 </context>
@@ -4385,12 +4386,12 @@ The new AppImage is saved at:
     <message>
         <source>No scale - Calibrate (paper · %1)</source>
         <extracomment>Shown when the page has no drawing scale. %1 is the unit symbol, such as mm. Values are measured on the paper until the user calibrates.</extracomment>
-        <translation>Нема скала за цртање - Калибрирајте (хартија · %1)</translation>
+        <translation>Нема размер - Калибрирајте (хартија · %1)</translation>
     </message>
     <message>
         <source>Scale %1 · %2 · calibrated</source>
         <extracomment>%1 is the drawing scale, such as 1:100. %2 is the unit symbol, such as mm. The user set the scale by drawing a line of known length.</extracomment>
-        <translation>Скала за цртање %1 · %2 · калибрирана</translation>
+        <translation>Размер %1 · %2 · калибриран</translation>
     </message>
     <message>
         <source>Scale %1 · %2 · manual</source>

@@ -1,0 +1,33 @@
+Read inherited options and top index in list-widget appearances (MuPDF 1.28.5)
+
+This file modifies MuPDF. The Mervin PDF project added this local fix on
+2026-10-23. It is not an upstream backport. Remove it when the pinned MuPDF
+release reads these entries from the field hierarchy when regenerating list
+widget appearances.
+
+A choice field can keep its option array and top index on a parent shared by
+widgets on multiple pages. MuPDF's choice enumeration already inherits /Opt,
+but its list appearance writer reads /Opt and /TI only from the widget. Editing
+a valid shared list field can therefore replace its stored appearance with a
+blank one. Use the existing inherited dictionary accessors, as the other field
+attributes do. Do not copy field entries to the widgets or change the list to a
+combo box.
+
+This patch restores rendered option text and the authored top index. It does
+not implement the existing TODO for highlighting selected list items. /V and
+selection semantics remain independent of that upstream rendering limitation.
+
+diff --git a/source/pdf/pdf-appearance.c b/source/pdf/pdf-appearance.c
+--- a/source/pdf/pdf-appearance.c
++++ b/source/pdf/pdf-appearance.c
+@@ -2895,8 +2895,8 @@ pdf_write_ch_widget_appearance(fz_context *ctx, pdf_annot *annot, fz_buffer *buf,
+ 		fz_buffer *text = fz_new_buffer(ctx, 1024);
+ 		fz_try(ctx)
+ 		{
+-			pdf_obj *opt = pdf_dict_get(ctx, annot->obj, PDF_NAME(Opt));
+-			int i = pdf_dict_get_int(ctx, annot->obj, PDF_NAME(TI));
++			pdf_obj *opt = pdf_dict_get_inheritable(ctx, annot->obj, PDF_NAME(Opt));
++			int i = pdf_dict_get_inheritable_int(ctx, annot->obj, PDF_NAME(TI));
+ 			int n = pdf_array_len(ctx, opt);
+ 			/* TODO: Scrollbar */
+ 			/* TODO: Highlight selected items */

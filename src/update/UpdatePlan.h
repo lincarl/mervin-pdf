@@ -31,6 +31,9 @@ bool isPackageFileName(PackageKind kind, const QString &fileName);
 
 inline constexpr int kDaysPerCheck = 30;
 
+// Whether a stored or release SHA-256 digest has exactly 64 hexadecimal digits.
+bool isSha256(QStringView digest);
+
 // Check on startup after 30 days. Missing or future timestamps need a fresh
 // check, including profiles migrating from the old start counter.
 bool automaticCheckDue(const QDateTime &lastCheck, const QDateTime &now);

@@ -233,6 +233,11 @@ private slots:
         i18n::apply(QStringLiteral("sv"));
         QCOMPARE(i18n::current(), QStringLiteral("sv"));
         QCOMPARE(cancel(), QStringLiteral("Avbryt"));
+        // The app's Swedish correction must take precedence over Qt's "Ok".
+        for (const char *context : {"QPlatformTheme", "QDialogButtonBox", "QMessageBox"}) {
+            QCOMPARE(QCoreApplication::translate(context, "OK"), QStringLiteral("OK"));
+            QCOMPARE(QCoreApplication::translate(context, "&OK"), QStringLiteral("&OK"));
+        }
 
         i18n::apply(QStringLiteral("zh-CN"));
         QCOMPARE(i18n::current(), QStringLiteral("zh_CN"));
@@ -244,8 +249,15 @@ private slots:
         QCOMPARE(cancel(), QStringLiteral("取消"));
         QCOMPARE(QGuiApplication::layoutDirection(), Qt::LeftToRight);
 
+        i18n::apply(QStringLiteral("ar"));
+        QCOMPARE(QGuiApplication::layoutDirection(), Qt::RightToLeft);
+        i18n::apply(QStringLiteral("en"));
+        QCOMPARE(QGuiApplication::layoutDirection(), Qt::LeftToRight);
+        QCOMPARE(cancel(), QStringLiteral("Cancel"));
+        i18n::apply(QStringLiteral("ar"));
         i18n::apply(QStringLiteral("xx"));
         QCOMPARE(i18n::current(), QStringLiteral("en"));
+        QCOMPARE(QGuiApplication::layoutDirection(), Qt::LeftToRight);
         QCOMPARE(cancel(), QStringLiteral("Cancel"));
     }
 

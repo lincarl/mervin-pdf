@@ -174,6 +174,7 @@ namespace {
 std::mutex cacheMutex;
 QString cachedFile;              // guarded by cacheMutex
 std::optional<Settings> cached;  // guarded by cacheMutex
+bool persistenceEnabled = true; // guarded by cacheMutex
 
 // The values in effect for `file`, read from it the first time. Call with
 // cacheMutex held.
@@ -197,6 +198,12 @@ Settings Settings::load()
     }
     result.baseline_ = serializeTable(settingsTable(result));
     return result;
+}
+
+void Settings::setPersistenceEnabled(bool enabled)
+{
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    persistenceEnabled = enabled;
 }
 
 bool Settings::save(QString *error) const
@@ -228,6 +235,11 @@ bool Settings::save(QString *error) const
         }
     }
     const QByteArray bytes = serializeTable(merged);
+    if (!persistenceEnabled) {
+        current(path) = parsedValues(bytes);
+        baseline_ = serializeTable(desired);
+        return true;
+    }
     if (!error) {
         current(path) = parsedValues(bytes);
         lock.unlock();

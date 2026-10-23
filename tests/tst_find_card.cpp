@@ -5,6 +5,7 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QLabel>
+#include <QKeyEvent>
 #include <QLineEdit>
 #include <QSignalSpy>
 #include <QTest>
@@ -35,6 +36,9 @@ private slots:
     void countShowsMatchesOrNoResults();
     void pasteTrimsOuterWhitespace();
     void typingPreservesOuterWhitespace();
+    void dismissCancelsThePendingQuery();
+    void wholeWordAndPendingPreviousSearchTheCurrentText();
+    void keysOutsideTheFieldStayInsideTheCard();
 
 private:
     QWidget *viewport_ = nullptr;
@@ -263,6 +267,72 @@ void TstFindCard::typingPreservesOuterWhitespace()
     QTest::keyClicks(field(), QStringLiteral("  annual report  "));
 
     QCOMPARE(field()->text(), QStringLiteral("  annual report  "));
+}
+
+/// A closed card must not restart highlights when its typing debounce expires.
+void TstFindCard::dismissCancelsThePendingQuery()
+{
+    card_->open();
+    QSignalSpy searched(card_, &FindCard::searchChanged);
+    QTest::keyClicks(field(), QStringLiteral("pending"));
+    card_->dismiss();
+    // Observe beyond the documented 200 ms typing debounce.
+    QVERIFY(!searched.wait(350));
+    QVERIFY(searched.isEmpty());
+    card_->open();
+    QCOMPARE(searched.count(), 1);
+    QCOMPARE(searched.first().at(0).toString(), QStringLiteral("pending"));
+}
+
+void TstFindCard::wholeWordAndPendingPreviousSearchTheCurrentText()
+{
+    card_->open(QStringLiteral("old"));
+    QSignalSpy searched(card_, &FindCard::searchChanged);
+    QSignalSpy previous(card_, &FindCard::findPrev);
+    auto *whole = checkBox(QStringLiteral("Whole word"));
+    QVERIFY(whole);
+    QTest::mouseClick(whole, Qt::LeftButton, {}, QPoint(4, whole->height() / 2));
+    QCOMPARE(searched.count(), 1);
+    QCOMPARE(searched.first(), QVariantList({QStringLiteral("old"), false, true}));
+    field()->selectAll();
+    QTest::keyClicks(field(), QStringLiteral("replacement"));
+    QTest::keyClick(field(), Qt::Key_Return, Qt::ShiftModifier);
+    QCOMPARE(searched.count(), 2);
+    QCOMPARE(searched.last(), QVariantList({QStringLiteral("replacement"), false, true}));
+    QVERIFY(previous.isEmpty());
+    QTest::keyClick(field(), Qt::Key_Return, Qt::ShiftModifier);
+    QCOMPARE(previous.count(), 1);
+}
+
+/// Unused keys must not reach page actions when a tabbed-to control has focus.
+void TstFindCard::keysOutsideTheFieldStayInsideTheCard()
+{
+    class KeyObserver : public QObject
+    {
+    public:
+        int presses = 0;
+        bool eventFilter(QObject *, QEvent *event) override
+        {
+            if (event->type() == QEvent::KeyPress)
+                ++presses;
+            return false;
+        }
+    } observer;
+    viewport_->installEventFilter(&observer);
+    card_->open(QStringLiteral("term"));
+    auto *whole = checkBox(QStringLiteral("Whole word"));
+    QVERIFY(whole);
+    whole->setFocus(Qt::TabFocusReason);
+    QTest::keyClick(whole, Qt::Key_Backspace);
+    QCOMPARE(observer.presses, 0);
+    QVERIFY(card_->isOpen());
+    QCOMPARE(card_->query(), QStringLiteral("term"));
+    QSignalSpy opened(card_, &FindCard::openChanged);
+    QTest::keyClick(whole, Qt::Key_Escape);
+    QVERIFY(!card_->isOpen());
+    QCOMPARE(opened.count(), 1);
+    QCOMPARE(opened.first().at(0).toBool(), false);
+    QCOMPARE(observer.presses, 0);
 }
 
 QTEST_MAIN(TstFindCard)

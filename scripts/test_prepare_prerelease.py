@@ -2,7 +2,11 @@
 """Test prerelease version allocation, tag reuse, and GitHub API failures."""
 
 import importlib.util
+import contextlib
+import io
+import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -15,6 +19,67 @@ SPEC.loader.exec_module(prerelease)
 COMMIT = "a" * 40
 TAG_OBJECT = "b" * 40
 REPOSITORY = "owner/project"
+
+
+class PrereleaseMainTests(unittest.TestCase):
+    """Validate CI inputs without contacting GitHub or creating tags."""
+
+    def setUp(self):
+        temporary_root = Path(__file__).resolve().parents[1] / "dev-temp"
+        temporary_root.mkdir(exist_ok=True)
+        directory = tempfile.TemporaryDirectory(prefix="prerelease-main-", dir=temporary_root)
+        self.addCleanup(directory.cleanup)
+        self.output = Path(directory.name) / "output"
+        self.output.write_text("previous=value\n", encoding="utf-8")
+        self.environment = {
+            "GH_TOKEN": "test-only-token",
+            "GITHUB_REPOSITORY": REPOSITORY,
+            "GITHUB_SHA": COMMIT,
+            "GITHUB_RUN_ID": "42",
+            "GITHUB_OUTPUT": str(self.output),
+        }
+
+    def test_rejects_missing_and_malformed_environment_before_tag_creation(self):
+        cases = [(name, "") for name in self.environment]
+        cases.extend((name, value) for name, values in (
+            ("GITHUB_REPOSITORY", ("owner", "owner/project/extra", "owner/project\n")),
+            ("GITHUB_SHA", ("a" * 39, "A" * 40, COMMIT + "\n")),
+            ("GITHUB_RUN_ID", ("0", "-1", "01", "42\n")),
+        ) for value in values)
+        for name, value in cases:
+            with self.subTest(name=name, value=value), patch.dict(
+                os.environ, self.environment | {name: value}, clear=True
+            ), patch.object(prerelease, "prepare_tag") as prepare, patch.object(
+                prerelease, "command"
+            ) as command, contextlib.redirect_stderr(io.StringIO()) as errors:
+                self.assertEqual(prerelease.main(), 1)
+                self.assertTrue(errors.getvalue().strip())
+                command.assert_not_called()
+                prepare.assert_not_called()
+                self.assertEqual(self.output.read_text(encoding="utf-8"), "previous=value\n")
+
+    def test_checkout_must_match_before_tag_creation(self):
+        with patch.dict(os.environ, self.environment, clear=True), patch.object(
+            prerelease, "command", return_value="c" * 40 + "\n"
+        ) as command, patch.object(prerelease, "prepare_tag") as prepare, contextlib.redirect_stderr(
+            io.StringIO()
+        ) as errors:
+            self.assertEqual(prerelease.main(), 1)
+            self.assertIn("Checkout does not match", errors.getvalue())
+            command.assert_called_once_with("git", "rev-parse", "HEAD")
+            prepare.assert_not_called()
+
+    def test_appends_exact_outputs_after_validated_checkout(self):
+        with patch.dict(os.environ, self.environment, clear=True), patch.object(
+            prerelease, "command", return_value=COMMIT + "\n"
+        ), patch.object(prerelease, "prepare_tag", return_value="v1.2.3-rc4") as prepare, contextlib.redirect_stdout(
+            io.StringIO()
+        ) as output:
+            self.assertEqual(prerelease.main(), 0)
+            prepare.assert_called_once_with(REPOSITORY, COMMIT, "42")
+            self.assertEqual(output.getvalue(), "v1.2.3-rc4\n")
+            self.assertEqual(self.output.read_text(encoding="utf-8"),
+                             "previous=value\ntag=v1.2.3-rc4\nversion=1.2.3-rc4\n")
 
 
 class PrereleaseTests(unittest.TestCase):

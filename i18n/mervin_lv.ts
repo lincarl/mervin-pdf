@@ -244,7 +244,8 @@ Rediģētais dokuments saglabāts %2.
     </message>
     <message>
         <source>Split Pages</source>
-        <translation>Sadalītas lapas</translation>
+        <extracomment>Title of the action that saves each PDF page as a separate file. Split is an action, not an adjective describing pages that have already been split.</extracomment>
+        <translation>Sadalīt lapas</translation>
     </message>
     <message>
         <source>Print</source>
@@ -1014,7 +1015,7 @@ Button: starts printing.</extracomment>
     <message>
         <source>Comment</source>
         <extracomment>Keyboard shortcut list: turn the comment tool on or off.</extracomment>
-        <translation>komentēt</translation>
+        <translation>Komentēt</translation>
     </message>
     <message>
         <source>OCR selection</source>
@@ -1720,7 +1721,7 @@ Atveriet sistēmas Iestatījumi → Noklusējuma lietojumprogrammas (vai ar pele
     <message>
         <source>Comment</source>
         <extracomment>Title of the comment tool panel, and its button that drops a sticky-note comment on the page.</extracomment>
-        <translation>komentēt</translation>
+        <translation>Komentēt</translation>
     </message>
     <message>
         <source>Close comment tool</source>
@@ -3003,7 +3004,7 @@ Atveriet sistēmas Iestatījumi → Noklusējuma lietojumprogrammas (vai ar pele
     </message>
     <message>
         <source>A password contains characters that AES-128 and RC4-128 cannot use. Choose AES-256.</source>
-        <extracomment>Reason shown after &quot;The operation failed.&quot; when encrypting. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
+        <extracomment>Shown in the security dialog or after an encryption failure. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
         <translation>Parole satur rakstzīmes, kuras AES-128 un RC4-128 nevar izmantot. Izvēlieties AES-256.</translation>
     </message>
 </context>

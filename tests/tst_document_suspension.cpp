@@ -6,6 +6,7 @@
 #include "io/JobContext.h"
 #include "render/AnnotModel.h"
 #include "render/Document.h"
+#include "render/DocumentSearch.h"
 #include "render/FormModel.h"
 #include "render/MeasureContent.h"
 #include "render/RenderEngine.h"
@@ -34,6 +35,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSignalSpy>
+#include <QSemaphore>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
@@ -421,36 +423,60 @@ private slots:
     }
 #endif
 
-    // Closing a tab whose load waits for the drive in RenderEngine::open, the load's only
-    // read of the file, stops that load. Once the drive answers, the load reports no
-    // further read of the file and its background task ends.
+    void closingALoadingTabStopsItsRead_data()
+    {
+        QTest::addColumn<bool>("closeTab");
+        QTest::newRow("closed tab cancels construction") << true;
+        QTest::newRow("live tab constructs and publishes") << false;
+    }
+
+    // Closing a tab cancels its held read before a Document can be constructed,
+    // even transiently. Stop waiting on a resumed tab is a different contract,
+    // since Retry can take that read back while it runs.
     void closingALoadingTabStopsItsRead()
     {
+        QFETCH(bool, closeTab);
         QTemporaryDir files;
+        QVERIFY(files.isValid());
         const QString path = files.filePath(QStringLiteral("form.pdf"));
         QVERIFY(writeFile(path, formPdf()));
-        std::atomic<int> reads{0};
-        job::testing::failWhen([path, &reads](job::Step step, const QString &file) {
-            if (step == job::Step::Reading && file == path)
-                ++reads;
-            return false; // counts, fails nothing
-        });
-        const auto stopCounting = qScopeGuard([] { job::testing::failWhen({}); });
-        holdReadsOf(path);
         // No other background work, such as the settings write in init(), may end
         // while the count below is taken or compared.
         QVERIFY(mervin::background::settle(10000));
         RenderEngine engine;
         auto tab = std::make_unique<TabPage>(&engine);
         tab->initializeSuspended(path);
+        QSignalSpy resumed(tab.get(), &TabPage::resumeFinished);
         const int tasks = mervin::background::running();
+        const quint64 constructed = Document::testing::constructions();
+        const int attempts = RenderEngine::testing::opens();
+        // TabPage reports Reading before entering its opener. Hold inside the
+        // actual open, after its attempt counter advances, before construction.
+        job::testing::holdWhen([path, attempts](job::Step step, const QString &file) {
+            return step == job::Step::Reading && file == path
+                   && RenderEngine::testing::opens() > attempts;
+        });
+        const auto release = qScopeGuard([] { job::testing::release(); });
         tab->resumeAsync();
         QTRY_COMPARE(job::testing::held(), 1);
-        tab.reset();
+        QCOMPARE(RenderEngine::testing::opens(), attempts + 1);
+        QCOMPARE(Document::testing::constructions(), constructed);
+        QVERIFY(!tab->viewer()->document());
+        QVERIFY(!TabPage::testing::storedDocument(*tab));
+        if (closeTab)
+            tab.reset();
         job::testing::release();
-        QTRY_COMPARE_WITH_TIMEOUT(reads.load(), 1, 10000); // the read went on and stopped
         QTRY_COMPARE_WITH_TIMEOUT(mervin::background::running(), tasks, 10000); // it ended
-        QCOMPARE(reads.load(), 1);
+        QCoreApplication::processEvents(); // deliver any completed load before checking publication
+        QCOMPARE(RenderEngine::testing::opens(), attempts + 1);
+        QCOMPARE(Document::testing::constructions(), constructed + (closeTab ? 0 : 1));
+        QCOMPARE(resumed.count(), closeTab ? 0 : 1);
+        if (!closeTab) {
+            QVERIFY(resumed.first().at(0).toBool());
+            QVERIFY(tab->isLoaded());
+            QVERIFY(tab->viewer()->document());
+            QCOMPARE(tab->viewer()->document()->pageCount(), 1);
+        }
     }
 
     // A load says "Loading" at once. After two seconds without progress it names the
@@ -751,9 +777,11 @@ private slots:
 
         if (then == QLatin1String("resume")) {
             std::atomic<bool> released{false};
-            std::thread releaser([&stall, &released] {
-                std::this_thread::sleep_for(std::chrono::milliseconds(300));
-                released = true;
+            std::jthread releaser([&stall, &released] {
+                QDeadlineTimer deadline(5000);
+                while (TabPage::testing::waitingForStoppedLoad() == 0 && !deadline.hasExpired())
+                    QThread::msleep(1);
+                released = TabPage::testing::waitingForStoppedLoad() > 0;
                 stall.release();
             });
             QString error;
@@ -773,7 +801,7 @@ private slots:
             QVERIFY(placeholder.valid());
             QTest::mouseClick(placeholder.retry, Qt::LeftButton);
             QVERIFY(tab->isLoading());
-            QTest::qWait(300); // a read that does not wait for the close starts at once
+            QTRY_VERIFY(TabPage::testing::waitingForStoppedLoad() > 0);
             QCOMPARE(reads.load(), 0);
         }
         if (then == QLatin1String("retry")) {
@@ -1455,27 +1483,95 @@ private slots:
         QCOMPARE(readFile(path), original);
     }
 
+    // A stalled read in one tab leaves another tab's real form editor usable.
+    void stalledLoadAllowsEditingAnotherTab()
+    {
+        QTemporaryDir files;
+        const QString form = files.filePath(QStringLiteral("form.pdf"));
+        const QString blocked = files.filePath(QStringLiteral("blocked.pdf"));
+        QVERIFY(writeFile(form, formPdf()));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), blocked));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(testing::openAndWait(window, form));
+        auto *editable = window.findChild<TabPage *>();
+        QVERIFY(editable);
+        holdReadsOf(blocked);
+        const auto release = qScopeGuard([] { job::testing::release(); });
+        QVERIFY(window.openFile(blocked, true));
+        QTRY_COMPARE(job::testing::held(), 1);
+        auto *tabs = window.findChild<QTabWidget *>();
+        QVERIFY(tabs);
+        tabs->setCurrentWidget(editable);
+        editable->viewer()->setFormMode(true);
+        QTRY_COMPARE(editable->viewer()->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly).size(), 1);
+        auto *editor = editable->viewer()->viewport()->findChild<QLineEdit *>(QString(), Qt::FindDirectChildrenOnly);
+        QVERIFY(editor);
+        QTest::mouseClick(editor, Qt::LeftButton);
+        QTest::keyClicks(editor, "Edited while another tab waits");
+        QTest::keyClick(editor, Qt::Key_Return);
+        QCOMPARE(editable->viewer()->formModel()->pageFields(0).front().value,
+                 QStringLiteral("Edited while another tab waits"));
+        QCOMPARE(job::testing::held(), 1);
+        QVERIFY(editable->hasUnsavedEdits());
+        job::testing::release();
+        const auto pages = window.findChildren<TabPage *>();
+        QCOMPARE(pages.size(), 2);
+        QTRY_VERIFY(std::all_of(pages.cbegin(), pages.cend(),
+                               [](const TabPage *tab) { return tab->isLoaded(); }));
+    }
+
+    // Hold an acknowledged worker search across unload, then require resumed matches and pixels.
     void unloadCancelsRunningSearchAndRender()
     {
         RenderEngine engine;
+        QSignalSpy rendered(&engine, &RenderEngine::resultReady);
         TabPage tab(&engine);
         showForLayout(tab);
         QVERIFY(tab.open(QStringLiteral(MERVIN_FIXTURE_PDF)));
-        tab.findCard()->open(); // the search must survive each reload, as with the card open
-        for (int i = 0; i < 6; ++i) {
-            tab.viewer()->setScale(1.0 + i * 0.5);
-            tab.viewer()->viewport()->repaint();
-            tab.viewer()->startFind(QStringLiteral("STANDARD"), false, false);
-            const auto lifetime = tab.viewer()->document()->lifetime();
-            QVERIFY(tab.suspend());
-            // The document closes on a background thread once its render and search
-            // work has stopped.
-            QTRY_VERIFY_WITH_TIMEOUT(closed(lifetime), 10000);
-            QCoreApplication::processEvents();
-            QVERIFY(!tab.viewer()->document());
-            QVERIFY(tab.resume());
-        }
+        tab.findCard()->open();
+        QTRY_VERIFY(!rendered.isEmpty());
+        const quint64 requester = rendered.front().front().value<RenderResult>().requester;
+        QTRY_COMPARE(RenderEngine::testing::activeRequests(engine, requester), 0);
+        auto entered = std::make_shared<QSemaphore>();
+        auto release = std::make_shared<QSemaphore>();
+        auto queued = std::make_shared<QSemaphore>();
+        auto starts = std::make_shared<std::atomic<int>>(0);
+        DocumentSearch::testing::observe([entered, release, starts, queued](auto phase, const QString &) {
+            if (phase == DocumentSearch::testing::Phase::CompletionQueued) {
+                queued->release();
+                return;
+            }
+            if (starts->fetch_add(1) == 0) {
+                entered->release();
+                release->tryAcquire(1, 10000);
+            }
+        });
+        const auto reset = qScopeGuard([release] {
+            release->release();
+            DocumentSearch::testing::observe({});
+        });
+        const auto lifetime = tab.viewer()->document()->lifetime();
+        Stall renderStall(lifetime->mutex, 10000);
+        tab.viewer()->setZoomEaseMs(0);
+        tab.viewer()->setScale(1.5);
+        tab.viewer()->viewport()->repaint();
+        QTRY_VERIFY(RenderEngine::testing::activeRequests(engine, requester) > 0);
+        tab.viewer()->startFind(QStringLiteral("STANDARD"), false, false);
+        QVERIFY(entered->tryAcquire(1, 5000));
+        QVERIFY(tab.suspend());
+        QVERIFY(!tab.viewer()->document());
+        QCOMPARE(tab.viewer()->matchCount(), 0);
+        release->release();
+        renderStall.release();
+        QTRY_VERIFY_WITH_TIMEOUT(closed(lifetime), 10000);
+        QVERIFY(queued->tryAcquire(1, 10000));
+        QCoreApplication::processEvents();
+        QCOMPARE(tab.viewer()->matchCount(), 0);
+        QVERIFY(tab.resume());
         QTRY_COMPARE(tab.viewer()->matchCount(), 4);
+        QVERIFY(starts->load() >= 2);
         QVERIFY(!engine.renderPageImage(tab.viewer()->document(), 0, 1.0, 0).isNull());
     }
 

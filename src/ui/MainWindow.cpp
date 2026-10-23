@@ -88,6 +88,7 @@
 #include <QPushButton>
 #include <QProgressDialog>
 #include <QSaveFile>
+#include <QScreen>
 #include <QSet>
 #include <QToolButton>
 #include <QStackedWidget>
@@ -366,8 +367,10 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
     // The QTabWidget's own built-in tab bar is hidden so it does not double up.
     tabRow_ = new QWidget(this);
     tabRow_->setObjectName(QStringLiteral("tabRowWidget"));
-    tabRow_->setFixedHeight(46);
+    tabRow_->setMinimumHeight(46);
+    tabRow_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     auto *tabRowLayout = new QHBoxLayout(tabRow_);
+    tabRowLayout->setSizeConstraint(QLayout::SetMinimumSize);
     tabRowLayout->setContentsMargins(8, 6, 8, 6);
     tabRowLayout->setSpacing(0);
 
@@ -555,8 +558,11 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
     setWindowTitle(tr("Mervin PDF"));
     if (!settings_.windowGeometry.isEmpty())
         restoreGeometry(settings_.windowGeometry);
-    else
-        resize(1100, 820);
+    else {
+        // Leave room for the taskbar and native frame on a smaller first-run desktop.
+        const QSize available = screen()->availableGeometry().size() * 0.9;
+        resize(QSize(1100, 820).boundedTo(available));
+    }
     if (!settings_.windowState.isEmpty())
         restoreState(settings_.windowState);
     mervin::dockSidebarsOnLeft(*this, {thumbnailDock_, outlineDock_, commentsDock_});
