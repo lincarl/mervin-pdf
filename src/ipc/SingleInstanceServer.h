@@ -15,6 +15,10 @@ class QThread;
 
 namespace mervin::ipc {
 
+#ifdef Q_OS_WIN
+class LegacyCarryGuard;
+#endif
+
 // The primary's endpoint for later launches, guarded by a per-user lock file. Windows
 // permits multiple named-pipe servers, so listen() alone cannot enforce one primary.
 // A thread of its own accepts the connections, decodes their frames and acknowledges
@@ -51,7 +55,9 @@ public:
 
     // The carry files a new primary takes over. That is its own, and on Unix those in the
     // group's other folders whose lock no live process holds, as a primary that ran in
-    // another folder leaves them. Empty until start() returned Started.
+    // another folder leaves them. On Windows, also the trusted legacy TEMP carry
+    // after acquiring its lock, which this server keeps through consumption.
+    // The current carry file comes first. Empty without ownership of the current lock.
     QStringList carriedFiles() const;
 
     // Keeps the lock until this process ends, for a primary that quits while writes of its
@@ -91,6 +97,10 @@ private:
     std::unique_ptr<QLockFile> lock_; // single-instance guard
     QString name_;                    // the group start() was called for
     QString carriedFile_;
+#ifdef Q_OS_WIN
+    mutable std::shared_ptr<LegacyCarryGuard> legacyCarryGuard_;
+    mutable QString legacyCarriedFile_;
+#endif
     std::unique_ptr<QThread> thread_; // runs the Listener while listening
     Listener *listener_ = nullptr;    // lives on thread_, which deletes it
     QMutex opensMutex_;

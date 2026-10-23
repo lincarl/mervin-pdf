@@ -212,6 +212,8 @@ private slots:
     void deadSocketIsReplaced();
 #endif
 #ifdef Q_OS_LINUX
+    void precedingProfileIdentityIsFound_data();
+    void precedingProfileIdentityIsFound();
     void legacyNameMatchesOlderCopies();
     void legacyCopyGetsTheOpen();
     void legacyCopyOfAnotherUserGetsNothing();
@@ -1677,6 +1679,88 @@ void TstSingleInstance::deadSocketIsReplaced()
 #endif
 
 #ifdef Q_OS_LINUX
+void TstSingleInstance::precedingProfileIdentityIsFound_data()
+{
+    QTest::addColumn<QString>("folder");
+    QTest::addColumn<bool>("quitting");
+    QTest::addColumn<bool>("currentPrimary");
+    QTest::newRow("old runtime listener") << QStringLiteral("runtime") << false << false;
+    QTest::newRow("old profile listener") << QStringLiteral("profile") << false << false;
+    QTest::newRow("old profile listener after login") << QStringLiteral("moved") << false << false;
+    QTest::newRow("old runtime lock without listener") << QStringLiteral("runtime") << true << false;
+    QTest::newRow("old profile lock without listener") << QStringLiteral("profile") << true << false;
+    QTest::newRow("old profile lock after login") << QStringLiteral("moved") << true << false;
+    QTest::newRow("current primary takes precedence") << QStringLiteral("runtime") << false << true;
+}
+
+// The preceding release used the UID with the uncanonicalized --profile spelling.
+// Its real listener or remaining shutdown lock must prevent a second state owner.
+void TstSingleInstance::precedingProfileIdentityIsFound()
+{
+    QFETCH(QString, folder);
+    QFETCH(bool, quitting);
+    QFETCH(bool, currentPrimary);
+    QTemporaryDir root(kShortTemp);
+    QVERIFY(root.isValid());
+    const QString direct = root.filePath(QStringLiteral("actual"));
+    const QString alias = root.filePath(QStringLiteral("alias"));
+    QVERIFY(QDir().mkdir(direct));
+    QVERIFY(QFile::link(direct, alias));
+    const ProfileOverride profile(alias);
+    const auto token = [](const QByteArray &value) {
+        return QString::fromLatin1(
+            QCryptographicHash::hash(value, QCryptographicHash::Sha1).toHex().left(16));
+    };
+    const QString previousGroup = QStringLiteral("MervinPDF-")
+        + token(QByteArray::number(uint(::getuid()))) + QLatin1Char('-')
+        + token(QDir::cleanPath(alias).toUtf8());
+    QVERIFY(previousGroup != mervin::ipc::hostPipeName());
+    std::unique_ptr<NoRuntimeDir> noRuntime;
+    if (folder != QLatin1String("runtime"))
+        noRuntime = std::make_unique<NoRuntimeDir>();
+    const auto previousPaths = mervin::ipc::instancePaths(previousGroup);
+    auto previous = std::make_unique<SingleInstanceServer>();
+    QCOMPARE(previous->start(previousGroup), Start::Started);
+    QVERIFY(previous->isListening());
+    if (folder == QLatin1String("moved"))
+        noRuntime.reset();
+    if (quitting)
+        previous->stopListening();
+
+    SingleInstanceServer current;
+    if (currentPrimary)
+        QCOMPARE(current.start(), Start::Started);
+    const auto currentPaths = mervin::ipc::instancePaths();
+    SingleInstanceServer launch;
+    const Message open = Message::open({QStringLiteral("upgrade.pdf")}, QStringLiteral("new-window"));
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, open, quitting ? 250 : 2000),
+             quitting ? Launch::Standalone : Launch::Delivered);
+    QVERIFY(!launch.isListening());
+    QVERIFY(launch.carriedFiles().isEmpty());
+    QCOMPARE(QFile::exists(currentPaths.lockFile), currentPrimary);
+    QVERIFY(QFile::exists(previousPaths.lockFile));
+    if (quitting) {
+        QVERIFY(previous->takeOpens().isEmpty());
+    } else {
+        const auto received = currentPrimary ? current.takeOpens() : previous->takeOpens();
+        QCOMPARE(received.size(), 1);
+        QCOMPARE(received.first().paths, open.paths);
+        QCOMPARE(received.first().behavior, open.behavior);
+        if (currentPrimary)
+            QVERIFY(previous->takeOpens().isEmpty());
+    }
+
+    // Carry adoption is also restricted to a primary after the older lock is free.
+    if (!currentPrimary) {
+        previous.reset();
+        SingleInstanceServer next;
+        QVERIFY(next.carriedFiles().isEmpty());
+        QCOMPARE(mervin::ipc::claimOrHandOff(next, open, 1000), Launch::Primary);
+        QCOMPARE(next.carriedFiles().first(), currentPaths.carriedFile);
+        QVERIFY(next.carriedFiles().contains(previousPaths.carriedFile));
+    }
+}
+
 namespace {
 // What a copy from before the move does with an Open.
 enum class Legacy {

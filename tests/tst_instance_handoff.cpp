@@ -43,6 +43,14 @@
 #include <memory>
 #include <optional>
 
+#ifdef Q_OS_WIN
+#  define WIN32_LEAN_AND_MEAN
+#  define NOMINMAX
+#  include <windows.h>
+#  include <aclapi.h>
+#  include <winioctl.h>
+#endif
+
 #ifdef Q_OS_UNIX
 #  include <unistd.h>
 #endif
@@ -98,6 +106,143 @@ bool lockHeld()
     return other.start(kGroup) == Start::Running;
 }
 
+#ifdef Q_OS_WIN
+// Fix ownership explicitly because elevated runners can default to Administrators.
+bool setLegacyFixtureOwner(const QString &path)
+{
+    const QByteArray user = ipc::currentUser();
+    if (user.isEmpty())
+        return false;
+    std::wstring native = QDir::toNativeSeparators(path).toStdWString();
+    return SetNamedSecurityInfoW(native.data(), SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION,
+                                 const_cast<char *>(user.constData()), nullptr, nullptr, nullptr)
+        == ERROR_SUCCESS;
+}
+
+// Give the fixture a known legacy ACL, including Administrators and inheritance.
+bool setLegacyFixtureAcl(const QString &path, bool everyone = false)
+{
+    const QByteArray user = ipc::currentUser();
+    BYTE system[SECURITY_MAX_SID_SIZE];
+    BYTE administrators[SECURITY_MAX_SID_SIZE];
+    BYTE world[SECURITY_MAX_SID_SIZE];
+    DWORD systemSize = sizeof(system);
+    DWORD administratorsSize = sizeof(administrators);
+    DWORD worldSize = sizeof(world);
+    if (user.isEmpty() || !CreateWellKnownSid(WinLocalSystemSid, nullptr, system, &systemSize)
+        || !CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr,
+                               administrators, &administratorsSize)
+        || !CreateWellKnownSid(WinWorldSid, nullptr, world, &worldSize))
+        return false;
+    EXPLICIT_ACCESSW entries[4]{};
+    const PSID sids[]{const_cast<char *>(user.constData()), system, administrators, world};
+    for (int i = 0; i < 4; ++i) {
+        entries[i].grfAccessPermissions = FILE_ALL_ACCESS;
+        entries[i].grfAccessMode = SET_ACCESS;
+        entries[i].grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+        entries[i].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+        entries[i].Trustee.ptstrName = static_cast<LPWSTR>(sids[i]);
+    }
+    PACL acl = nullptr;
+    if (SetEntriesInAclW(everyone ? 4 : 3, entries, nullptr, &acl) != ERROR_SUCCESS)
+        return false;
+    const auto freeAcl = qScopeGuard([&] { LocalFree(acl); });
+    std::wstring native = QDir::toNativeSeparators(path).toStdWString();
+    return SetNamedSecurityInfoW(native.data(), SE_FILE_OBJECT,
+                                 OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
+                                     | PROTECTED_DACL_SECURITY_INFORMATION,
+                                 const_cast<char *>(user.constData()), nullptr, acl, nullptr)
+        == ERROR_SUCCESS;
+}
+
+// Isolate the old TEMP path and restore both environment variables before cleanup.
+struct LegacyTempFixture
+{
+    QTemporaryDir root;
+    QString path;
+    const QByteArray previousTemp = qgetenv("TEMP");
+    const QByteArray previousTmp = qgetenv("TMP");
+
+    // Inherit the known root ACL without protecting the simulated TEMP's DACL.
+    bool create()
+    {
+        if (!root.isValid() || !setLegacyFixtureAcl(root.path()))
+            return false;
+        path = root.filePath(QStringLiteral("temp"));
+        if (!QDir().mkdir(path) || !setLegacyFixtureOwner(path))
+            return false;
+        qputenv("TEMP", QFile::encodeName(path));
+        qputenv("TMP", QFile::encodeName(path));
+        return QDir::tempPath() == path;
+    }
+
+    ~LegacyTempFixture()
+    {
+        if (previousTemp.isNull())
+            qunsetenv("TEMP");
+        else
+            qputenv("TEMP", previousTemp);
+        if (previousTmp.isNull())
+            qunsetenv("TMP");
+        else
+            qputenv("TMP", previousTmp);
+    }
+};
+
+// Write the old format independently of the current carry writer.
+bool writeLegacyFixture(const QString &path, const QList<Message> &messages)
+{
+    QJsonArray launches;
+    for (const Message &message : messages)
+        launches.append(message.toJson());
+    const QByteArray bytes = QJsonDocument(QJsonObject{
+        {QStringLiteral("written"), QDateTime::currentMSecsSinceEpoch()},
+        {QStringLiteral("launches"), launches}}).toJson(QJsonDocument::Compact);
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size())
+        return false;
+    file.close();
+    return setLegacyFixtureOwner(path);
+}
+
+// Build a directory junction without requiring the symbolic-link privilege.
+bool makeLegacyFixtureJunction(const QString &path, const QString &target)
+{
+    if (!QDir().mkdir(path))
+        return false;
+    const std::wstring native = QDir::toNativeSeparators(path).toStdWString();
+    const HANDLE directory = CreateFileW(native.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+                                         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                                         nullptr);
+    if (directory == INVALID_HANDLE_VALUE)
+        return false;
+    const auto close = qScopeGuard([&] { CloseHandle(directory); });
+    const std::wstring print = QDir::toNativeSeparators(target).toStdWString();
+    const std::wstring substitute = L"\\??\\" + print;
+    struct JunctionHeader {
+        DWORD tag;
+        WORD length;
+        WORD reserved;
+        WORD substituteOffset;
+        WORD substituteLength;
+        WORD printOffset;
+        WORD printLength;
+    };
+    static_assert(sizeof(JunctionHeader) == 16);
+    const WORD substituteBytes = WORD(substitute.size() * sizeof(wchar_t));
+    const WORD printBytes = WORD(print.size() * sizeof(wchar_t));
+    const WORD length = WORD(8 + substituteBytes + sizeof(wchar_t) + printBytes + sizeof(wchar_t));
+    const JunctionHeader header{IO_REPARSE_TAG_MOUNT_POINT, length, 0, 0, substituteBytes,
+                                WORD(substituteBytes + sizeof(wchar_t)), printBytes};
+    QByteArray data(reinterpret_cast<const char *>(&header), sizeof(header));
+    data.append(reinterpret_cast<const char *>(substitute.c_str()), substituteBytes + sizeof(wchar_t));
+    data.append(reinterpret_cast<const char *>(print.c_str()), printBytes + sizeof(wchar_t));
+    DWORD written = 0;
+    return DeviceIoControl(directory, FSCTL_SET_REPARSE_POINT, data.data(), DWORD(data.size()),
+                           nullptr, 0, &written, nullptr);
+}
+#endif
+
 } // namespace
 
 // Checks how WindowManager uses the single-instance server: the opens it takes, when it
@@ -128,6 +273,14 @@ private slots:
     void failedCarryWritePassesFilesAsArguments();
     void carryFileKeepsEveryPath();
     void primaryOpensCarriedLaunches();
+#ifdef Q_OS_WIN
+    void windowsLegacyCarryKeepsOrder();
+    void windowsLegacyCarryWaitsForLock();
+    void windowsLegacyCarryFailures_data();
+    void windowsLegacyCarryFailures();
+    void windowsLegacyCarryRejectsUnsafePaths_data();
+    void windowsLegacyCarryRejectsUnsafePaths();
+#endif
 #ifdef Q_OS_UNIX
     void carryFileInAnotherFolder_data();
     void carryFileInAnotherFolder();
@@ -736,6 +889,240 @@ void TstInstanceHandoff::primaryOpensCarriedLaunches()
     manager.quitAll();
     QTRY_VERIFY_WITH_TIMEOUT(manager.openTabPaths().isEmpty(), 10000);
 }
+
+#ifdef Q_OS_WIN
+// Default group naming exercises the old username hash and the new SID hash.
+void TstInstanceHandoff::windowsLegacyCarryKeepsOrder()
+{
+    LegacyTempFixture temp;
+    QVERIFY(temp.create());
+    const auto current = ipc::instancePaths();
+    const auto legacy = ipc::legacyInstancePaths();
+    QCOMPARE(legacy.carriedFile,
+             QDir(temp.path).filePath(ipc::legacyEndpoint() + QStringLiteral(".carried")));
+    QVERIFY(current.carriedFile != legacy.carriedFile);
+    QVERIFY(current.server != legacy.server);
+
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    PACL acl = nullptr;
+    const std::wstring nativeTemp = QDir::toNativeSeparators(temp.path).toStdWString();
+    QCOMPARE(GetNamedSecurityInfoW(nativeTemp.c_str(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+                                   nullptr, nullptr, &acl, nullptr, &descriptor), DWORD(ERROR_SUCCESS));
+    const auto freeDescriptor = qScopeGuard([&] { LocalFree(descriptor); });
+    SECURITY_DESCRIPTOR_CONTROL control = 0;
+    DWORD revision = 0;
+    QVERIFY(GetSecurityDescriptorControl(descriptor, &control, &revision));
+    QVERIFY(!(control & SE_DACL_PROTECTED));
+    QVERIFY(acl && acl->AceCount == 3);
+    for (DWORD index = 0; index < acl->AceCount; ++index) {
+        void *raw = nullptr;
+        QVERIFY(GetAce(acl, index, &raw));
+        QVERIFY(static_cast<ACE_HEADER *>(raw)->AceFlags & INHERITED_ACE);
+    }
+
+    const QList<Message> expected{
+        Message::open({QStringLiteral("C:/current.pdf")}, QStringLiteral("new-tab")),
+        Message::open({QStringLiteral(u"C:/Pr\u00fcfung \u8cc7\u6599.pdf")},
+                      QStringLiteral("new-window")),
+        Message::open({}, QStringLiteral("new-window"))};
+    QVERIFY(writeLegacyFixture(current.carriedFile, {expected.first()}));
+    QVERIFY(writeLegacyFixture(legacy.carriedFile, expected.mid(1)));
+    SingleInstanceServer server;
+    QVERIFY(server.carriedFiles().isEmpty());
+    QCOMPARE(server.start(), Start::Started);
+    const QStringList files{current.carriedFile, legacy.carriedFile};
+    QCOMPARE(server.carriedFiles(), files);
+    QLockFile excluded(legacy.lockFile);
+    excluded.setStaleLockTime(0);
+    QVERIFY(!excluded.tryLock(0));
+    QList<Message> consumed;
+    for (const QString &file : server.carriedFiles())
+        consumed += relaunch::takeCarried(file);
+    QCOMPARE(consumed.size(), expected.size());
+    for (qsizetype index = 0; index < expected.size(); ++index) {
+        QCOMPARE(consumed.at(index).paths, expected.at(index).paths);
+        QCOMPARE(consumed.at(index).behavior, expected.at(index).behavior);
+    }
+    for (const QString &file : files) {
+        QVERIFY(!QFile::exists(file));
+        QVERIFY(relaunch::takeCarried(file).isEmpty());
+    }
+    server.keepLockUntilExit();
+    QVERIFY(server.carriedFiles().isEmpty());
+}
+
+// A silent old primary still owns its carry file until it releases its lock.
+void TstInstanceHandoff::windowsLegacyCarryWaitsForLock()
+{
+    LegacyTempFixture temp;
+    QVERIFY(temp.create());
+    const auto current = ipc::instancePaths();
+    const auto legacy = ipc::legacyInstancePaths();
+    QVERIFY(writeLegacyFixture(legacy.carriedFile,
+                               {Message::open({pdf_}, QStringLiteral("new-tab"))}));
+    QLockFile oldPrimary(legacy.lockFile);
+    oldPrimary.setStaleLockTime(0);
+    QVERIFY(oldPrimary.tryLock(0));
+    QVERIFY(setLegacyFixtureOwner(legacy.lockFile));
+    auto server = std::make_unique<SingleInstanceServer>();
+    QCOMPARE(server->start(), Start::Started);
+    QCOMPARE(server->carriedFiles(), QStringList{current.carriedFile});
+    QVERIFY(QFile::exists(legacy.carriedFile));
+    SingleInstanceServer secondary;
+    QCOMPARE(secondary.start(), Start::Running);
+    QVERIFY(secondary.carriedFiles().isEmpty());
+    oldPrimary.unlock();
+    WindowManager manager;
+    manager.adoptInstanceServer(std::move(server));
+    QTRY_VERIFY_WITH_TIMEOUT(shows(manager, pdf_), 10000);
+    QVERIFY(!QFile::exists(legacy.carriedFile));
+    manager.quitAll();
+    QTRY_VERIFY_WITH_TIMEOUT(manager.openTabPaths().isEmpty(), 10000);
+}
+
+void TstInstanceHandoff::windowsLegacyCarryFailures_data()
+{
+    QTest::addColumn<QString>("failure");
+    QTest::newRow("malformed JSON") << QStringLiteral("format");
+    QTest::newRow("read sharing denied") << QStringLiteral("read");
+    QTest::newRow("delete sharing denied") << QStringLiteral("remove");
+}
+
+// Failed consumption must preserve bytes and permit a later primary to retry.
+void TstInstanceHandoff::windowsLegacyCarryFailures()
+{
+    QFETCH(QString, failure);
+    LegacyTempFixture temp;
+    QVERIFY(temp.create());
+    const auto legacy = ipc::legacyInstancePaths();
+    const QList<Message> messages{Message::open({pdf_}, QStringLiteral("new-window"))};
+    QVERIFY(writeLegacyFixture(legacy.carriedFile, messages));
+    QFile file(legacy.carriedFile);
+    if (failure == QLatin1String("format")) {
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write("{\"written\":"), qint64(11));
+        file.close();
+    }
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QByteArray before = file.readAll();
+    file.close();
+    HANDLE held = INVALID_HANDLE_VALUE;
+    const auto close = qScopeGuard([&] {
+        if (held != INVALID_HANDLE_VALUE)
+            CloseHandle(held);
+    });
+    if (failure != QLatin1String("format")) {
+        const std::wstring native = QDir::toNativeSeparators(legacy.carriedFile).toStdWString();
+        held = CreateFileW(native.c_str(), GENERIC_READ,
+                            failure == QLatin1String("read") ? 0 : FILE_SHARE_READ | FILE_SHARE_WRITE,
+                            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        QVERIFY(held != INVALID_HANDLE_VALUE);
+    }
+    {
+        SingleInstanceServer server;
+        QCOMPARE(server.start(), Start::Started);
+        for (const QString &path : server.carriedFiles())
+            QVERIFY(relaunch::takeCarried(path).isEmpty());
+        QVERIFY(QFile::exists(legacy.carriedFile));
+    }
+    if (held != INVALID_HANDLE_VALUE) {
+        CloseHandle(held);
+        held = INVALID_HANDLE_VALUE;
+    }
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), before);
+    file.close();
+    if (failure == QLatin1String("format"))
+        QVERIFY(writeLegacyFixture(legacy.carriedFile, messages));
+    SingleInstanceServer retry;
+    QCOMPARE(retry.start(), Start::Started);
+    QList<Message> consumed;
+    for (const QString &path : retry.carriedFiles())
+        consumed += relaunch::takeCarried(path);
+    QCOMPARE(consumed.size(), 1);
+    QCOMPARE(consumed.first().paths, messages.first().paths);
+    QCOMPARE(consumed.first().behavior, messages.first().behavior);
+    QVERIFY(!QFile::exists(legacy.carriedFile));
+}
+
+void TstInstanceHandoff::windowsLegacyCarryRejectsUnsafePaths_data()
+{
+    QTest::addColumn<QString>("unsafe");
+    QTest::newRow("TEMP grants Everyone access") << QStringLiteral("temp-acl");
+    QTest::newRow("carry grants Everyone access") << QStringLiteral("carry-acl");
+    QTest::newRow("lock grants Everyone access") << QStringLiteral("lock-acl");
+    QTest::newRow("TEMP is a junction") << QStringLiteral("temp-junction");
+    QTest::newRow("carry is a symbolic link") << QStringLiteral("carry-link");
+}
+
+// Source validation must not follow redirects or trust other users' permissions.
+void TstInstanceHandoff::windowsLegacyCarryRejectsUnsafePaths()
+{
+    QFETCH(QString, unsafe);
+    LegacyTempFixture temp;
+    QVERIFY(temp.create());
+    const auto current = ipc::instancePaths();
+    const auto legacy = ipc::legacyInstancePaths();
+    const QList<Message> messages{Message::open({pdf_})};
+    QVERIFY(writeLegacyFixture(legacy.carriedFile, messages));
+    QString preserved = legacy.carriedFile;
+    QString reparse;
+    const auto removeReparse = qScopeGuard([&] {
+        if (!reparse.isEmpty()) {
+            const std::wstring native = QDir::toNativeSeparators(reparse).toStdWString();
+            if (unsafe == QLatin1String("temp-junction"))
+                RemoveDirectoryW(native.c_str());
+            else
+                DeleteFileW(native.c_str());
+        }
+    });
+    if (unsafe == QLatin1String("temp-acl")) {
+        QVERIFY(setLegacyFixtureAcl(temp.path, true));
+    } else if (unsafe == QLatin1String("carry-acl")) {
+        QVERIFY(setLegacyFixtureAcl(legacy.carriedFile, true));
+    } else if (unsafe == QLatin1String("lock-acl")) {
+        QFile lock(legacy.lockFile);
+        QVERIFY(lock.open(QIODevice::WriteOnly));
+        QCOMPARE(lock.write("untouched"), qint64(9));
+        lock.close();
+        QVERIFY(setLegacyFixtureAcl(legacy.lockFile, true));
+    } else if (unsafe == QLatin1String("temp-junction")) {
+        const QString moved = temp.root.filePath(QStringLiteral("moved"));
+        QVERIFY(QDir().rename(temp.path, moved));
+        preserved = QDir(moved).filePath(QFileInfo(legacy.carriedFile).fileName());
+        reparse = temp.path;
+        QVERIFY(makeLegacyFixtureJunction(reparse, moved));
+    } else {
+        preserved = temp.root.filePath(QStringLiteral("target.carried"));
+        QVERIFY(QFile::rename(legacy.carriedFile, preserved));
+        const std::wstring native = QDir::toNativeSeparators(legacy.carriedFile).toStdWString();
+        const std::wstring target = QDir::toNativeSeparators(preserved).toStdWString();
+        if (!CreateSymbolicLinkW(native.c_str(), target.c_str(),
+                                 SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+            if (GetLastError() == ERROR_PRIVILEGE_NOT_HELD)
+                QSKIP("File symlink fixture needs Developer Mode or symbolic-link privilege.");
+            QFAIL(qPrintable(QString::number(GetLastError())));
+        }
+        reparse = legacy.carriedFile;
+    }
+    QFile file(preserved);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QByteArray before = file.readAll();
+    file.close();
+    SingleInstanceServer server;
+    QCOMPARE(server.start(), Start::Started);
+    QCOMPARE(server.carriedFiles(), QStringList{current.carriedFile});
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), before);
+    if (unsafe == QLatin1String("lock-acl")) {
+        QFile lock(legacy.lockFile);
+        QVERIFY(lock.open(QIODevice::ReadOnly));
+        QCOMPARE(lock.readAll(), QByteArray("untouched"));
+    } else {
+        QVERIFY(!QFile::exists(legacy.lockFile));
+    }
+}
+#endif
 
 #ifdef Q_OS_UNIX
 void TstInstanceHandoff::carryFileInAnotherFolder_data()

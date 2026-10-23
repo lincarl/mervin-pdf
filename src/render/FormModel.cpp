@@ -47,6 +47,22 @@ pdf_obj *fieldGroup(fz_context *ctx, pdf_obj *widget)
     return widget;
 }
 
+// A malformed candidate is not a sibling. Keep target validation and failures
+// unrelated to PDF format outside this recovery path.
+bool sharesFieldGroup(fz_context *ctx, pdf_obj *widget, pdf_obj *group)
+{
+    bool matches = false;
+    fz_var(matches);
+    fz_try(ctx) {
+        matches = pdf_objcmp(ctx, fieldGroup(ctx, widget), group) == 0;
+    }
+    fz_catch(ctx) {
+        fz_rethrow_unless(ctx, FZ_ERROR_FORMAT);
+        fz_report_error(ctx);
+    }
+    return matches;
+}
+
 // Keep every sibling page open during the edit. MuPDF resynthesises open pages
 // together and then clears its document flag, so opening siblings afterwards can
 // leave their saved /AP stale. Page dictionaries also cover widgets without /P.
@@ -83,7 +99,7 @@ bool applyToWidget(const Document &doc, int page, int idx,
                         pdf_obj *annot = pdf_array_get(ctx, annots, a);
                         if (pdf_name_eq(ctx, pdf_dict_get(ctx, annot, PDF_NAME(Subtype)),
                                         PDF_NAME(Widget))
-                            && pdf_objcmp(ctx, fieldGroup(ctx, annot), group) == 0) {
+                            && sharesFieldGroup(ctx, annot, group)) {
                             sharesField = true;
                             break;
                         }
@@ -96,7 +112,7 @@ bool applyToWidget(const Document &doc, int page, int idx,
                     int field = 0;
                     for (pdf_annot *s = pdf_first_widget(ctx, pdf_page_from_fz_page(ctx, loaded));
                          s; s = pdf_next_widget(ctx, s), ++field)
-                        if (pdf_objcmp(ctx, fieldGroup(ctx, pdf_annot_obj(ctx, s)), group) == 0)
+                        if (sharesFieldGroup(ctx, pdf_annot_obj(ctx, s), group))
                             affected.emplace_back(p, field);
                 }
                 changed = op(ctx, w);

@@ -152,7 +152,7 @@ QStringList recoveryEntries()
 
 // Two pages share text and choice fields with authored appearances. Page 1 also
 // has an unrelated editor, so refreshing siblings must preserve its pending text.
-void writeSharedForm(const QString &path, bool listBox = false)
+void writeSharedForm(const QString &path, bool listBox = false, bool malformedWidget = false)
 {
     QPDF pdf;
     pdf.emptyPDF();
@@ -211,6 +211,15 @@ void writeSharedForm(const QString &path, bool listBox = false)
             fields.appendItem(other);
             page.getKey("/Annots").appendItem(other);
         }
+    }
+    if (malformedWidget) {
+        auto page = pdf.makeIndirectObject(QPDFObjectHandle::parse(
+            "<< /Type /Page /MediaBox [0 0 300 300] /Resources << >> /Annots [] >>"));
+        auto widget = pdf.makeIndirectObject(QPDFObjectHandle::parse(
+            "<< /Type /Annot /Subtype /Widget /FT /Tx /V () /Rect [20 250 280 270] /F 4 >>"));
+        widget.replaceKey("/Parent", widget);
+        page.getKey("/Annots").appendItem(widget);
+        pages.addPage(QPDFPageObjectHelper(page), false);
     }
     const QByteArray name = path.toUtf8();
     QPDFWriter writer(pdf, name.constData());
@@ -306,17 +315,21 @@ private slots:
     void sharedFieldAppearancesPersistWithoutRevisiting_data()
     {
         QTest::addColumn<bool>("listBox");
-        QTest::newRow("combo") << false;
-        QTest::newRow("list") << true;
+        QTest::addColumn<bool>("malformedWidget");
+        QTest::newRow("combo") << false << false;
+        QTest::newRow("list") << true << false;
+        QTest::newRow("combo-unrelated-malformed") << false << true;
+        QTest::newRow("list-unrelated-malformed") << true << true;
     }
 
     // A cold sibling appearance must be written correctly before any revisit.
     void sharedFieldAppearancesPersistWithoutRevisiting()
     {
         QFETCH(bool, listBox);
+        QFETCH(bool, malformedWidget);
         QTemporaryDir files;
         const QString path = files.filePath(QStringLiteral("shared.pdf"));
-        writeSharedForm(path, listBox);
+        writeSharedForm(path, listBox, malformedWidget);
         RenderEngine engine;
         for (int field = 0; field < 2; ++field) {
             auto doc = engine.openDocument(path);

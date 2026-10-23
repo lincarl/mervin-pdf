@@ -46,6 +46,34 @@
 #  include <unistd.h>
 #endif
 
+#ifdef Q_OS_LINUX
+#  include <sys/stat.h>
+#  include <sys/syscall.h>
+
+namespace {
+// The path storage outlives disk work even when a test fails. Change it only
+// while the disk thread is idle, and publish it before enabling observation.
+QByteArray pendingStatPath;
+std::atomic<const char *> observedStatPath{nullptr};
+std::atomic<int> pendingStats{0};
+std::atomic<int> pendingStatsOnUiThread{0};
+}
+
+// Observe Qt's real file metadata syscall in this executable only. Keep the
+// filesystem result unchanged so validation and private staging still run.
+extern "C" int statx(int dirfd, const char *path, int flags, unsigned int mask,
+                     struct statx *result) noexcept
+{
+    const char *observed = observedStatPath.load();
+    if (observed && std::strcmp(path, observed) == 0) {
+        ++pendingStats;
+        if (::syscall(SYS_gettid) == ::getpid())
+            ++pendingStatsOnUiThread;
+    }
+    return static_cast<int>(::syscall(SYS_statx, dirfd, path, flags, mask, result));
+}
+#endif
+
 namespace {
 
 using mervin::update::PackageKind;
@@ -308,6 +336,9 @@ private slots:
     void queuedAutomaticInstallCanBecomeManual();
     void startupRespectsSetting_data();
     void startupRespectsSetting();
+#ifdef Q_OS_LINUX
+    void pendingValidationStaysOnDiskThread();
+#endif
     void pendingUpdateOfThisKindOnly_data();
     void pendingUpdateOfThisKindOnly();
     void replacementDuringCloseUsesStagedBytes_data();
@@ -316,6 +347,7 @@ private slots:
     void hashlessPendingRequiresRelease();
     void stagedPackageManagerLifetime_data();
     void stagedPackageManagerLifetime();
+    void missingPackageManagerKeepsRetry_data();
     void missingPackageManagerKeepsRetry();
     void alteredDownloadIsNotInstalled_data();
     void alteredDownloadIsNotInstalled();
@@ -329,6 +361,7 @@ private slots:
     void msixDelegatesToStore();
     void recordStoreUrl(const QUrl &url);
     void recordOpenedFile(const QUrl &url);
+    void recordReleaseUrl(const QUrl &url);
     void releaseInstallsWithoutConfirmation_data();
     void releaseInstallsWithoutConfirmation();
     void disablingCancelsQueuedInstall();
@@ -369,6 +402,7 @@ private:
     int quitRequests_ = 0;
     QList<QUrl> storeUrls_;
     QList<QUrl> openedFiles_; // handed to the desktop, see recordOpenedFile
+    QList<QUrl> releaseUrls_;
 
     // The updater touches the disk on a background thread; true once that work,
     // and what it hands back, is done.
@@ -412,6 +446,7 @@ void TestUpdater::init()
     installedKind = PackageKind::Msi;
     storeUrls_.clear();
     openedFiles_.clear();
+    releaseUrls_.clear();
     QSettings().clear();
     installerFiles.clear();
     installedBytes.clear();
@@ -442,6 +477,7 @@ void TestUpdater::cleanup()
     QVERIFY(settled());
     QDesktopServices::unsetUrlHandler(QStringLiteral("ms-windows-store"));
     QDesktopServices::unsetUrlHandler(QStringLiteral("file"));
+    QDesktopServices::unsetUrlHandler(QStringLiteral("https"));
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     qApp->setStyleSheet(previousStyle_);
     QApplication::setFont(previousFont_);
@@ -905,6 +941,12 @@ void TestUpdater::recordOpenedFile(const QUrl &url)
     openedFiles_.append(url);
 }
 
+// Observe the real download-page button without opening an external browser.
+void TestUpdater::recordReleaseUrl(const QUrl &url)
+{
+    releaseUrls_.append(url);
+}
+
 void TestUpdater::msixDelegatesToStore_data()
 {
     QTest::addColumn<bool>("pending");
@@ -1249,26 +1291,105 @@ void TestUpdater::stagedPackageManagerLifetime()
     QCOMPARE(observer.messages.isEmpty(), !launchFails && (exitCode == 0 || exitCode == 126));
 }
 
+void TestUpdater::missingPackageManagerKeepsRetry_data()
+{
+    QTest::addColumn<PackageKind>("kind");
+    QTest::addColumn<bool>("resume");
+    for (PackageKind kind : {PackageKind::Deb, PackageKind::Rpm}) {
+        const char *name = kind == PackageKind::Deb ? "deb" : "rpm";
+        QTest::addRow("%s checked release", name) << kind << false;
+        QTest::addRow("%s resumed at startup", name) << kind << true;
+    }
+}
+
+#ifdef Q_OS_LINUX
+// A resumed package must be checked on the worker before its result reaches UI.
+void TestUpdater::pendingValidationStaysOnDiskThread()
+{
+    QVERIFY(savePending());
+    Updater updater;
+    auto *network = useLocalNetwork(updater);
+    updater.setCloseWindowsHandler([] { return Updater::CloseResult::Declined; });
+    QVERIFY(settled());
+    pendingStatPath = QFile::encodeName(downloadedPath());
+    pendingStats = 0;
+    pendingStatsOnUiThread = 0;
+    observedStatPath = pendingStatPath.constData();
+    const auto stopObserving = qScopeGuard([] { observedStatPath = nullptr; });
+
+    updater.onStartup();
+    QTRY_VERIFY(!updater.busy_);
+    QVERIFY(settled());
+
+    QVERIFY(pendingStats.load() > 0); // fail if Qt stops using the observed syscall
+    QCOMPARE(pendingStatsOnUiThread.load(), 0);
+    QCOMPARE(network->requests, 0);
+    QVERIFY(installerFiles.isEmpty());
+}
+#endif
+
 void TestUpdater::missingPackageManagerKeepsRetry()
 {
-    installedKind = PackageKind::Deb;
+    QFETCH(PackageKind, kind);
+    QFETCH(bool, resume);
+    installedKind = kind;
     QVERIFY(savePending());
     Updater updater;
     auto *network = useLocalNetwork(updater);
     network->hasUpdate = true;
     network->offeredAsset = assetName(installedKind);
     QDesktopServices::setUrlHandler(QStringLiteral("file"), this, "recordOpenedFile");
-    PromptObserver observer;
+    QDesktopServices::setUrlHandler(QStringLiteral("https"), this, "recordReleaseUrl");
+    QDialog settingsDialog;
+    settingsDialog.setAttribute(Qt::WA_DontShowOnScreen);
+    settingsDialog.setModal(true);
+    settingsDialog.show();
+    if (resume) {
+        updater.onStartup();
+        QVERIFY(settled());
+        QVERIFY(updater.installQueued_);
+        QVERIFY(updater.releasePageUrl_.isEmpty());
+        QVERIFY(packageInstalls.isEmpty());
+    }
+    QStringList messages;
+    bool clickedDownload = false;
+    QTimer prompts;
+    connect(&prompts, &QTimer::timeout, this, [&] {
+        for (QWidget *widget : QApplication::topLevelWidgets()) {
+            auto *box = qobject_cast<QMessageBox *>(widget);
+            if (!box || !box->isVisible())
+                continue;
+            messages.append(box->text());
+            for (QAbstractButton *button : box->buttons()) {
+                if (button->text() == QStringLiteral("Open Download Page")) {
+                    clickedDownload = true;
+                    QTest::mouseClick(button, Qt::LeftButton);
+                    return;
+                }
+            }
+            box->reject(); // unexpected warnings must fail without hanging the test
+        }
+    });
+    prompts.start(1);
     updater.checkNow();
     QTRY_VERIFY(!updater.busy_);
     QVERIFY(settled());
-    QCOMPARE(network->requests, 1);
+    QCOMPARE(network->requests, resume ? 0 : 1);
+    QVERIFY(clickedDownload);
+    QCOMPARE(releaseUrls_, QList<QUrl>{QUrl(resume
+        ? QStringLiteral("https://github.com/lincarl/mervin-pdf/releases/latest")
+        : QStringLiteral("https://example.invalid/release"))});
     QCOMPARE(packageInstalls.size(), 1);
     QVERIFY(!QFileInfo::exists(QFileInfo(packageInstalls.first()).absolutePath()));
     QVERIFY(openedFiles_.isEmpty());
+    QVERIFY(installerFiles.isEmpty());
+    QCOMPARE(quitRequests_, 0);
     QCOMPARE(QSettings().value(stateKey(u"pendingFile")).toString(), downloadedPath());
     QCOMPARE(QSettings().value(stateKey(u"pendingSha256")).toString(), kDownloadSha256);
-    QCOMPARE(observer.messages, QStringList{QStringLiteral("Mervin PDF %1 is available.").arg(kVersion)});
+    QFile cached(downloadedPath());
+    QVERIFY(cached.open(QIODevice::ReadOnly));
+    QCOMPARE(cached.readAll(), kDownload);
+    QCOMPARE(messages, QStringList{QStringLiteral("Mervin PDF %1 is available.").arg(kVersion)});
 }
 
 void TestUpdater::alteredDownloadIsNotInstalled_data()

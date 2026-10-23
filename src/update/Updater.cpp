@@ -839,9 +839,13 @@ void Updater::pollInstall()
     }
     installQueued_ = false;
     onDisk(
-        [kind = kind_] { return loadPending(kind); },
-        [this](const Pending &pending) {
-            if (!pending.usable()) {
+        [kind = kind_]() -> std::optional<Pending> {
+            const Pending pending = loadPending(kind);
+            // Checking the cached file can block on the profile's filesystem.
+            return pending.usable() ? std::optional(pending) : std::nullopt;
+        },
+        [this](const std::optional<Pending> &pending) {
+            if (!pending) {
                 // Metadata written by old copies must never bypass verification.
                 // Tidy discards it and forces a fresh authenticated release check.
                 onDisk([kind = kind_] { tidyDownloads(kind); }, [this] { endOperation(); });
@@ -851,7 +855,7 @@ void Updater::pollInstall()
                 installWhenIdle();
                 return;
             }
-            install(pending.file, pending.version.toString(), pending.sha256);
+            install(pending->file, pending->version.toString(), pending->sha256);
         });
 }
 
@@ -1038,7 +1042,11 @@ void Updater::runPackageManager(const QStringList &command, const QString &file,
         // A desktop URL launch provides no completion handle. Keep the pending
         // download for retry and let manual checks offer the release page instead.
         Q_UNUSED(file);
-        offerManualDownload(version, releasePageUrl_);
+        // Startup can resume a cached package without fetching release metadata.
+        const QString pageUrl = releasePageUrl_.isEmpty()
+            ? QStringLiteral("https://github.com/lincarl/mervin-pdf/releases/latest")
+            : releasePageUrl_;
+        offerManualDownload(version, pageUrl);
         return;
     }
 

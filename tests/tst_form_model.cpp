@@ -30,6 +30,8 @@ private slots:
     void nonLatinValueSurvivesSave();
     void sharedFieldsRefreshAndPersist_data();
     void sharedFieldsRefreshAndPersist();
+    void unrelatedMalformedWidgetDoesNotBlockEdit_data();
+    void unrelatedMalformedWidgetDoesNotBlockEdit();
     void listAppearancesInheritOptionsAndTopIndex();
     void encryptedSourceStaysEncrypted();
 };
@@ -124,6 +126,32 @@ QByteArray makeSharedFormPdf(bool listBox, int topIndex = 0, bool inheritChoice 
     for (const QByteArray &content : {QByteArray(""), QByteArray("0 g 2 2 16 16 re f\n")})
         objs << "<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Resources << >> /Length "
                     + QByteArray::number(content.size()) + " >>\nstream\n" + content + "endstream";
+    return assemblePdf(objs, {});
+}
+
+// Two valid widgets share a text field. The unrelated widget has a cyclic
+// parent, either on its own page or beside the valid sibling before/after it.
+QByteArray makeMalformedWidgetFormPdf(int placement)
+{
+    QList<QByteArray> objs{
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [7 0 R] /DR << /Font << /Helv 6 0 R >> >> /DA (/Helv 12 Tf 0 g) >> >>",
+        "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [8 0 R] /Resources << >> >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [9 0 R] /Resources << >> >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [] /Resources << >> >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        "<< /FT /Tx /T (shared) /V (Old) /Kids [8 0 R 9 0 R] >>",
+        "<< /Type /Annot /Subtype /Widget /Parent 7 0 R /P 3 0 R /Rect [20 250 280 270] /F 4 /AP << /N 11 0 R >> >>",
+        "<< /Type /Annot /Subtype /Widget /Parent 7 0 R /Rect [20 250 280 270] /F 4 /AP << /N 11 0 R >> >>",
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /Ff 0 /Parent 10 0 R /V () /DA (/Helv 12 Tf 0 g) /Q 0 /Rect [20 210 280 230] /F 4 /AP << /N 11 0 R >> >>"};
+    if (placement == 0)
+        objs[4].replace("/Annots []", "/Annots [10 0 R]");
+    else
+        objs[3].replace("/Annots [9 0 R]", placement == 1
+            ? "/Annots [10 0 R 9 0 R]" : "/Annots [9 0 R 10 0 R]");
+    const QByteArray content = "BT /Helv 12 Tf 2 5 Td (Old) Tj ET\n";
+    objs << "<< /Type /XObject /Subtype /Form /BBox [0 0 260 20] /Resources << /Font << /Helv 6 0 R >> >> /Length "
+                + QByteArray::number(content.size()) + " >>\nstream\n" + content + "endstream";
     return assemblePdf(objs, {});
 }
 
@@ -325,6 +353,63 @@ void TstFormModel::sharedFieldsRefreshAndPersist()
     }
     QVERIFY(loaded.toggle(1, 2));
     QCOMPARE(loaded.pageFields(0)[2].value, QStringLiteral("Off"));
+}
+
+void TstFormModel::unrelatedMalformedWidgetDoesNotBlockEdit_data()
+{
+    QTest::addColumn<int>("placement");
+    QTest::newRow("unrelated-page") << 0;
+    QTest::newRow("before-sibling") << 1;
+    QTest::newRow("after-sibling") << 2;
+}
+
+void TstFormModel::unrelatedMalformedWidgetDoesNotBlockEdit()
+{
+    QFETCH(int, placement);
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    const QString source = writeTemp(files, QStringLiteral("malformed-widget.pdf"),
+                                     makeMalformedWidgetFormPdf(placement));
+    RenderEngine engine;
+    auto doc = engine.openDocument(source);
+    QVERIFY(doc);
+    FormModel form(*doc);
+    QCOMPARE(form.pageFields(0).size(), size_t(1));
+    QVERIFY(form.pageFields(0)[0].editable());
+    QCOMPARE(form.pageFields(0)[0].value, QStringLiteral("Old"));
+    if (placement == 0)
+        QCOMPARE(form.pageFields(1)[0].value, QStringLiteral("Old"));
+    QVERIFY(!form.isDirty());
+
+    QVERIFY(form.setTextValue(0, 0, QStringLiteral("Changed")));
+    QVERIFY(form.isDirty());
+    const std::vector<std::pair<int, int>> affected{{0, 0}, {1, placement == 1 ? 1 : 0}};
+    QCOMPARE(form.changedFields(), affected);
+    const QString saved = files.filePath(QStringLiteral("saved.pdf"));
+    QString error;
+    QVERIFY2(form.saveTo(saved, &error), qPrintable(error));
+    QCOMPARE(form.pageFields(0)[0].value, QStringLiteral("Changed"));
+    if (placement == 0)
+        QCOMPARE(form.pageFields(1)[0].value, QStringLiteral("Changed"));
+    auto reopened = engine.openDocument(saved);
+    QVERIFY(reopened);
+    QCOMPARE(FormModel(*reopened).pageFields(0)[0].value, QStringLiteral("Changed"));
+
+    // A malformed target must fail without clearing an earlier successful edit.
+    const int badPage = placement == 0 ? 2 : 1;
+    const int badIndex = placement == 2 ? 1 : 0;
+    QVERIFY(!form.setTextValue(badPage, badIndex, QStringLiteral("Rejected")));
+    QVERIFY(form.isDirty());
+    QVERIFY(form.changedFields().empty());
+    form.clearDirty();
+    QVERIFY(!form.setTextValue(0, 0, QStringLiteral("Changed")));
+    QVERIFY(!form.isDirty());
+    QVERIFY(form.changedFields().empty());
+    // A malformed target must still fail before changing a value or dirty state.
+    QVERIFY(!form.setTextValue(badPage, badIndex, QStringLiteral("Rejected")));
+    QVERIFY(!form.isDirty());
+    QVERIFY(form.changedFields().empty());
+    QCOMPARE(form.pageFields(0)[0].value, QStringLiteral("Changed"));
 }
 
 void TstFormModel::listAppearancesInheritOptionsAndTopIndex()

@@ -3,6 +3,8 @@
 #include <QList>
 #include <QString>
 
+#include <memory>
+
 namespace mervin::ipc {
 
 // Stable per-user pipe name hashed to avoid Windows charset/length issues.
@@ -57,16 +59,30 @@ void recordEndpoint(const InstancePaths &paths);
 QString legacyEndpoint(const QString &name = QString());
 #endif
 
+#ifdef Q_OS_WIN
+// The old username-based group's paths in this launch's TEMP. Creates nothing.
+InstancePaths legacyInstancePaths(const QString &name = QString());
+
+class LegacyCarryGuard;
+
+// Locks a legacy carry file's group while its current-user-owned TEMP folder is
+// pinned against renames. Refuses reparse points and ACLs granting access beyond
+// this user, SYSTEM and Administrators. Inherited legacy ACLs are accepted without
+// changing the stricter policy for new instance folders. Empty if unsafe or held.
+// Keep the guard alive until takeCarried() has finished consuming paths.carriedFile.
+std::shared_ptr<LegacyCarryGuard> guardLegacyCarry(const InstancePaths &paths);
+#endif
+
 // Whether `lockFile` holds no lock information and is older than QLockFile needs to write
 // it, as a lock file that a process left when it ended between making and writing it.
 // QLockFile with a stale lock time of 0 never counts such a file as stale. Only reads it.
 bool lockLeftUnwritten(const QString &lockFile);
 
 #ifdef Q_OS_UNIX
-// The paths of the group `name` in the other folder that instancePaths() can choose, for
-// when /run/user/<uid> appeared or went away while a primary ran. Only folders that
-// already are this user's private folders count, and nothing is created in them. The
-// launch's own folder, which instancePaths() makes, is left out.
+// The group's other paths, including the preceding noncanonical profile identity when
+// `name` is empty, for upgrades or when /run/user/<uid> changed while a primary ran.
+// Only existing private folders count. No alternate folder is created, and the launch's
+// own lock path, which instancePaths() chooses, is left out.
 QList<InstancePaths> otherInstancePaths(const QString &name = QString());
 
 // Whether a live process holds the lock file `lockFile`, which lies in one of this user's

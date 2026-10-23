@@ -201,7 +201,8 @@ Launch claimOrHandOff(SingleInstanceServer &server, const Message &open, int wai
 #ifdef Q_OS_UNIX
     // While nothing holds this group's lock, a primary may still run elsewhere. One of
     // this version can have chosen another folder, as when the folders available changed
-    // since it started. One from before the lock and socket left the temp folder does not
+    // since it started. The preceding UID-based version can also have used the profile's
+    // noncanonical name. One from before the lock and socket left the temp folder does not
     // see this lock at all (Linux only, upgrade support removed with legacyEndpoint()).
     // A primary there that takes the open but does not answer in time keeps it, so this
     // launch opens the files standalone. One that closes the connection, as when it is

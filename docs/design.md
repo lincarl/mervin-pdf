@@ -417,7 +417,16 @@ after a failed removal but is not a durable acknowledgement of opened tabs. A cr
 between removal and opening can still lose them. It also takes the carry files in
 the group's other folders whose lock no
 live process holds, as a primary that ran in another folder leaves them (see
-below). That is the copy `relaunch::startIfDue()` starts once the process has quit,
+below). On Windows, it reads its current carry file first, then the preceding
+username-based TEMP carry file if it can acquire that group's lock. Migration
+requires current-user ownership of the TEMP folder and existing carry and lock
+files. It rejects reparse points and ACL grants to principals other than the user,
+SYSTEM and Administrators. Inherited legacy ACLs are accepted without changing
+the protected owner-and-SYSTEM policy for new instance folders. The primary pins
+the legacy directory and retains its lock through consumption. Unsafe paths,
+live locks and unreadable or unremovable carry data remain untouched. Discovery
+does not search historical TEMP locations, usernames or other profile aliases.
+That is the copy `relaunch::startIfDue()` starts once the process has quit,
 which is also the copy of a language restart, the copy an update starts, or a copy
 the user starts first. No path goes on a command line or into the environment,
 unless the carry file cannot be written. The launches then stay with `relaunch`,
@@ -456,7 +465,12 @@ While nothing holds this group's lock, `claimOrHandOff()` first looks for a prim
 elsewhere. One of this version can listen in another of the folders above, as when
 `/run/user/<uid>` appeared with a desktop login after it started from ssh.
 `ipc::otherInstancePaths()` lists the group's paths in those folders that already
-are this user's private folders, and creates nothing. A copy that holds the lock in
+are this user's private folders, and creates nothing. On Linux, this includes the
+preceding UID-based group hashed from the launch's noncanonical profile spelling.
+An upgraded launch can therefore find an older primary that used the same
+symlinked `--profile` path, including its remaining lock after its endpoint closes.
+The current canonical group retains precedence. This does not discover a different
+historical alias that the launch was not given. A copy that holds the lock in
 one of them and does not answer there is starting or in its exit wait. The launch
 waits for it as for a holder of this group's lock, within the same
 `ipc::kLaunchWaitMs`, and hands off once it answers. On Linux, copies built before
@@ -481,9 +495,10 @@ does not answer. An older copy, which has no rule to drop such an Open, shows th
 files as well once it runs again. If nothing answers, the process is another user's,
 or it closes the connection without an acknowledgement, as a quitting copy does, the
 launch goes on as above. The reverse case cannot be fixed in the older code. An
-older copy launched while a newer one runs starts a second primary until one of them
-exits. Windows also probes the legacy environment-username endpoint after acquiring
-the new lock, with the same SID peer check. This supports new-to-old handoff only;
+older copy that cannot discover the newer group starts a second primary until one
+of them exits. Windows probes the current endpoint first, then the legacy
+environment-username endpoint before trying to acquire the new lock, with the same
+SID peer check. This supports new-to-old handoff only;
 an already released copy cannot discover the new SID-based endpoint.
 
 Session restoration creates the tab list but opens only the selected document. Other
@@ -951,6 +966,8 @@ All changes run through `Document::withPdfDocument`, which serializes them again
 render workers. A form change refreshes the appearances, cached values and active
 editors on every page sharing the field. Those pages leave the image cache and
 render again so screen, print, and save output agree.
+Sibling discovery skips unrelated widgets with malformed parent chains. The
+selected target remains strict, and non-format failures still abort the edit.
 
 Form fields and annotations are standard PDF objects. `Document::savePdfTo` performs
 one full MuPDF rewrite that captures both kinds of edits and preserves existing
@@ -1795,7 +1812,8 @@ atomic rename. The detached MSI helper removes its private package and directory
 after the installer exits. Linux package-manager staging stays alive through the
 `QProcess` result and is removed on success, failure or cancellation. Without a
 supported package manager and `pkexec`, a manual check offers the existing download
-page and retains the pending package for retry. It does not hand a temporary file
+page and retains the pending package for retry. A cached update resumed without
+release metadata uses the official latest-release page. It does not hand a temporary file
 to a desktop installer whose completion cannot be observed. At each start, also with automatic updates off, an installed
 copy deletes its kind's downloads that are no longer newer than itself. A response
 to the release check that is not a JSON object with a string `tag_name`, such as a
@@ -1803,7 +1821,8 @@ network filter's page sent with HTTP 200, does not count as a check. `Updater`
 reads and writes this state and the downloads, streams a download to disk, and finds
 the package manager or replaces the AppImage on one background thread, in the order
 asked, and each step of a check, download or installation goes on when its disk work
-answers. A step whose operation ended meanwhile, as when automatic updates were
+answers. Pending-file availability checks also run on that worker before the UI
+receives the validated record. A step whose operation ended meanwhile, as when automatic updates were
 switched off, is dropped.
 The last check date is read when the updater starts and kept in memory, so Settings
 shows it without reading the profile. Handing off to the Windows installer consumes

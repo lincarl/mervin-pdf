@@ -176,6 +176,9 @@ SingleInstanceServer::~SingleInstanceServer()
     // Closing the server removes whatever file is at the socket path on Unix. With
     // the lock still held, no other process can have put its own socket there.
     stopListening();
+#ifdef Q_OS_WIN
+    legacyCarryGuard_.reset();
+#endif
     lock_.reset();
 }
 
@@ -290,13 +293,23 @@ SingleInstanceServer::Start SingleInstanceServer::start(const QString &serverNam
 
 QStringList SingleInstanceServer::carriedFiles() const
 {
-    if (carriedFile_.isEmpty())
+    if (carriedFile_.isEmpty() || !lock_ || !lock_->isLocked())
         return {};
     QStringList files{carriedFile_};
 #ifdef Q_OS_UNIX
     for (const InstancePaths &other : otherInstancePaths(name_))
         if (other.carriedFile != carriedFile_ && !lockHeldByLiveProcess(other.lockFile))
             files.append(other.carriedFile);
+#endif
+#ifdef Q_OS_WIN
+    if (!legacyCarryGuard_) {
+        const InstancePaths legacy = legacyInstancePaths(name_);
+        legacyCarryGuard_ = guardLegacyCarry(legacy);
+        if (legacyCarryGuard_)
+            legacyCarriedFile_ = legacy.carriedFile;
+    }
+    if (legacyCarryGuard_)
+        files.append(legacyCarriedFile_);
 #endif
     return files;
 }
