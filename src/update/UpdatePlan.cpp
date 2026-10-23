@@ -5,8 +5,19 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
+#include <QUrl>
+
+#include <algorithm>
 
 namespace mervin::update {
+
+bool isSha256(QStringView digest)
+{
+    return digest.size() == 64 && std::all_of(digest.begin(), digest.end(), [](QChar ch) {
+        return (ch >= u'0' && ch <= u'9') || (ch >= u'a' && ch <= u'f')
+            || (ch >= u'A' && ch <= u'F');
+    });
+}
 
 bool automaticCheckDue(const QDateTime &lastCheck, const QDateTime &now)
 {
@@ -128,7 +139,8 @@ std::optional<ReleaseAsset> assetFor(const QList<ReleaseAsset> &assets, PackageK
 {
     std::optional<ReleaseAsset> match;
     for (const ReleaseAsset &a : assets) {
-        if (!isPackageFileName(kind, a.name) || a.sha256.isEmpty())
+        if (!isPackageFileName(kind, a.name) || !isSha256(a.sha256)
+            || QUrl(a.url).scheme() != QLatin1String("https"))
             continue;
         if (kind == PackageKind::Deb && !osVersion.isEmpty()
             && a.name.contains(QStringLiteral("_ubuntu%1_").arg(osVersion), Qt::CaseInsensitive))

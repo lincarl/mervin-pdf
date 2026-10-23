@@ -181,6 +181,10 @@ public:
         // The document a finished load left for the tab, before the tab took it, or
         // null.
         static std::shared_ptr<DocumentLifetime> storedDocument(const TabPage &tab);
+        // UI-thread inspection of the slow-load polling timer.
+        static bool slowPolling(const TabPage &tab);
+        // Process-wide waits for stopped loads to release their documents, on any thread.
+        static int waitingForStoppedLoad();
         // The notice a slow load shows for `name` in `folder`, in a label `width` wide.
         static QString slowNotice(const QString &name, const QString &folder,
                                   const QFontMetrics &metrics, int width);

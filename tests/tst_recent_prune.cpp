@@ -2,18 +2,27 @@
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
 #include "io/AppFiles.h"
+#include "io/Background.h"
 #include "recent/RecentStore.h"
 #include "recent/ViewStateStore.h"
+#include "render/Document.h"
+#include "render/RenderEngine.h"
 
 #include <QDateTime>
+#include <QDeadlineTimer>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
+#include <QPainter>
+#include <QPdfWriter>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QtTest>
 
 #include <memory>
+#include <algorithm>
 
 using namespace mervin;
 
@@ -277,6 +286,121 @@ private slots:
         wm.refreshRecent();
         QTest::qWait(200);
         QCOMPARE(wm.recentEntries().size(), 4);
+    }
+
+    /// A delayed missing-file reply from an earlier pass cannot prune a newer pass.
+    void previousPassCannotRemoveARecentEntry()
+    {
+        WindowManager wm;
+        QSignalSpy checked(wm.fileProbe(), &FileProbe::checked);
+        wm.refreshRecent();
+        QTRY_COMPARE(wm.recentEntries().size(), 2);
+        QTRY_VERIFY(!entry(wm, kept_).mount.isEmpty()
+                    || RecentStore::mountOf(kept_).isEmpty());
+        // Repeat after mount discovery, so both passes use the same file and mount.
+        checked.clear();
+        wm.refreshRecent();
+        QTRY_VERIFY(std::any_of(checked.cbegin(), checked.cend(), [this](const auto &args) {
+            return args.at(0).template value<FileCheck>().path == kept_;
+        }));
+        FileCheck previous;
+        for (const auto &args : checked)
+            if (args.at(0).value<FileCheck>().path == kept_)
+                previous = args.at(0).value<FileCheck>();
+        QVERIFY(!previous.path.isEmpty());
+        checked.clear();
+        wm.refreshRecent();
+        FileFacts missing;
+        missing.volumeAttached = true;
+        missing.folderExists = true;
+        emit wm.fileProbe()->checked(previous, missing);
+        QCOMPARE(entry(wm, kept_).path, kept_);
+        QTRY_VERIFY(std::any_of(checked.cbegin(), checked.cend(), [&](const auto &args) {
+            const FileCheck file = args.at(0).template value<FileCheck>();
+            return file.path == kept_ && file.generation != previous.generation;
+        }));
+        QCOMPARE(entry(wm, kept_).path, kept_);
+    }
+
+    void missingReplyAfterReplacement_data()
+    {
+        QTest::addColumn<bool>("reopen");
+        QTest::newRow("successful reopen invalidates pending prune") << true;
+        QTest::newRow("replacement alone keeps pending prune") << false;
+    }
+
+    // Finish the real missing-file probe before replacement, but leave its GUI
+    // delivery queued until a successful open has updated the same Recent entry.
+    void missingReplyAfterReplacement()
+    {
+        QFETCH(bool, reopen);
+        RecentStore recent;
+        recent.add(gone_, 1, 7);
+        QVERIFY(recent.save(RecentStore::defaultFile()));
+        QVERIFY(background::settle(10000));
+        WindowManager wm;
+        QCOMPARE(wm.recentEntries().size(), 1);
+        QCOMPARE(entry(wm, gone_).pageCount, 7);
+        QSignalSpy checked(wm.fileProbe(), &FileProbe::checked);
+        const int renderWorkers = background::running();
+        wm.refreshRecent();
+        // The engine's render workers stay alive. Wait for just the added probe
+        // work to retire without dispatching its queued GUI reply.
+        for (QDeadlineTimer deadline(10000);
+             background::running() != renderWorkers && !deadline.hasExpired();)
+            QThread::msleep(1);
+        QCOMPARE(background::running(), renderWorkers);
+        QVERIFY(checked.isEmpty());
+        QVERIFY(!QFileInfo::exists(gone_));
+
+        {
+            QPdfWriter replacement(gone_);
+            QPainter painter(&replacement);
+            QVERIFY(painter.isActive());
+            painter.drawRect(100, 100, 200, 200);
+            QVERIFY(painter.end());
+        }
+        QVERIFY(QFileInfo(gone_).size() > 0);
+        std::unique_ptr<Document> opened;
+        if (reopen) {
+            QString error;
+            opened = wm.engine()->openDocument(gone_, {}, &error);
+            QVERIFY2(opened, qPrintable(error));
+            QCOMPARE(opened->pageCount(), 1);
+            // This is the successful-open protocol. No newer prune pass runs.
+            wm.recordOpen(gone_, false, opened->pageCount());
+            ViewState view;
+            view.zoomMode = QStringLiteral("custom");
+            view.scale = 1.75;
+            view.rotation = 90;
+            wm.saveViewState(gone_, view);
+            QCOMPARE(entry(wm, gone_).pageCount, 1);
+        }
+
+        QTRY_VERIFY(std::any_of(checked.cbegin(), checked.cend(), [this](const auto &args) {
+            const auto file = args.at(0).template value<FileCheck>();
+            return file.path == gone_ && file.generation != 0
+                   && args.at(1).template value<FileFacts>().removed();
+        }));
+        // Missing replies coalesce their removals on the next GUI turn. Drain it
+        // before either row checks that the entry was retained or removed.
+        QCoreApplication::processEvents();
+        QCOMPARE(entry(wm, gone_).path, reopen ? gone_ : QString());
+        QVERIFY(appfiles::flush(10000));
+        RecentStore savedRecent;
+        QVERIFY(savedRecent.load(RecentStore::defaultFile()));
+        QCOMPARE(savedRecent.count(), reopen ? 1 : 0);
+        ViewStateStore savedViews;
+        QVERIFY(savedViews.load(ViewStateStore::defaultFile()));
+        const auto view = savedViews.get(gone_);
+        QCOMPARE(view.has_value(), reopen);
+        if (reopen) {
+            QCOMPARE(savedRecent.entries().first().path, gone_);
+            QCOMPARE(savedRecent.entries().first().pageCount, 1);
+            QCOMPARE(view->zoomMode, QStringLiteral("custom"));
+            QCOMPARE(view->scale, 1.75);
+            QCOMPARE(view->rotation, 90);
+        }
     }
 
     // Settings OK: a lower retention is saved at once, the shown count goes to

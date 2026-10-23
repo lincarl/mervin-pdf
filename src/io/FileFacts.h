@@ -11,6 +11,9 @@ struct FileCheck
 {
     QString path;
     QString mount;
+    // Nonzero identifies a one-shot request whose answer must not satisfy another
+    // pass. These answers are delivered but not retained in FileProbe's cache.
+    quint64 generation = 0;
 };
 
 // What a check on a background thread found for one file (see FileProbe).

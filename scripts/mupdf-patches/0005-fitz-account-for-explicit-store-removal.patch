@@ -1,0 +1,23 @@
+Return the removed item budget to the store (MuPDF 1.28.5)
+
+This file modifies MuPDF. The Mervin PDF project added this local fix on
+2026-10-23. It is not an upstream backport. Remove it when the pinned MuPDF
+release subtracts removed entries from the store size in fz_remove_item.
+
+Explicit removal unlinks and frees the entry, but leaves its byte count in
+store->size. Later insertions can evict unrelated cached resources even when
+the live entries fit the configured budget. Subtract the removed entry size
+under FZ_LOCK_ALLOC, matching the other eviction paths. A missing key still
+changes nothing. Both hashed and scanned keys use this accounting path.
+
+diff --git a/source/fitz/store.c b/source/fitz/store.c
+--- a/source/fitz/store.c
++++ b/source/fitz/store.c
+@@ -677,6 +677,7 @@
+ 	}
+ 	if (item)
+ 	{
++		store->size -= item->size;
+ 		/* Momentarily things can be in the hash table without being
+ 		 * in the list. Don't attempt to unlink these. We indicate
+ 		 * such items by setting item->next == item. */

@@ -1,6 +1,7 @@
 #include "TextFit.h"
 
 #include <QApplication>
+#include <QMenu>
 #include <QScrollArea>
 #include <QSpinBox>
 #include <QTest>
@@ -14,6 +15,8 @@ private slots:
     void fittingControls();
     void detectsClippedControls();
     void checksUnselectedComboOptions();
+    void comboOptionsAccountForIcons();
+    void comboOptionsAccountForItemFonts();
     void wrappingAndRichText();
     void scrollingContentAndEditableValues();
     void explicitElisionDoesNotHideVerticalClipping();
@@ -26,6 +29,11 @@ private slots:
     void multilinePlaceholderMustFitWithoutScrolling();
     void placeholderAccountsForPersistentActionsButNotClearButton();
     void editableValuesCanScrollOnlyHorizontally();
+    void toolButtonsAccountForIconPlacement();
+    void toolButtonsAccountForMenuIndicator();
+    void listRowsAccountForIconsAndItemFonts();
+    void elisionAllowanceDoesNotExemptSiblings();
+    void elisionAllowanceDoesNotExemptDescendants();
 };
 
 namespace {
@@ -47,8 +55,9 @@ void TstTextFit::fittingControls()
     auto *edit = new QLineEdit;
     edit->setPlaceholderText(QStringLiteral("Choose a file"));
     layout->addWidget(edit);
-    label->setText(QStringLiteral("&Name"));
-    label->setBuddy(edit);
+    auto *name = new QLabel(QStringLiteral("&Name"));
+    name->setBuddy(edit);
+    layout->addWidget(name);
     layout->addWidget(new QPushButton(QStringLiteral("&Open && inspect")));
     layout->addWidget(new QCheckBox(QStringLiteral("&Remember choice")));
     layout->addWidget(new QRadioButton(QStringLiteral("Use &default")));
@@ -122,15 +131,71 @@ void TstTextFit::checksUnselectedComboOptions()
     QVERIFY(!errors.contains(QStringLiteral("option 0")));
 }
 
+void TstTextFit::comboOptionsAccountForIcons()
+{
+    QComboBox combo;
+    combo.addItems({QStringLiteral("OK"), QStringLiteral("Translated option")});
+    combo.setCurrentIndex(0);
+    const QSize plainSize = combo.sizeHint();
+    combo.setFixedSize(plainSize.width() + 4, 100);
+    showAndSettle(combo);
+    QVERIFY2(textfit::check(combo).isEmpty(), qPrintable(textfit::check(combo).join('\n')));
+
+    // The unselected row's icon alone makes the previously fitting text overflow.
+    combo.setIconSize(QSize(64, 64));
+    combo.setItemIcon(1, combo.style()->standardIcon(QStyle::SP_FileIcon));
+    QStringList errors = textfit::check(combo);
+    QCOMPARE(errors.size(), 1);
+    QVERIFY2(errors.first().contains(QStringLiteral("option 1")), qPrintable(errors.first()));
+    combo.setFixedWidth(combo.width() + 100);
+    QVERIFY(textfit::check(combo).isEmpty());
+
+    // Enough text height does not imply enough icon height.
+    combo.setFixedHeight(plainSize.height());
+    errors = textfit::check(combo);
+    QCOMPARE(errors.size(), 1);
+    QVERIFY(errors.first().contains(QStringLiteral("option 1")));
+    combo.setItemIcon(1, QIcon());
+    QVERIFY(textfit::check(combo).isEmpty());
+}
+
+void TstTextFit::comboOptionsAccountForItemFonts()
+{
+    QComboBox combo;
+    combo.addItems({QStringLiteral("OK"), QStringLiteral("Translated option")});
+    combo.setCurrentIndex(0);
+    const QSize plainSize = combo.sizeHint();
+    combo.setFixedSize(plainSize.width() + 4, 100);
+    showAndSettle(combo);
+    QVERIFY(textfit::check(combo).isEmpty());
+
+    QFont large = combo.font();
+    large.setPixelSize(combo.fontMetrics().height() * 2);
+    combo.setItemData(1, large, Qt::FontRole);
+    QStringList errors = textfit::check(combo);
+    QCOMPARE(errors.size(), 1);
+    QVERIFY2(errors.first().contains(QStringLiteral("option 1")), qPrintable(errors.first()));
+    combo.setFixedWidth(600);
+    QVERIFY(textfit::check(combo).isEmpty());
+    combo.setFixedHeight(plainSize.height());
+    errors = textfit::check(combo);
+    QCOMPARE(errors.size(), 1);
+    QVERIFY(errors.first().contains(QStringLiteral("option 1")));
+    combo.setItemData(1, QVariant(), Qt::FontRole);
+    QVERIFY(textfit::check(combo).isEmpty());
+}
+
 void TstTextFit::wrappingAndRichText()
 {
-    for (const int mode : {0, 1, 2}) {
+    for (const int mode : {0, 1, 2, 3}) {
         const bool rich = mode == 1;
         QLabel label;
-        label.setTextFormat(rich ? Qt::RichText : Qt::PlainText);
+        label.setTextFormat(mode == 3 ? Qt::MarkdownText : rich ? Qt::RichText : Qt::PlainText);
         label.setText(rich ? QStringLiteral("<b>Translated explanation</b> that wraps onto several lines.")
                            : QStringLiteral("Translated explanation that wraps onto several lines."));
         label.setWordWrap(true);
+        if (mode == 3)
+            label.setText(QStringLiteral("**Translated explanation** that wraps onto several lines."));
         if (mode == 2)
             label.setTextInteractionFlags(Qt::TextSelectableByMouse);
         label.setMargin(4);
@@ -304,6 +369,105 @@ void TstTextFit::editableValuesCanScrollOnlyHorizontally()
     editor.setFixedHeight(8);
     const QString problems = textfit::check(editor).join('\n');
     QVERIFY2(problems.contains(QStringLiteral("scrollable value")), qPrintable(problems));
+}
+
+void TstTextFit::toolButtonsAccountForIconPlacement()
+{
+    QToolButton button;
+    button.setText(QStringLiteral("Translated action"));
+    button.setIcon(button.style()->standardIcon(QStyle::SP_FileIcon));
+    button.setIconSize(QSize(32, 32));
+    for (Qt::ToolButtonStyle style : {Qt::ToolButtonTextBesideIcon, Qt::ToolButtonTextUnderIcon}) {
+        button.setToolButtonStyle(style);
+        button.setFixedSize(300, 120);
+        showAndSettle(button);
+        QVERIFY2(textfit::check(button).isEmpty(), qPrintable(textfit::check(button).join('\n')));
+        button.setFixedSize(style == Qt::ToolButtonTextBesideIcon ? QSize(45, 120) : QSize(300, 20));
+        QVERIFY(!textfit::check(button).isEmpty());
+    }
+    button.setToolButtonStyle(Qt::ToolButtonIconOnly);
+    button.setFixedSize(48, 48);
+    button.setText(QString(200, QLatin1Char('x')));
+    QVERIFY(textfit::check(button).isEmpty());
+}
+
+void TstTextFit::toolButtonsAccountForMenuIndicator()
+{
+    QToolButton button;
+    button.setToolButtonStyle(Qt::ToolButtonTextOnly);
+    button.setText(QStringLiteral("Translated action"));
+    button.setFixedSize(button.fontMetrics().size(Qt::TextShowMnemonic, button.text())
+                        + QSize(10, 20));
+    showAndSettle(button);
+    QVERIFY2(textfit::check(button).isEmpty(), qPrintable(textfit::check(button).join('\n')));
+
+    QMenu menu;
+    menu.addAction(QStringLiteral("Another action"));
+    button.setMenu(&menu);
+    button.setPopupMode(QToolButton::MenuButtonPopup);
+    QVERIFY(button.sizeHint().width() > button.width());
+    QVERIFY(!textfit::check(button).isEmpty());
+    button.setFixedSize(button.sizeHint() + QSize(2, 10));
+    QVERIFY2(textfit::check(button).isEmpty(), qPrintable(textfit::check(button).join('\n')));
+}
+
+void TstTextFit::listRowsAccountForIconsAndItemFonts()
+{
+    QListWidget list;
+    list.setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    list.setIconSize(QSize(32, 32));
+    auto *item = new QListWidgetItem(list.style()->standardIcon(QStyle::SP_FileIcon),
+                                    QStringLiteral("Large translated row"), &list);
+    QFont font = list.font();
+    font.setPointSize(22);
+    item->setFont(font);
+    item->setSizeHint(QSize(440, 65));
+    list.setFixedSize(500, 100);
+    showAndSettle(list);
+    QVERIFY2(textfit::check(list).isEmpty(), qPrintable(textfit::check(list).join('\n')));
+    list.setFixedWidth(100);
+    QVERIFY(!textfit::check(list).isEmpty());
+    list.setFixedWidth(500);
+    item->setSizeHint(QSize(440, 10));
+    QCoreApplication::processEvents();
+    QVERIFY(!textfit::check(list).isEmpty());
+}
+
+void TstTextFit::elisionAllowanceDoesNotExemptSiblings()
+{
+    QWidget root;
+    root.resize(150, 100);
+    QLabel path(QStringLiteral("A deliberately shortened path"), &root);
+    path.setProperty("textFitAllowElision", QStringLiteral("Paths may elide."));
+    path.setGeometry(0, 0, 40, 40);
+    QLabel action(QStringLiteral("A translated action must fit"), &root);
+    action.setObjectName(QStringLiteral("unexemptedAction"));
+    action.setGeometry(0, 45, 40, 40);
+    showAndSettle(root);
+    const QStringList errors = textfit::check(root);
+    QCOMPARE(errors.size(), 1);
+    QVERIFY(errors.first().contains(QStringLiteral("unexemptedAction")));
+}
+
+void TstTextFit::elisionAllowanceDoesNotExemptDescendants()
+{
+    QWidget root;
+    root.resize(200, 120);
+    QLabel path(QStringLiteral("A deliberately shortened path"), &root);
+    path.setProperty("textFitAllowElision", QStringLiteral("Paths may elide."));
+    path.setGeometry(0, 0, 80, 100);
+    path.setAlignment(Qt::AlignTop);
+    QLabel action(QStringLiteral("A translated action must fit"), &path);
+    action.setObjectName(QStringLiteral("unexemptedDescendant"));
+    action.setGeometry(0, 45, 40, 40);
+    showAndSettle(root);
+    const QStringList errors = textfit::check(root);
+    QCOMPARE(errors.size(), 1);
+    QVERIFY2(errors.first().contains(QStringLiteral("unexemptedDescendant")),
+             qPrintable(errors.first()));
+
+    action.setText(QStringLiteral("OK"));
+    QVERIFY(textfit::check(root).isEmpty());
 }
 
 QTEST_MAIN(TstTextFit)

@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import reviewed_ci as ci
 
@@ -60,13 +61,13 @@ def event(repository=REPOSITORY):
 def workflow_run():
     """Create successful run metadata with resolved full-ci control evidence."""
     return {
-        "id": int(PRIOR_RUN), "event": "pull_request", "path": ci.WORKFLOW,
+        "id": int(PRIOR_RUN), "event": "pull_request", "path": ".github/workflows/pr-ci.yml",
         "display_title": f"PR CI #7 @ {SHA}", "pull_requests": [],
         "status": "completed", "conclusion": "success", "head_sha": SHA,
         "head_repository": {"full_name": REPOSITORY}, "head_branch": "feature/fix",
         "repository": {"full_name": REPOSITORY}, "run_attempt": 1,
         "referenced_workflows": [{
-            "path": f"{REPOSITORY}/{ci.FULL_WORKFLOW}@{CONTROL_SHA}", "sha": CONTROL_SHA,
+            "path": f"{REPOSITORY}/.github/workflows/full-ci.yml@{CONTROL_SHA}", "sha": CONTROL_SHA,
         }],
     }
 
@@ -88,7 +89,7 @@ class EvidenceAPI(ci.GitHub):
         super().__init__(REPOSITORY)
         self.calls = []
         self.responses = {
-            f"{ROOT}/pulls/7": deepcopy((pr_event or event())["pull_request"]),
+            f"{ROOT}/pulls/7": deepcopy((event() if pr_event is None else pr_event)["pull_request"]),
             f"{ROOT}/actions/workflows/pr-ci.yml/runs?event=pull_request&status=success"
             f"&head_sha={SHA}&per_page=100&page=1": {"workflow_runs": [workflow_run()]},
             f"{ROOT}/actions/runs/{PRIOR_RUN}": workflow_run(),
@@ -172,6 +173,31 @@ class PrepareTests(unittest.TestCase):
 
 
 class ReuseTests(unittest.TestCase):
+    def test_valid_candidate_on_second_page_is_found(self):
+        api = EvidenceAPI()
+        search = next(path for path in api.responses if "/workflows/" in path)
+        rejected = [{**workflow_run(), "id": 1000 + i, "head_sha": OTHER_SHA} for i in range(100)]
+        api.responses[search] = {"workflow_runs": rejected}
+        for run in rejected:
+            api.responses[f"{ROOT}/actions/runs/{run['id']}"] = run
+        second = search.replace("&page=1", "&page=2")
+        api.responses[second] = {"workflow_runs": [workflow_run()]}
+        self.assertEqual(ci.prepare(event(), ENV, api)["reuse_run"], PRIOR_RUN)
+        self.assertIn(second, api.calls)
+
+    def test_failed_duplicate_job_on_second_page_prevents_reuse(self):
+        api = EvidenceAPI()
+        path = next(path for path in api.responses if "/jobs?" in path)
+        jobs = full_jobs()
+        jobs.extend({"name": f"extra-{i}", "status": "completed", "conclusion": "success"}
+                    for i in range(100 - len(jobs)))
+        api.responses[path] = {"jobs": jobs}
+        second = path.replace("&page=1", "&page=2")
+        api.responses[second] = {"jobs": [{"name": "full-ci / windows-tests",
+                                         "status": "completed", "conclusion": "failure"}]}
+        self.assertEqual(ci.prepare(event(), ENV, api)["reuse_run"], "")
+        self.assertIn(second, api.calls)
+
     def test_valid_run_reuses_original_after_reading_run_and_latest_jobs(self):
         api = EvidenceAPI()
         self.assertEqual(ci.prepare(event(), ENV, api)["reuse_run"], PRIOR_RUN)
@@ -309,7 +335,10 @@ class ReuseTests(unittest.TestCase):
 class VerifyHeadTests(unittest.TestCase):
     def test_current_open_ready_head_requires_only_one_pr_read(self):
         api = EvidenceAPI()
-        self.assertEqual(ci.verify_head(event(), ENV, api), ci.select_source(event(), ENV))
+        self.assertEqual(ci.verify_head(event(), ENV, api), {
+            "head_sha": SHA, "head_repository": REPOSITORY,
+            "head_branch": "feature/fix", "pr_number": "7",
+        })
         self.assertEqual(api.calls, [f"{ROOT}/pulls/7"])
 
     def test_stale_closed_draft_or_unavailable_head_cannot_pass(self):
@@ -354,6 +383,41 @@ DIAGNOSTIC_ENV = {**ENV, "GITHUB_EVENT_NAME": "workflow_dispatch",
 
 
 class DiagnosticTests(unittest.TestCase):
+    def test_producer_must_still_match_after_payload_checks(self):
+        for change in ({"run_attempt": 2}, {"status": "in_progress"}, ci.CIError("unavailable")):
+            api = diagnostic_api()
+            original_read = api.api
+            reads = 0
+
+            def read(path):
+                """Alter only the final producer observation."""
+                nonlocal reads
+                result = original_read(path)
+                if path == f"{ROOT}/actions/runs/{PRIOR_RUN}":
+                    reads += 1
+                    if reads == 2:
+                        if isinstance(change, Exception):
+                            raise change
+                        result.update(change)
+                return result
+
+            api.api = read
+            with self.subTest(change=change), self.assertRaises(ci.CIError):
+                ci.diagnostic(DIAGNOSTIC_ENV, api)
+            self.assertEqual(reads, 2)
+
+    def test_successful_step_conclusion_requires_completed_status(self):
+        for status in (None, "in_progress", "queued"):
+            api = diagnostic_api()
+            path = next(path for path in api.responses if "/jobs?" in path)
+            step = api.responses[path]["jobs"][0]["steps"][0]
+            if status is None:
+                del step["status"]
+            else:
+                step["status"] = status
+            with self.subTest(status=status), self.assertRaises(ci.CIError):
+                ci.diagnostic(DIAGNOSTIC_ENV, api)
+
     def test_failed_overall_and_msix_results_allow_verified_windows_payload(self):
         ci.diagnostic(DIAGNOSTIC_ENV, diagnostic_api())
 
@@ -470,6 +534,26 @@ class AggregateTests(unittest.TestCase):
                 ci.check_results({**dict.fromkeys(EXPECTED_RESULT_VARIABLES, "success"), "CI_DIAGNOSTIC": flag})
 
 
+class TransportTests(unittest.TestCase):
+    def test_failed_gets_are_bounded_and_do_not_expose_transport_output(self):
+        for failure in (OSError("private diagnostic"),
+                        subprocess.TimeoutExpired("gh", 30), None):
+            with self.subTest(failure=failure), patch.object(ci.subprocess, "run") as run:
+                run.side_effect = failure
+                run.return_value = subprocess.CompletedProcess([], 1, stdout="", stderr="private diagnostic")
+                with self.assertRaises(ci.CIError) as caught:
+                    ci.GitHub(REPOSITORY).api(f"{ROOT}/pulls/7")
+                self.assertNotIn("private diagnostic", str(caught.exception))
+                self.assertEqual(run.call_args.kwargs["timeout"], 30)
+
+    def test_malformed_get_json_is_rejected(self):
+        with patch.object(ci.subprocess, "run", return_value=subprocess.CompletedProcess(
+            [], 0, stdout="private non-JSON response"
+        )), self.assertRaises(ci.CIError) as caught:
+            ci.GitHub(REPOSITORY).api(f"{ROOT}/pulls/7")
+        self.assertNotIn("private non-JSON", str(caught.exception))
+
+
 class CLITests(unittest.TestCase):
     def setUp(self):
         temporary_root = Path(os.environ.get("REVIEWED_CI_TEST_TEMP", Path(__file__).resolve().parents[1] / "dev-temp"))
@@ -544,7 +628,8 @@ print(json.dumps(response))
         self.fixtures.write_text("{}")
         result = self.run_cli()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(self.output.read_text().endswith("reuse_run=\n"))
+        self.assertEqual(self.output.read_text(), f"head_sha={SHA}\nhead_repository={REPOSITORY}\n"
+                         "head_branch=feature/fix\npr_number=7\nreuse_run=\n")
 
     def test_verify_head_cli_validates_current_head_without_any_output_files(self):
         self.fixtures.write_text(json.dumps({f"{ROOT}/pulls/7": event()["pull_request"]}))

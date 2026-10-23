@@ -181,6 +181,23 @@ Launch claimOrHandOff(SingleInstanceServer &server, const Message &open, int wai
 {
     const QDeadlineTimer deadline(waitMs);
     const InstancePaths paths = instancePaths(name);
+#ifdef Q_OS_WIN
+    // Prefer a current primary, then a copy from before SID-based names and
+    // profile-based locks. Old binaries cannot discover the new endpoint.
+    const QStringList candidates{paths.server, legacyEndpoint(name)};
+    for (const QString &candidate : candidates) {
+        if (candidate.isEmpty())
+            continue;
+        switch (handOff(candidate, open, deadline, lookup)) {
+        case Handoff::Delivered:
+            return Launch::Delivered;
+        case Handoff::Busy:
+            return Launch::Standalone;
+        case Handoff::NoPrimary:
+            break;
+        }
+    }
+#endif
 #ifdef Q_OS_UNIX
     // While nothing holds this group's lock, a primary may still run elsewhere. One of
     // this version can have chosen another folder, as when the folders available changed

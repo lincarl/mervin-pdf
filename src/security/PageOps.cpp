@@ -1,5 +1,6 @@
 #include "security/PageOps.h"
 #include "io/JobContext.h"
+#include "recent/PathKey.h"
 #include "security/AtomicPdfWriter.h"
 #include "security/MeasurementPages.h"
 #include "security/QpdfSource.h"
@@ -33,6 +34,7 @@ namespace {
 using ObjectSet = std::set<QPDFObjGen>;
 
 std::atomic<bool> failRetarget{false}; // see PageOps::testing::failNextRetarget
+thread_local PageOps::testing::SplitProjection splitProjection;
 
 // How deep the recursive walks below follow form fields, outline items, structure elements
 // and action chains. qpdf's own form traversal stops at the same depth. A walk that removes
@@ -824,10 +826,64 @@ void removeDeletedContent(QPDF &q, const std::vector<QPDFPageObjectHelper> &page
             trimResources(page);
 }
 
-/// Form helpers for the documents that pages are copied from, each made once.
+// The fields of the trees of `fields`, with their fully qualified names. The walk reaches
+// each field once, so it needs no depth limit.
+std::vector<std::pair<QPDFObjectHandle, std::string>>
+fieldNames(const std::vector<QPDFObjectHandle> &fields)
+{
+    std::vector<std::pair<QPDFObjectHandle, std::string>> names;
+    ObjectSet seen;
+    std::vector<QPDFObjectHandle> queue = fields;
+    while (!queue.empty()) {
+        QPDFObjectHandle node = queue.back();
+        queue.pop_back();
+        if (!node.isIndirect() || !node.isDictionary() || !seen.insert(node.getObjGen()).second)
+            continue;
+        if (node.hasKey("/T"))
+            names.emplace_back(node, QPDFFormFieldObjectHelper(node).getFullyQualifiedName());
+        QPDFObjectHandle kids = node.getKey("/Kids");
+        if (kids.isArray())
+            for (QPDFObjectHandle kid : kids.aitems())
+                queue.push_back(kid);
+    }
+    return names;
+}
+
+/// Form helpers and action names for sources, each collected once.
 class SourceForms
 {
 public:
+    struct Names
+    {
+        std::set<std::string> fields, movies;
+    };
+
+    /// Retains full-source names even when a part copies only selected field branches.
+    const Names &namesOf(QPDF &pdf)
+    {
+        auto [it, inserted] = names_.try_emplace(&pdf);
+        if (inserted) {
+            try {
+                QPDFObjectHandle form = pdf.getRoot().getKey("/AcroForm");
+                QPDFObjectHandle fields = form.isDictionary() ? form.getKey("/Fields") : form;
+                if (fields.isArray())
+                    for (const auto &named : fieldNames(fields.getArrayAsVector()))
+                        it->second.fields.insert(named.second);
+                for (QPDFObjectHandle page : pdf.getAllPages()) {
+                    QPDFObjectHandle annots = page.getKey("/Annots");
+                    if (annots.isArray())
+                        for (QPDFObjectHandle annot : annots.aitems())
+                            if (annot.isDictionary() && annot.getKey("/Subtype").isNameAndEquals("/Movie")
+                                && annot.getKey("/T").isString())
+                                it->second.movies.insert(annot.getKey("/T").getUTF8Value());
+                }
+            } catch (const std::exception &) {
+                // As before, an unreadable name stays and finds nothing in the copy.
+            }
+        }
+        return it->second;
+    }
+
     /// The helper for `pdf`, or null when it has no form or qpdf cannot read the form, in
     /// which case its pages are copied as addPage leaves them.
     QPDFAcroFormDocumentHelper *of(QPDF &pdf)
@@ -850,6 +906,258 @@ public:
 
 private:
     std::map<QPDF *, std::unique_ptr<QPDFAcroFormDocumentHelper>> forms_;
+    std::map<QPDF *, Names> names_;
+};
+
+/// Builds independent, small form sources for Split without changing the original tree.
+/// Cross-references outside /Parent, /Kids and annotation /P retain the existing copy path.
+class SplitFormPages
+{
+public:
+    SplitFormPages(QPDF &source, const std::vector<QPDFPageObjectHelper> &pages)
+        : form_(source.getRoot().getKey("/AcroForm"))
+    {
+        try {
+            QPDFObjectHandle fields = form_.isDictionary() ? form_.getKey("/Fields") : form_;
+            if (!fields.isArray() || fields.getArrayNItems() == 0)
+                return;
+            for (QPDFObjectHandle field : fields.aitems())
+                if (!index(field, QPDFObjectHandle::newNull(), 0))
+                    return;
+            for (auto page : pages) {
+                QPDFObjectHandle object = page.getObjectHandle();
+                pages_.insert(object.getObjGen());
+                QPDFObjectHandle annots = object.getKey("/Annots");
+                if (annots.isNull())
+                    continue;
+                if (!annots.isArray())
+                    return;
+                for (QPDFObjectHandle annot : annots.aitems()) {
+                    if (!annot.isIndirect() || !annot.isDictionary())
+                        return;
+                    annotations_.insert(annot.getObjGen());
+                    if (annot.getKey("/Subtype").isNameAndEquals("/Widget")
+                        && !nodes_.count(annot.getObjGen()))
+                        return;
+                }
+            }
+            valid_ = true;
+        } catch (const std::exception &) {
+            // Malformed forms use the existing copy and pruning rules.
+        }
+    }
+
+    /// Copies just this page's widgets and their ancestors, or declines the fast path.
+    std::unique_ptr<QPDF> select(QPDFPageObjectHelper page)
+    {
+        if (!valid_)
+            return {};
+        QPDFObjectHandle original = page.getObjectHandle();
+        QPDFObjectHandle annots = original.getKey("/Annots");
+        if (!annots.isArray())
+            return {};
+        ObjectSet selected;
+        for (QPDFObjectHandle annot : annots.aitems()) {
+            if (!annot.getKey("/Subtype").isNameAndEquals("/Widget"))
+                continue;
+            auto id = annot.getObjGen();
+            while (id.isIndirect() && selected.insert(id).second)
+                id = nodes_.at(id).parent;
+        }
+        if (selected.empty())
+            return {};
+        // Validate dependencies before copying anything. Importing an action or an
+        // appearance that refers back into the original form would copy that tree again
+        // and give its references different identities from the selected branches.
+        if (!safeProperties(form_, {"/Fields"})
+            || !safeProperties(original, {"/Parent", "/Annots"}))
+            return {};
+        for (const char *key : {"/Resources", "/MediaBox", "/CropBox", "/Rotate"})
+            if (!safe(page.getAttribute(key, false), 0))
+                return {};
+        for (const auto &id : selected)
+            if (!safeProperties(nodes_.at(id).object, {"/Parent", "/Kids", "/P"}))
+                return {};
+        for (QPDFObjectHandle annot : annots.aitems())
+            if (!nodes_.count(annot.getObjGen()) && !safeProperties(annot, {"/P"}))
+                return {};
+
+        auto part = std::make_unique<QPDF>();
+        part->emptyPDF();
+        QPDFObjectHandle copiedPage = part->makeIndirectObject(
+            copyProperties(*part, original, {"/Parent", "/Annots"}));
+        // addPage normally moves inherited attributes onto the page. This independent
+        // page has no source /Parent, so retain those attributes explicitly.
+        for (const char *key : {"/Resources", "/MediaBox", "/CropBox", "/Rotate"}) {
+            QPDFObjectHandle value = page.getAttribute(key, false);
+            if (!value.isNull())
+                copiedPage.replaceKey(key, copyValue(*part, value));
+        }
+        QPDFPageDocumentHelper(*part).addPage(QPDFPageObjectHelper(copiedPage), false);
+        std::map<QPDFObjGen, QPDFObjectHandle> copied;
+        std::map<QPDFObjGen, std::vector<QPDFObjGen>> children;
+        for (const auto &id : selected) {
+            copied.emplace(id, part->makeIndirectObject(
+                copyProperties(*part, nodes_.at(id).object, {"/Parent", "/Kids", "/P"})));
+            children[nodes_.at(id).parent].push_back(id);
+        }
+        // Preserve source sibling order without scanning all of a parent's omitted kids.
+        for (auto &[parent, kids] : children)
+            std::sort(kids.begin(), kids.end(), [&](const auto &a, const auto &b) {
+                return nodes_.at(a).order < nodes_.at(b).order;
+            });
+        const auto childArray = [&](const QPDFObjGen &parent) {
+            auto result = QPDFObjectHandle::newArray();
+            for (const auto &id : children[parent])
+                result.appendItem(copied.at(id));
+            return result;
+        };
+        for (auto &[id, object] : copied) {
+            auto &node = nodes_.at(id);
+            if (node.parent.isIndirect())
+                object.replaceKey("/Parent", copied.at(node.parent));
+            if (children.count(id))
+                object.replaceKey("/Kids", childArray(id));
+            if (node.object.hasKey("/P"))
+                object.replaceKey("/P", copiedPage);
+        }
+        auto copiedAnnots = QPDFObjectHandle::newArray();
+        for (QPDFObjectHandle annot : annots.aitems()) {
+            const auto found = copied.find(annot.getObjGen());
+            QPDFObjectHandle object = found != copied.end() ? found->second
+                : part->makeIndirectObject(copyProperties(*part, annot, {"/P"}));
+            if (annot.hasKey("/P"))
+                object.replaceKey("/P", copiedPage);
+            copiedAnnots.appendItem(object);
+        }
+        copiedPage.replaceKey("/Annots", copiedAnnots);
+        auto form = copyProperties(*part, form_, {"/Fields"});
+        form.replaceKey("/Fields", childArray(QPDFObjGen()));
+        part->getRoot().replaceKey("/AcroForm", part->makeIndirectObject(form));
+        ++splitProjection.pages;
+        splitProjection.fields += selected.size();
+        return part;
+    }
+
+private:
+    struct Node
+    {
+        QPDFObjectHandle object;
+        QPDFObjGen parent;
+        size_t order;
+    };
+
+    /// Requires an indirect, acyclic tree with reciprocal parents and bounded depth.
+    bool index(QPDFObjectHandle field, QPDFObjectHandle parent, int depth)
+    {
+        if (depth >= kMaxDepth || !field.isIndirect() || !field.isDictionary()
+            || nodes_.count(field.getObjGen()))
+            return false;
+        QPDFObjectHandle declared = field.getKey("/Parent");
+        if (parent.isNull() ? !declared.isNull() : !declared.isSameObjectAs(parent))
+            return false;
+        const bool widget = field.getKey("/Subtype").isNameAndEquals("/Widget");
+        // Only annotations have a page link we can safely replace. Nonterminal widgets
+        // and typed parents have ambiguous field inheritance, so keep the existing path.
+        if ((!widget && (field.hasKey("/P") || field.hasKey("/Type")))
+            || (widget && field.hasKey("/Kids")))
+            return false;
+        nodes_.emplace(field.getObjGen(), Node{field, parent.getObjGen(), nodes_.size()});
+        QPDFObjectHandle kids = field.getKey("/Kids");
+        if (kids.isNull())
+            return true;
+        if (!kids.isArray())
+            return false;
+        for (QPDFObjectHandle kid : kids.aitems())
+            if (!index(kid, field, depth + 1))
+                return false;
+        return true;
+    }
+
+    /// Allows only dependencies that cannot pull pages, annotations or fields back in.
+    bool safe(QPDFObjectHandle value, int depth)
+    {
+        if (depth >= kMaxDepth)
+            return false;
+        const bool indirect = value.isIndirect();
+        const auto id = value.getObjGen();
+        if (indirect) {
+            if (nodes_.count(id) || annotations_.count(id) || pages_.count(id))
+                return false;
+            const auto [it, inserted] = safe_.emplace(id, false);
+            if (!inserted)
+                return it->second; // a cycle is conservatively ineligible
+        }
+        bool result = true;
+        if (value.isStream())
+            result = safe(value.getDict(), depth + 1);
+        else if (value.isDictionary()) {
+            if (value.getKey("/Type").isNameAndEquals("/Page")
+                || value.getKey("/Type").isNameAndEquals("/Pages")
+                || value.getKey("/Type").isNameAndEquals("/Catalog")
+                || value.getKey("/Subtype").isNameAndEquals("/Widget")
+                || (value.hasKey("/Subtype") && value.hasKey("/Rect")))
+                result = false;
+            else
+                for (auto item : value.ditems())
+                    if (!safe(item.second, depth + 1)) {
+                        result = false;
+                        break;
+                    }
+        } else if (value.isArray()) {
+            for (QPDFObjectHandle item : value.aitems())
+                if (!safe(item, depth + 1)) {
+                    result = false;
+                    break;
+                }
+        }
+        if (indirect)
+            safe_[id] = result;
+        return result;
+    }
+
+    /// Checks nonstructural properties while leaving source dictionaries untouched.
+    bool safeProperties(QPDFObjectHandle object, const std::set<std::string> &skip)
+    {
+        for (auto item : object.ditems())
+            if (!skip.count(item.first) && !safe(item.second, 0))
+                return false;
+        return true;
+    }
+
+    /// Imports direct containers and uses qpdf's stream-preserving copier for references.
+    static QPDFObjectHandle copyValue(QPDF &out, QPDFObjectHandle value)
+    {
+        if (value.isIndirect())
+            return out.copyForeignObject(value);
+        if (value.isDictionary())
+            return copyProperties(out, value, {});
+        if (value.isArray()) {
+            auto result = QPDFObjectHandle::newArray();
+            for (QPDFObjectHandle item : value.aitems())
+                result.appendItem(copyValue(out, item));
+            return result;
+        }
+        // Parsed scalar values can retain source ownership too, for example /Rotate.
+        return value.shallowCopy();
+    }
+
+    /// Copies validated properties, excluding links supplied by the selected branch graph.
+    static QPDFObjectHandle copyProperties(QPDF &out, QPDFObjectHandle object,
+                                           const std::set<std::string> &skip)
+    {
+        auto result = QPDFObjectHandle::newDictionary();
+        for (auto item : object.ditems())
+            if (!skip.count(item.first))
+                result.replaceKey(item.first, copyValue(out, item.second));
+        return result;
+    }
+
+    QPDFObjectHandle form_;
+    std::map<QPDFObjGen, Node> nodes_;
+    ObjectSet annotations_, pages_;
+    std::map<QPDFObjGen, bool> safe_;
+    bool valid_ = false;
 };
 
 /// Copies form fields along with the pages that one output gets from QPDFPageDocumentHelper::
@@ -873,14 +1181,17 @@ private:
 class FormCopy
 {
 public:
-    FormCopy(QPDF &out, SourceForms &sources) : out_(out), form_(out), sources_(sources) {}
+    FormCopy(QPDF &out, SourceForms &sources, SourceForms *actionSources = nullptr)
+        : out_(out), form_(out), sources_(sources),
+          actionSources_(actionSources ? *actionSources : sources) {}
 
     /// Records that addPage just added `page` of `source` as the output's last page.
-    void copied(QPDF &source, QPDFPageObjectHelper page)
+    void copied(QPDF &source, QPDFPageObjectHelper page, QPDF *originalSource = nullptr)
     {
         QPDFObjectHandle from = page.getObjectHandle();
         const int pass = passes_[{&source, from.getObjGen()}]++;
-        copies_.push_back({&source, pass, from, out_.getAllPages().back()});
+        copies_.push_back({&source, originalSource ? originalSource : &source, pass, from,
+                           out_.getAllPages().back()});
     }
 
     /// Copies the forms of the recorded pages, then removes the copied fields that have no
@@ -1203,9 +1514,11 @@ private:
     void scopeFormActions()
     {
         std::map<QPDF *, std::vector<QPDFObjectHandle>> pagesOf;
+        std::map<QPDF *, QPDF *> originals;
         ObjectSet seenPages;
         for (const Copy &copy : copies_) {
             QPDFObjectHandle page = copy.to;
+            originals[copy.source] = copy.originalSource;
             if (seenPages.insert(page.getObjGen()).second)
                 pagesOf[copy.source].push_back(page);
         }
@@ -1248,7 +1561,7 @@ private:
             own.movies = std::move(movies);
             own.single = !several;
             if (own.single)
-                own.readSource(*source);
+                own.sourceNames = &actionSources_.namesOf(*originals.at(source));
             for (QPDFObjectHandle holder : holders)
                 rewriteActions(holder, [&](QPDFObjectHandle action) {
                     ObjectSet seenActions;
@@ -1296,7 +1609,7 @@ private:
             if (!entry.isString())
                 return false;
             const std::string name = entry.getUTF8Value();
-            return names.count(name) > 0 || (single && !sourceNames.count(name));
+            return names.count(name) > 0 || (single && sourceNames && !sourceNames->fields.count(name));
         }
 
         /// Whether an action keeps `annotation`, the annotation that it names by reference.
@@ -1305,36 +1618,12 @@ private:
             return annotation.isIndirect() && annotations.count(annotation.getObjGen()) > 0;
         }
 
-        /// Reads the names of the fields of `source`, the output's one file, and the titles of
-        /// its movie annotations, so that a name that the copy left out can be told from one
-        /// that named nothing.
-        void readSource(QPDF &source)
-        {
-            try {
-                QPDFObjectHandle form = source.getRoot().getKey("/AcroForm");
-                QPDFObjectHandle fields = form.isDictionary() ? form.getKey("/Fields") : form;
-                if (fields.isArray())
-                    for (const auto &named : fieldNames(fields.getArrayAsVector()))
-                        sourceNames.insert(named.second);
-                for (QPDFObjectHandle page : source.getAllPages()) {
-                    QPDFObjectHandle annots = page.getKey("/Annots");
-                    if (annots.isArray())
-                        for (QPDFObjectHandle annot : annots.aitems())
-                            if (annot.isDictionary() && annot.getKey("/Subtype").isNameAndEquals("/Movie")
-                                && annot.getKey("/T").isString())
-                                sourceMovies.insert(annot.getKey("/T").getUTF8Value());
-                }
-            } catch (const std::exception &) {
-                // A name that the copy left out then stays, and finds nothing.
-            }
-        }
-
         ObjectSet ids;
         std::set<std::string> names;
         ObjectSet annotations;
         std::map<std::string, QPDFObjectHandle> movies; // the first of each title
         bool single = false; // the output has pages of this file only
-        std::set<std::string> sourceNames, sourceMovies; // read only for a single file
+        const SourceForms::Names *sourceNames = nullptr; // full source, only for a single file
     };
 
     // `action`, and the actions in its /Next, with each SubmitForm, ResetForm, Hide and
@@ -1418,7 +1707,8 @@ private:
                         return scopedNext;
                     change("/T", QPDFObjectHandle::newNull());
                     change("/Annotation", found->second);
-                } else if (found == own.movies.end() && own.sourceMovies.count(title.getUTF8Value())) {
+                } else if (found == own.movies.end() && own.sourceNames
+                           && own.sourceNames->movies.count(title.getUTF8Value())) {
                     return scopedNext; // its movie annotation was left out
                 }
             }
@@ -1520,29 +1810,6 @@ private:
         return whole;
     }
 
-    // The fields of the trees of `fields`, with their fully qualified names. The walk reaches
-    // each field once, so it needs no depth limit.
-    static std::vector<std::pair<QPDFObjectHandle, std::string>>
-    fieldNames(const std::vector<QPDFObjectHandle> &fields)
-    {
-        std::vector<std::pair<QPDFObjectHandle, std::string>> names;
-        ObjectSet seen;
-        std::vector<QPDFObjectHandle> queue = fields;
-        while (!queue.empty()) {
-            QPDFObjectHandle node = queue.back();
-            queue.pop_back();
-            if (!node.isIndirect() || !node.isDictionary() || !seen.insert(node.getObjGen()).second)
-                continue;
-            if (node.hasKey("/T"))
-                names.emplace_back(node, QPDFFormFieldObjectHelper(node).getFullyQualifiedName());
-            QPDFObjectHandle kids = node.getKey("/Kids");
-            if (kids.isArray())
-                for (QPDFObjectHandle kid : kids.aitems())
-                    queue.push_back(kid);
-        }
-        return names;
-    }
-
     // The fields of `before` that addAndRenameFormFields renamed, from the old fully
     // qualified name to the new one.
     static std::map<std::string, std::string>
@@ -1627,6 +1894,7 @@ private:
     struct Copy
     {
         QPDF *source;
+        QPDF *originalSource; // unabridged source for field and annotation action names
         int pass; // 0 for the first copy of a source page, 1 for the second, and so on
         QPDFObjectHandle from;
         QPDFObjectHandle to;
@@ -1756,6 +2024,7 @@ private:
     QPDF &out_;
     QPDFAcroFormDocumentHelper form_;
     SourceForms &sources_;
+    SourceForms &actionSources_;
     std::map<std::pair<QPDF *, QPDFObjGen>, int> passes_; // copies so far of each source page
     std::vector<Copy> copies_;
 };
@@ -1764,14 +2033,8 @@ private:
 
 int PageOps::pageCount(const QString &path, const QString &password)
 {
-    std::unique_ptr<QPDF> q;
-    if (openQpdf(path, password, q, nullptr) != Status::Ok)
-        return -1;
-    try {
-        return static_cast<int>(QPDFPageDocumentHelper(*q).getAllPages().size());
-    } catch (const std::exception &) {
-        return -1;
-    }
+    int count = -1;
+    return probe(path, &count, password) == Status::Ok ? count : -1;
 }
 
 QString PageOps::measurementsTooLargeError()
@@ -1784,19 +2047,30 @@ void PageOps::testing::failNextRetarget()
     failRetarget = true;
 }
 
+PageOps::testing::SplitProjection PageOps::testing::lastSplitProjection()
+{
+    return splitProjection;
+}
+
 PageOps::Status PageOps::probe(const QString &path, int *count, const QString &password,
-                               QString *error, bool *encrypted)
+                               QString *error, bool *encrypted, QString *sourceKey)
 {
     std::unique_ptr<QPDF> source;
-    const Status st = openQpdf(path, password, source, error);
+    std::shared_ptr<QpdfReadState> reads;
+    const Status st = openQpdf(path, password, source, error, &reads);
     if (st != Status::Ok)
         return st;
     QPDF &q = *source;
     try {
+        const int pages = static_cast<int>(QPDFPageDocumentHelper(q).getAllPages().size());
+        checkQpdfWarnings(q, reads.get());
+        reads->throwIfFailed();
         if (count)
-            *count = static_cast<int>(QPDFPageDocumentHelper(q).getAllPages().size());
+            *count = pages;
         if (encrypted)
             *encrypted = q.isEncrypted();
+        if (sourceKey)
+            *sourceKey = fileKey(QFileInfo(path));
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)
@@ -1829,7 +2103,8 @@ PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPa
     if (failedIndex)
         *failedIndex = -1;
     std::unique_ptr<QPDF> source;
-    const Status st = openQpdf(inPath, password, source, error);
+    std::shared_ptr<QpdfReadState> reads;
+    const Status st = openQpdf(inPath, password, source, error, &reads);
     if (st != Status::Ok) {
         if (failedIndex)
             *failedIndex = 0;
@@ -1841,6 +2116,7 @@ PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPa
         QPDFPageDocumentHelper dh(q);
         auto all = dh.getAllPages();
         const MeasureDoc measurements = measurementPages::read(q);
+        checkQpdfWarnings(q, reads.get());
         reading = false;
         const std::set<int> drop(pages.begin(), pages.end());
         const bool shared = sharesResources(q);
@@ -1859,14 +2135,20 @@ PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPa
         MeasureDoc mapped;
         measurementPages::append(mapped, measurements, kept, 0);
         measurementPages::write(q, mapped);
+        checkQpdfWarnings(q, reads.get());
         setKeyLength(q);
         AtomicPdfWriter output(q, outPath);
-        output.write();
+        output.write([&] {
+            checkQpdfWarnings(q, reads.get());
+            reads->throwIfFailed();
+            return true;
+        });
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)
             *error = QString::fromUtf8(e.what());
-        if (failedIndex && reading)
+        if (failedIndex && (reading || !reads->error.isEmpty()
+                            || qpdfFailurePath(e) == inPath))
             *failedIndex = 0;
         return Status::Failed;
     }
@@ -1877,7 +2159,8 @@ PageOps::Status PageOps::rotatePages(const QString &inPath, const QString &outPa
                                      const QString &password, QString *error)
 {
     std::unique_ptr<QPDF> source;
-    const Status st = openQpdf(inPath, password, source, error);
+    std::shared_ptr<QpdfReadState> reads;
+    const Status st = openQpdf(inPath, password, source, error, &reads);
     if (st != Status::Ok)
         return st;
     QPDF &q = *source;
@@ -1885,6 +2168,7 @@ PageOps::Status PageOps::rotatePages(const QString &inPath, const QString &outPa
         QPDFPageDocumentHelper dh(q);
         auto all = dh.getAllPages();
         auto data = measurementPages::read(q);
+        checkQpdfWarnings(q, reads.get());
         if (angle % 90 != 0)
             throw std::runtime_error(
                 tr("Rotation must be a multiple of 90 degrees.").toStdString());
@@ -1926,9 +2210,14 @@ PageOps::Status PageOps::rotatePages(const QString &inPath, const QString &outPa
                         std::swap(scale.mmPerPointX, scale.mmPerPointY);
         }
         measurementPages::write(q, data);
+        checkQpdfWarnings(q, reads.get());
         setKeyLength(q);
         AtomicPdfWriter output(q, outPath);
-        output.write();
+        output.write([&] {
+            checkQpdfWarnings(q, reads.get());
+            reads->throwIfFailed();
+            return true;
+        });
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)
@@ -1959,17 +2248,19 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
     if (failedIndex)
         *failedIndex = -1;
     int reading = -1; // the input being read, which an exception names in failedIndex
+    std::vector<std::pair<int, std::shared_ptr<QpdfReadState>>> reads;
     try {
         QPDF out;
         out.emptyPDF();
         QPDFPageDocumentHelper odh(out);
         // Sources must outlive write() so their stream data can be copied. The
-        // same path may appear as several inputs (the same file contributing two
-        // different page ranges), so each distinct path is opened exactly once
+        // same file may appear under several paths and contribute several ranges,
+        // so each canonical identity is opened exactly once
         // and reused - both to save the parse and because two QPDFs over one file
         // would copy its shared objects into the output twice.
         std::vector<std::unique_ptr<QPDF>> sources;
         std::map<QString, QPDF *> opened;
+        std::map<QString, QSet<QString>> passwords;
         SourceForms sourceForms;
         FormCopy forms(out, sourceForms);
         ResourceTrim resources;
@@ -1979,17 +2270,32 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
         for (int i = 0; i < inputs.size(); ++i) {
             reading = i;
             const MergeInput &in = inputs.at(i);
-            auto it = opened.find(in.path);
+            const QString key = fileKey(QFileInfo(in.path));
+            auto it = opened.find(key);
             if (it == opened.end()) {
                 std::unique_ptr<QPDF> src;
-                const Status st = openQpdf(in.path, in.password, src, error);
+                std::shared_ptr<QpdfReadState> state;
+                const Status st = openQpdf(in.path, in.password, src, error, &state);
                 if (st != Status::Ok) {
                     if (failedIndex)
                         *failedIndex = i;
                     return st;
                 }
-                it = opened.emplace(in.path, src.get()).first;
+                reads.emplace_back(i, std::move(state));
+                it = opened.emplace(key, src.get()).first;
+                passwords[key].insert(in.password);
                 sources.push_back(std::move(src));
+            } else if (!passwords[key].contains(in.password)) {
+                // Reusing a handle must not silently accept a conflicting password.
+                // Both a valid owner password and a valid user password are allowed.
+                std::unique_ptr<QPDF> checked;
+                const Status st = openQpdf(in.path, in.password, checked, error);
+                if (st != Status::Ok) {
+                    if (failedIndex)
+                        *failedIndex = i;
+                    return st;
+                }
+                passwords[key].insert(in.password);
             }
 
             auto all = QPDFPageDocumentHelper(*it->second).getAllPages();
@@ -2018,23 +2324,42 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
             }
             measurementPages::append(mergedMeasurements, measurementPages::read(*it->second),
                                      selected, outputPage);
+            checkQpdfWarnings(*it->second);
+            checkQpdfWarnings(out);
             outputPage += selected.size();
         }
         reading = -1;
         forms.finish();
+        for (size_t i = 0; i < sources.size(); ++i)
+            checkQpdfWarnings(*sources[i], reads[i].second.get());
+        checkQpdfWarnings(out);
         measurementPages::write(out, mergedMeasurements);
 
         AtomicPdfWriter output(out, outPath);
         // Pages of one file keep its encryption. A merge of several files has none.
         if (sources.size() == 1)
             copyEncryption(output, *sources.front());
-        output.write(mayCommit);
+        output.write([&] {
+            for (size_t i = 0; i < sources.size(); ++i) {
+                checkQpdfWarnings(*sources[i], reads[i].second.get());
+                reads[i].second->throwIfFailed();
+            }
+            checkQpdfWarnings(out);
+            return !mayCommit || mayCommit();
+        });
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)
             *error = QString::fromUtf8(e.what());
-        if (failedIndex)
+        if (failedIndex) {
             *failedIndex = reading;
+            const QString path = qpdfFailurePath(e);
+            for (const auto &[index, state] : reads)
+                if (!state->error.isEmpty() || (!path.isEmpty() && path == state->path)) {
+                    *failedIndex = index;
+                    break;
+                }
+        }
         return Status::Failed;
     }
 }
@@ -2053,14 +2378,17 @@ PageOps::Status PageOps::split(const QString &inPath, const QString &outDir, con
                                const std::function<bool(const QStringList &)> &mayWrite,
                                const std::function<bool(const QString &)> &mayCommit)
 {
+    splitProjection = {};
     std::unique_ptr<QPDF> source;
-    const Status st = openQpdf(inPath, password, source, error);
+    std::shared_ptr<QpdfReadState> reads;
+    const Status st = openQpdf(inPath, password, source, error, &reads);
     if (st != Status::Ok)
         return st;
     QPDF &q = *source;
     try {
         QPDFPageDocumentHelper dh(q);
         auto all = dh.getAllPages();
+        checkQpdfWarnings(q, reads.get());
         const QDir dir(outDir);
         QStringList paths;
         for (int i = 0; i < static_cast<int>(all.size()); ++i)
@@ -2070,16 +2398,28 @@ PageOps::Status PageOps::split(const QString &inPath, const QString &outDir, con
         if (mayWrite && !mayWrite(paths))
             return Status::Failed;
         const auto data = measurementPages::read(q);
+        checkQpdfWarnings(q, reads.get());
         SourceForms sourceForms;
         ResourceTrim resources;
+        SplitFormPages selectedForms(q, all);
+        checkQpdfWarnings(q, reads.get());
         for (int i = 0; i < static_cast<int>(all.size()); ++i) {
             QPDF out;
             out.emptyPDF();
-            FormCopy forms(out, sourceForms);
             resources.before(q, all[static_cast<size_t>(i)]);
-            QPDFPageDocumentHelper(out).addPage(all[static_cast<size_t>(i)], false);
-            forms.copied(q, all[static_cast<size_t>(i)]);
+            auto projected = selectedForms.select(all[static_cast<size_t>(i)]);
+            SourceForms partForms;
+            FormCopy forms(out, projected ? partForms : sourceForms, &sourceForms);
+            QPDF &copySource = projected ? *projected : q;
+            auto page = projected ? QPDFPageDocumentHelper(*projected).getAllPages().front()
+                                 : all[static_cast<size_t>(i)];
+            QPDFPageDocumentHelper(out).addPage(page, false);
+            forms.copied(copySource, page, &q);
             forms.finish();
+            if (projected)
+                checkQpdfWarnings(*projected);
+            checkQpdfWarnings(q, reads.get());
+            checkQpdfWarnings(out);
             MeasureDoc selected;
             measurementPages::append(selected, data, {i}, 0);
             measurementPages::write(out, selected);
@@ -2087,7 +2427,14 @@ PageOps::Status PageOps::split(const QString &inPath, const QString &outDir, con
             // A stopped job throws here, before it takes the next file.
             AtomicPdfWriter output(out, path);
             copyEncryption(output, q);
-            output.write([&mayCommit, &path] { return !mayCommit || mayCommit(path); });
+            output.write([&] {
+                checkQpdfWarnings(q, reads.get());
+                if (projected)
+                    checkQpdfWarnings(*projected);
+                checkQpdfWarnings(out);
+                reads->throwIfFailed();
+                return !mayCommit || mayCommit(path);
+            });
             if (outFiles)
                 outFiles->append(path);
         }

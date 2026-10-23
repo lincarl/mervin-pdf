@@ -38,6 +38,7 @@
 #include <QRubberBand>
 #include <QScrollBar>
 #include <QSet>
+#include <QSignalBlocker>
 #include <QShowEvent>
 #include <QTextDocument>
 #include <QTimer>
@@ -714,19 +715,61 @@ void ViewerWidget::commitActiveFormEditor()
 
 void ViewerWidget::applyFormFieldChange(int page)
 {
-    // Re-render just the touched page: drop its cached image and any stale in-flight
-    // request (so the new request's token supersedes), then request a fresh tile.
-    // Its frozen preview goes too - it predates the edit.
-    cache_.erase(page);
-    preview_.erase(page);
-    pending_.remove(page);
+    QSet<int> pages{page};
+    if (formModel_) {
+        for (const auto &[changedPage, fieldIndex] : formModel_->changedFields()) {
+            pages.insert(changedPage);
+            const auto &fields = formModel_->pageFields(changedPage);
+            if (fieldIndex < 0 || fieldIndex >= static_cast<int>(fields.size()))
+                continue;
+            const QString &value = fields[fieldIndex].value;
+            for (const FormEditor &editor : formEditors_) {
+                if (editor.page != changedPage || editor.fieldIndex != fieldIndex || !editor.widget)
+                    continue;
+                // A sibling editor must not later commit its pre-edit value over
+                // this shared field. Unrelated pending edits remain untouched.
+                const QSignalBlocker block(editor.widget);
+                if (auto *line = qobject_cast<QLineEdit *>(editor.widget)) {
+                    if (line->text() != value)
+                        line->setText(value);
+                } else if (auto *text = qobject_cast<QPlainTextEdit *>(editor.widget)) {
+                    if (text->toPlainText() != value)
+                        text->setPlainText(value);
+                } else if (auto *combo = qobject_cast<QComboBox *>(editor.widget)) {
+                    int index = combo->findText(value);
+                    if (index < 0 && !value.isEmpty()) {
+                        combo->addItem(value);
+                        index = combo->count() - 1;
+                    }
+                    combo->setCurrentIndex(index);
+                } else if (auto *list = qobject_cast<QListWidget *>(editor.widget)) {
+                    int index = -1;
+                    for (int i = 0; i < list->count(); ++i)
+                        if (list->item(i)->text() == value) {
+                            index = i;
+                            break;
+                        }
+                    list->setCurrentRow(index);
+                }
+            }
+        }
+    }
+    // Retire all pre-edit rasters and request identities, including offscreen
+    // siblings. Fresh visible tiles supersede any old result already in flight.
+    for (int affected : pages) {
+        cache_.erase(affected);
+        preview_.erase(affected);
+        pending_.remove(affected);
+    }
     const QPoint off = contentOffset();
     const QRect vpCanvas(off, viewport()->size());
-    const QRect pageCanvas = layout_.pageRect(page);
-    if (pageCanvas.isValid()) {
-        const QRect needed = pageCanvas.intersected(vpCanvas);
-        if (!needed.isEmpty())
-            ensureRendered(page, needed);
+    for (int affected : pages) {
+        const QRect pageCanvas = layout_.pageRect(affected);
+        if (pageCanvas.isValid()) {
+            const QRect needed = pageCanvas.intersected(vpCanvas);
+            if (!needed.isEmpty())
+                ensureRendered(affected, needed);
+        }
     }
     viewport()->update();
 }

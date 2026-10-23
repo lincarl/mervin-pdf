@@ -193,19 +193,21 @@ double ViewerWidget::maximumScale() const
     // pixel of headroom covers rounding the page bounds out to whole pixels. A page
     // that passes the limit even at kMinScale, such as a malformed giant MediaBox,
     // cannot render at any zoom, so it must not pin the other pages to it.
+    const double geometryLimit = std::min(kMaxScale, layout_.maximumScale());
     if (dpr_ <= 0)
-        return kMaxScale;
+        return geometryLimit;
     const double limit = kMaxDevicePixel - 1;
     const auto fits = std::upper_bound(pageSides_.begin(), pageSides_.end(),
                                        limit / (kMinScale * dpr_));
     if (fits == pageSides_.begin())
-        return pageSides_.empty() ? kMaxScale : kMinScale;
-    return std::clamp(limit / (*std::prev(fits) * dpr_), kMinScale, kMaxScale);
+        return std::min(geometryLimit, pageSides_.empty() ? kMaxScale : kMinScale);
+    return std::min(geometryLimit, std::clamp(limit / (*std::prev(fits) * dpr_), kMinScale, kMaxScale));
 }
 
 double ViewerWidget::clampScale(double s) const
 {
-    return std::clamp(s, kMinScale, maximumScale());
+    const double upper = maximumScale();
+    return std::clamp(s, std::min(kMinScale, upper), upper);
 }
 
 double ViewerWidget::deviceRatio() const
@@ -846,7 +848,9 @@ void ViewerWidget::ensureRendered(int pageNo, const QRect &neededCanvas)
     req.epoch = viewEpoch_;
     req.token = nextToken_++;
     req.theme = pageTheme_; // Comfort is applied by the worker; Inverted below
-    if (clipped) {
+    // Unrenderable giant pages still produce a normal failed result. Avoid
+    // converting their potentially overflowing device offsets into a clip first.
+    if (clipped && std::max(pr.width(), pr.height()) * dpr_ <= kMaxDevicePixel) {
         // Clip is in device px relative to the page image's top-left.
         req.clip = QRect(qRound((region.x() - pr.x()) * dpr_),
                          qRound((region.y() - pr.y()) * dpr_),

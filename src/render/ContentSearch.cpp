@@ -28,6 +28,7 @@ struct ContentSearch::Shared
         QString query;
         quint64 generation = 0;
     };
+    std::function<void(testing::Phase, const QString &)> observer;
     std::mutex mutex;
     std::optional<Request> pending; // guarded by mutex: the newest query not started yet
     bool running = false;           // guarded by mutex: a task is running searches
@@ -127,6 +128,13 @@ ContentSearch::~ContentSearch()
     shared_->pending.reset();
 }
 
+void ContentSearch::testing::observe(
+    ContentSearch &search, std::function<void(Phase, const QString &)> observer)
+{
+    std::lock_guard lock(search.shared_->mutex);
+    search.shared_->observer = std::move(observer);
+}
+
 void ContentSearch::cancel()
 {
     shared_->generation.fetch_add(1);
@@ -192,6 +200,13 @@ void ContentSearch::drain(const std::shared_ptr<Shared> &shared)
 void ContentSearch::run(const std::shared_ptr<Shared> &shared, const QStringList &paths,
                         const QString &query, quint64 generation, fz_context *ctx)
 {
+    std::function<void(testing::Phase, const QString &)> observer;
+    {
+        std::lock_guard lock(shared->mutex);
+        observer = shared->observer;
+    }
+    if (observer)
+        observer(testing::Phase::Started, query);
     int matched = 0;
     int scanned = 0;
     bool canceled = false;
@@ -228,6 +243,8 @@ void ContentSearch::run(const std::shared_ptr<Shared> &shared, const QStringList
                 fz_document *doc = nullptr;
                 fz_var(doc);
                 fz_try(ctx) {
+                    if (observer)
+                        observer(testing::Phase::Opening, path);
                     doc = fz_open_document(ctx, utf8.constData());
                     const int n = doc ? fz_count_pages(ctx, doc) : 0;
                     for (int p = 0; p < n; ++p) {

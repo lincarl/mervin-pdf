@@ -24,6 +24,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QSysInfo>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -31,6 +32,13 @@
 #include <chrono>
 #include <future>
 #include <type_traits>
+
+#ifdef Q_OS_WIN
+#  define WIN32_LEAN_AND_MEAN
+#  define NOMINMAX
+#  include <windows.h>
+#  include <aclapi.h>
+#endif
 
 namespace mervin {
 
@@ -114,15 +122,15 @@ struct Pending
 {
     QVersionNumber version;
     QString file;
-    // The asset's SHA-256 in lower-case hex. Empty for a download that an older
-    // version recorded, which checked it when it arrived.
+    // The asset's SHA-256 from the authenticated release response. Legacy
+    // records without a valid digest are discarded and checked again.
     QString sha256;
 
     // Still worth installing. Newer than this copy and not deleted since.
     bool usable() const
     {
         return update::isNewerStableVersion(version, QStringLiteral(MERVIN_VERSION_STRING))
-            && QFileInfo(file).isFile();
+            && update::isSha256(sha256) && QFileInfo(file).isFile();
     }
 };
 
@@ -185,6 +193,61 @@ QString fileSha256(const QString &path)
     if (!file.open(QIODevice::ReadOnly) || !hash.addData(&file))
         return {};
     return QString::fromLatin1(hash.result().toHex());
+}
+
+// Keep Windows parent ACLs from granting other users access to staging, even
+// when an isolated profile lives in a shared folder. SYSTEM can read MSI inputs.
+bool privateStagingDirectory(const QString &path)
+{
+#ifdef Q_OS_WIN
+    const std::wstring native = QDir::toNativeSeparators(path).toStdWString();
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    PSID owner = nullptr;
+    if (GetNamedSecurityInfoW(native.c_str(), SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION,
+                             &owner, nullptr, nullptr, nullptr, &descriptor) != ERROR_SUCCESS)
+        return false;
+    BYTE systemSid[SECURITY_MAX_SID_SIZE];
+    DWORD systemSize = sizeof(systemSid);
+    EXPLICIT_ACCESSW entries[2]{};
+    entries[0].grfAccessPermissions = FILE_ALL_ACCESS;
+    entries[0].grfAccessMode = SET_ACCESS;
+    entries[0].grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+    entries[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+    entries[0].Trustee.ptstrName = static_cast<LPWSTR>(owner);
+    entries[1] = entries[0];
+    entries[1].Trustee.ptstrName = reinterpret_cast<LPWSTR>(systemSid);
+    PACL acl = nullptr;
+    const bool ok = CreateWellKnownSid(WinLocalSystemSid, nullptr, systemSid, &systemSize)
+        && SetEntriesInAclW(2, entries, nullptr, &acl) == ERROR_SUCCESS
+        && SetNamedSecurityInfoW(const_cast<LPWSTR>(native.c_str()), SE_FILE_OBJECT,
+                                 DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                                 nullptr, nullptr, acl, nullptr) == ERROR_SUCCESS;
+    if (acl)
+        LocalFree(acl);
+    LocalFree(descriptor);
+    return ok;
+#else
+    return QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                                      | QFileDevice::ExeOwner);
+#endif
+}
+
+// Create a new file inheriting only the private directory's access rules. CopyFile
+// on Windows can copy the source ACL, so stream bytes instead of QFile::copy.
+bool copyToStaging(const QString &sourcePath, const QString &destinationPath)
+{
+    QFile source(sourcePath);
+    QFile destination(destinationPath);
+    if (!source.open(QIODevice::ReadOnly)
+        || !destination.open(QIODevice::WriteOnly | QIODevice::NewOnly,
+                             QFileDevice::ReadOwner | QFileDevice::WriteOwner))
+        return false;
+    while (!source.atEnd()) {
+        const QByteArray bytes = source.read(1024 * 1024);
+        if (bytes.isEmpty() || destination.write(bytes) != bytes.size())
+            return false;
+    }
+    return source.error() == QFileDevice::NoError && destination.flush();
 }
 
 // The download in progress (<asset>.part), open from the start of the transfer to
@@ -250,6 +313,9 @@ bool tidyDownloads(update::PackageKind kind)
 {
     const Pending pending = loadPending(kind);
     if (!pending.usable()) {
+        if (!pending.file.isEmpty() && !update::isSha256(pending.sha256)
+            && update::isNewerStableVersion(pending.version, QStringLiteral(MERVIN_VERSION_STRING)))
+            QSettings().setValue(stateKey(kind, kCheckDue), true);
         discardDownloads(kind); // installed, deleted by hand, or never there
         return false;
     }
@@ -367,6 +433,7 @@ void Updater::onDisk(Work work, Done done, bool forOperation)
 
 Updater::~Updater()
 {
+    clearStaging();
     if (g_instance == this)
         g_instance = nullptr;
 }
@@ -550,28 +617,13 @@ void Updater::onReleaseReply(QNetworkReply *reply)
         return;
     }
 
+    releasePageUrl_ = release->pageUrl;
     const std::optional<update::ReleaseAsset> asset =
         update::assetFor(release->assets, kind_, QSysInfo::productVersion());
     if (!asset) {
         // This copy can't install anything itself: point at the release page.
         markChecked();
-        const bool manual = manual_;
-        endOperation();
-        if (manual) {
-            QMessageBox box(dialogParent());
-            box.setWindowTitle(tr("Update Available"));
-            box.setIcon(QMessageBox::Information);
-            //: %1 is the version number of the new release.
-            box.setText(tr("Mervin PDF %1 is available.").arg(release->version.toString()));
-            //: %1 is the version number of this copy.
-            box.setInformativeText(tr("You have %1.").arg(QStringLiteral(MERVIN_VERSION_STRING)));
-            QPushButton *open = box.addButton(tr("Open Download Page"), QMessageBox::AcceptRole);
-            box.addButton(QMessageBox::Close);
-            box.setDefaultButton(open);
-            box.exec();
-            if (box.clickedButton() == open && !release->pageUrl.isEmpty())
-                QDesktopServices::openUrl(QUrl(release->pageUrl));
-        }
+        offerManualDownload(release->version.toString(), release->pageUrl);
         return;
     }
 
@@ -682,8 +734,8 @@ void Updater::onDownloadFinished()
     const bool received = reply->error() == QNetworkReply::NoError;
     const QString networkError = reply->errorString();
     const bool canceled = reply->error() == QNetworkReply::OperationCanceledError;
-    const bool verified = asset_.sha256.isEmpty()
-        || QString::fromLatin1(hash_.result().toHex()) == asset_.sha256;
+    const bool verified = update::isSha256(asset_.sha256)
+        && QString::fromLatin1(hash_.result().toHex()) == asset_.sha256.toLower();
 
     // The rest of the file, then the verdict, on the disk thread.
     enum class Outcome { Saved, WriteFailed, NetworkFailed, BadHash, RenameFailed };
@@ -786,39 +838,19 @@ void Updater::pollInstall()
         return;
     }
     installQueued_ = false;
-    struct Ready
-    {
-        Pending pending;      // empty when there is nothing to install
-        bool altered = false; // the file changed after it was verified, and was discarded
-    };
     onDisk(
-        [kind = kind_] {
-            const Pending pending = loadPending(kind);
-            if (!pending.usable())
-                return Ready{};
-            // Hashed again, as the file can have changed since it was downloaded.
-            if (!pending.sha256.isEmpty() && fileSha256(pending.file) != pending.sha256) {
-                // The flag is saved first, so a copy that stops in between still
-                // checks again at its next start.
-                QSettings().setValue(stateKey(kind, kCheckDue), true);
-                discardDownloads(kind);
-                return Ready{{}, true};
-            }
-            return Ready{pending};
-        },
-        [this](const Ready &ready) {
-            const Pending &pending = ready.pending;
-            if (pending.file.isEmpty()) {
-                if (ready.altered && manual_)
-                    warn(tr("The downloaded update failed its integrity check and was discarded."));
-                endOperation();
+        [kind = kind_] { return loadPending(kind); },
+        [this](const Pending &pending) {
+            if (!pending.usable()) {
+                // Metadata written by old copies must never bypass verification.
+                // Tidy discards it and forces a fresh authenticated release check.
+                onDisk([kind = kind_] { tidyDownloads(kind); }, [this] { endOperation(); });
                 return;
             }
-            if (shouldWaitForDialogs()) { // one opened meanwhile
+            if (shouldWaitForDialogs()) {
                 installWhenIdle();
                 return;
             }
-            installing_ = true;
             install(pending.file, pending.version.toString(), pending.sha256);
         });
 }
@@ -838,12 +870,70 @@ void Updater::install(const QString &file, const QString &version, const QString
         endOperation();
         return;
     }
+    struct Staged
+    {
+        std::shared_ptr<QTemporaryDir> directory;
+        QString file;
+        bool badHash = false;
+    };
+    onDisk(
+        [kind = kind_, file, sha256] {
+            // QTemporaryDir creates an owner-only directory. Copy first, then
+            // hash that independent copy, never a path later reopened for copying.
+            // Same-user code that can modify this private directory or our process
+            // is outside this boundary.
+            Staged staged;
+            staged.directory = std::shared_ptr<QTemporaryDir>(
+                new QTemporaryDir(QDir(downloadsDir(kind)).filePath(QStringLiteral(".install-XXXXXX"))),
+                [](QTemporaryDir *directory) {
+                    onDiskThread([directory] { delete directory; });
+                });
+            if (!staged.directory->isValid() || !privateStagingDirectory(staged.directory->path()))
+                return staged;
+            staged.file = staged.directory->filePath(QFileInfo(file).fileName());
+            if (!copyToStaging(file, staged.file)) {
+                staged.file.clear();
+                return staged;
+            }
+            if (!update::isSha256(sha256) || fileSha256(staged.file) != sha256.toLower()) {
+                QSettings().setValue(stateKey(kind, kCheckDue), true);
+                discardDownloads(kind);
+                staged.badHash = true;
+                staged.file.clear();
+            }
+            return staged;
+        },
+        [this, file, version, sha256](const Staged &staged) {
+            if (staged.file.isEmpty()) {
+                if (manual_) {
+                    if (staged.badHash)
+                        warn(tr("The downloaded update failed its integrity check and was discarded."));
+                    else
+                        warn(tr("Couldn't save the update."));
+                }
+                endOperation();
+                return;
+            }
+            if (shouldWaitForDialogs()) {
+                installing_ = false;
+                installWhenIdle();
+                return;
+            }
+            staging_ = staged.directory;
+            stagedFile_ = staged.file;
+            installing_ = true;
+            installStaged(file, version, sha256);
+        });
+}
+
+void Updater::installStaged(const QString &file, const QString &version, const QString &sha256)
+{
     switch (kind_) {
     case update::PackageKind::Msi:
         // The helper relaunches even if MSI fails or is cancelled, so this attempt
         // is consumed before the handoff, and only once that is written. The old
-        // app must not enter an install/relaunch loop. The file stays until the
-        // installer exits and startup cleans it up.
+        // app must not enter an install/relaunch loop. The helper keeps staging
+        // until MSI exits, then removes it. Startup removes the cached download.
         onDisk(
             [kind = kind_] {
                 QSettings st;
@@ -861,6 +951,7 @@ void Updater::install(const QString &file, const QString &version, const QString
                 if (shouldWaitForDialogs()) { // one opened meanwhile
                     putBackPending(kind_, version, file, sha256);
                     installing_ = false;
+                    clearStaging();
                     installWhenIdle();
                     return;
                 }
@@ -870,9 +961,9 @@ void Updater::install(const QString &file, const QString &version, const QString
     case update::PackageKind::AppImage:
         // A copy of about 90 MB, beside the running image.
         onDisk(
-            [file] {
+            [staged = stagedFile_, staging = staging_, sha256] {
                 QString error;
-                return update::replaceAppImage(file, &error) ? QString() : error;
+                return update::replaceAppImage(staged, sha256, &error) ? QString() : error;
             },
             [this, file](const QString &error) {
                 if (!error.isEmpty()) {
@@ -910,13 +1001,17 @@ void Updater::handOffToInstaller(const QString &file, const QString &version,
         endOperation();
         return;
     }
-    if (!update::startWindowsInstaller(file)) {
+    if (!update::startWindowsInstaller(stagedFile_)) {
         putBackPending(kind_, version, file, sha256);
         warnInstallerNotStarted(file);
         endOperation();
         QApplication::quit();
         return;
     }
+    // The helper removes its private directory after msiexec exits. The app may
+    // now quit without deleting bytes the detached installer has yet to open.
+    staging_->setAutoRemove(false);
+    clearStaging();
     markChecked(); // also defers retries of downloads kept over 30 days
     QApplication::quit();
 }
@@ -924,10 +1019,11 @@ void Updater::handOffToInstaller(const QString &file, const QString &version,
 void Updater::installWithPackageManager(const QString &file, const QString &version)
 {
     // Finding pkexec and the package manager looks through PATH.
-    onDisk([kind = kind_, file] { return update::packageInstallCommand(kind, file); },
+    onDisk([kind = kind_, staged = stagedFile_] { return update::packageInstallCommand(kind, staged); },
            [this, file, version](const QStringList &command) {
                if (shouldWaitForDialogs()) { // one opened meanwhile
                    installing_ = false;
+                   clearStaging();
                    installWhenIdle();
                    return;
                }
@@ -939,10 +1035,10 @@ void Updater::runPackageManager(const QStringList &command, const QString &file,
                                 const QString &version)
 {
     if (command.isEmpty()) {
-        // No pkexec: hand the package to the desktop's software installer. The
-        // next start after it is installed clears the download.
-        QDesktopServices::openUrl(QUrl::fromLocalFile(file));
-        endOperation();
+        // A desktop URL launch provides no completion handle. Keep the pending
+        // download for retry and let manual checks offer the release page instead.
+        Q_UNUSED(file);
+        offerManualDownload(version, releasePageUrl_);
         return;
     }
 
@@ -953,10 +1049,11 @@ void Updater::runPackageManager(const QStringList &command, const QString &file,
 
     auto *proc = new QProcess(this);
     proc->setProcessChannelMode(QProcess::MergedChannels);
-    const auto done = [this, proc, note](bool ok, const QString &failure) {
+    const auto done = [this, proc, note, staging = staging_](bool ok, const QString &failure) {
         proc->deleteLater();
         note->hide(); // not close(): that goes through the disabled reject()
         note->deleteLater();
+        clearStaging();
         if (ok) {
             restart(exePath_);
         } else {
@@ -966,6 +1063,8 @@ void Updater::runPackageManager(const QStringList &command, const QString &file,
             endOperation();
         }
     };
+    // Completion can show a modal warning. Wait until QProcess has unwound its
+    // signal emission before that event loop can deliver its deferred deletion.
     connect(proc, &QProcess::finished, this, [proc, done](int code, QProcess::ExitStatus status) {
         if (status == QProcess::NormalExit && code == 0)
             return done(true, {});
@@ -974,11 +1073,11 @@ void Updater::runPackageManager(const QStringList &command, const QString &file,
             return done(false, {});
         const QString output = QString::fromLocal8Bit(proc->readAll()).trimmed();
         done(false, output.right(600));
-    });
+    }, Qt::QueuedConnection);
     connect(proc, &QProcess::errorOccurred, this, [proc, done](QProcess::ProcessError error) {
         if (error == QProcess::FailedToStart)
             done(false, proc->errorString());
-    });
+    }, Qt::QueuedConnection);
     proc->start(command.first(), command.mid(1));
 }
 
@@ -1000,8 +1099,36 @@ void Updater::restart(const QString &exe)
     QApplication::quit();
 }
 
+void Updater::clearStaging()
+{
+    staging_.reset();
+    stagedFile_.clear();
+}
+
+void Updater::offerManualDownload(const QString &version, const QString &pageUrl)
+{
+    const bool manual = manual_;
+    endOperation();
+    if (!manual)
+        return;
+    QMessageBox box(dialogParent());
+    box.setWindowTitle(tr("Update Available"));
+    box.setIcon(QMessageBox::Information);
+    //: %1 is the version number of the new release.
+    box.setText(tr("Mervin PDF %1 is available.").arg(version));
+    //: %1 is the version number of this copy.
+    box.setInformativeText(tr("You have %1.").arg(QStringLiteral(MERVIN_VERSION_STRING)));
+    QPushButton *open = box.addButton(tr("Open Download Page"), QMessageBox::AcceptRole);
+    box.addButton(QMessageBox::Close);
+    box.setDefaultButton(open);
+    box.exec();
+    if (box.clickedButton() == open && QUrl(pageUrl).scheme() == QLatin1String("https"))
+        QDesktopServices::openUrl(QUrl(pageUrl));
+}
+
 void Updater::endOperation()
 {
+    clearStaging();
     ++operation_; // what its disk work answers no longer applies
     busy_ = false;
     manual_ = false;

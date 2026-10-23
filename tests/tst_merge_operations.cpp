@@ -24,6 +24,7 @@
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMessageBox>
 #include <QPointer>
 #include <QPushButton>
@@ -53,6 +54,23 @@ bool writeBytes(const QString &path, const QByteArray &data)
     return file.open(QIODevice::WriteOnly) && file.write(data) == data.size();
 }
 
+/// Gives the existing four-page fixture distinct widths without changing xref offsets.
+bool identifyPages(const QString &path, int firstWidth)
+{
+    QByteArray data = bytes(path);
+    const QByteArray box("/MediaBox [0 0 612 792]");
+    for (int i = 0; i < 4; ++i) {
+        const qsizetype at = data.indexOf(box);
+        if (at < 0)
+            return false;
+        const QByteArray replacement = "/MediaBox [0 0 " + QByteArray::number(firstWidth + i) + " 792]";
+        if (replacement.size() != box.size())
+            return false;
+        data.replace(at, box.size(), replacement);
+    }
+    return writeBytes(path, data);
+}
+
 } // namespace
 
 /// Exercises worker writes, recovery dialogs and result delivery through real controls.
@@ -66,6 +84,8 @@ public:
     {
         QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
         connect(&dialogs_, &QTimer::timeout, this, [this] {
+            if (configuring_)
+                return;
             QWidget *modal = QApplication::activeModalWidget();
             if (elapsed_.elapsed() > 20000) {
                 if (unexpected_.isEmpty())
@@ -119,11 +139,17 @@ public:
                     output->setFocus();
                     output->selectAll();
                     QTest::keyClicks(output, QDir::toNativeSeparators(output_));
+                    if (beforeFirst_) {
+                        configuring_ = true;
+                        const auto done = qScopeGuard([this] { configuring_ = false; });
+                        beforeFirst_(dialog);
+                    }
                     return;
                 }
                 reopenedSpec_ = fields.front()->text();
                 reopenedOutput_ = output->text();
                 reopenedError_ = dialog->findChild<QLabel *>("mergeError")->text();
+                reopenedInputs_ = dialog->inputs();
                 if (beforeReopen_)
                     beforeReopen_(dialog);
                 if (repair_)
@@ -164,14 +190,16 @@ private slots:
         current_.clear();
         dialogsSeen_ = successes_ = 0;
         submitted_ = false;
+        configuring_ = false;
         quitAnswered_ = false;
         openResult_ = false;
         reopenedSpec_.clear();
         reopenedOutput_.clear();
         reopenedError_.clear();
+        reopenedInputs_.clear();
         unexpected_.clear();
         repair_ = beforeMerge_ = {};
-        beforeReopen_ = {};
+        beforeFirst_ = beforeReopen_ = {};
         beforeMessage_ = {};
         elapsed_.start();
         dialogs_.start(10);
@@ -194,6 +222,25 @@ private slots:
     /// Checks that retry preserves ranges, output choice and remapped measurements.
     void failedWriteKeepsThePlan()
     {
+        QVERIFY(identifyPages(source_, 101));
+        const QString second = files_->filePath("second.pdf");
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), second));
+        QVERIFY(identifyPages(second, 201));
+        const QByteArray secondBefore = bytes(second);
+        spec_ = QStringLiteral("2,4");
+        beforeFirst_ = [second](MergeDialog *dialog) {
+            dialog->addPaths({second});
+            QVERIFY(QTest::qWaitFor([dialog] { return !dialog->reading(); }, 5000));
+            auto fields = dialog->findChildren<QLineEdit *>("mergeRowSpec");
+            QCOMPARE(fields.size(), 2);
+            fields.at(1)->setText(QStringLiteral("3,1,3"));
+            auto *list = dialog->findChild<QListWidget *>();
+            QVERIFY(list);
+            list->setCurrentRow(1);
+            list->setFocus();
+            QTest::keyClick(list, Qt::Key_Up, Qt::ControlModifier | Qt::ShiftModifier);
+            QCOMPARE(dialog->inputs().front().path, second);
+        };
         RenderEngine engine;
         QString error;
         auto source = engine.openDocument(source_, {}, &error);
@@ -207,6 +254,7 @@ private slots:
         source.reset();
         QVERIFY(QFile::remove(source_));
         QVERIFY(QFile::rename(measured, source_));
+        const QByteArray sourceBefore = bytes(source_);
         QVERIFY(QFile::copy(source_, output_));
         QVERIFY(QFile::setPermissions(output_, QFileDevice::ReadOwner | QFileDevice::ReadUser));
         repair_ = [this] {
@@ -217,18 +265,31 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(&window, "mergeDocuments"));
         QTRY_COMPARE_WITH_TIMEOUT(successes_, 1, 10000);
         QCOMPARE(dialogsSeen_, 2);
-        QCOMPARE(reopenedSpec_, spec_);
+        QCOMPARE(reopenedSpec_, QStringLiteral("3,1,3"));
+        QCOMPARE(reopenedInputs_.size(), 2);
+        QCOMPARE(reopenedInputs_.at(0).path, second);
+        QCOMPARE(reopenedInputs_.at(0).pages, (QList<int>{2, 0, 2}));
+        QCOMPARE(reopenedInputs_.at(1).path, source_);
+        QCOMPARE(reopenedInputs_.at(1).pages, (QList<int>{1, 3}));
         QCOMPARE(reopenedOutput_, QDir::toNativeSeparators(output_));
         QVERIFY(reopenedError_.contains(QStringLiteral("Could not write")));
         int pages = 0;
         QCOMPARE(PageOps::probe(output_, &pages, {}), PageOps::Status::Ok);
-        QCOMPARE(pages, 2);
+        QCOMPARE(pages, 5);
+        const auto result = engine.openDocument(output_);
+        QVERIFY(result);
+        QList<int> widths;
+        for (int i = 0; i < result->pageCount(); ++i)
+            widths.append(qRound(result->pageSize(i).width()));
+        QCOMPARE(widths, (QList<int>{203, 201, 203, 102, 104}));
+        QCOMPARE(bytes(source_), sourceBefore);
+        QCOMPARE(bytes(second), secondBefore);
         const auto blob = MeasureExport::readMervinBlob(output_);
         QVERIFY(blob);
         MeasureDoc retained;
         QVERIFY(parseMeasurements(*blob, &retained));
         QCOMPARE(retained.measurements.size(), size_t(1));
-        QCOMPARE(retained.measurements.front().page, 0);
+        QCOMPARE(retained.measurements.front().page, 3);
         QCOMPARE(retained.measurements.front().pts, measurements.measurements.front().pts);
     }
 
@@ -375,16 +436,16 @@ private slots:
         QCOMPARE(PageOps::pageCount(output_), 2);
     }
 
-    /// Stop during the final streamed destination check preserves bytes and suppresses completion.
+    /// Stop during the final destination check preserves bytes and suppresses completion.
     void stopDuringDestinationConsentRead()
     {
         const QByteArray original(3 * 1024 * 1024, 'x');
         QVERIFY(writeBytes(output_, original));
         beforeMessage_ = [this](QMessageBox *box) {
             if (box->text().contains(QStringLiteral("Replace it?")))
-                job::testing::holdWhen([output = QDir::toNativeSeparators(output_), reads = 0]
+                job::testing::holdWhen([output = QDir::toNativeSeparators(output_)]
                                       (job::Step step, const QString &path) mutable {
-                    return step == job::Step::Reading && path == output && ++reads == 3;
+                    return job::testing::hasScope() && step == job::Step::Reading && path == output;
                 });
         };
         const auto release = qScopeGuard([] { job::testing::release(); });
@@ -410,9 +471,9 @@ private slots:
     void failedMergeSelectsItsLaunchingTab()
     {
         beforeMerge_ = [this] {
-            job::testing::holdWhen([source = source_, reads = 0]
+            job::testing::holdWhen([source = source_]
                                   (job::Step step, const QString &path) mutable {
-                return step == job::Step::Reading && path == source && ++reads == 2;
+                return job::testing::hasScope() && step == job::Step::Reading && path == source;
             });
         };
         const auto release = qScopeGuard([] { job::testing::release(); });
@@ -457,9 +518,9 @@ private slots:
         QFETCH(bool, failure);
         QFETCH(bool, cancel);
         beforeMerge_ = [this] {
-            job::testing::holdWhen([source = source_, reads = 0]
+            job::testing::holdWhen([source = source_]
                                   (job::Step step, const QString &path) mutable {
-                return step == job::Step::Reading && path == source && ++reads == 2;
+                return job::testing::hasScope() && step == job::Step::Reading && path == source;
             });
         };
         const auto release = qScopeGuard([] { job::testing::release(); });
@@ -514,9 +575,9 @@ private slots:
     void queuedFailureSurvivesOldOwnerDestruction()
     {
         beforeMerge_ = [this] {
-            job::testing::holdWhen([source = source_, reads = 0]
+            job::testing::holdWhen([source = source_]
                                   (job::Step step, const QString &path) mutable {
-                return step == job::Step::Reading && path == source && ++reads == 2;
+                return job::testing::hasScope() && step == job::Step::Reading && path == source;
             });
         };
         const auto release = qScopeGuard([] { job::testing::release(); });
@@ -559,11 +620,16 @@ private slots:
         QVERIFY(writeBytes(output_, original));
         beforeMerge_ = [this, writing] {
             job::testing::holdWhen([source = source_, folder = files_->path(), writing,
-                                   reads = 0, writes = 0]
+                                   sourceChecked = false]
                                   (job::Step step, const QString &path) mutable {
-                if (writing)
-                    return step == job::Step::Writing && path == folder && ++writes == 2;
-                return step == job::Step::Reading && path == source && ++reads == 2;
+                if (!job::testing::hasScope())
+                    return false;
+                if (step == job::Step::Reading && path == source) {
+                    sourceChecked = true;
+                    return !writing;
+                }
+                // Output begins only after the worker checked and opened its source.
+                return writing && sourceChecked && step == job::Step::Writing && path == folder;
             });
         };
         const auto release = qScopeGuard([] { job::testing::release(); });
@@ -574,12 +640,13 @@ private slots:
         QVERIFY(tab);
         const int tasks = background::running();
         const int guiSteps = job::testing::stepsOnMainThread();
-        QElapsedTimer elapsed;
-        elapsed.start();
         QVERIFY(QMetaObject::invokeMethod(&window, "mergeDocuments"));
-        QVERIFY2(elapsed.elapsed() < 1000,
-                 qPrintable(QString("Merge took %1 ms").arg(elapsed.elapsed())));
         QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+        int heartbeats = 0;
+        QTimer heartbeat;
+        connect(&heartbeat, &QTimer::timeout, this, [&] { ++heartbeats; });
+        heartbeat.start(0);
+        QTRY_VERIFY(heartbeats > 0);
         QVERIFY(tab->isBusy());
         QCOMPARE(job::testing::stepsOnMainThread(), guiSteps);
         tab->stopWaiting();
@@ -596,15 +663,17 @@ private:
     std::unique_ptr<QTemporaryDir> files_;
     QString source_, output_, spec_;
     QString reopenedSpec_, reopenedOutput_, reopenedError_;
+    QList<PageOps::MergeInput> reopenedInputs_;
     QStringList unexpected_;
     QPointer<MergeDialog> current_;
     bool submitted_ = false;
+    bool configuring_ = false;
     bool quitAnswered_ = false;
     bool openResult_ = false; // answers "Open it now?" with Yes
     int dialogsSeen_ = 0;
     int successes_ = 0;
     std::function<void()> repair_, beforeMerge_;
-    std::function<void(MergeDialog *)> beforeReopen_;
+    std::function<void(MergeDialog *)> beforeFirst_, beforeReopen_;
     std::function<void(QMessageBox *)> beforeMessage_;
     QTimer dialogs_;
     QElapsedTimer elapsed_;

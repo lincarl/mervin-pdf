@@ -63,6 +63,7 @@ bool MergePlan::resolveProbe(quint64 ticket, const Entry &result)
         entry.loadError = result.loadError;
         entry.password = result.password;
         entry.encrypted = result.encrypted;
+        entry.sourceKey = result.sourceKey;
         found = true;
     }
     return found;
@@ -254,7 +255,7 @@ QString MergePlan::summaryText() const
         return tr("This merge cannot run yet.");
     QSet<QString> distinct;
     for (const Entry &e : entries_)
-        distinct.insert(e.path);
+        distinct.insert(e.sourceKey.isEmpty() ? e.path : e.sourceKey);
     // Two counts, and Qt's %n takes one: the sentence takes the pages and the
     // file count comes in as its own plural phrase. The English forms come from
     // i18n/mervin_en.ts; without that catalog the "(s)" would show verbatim.
@@ -293,12 +294,14 @@ QList<PageOps::MergeInput> MergePlan::inputs() const
 
 namespace {
 
-/// True when every row names the first row's path, which PageOps::merge opens once.
+/// Compares worker-resolved identities without touching the filesystem in the UI.
 bool namesOneFile(const QList<MergePlan::Entry> &entries)
 {
     return !entries.isEmpty()
         && std::all_of(entries.cbegin(), entries.cend(), [&entries](const MergePlan::Entry &e) {
-               return e.path == entries.first().path;
+               const auto &first = entries.first();
+               return !e.sourceKey.isEmpty() && !first.sourceKey.isEmpty()
+                   ? e.sourceKey == first.sourceKey : e.path == first.path;
            });
 }
 

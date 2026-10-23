@@ -6,11 +6,15 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QMap>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QPointer>
+#include <QSaveFile>
 #include <QSignalSpy>
+#include <QScopeGuard>
+#include <QSemaphore>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QThread>
@@ -155,7 +159,12 @@ private slots:
     void replacesExistingModelOnlyOnSuccess();
     void failureDoesNotStopOtherLanguage();
     void cancelAndDestructionAbandonDownloads();
-    void cancelStopsAnInstallationNotStarted();
+    void queuedInstallationLifetime_data();
+    void queuedInstallationLifetime();
+    void laterBytesRestartInactivityDeadline();
+    void installFailureAfterSuccessfulStaging();
+    void installFailureAfterDestinationOpened_data();
+    void installFailureAfterDestinationOpened();
     void inactivityAbandonsDownload();
     void unwritableDestinationDoesNotRequest();
 };
@@ -239,6 +248,7 @@ void TstOcrProvisioner::downloadsBestModelsOnce()
     network.replies.at(0)->finish();
     QTRY_VERIFY(!mervin::TessdataManager::busy()); // the files are written on its thread
     QCOMPARE(installed.count(), 1);
+    QCOMPARE(installed[0][0].toString(), QStringLiteral("swe"));
     QCOMPARE(finished.count(), 0);
     QCOMPARE(readFile(directory.filePath("swe.traineddata")), data);
     QVERIFY(mervin::TessdataFile::validate(directory.filePath("swe.traineddata")));
@@ -247,6 +257,8 @@ void TstOcrProvisioner::downloadsBestModelsOnce()
     network.replies.at(1)->finish();
     QTRY_VERIFY(!mervin::TessdataManager::busy());
     QCOMPARE(installed.count(), 2);
+    QCOMPARE(installed[1][0].toString(), QStringLiteral("eng"));
+    QCOMPARE(readFile(directory.filePath("eng.traineddata")), data);
     QCOMPARE(finished.count(), 1);
     QCOMPARE(files(directory.path()), QStringList({"eng.traineddata", "swe.traineddata"}));
     provisioner.start(models, directory.path());
@@ -354,35 +366,247 @@ void TstOcrProvisioner::cancelAndDestructionAbandonDownloads()
     }
 }
 
-// A download can finish while the folder's thread is busy. Canceling before its
-// installation starts leaves the installed model as it was.
-void TstOcrProvisioner::cancelStopsAnInstallationNotStarted()
+// Explicit cancel stops queued installation; destruction only abandons live downloads.
+void TstOcrProvisioner::queuedInstallationLifetime_data()
 {
+    QTest::addColumn<bool>("cancelExplicitly");
+    QTest::newRow("explicit cancel keeps original") << true;
+    QTest::newRow("destruction permits queued installation") << false;
+}
+
+void TstOcrProvisioner::queuedInstallationLifetime()
+{
+    QFETCH(bool, cancelExplicitly);
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     const QString target = directory.filePath("eng.traineddata");
     const QByteArray original = modelData('A');
+    const QByteArray replacement = modelData('B');
     QVERIFY(writeFile(target, original));
+    ModelNetwork network;
+    auto provisioner = std::make_unique<mervin::ocr::OcrProvisioner>(nullptr, &network);
+    int notifications = 0;
+    connect(provisioner.get(), &mervin::ocr::OcrProvisioner::modelInstalled,
+            this, [&] { ++notifications; });
+    QSignalSpy finished(provisioner.get(), &mervin::ocr::OcrProvisioner::finished);
+    provisioner->start({"eng"}, directory.path());
+    QTRY_COMPARE(network.requests.size(), 1);
+    network.replies.first()->supply(replacement);
+    QTRY_VERIFY(!mervin::TessdataManager::busy());
+    auto entered = std::make_shared<QSemaphore>();
+    auto release = std::make_shared<QSemaphore>();
+    mervin::TessdataManager::runInFolder([entered, release] {
+        entered->release();
+        release->tryAcquire(1, 10000);
+    });
+    const auto unblock = qScopeGuard([release] { release->release(); });
+    QVERIFY(entered->tryAcquire(1, 5000));
+    network.replies.first()->finish();
+    if (cancelExplicitly) {
+        provisioner->cancel();
+        provisioner->cancel();
+        QCOMPARE(finished.count(), 1);
+    } else {
+        provisioner.reset();
+        QCOMPARE(finished.count(), 0);
+    }
+    QCOMPARE(readFile(target), original);
+    release->release();
+    QTRY_VERIFY(!mervin::TessdataManager::busy());
+    QCOMPARE(notifications, 0);
+    QCOMPARE(readFile(target), cancelExplicitly ? original : replacement);
+    QCOMPARE(files(directory.path()), QStringList({"eng.traineddata"}));
+}
+
+// Exercise the inactivity deadline itself, including a later chunk extending it.
+void TstOcrProvisioner::laterBytesRestartInactivityDeadline()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    ModelNetwork network;
+    mervin::ocr::OcrProvisioner provisioner(nullptr, &network, 1000);
+    QSignalSpy finished(&provisioner, &mervin::ocr::OcrProvisioner::finished);
+    QSignalSpy installed(&provisioner, &mervin::ocr::OcrProvisioner::modelInstalled);
+    provisioner.start({"eng"}, directory.path());
+    QTRY_COMPARE(network.requests.size(), 1);
+    const QByteArray data = modelData();
+    network.replies.first()->supply(data.first(50));
+    QTest::qWait(600);
+    QCOMPARE(finished.count(), 0);
+    QVERIFY(network.replies.first());
+    network.replies.first()->supply(data.mid(50));
+    QTest::qWait(600); // beyond the first deadline, within the restarted deadline
+    QCOMPARE(finished.count(), 0);
+    QCOMPARE(network.aborts, 0);
+    QVERIFY(network.replies.first());
+    network.replies.first()->finish();
+    QTRY_VERIFY(!mervin::TessdataManager::busy());
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(installed.count(), 1);
+    QCOMPARE(readFile(directory.filePath("eng.traineddata")), data);
+}
+
+// A destination open failure after staging must not report success.
+void TstOcrProvisioner::installFailureAfterSuccessfulStaging()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
     ModelNetwork network;
     mervin::ocr::OcrProvisioner provisioner(nullptr, &network);
     QSignalSpy installed(&provisioner, &mervin::ocr::OcrProvisioner::modelInstalled);
     QSignalSpy finished(&provisioner, &mervin::ocr::OcrProvisioner::finished);
     provisioner.start({"eng"}, directory.path());
     QTRY_COMPARE(network.requests.size(), 1);
-    std::atomic<bool> held{true};
-    mervin::TessdataManager::runInFolder([&held] {
-        for (int i = 0; held.load() && i < 2000; ++i)
-            QThread::msleep(5);
-    });
     network.replies.first()->supply(modelData('B'));
-    network.replies.first()->finish();
-    provisioner.cancel();
-    held = false;
     QTRY_VERIFY(!mervin::TessdataManager::busy());
-    QCOMPARE(finished.count(), 1);
+    const QString target = directory.filePath("eng.traineddata");
+    QVERIFY(QDir().mkdir(target)); // works even under root, unlike permission tricks
+    const QString sentinel = QDir(target).filePath("original");
+    QVERIFY(writeFile(sentinel, modelData('A')));
+    network.replies.first()->finish();
+    QTRY_VERIFY(!mervin::TessdataManager::busy());
     QCOMPARE(installed.count(), 0);
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(readFile(sentinel), modelData('A'));
+    QCOMPARE(QDir(directory.path()).entryList(QDir::Files | QDir::Hidden).size(), 0);
+    // The same valid bytes install once the destination conflict is removed.
+    QVERIFY(QFile::remove(sentinel));
+    QVERIFY(QDir().rmdir(target));
+    mervin::ocr::OcrProvisioner retry(nullptr, &network);
+    QSignalSpy retried(&retry, &mervin::ocr::OcrProvisioner::modelInstalled);
+    retry.start({"eng"}, directory.path());
+    QTRY_COMPARE(network.requests.size(), 2);
+    network.replies.last()->supply(modelData('B'));
+    network.replies.last()->finish();
+    QTRY_VERIFY(!mervin::TessdataManager::busy());
+    QCOMPARE(retried.count(), 1);
+    QCOMPARE(readFile(target), modelData('B'));
+}
+
+/// Selects failures during copying and after the complete copy reaches commit.
+void TstOcrProvisioner::installFailureAfterDestinationOpened_data()
+{
+    QTest::addColumn<bool>("failDuringWrite");
+    QTest::newRow("during-write") << true;
+    QTest::newRow("during-commit") << false;
+}
+
+/// Keeps an existing regular model intact when the opened replacement fails.
+void TstOcrProvisioner::installFailureAfterDestinationOpened()
+{
+    QFETCH(bool, failDuringWrite);
+    using Provisioner = mervin::ocr::OcrProvisioner;
+    using Phase = Provisioner::InstallPhase;
+    struct Observation
+    {
+        Phase phase;
+        qint64 position;
+        bool open;
+        QString target;
+    };
+    struct Installation
+    {
+        QList<Observation> observations;
+        bool canceled = false;
+        qint64 canceledAt = -1;
+    };
+    const auto installation = std::make_shared<Installation>();
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString target = directory.filePath("eng.traineddata");
+    const QByteArray original = modelData('A');
+    QVERIFY(writeFile(target, original));
+    QVERIFY(QFileInfo(target).isFile());
+
+    // Add an opaque component before the unicharset so copying needs several
+    // writes. The write failure occurs only after some replacement bytes landed.
+    QByteArray replacement = modelData('B');
+    constexpr qsizetype tableEnd = sizeof(quint32) + 22 * sizeof(qint64);
+    const QByteArray opaque(128 * 1024, 'x');
+    replacement.insert(tableEnd, opaque);
+    qToLittleEndian<qint64>(tableEnd, replacement.data() + sizeof(quint32));
+    qToLittleEndian<qint64>(tableEnd + opaque.size(),
+                           replacement.data() + sizeof(quint32) + 21 * sizeof(qint64));
+
+    ModelNetwork network;
+    Provisioner provisioner(nullptr, &network);
+    provisioner.setInstallHookForTesting([installation, failDuringWrite](QSaveFile &output,
+                                                                        Phase phase) {
+        installation->observations.append(
+            {phase, output.pos(), output.isOpen(), output.fileName()});
+        const bool failHere = failDuringWrite
+            ? phase == Phase::BeforeWrite && output.pos() > 0
+            : phase == Phase::BeforeCommit;
+        if (failHere && !installation->canceled) {
+            installation->canceled = true;
+            installation->canceledAt = output.pos();
+            output.cancelWriting();
+        }
+    });
+    QSignalSpy installed(&provisioner, &Provisioner::modelInstalled);
+    QSignalSpy finished(&provisioner, &Provisioner::finished);
+    provisioner.start({"eng"}, directory.path());
+    QTRY_COMPARE(network.requests.size(), 1);
+    network.replies.first()->supply(replacement);
+    QTRY_VERIFY(!mervin::TessdataManager::busy());
     QCOMPARE(readFile(target), original);
-    QCOMPARE(files(directory.path()), QStringList({"eng.traineddata"}));
+    network.replies.first()->finish();
+    QTRY_COMPARE(finished.count(), 1);
+    QTRY_VERIFY(!mervin::TessdataManager::busy());
+
+    QVERIFY(installation->canceled);
+    QVERIFY(installation->observations.size() >= 2);
+    QCOMPARE(installation->observations.first().phase, Phase::BeforeWrite);
+    QCOMPARE(installation->observations.first().position, 0);
+    qsizetype commitPhases = 0;
+    for (const Observation &observation : installation->observations) {
+        QVERIFY(observation.open);
+        QCOMPARE(observation.target, target);
+        if (observation.phase == Phase::BeforeCommit)
+            ++commitPhases;
+    }
+    if (failDuringWrite) {
+        QVERIFY(installation->canceledAt > 0);
+        QVERIFY(installation->canceledAt < replacement.size());
+        QCOMPARE(installation->observations.last().phase, Phase::BeforeWrite);
+        QCOMPARE(installation->observations.last().position, installation->canceledAt);
+        QCOMPARE(commitPhases, 0); // a failed write must stop before commit
+    } else {
+        QCOMPARE(installation->canceledAt, replacement.size());
+        QCOMPARE(installation->observations.last().phase, Phase::BeforeCommit);
+        QCOMPARE(commitPhases, 1);
+    }
+    QCOMPARE(installed.count(), 0);
+    QCOMPARE(finished.count(), 1);
+    QVERIFY(QFileInfo(target).isFile());
+    QVERIFY(!QFileInfo(target).isSymLink());
+    QCOMPARE(readFile(target), original);
+    QCOMPARE(QDir(directory.path()).entryList(QDir::AllEntries | QDir::Hidden
+                                              | QDir::System | QDir::NoDotAndDotDot),
+             QStringList({"eng.traineddata"}));
+
+    // Provisioners are single-use. A fresh instance retries the same valid bytes
+    // without the fault, while the failed instance's callback remains isolated.
+    const qsizetype observedPhases = installation->observations.size();
+    Provisioner retry(nullptr, &network);
+    QSignalSpy retried(&retry, &Provisioner::modelInstalled);
+    QSignalSpy retryFinished(&retry, &Provisioner::finished);
+    retry.start({"eng"}, directory.path());
+    QTRY_COMPARE(network.requests.size(), 2);
+    network.replies.last()->supply(replacement);
+    network.replies.last()->finish();
+    QTRY_COMPARE(retryFinished.count(), 1);
+    QTRY_VERIFY(!mervin::TessdataManager::busy());
+    QCOMPARE(retried.count(), 1);
+    QCOMPARE(retried.first().first().toString(), QStringLiteral("eng"));
+    QCOMPARE(readFile(target), replacement);
+    QVERIFY(mervin::TessdataFile::validate(target));
+    QCOMPARE(installed.count(), 0);
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(installation->observations.size(), observedPhases);
+    QCOMPARE(QDir(directory.path()).entryList(QDir::AllEntries | QDir::Hidden
+                                              | QDir::System | QDir::NoDotAndDotDot),
+             QStringList({"eng.traineddata"}));
 }
 
 void TstOcrProvisioner::inactivityAbandonsDownload()

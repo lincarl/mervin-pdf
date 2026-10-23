@@ -51,6 +51,11 @@ OcrService::OcrService(RenderEngine *engine)
 {
 }
 
+void OcrService::testing::observe(OcrService &service, std::function<void(Phase)> observer)
+{
+    service.observer_ = std::move(observer);
+}
+
 OcrService::~OcrService()
 {
     if (ctx_)
@@ -84,14 +89,15 @@ QString OcrService::recognize(const std::shared_ptr<DocumentLifetime> &lifetime,
     // MuPDF wants comma-separated languages; default to English.
     QStringList langs = languages;
     langs.removeAll(QString());
+    if (langs.isEmpty())
+        langs.append(QStringLiteral("eng"));
 
     // Damaged language data does not make Tesseract return an error - it makes it
     // abort() or write past the end of a vector, neither of which fz_catch below
     // can intercept, so the whole app would go down. Check the files first.
     if (!TessdataFile::validateLanguages(tessdataDir, langs, error))
         return {};
-    const std::string lang = (langs.isEmpty() ? QStringLiteral("eng") : langs.join(QLatin1Char(',')))
-                                 .toStdString();
+    const std::string lang = langs.join(QLatin1Char(',')).toStdString();
     const std::string datadir = QDir::toNativeSeparators(tessdataDir).toStdString();
 
     const double s = static_cast<double>(kOcrDpi) / 72.0;
@@ -132,6 +138,8 @@ QString OcrService::recognize(const std::shared_ptr<DocumentLifetime> &lifetime,
     // fails with "Attempt to use Leptonica from 2 threads at once!". A canceled run
     // can still be finishing when the next one starts, so they take turns here.
     static std::mutex oneAtATime;
+    if (observer_)
+        observer_(testing::Phase::WaitingForTurn);
     std::lock_guard<std::mutex> turn(oneAtATime);
     fz_device *ocr = nullptr;
     fz_device *sdev = nullptr;
@@ -140,6 +148,10 @@ QString OcrService::recognize(const std::shared_ptr<DocumentLifetime> &lifetime,
     fz_var(sdev);
     fz_var(stext);
 
+    struct Progress {
+        const std::atomic<bool> *canceled;
+        const std::function<void(testing::Phase)> *observer;
+    } progressState{canceled, &observer_};
     QString result;
     fz_try(ctx) {
         stext = fz_new_stext_page(ctx, fz_transform_rect(mediabox, ctm));
@@ -149,11 +161,13 @@ QString OcrService::recognize(const std::shared_ptr<DocumentLifetime> &lifetime,
 
         // with_list=0 prevents original text outside the selection leaking into OCR.
         const auto progress = [](fz_context *, void *arg, int) -> int {
-            auto *flag = static_cast<const std::atomic<bool> *>(arg);
-            return flag && flag->load() ? 1 : 0;
+            const auto &state = *static_cast<const Progress *>(arg);
+            if (*state.observer)
+                (*state.observer)(testing::Phase::NativeProgress);
+            return state.canceled && state.canceled->load() ? 1 : 0;
         };
         ocr = fz_new_ocr_device(ctx, sdev, ctm, mediabox, 0, lang.c_str(),
-                                datadir.c_str(), progress, const_cast<std::atomic<bool> *>(canceled));
+                                datadir.c_str(), progress, &progressState);
         const fz_matrix pageCtm = fz_concat(fz_translate(-bounds.x0, -bounds.y0), ctm);
         fz_run_display_list(ctx, list, ocr, pageCtm, fz_infinite_rect, nullptr);
         fz_close_device(ctx, ocr);

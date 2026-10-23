@@ -28,6 +28,9 @@ private slots:
     void enumeratesTextField();
     void fillSaveReopenRoundTrip();
     void nonLatinValueSurvivesSave();
+    void sharedFieldsRefreshAndPersist_data();
+    void sharedFieldsRefreshAndPersist();
+    void listAppearancesInheritOptionsAndTopIndex();
     void encryptedSourceStaysEncrypted();
 };
 
@@ -82,6 +85,46 @@ QByteArray makePlainPdf()
     objs << "<< /Type /Pages /Kids [3 0 R] /Count 1 >>";
     objs << "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Resources << >> >>";
     return assemblePdf(objs, QByteArray());
+}
+
+// Shared text, choice, checkbox and radio widgets cross pages. The second page
+// deliberately omits /P, and every widget starts with a stored appearance.
+QByteArray makeSharedFormPdf(bool listBox, int topIndex = 0, bool inheritChoice = true)
+{
+    QList<QByteArray> objs{
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [6 0 R 9 0 R 12 0 R 15 0 R 18 0 R 19 0 R 20 0 R 21 0 R] /DR << /Font << /Helv 5 0 R >> >> /DA (/Helv 12 Tf 0 g) >> >>",
+        "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [7 0 R 10 0 R 13 0 R 16 0 R 18 0 R 19 0 R 20 0 R 21 0 R] /Resources << >> >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [8 0 R 11 0 R 14 0 R 17 0 R] /Resources << >> >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        "<< /FT /Tx /T (shared-text) /V () /Kids [7 0 R 8 0 R] >>",
+        "<< /Type /Annot /Subtype /Widget /Parent 6 0 R /P 3 0 R /Rect [20 250 280 270] /F 4 /AP << /N 22 0 R >> >>",
+        "<< /Type /Annot /Subtype /Widget /Parent 6 0 R /Rect [20 250 280 270] /F 4 /AP << /N 22 0 R >> >>",
+        "<< /FT /Ch /Ff 131072 /T (shared-choice) /V (Red) /Opt [(Red) (Green)] /Kids [10 0 R 11 0 R] >>",
+        "<< /Type /Annot /Subtype /Widget /Parent 9 0 R /P 3 0 R /Rect [20 210 280 230] /F 4 /AP << /N 22 0 R >> >>",
+        "<< /Type /Annot /Subtype /Widget /Parent 9 0 R /Rect [20 210 280 230] /F 4 /AP << /N 22 0 R >> >>",
+        "<< /FT /Btn /T (shared-check) /V /Off /Kids [13 0 R 14 0 R] >>",
+        "<< /Type /Annot /Subtype /Widget /Parent 12 0 R /P 3 0 R /Rect [20 160 40 180] /F 4 /AS /Off /AP << /N << /Off 22 0 R /Yes 23 0 R >> >> >>",
+        "<< /Type /Annot /Subtype /Widget /Parent 12 0 R /Rect [20 160 40 180] /F 4 /AS /Off /AP << /N << /Off 22 0 R /Yes 23 0 R >> >> >>",
+        "<< /FT /Btn /Ff 49152 /T (shared-radio) /V /A /Kids [16 0 R 17 0 R] >>",
+        "<< /Type /Annot /Subtype /Widget /Parent 15 0 R /P 3 0 R /Rect [60 160 80 180] /F 4 /AS /A /AP << /N << /Off 22 0 R /A 23 0 R >> >> >>",
+        "<< /Type /Annot /Subtype /Widget /Parent 15 0 R /Rect [60 160 80 180] /F 4 /AS /Off /AP << /N << /Off 22 0 R /B 23 0 R >> >> >>",
+        "<< /Type /Annot /Subtype /Widget /FT /Btn /T (independent-check) /V /Off /Rect [100 160 120 180] /F 4 /AS /Off /AP << /N << /Off 22 0 R /Yes 23 0 R >> >> >>",
+        "<< /Type /Annot /Subtype /Widget /FT /Btn /Ff 49152 /T (independent-radio) /V /C /Rect [140 160 160 180] /F 4 /AS /C /AP << /N << /Off 22 0 R /C 23 0 R >> >> >>",
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /Ff 1 /T (read-only) /V (locked) /Rect [20 80 280 100] /F 4 /AP << /N 22 0 R >> >>",
+        "<< /Type /Annot /Subtype /Widget /FT /Sig /T (signature) /Rect [20 40 280 60] /F 4 /AP << /N 22 0 R >> >>"};
+    if (listBox) {
+        objs[8].replace("/Ff 131072", "/Ff 0");
+        const QByteArray entries = "/Opt [(Red) (Green)] /TI " + QByteArray::number(topIndex);
+        objs[8].replace("/Opt [(Red) (Green)]", inheritChoice ? entries : QByteArray());
+        if (!inheritChoice)
+            for (int index : {9, 10})
+                objs[index].replace("/Parent 9 0 R", "/Parent 9 0 R " + entries);
+    }
+    for (const QByteArray &content : {QByteArray(""), QByteArray("0 g 2 2 16 16 re f\n")})
+        objs << "<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Resources << >> /Length "
+                    + QByteArray::number(content.size()) + " >>\nstream\n" + content + "endstream";
+    return assemblePdf(objs, {});
 }
 
 // Write `bytes` to `dir`/`name` and return the absolute path.
@@ -192,7 +235,8 @@ void TstFormModel::nonLatinValueSurvivesSave()
     std::unique_ptr<Document> doc = engine.openDocument(src, QString(), &err);
     QVERIFY2(doc != nullptr, qPrintable(err));
 
-    const QString value = QString::fromUtf8("\xC3\xA5\xC3\xA4\xC3\xB6 \xE2\x82\xAC"); // "åäö €"
+    const QString value = QString::fromUtf8("\xC3\xA5\xC3\xA4\xC3\xB6 \xE2\x82\xAC "
+                                          "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E");
     FormModel fm(*doc);
     QVERIFY(fm.setTextValue(0, 0, value));
 
@@ -204,6 +248,132 @@ void TstFormModel::nonLatinValueSurvivesSave()
     QVERIFY2(doc2 != nullptr, qPrintable(err));
     FormModel fm2(*doc2);
     QCOMPARE(fm2.pageFields(0).at(0).value, value);
+}
+
+void TstFormModel::sharedFieldsRefreshAndPersist_data()
+{
+    QTest::addColumn<bool>("listBox");
+    QTest::newRow("combo") << false;
+    QTest::newRow("list") << true;
+}
+
+void TstFormModel::sharedFieldsRefreshAndPersist()
+{
+    QFETCH(bool, listBox);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString source = writeTemp(dir, QStringLiteral("shared.pdf"), makeSharedFormPdf(listBox));
+    RenderEngine engine;
+    auto doc = engine.openDocument(source);
+    QVERIFY(doc);
+    FormModel form(*doc);
+    QCOMPARE(form.pageFields(0).size(), size_t(8));
+    QCOMPARE(form.pageFields(1).size(), size_t(4));
+    QVERIFY(!form.pageFields(0)[6].editable());
+    QCOMPARE(form.pageFields(0)[7].type, FormFieldType::Signature);
+    QVERIFY(!form.pageFields(0)[7].editable());
+    QCOMPARE(form.pageFields(0)[1].options, QStringList({"Red", "Green"}));
+    QCOMPARE(form.pageFields(0)[1].type, listBox ? FormFieldType::ListBox : FormFieldType::ComboBox);
+    const QImage before0 = engine.renderPageImage(doc.get(), 0, 1, 0);
+    const QImage before1 = engine.renderPageImage(doc.get(), 1, 1, 0);
+    QVERIFY(!before0.isNull() && !before1.isNull());
+    QVERIFY(!form.setTextValue(-1, 0, QStringLiteral("Rejected")));
+    QVERIFY(!form.toggle(1, 99));
+    QVERIFY(!form.isDirty());
+
+    QVERIFY(form.setTextValue(0, 0, QStringLiteral("Shared text")));
+    const std::vector<std::pair<int, int>> textWidgets{{0, 0}, {1, 0}};
+    QCOMPARE(form.changedFields(), textWidgets);
+    QCOMPARE(form.pageFields(1)[0].value, QStringLiteral("Shared text"));
+    QVERIFY(form.setChoiceValue(1, 1, QStringLiteral("Green")));
+    QCOMPARE(form.pageFields(0)[1].value, QStringLiteral("Green"));
+    QVERIFY(form.toggle(0, 2));
+    QCOMPARE(form.pageFields(1)[2].value, QStringLiteral("Yes"));
+    QVERIFY(form.toggle(1, 3));
+    QCOMPARE(form.pageFields(0)[3].value, QStringLiteral("B"));
+    QCOMPARE(form.pageFields(0)[4].value, QStringLiteral("Off"));
+    QCOMPARE(form.pageFields(0)[5].value, QStringLiteral("C"));
+    form.clearDirty();
+    QVERIFY(!form.toggle(1, 3)); // the selected no-toggle-to-off radio is a no-op
+    QVERIFY(!form.isDirty());
+    QVERIFY(form.changedFields().empty());
+    QVERIFY(!form.setChoiceValue(0, 1, QStringLiteral("Green")));
+
+    // Save before rendering or enumerating again can repair any stale appearance.
+    const QString saved = dir.filePath(QStringLiteral("saved.pdf"));
+    QString error;
+    QVERIFY2(form.saveTo(saved, &error), qPrintable(error));
+    auto reopened = engine.openDocument(saved);
+    QVERIFY(reopened);
+    FormModel loaded(*reopened);
+    for (int page = 0; page < 2; ++page) {
+        const auto &fields = loaded.pageFields(page);
+        QCOMPARE(fields[0].value, QStringLiteral("Shared text"));
+        QCOMPARE(fields[1].value, QStringLiteral("Green"));
+        QCOMPARE(fields[2].value, QStringLiteral("Yes"));
+        QCOMPARE(fields[3].value, QStringLiteral("B"));
+        const QImage rendered = engine.renderPageImage(reopened.get(), page, 1, 0);
+        QVERIFY(!rendered.isNull());
+        const QImage before = page == 0 ? before0 : before1;
+        QVERIFY(rendered.copy(20, 30, 260, 20) != before.copy(20, 30, 260, 20));
+        // List options must be rendered. MuPDF does not highlight selection in
+        // list appearances, so this is not an assertion about selected-row ink.
+        QVERIFY(rendered.copy(20, 70, 260, 20) != before.copy(20, 70, 260, 20));
+        QVERIFY(rendered.pixelColor(30, 130).lightness() < 50);
+        QCOMPARE(rendered.pixelColor(70, 130).lightness() < 50, page == 1);
+        QCOMPARE(rendered, engine.renderPageImage(doc.get(), page, 1, 0));
+    }
+    QVERIFY(loaded.toggle(1, 2));
+    QCOMPARE(loaded.pageFields(0)[2].value, QStringLiteral("Off"));
+}
+
+void TstFormModel::listAppearancesInheritOptionsAndTopIndex()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    RenderEngine engine;
+    QImage firstRows[2];
+    for (int top = 0; top < 2; ++top) {
+        QImage widgetLocal;
+        for (bool inherited : {false, true}) {
+            const QString name = QStringLiteral("list-%1-%2.pdf").arg(top).arg(inherited);
+            const QString source = writeTemp(dir, name, makeSharedFormPdf(true, top, inherited));
+            auto doc = engine.openDocument(source);
+            QVERIFY(doc);
+            FormModel form(*doc);
+            QCOMPARE(form.pageFields(0).size(), size_t(8));
+            QCOMPARE(form.pageFields(1).size(), size_t(4));
+            QVERIFY(form.setChoiceValue(0, 1, QStringLiteral("Green")));
+            const QString saved = dir.filePath(QStringLiteral("saved-") + name);
+            QVERIFY(form.saveTo(saved));
+            auto reopened = engine.openDocument(saved);
+            QVERIFY(reopened);
+            FormModel loaded(*reopened);
+            for (int page = 0; page < 2; ++page) {
+                const auto &field = loaded.pageFields(page)[1];
+                QCOMPARE(field.type, FormFieldType::ListBox);
+                QCOMPARE(field.value, QStringLiteral("Green"));
+                QCOMPARE(field.options, QStringList({"Red", "Green"}));
+                const QImage image = engine.renderPageImage(reopened.get(), page, 1, 0);
+                QVERIFY(!image.isNull());
+                const QImage row = image.copy(20, 70, 260, 20);
+                int ink = 0;
+                for (int y = 0; y < row.height(); ++y)
+                    for (int x = 0; x < row.width(); ++x)
+                        ink += row.pixelColor(x, y).lightness() < 100;
+                QVERIFY(ink > 10);
+                if (!inherited && page == 0)
+                    widgetLocal = row;
+                else
+                    QCOMPARE(row, widgetLocal);
+                if (inherited)
+                    firstRows[top] = row;
+            }
+        }
+    }
+    // /V is Green in both files. Different top rows prove /TI is respected,
+    // independently of the upstream absence of selected-item highlighting.
+    QVERIFY(firstRows[0] != firstRows[1]);
 }
 
 void TstFormModel::encryptedSourceStaysEncrypted()

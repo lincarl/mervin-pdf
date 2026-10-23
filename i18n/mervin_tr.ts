@@ -236,6 +236,7 @@ Düzenlenen belge %2 konumunda tutuldu.
     </message>
     <message>
         <source>Split Pages</source>
+        <extracomment>Title of the action that saves each PDF page as a separate file. Split is an action, not an adjective describing pages that have already been split.</extracomment>
         <translation>Sayfaları Böl</translation>
     </message>
     <message>
@@ -2971,7 +2972,7 @@ Sisteminizin Ayarlar → Varsayılan Uygulamalar&apos;ı açın (veya bir PDF&ap
     </message>
     <message>
         <source>A password contains characters that AES-128 and RC4-128 cannot use. Choose AES-256.</source>
-        <extracomment>Reason shown after &quot;The operation failed.&quot; when encrypting. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
+        <extracomment>Shown in the security dialog or after an encryption failure. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
         <translation>Bir parola, AES-128 ve RC4-128&apos;in kullanamadığı karakterler içeriyor. AES-256&apos;yı seçin.</translation>
     </message>
 </context>

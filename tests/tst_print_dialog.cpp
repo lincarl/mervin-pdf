@@ -6,8 +6,11 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
+#include <QFontDatabase>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPainter>
@@ -25,6 +28,8 @@
 #include <cmath>
 
 using namespace mervin;
+
+Q_DECLARE_METATYPE(PrintDialog::PaperCapabilities)
 
 namespace {
 
@@ -111,6 +116,15 @@ void configurePrinter(QPrinter &printer)
     printer.setPageMargins(QMarginsF(18, 24, 30, 36), QPageLayout::Point);
 }
 
+// Observes retirement of the preview's queued and active render jobs after delivery.
+bool previewRenderRetired(const RenderEngine &engine, const QSignalSpy &results)
+{
+    if (results.isEmpty())
+        return false;
+    const auto result = results.constLast().constFirst().value<RenderResult>();
+    return RenderEngine::testing::pendingRequests(engine, result.requester) == 0;
+}
+
 } // namespace
 
 class TstPrintDialog : public QObject
@@ -122,6 +136,9 @@ private slots:
     void defaultsAndLiveSettings();
     void printerChangesSelectDefaultPaper();
     void printerPaperAliasesReuseEntries();
+    void nativePaperCapabilities_data();
+    void nativePaperCapabilities();
+    void nativePaperSwitchAndPdfFallback();
     void systemHandoffKeepsSelectedPrinterDefault_data();
     void systemHandoffKeepsSelectedPrinterDefault();
     void customOrderValidationAndStaleResults();
@@ -131,6 +148,7 @@ private slots:
     void previewPredictsAPrintRefusal();
     void previewShowsTheVisiblePartOfALargePage();
     void cancellingSaveKeepsDialogOpen();
+    void staleSamePagePreviewCannotReplaceNewGeneration();
 
 private:
     QTemporaryDir files_;
@@ -141,6 +159,19 @@ void TstPrintDialog::initTestCase()
 {
     QVERIFY(files_.isValid());
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    // Use the same pinned Latin font as the translation layout suite on both
+    // platforms. MERVIN_TEST_FONT names a font in the shared test-font directory.
+    const QString fontPath = qEnvironmentVariable("MERVIN_TEST_FONT");
+    if (!fontPath.isEmpty()) {
+        const QString latinPath = QFileInfo(fontPath).absoluteDir().filePath(
+            QStringLiteral("NotoSans-Regular.ttf"));
+        QVERIFY2(QFontDatabase::addApplicationFont(latinPath) >= 0,
+                 qPrintable(QStringLiteral("Could not load %1. Run scripts/fetch-test-font.py.")
+                                .arg(latinPath)));
+    }
+    QVERIFY2(QFontDatabase::families().contains(QStringLiteral("Noto Sans")),
+             "Noto Sans is required. Set MERVIN_TEST_FONT after running scripts/fetch-test-font.py.");
+    QApplication::setFont(QFont(QStringLiteral("Noto Sans"), 10));
     sourcePath_ = files_.filePath("coloured-pages.pdf");
     QPdfWriter writer(sourcePath_);
     writer.setResolution(72);
@@ -324,6 +355,123 @@ void TstPrintDialog::printerPaperAliasesReuseEntries()
     }
 }
 
+// Models the same supported/default/custom-bound fields exposed by QPrinterInfo.
+void TstPrintDialog::nativePaperCapabilities_data()
+{
+    QTest::addColumn<PrintDialog::PaperCapabilities>("capabilities");
+    QTest::addColumn<QPageSize>("requested");
+    QTest::addColumn<QPageSize>("expected");
+    const QPageSize a4(QPageSize::A4);
+    const QPageSize letter(QSizeF(8.5, 11), QPageSize::Inch,
+                           QStringLiteral("Driver US Letter"), QPageSize::ExactMatch);
+    const PrintDialog::PaperCapabilities fixed{{a4, letter}, false, {}, {}};
+    QTest::newRow("A4") << fixed << a4 << a4;
+    QTest::newRow("Letter keeps driver definition")
+        << fixed << QPageSize(QPageSize::Letter) << letter;
+    QTest::newRow("unsupported A3") << fixed << QPageSize(QPageSize::A3) << QPageSize();
+    const auto custom = [](double width, double height) {
+        return QPageSize(QSizeF(width, height), QPageSize::Point,
+                         QStringLiteral("Custom stock"), QPageSize::ExactMatch);
+    };
+    const QPageSize stock = custom(510, 737);
+    const PrintDialog::PaperCapabilities variable{{a4}, true, custom(200, 300), custom(700, 900)};
+    QTest::newRow("custom unsupported") << fixed << stock << QPageSize();
+    QTest::newRow("custom within bounds") << variable << stock << stock;
+    QTest::newRow("unlisted standard dimensions within custom bounds")
+        << variable << QPageSize(QPageSize::Letter) << QPageSize(QPageSize::Letter);
+    QTest::newRow("unlisted standard dimensions beyond custom bounds")
+        << variable << QPageSize(QPageSize::A3) << QPageSize();
+    QTest::newRow("custom minimum") << variable << variable.minimum << variable.minimum;
+    QTest::newRow("custom maximum") << variable << variable.maximum << variable.maximum;
+    QTest::newRow("custom too narrow") << variable << custom(199, 500) << QPageSize();
+    QTest::newRow("custom too short") << variable << custom(500, 299) << QPageSize();
+    QTest::newRow("custom too wide") << variable << custom(701, 500) << QPageSize();
+    QTest::newRow("custom too tall") << variable << custom(500, 901) << QPageSize();
+    QTest::newRow("custom no bounds")
+        << PrintDialog::PaperCapabilities{{a4}, true, {}, {}} << stock << stock;
+    QTest::newRow("missing metadata") << PrintDialog::PaperCapabilities{} << stock << stock;
+    QTest::newRow("invalid paper") << PrintDialog::PaperCapabilities{} << QPageSize() << QPageSize();
+    // Same physical sheet, different driver keys. Equivalence alone must not merge
+    // variants such as borderless media into a driver definition it did not report.
+    const QPageSize alias(QSizeF(180, 260), QPageSize::Millimeter,
+                          QStringLiteral("Other media key"), QPageSize::ExactMatch);
+    QVERIFY(alias.isEquivalentTo(stock));
+    QVERIFY(alias.key() != stock.key());
+    QTest::newRow("distinct media key")
+        << PrintDialog::PaperCapabilities{{stock}, false, {}, {}} << alias << QPageSize();
+}
+
+// Checks policy independently of whether this host has a native printer installed.
+void TstPrintDialog::nativePaperCapabilities()
+{
+    QFETCH(PrintDialog::PaperCapabilities, capabilities);
+    QFETCH(QPageSize, requested);
+    QFETCH(QPageSize, expected);
+    QCOMPARE(capabilities.acceptedPaper(requested), expected);
+}
+
+// Exercises the real dialog's device switches, lazy metadata and PDF independence.
+void TstPrintDialog::nativePaperSwitchAndPdfFallback()
+{
+    RenderEngine engine;
+    auto document = engine.openDocument(sourcePath_);
+    QVERIFY(document);
+    QPrinter printer;
+    configurePrinter(printer);
+    QStringList queries;
+    PrintDialog dialog(&printer, &engine, document.get(), 0, QPageLayout::Portrait, 1,
+        "coloured", nullptr, [&queries](const QString &name) {
+            queries.append(name);
+            if (name == QStringLiteral("A4"))
+                return PrintDialog::PaperCapabilities{{QPageSize(QPageSize::A4)}, false, {}, {}};
+            if (name == QStringLiteral("Letter"))
+                return PrintDialog::PaperCapabilities{{QPageSize(QPageSize::Letter)}, false, {}, {}};
+            return PrintDialog::PaperCapabilities{};
+        });
+    auto *printers = dialog.findChild<QComboBox *>("printPrinter");
+    auto *paper = dialog.findChild<QComboBox *>("printPaperSize");
+    auto *toFile = dialog.findChild<QCheckBox *>("printToFile");
+    auto *print = dialog.findChild<QPushButton *>("printConfirm");
+    QVERIFY(printers && paper && toFile && print);
+    QVERIFY(queries.isEmpty());
+    const int first = printers->count();
+    for (const auto &[name, size] : QList<QPair<QString, QPageSize>>{
+             {QStringLiteral("A4"), QPageSize(QPageSize::A4)},
+             {QStringLiteral("Letter"), QPageSize(QPageSize::Letter)},
+             {QStringLiteral("Missing"), QPageSize()}}) {
+        printers->addItem(name, name);
+        printers->setItemData(printers->count() - 1, QVariant::fromValue(size), Qt::UserRole + 1);
+    }
+    printers->setCurrentIndex(first);
+    toFile->setEnabled(true);
+    toFile->setChecked(false);
+    QCOMPARE(queries, QStringList{"A4"});
+    QCOMPARE(paper->count(), 1);
+    QCOMPARE(paper->currentData().value<QPageSize>().id(), QPageSize::A4);
+    // A stale or externally supplied choice must still fail at acceptance.
+    paper->addItem("A3", QVariant::fromValue(QPageSize(QPageSize::A3)));
+    paper->setCurrentIndex(paper->count() - 1);
+    QVERIFY(QMetaObject::invokeMethod(&dialog, "accept"));
+    QVERIFY(!print->isEnabled());
+    QCOMPARE(dialog.result(), int(QDialog::Rejected));
+    printers->setCurrentIndex(first + 1);
+    QCOMPARE(paper->count(), 1);
+    QCOMPARE(paper->currentData().value<QPageSize>().id(), QPageSize::Letter);
+    printers->setCurrentIndex(first);
+    QCOMPARE(queries, (QStringList{"A4", "Letter"}));
+    printers->setCurrentIndex(first + 2);
+    QVERIFY(paper->count() >= 9);
+    QCOMPARE(paper->currentData().value<QPageSize>().id(), QPageSize::A4);
+    toFile->setChecked(true);
+    const int a3 = paper->findData(QVariant::fromValue(QPageSize(QPageSize::A3)));
+    QVERIFY(a3 >= 0);
+    paper->setCurrentIndex(a3);
+    QTRY_VERIFY(print->isEnabled());
+    QCOMPARE(printer.outputFormat(), QPrinter::PdfFormat);
+    QCOMPARE(printer.pageLayout().pageSize().id(), QPageSize::A3);
+    QCOMPARE(queries, (QStringList{"A4", "Letter", "Missing"}));
+}
+
 void TstPrintDialog::systemHandoffKeepsSelectedPrinterDefault_data()
 {
     QTest::addColumn<int>("switches");
@@ -482,6 +630,7 @@ void TstPrintDialog::sheetAlwaysFitsAfterResizeAndOrientation()
 void TstPrintDialog::blackAndWhitePreviewConvertsOnce()
 {
     RenderEngine engine;
+    QSignalSpy results(&engine, &RenderEngine::resultReady);
     auto document = engine.openDocument(sourcePath_);
     QVERIFY(document);
     // A screen-resolution printer would cap the black-and-white preview below 300 dpi.
@@ -496,7 +645,7 @@ void TstPrintDialog::blackAndWhitePreviewConvertsOnce()
     QSignalSpy rendered(preview, &PrintPreviewWidget::previewReady);
     colour->setCurrentIndex(2);
     QTRY_VERIFY(!rendered.isEmpty());
-    QTest::qWait(300); // no further render is due
+    QTRY_VERIFY(previewRenderRetired(engine, results));
     QCOMPARE(centreColour(preview), QColor(Qt::black));
     const int renders = rendered.size();
     const int conversions = preview->conversions();
@@ -513,15 +662,67 @@ void TstPrintDialog::blackAndWhitePreviewConvertsOnce()
     QCOMPARE(preview->reductions(), reductions);
     const QSize before = preview->size();
     dialog.resize(dialog.width() + 120, dialog.height() + 80);
-    QTest::qWait(300);
-    QVERIFY(preview->size() != before);
+    QTRY_VERIFY(preview->size() != before);
     QCOMPARE(centreColour(preview), QColor(Qt::black));
-    QCOMPARE(preview->reductions(), reductions + 1);
+    QTRY_COMPARE(preview->reductions(), reductions + 1);
+    // The resize schedules a 100 ms debounce even when its raster is reusable.
+    // Observe that interval before checking no request was submitted; worker
+    // completion itself is observed below instead of guessed from a delay.
+    const int rasterizations = RenderEngine::testing::rasterizations(engine);
+    QTest::qWait(150);
+    QTRY_VERIFY(previewRenderRetired(engine, results));
     for (int i = 0; i < 5; ++i)
         preview->repaint();
     QCOMPARE(preview->reductions(), reductions + 1);
     QCOMPARE(rendered.size(), renders);
+    QCOMPARE(RenderEngine::testing::rasterizations(engine), rasterizations);
     QCOMPARE(preview->conversions(), conversions);
+}
+
+void TstPrintDialog::staleSamePagePreviewCannotReplaceNewGeneration()
+{
+    RenderEngine engine;
+    auto document = engine.openDocument(sourcePath_);
+    QVERIFY(document);
+    PrintPreviewWidget preview(&engine, document.get(), 0);
+    preview.resize(420, 480);
+    QSignalSpy results(&engine, &RenderEngine::resultReady);
+    QSignalSpy ready(&preview, &PrintPreviewWidget::previewReady);
+    const QPageLayout layout(QPageSize(QPageSize::A4), QPageLayout::Portrait,
+                             QMarginsF(), QPageLayout::Point);
+    printing::Settings settings;
+    preview.setPage(0, layout, settings);
+    preview.show();
+    QTRY_COMPARE(ready.size(), 1);
+    QCOMPARE(results.size(), 1);
+    QVERIFY(centreColour(&preview).red() > 180);
+    RenderResult stale = results.front().front().value<RenderResult>();
+
+    settings.colourMode = printing::ColourMode::BlackAndWhite;
+    preview.setPage(0, layout, settings);
+    QTRY_COMPARE(ready.size(), 2);
+    QCOMPARE(results.size(), 2);
+    const auto current = results.back().front().value<RenderResult>();
+    QCOMPARE(current.requester, stale.requester);
+    QCOMPARE(current.pageNo, stale.pageNo);
+    QVERIFY(current.epoch != stale.epoch);
+    QCOMPARE(centreColour(&preview), QColor(Qt::black));
+    const QImage frame = preview.grab().toImage();
+
+    // A late completion for this same page must not replace the newer raster.
+    // White would visibly replace the current black ink if generation is ignored.
+    stale.image.fill(Qt::white);
+    emit engine.resultReady(stale);
+    QCOMPARE(ready.size(), 2);
+    QCOMPARE(preview.grab().toImage(), frame);
+
+    // The same payload with the current generation is accepted, so the rejection
+    // above cannot pass merely because result delivery or painting is disconnected.
+    stale.epoch = current.epoch;
+    stale.scale = current.scale;
+    emit engine.resultReady(stale);
+    QCOMPARE(ready.size(), 3);
+    QCOMPARE(centreColour(&preview), QColor(Qt::white));
 }
 
 // A page whose raster at the preview's resolution is beyond what MuPDF draws must say
@@ -573,6 +774,7 @@ void TstPrintDialog::previewPredictsAPrintRefusal()
                                       "0.86 0.08 0.08 rg 0 0 14400 14400 re f");
     QVERIFY(!path.isEmpty());
     RenderEngine engine;
+    QSignalSpy results(&engine, &RenderEngine::resultReady);
     auto document = engine.openDocument(path);
     QVERIFY(document);
     QPrinter printer(QPrinter::HighResolution);
@@ -587,7 +789,7 @@ void TstPrintDialog::previewPredictsAPrintRefusal()
     QSignalSpy answered(preview, &PrintPreviewWidget::previewReady);
     scale->setCurrentIndex(1); // Actual size
     QTRY_VERIFY(!answered.isEmpty());
-    QTest::qWait(300); // no further render is due
+    QTRY_VERIFY(previewRenderRetired(engine, results));
     QVERIFY(!preview->isReady());
     QVERIFY(matchingBounds(preview->grab().toImage(), true).isEmpty());
 }
@@ -606,6 +808,7 @@ void TstPrintDialog::previewShowsTheVisiblePartOfALargePage()
                                       "0 g 480 680 40 40 re f 0 G 0.1 w 400 599.5 m 600 599.5 l S");
     QVERIFY(!path.isEmpty());
     RenderEngine engine;
+    QSignalSpy results(&engine, &RenderEngine::resultReady);
     auto document = engine.openDocument(path);
     QVERIFY(document);
     // A screen-resolution printer would cap the black-and-white preview below 300 dpi.
@@ -622,7 +825,7 @@ void TstPrintDialog::previewShowsTheVisiblePartOfALargePage()
     scale->setCurrentIndex(1); // Actual size
     colour->setCurrentIndex(2);
     QTRY_VERIFY(!rendered.isEmpty());
-    QTest::qWait(300); // no further render is due
+    QTRY_VERIFY(previewRenderRetired(engine, results));
     QTRY_VERIFY(preview->isReady());
 
     // The page centre lands at the printable area's centre, in sheet points.

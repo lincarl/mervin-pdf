@@ -23,7 +23,7 @@ namespace mervin {
 //
 // Every output keeps the source's encryption, its passwords and permission flags,
 // when all its pages come from one source: Rotate, Delete, Extract, each Split part,
-// and a merge whose inputs all name one path. A merge of several files is not
+// and a merge whose input paths resolve to one file. A merge of several files is not
 // encrypted. qpdf writes V4 copies with AES, so a V4 RC4 source, such as Mervin's
 // RC4-128 option writes, gives AES-128.
 class PageOps
@@ -42,9 +42,11 @@ public:
     // that will do the writing is deliberate: whatever this accepts, merge() can
     // then actually read. *encrypted, also written only on Ok, says whether the file
     // is encrypted, which includes a file with only an owner password that opens
-    // without one.
+    // without one. Optional sourceKey receives the canonical file identity. Resolve
+    // it only on a worker, then carry it to the UI without further filesystem work.
     static Status probe(const QString &path, int *count, const QString &password = QString(),
-                        QString *error = nullptr, bool *encrypted = nullptr);
+                        QString *error = nullptr, bool *encrypted = nullptr,
+                        QString *sourceKey = nullptr);
 
     // Write a copy with the given pages removed. The copy keeps the source's structure and
     // encryption but leaves out what only the removed pages used: the pages, their
@@ -66,7 +68,8 @@ public:
     // should appear; an empty list means every page. Duplicates are honoured, so
     // a file may contribute the same page more than once, and the same file may
     // appear as several inputs. `password` is used only if the source is
-    // user-password encrypted.
+    // user-password encrypted. Different supplied passwords for one file must each
+    // open it, so aliases cannot make an incorrect password succeed through reuse.
     struct MergeInput
     {
         QString path;
@@ -78,10 +81,9 @@ public:
     // page indices to avoid silently shortening output. Form fields come along with their
     // pages, without the fields and values of pages left out. On failure, failedIndex names
     // the input that could not be opened or read, including a missing page and measurement
-    // data it cannot read, or is -1 for errors while building or writing the output. qpdf
-    // reads most stream data while writing, so a damaged stream in an input also gives -1.
+    // data it cannot read and deferred source I/O, or is -1 for output failures.
     // Optional mayCommit runs under the output lock after flushing and before commit admission.
-    // The output is encrypted like its source when every input names the same path.
+    // The output keeps encryption when every input resolves to the same canonical file.
     // Combined measurements past kMaxMeasurementBlobBytes fail with
     // measurementsTooLargeError() and failedIndex -1, before anything is written.
     static Status merge(const QList<MergeInput> &inputs, const QString &outPath,
@@ -114,6 +116,15 @@ public:
     // For tests only.
     struct testing
     {
+        struct SplitProjection
+        {
+            quint64 pages = 0;
+            quint64 fields = 0; // selected field tree nodes, including widgets
+        };
+
+        // Work projected by the last split on this thread, reset even if opening fails.
+        static SplitProjection lastSplitProjection();
+
         // Makes the next form copy fail while it points the copied annotations and actions
         // at their own copies, as damaged input can.
         static void failNextRetarget();

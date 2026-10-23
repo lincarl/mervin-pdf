@@ -26,6 +26,7 @@
 #include <QPushButton>
 #include <QPointer>
 #include <QScopeGuard>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -102,6 +103,9 @@ private slots:
     void closingStopsDestinationConsentRead();
     void pendingReasonRefitsFilename();
     void pendingRowsKeepTheirProbeIdentity();
+    void readyEditorSurvivesAnotherProbe();
+    void planChangesCancelPendingAcceptance_data();
+    void planChangesCancelPendingAcceptance();
     void batchWarningWaitsAndIgnoresRemovedRows_data();
     void batchWarningWaitsAndIgnoresRemovedRows();
     void ownerDeletionDuringQuestion_data();
@@ -233,6 +237,14 @@ void TstMergeDialog::seededEncryptedDocumentIsBlockedUpFront()
         QVERIFY2(!mergeBtn(d)->isEnabled(), "an encrypted seeded row must block the merge");
         // The row says why, and says it before anything is written.
         QVERIFY(specs(d).size() == 1 && !specs(d).at(0)->isEnabled());
+        const auto counts = d.findChildren<QLabel *>(QStringLiteral("rowListCount"));
+        QCOMPARE(counts.size(), 1);
+        QCOMPARE(counts.first()->text(), QStringLiteral("Locked"));
+        bool explained = false;
+        for (auto *label : list(d)->itemWidget(list(d)->item(0))->findChildren<QLabel *>())
+            explained |= label->toolTip().contains(QStringLiteral("This PDF is encrypted. Open it in Mervin, use "
+                "Document > Security to save an unlocked copy, then add that copy instead."));
+        QVERIFY(explained);
     }
 }
 
@@ -532,11 +544,12 @@ void TstMergeDialog::volumesProbeIndependently()
     MergeDialog d(QString(), 0);
     d.show();
     const int guiSteps = mervin::job::testing::stepsOnMainThread();
-    QElapsedTimer elapsed;
-    elapsed.start();
     d.addPaths({held, same, healthy});
-    QVERIFY(elapsed.elapsed() < 1000);
     QTRY_COMPARE(mervin::job::testing::held(), 1);
+    bool heartbeat = false;
+    QTimer::singleShot(0, &d, [&] { heartbeat = true; });
+    QTRY_VERIFY(heartbeat);
+    QCOMPARE(mervin::job::testing::held(), 1);
     const auto counts = d.findChildren<QLabel *>("rowListCount");
     QCOMPARE(counts.size(), 3);
 #ifdef Q_OS_WIN
@@ -822,6 +835,80 @@ void TstMergeDialog::pendingRowsKeepTheirProbeIdentity()
     QCOMPARE(d.inputs().at(1).pages.size(), 6);
 }
 
+/// Completing another row must not overwrite the current editor's unfinished selection.
+void TstMergeDialog::readyEditorSurvivesAnotherProbe()
+{
+    const QString second = dir_.filePath(QStringLiteral("later-probe.pdf"));
+    QVERIFY(QFile::copy(plain_, second));
+    MergeDialog d(plain_, 6);
+    prepare(d);
+    mervin::job::testing::holdWhen([second](mervin::job::Step step, const QString &path) {
+        return step == mervin::job::Step::Reading && path == second;
+    });
+    const auto release = qScopeGuard([] { mervin::job::testing::release(); });
+    d.addPaths({second});
+    QTRY_COMPARE(mervin::job::testing::held(), 1);
+    QPointer<QLineEdit> editor = specs(d).first();
+    editor->setFocus();
+    editor->selectAll();
+    QTest::keyClicks(editor, QStringLiteral("2-5"));
+    editor->setSelection(0, 2);
+    const int cursor = editor->cursorPosition();
+    mervin::job::testing::release();
+    settle(&d);
+    QVERIFY(editor);
+    QCOMPARE(editor->text(), QStringLiteral("2-5"));
+    QCOMPARE(editor->cursorPosition(), cursor);
+    QCOMPARE(editor->selectionStart(), 0);
+    QCOMPARE(editor->selectedText(), QStringLiteral("2-"));
+    QCOMPARE(d.inputs().first().pages, QList<int>({1, 2, 3, 4}));
+}
+
+void TstMergeDialog::planChangesCancelPendingAcceptance_data()
+{
+    QTest::addColumn<bool>("reorder");
+    QTest::newRow("range edit") << false;
+    QTest::newRow("row reorder") << true;
+}
+
+/// A destination answer cannot accept the earlier page plan after the user changes it.
+void TstMergeDialog::planChangesCancelPendingAcceptance()
+{
+    QFETCH(bool, reorder);
+    MergeDialog d(plain_, 6);
+    // Use the same readable file twice so ordering is distinguished by page selections.
+    d.addPaths({plain_});
+    prepare(d);
+    QCOMPARE(specs(d).size(), 2);
+    replaceText(specs(d).at(0), QStringLiteral("1"));
+    replaceText(specs(d).at(1), QStringLiteral("3"));
+    QSignalSpy accepted(&d, &QDialog::accepted);
+    const auto release = qScopeGuard([] { mervin::SaveCheck::holdForTesting(false); });
+    mervin::SaveCheck::holdForTesting(true);
+    mergeBtn(d)->click();
+    QVERIFY(d.findChild<mervin::SaveCheck *>()->pending());
+    if (reorder) {
+        list(d)->setCurrentRow(1);
+        QPushButton *up = nullptr;
+        for (auto *button : d.findChildren<QPushButton *>())
+            if (button->text() == QStringLiteral("Move Up"))
+                up = button;
+        QVERIFY(up);
+        up->click();
+    } else {
+        specs(d).first()->selectAll();
+        QTest::keyClicks(specs(d).first(), QStringLiteral("2"));
+    }
+    mervin::SaveCheck::holdForTesting(false);
+    settle(&d);
+    QVERIFY(accepted.isEmpty());
+    QVERIFY(d.isVisible());
+    press(d);
+    QCOMPARE(accepted.count(), 1);
+    QCOMPARE(d.inputs().at(0).pages, QList<int>{reorder ? 2 : 1});
+    QCOMPARE(d.inputs().at(1).pages, QList<int>{reorder ? 0 : 2});
+}
+
 /// Covers fresh and reopened plans when failed rows leave a pending batch.
 void TstMergeDialog::batchWarningWaitsAndIgnoresRemovedRows_data()
 {
@@ -978,12 +1065,13 @@ void TstMergeDialog::fifoRowsReturnWithoutWaiting()
     });
     warningTimer->start(10);
     const auto stop = qScopeGuard([warningTimer] { delete warningTimer; });
-    QElapsedTimer elapsed;
-    elapsed.start();
     MergeDialog d(seeded ? path : QString(), 0);
     if (!seeded)
         d.addPaths({path});
-    QVERIFY2(elapsed.elapsed() < 1000, qPrintable(QString("Probe took %1 ms").arg(elapsed.elapsed())));
+    bool heartbeat = false;
+    QTimer::singleShot(0, &d, [&] { heartbeat = true; });
+    QTRY_VERIFY(heartbeat);
+    QVERIFY(writer.holding());
     QVERIFY(d.reading());
     QVERIFY(!mergeBtn(d)->isEnabled());
     QCOMPARE(d.findChild<QLabel *>("rowListCount")->text(), QStringLiteral("Reading…"));

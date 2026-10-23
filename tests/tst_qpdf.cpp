@@ -1,12 +1,16 @@
 #include "i18n/UiLanguage.h"
 #include "io/DestinationConsent.h"
+#include "io/JobContext.h"
 #include "render/Document.h"
 #include "render/RenderEngine.h"
 #include "security/PageOps.h"
+#include "security/MeasureExport.h"
+#include "security/QpdfSource.h"
 #include "security/QpdfService.h"
 
 #include <qpdf/Buffer.hh>
 #include <qpdf/QPDF.hh>
+#include <qpdf/QPDFExc.hh>
 #include <qpdf/QPDFNameTreeObjectHelper.hh>
 #include <qpdf/QPDFFormFieldObjectHelper.hh>
 #include <qpdf/QPDFNumberTreeObjectHelper.hh>
@@ -20,6 +24,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -1193,12 +1198,14 @@ void setMeasurementBlob(const QString &path, const std::string &blob, bool strea
 // Distinct widths make each page identifiable after a copy, which is the only
 // way to assert that pages came out in the right ORDER - makePdf's pages are all
 // identical, so a reversed or sorted implementation passes a count-only check.
-void makePdfSized(const QString &path, const QList<int> &widths)
+void makePdfSized(const QString &path, const QList<int> &widths,
+                  const QList<int> &rotations = {})
 {
     QPDF q;
     q.emptyPDF();
     QPDFPageDocumentHelper dh(q);
-    for (int w : widths) {
+    for (qsizetype i = 0; i < widths.size(); ++i) {
+        const int w = widths.at(i);
         QPDFObjectHandle box = QPDFObjectHandle::newArray();
         box.appendItem(QPDFObjectHandle::newInteger(0));
         box.appendItem(QPDFObjectHandle::newInteger(0));
@@ -1207,6 +1214,8 @@ void makePdfSized(const QString &path, const QList<int> &widths)
         QPDFObjectHandle page = QPDFObjectHandle::newDictionary();
         page.replaceKey("/Type", QPDFObjectHandle::newName("/Page"));
         page.replaceKey("/MediaBox", box);
+        if (i < rotations.size())
+            page.replaceKey("/Rotate", QPDFObjectHandle::newInteger(rotations.at(i)));
         dh.addPage(QPDFPageObjectHelper(q.makeIndirectObject(page)), false);
     }
     const QByteArray outputName = path.toUtf8();
@@ -1233,6 +1242,58 @@ QList<int> widthsOf(const QString &path)
     for (int i = 0; i < doc->pageCount(); ++i)
         out << qRound(doc->pageSize(i).width());
     return out;
+}
+
+/// Builds a tiny encoded object stream with 65 MiB of decoded padding before its object.
+/// The required catalog and optional annotation exercise different qpdf recovery paths.
+bool makePaddedObjectStream(const QString &path, bool optional)
+{
+    const QByteArray header = optional ? "7 0 " : "1 0 ";
+    const QByteArray catalog("<< /Type /Catalog /Pages 2 0 R >>");
+    const QByteArray annotation("<< /Type /Annot /Subtype /Text /Contents (KEEP THIS NOTE) "
+                                "/Rect [20 20 60 60] >>");
+    const qsizetype padding = 65 * 1024 * 1024;
+    const QByteArray encoded = qCompress(header + QByteArray(padding, ' ')
+                                        + (optional ? annotation : catalog), 1).mid(4);
+    QByteArray pdf("%PDF-1.7\n");
+    std::map<int, qsizetype> offsets;
+    const auto append = [&](int object, const QByteArray &body) {
+        offsets[object] = pdf.size();
+        pdf += QByteArray::number(object) + " 0 obj\n" + body + "\nendobj\n";
+    };
+    if (optional)
+        append(1, catalog);
+    append(2, "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>");
+    append(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> "
+              "/Annots [7 0 R] >>");
+    append(4, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 792] /Resources << >> >>");
+    append(5, "<< /Type /ObjStm /N 1 /First " + QByteArray::number(header.size() + padding)
+               + " /Filter /FlateDecode /Length " + QByteArray::number(encoded.size())
+               + " >>\nstream\n" + encoded + "\nendstream");
+    if (!optional)
+        append(7, annotation);
+    offsets[6] = pdf.size();
+    QByteArray xref;
+    const auto row = [&xref](int type, quint32 offset, quint16 generation) {
+        xref.append(char(type));
+        for (int shift : {24, 16, 8, 0})
+            xref.append(char((offset >> shift) & 255));
+        xref.append(char(generation >> 8));
+        xref.append(char(generation & 255));
+    };
+    row(0, 0, 65535);
+    for (int id = 1; id <= 7; ++id) {
+        if (id == (optional ? 7 : 1))
+            row(2, 5, 0);
+        else
+            row(1, quint32(offsets.at(id)), 0);
+    }
+    const qsizetype xrefOffset = offsets.at(6);
+    append(6, "<< /Type /XRef /Size 8 /W [1 4 2] /Root 1 0 R /Length "
+               + QByteArray::number(xref.size()) + " >>\nstream\n" + xref + "\nendstream");
+    pdf += "startxref\n" + QByteArray::number(xrefOffset) + "\n%%EOF\n";
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly) && file.write(pdf) == pdf.size();
 }
 
 // Removes /Length from the Encrypt dictionary of a file qpdf encrypted, as some
@@ -1331,10 +1392,15 @@ private slots:
     void cryptFilterNamesTheAlgorithm_data();
     void cryptFilterNamesTheAlgorithm();
     void deletePagesReducesCount();
+    void invalidPageOperationsPreserveFiles_data();
+    void invalidPageOperationsPreserveFiles();
     void deleteLeavesOutDeletedContent_data();
     void deleteLeavesOutDeletedContent();
     void deleteKeepsEncryptionWithoutDeletedContent();
     void copiesKeepFormFields();
+    void splitProjectsSelectedFieldBranches();
+    void splitFallsBackForFieldDependencies_data();
+    void splitFallsBackForFieldDependencies();
     void copiesLeaveOutFieldsOfOtherPages_data();
     void copiesLeaveOutFieldsOfOtherPages();
     void copiesKeepAFieldThatCopiedPagesShare();
@@ -1361,6 +1427,11 @@ private slots:
     void mergeEmptyPagesMeansAll();
     void mergeUsesPerFilePassword();
     void mergeReportsFailedIndex();
+    void lateSourceReadNamesInput_data();
+    void lateSourceReadNamesInput();
+    void paddedObjectStreamsFailBeforePublication_data();
+    void paddedObjectStreamsFailBeforePublication();
+    void flateWarningClassificationKeepsBenignRepairs();
     void mergeRejectsOutOfRangeIndex();
     void destinationConsentDistinguishesContentsAndErrors();
     void delayedMergeRequiresFreshConsent_data();
@@ -1371,9 +1442,12 @@ private slots:
     void singleSourceCopiesKeepItsEncryption_data();
     void singleSourceCopiesKeepItsEncryption();
     void singleSourceCopiesKeepOwnerRestrictions();
+    void sourceAliasesKeepEncryption_data();
+    void sourceAliasesKeepEncryption();
     void mergeOfSeveralFilesIsNotEncrypted();
     void splitWritesOnePerPage();
     void rotateKeepsCount();
+    void rotateKeepsCount_data();
     void rotateAndDeleteKeepEncryptionWithoutKeyLength_data();
     void rotateAndDeleteKeepEncryptionWithoutKeyLength();
     void openEncryptedNeedsPassword();
@@ -1989,9 +2063,49 @@ void TstQpdf::deletePagesReducesCount()
 {
     const QString src = in(QStringLiteral("del_src.pdf"));
     const QString out = in(QStringLiteral("del_out.pdf"));
-    makePdf(src, 5);
+    makePdfSized(src, {100, 200, 300, 400, 500});
     QCOMPARE(PageOps::deletePages(src, out, {1, 3}), PageOps::Status::Ok);
-    QCOMPARE(PageOps::pageCount(out), 3);
+    QCOMPARE(widthsOf(out), (QList<int>{100, 300, 500}));
+}
+
+/// Rejects invalid page selections and angles before replacing either file.
+void TstQpdf::invalidPageOperationsPreserveFiles_data()
+{
+    QTest::addColumn<bool>("deleting");
+    QTest::addColumn<QList<int>>("pages");
+    QTest::addColumn<int>("angle");
+    QTest::newRow("delete negative") << true << QList<int>{-1} << 90;
+    QTest::newRow("delete beyond end") << true << QList<int>{3} << 90;
+    QTest::newRow("delete all") << true << QList<int>{0, 1, 2} << 90;
+    QTest::newRow("rotate negative") << false << QList<int>{-1} << 90;
+    QTest::newRow("rotate valid then beyond end") << false << QList<int>{0, 3} << 90;
+    QTest::newRow("rotate invalid angle") << false << QList<int>{0} << 45;
+}
+
+void TstQpdf::invalidPageOperationsPreserveFiles()
+{
+    QFETCH(bool, deleting);
+    QFETCH(QList<int>, pages);
+    QFETCH(int, angle);
+    const QString src = in(QStringLiteral("invalid-source.pdf"));
+    const QString out = in(QStringLiteral("invalid-output.pdf"));
+    makePdfSized(src, {100, 200, 300});
+    QFile source(src);
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    const QByteArray before = source.readAll();
+    source.close();
+    QFile destination(out);
+    QVERIFY(destination.open(QIODevice::WriteOnly));
+    const QByteArray sentinel("previous destination");
+    QCOMPARE(destination.write(sentinel), sentinel.size());
+    destination.close();
+    const auto result = deleting ? PageOps::deletePages(src, out, pages)
+        : PageOps::rotatePages(src, out, pages, angle);
+    QCOMPARE(result, PageOps::Status::Failed);
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    QCOMPARE(source.readAll(), before);
+    QVERIFY(destination.open(QIODevice::ReadOnly));
+    QCOMPARE(destination.readAll(), sentinel);
 }
 
 /// One row per way a document can refer to the page that Delete Pages removes.
@@ -2394,6 +2508,9 @@ void TstQpdf::copiesLeaveOutFieldsOfOtherPages()
     const QString src = in(QStringLiteral("other_src_%1.pdf").arg(reference));
     const QString out = in(QStringLiteral("other_out_%1.pdf").arg(reference));
     makeReferencedPdf(src, Reference(reference));
+    QFile source(src);
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    const QByteArray before = source.readAll();
     const std::string keptText = kept.toStdString();
 
     QCOMPARE(PageOps::merge(QList<PageOps::MergeInput>{{src, {0}, {}}}, out), PageOps::Status::Ok);
@@ -2427,12 +2544,215 @@ void TstQpdf::copiesLeaveOutFieldsOfOtherPages()
                             &parts),
              PageOps::Status::Ok);
     QCOMPARE(parts.size(), 3);
+    if (Reference(reference) == Reference::DeepField
+        || Reference(reference) == Reference::DeepFieldNoForm
+        || Reference(reference) == Reference::UnlistedField || inheriting)
+        QCOMPARE(PageOps::testing::lastSplitProjection().pages, quint64(0));
     QVERIFY(!pdfContains(parts.at(0), kSecret));
     QVERIFY(pdfContains(parts.at(0), keptText));
     if (inheriting)
         QCOMPARE(inheritedFieldProblem(parts.at(0)), QString());
     QVERIFY(!pdfContains(parts.at(2), kSecret));
     QVERIFY(!pdfContains(parts.at(2), keptText));
+    QVERIFY(source.seek(0));
+    QCOMPARE(source.readAll(), before);
+}
+
+/// Split copies selected branches, while actions still distinguish omitted source names
+/// from names that never existed. Shared values, inherited resources and script policy stay.
+void TstQpdf::splitProjectsSelectedFieldBranches()
+{
+    constexpr int pageCount = 8;
+    const QString src = in(QStringLiteral("split_branches.pdf"));
+    {
+        QPDF q;
+        q.emptyPDF();
+        QPDFPageDocumentHelper pages(q);
+        auto root = q.makeIndirectObject(parse("<< /T (root) /AA << /K << /S /JavaScript "
+                                               "/JS (opaque-script-marker) >> >> >>"));
+        auto shared = q.makeIndirectObject(parse("<< /T (common) /FT /Tx /V (shared-value) >>"));
+        std::vector<QPDFObjectHandle> branches, sharedWidgets;
+        for (int i = 0; i < pageCount; ++i) {
+            const std::string name = "page" + std::to_string(i);
+            const std::string omitted = "page" + std::to_string((i + 1) % pageCount);
+            auto page = textPage(q, "selected " + name, 300 + i);
+            auto branch = q.makeIndirectObject(parse("<< /T (" + name + ") /FT /Tx /A "
+                "<< /S /Hide /T [(root." + name + ".first) (root." + omitted
+                + ".first) (never-existed)] /Next << /S /ResetForm /Fields [(root."
+                + name + ".second) (root." + omitted + ".second)] >> >> >>"));
+            auto first = widget(q, page, "/T (first) /V (value-" + name + "-first)");
+            auto second = widget(q, page, "/T (second) /V (value-" + name + "-second)");
+            first.replaceKey("/AP", appearance(q, "appearance-" + name));
+            adopt(branch, {first, second});
+            branches.push_back(branch);
+            sharedWidgets.push_back(widget(q, page));
+            auto movie = q.makeIndirectObject(parse("<< /Type /Annot /Subtype /Movie "
+                "/Rect [0 0 20 20] /T (clip" + std::to_string(i) + ") >>"));
+            annotate(page, movie);
+            page.replaceKey("/AA", parse("<< /O << /S /Movie /T (clip"
+                + std::to_string((i + 1) % pageCount)
+                + ") /Next << /S /URI /URI (https://example.invalid/kept) >> >> >>"));
+            pages.addPage(QPDFPageObjectHelper(page), false);
+        }
+        branches.push_back(shared);
+        adopt(root, branches);
+        adopt(shared, sharedWidgets);
+        auto form = installForm(q, {root});
+        form.replaceKey("/XFA", q.newStream("xfa-marker-left-out"));
+        auto pageTree = q.getRoot().getKey("/Pages");
+        auto firstPage = q.getAllPages().front();
+        pageTree.replaceKey("/Resources", firstPage.getKey("/Resources"));
+        pageTree.replaceKey("/Rotate", QPDFObjectHandle::newInteger(90));
+        pageTree.replaceKey("/CropBox", parse("[0 0 250 700]"));
+        for (auto page : q.getAllPages())
+            page.removeKey("/Resources");
+        QPDFWriter writer(q, src.toUtf8().constData());
+        writer.write();
+    }
+    QFile source(src);
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    const QByteArray before = source.readAll();
+    QStringList parts;
+    QString error;
+    const auto status = PageOps::split(src, dir_.path(), QStringLiteral("branches"), {}, &parts, &error);
+    QVERIFY2(status == PageOps::Status::Ok, qPrintable(error));
+    QCOMPARE(parts.size(), pageCount);
+    const auto projection = PageOps::testing::lastSplitProjection();
+    QCOMPARE(projection.pages, quint64(pageCount));
+    QCOMPARE(projection.fields, quint64(6 * pageCount));
+    for (int i = 0; i < pageCount; ++i) {
+        QPDF out;
+        out.processFile(parts.at(i).toUtf8().constData());
+        QCOMPARE(out.getAllPages().size(), size_t(1));
+        auto page = out.getAllPages().front();
+        QCOMPARE(page.getKey("/MediaBox").getArrayItem(2).getIntValue(), 300 + i);
+        QCOMPARE(page.getKey("/CropBox").unparse(), std::string("[ 0 0 250 700 ]"));
+        QCOMPARE(page.getKey("/Rotate").getIntValue(), 90);
+        QVERIFY(page.getKey("/Resources").getKey("/Font").hasKey("/F1"));
+        auto form = out.getRoot().getKey("/AcroForm");
+        QVERIFY(form.getKey("/NeedAppearances").getBoolValue());
+        QVERIFY(form.getKey("/DR").getKey("/Font").hasKey("/Helv"));
+        QVERIFY(!form.hasKey("/XFA"));
+        QCOMPARE(form.getKey("/Fields").getArrayNItems(), 1);
+        auto root = form.getKey("/Fields").getArrayItem(0);
+        QCOMPARE(root.getKey("/T").getUTF8Value(), std::string("root"));
+        QCOMPARE(root.getKey("/AA").getKey("/K").getKey("/JS").getUTF8Value(),
+                 std::string("opaque-script-marker"));
+        QCOMPARE(root.getKey("/Kids").getArrayNItems(), 2);
+        auto branch = root.getKey("/Kids").getArrayItem(0);
+        const std::string name = "page" + std::to_string(i);
+        QCOMPARE(branch.getKey("/T").getUTF8Value(), name);
+        QCOMPARE(branch.getKey("/Parent").getObjGen(), root.getObjGen());
+        QCOMPARE(branch.getKey("/Kids").getArrayNItems(), 2);
+        auto annots = page.getKey("/Annots");
+        QCOMPARE(annots.getArrayNItems(), 4);
+        for (int j = 0; j < 2; ++j) {
+            auto field = branch.getKey("/Kids").getArrayItem(j);
+            const std::string leaf = j == 0 ? "first" : "second";
+            QCOMPARE(QPDFFormFieldObjectHelper(field).getFullyQualifiedName(),
+                     "root." + name + "." + leaf);
+            QCOMPARE(field.getKey("/V").getUTF8Value(), "value-" + name + "-" + leaf);
+            QCOMPARE(field.getKey("/Parent").getObjGen(), branch.getObjGen());
+            QCOMPARE(field.getObjGen(), annots.getArrayItem(j).getObjGen());
+            QCOMPARE(QPDFFormFieldObjectHelper(field).getDefaultAppearance(),
+                     std::string("/Helv 0 Tf 0 g"));
+        }
+        auto shared = root.getKey("/Kids").getArrayItem(1);
+        QCOMPARE(shared.getKey("/T").getUTF8Value(), std::string("common"));
+        QCOMPARE(shared.getKey("/V").getUTF8Value(), std::string("shared-value"));
+        QCOMPARE(shared.getKey("/Kids").getArrayNItems(), 1);
+        QCOMPARE(shared.getKey("/Kids").getArrayItem(0).getObjGen(),
+                 annots.getArrayItem(2).getObjGen());
+        for (auto annot : annots.aitems())
+            QCOMPARE(annot.getKey("/P").getObjGen(), page.getObjGen());
+        auto hide = branch.getKey("/A");
+        QCOMPARE(hide.getKey("/T").getArrayNItems(), 2);
+        QCOMPARE(hide.getKey("/T").getArrayItem(0).getUTF8Value(), "root." + name + ".first");
+        QCOMPARE(hide.getKey("/T").getArrayItem(1).getUTF8Value(), std::string("never-existed"));
+        auto reset = hide.getKey("/Next");
+        QCOMPARE(reset.getKey("/Fields").getArrayNItems(), 1);
+        QCOMPARE(reset.getKey("/Fields").getArrayItem(0).getUTF8Value(),
+                 "root." + name + ".second");
+        QVERIFY(page.getKey("/AA").getKey("/O").getKey("/S").isNameAndEquals("/URI"));
+        QVERIFY(pdfContains(parts.at(i), "appearance-" + name));
+        QVERIFY(!pdfContains(parts.at(i), "xfa-marker-left-out"));
+        for (int omitted = 0; omitted < pageCount; ++omitted)
+            if (omitted != i)
+                QVERIFY(!pdfContains(parts.at(i), "value-page" + std::to_string(omitted) + "-"));
+        mervin::RenderEngine engine;
+        auto doc = engine.openDocument(parts.at(i), {}, &error, nullptr);
+        QVERIFY2(doc, qPrintable(error));
+        QVERIFY(doc->hasForm());
+    }
+    QVERIFY(source.seek(0));
+    QCOMPARE(source.readAll(), before);
+    QCOMPARE(PageOps::split(in(QStringLiteral("missing.pdf")), dir_.path(), "missing"),
+             PageOps::Status::Failed);
+    QCOMPARE(PageOps::testing::lastSplitProjection().pages, quint64(0));
+    QCOMPARE(PageOps::testing::lastSplitProjection().fields, quint64(0));
+}
+
+void TstQpdf::splitFallsBackForFieldDependencies_data()
+{
+    QTest::addColumn<bool>("fieldLink");
+    QTest::newRow("indirect action target") << true;
+    QTest::newRow("non-widget page property") << false;
+}
+
+/// Unusual field properties and reference targets retain the original copy/retarget path.
+void TstQpdf::splitFallsBackForFieldDependencies()
+{
+    QFETCH(bool, fieldLink);
+    const QString src = in(QStringLiteral("split_dependencies.pdf"));
+    {
+        QPDF q;
+        q.emptyPDF();
+        auto root = q.makeIndirectObject(parse("<< /T (root) /FT /Tx >>"));
+        std::vector<QPDFObjectHandle> fields;
+        for (int i = 0; i < 2; ++i) {
+            auto page = textPage(q, "fallback " + std::to_string(i));
+            fields.push_back(widget(q, page, "/T (field" + std::to_string(i) + ") /V (kept"
+                + std::to_string(i) + ")"));
+            QPDFPageDocumentHelper(q).addPage(QPDFPageObjectHelper(page), false);
+        }
+        adopt(root, fields);
+        if (fieldLink) {
+            auto action = parse("<< /S /ResetForm >>");
+            action.replaceKey("/Fields", QPDFObjectHandle::newArray({fields.front()}));
+            root.replaceKey("/A", action);
+        } else {
+            root.replaceKey("/P", QPDFObjectHandle::newString("unknown-property"));
+        }
+        installForm(q, {root});
+        QPDFWriter writer(q, src.toUtf8().constData());
+        writer.write();
+    }
+    QFile source(src);
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    const QByteArray before = source.readAll();
+    QStringList parts;
+    QCOMPARE(PageOps::split(src, dir_.path(), QStringLiteral("dependencies"), {}, &parts),
+             PageOps::Status::Ok);
+    QCOMPARE(parts.size(), 2);
+    QCOMPARE(PageOps::testing::lastSplitProjection().pages, quint64(0));
+    for (int i = 0; i < 2; ++i) {
+        QPDF out;
+        out.processFile(parts.at(i).toUtf8().constData());
+        auto root = out.getRoot().getKey("/AcroForm").getKey("/Fields").getArrayItem(0);
+        QCOMPARE(root.getKey("/Kids").getArrayNItems(), 1);
+        auto field = root.getKey("/Kids").getArrayItem(0);
+        QCOMPARE(field.getKey("/V").getUTF8Value(), "kept" + std::to_string(i));
+        if (fieldLink && i == 0)
+            QCOMPARE(root.getKey("/A").getKey("/Fields").getArrayItem(0).getObjGen(),
+                     field.getObjGen());
+        else if (fieldLink)
+            QVERIFY(!root.hasKey("/A"));
+        else
+            QCOMPARE(root.getKey("/P").getUTF8Value(), std::string("unknown-property"));
+        QVERIFY(!pdfContains(parts.at(i), "kept" + std::to_string(1 - i)));
+    }
+    QVERIFY(source.seek(0));
+    QCOMPARE(source.readAll(), before);
 }
 
 /// Checks that a field shown on two copied pages stays one field, while a repeated page gets
@@ -3001,6 +3321,187 @@ void TstQpdf::mergeReportsFailedIndex()
     QVERIFY(!err.isEmpty());
 }
 
+/// Includes deferred reads from later Merge inputs and the one-source tools.
+void TstQpdf::lateSourceReadNamesInput_data()
+{
+    QTest::addColumn<QString>("operation");
+    QTest::addColumn<bool>("truncate");
+    for (const QString &operation : {QStringLiteral("merge"), QStringLiteral("extract"),
+                                     QStringLiteral("delete")}) {
+        QTest::newRow(qPrintable(operation + " source")) << operation << true;
+        QTest::newRow(qPrintable(operation + " destination")) << operation << false;
+    }
+}
+
+/// A shortened deferred stream fails without publishing, and a write failure stays an output error.
+void TstQpdf::lateSourceReadNamesInput()
+{
+    QFETCH(QString, operation);
+    QFETCH(bool, truncate);
+    const QString src = in(QStringLiteral("late-source.pdf"));
+    const QString other = in(QStringLiteral("late-other.pdf"));
+    const QString out = in(QStringLiteral("late-output.pdf"));
+    makePdfSized(other, {100});
+    {
+        QPDF pdf;
+        pdf.emptyPDF();
+        auto page = textPage(pdf, "LATE CONTENT");
+        page.replaceKey("/Contents", pdf.newStream(std::string(256 * 1024, ' ') +
+            "BT /F1 12 Tf 72 700 Td (LATE CONTENT) Tj ET"));
+        QPDFPageDocumentHelper pages(pdf);
+        pages.addPage(QPDFPageObjectHelper(page), false);
+        pages.addPage(QPDFPageObjectHelper(textPage(pdf, "REMOVE")), false);
+        QPDFWriter writer(pdf, src.toUtf8().constData());
+        writer.setCompressStreams(false);
+        writer.setObjectStreamMode(qpdf_o_disable);
+        writer.write();
+    }
+    QFile destination(out);
+    QVERIFY(destination.open(QIODevice::WriteOnly));
+    const QByteArray before("previous destination");
+    QCOMPARE(destination.write(before), before.size());
+    destination.close();
+    bool reachedWrite = false;
+    bool shortened = false;
+    mervin::job::testing::failWhen([&](mervin::job::Step step, const QString &path) {
+        if (step != mervin::job::Step::Writing || path != dir_.path() || reachedWrite)
+            return false;
+        reachedWrite = true;
+        if (truncate) {
+            QFile source(src);
+            shortened = source.open(QIODevice::ReadWrite) && source.resize(0);
+        }
+        return !truncate;
+    });
+    const auto clear = qScopeGuard([] { mervin::job::testing::failWhen({}); });
+    int failed = -7;
+    QString error;
+    PageOps::Status result;
+    if (operation == "delete")
+        result = PageOps::deletePages(src, out, {1}, {}, &error, &failed);
+    else {
+        QList<PageOps::MergeInput> inputs;
+        if (operation == "merge")
+            inputs.append({other, {0}, {}});
+        inputs.append({src, {0}, {}});
+        result = PageOps::merge(inputs, out, &error, &failed);
+    }
+    QVERIFY(reachedWrite);
+    QCOMPARE(shortened, truncate);
+    QCOMPARE(result, PageOps::Status::Failed);
+    QVERIFY(!error.isEmpty());
+    QCOMPARE(failed, truncate ? (operation == "merge" ? 1 : 0) : -1);
+    QVERIFY(destination.open(QIODevice::ReadOnly));
+    QCOMPARE(destination.readAll(), before);
+}
+
+/// Includes both a required object and optional content that qpdf would silently discard.
+void TstQpdf::paddedObjectStreamsFailBeforePublication_data()
+{
+    QTest::addColumn<bool>("optional");
+    QTest::addColumn<QString>("operation");
+    for (bool optional : {false, true})
+        for (const QString &operation : {QStringLiteral("probe"), QStringLiteral("info"),
+                 QStringLiteral("encrypt"), QStringLiteral("decrypt"), QStringLiteral("rotate"),
+                 QStringLiteral("delete"), QStringLiteral("extract"), QStringLiteral("merge"),
+                 QStringLiteral("split"), QStringLiteral("flatten"), QStringLiteral("embed"),
+                 QStringLiteral("keep")})
+            QTest::newRow(qPrintable((optional ? "annotation " : "catalog ") + operation))
+                << optional << operation;
+}
+
+/// Refuses oversized decoding without changing an existing output or the source bytes.
+void TstQpdf::paddedObjectStreamsFailBeforePublication()
+{
+    QFETCH(bool, optional);
+    QFETCH(QString, operation);
+    const QString src = in(optional ? QStringLiteral("padded-annotation.pdf")
+                                    : QStringLiteral("padded-catalog.pdf"));
+    if (!QFileInfo::exists(src))
+        QVERIFY(makePaddedObjectStream(src, optional));
+    const QString other = in(QStringLiteral("padded-other.pdf"));
+    makePdfSized(other, {100});
+    const QString out = in(operation == "split" ? QStringLiteral("capped-001.pdf")
+                                               : QStringLiteral("capped-output.pdf"));
+    QFile source(src);
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    const QByteArray sourceBefore = source.readAll();
+    source.close();
+    QFile destination(out);
+    QVERIFY(destination.open(QIODevice::WriteOnly));
+    const QByteArray before("previous destination");
+    QCOMPARE(destination.write(before), before.size());
+    destination.close();
+    QString error;
+    int failed = -1;
+    PageOps::Status result;
+    QpdfService service;
+    if (operation == "probe") {
+        int count = -1;
+        result = PageOps::probe(src, &count, {}, &error);
+    } else if (operation == "info") {
+        QpdfService::Info info;
+        result = service.readInfo(src, {}, info, &error);
+    } else if (operation == "encrypt") {
+        result = service.encrypt(src, out, {}, QStringLiteral("secret"), {},
+                                 QpdfService::Algorithm::AES256, {}, &error);
+    } else if (operation == "decrypt") {
+        result = service.decrypt(src, out, {}, &error);
+    } else if (operation == "rotate") {
+        result = PageOps::rotatePages(src, out, {0}, 90, true, {}, &error);
+    } else if (operation == "delete") {
+        result = PageOps::deletePages(src, out, {1}, {}, &error, &failed);
+    } else if (operation == "split") {
+        QStringList produced;
+        result = PageOps::split(src, dir_.path(), QStringLiteral("capped"), {}, &produced, &error);
+        QVERIFY(produced.isEmpty());
+        QVERIFY(!QFileInfo::exists(in(QStringLiteral("capped-002.pdf"))));
+    } else if (operation == "flatten") {
+        result = mervin::MeasureExport::flatten(src, out, {}, {}, &error);
+    } else if (operation == "embed") {
+        result = mervin::MeasureExport::embedMervin(src, out, {}, {}, &error);
+    } else if (operation == "keep") {
+        result = mervin::MeasureExport::keepMervin(src, out, {}, &error);
+    } else {
+        QList<PageOps::MergeInput> inputs;
+        if (operation == "merge")
+            inputs.append({other, {0}, {}});
+        inputs.append({src, {0}, {}});
+        result = PageOps::merge(inputs, out, &error, &failed);
+    }
+    // Read-only probes need not resolve annotations. Their untouched compressed data
+    // stays in the source, and every writer must still reject it before publication.
+    const bool unreadOptional = optional && (operation == "probe" || operation == "info");
+    QCOMPARE(result, unreadOptional ? PageOps::Status::Ok : PageOps::Status::Failed);
+    if (!unreadOptional)
+        QVERIFY2(error.contains(QStringLiteral("PL_Flate memory limit exceeded")), qPrintable(error));
+    if (operation == "merge" || operation == "extract" || operation == "delete")
+        QCOMPARE(failed, operation == "merge" ? 1 : 0);
+    QVERIFY(destination.open(QIODevice::ReadOnly));
+    QCOMPARE(destination.readAll(), before);
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    QCOMPARE(source.readAll(), sourceBefore);
+}
+
+/// Rejects only the structured decoder-limit diagnostic, not lookalike repair warnings.
+void TstQpdf::flateWarningClassificationKeepsBenignRepairs()
+{
+    QPDF pdf;
+    pdf.emptyPDF();
+    pdf.setSuppressWarnings(true);
+    const std::string limit("error decoding stream data for object 5 0: PL_Flate memory limit exceeded");
+    pdf.warn(QPDFExc(qpdf_e_damaged_pdf, limit, "", 0, "benign repair"));
+    pdf.warn(QPDFExc(qpdf_e_damaged_pdf, "input.pdf", limit, 0, "benign repair"));
+    pdf.warn(QPDFExc(qpdf_e_damaged_pdf, "input.pdf", "", 0, "other error: PL_Flate memory limit exceeded"));
+    pdf.warn(QPDFExc(qpdf_e_unsupported, "input.pdf", "", 0, limit));
+    mervin::checkQpdfWarnings(pdf);
+    mervin::QpdfReadState state{QStringLiteral("input.pdf"), {}};
+    pdf.warn(QPDFExc(qpdf_e_damaged_pdf, "input.pdf", "", 0, limit));
+    QVERIFY_EXCEPTION_THROWN(mervin::checkQpdfWarnings(pdf, &state), mervin::QpdfReadError);
+    QVERIFY(!state.error.isEmpty());
+    QVERIFY_EXCEPTION_THROWN(state.throwIfFailed(), mervin::QpdfReadError);
+}
+
 void TstQpdf::mergeRejectsOutOfRangeIndex()
 {
     // An out-of-range index fails rather than being skipped. A page count that
@@ -3201,6 +3702,91 @@ void TstQpdf::singleSourceCopiesKeepOwnerRestrictions()
     }
 }
 
+/// Exercises real canonical aliases, including conflicting and alternate valid passwords.
+void TstQpdf::sourceAliasesKeepEncryption_data()
+{
+    QTest::addColumn<QString>("aliasKind");
+    QTest::addColumn<QString>("secondPassword");
+    QStringList aliases{QStringLiteral("relative")};
+#ifdef Q_OS_WIN
+    aliases.append(QStringLiteral("case"));
+#else
+    aliases.append(QStringLiteral("symlink"));
+#endif
+    for (const auto &alias : aliases)
+        for (const auto &password : {QStringLiteral("secret"), QStringLiteral("owner"),
+                                     QStringLiteral("wrong")})
+            QTest::newRow(qPrintable(alias + ' ' + password)) << alias << password;
+}
+
+void TstQpdf::sourceAliasesKeepEncryption()
+{
+    QFETCH(QString, aliasKind);
+    QFETCH(QString, secondPassword);
+    const QString plain = in(QStringLiteral("alias-plain.pdf"));
+    const QString src = in(QStringLiteral("alias-encrypted.pdf"));
+    const QString out = in(QStringLiteral("alias-output.pdf"));
+    makePdfSized(plain, {100, 200, 300});
+    QpdfService::Permissions permissions;
+    permissions.canPrint = false;
+    permissions.canCopy = false;
+    QCOMPARE(QpdfService().encrypt(plain, src, {}, QStringLiteral("secret"),
+        QStringLiteral("owner"), QpdfService::Algorithm::AES256, permissions, nullptr),
+        PageOps::Status::Ok);
+    QString alias = QDir::current().relativeFilePath(src);
+    if (aliasKind == "symlink") {
+        alias = in(QStringLiteral("alias-link-%1.pdf").arg(secondPassword));
+        QVERIFY(QFile::link(src, alias));
+    } else if (aliasKind == "case") {
+        alias = src.toUpper();
+    }
+    int count = 0;
+    QString originalKey, aliasKey;
+    QCOMPARE(PageOps::probe(src, &count, QStringLiteral("secret"), nullptr, nullptr,
+                             &originalKey), PageOps::Status::Ok);
+    QCOMPARE(PageOps::probe(alias, &count, QStringLiteral("secret"), nullptr, nullptr,
+                             &aliasKey), PageOps::Status::Ok);
+    QVERIFY(!originalKey.isEmpty());
+    QCOMPARE(aliasKey, originalKey);
+    QFile source(src);
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    const QByteArray sourceBefore = source.readAll();
+    source.close();
+    QFile destination(out);
+    QVERIFY(destination.open(QIODevice::WriteOnly));
+    const QByteArray sentinel("previous output");
+    QCOMPARE(destination.write(sentinel), sentinel.size());
+    destination.close();
+    int failed = -2;
+    QString error;
+    const auto result = PageOps::merge({{src, {2}, QStringLiteral("secret")},
+        {alias, {0, 2}, secondPassword}}, out, &error, &failed);
+    if (secondPassword == "wrong") {
+        QCOMPARE(result, PageOps::Status::NeedsPassword);
+        QCOMPARE(failed, 1);
+        QVERIFY(destination.open(QIODevice::ReadOnly));
+        QCOMPARE(destination.readAll(), sentinel);
+    } else {
+        QCOMPARE(result, PageOps::Status::Ok);
+        QCOMPARE(PageOps::probe(out, &count), PageOps::Status::NeedsPassword);
+        QpdfService::Info info;
+        QCOMPARE(QpdfService().readInfo(out, QStringLiteral("secret"), info, &error),
+                 PageOps::Status::Ok);
+        QVERIFY(info.encrypted);
+        QVERIFY(!info.permissions.canPrint);
+        QVERIFY(!info.permissions.canCopy);
+        QVERIFY(info.permissions.canModify);
+        QPDF pdf;
+        pdf.processFile(out.toUtf8().constData(), "owner");
+        QList<int> widths;
+        for (auto page : QPDFPageDocumentHelper(pdf).getAllPages())
+            widths.append(qRound(page.getMediaBox().getArrayAsRectangle().urx));
+        QCOMPARE(widths, (QList<int>{300, 100, 300}));
+    }
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    QCOMPARE(source.readAll(), sourceBefore);
+}
+
 /// A merge that reads several files writes no encryption, even when one input has it.
 void TstQpdf::mergeOfSeveralFilesIsNotEncrypted()
 {
@@ -3233,13 +3819,38 @@ void TstQpdf::splitWritesOnePerPage()
         QCOMPARE(PageOps::pageCount(f), 1);
 }
 
+/// Pins relative and absolute rotations on pre-rotated and untouched pages.
+void TstQpdf::rotateKeepsCount_data()
+{
+    QTest::addColumn<bool>("relative");
+    QTest::addColumn<int>("angle");
+    QTest::addColumn<QList<int>>("expected");
+    QTest::newRow("relative 90") << true << 90 << QList<int>{180, 180, 0};
+    QTest::newRow("relative negative") << true << -90 << QList<int>{0, 180, 180};
+    QTest::newRow("relative 270") << true << 270 << QList<int>{0, 180, 180};
+    QTest::newRow("absolute 90") << false << 90 << QList<int>{90, 180, 90};
+    QTest::newRow("absolute negative") << false << -90 << QList<int>{270, 180, 270};
+    QTest::newRow("absolute 270") << false << 270 << QList<int>{270, 180, 270};
+}
+
 void TstQpdf::rotateKeepsCount()
 {
+    QFETCH(bool, relative);
+    QFETCH(int, angle);
+    QFETCH(QList<int>, expected);
     const QString src = in(QStringLiteral("r_src.pdf"));
     const QString out = in(QStringLiteral("r_out.pdf"));
-    makePdf(src, 3);
-    QCOMPARE(PageOps::rotatePages(src, out, {0, 2}, 90, true), PageOps::Status::Ok);
-    QCOMPARE(PageOps::pageCount(out), 3);
+    makePdfSized(src, {100, 200, 300}, {90, 180, 270});
+    QCOMPARE(PageOps::rotatePages(src, out, {0, 2}, angle, relative), PageOps::Status::Ok);
+    QPDF pdf;
+    pdf.processFile(out.toUtf8().constData());
+    QList<int> widths, rotations;
+    for (auto page : QPDFPageDocumentHelper(pdf).getAllPages()) {
+        widths.append(qRound(page.getMediaBox().getArrayAsRectangle().urx));
+        rotations.append(int(page.getAttribute("/Rotate", false).getIntValue()));
+    }
+    QCOMPARE(widths, (QList<int>{100, 200, 300}));
+    QCOMPARE(rotations, expected);
 }
 
 /// Covers V4 files with AES and with RC4, which Mervin writes with /Length.

@@ -57,7 +57,8 @@ MeasureExport::Status MeasureExport::flatten(const QString &inPath, const QStrin
                                              bool keepStoredBlob)
 {
     std::unique_ptr<QPDF> source;
-    const Status st = openQpdf(inPath, password, source, error);
+    std::shared_ptr<QpdfReadState> readState;
+    const Status st = openQpdf(inPath, password, source, error, &readState);
     if (st != Status::Ok)
         return st;
     QPDF &q = *source;
@@ -103,7 +104,11 @@ MeasureExport::Status MeasureExport::flatten(const QString &inPath, const QStrin
         else if (q.getRoot().hasKey("/Mervin_Measurements"))
             q.getRoot().removeKey("/Mervin_Measurements");
         AtomicPdfWriter output(q, outPath);
-        output.write();
+        output.write([&] {
+            checkQpdfWarnings(*source, readState.get());
+            readState->throwIfFailed();
+            return true;
+        });
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)
@@ -117,14 +122,19 @@ MeasureExport::Status MeasureExport::embedMervin(const QString &inPath, const QS
                                                  QString *error)
 {
     std::unique_ptr<QPDF> source;
-    const Status st = openQpdf(inPath, password, source, error);
+    std::shared_ptr<QpdfReadState> readState;
+    const Status st = openQpdf(inPath, password, source, error, &readState);
     if (st != Status::Ok)
         return st;
     QPDF &q = *source;
     try {
         measurementPages::store(q, doc); // throws before anything is written when too large
         AtomicPdfWriter output(q, outPath);
-        output.write();
+        output.write([&] {
+            checkQpdfWarnings(*source, readState.get());
+            readState->throwIfFailed();
+            return true;
+        });
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)
@@ -137,13 +147,18 @@ MeasureExport::Status MeasureExport::keepMervin(const QString &inPath, const QSt
                                                 const QString &password, QString *error)
 {
     std::unique_ptr<QPDF> source;
-    const Status st = openQpdf(inPath, password, source, error);
+    std::shared_ptr<QpdfReadState> readState;
+    const Status st = openQpdf(inPath, password, source, error, &readState);
     if (st != Status::Ok)
         return st;
     try {
         keepStoredMeasurements(*source);
         AtomicPdfWriter output(*source, outPath);
-        output.write();
+        output.write([&] {
+            checkQpdfWarnings(*source, readState.get());
+            readState->throwIfFailed();
+            return true;
+        });
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)
@@ -156,7 +171,8 @@ std::optional<QByteArray> MeasureExport::readMervinBlob(const QString &inPath,
                                                         const QString &password)
 {
     std::unique_ptr<QPDF> source;
-    if (openQpdf(inPath, password, source, nullptr) != Status::Ok)
+    std::shared_ptr<QpdfReadState> readState;
+    if (openQpdf(inPath, password, source, nullptr, &readState) != Status::Ok)
         return std::nullopt;
     try {
         auto root = source->getRoot();
@@ -164,8 +180,12 @@ std::optional<QByteArray> MeasureExport::readMervinBlob(const QString &inPath,
             return std::nullopt;
         auto blob = root.getKey("/Mervin_Measurements");
         // Mervin writes only streams, so a string or any other object gives no data.
-        if (blob.isStream())
-            return measurementPages::decodeBlob(blob);
+        if (blob.isStream()) {
+            auto bytes = measurementPages::decodeBlob(blob);
+            checkQpdfWarnings(*source, readState.get());
+            readState->throwIfFailed();
+            return bytes;
+        }
         return std::nullopt;
     } catch (const std::exception &) {
         return std::nullopt;

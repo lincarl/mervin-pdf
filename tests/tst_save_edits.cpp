@@ -7,6 +7,7 @@
 #include "io/JobContext.h"
 #include "render/AnnotModel.h"
 #include "render/Document.h"
+#include "render/FormModel.h"
 #include "render/MeasureContent.h"
 #include "render/RenderEngine.h"
 #include "recent/PathKey.h"
@@ -23,10 +24,14 @@
 #include <qpdf/QPDFWriter.hh>
 
 #include <QDir>
+#include <QComboBox>
 #include <QDialog>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QLabel>
+#include <QLineEdit>
+#include <QFocusEvent>
+#include <QPlainTextEdit>
 #include <QMessageBox>
 #include <QPointer>
 #include <QPushButton>
@@ -35,6 +40,7 @@
 #include <QtTest>
 
 #include <atomic>
+#include <algorithm>
 
 using namespace mervin;
 
@@ -143,6 +149,83 @@ QStringList recoveryEntries()
     return QDir(QDir(ConfigPaths::configDir()).filePath(QStringLiteral("recovery")))
         .entryList(QDir::Files | QDir::Hidden | QDir::NoDotAndDotDot);
 }
+
+// Two pages share text and choice fields with authored appearances. Page 1 also
+// has an unrelated editor, so refreshing siblings must preserve its pending text.
+void writeSharedForm(const QString &path, bool listBox = false)
+{
+    QPDF pdf;
+    pdf.emptyPDF();
+    auto font = pdf.makeIndirectObject(QPDFObjectHandle::parse(
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"));
+    auto fonts = QPDFObjectHandle::newDictionary();
+    fonts.replaceKey("/Helv", font);
+    auto resources = QPDFObjectHandle::newDictionary();
+    resources.replaceKey("/Font", fonts);
+    auto fields = QPDFObjectHandle::newArray();
+    auto text = pdf.makeIndirectObject(QPDFObjectHandle::parse(
+        "<< /FT /Tx /T (shared-text) /V (Old) /Kids [] >>"));
+    auto choice = pdf.makeIndirectObject(QPDFObjectHandle::parse(
+        "<< /FT /Ch /Ff 131072 /T (shared-choice) /V (Red) /Opt [(Red) (Green)] /Kids [] >>"));
+    if (listBox) {
+        choice.replaceKey("/Ff", QPDFObjectHandle::newInteger(0));
+        choice.replaceKey("/TI", QPDFObjectHandle::newInteger(1));
+    }
+    fields.appendItem(text);
+    fields.appendItem(choice);
+    auto form = QPDFObjectHandle::parse("<< /DA (/Helv 12 Tf 0 g) >>");
+    form.replaceKey("/Fields", fields);
+    form.replaceKey("/DR", resources);
+    pdf.getRoot().replaceKey("/AcroForm", form);
+    QPDFPageDocumentHelper pages(pdf);
+    for (int p = 0; p < 2; ++p) {
+        auto page = pdf.makeIndirectObject(QPDFObjectHandle::parse(
+            "<< /Type /Page /MediaBox [0 0 300 300] /Resources << >> /Annots [] >>"));
+        pages.addPage(QPDFPageObjectHelper(page), false);
+        int index = 0;
+        for (auto field : {text, choice}) {
+            auto appearance = pdf.newStream(index == 0
+                ? "BT /Helv 12 Tf 2 5 Td (Old) Tj ET\n"
+                : "BT /Helv 12 Tf 2 5 Td (Red) Tj ET\n");
+            appearance.getDict().replaceKey("/Type", QPDFObjectHandle::newName("/XObject"));
+            appearance.getDict().replaceKey("/Subtype", QPDFObjectHandle::newName("/Form"));
+            appearance.getDict().replaceKey("/BBox", QPDFObjectHandle::parse("[0 0 260 20]"));
+            appearance.getDict().replaceKey("/Resources", resources);
+            auto ap = QPDFObjectHandle::newDictionary();
+            ap.replaceKey("/N", appearance);
+            auto widget = pdf.makeIndirectObject(QPDFObjectHandle::parse(
+                "<< /Type /Annot /Subtype /Widget /F 4 >>"));
+            widget.replaceKey("/Parent", field);
+            widget.replaceKey("/Rect", QPDFObjectHandle::parse(
+                index++ == 0 ? "[20 250 280 270]" : "[20 210 280 230]"));
+            widget.replaceKey("/AP", ap);
+            if (p == 0)
+                widget.replaceKey("/P", page);
+            field.getKey("/Kids").appendItem(widget);
+            page.getKey("/Annots").appendItem(widget);
+        }
+        if (p == 0) {
+            auto other = pdf.makeIndirectObject(QPDFObjectHandle::parse(
+                "<< /Type /Annot /Subtype /Widget /FT /Tx /T (other) /V (Untouched) "
+                "/F 4 /Rect [20 170 280 190] >>"));
+            fields.appendItem(other);
+            page.getKey("/Annots").appendItem(other);
+        }
+    }
+    const QByteArray name = path.toUtf8();
+    QPDFWriter writer(pdf, name.constData());
+    writer.write();
+}
+
+// Inspect saved appearance bytes without a renderer synthesising missing /AP.
+QByteArray savedAppearance(QPDFObjectHandle widget)
+{
+    auto stream = widget.getKey("/AP").getKey("/N");
+    if (!stream.isStream())
+        return {};
+    const auto data = stream.getStreamData(qpdf_dl_all);
+    return QByteArray(reinterpret_cast<const char *>(data->getBuffer()), qsizetype(data->getSize()));
+}
 }
 
 // Checks background Save durability, cancellation, restored edits and completion ownership.
@@ -178,7 +261,189 @@ private slots:
         profile_.reset();
     }
 
+    // Direct Save must commit the open editor before its clean-document shortcut.
+    void saveCommitsOpenCleanAnnotationEditor()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("annotation.pdf"));
+        RenderEngine engine;
+        {
+            auto doc = engine.openDocument(QStringLiteral(MERVIN_FIXTURE_PDF));
+            QVERIFY(doc);
+            AnnotModel model(*doc);
+            QVERIFY(model.addTextNote(0, {40, 40}, Qt::yellow, {}, QStringLiteral("Before")) >= 0);
+            QVERIFY(doc->savePdfTo(path));
+        }
+        TabPage tab(&engine);
+        tab.setAttribute(Qt::WA_DontShowOnScreen);
+        tab.resize(900, 800);
+        tab.show();
+        QVERIFY(tab.open(path));
+        auto *viewer = tab.viewer();
+        const auto annots = viewer->annotModel()->pageAnnots(0);
+        QCOMPARE(annots.size(), size_t(1));
+        viewer->setCommentToolEnabled(true);
+        viewer->setAnnotSubMode(AnnotSubMode::Note);
+        viewer->revealAnnotation(0, annots[0].id);
+        auto *editor = viewer->viewport()->findChild<QPlainTextEdit *>();
+        QVERIFY(editor && editor->isVisible() && !editor->isReadOnly());
+        editor->setPlainText(QStringLiteral("Only the open editor has this text"));
+        QVERIFY(!tab.hasUnsavedEdits());
+        QVERIFY(!viewer->annotModel()->isDirty());
+        QCOMPARE(viewer->annotModel()->annot(0, annots[0].id)->contents, QStringLiteral("Before"));
+        Outcome outcome;
+        tab.startSave(outcome.callbacks());
+        QTRY_VERIFY_WITH_TIMEOUT(outcome.completion.has_value(), 10000);
+        QCOMPARE(outcome.completion->result, TabPage::SaveResult::Saved);
+        QVERIFY(!tab.hasUnsavedEdits());
+        auto reopened = engine.openDocument(path);
+        QVERIFY(reopened);
+        const auto saved = AnnotModel(*reopened).pageAnnots(0);
+        QCOMPARE(saved.size(), size_t(1));
+        QCOMPARE(saved[0].contents, QStringLiteral("Only the open editor has this text"));
+    }
+
+    void sharedFieldAppearancesPersistWithoutRevisiting_data()
+    {
+        QTest::addColumn<bool>("listBox");
+        QTest::newRow("combo") << false;
+        QTest::newRow("list") << true;
+    }
+
+    // A cold sibling appearance must be written correctly before any revisit.
+    void sharedFieldAppearancesPersistWithoutRevisiting()
+    {
+        QFETCH(bool, listBox);
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("shared.pdf"));
+        writeSharedForm(path, listBox);
+        RenderEngine engine;
+        for (int field = 0; field < 2; ++field) {
+            auto doc = engine.openDocument(path);
+            QVERIFY(doc);
+            FormModel model(*doc);
+            QCOMPARE(model.pageFields(0).size(), size_t(3));
+            QCOMPARE(model.pageFields(1).size(), size_t(2));
+            const QString value = field == 0 ? QStringLiteral("Changed") : QStringLiteral("Green");
+            QVERIFY(field == 0 ? model.setTextValue(0, 0, value)
+                               : model.setChoiceValue(0, 1, value));
+            const QString output = files.filePath(QStringLiteral("saved-%1.pdf").arg(field));
+            QVERIFY(doc->savePdfTo(output));
+            QPDF before, after;
+            before.processFile(path.toUtf8().constData());
+            after.processFile(output.toUtf8().constData());
+            auto oldPages = QPDFPageDocumentHelper(before).getAllPages();
+            auto newPages = QPDFPageDocumentHelper(after).getAllPages();
+            QByteArray first;
+            for (int p = 0; p < 2; ++p) {
+                auto widget = newPages[p].getObjectHandle().getKey("/Annots").getArrayItem(field);
+                const auto oldAppearance = savedAppearance(
+                    oldPages[p].getObjectHandle().getKey("/Annots").getArrayItem(field));
+                const auto appearance = savedAppearance(widget);
+                QVERIFY(!appearance.isEmpty());
+                QVERIFY(appearance != oldAppearance);
+                if (p == 0)
+                    first = appearance;
+                else
+                    QCOMPARE(appearance, first);
+                if (field == 1 && listBox) {
+                    auto parent = widget.getKey("/Parent");
+                    QCOMPARE(parent.getKey("/FT").getName(), std::string("/Ch"));
+                    QCOMPARE(parent.getKey("/Ff").getIntValue(), 0);
+                    QCOMPARE(parent.getKey("/V").getUTF8Value(), std::string("Green"));
+                    QCOMPARE(parent.getKey("/TI").getIntValue(), 1);
+                    QCOMPARE(parent.getKey("/Opt").getArrayNItems(), 2);
+                    QVERIFY(!widget.hasKey("/Opt"));
+                    QVERIFY(!widget.hasKey("/TI"));
+                }
+            }
+        }
+    }
+
     void unreadableMeasurementsSurviveSave_data() { addUnreadableBlobRows(); }
+
+    // Editing either page refreshes sibling controls and both cached page tiles.
+    void sharedFormEditorsAndTilesRefreshBeforeSave()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("shared.pdf"));
+        writeSharedForm(path);
+        RenderEngine engine;
+        TabPage tab(&engine);
+        tab.setAttribute(Qt::WA_DontShowOnScreen);
+        tab.resize(900, 900);
+        tab.show();
+        QVERIFY(tab.open(path));
+        auto *viewer = tab.viewer();
+        viewer->setZoomEaseMs(0);
+        viewer->setLayoutMode({ViewLayout::Scroll::Continuous, false});
+        viewer->setPageTheme(PageTheme::Light);
+        viewer->setScale(1);
+        viewer->setFormMode(true);
+        const auto lineEditors = [&] {
+            auto editors = viewer->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly);
+            std::sort(editors.begin(), editors.end(), [](QLineEdit *a, QLineEdit *b) {
+                return a->y() < b->y();
+            });
+            return editors;
+        };
+        QTRY_COMPARE(lineEditors().size(), 3);
+        const QRect firstField = lineEditors()[0]->geometry();
+        const QRect siblingField = lineEditors()[2]->geometry();
+        QCOMPARE(viewer->pageUnder(firstField.center()), 0);
+        QCOMPARE(viewer->pageUnder(siblingField.center()), 1);
+        viewer->setFormMode(false);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        const auto settled = [&] {
+            viewer->resetPaintStats();
+            viewer->viewport()->grab();
+            const auto stats = viewer->paintStats();
+            return stats.fresh == 2 && stats.blank == 0 && stats.preview == 0;
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(settled(), 10000);
+        const QImage before = viewer->viewport()->grab().toImage();
+        QVERIFY(!before.isNull());
+        viewer->setFormMode(true);
+        auto editors = lineEditors();
+        QCOMPARE(editors.size(), 3);
+        editors[1]->setText(QStringLiteral("Independent pending edit"));
+        editors[0]->setText(QStringLiteral("Changed shared text"));
+        QFocusEvent commit(QEvent::FocusOut);
+        QCoreApplication::sendEvent(editors[0], &commit);
+        QCOMPARE(editors[2]->text(), QStringLiteral("Changed shared text"));
+        QCOMPARE(editors[1]->text(), QStringLiteral("Independent pending edit"));
+        QCOMPARE(viewer->formModel()->pageFields(0)[2].value, QStringLiteral("Untouched"));
+        auto choices = viewer->viewport()->findChildren<QComboBox *>(Qt::FindDirectChildrenOnly);
+        QCOMPARE(choices.size(), 2);
+        choices[0]->setCurrentIndex(1);
+        QVERIFY(QMetaObject::invokeMethod(choices[0], "activated", Qt::DirectConnection, Q_ARG(int, 1)));
+        QCOMPARE(choices[1]->currentText(), QStringLiteral("Green"));
+        QCOMPARE(editors[1]->text(), QStringLiteral("Independent pending edit"));
+        viewer->setFormMode(false);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QTRY_VERIFY_WITH_TIMEOUT(settled(), 10000);
+        const QImage after = viewer->viewport()->grab().toImage();
+        QVERIFY(!after.isNull());
+        const auto fieldPixels = [](const QImage &image, const QRect &rect) {
+            const qreal ratio = image.devicePixelRatio();
+            return image.copy(qRound(rect.x() * ratio), qRound(rect.y() * ratio),
+                              qRound(rect.width() * ratio), qRound(rect.height() * ratio));
+        };
+        QVERIFY(fieldPixels(after, firstField) != fieldPixels(before, firstField));
+        QVERIFY(fieldPixels(after, siblingField) != fieldPixels(before, siblingField));
+        Outcome outcome;
+        tab.startSave(outcome.callbacks());
+        QTRY_VERIFY_WITH_TIMEOUT(outcome.completion.has_value(), 10000);
+        QCOMPARE(outcome.completion->result, TabPage::SaveResult::Saved);
+        auto reopened = engine.openDocument(path);
+        QVERIFY(reopened);
+        FormModel form(*reopened);
+        for (int page = 0; page < 2; ++page) {
+            QCOMPARE(form.pageFields(page)[0].value, QStringLiteral("Changed shared text"));
+            QCOMPARE(form.pageFields(page)[1].value, QStringLiteral("Green"));
+        }
+        QCOMPARE(form.pageFields(0)[2].value, QStringLiteral("Independent pending edit"));
+    }
 
     // Checks that Save with edits keeps a stored blob Mervin could not read byte for byte,
     // or a string blob as the same string.
@@ -563,9 +828,12 @@ private slots:
         QTRY_VERIFY(page && page->isUsable());
         QVERIFY(edit(*page));
         std::atomic<bool> reopenFailed{false};
-        job::testing::failWhen([path, &reopenFailed, reads = 0]
+        job::testing::failWhen([path, &reopenFailed, opensAtCommit = -1]
                               (job::Step step, const QString &file) mutable {
-            if (step == job::Step::Reading && file == path && ++reads >= 3) {
+            if (step == job::Step::Commit && file == path)
+                opensAtCommit = RenderEngine::testing::opens();
+            if (opensAtCommit >= 0 && RenderEngine::testing::opens() > opensAtCommit
+                && step == job::Step::Reading && file == path) {
                 reopenFailed = true;
                 return true;
             }
@@ -575,7 +843,10 @@ private slots:
             return reopenFailed && step == job::Step::Reading
                 && file.contains(QStringLiteral("/recovery/"));
         });
-        const auto release = qScopeGuard([] { job::testing::release(); });
+        const auto release = qScopeGuard([] {
+            job::testing::release();
+            job::testing::failWhen({});
+        });
         QString warning;
         QTimer dialogs;
         connect(&dialogs, &QTimer::timeout, this, [&] {
@@ -893,18 +1164,28 @@ private slots:
         TabPage tab(&engine);
         QVERIFY(tab.open(path));
         QVERIFY(edit(tab));
-        job::testing::failWhen([failure, path, reads = 0](job::Step step, const QString &file) mutable {
+        std::atomic<bool> injected{false};
+        job::testing::failWhen([failure, path, &injected, opensAtCommit = -1]
+                              (job::Step step, const QString &file) mutable {
+            if (step == job::Step::Commit && file == path)
+                opensAtCommit = RenderEngine::testing::opens();
+            bool fail = false;
             if (failure == 0)
-                return step == job::Step::Commit && file.endsWith(QStringLiteral(".json"));
-            if (failure == 1)
-                return step == job::Step::Commit && file == path;
-            if (step == job::Step::Reading && file == path)
-                return ++reads >= 3;
-            return false;
+                fail = step == job::Step::Commit && file.endsWith(QStringLiteral(".json"));
+            else if (failure == 1)
+                fail = step == job::Step::Commit && file == path;
+            else
+                fail = opensAtCommit >= 0 && RenderEngine::testing::opens() > opensAtCommit
+                    && step == job::Step::Reading && file == path;
+            if (fail)
+                injected = true;
+            return fail;
         });
+        const auto resetFailure = qScopeGuard([] { job::testing::failWhen({}); });
         Outcome outcome;
         tab.startSave(outcome.callbacks());
         QTRY_VERIFY_WITH_TIMEOUT(outcome.completion.has_value(), 10000);
+        QVERIFY(injected);
         QCOMPARE(outcome.completion->result, TabPage::SaveResult::Failed);
         QCOMPARE(outcome.completion->originalSaved, failure == 2);
         QTRY_VERIFY_WITH_TIMEOUT(tab.isUsable(), 10000);

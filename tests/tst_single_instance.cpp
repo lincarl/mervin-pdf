@@ -28,6 +28,14 @@
 #include <memory>
 #include <optional>
 
+#ifdef Q_OS_WIN
+#  define WIN32_LEAN_AND_MEAN
+#  define NOMINMAX
+#  include <windows.h>
+#  include <aclapi.h>
+#  include <winioctl.h>
+#endif
+
 #ifdef Q_OS_UNIX
 #  include <sys/socket.h>
 #  include <sys/stat.h>
@@ -73,7 +81,6 @@ QList<Message> opensWithin(SingleInstanceServer &server, int ms)
     return opens;
 }
 
-#ifdef Q_OS_UNIX
 // Sets an environment variable for the rest of the scope.
 class EnvOverride
 {
@@ -99,6 +106,48 @@ private:
     const char *name_;
     std::optional<QByteArray> previous_;
 };
+
+#ifdef Q_OS_WIN
+// Create a directory junction without requiring the symlink privilege.
+bool makeJunction(const QString &path, const QString &target)
+{
+    const std::wstring native = QDir::toNativeSeparators(path).toStdWString();
+    if (!CreateDirectoryW(native.c_str(), nullptr))
+        return false;
+    auto remove = qScopeGuard([&] { RemoveDirectoryW(native.c_str()); });
+    const HANDLE directory = CreateFileW(native.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+                                         FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+                                         nullptr);
+    if (directory == INVALID_HANDLE_VALUE)
+        return false;
+    const auto close = qScopeGuard([&] { CloseHandle(directory); });
+    const std::wstring print = QDir::toNativeSeparators(target).toStdWString();
+    const std::wstring substitute = L"\\??\\" + print;
+    struct JunctionHeader {
+        DWORD tag;
+        WORD length;
+        WORD reserved;
+        WORD substituteOffset;
+        WORD substituteLength;
+        WORD printOffset;
+        WORD printLength;
+    };
+    static_assert(sizeof(JunctionHeader) == 16);
+    const WORD substituteBytes = WORD(substitute.size() * sizeof(wchar_t));
+    const WORD printBytes = WORD(print.size() * sizeof(wchar_t));
+    const WORD length = WORD(8 + substituteBytes + sizeof(wchar_t) + printBytes + sizeof(wchar_t));
+    const JunctionHeader header{IO_REPARSE_TAG_MOUNT_POINT, length, 0, 0, substituteBytes,
+                                WORD(substituteBytes + sizeof(wchar_t)), printBytes};
+    QByteArray data(reinterpret_cast<const char *>(&header), sizeof(header));
+    data.append(reinterpret_cast<const char *>(substitute.c_str()), substituteBytes + sizeof(wchar_t));
+    data.append(reinterpret_cast<const char *>(print.c_str()), printBytes + sizeof(wchar_t));
+    DWORD written = 0;
+    if (!DeviceIoControl(directory, FSCTL_SET_REPARSE_POINT, data.data(), DWORD(data.size()),
+                         nullptr, 0, &written, nullptr))
+        return false;
+    remove.dismiss();
+    return true;
+}
 #endif
 } // namespace
 
@@ -131,7 +180,15 @@ private slots:
     void peerCheck();
     void lockLeftWithoutContent_data();
     void lockLeftWithoutContent();
+#ifdef Q_OS_WIN
+    void windowsEnvironmentDoesNotSplitPrimary();
+    void windowsLegacyPrimaryGetsLaunch();
+    void windowsInstanceFolderMustBePrivate_data();
+    void windowsInstanceFolderMustBePrivate();
+#endif
 #ifdef Q_OS_UNIX
+    void profileAliasesSharePrimary_data();
+    void profileAliasesSharePrimary();
     void filesLiveInRuntimeDir();
     void launchesWithAndWithoutXdgRuntimeDirShareOnePrimary();
     void primaryInAnotherFolderIsFound();
@@ -179,6 +236,9 @@ private:
     std::optional<EnvOverride> runtimeEnv_;
     std::optional<EnvOverride> tmpEnv_;
     std::optional<EnvOverride> cacheEnv_;
+#elif defined(Q_OS_WIN)
+    QTemporaryDir profile_;
+    QString previousProfile_;
 #endif
 };
 
@@ -263,6 +323,10 @@ void TstSingleInstance::initTestCase()
     QVERIFY2(lockFile.startsWith(runtimeDir + QLatin1Char('/')),
              qPrintable(QStringLiteral("the lock is at %1, outside the suite's folder")
                             .arg(lockFile)));
+#elif defined(Q_OS_WIN)
+    QVERIFY(profile_.isValid());
+    previousProfile_ = mervin::ConfigPaths::overrideDir();
+    mervin::ConfigPaths::setOverrideDir(profile_.path());
 #endif
 }
 
@@ -275,8 +339,178 @@ void TstSingleInstance::cleanupTestCase()
     mervin::ConfigPaths::setOverrideDir(previousProfile_);
     mervin::ipc::setSocketRootForTests({});
     mervin::ipc::setUserRuntimeRootForTests({});
+#elif defined(Q_OS_WIN)
+    mervin::ConfigPaths::setOverrideDir(previousProfile_);
 #endif
 }
+
+#ifdef Q_OS_WIN
+// The same account and profile must keep one primary across launcher environments.
+void TstSingleInstance::windowsEnvironmentDoesNotSplitPrimary()
+{
+    QTemporaryDir profile;
+    QTemporaryDir firstTemp;
+    QTemporaryDir secondTemp;
+    QVERIFY(profile.isValid() && firstTemp.isValid() && secondTemp.isValid());
+    const QString previous = mervin::ConfigPaths::overrideDir();
+    const auto restore = qScopeGuard([&] { mervin::ConfigPaths::setOverrideDir(previous); });
+    mervin::ConfigPaths::setOverrideDir(profile.path());
+    SingleInstanceServer primary;
+    QString group;
+    mervin::ipc::InstancePaths paths;
+    {
+        const EnvOverride user("USERNAME", "launcher-one");
+        const EnvOverride temp("TEMP", QFile::encodeName(firstTemp.path()));
+        const EnvOverride tmp("TMP", QFile::encodeName(firstTemp.path()));
+        group = mervin::ipc::hostPipeName();
+        paths = mervin::ipc::instancePaths();
+        QCOMPARE(primary.start(), Start::Started);
+    }
+    const EnvOverride user("USERNAME", "launcher-two");
+    const EnvOverride unixUser("USER", "different-name");
+    const EnvOverride temp("TEMP", QFile::encodeName(secondTemp.path()));
+    const EnvOverride tmp("TMP", QFile::encodeName(secondTemp.path()));
+    QCOMPARE(mervin::ipc::hostPipeName(), group);
+    QCOMPARE(mervin::ipc::instancePaths().lockFile, paths.lockFile);
+    QCOMPARE(mervin::ipc::instancePaths().carriedFile, paths.carriedFile);
+    SingleInstanceServer launch;
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, Message::open({QStringLiteral("same.pdf")}),
+                                         1000), Launch::Delivered);
+    const auto opens = primary.takeOpens();
+    QCOMPARE(opens.size(), 1);
+    QCOMPARE(opens.first().paths, QStringList{QStringLiteral("same.pdf")});
+}
+
+// Upgrade discovery remains one-way. A new launch can still reach an old name.
+void TstSingleInstance::windowsLegacyPrimaryGetsLaunch()
+{
+    const QString legacy = mervin::ipc::legacyEndpoint();
+    QVERIFY(legacy != mervin::ipc::hostPipeName());
+    SingleInstanceServer older;
+    QCOMPARE(older.start(legacy), Start::Started);
+    SingleInstanceServer launch;
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, Message::open({QStringLiteral("legacy.pdf")}),
+                                         1000), Launch::Delivered);
+    QVERIFY(!launch.isListening());
+    const auto opens = older.takeOpens();
+    QCOMPARE(opens.size(), 1);
+    QCOMPARE(opens.first().paths, QStringList{QStringLiteral("legacy.pdf")});
+}
+
+void TstSingleInstance::windowsInstanceFolderMustBePrivate_data()
+{
+    QTest::addColumn<QString>("kind");
+    QTest::newRow("everyone can read it") << QStringLiteral("everyone");
+    QTest::newRow("inherits parent permissions") << QStringLiteral("inherited");
+    QTest::newRow("junction to another directory") << QStringLiteral("junction");
+    QTest::newRow("regular file in place of folder") << QStringLiteral("file");
+}
+
+// Untrusted storage must not create a lock, consume data or acquire state ownership.
+void TstSingleInstance::windowsInstanceFolderMustBePrivate()
+{
+    QFETCH(QString, kind);
+    QTemporaryDir profile;
+    QTemporaryDir target;
+    QVERIFY(profile.isValid() && target.isValid());
+    const QString previous = mervin::ConfigPaths::overrideDir();
+    const auto restore = qScopeGuard([&] { mervin::ConfigPaths::setOverrideDir(previous); });
+    mervin::ConfigPaths::setOverrideDir(profile.path());
+    const auto paths = mervin::ipc::instancePaths();
+    QVERIFY(!paths.lockFile.isEmpty());
+    const QString folder = QFileInfo(paths.lockFile).absolutePath();
+    std::wstring native = QDir::toNativeSeparators(folder).toStdWString();
+    const auto removeJunction = qScopeGuard([&] {
+        if (kind == QLatin1String("junction"))
+            RemoveDirectoryW(native.c_str());
+    });
+    if (kind == QLatin1String("everyone")) {
+        BYTE everyone[SECURITY_MAX_SID_SIZE];
+        DWORD size = sizeof(everyone);
+        QVERIFY(CreateWellKnownSid(WinWorldSid, nullptr, everyone, &size));
+        EXPLICIT_ACCESSW access{};
+        access.grfAccessPermissions = FILE_ALL_ACCESS;
+        access.grfAccessMode = SET_ACCESS;
+        access.grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+        access.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+        access.Trustee.ptstrName = reinterpret_cast<LPWSTR>(everyone);
+        PACL acl = nullptr;
+        QCOMPARE(SetEntriesInAclW(1, &access, nullptr, &acl), DWORD(ERROR_SUCCESS));
+        const auto freeAcl = qScopeGuard([&] { LocalFree(acl); });
+        QCOMPARE(SetNamedSecurityInfoW(native.data(), SE_FILE_OBJECT,
+                                       DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                                       nullptr, nullptr, acl, nullptr), DWORD(ERROR_SUCCESS));
+    } else if (kind == QLatin1String("inherited")) {
+        PACL acl = nullptr;
+        PSECURITY_DESCRIPTOR descriptor = nullptr;
+        QCOMPARE(GetNamedSecurityInfoW(native.c_str(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+                                       nullptr, nullptr, &acl, nullptr, &descriptor), DWORD(ERROR_SUCCESS));
+        const auto freeDescriptor = qScopeGuard([&] { LocalFree(descriptor); });
+        QCOMPARE(SetNamedSecurityInfoW(native.data(), SE_FILE_OBJECT,
+                                       DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
+                                       nullptr, nullptr, acl, nullptr), DWORD(ERROR_SUCCESS));
+    } else {
+        QVERIFY(QDir().rmdir(folder));
+        if (kind == QLatin1String("junction")) {
+            QVERIFY2(makeJunction(folder, target.path()), qPrintable(QString::number(GetLastError())));
+        } else {
+            QFile file(folder);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write("not a directory"), 15);
+        }
+    }
+    QVERIFY(mervin::ipc::instancePaths().lockFile.isEmpty());
+    SingleInstanceServer launch;
+    QCOMPARE(launch.start(), Start::Failed);
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, Message::open({QStringLiteral("private.pdf")}),
+                                         1000), Launch::Uncoordinated);
+    QVERIFY(!launch.isListening());
+    QVERIFY(QDir(target.path()).isEmpty());
+    if (kind != QLatin1String("file"))
+        QVERIFY(QDir(folder).isEmpty());
+}
+#endif
+
+#ifdef Q_OS_UNIX
+void TstSingleInstance::profileAliasesSharePrimary_data()
+{
+    QTest::addColumn<bool>("exists");
+    QTest::newRow("existing profile") << true;
+    QTest::newRow("profile created after identity lookup") << false;
+}
+
+// Use the production group name, unlike the explicit test names in endpoint tests.
+void TstSingleInstance::profileAliasesSharePrimary()
+{
+    QFETCH(bool, exists);
+    QTemporaryDir root(kShortTemp);
+    QVERIFY(root.isValid());
+    const QString direct = root.filePath(QStringLiteral("actual"));
+    const QString alias = root.filePath(QStringLiteral("alias"));
+    QVERIFY(QDir().mkdir(direct));
+    QVERIFY(QFile::link(direct, alias));
+    const QString suffix = QStringLiteral("/new/profile");
+    if (exists)
+        QVERIFY(QDir().mkpath(direct + suffix));
+    const ProfileOverride profile(direct + suffix);
+    const QString group = mervin::ipc::hostPipeName();
+    {
+        const ProfileOverride linked(alias + suffix);
+        QCOMPARE(mervin::ipc::hostPipeName(), group);
+    }
+    QVERIFY(QDir().mkpath(direct + suffix));
+    QCOMPARE(mervin::ipc::hostPipeName(), group);
+    SingleInstanceServer primary;
+    QCOMPARE(primary.start(), Start::Started);
+    const ProfileOverride linked(alias + suffix);
+    SingleInstanceServer launch;
+    QCOMPARE(mervin::ipc::claimOrHandOff(launch, Message::open({QStringLiteral("alias.pdf")}),
+                                         1000), Launch::Delivered);
+    const auto opens = primary.takeOpens();
+    QCOMPARE(opens.size(), 1);
+    QCOMPARE(opens.first().paths, QStringList{QStringLiteral("alias.pdf")});
+}
+#endif
 
 void TstSingleInstance::storeAndMsiHostsStaySeparate()
 {

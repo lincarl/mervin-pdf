@@ -31,6 +31,7 @@
 #include <QTest>
 
 #include <cstdlib>
+#include <limits>
 #include <memory>
 #include <set>
 #include <utility>
@@ -66,6 +67,10 @@ private slots:
 
     void mirrorsMatchLayout_data();
     void mirrorsMatchLayout();
+    void hypotheticalStateDoesNotChangeTheLayout();
+    void extremeCanvasesKeepEveryRowReachable_data();
+    void extremeCanvasesKeepEveryRowReachable();
+    void rowHelpersClamp();
     void fitNeverOverflows_data();
     void fitNeverOverflows();
     void fitFillsTheViewport();
@@ -78,6 +83,10 @@ private slots:
     void rowTopsAreShared();
     void pageAtYReportsEveryRowLeader_data();
     void pageAtYReportsEveryRowLeader();
+    void viewportIntersections_data();
+    void viewportIntersections();
+    void pageAtYHalfGapTransitions_data();
+    void pageAtYHalfGapTransitions();
     void oversizedSheetGetsItsOwnRow();
     void landscapePagesStillPair();
     void degenerateDocuments();
@@ -121,6 +130,8 @@ QList<QSizeF> fixture(const QString &key)
         return {{400, 300}, {440, 330}, {400, 300}, {440, 330}, {400, 300}};
     if (key == QLatin1String("tallOdd"))
         return {{400, 300}, {400, 420}, {400, 300}, {400, 420}};
+    if (key == QLatin1String("tallEven"))
+        return {{400, 420}, {400, 300}, {400, 420}, {400, 300}};
     if (key == QLatin1String("step"))
         return {{800, 600}, {400, 300}, {400, 300}, {400, 300}, {400, 300}};
     if (key == QLatin1String("uniform"))
@@ -181,7 +192,7 @@ QByteArray mediaBoxPdf(const QList<QSizeF> &pages)
                     + "] >>";
     for (const QSizeF &s : pages) {
         bodies << "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 "
-                        + QByteArray::number(s.width()) + " " + QByteArray::number(s.height())
+                        + QByteArray::number(s.width(), 'f', 0) + " " + QByteArray::number(s.height(), 'f', 0)
                         + "] >>";
     }
     return assemblePdf(bodies);
@@ -243,6 +254,116 @@ const Document *TstViewLayout::openFile(const QString &path)
 void TstViewLayout::mirrorsMatchLayout_data()
 {
     addFixtureRows();
+}
+
+void TstViewLayout::hypotheticalStateDoesNotChangeTheLayout()
+{
+    const Document *d = doc(QStringLiteral("spine"));
+    QVERIFY(d);
+    ViewLayout layout;
+    layout.setDocument(d);
+    layout.setMode(kSingle);
+    layout.setRotation(270);
+    layout.setScale(3);
+    layout.setCurrentPage(4);
+    const QSize before = layout.totalSize();
+    const QRect last = layout.pageRect(4);
+    struct Expected { double scale; Mode mode; int rotation; int page; QSize size; };
+    const Expected cases[] = {
+        {2, kContinuous, 90, 0, {692, 4240}},
+        {2, kSingleSpread, 90, 3, {1300, 912}},
+        {0.5, kSingle, 180, 4, {232, 182}},
+        {1, kSpread, 0, 0, {880, 1016}},
+    };
+    for (const auto &test : cases) {
+        QCOMPARE(layout.widthForScale(test.scale, test.mode, test.rotation, test.page), test.size.width());
+        QCOMPARE(layout.heightForScale(test.scale, test.mode, test.rotation, test.page), test.size.height());
+        const auto fit = layout.fitBasis(1000, 800, test.mode, test.rotation, test.page);
+        QVERIFY(fit.widthScale > 0);
+        QCOMPARE(layout.mode(), kSingle);
+        QCOMPARE(layout.rotation(), 270);
+        QCOMPARE(layout.scale(), 3);
+        QCOMPARE(layout.totalSize(), before);
+        QCOMPARE(layout.pageRect(4), last);
+        QVERIFY(layout.pageRect(0).isNull());
+    }
+}
+
+void TstViewLayout::extremeCanvasesKeepEveryRowReachable_data()
+{
+    QTest::addColumn<QString>("key");
+    QTest::addColumn<QList<QSizeF>>("pages");
+    QTest::newRow("giant-mixed") << QStringLiteral("giant-mixed")
+        << QList<QSizeF>{{1e12, 2e12}, {400, 300}, {400, 300}, {400, 300}};
+    QTest::newRow("giant-spread") << QStringLiteral("giant-spread")
+        << QList<QSizeF>{{1e12, 2e12}, {2e12, 1e12}, {1e12, 2e12}};
+    QTest::newRow("many-rows") << QStringLiteral("many-rows")
+        << QList<QSizeF>(3000, QSizeF(10000, 10000));
+}
+
+void TstViewLayout::extremeCanvasesKeepEveryRowReachable()
+{
+    QFETCH(QString, key);
+    QFETCH(QList<QSizeF>, pages);
+    const Document *d = build(key, pages);
+    QVERIFY(d);
+    QCOMPARE(d->pageCount(), pages.size());
+    ViewLayout layout;
+    layout.setDocument(d);
+    QVERIFY(layout.maximumScale() > 0);
+    QVERIFY(layout.maximumScale() < 100);
+    for (Mode mode : {kContinuous, kSpread, kSingle, kSingleSpread}) {
+        layout.setMode(mode);
+        for (int rotation : kRotations) {
+            layout.setRotation(rotation);
+            for (double requested : {0.08, 1.0, 100.0, 1e300}) {
+                layout.setScale(requested);
+                QCOMPARE(layout.scale(), std::min(requested, layout.maximumScale()));
+                layout.setCurrentPage(d->pageCount() - 1);
+                const QSize total = layout.totalSize();
+                QVERIFY(total.width() > 0 && total.height() > 0);
+                QVERIFY(total.width() <= std::numeric_limits<int>::max() / 4);
+                QVERIFY(total.height() <= std::numeric_limits<int>::max() / 4);
+                QCOMPARE(layout.widthForScale(requested, mode, rotation, d->pageCount() - 1), total.width());
+                QCOMPARE(layout.heightForScale(requested, mode, rotation, d->pageCount() - 1), total.height());
+                int bottom = -1;
+                for (int page = 0; page < d->pageCount(); ++page) {
+                    const QRect rect = layout.pageRect(page);
+                    if (mode.scroll == Scroll::Single && page < layout.rowStart(d->pageCount() - 1)) {
+                        QVERIFY(rect.isNull());
+                        continue;
+                    }
+                    QVERIFY(rect.isValid());
+                    QVERIFY(QRect(QPoint(0, 0), total).contains(rect));
+                    const auto visible = layout.pagesInViewport(QRect(rect.center(), QSize(1, 1)));
+                    QVERIFY(std::find(visible.begin(), visible.end(), page) != visible.end());
+                    if (page == layout.rowStart(page)) {
+                        QVERIFY(rect.top() > bottom);
+                        bottom = rect.bottom();
+                        QCOMPARE(layout.pageAtY(rect.top()), page);
+                    }
+                }
+            }
+        }
+    }
+}
+
+void TstViewLayout::rowHelpersClamp()
+{
+    ViewLayout layout;
+    for (Mode mode : {kContinuous, kSpread}) {
+        layout.setMode(mode);
+        QCOMPARE(layout.rowStart(-1), 0);
+        QCOMPARE(layout.rowEnd(std::numeric_limits<int>::max()), 0);
+    }
+    layout.setDocument(doc(QStringLiteral("spine")));
+    for (Mode mode : {kContinuous, kSpread}) {
+        layout.setMode(mode);
+        QCOMPARE(layout.rowStart(-1), 0);
+        QCOMPARE(layout.rowEnd(-1), mode.spread ? 2 : 1);
+        QCOMPARE(layout.rowStart(std::numeric_limits<int>::max()), 4);
+        QCOMPARE(layout.rowEnd(std::numeric_limits<int>::max()), 5);
+    }
 }
 
 // heightForScale/widthForScale are what the fit reasons about; relayout() is what
@@ -578,7 +699,7 @@ void TstViewLayout::pageAtYReportsEveryRowLeader_data()
 {
     QTest::addColumn<QString>("key");
     // Taller page on the LEFT: a bottom-sorted scan skips the right-hand sheet.
-    QTest::newRow("tallLeft") << QStringLiteral("spine");
+    QTest::newRow("tallLeft") << QStringLiteral("tallEven");
     // Taller page on the RIGHT: it hijacks a band and reports mid-spread instead.
     QTest::newRow("tallRight") << QStringLiteral("tallOdd");
     QTest::newRow("standalone") << QStringLiteral("step");
@@ -615,6 +736,126 @@ void TstViewLayout::pageAtYReportsEveryRowLeader()
         seen.insert(p);
     }
     QCOMPARE(seen, expected);
+}
+
+void TstViewLayout::viewportIntersections_data()
+{
+    QTest::addColumn<bool>("spread");
+    QTest::addColumn<bool>("single");
+    QTest::addColumn<int>("current");
+    QTest::addColumn<QRect>("viewport");
+    QTest::addColumn<std::vector<int>>("expected");
+
+    // At scale 1, tallOdd has left x=16..415 and right x=424..823.
+    // Row tops are 16 and 448, with bottoms 315/435 and 747/867.
+    struct Case {
+        const char *name;
+        QRect viewport;
+        std::vector<int> expected;
+    };
+    const Case spreadCases[] = {
+        {"above", {0, 0, 840, 16}, {}},
+        {"first-top", {0, 16, 840, 1}, {0, 1}},
+        {"left-edge-outside", {15, 16, 1, 420}, {}},
+        {"left-edge-inside", {16, 16, 1, 300}, {0}},
+        {"short-page-bottom", {0, 315, 840, 1}, {0, 1}},
+        {"below-short-page", {0, 316, 840, 1}, {1}},
+        {"below-short-page-left-only", {16, 316, 400, 120}, {}},
+        {"right-only", {424, 16, 400, 420}, {1}},
+        {"left-inner-edge", {415, 16, 1, 420}, {0}},
+        {"gutter", {416, 16, 8, 852}, {}},
+        {"gutter-right-edge", {423, 16, 1, 420}, {}},
+        {"right-inner-edge", {424, 16, 1, 420}, {1}},
+        {"right-edge-inside", {823, 16, 1, 420}, {1}},
+        {"right-edge-outside", {824, 16, 1, 420}, {}},
+        {"tall-page-bottom", {0, 435, 840, 1}, {1}},
+        {"row-gap", {0, 436, 840, 12}, {}},
+        {"gap-through-next-top", {0, 436, 840, 13}, {2, 3}},
+        {"both-row-edges", {0, 435, 840, 14}, {1, 2, 3}},
+        {"next-top", {0, 448, 840, 1}, {2, 3}},
+        {"all-pages", {0, 0, 840, 884}, {0, 1, 2, 3}},
+        {"right-column", {424, 16, 400, 852}, {1, 3}},
+        {"last-bottom", {0, 867, 840, 1}, {3}},
+        {"below", {0, 868, 840, 16}, {}},
+        {"null", {}, {}},
+        {"zero-width", {424, 16, 0, 420}, {}},
+        {"zero-height", {424, 16, 400, 0}, {}},
+        {"negative-width", {824, 16, -400, 420}, {}},
+        {"negative-height", {424, 436, 400, -420}, {}},
+    };
+    for (const auto &row : spreadCases)
+        QTest::newRow(row.name) << true << false << 0 << row.viewport << row.expected;
+
+    QTest::newRow("single-spread-current-right")
+        << true << true << 3 << QRect(0, 16, 840, 1) << std::vector<int>{2, 3};
+    QTest::newRow("single-spread-taller-right")
+        << true << true << 3 << QRect(0, 316, 840, 120) << std::vector<int>{3};
+    QTest::newRow("single-spread-left-only")
+        << true << true << 3 << QRect(16, 16, 400, 300) << std::vector<int>{2};
+    QTest::newRow("single-spread-gutter")
+        << true << true << 3 << QRect(416, 16, 8, 420) << std::vector<int>{};
+    QTest::newRow("single-spread-no-other-row")
+        << true << true << 3 << QRect(0, 448, 840, 420) << std::vector<int>{};
+    // Without spreads the first page ends at 315 and the second starts at 328.
+    QTest::newRow("continuous-bottom")
+        << false << false << 0 << QRect(16, 315, 400, 1) << std::vector<int>{0};
+    QTest::newRow("continuous-gap")
+        << false << false << 0 << QRect(16, 316, 400, 12) << std::vector<int>{};
+    QTest::newRow("continuous-both-edges")
+        << false << false << 0 << QRect(16, 315, 400, 14) << std::vector<int>{0, 1};
+    QTest::newRow("continuous-outside-width")
+        << false << false << 0 << QRect(416, 0, 10, 1508) << std::vector<int>{};
+}
+
+void TstViewLayout::viewportIntersections()
+{
+    QFETCH(bool, spread);
+    QFETCH(bool, single);
+    QFETCH(int, current);
+    QFETCH(QRect, viewport);
+    QFETCH(std::vector<int>, expected);
+    const Document *d = doc(QStringLiteral("tallOdd"));
+    QVERIFY(d);
+    ViewLayout layout;
+    layout.setDocument(d);
+    layout.setMode({single ? Scroll::Single : Scroll::Continuous, spread});
+    layout.setCurrentPage(current);
+    layout.setScale(1.0);
+    QCOMPARE(layout.pagesInViewport(viewport), expected);
+}
+
+void TstViewLayout::pageAtYHalfGapTransitions_data()
+{
+    QTest::addColumn<bool>("spread");
+    QTest::addColumn<int>("y");
+    QTest::addColumn<int>("expected");
+    const std::pair<int, int> spreadRows[] = {
+        {-1, 0}, {15, 0}, {16, 0}, {315, 0}, {316, 0}, {435, 0},
+        {436, 0}, {441, 0}, {442, 2}, {447, 2}, {448, 2}, {867, 2}, {900, 2},
+    };
+    const std::pair<int, int> continuousRows[] = {
+        {-1, 0}, {16, 0}, {315, 0}, {316, 0}, {321, 0}, {322, 1},
+        {327, 1}, {328, 1}, {747, 1}, {753, 1}, {754, 2},
+        {1059, 2}, {1065, 2}, {1066, 3}, {1491, 3}, {1600, 3},
+    };
+    for (const auto &[y, page] : spreadRows)
+        QTest::newRow(qPrintable(QStringLiteral("spread-%1").arg(y))) << true << y << page;
+    for (const auto &[y, page] : continuousRows)
+        QTest::newRow(qPrintable(QStringLiteral("continuous-%1").arg(y))) << false << y << page;
+}
+
+void TstViewLayout::pageAtYHalfGapTransitions()
+{
+    QFETCH(bool, spread);
+    QFETCH(int, y);
+    QFETCH(int, expected);
+    const Document *d = doc(QStringLiteral("tallOdd"));
+    QVERIFY(d);
+    ViewLayout layout;
+    layout.setDocument(d);
+    layout.setMode({Scroll::Continuous, spread});
+    layout.setScale(1.0);
+    QCOMPARE(layout.pageAtY(y), expected);
 }
 
 void TstViewLayout::oversizedSheetGetsItsOwnRow()

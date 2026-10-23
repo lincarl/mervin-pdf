@@ -37,7 +37,7 @@ const QByteArray kRelease163 = R"({
 // A downloadable, verifiable asset: the rules under test are about the name.
 ReleaseAsset named(const QString &name)
 {
-    return {name, QStringLiteral("https://example.invalid/") + name, QStringLiteral("ab12")};
+    return {name, QStringLiteral("https://example.invalid/") + name, QString(64, QLatin1Char('a'))};
 }
 
 } // namespace
@@ -332,6 +332,15 @@ void TestUpdatePlan::assetForNeedsADigestAndAPlainName()
     // Nothing unverifiable gets run as an installer.
     ReleaseAsset undigested = named(name);
     undigested.sha256.clear();
+    QVERIFY(!assetFor({undigested}, PackageKind::Msi, {}));
+
+    for (const QString &digest : {QStringLiteral("ab12"), QString(64, QLatin1Char('z')),
+                                 QString(63, QLatin1Char('a')), QString(65, QLatin1Char('a'))}) {
+        undigested.sha256 = digest;
+        QVERIFY(!assetFor({undigested}, PackageKind::Msi, {}));
+    }
+    undigested = named(name);
+    undigested.url = QStringLiteral("http://example.invalid/update");
     QVERIFY(!assetFor({undigested}, PackageKind::Msi, {}));
 
     // The name becomes a path under the updates folder, so it must stay there.

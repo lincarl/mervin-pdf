@@ -21,6 +21,9 @@
 # unchanged release. An existing unpatched build gets the patches. A build with
 # another patch set has that set reverted first. If the current set then does
 # not apply, the script puts the previous set back and stops.
+# A new destination must be absent or an empty directory. Downloads and
+# extraction stay in a private staging directory beside it, so unrelated
+# destinations and neighboring source trees are never removed or overwritten.
 #
 # Bundled third-party is used (no USE_SYSTEM_LIBS), so the only build dependency
 # is a C/C++ toolchain (build-essential). The resulting archives are
@@ -53,6 +56,38 @@ if [ "${1:-}" = "--patch-set" ]; then
 fi
 MARKER="build/release/mervin-patch-set.sha256"
 
+# Remove only temporary directories created by this invocation, including when
+# downloading, verifying, extracting, patching or building fails.
+staging=""
+previous=""
+cleanup() {
+    if [ -n "${staging}" ]; then rm -rf -- "${staging}"; fi
+    if [ -n "${previous}" ]; then rm -rf -- "${previous}"; fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# A trailing slash must not hide a symlink when checking a new destination.
+destination="${DEST}"
+while [[ "${destination}" != / && "${destination}" == */ ]]; do
+    destination="${destination%/}"
+done
+
+# Refuse occupied destinations before downloading and again before publishing.
+# nullglob includes hidden entries through the two explicit dot patterns.
+check_new_destination() {
+    if [ -L "${destination}" ] || { [ -e "${destination}" ] && [ ! -d "${destination}" ]; }; then
+        echo "ERROR: ${DEST} already exists and is not an empty directory. Choose another destination." >&2
+        return 1
+    fi
+    local entries=("${destination}"/* "${destination}"/.[!.]* "${destination}"/..?*)
+    if [ ${#entries[@]} -gt 0 ]; then
+        echo "ERROR: ${DEST} is not an empty directory or a MuPDF source tree. Choose another destination." >&2
+        return 1
+    fi
+}
+
 if [ -f "${DEST}/build/release/libmupdf.a" ]; then
     built="$(cat "${DEST}/${MARKER}" 2>/dev/null || echo none)"
     if [ "${built}" = "${PATCH_SET}" ]; then
@@ -66,23 +101,32 @@ if [ -f "${DEST}/build/release/libmupdf.a" ]; then
 fi
 
 if [ ! -f "${DEST}/Makefile" ]; then
-    parent="$(dirname "${DEST}")"
-    mkdir -p "${parent}"
-    tmptar="$(mktemp)"
+    check_new_destination
+    parent="$(dirname -- "${destination}")"
+    mkdir -p -- "${parent}"
+    parent="$(cd -- "${parent}" && pwd)"
+    staging="$(mktemp -d "${parent}/.mupdf-${VERSION}.XXXXXX")"
+    tmptar="${staging}/source.tar.gz"
     echo "Downloading ${URL}" >&2
     curl -fSL --retry 3 "${URL}" -o "${tmptar}"
     printf '%s  %s\n' "${SHA256}" "${tmptar}" | sha256sum --check - >&2
-    rm -rf "${DEST}"
-    # Extract straight into the parent, then rename within it (a same-dir rename,
-    # not a cross-filesystem copy of MuPDF's large tree).
-    tar -xzf "${tmptar}" -C "${parent}"
-    rm -f "${tmptar}"
-    produced="${parent}/mupdf-${VERSION}-source"
-    [ -d "${produced}" ] || { echo "ERROR: expected ${produced} after extraction" >&2; exit 1; }
-    [ "${produced}" = "${DEST}" ] || mv "${produced}" "${DEST}"
+    tar -xzf "${tmptar}" -C "${staging}"
+    produced="${staging}/mupdf-${VERSION}-source"
+    [ -d "${produced}" ] && [ ! -L "${produced}" ] \
+        && [ -f "${produced}/Makefile" ] && [ -f "${produced}/include/mupdf/fitz.h" ] \
+        || { echo "ERROR: expected MuPDF source at ${produced} after extraction" >&2; exit 1; }
+    check_new_destination
+    # Rename on the same filesystem. -T prevents nesting inside a destination
+    # that appeared meanwhile, and refuses files, symlinks and nonempty folders.
+    mv -T -- "${produced}" "${destination}"
 fi
 
-cd "${DEST}"
+# A Makefile alone does not identify a MuPDF source tree. Check before removing
+# build or patch records from a directory supplied by the caller.
+[ -f "${DEST}/include/mupdf/fitz.h" ] \
+    || { echo "ERROR: ${DEST} is not a MuPDF source tree. Choose another destination." >&2; exit 1; }
+
+cd -- "${DEST}"
 # Until make succeeds, the archives match no patch set.
 rm -f "${MARKER}"
 
@@ -116,7 +160,6 @@ if [ "${recorded}" != "${PATCH_SET}" ]; then
         mv mervin-patches.new mervin-patches
     }
     previous="$(mktemp -d)"
-    trap 'rm -rf "${previous}"' EXIT
     old=(mervin-patches/*.patch)
     if [ ${#old[@]} -gt 0 ]; then
         echo "Reverting the MuPDF patch set recorded in ${DEST}/mervin-patches" >&2

@@ -25,6 +25,7 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QScreen>
+#include <QSignalBlocker>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSpinBox>
@@ -40,18 +41,48 @@ namespace {
 // The settings column fits English at this width. A longer translation widens it.
 constexpr int kSettingsWidth = 390;
 constexpr int kDefaultPaperSizeRole = Qt::UserRole + 1;
+constexpr QPageSize::PageSizeId kCommonSizes[] = {
+    QPageSize::A3, QPageSize::A4, QPageSize::A5, QPageSize::B4, QPageSize::B5,
+    QPageSize::Letter, QPageSize::Legal, QPageSize::Tabloid, QPageSize::Executive,
+};
 } // namespace
+
+QPageSize PrintDialog::PaperCapabilities::acceptedPaper(const QPageSize &paper) const
+{
+    if (!paper.isValid())
+        return {};
+    for (const QPageSize &reported : supported) {
+        if (reported.key() == paper.key() && reported.isEquivalentTo(paper))
+            return reported;
+    }
+    if (supported.isEmpty() && !custom)
+        return paper;
+    if (!custom)
+        return {};
+    // Ordinary named sizes may also fit a variable-size device. A driver-specific
+    // variant key, however, must be explicitly reported, even at the same dimensions.
+    if (paper.id() != QPageSize::Custom && paper.key() != QPageSize(paper.id()).key())
+        return {};
+    const QSizeF size = paper.size(QPageSize::Point);
+    const QSizeF low = minimum.size(QPageSize::Point);
+    const QSizeF high = maximum.size(QPageSize::Point);
+    if ((minimum.isValid() && (size.width() < low.width() || size.height() < low.height()))
+        || (maximum.isValid() && (size.width() > high.width() || size.height() > high.height())))
+        return {};
+    return paper;
+}
 
 PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
                          mervin::Document *document, int rotation,
                          QPageLayout::Orientation initialOrientation, int currentPage,
-                         const QString &suggestedFileName, QWidget *parent)
+                         const QString &suggestedFileName, QWidget *parent, PaperQuery paperQuery)
     : QDialog(parent)
     , printer_(printer)
     , pageCount_(document ? document->pageCount() : 0)
     , currentPage_(qBound(1, currentPage, qMax(1, pageCount_)))
     , suggestedFileName_(suggestedFileName)
     , preferredMargins_(printer->pageLayout().margins(QPageLayout::Point))
+    , paperQuery_(std::move(paperQuery))
 {
     //: Dialog title.
     setWindowTitle(tr("Print"));
@@ -105,11 +136,6 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
 
     paperSizeCombo_ = new QComboBox(printerBox);
     paperSizeCombo_->setObjectName(QStringLiteral("printPaperSize"));
-    static const QPageSize::PageSizeId kCommonSizes[] = {
-        QPageSize::A3,     QPageSize::A4,     QPageSize::A5,    QPageSize::B4,
-        QPageSize::B5,     QPageSize::Letter, QPageSize::Legal, QPageSize::Tabloid,
-        QPageSize::Executive,
-    };
     const QPageSize currentSize = printer_->pageLayout().pageSize();
     for (QPageSize::PageSizeId id : kCommonSizes)
         paperSizeCombo_->addItem(QPageSize(id).name(), QVariant::fromValue(QPageSize(id)));
@@ -390,7 +416,9 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
         // QPrinter can carry the previous device's paper size across setPrinterName().
         // Select the driver's default before any refresh applies the dialog's options.
         printerSelectionChanged_ = true;
-        selectPaperSize(selectedPrinterDefaultPageSize());
+        const QPageSize defaultSize = selectedPrinterDefaultPageSize();
+        refreshPaperSizes(defaultSize.isValid() ? defaultSize
+            : paperSizeCombo_->currentData().value<QPageSize>());
         schedulePreview();
     });
     for (QComboBox *combo : {paperSizeCombo_, colorCombo_, qualityCombo_,
@@ -406,7 +434,10 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
         });
     }
     connect(customEdit_, &QLineEdit::textChanged, this, &PrintDialog::schedulePreview);
-    connect(printToFile_, &QCheckBox::toggled, this, &PrintDialog::schedulePreview);
+    connect(printToFile_, &QCheckBox::toggled, this, [this] {
+        refreshPaperSizes(paperSizeCombo_->currentData().value<QPageSize>());
+        schedulePreview();
+    });
     connect(twoSidedCheck_, &QCheckBox::toggled, this, &PrintDialog::schedulePreview);
     connect(previousButton_, &QPushButton::clicked, this, [this] {
         if (previewIndex_ > 0) {
@@ -423,6 +454,7 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
 
     const QRect screenArea = screen() ? screen()->availableGeometry() : QRect(0, 0, 1280, 900);
     resize(qMin(1180, screenArea.width() - 60), qMin(800, screenArea.height() - 80));
+    refreshPaperSizes(currentSize);
     refreshPreview();
     // Wrapped selection captions must not push navigation over the preview.
     mervin::followLayoutMinimum(*this, QSize(800, 480));
@@ -509,6 +541,59 @@ void PrintDialog::selectPaperSize(const QPageSize &size)
     paperSizeCombo_->setCurrentIndex(0);
 }
 
+// Queries only selected native devices and keeps even absent metadata for this dialog.
+const PrintDialog::PaperCapabilities &PrintDialog::selectedPaperCapabilities()
+{
+    const QString name = printerCombo_->currentData().toString();
+    auto found = paperCapabilities_.constFind(name);
+    if (found == paperCapabilities_.cend()) {
+        PaperCapabilities capabilities;
+        if (paperQuery_) {
+            capabilities = paperQuery_(name);
+        } else if (!name.isEmpty()) {
+            const QPrinterInfo info = QPrinterInfo::printerInfo(name);
+            capabilities = {info.supportedPageSizes(), info.supportsCustomPageSizes(),
+                            info.minimumPhysicalPageSize(), info.maximumPhysicalPageSize()};
+        }
+        found = paperCapabilities_.insert(name, std::move(capabilities));
+    }
+    return found.value();
+}
+
+// Offers native driver media or the common PDF choices, retaining an explicit choice
+// for validation instead of silently substituting a different sheet.
+void PrintDialog::refreshPaperSizes(const QPageSize &preferred)
+{
+    if (printToFile_->isChecked()) {
+        // Keep aliases reused by printer-default switching while PDF stays unrestricted.
+        for (QPageSize::PageSizeId id : kCommonSizes) {
+            if (paperSizeCombo_->findData(QVariant::fromValue(QPageSize(id))) < 0)
+                selectPaperSize(QPageSize(id));
+        }
+        selectPaperSize(preferred);
+        return;
+    }
+    const QSignalBlocker blocked(paperSizeCombo_);
+    const PaperCapabilities &capabilities = selectedPaperCapabilities();
+    paperSizeCombo_->clear();
+    if (capabilities.supported.isEmpty() && !capabilities.custom) {
+        for (QPageSize::PageSizeId id : kCommonSizes)
+            paperSizeCombo_->addItem(QPageSize(id).name(), QVariant::fromValue(QPageSize(id)));
+    } else {
+        for (const QPageSize &paper : capabilities.supported)
+            selectPaperSize(paper);
+        if (capabilities.custom) {
+            for (QPageSize::PageSizeId id : kCommonSizes) {
+                const QPageSize paper = capabilities.acceptedPaper(QPageSize(id));
+                if (paper.isValid())
+                    selectPaperSize(paper);
+            }
+        }
+    }
+    const QPageSize accepted = capabilities.acceptedPaper(preferred);
+    selectPaperSize(accepted.isValid() ? accepted : preferred);
+}
+
 bool PrintDialog::applyPrinterSettings(QString *error)
 {
     // Device changes reset driver properties, so apply every explicit option afterwards.
@@ -528,8 +613,10 @@ bool PrintDialog::applyPrinterSettings(QString *error)
             printer_->setPrinterName(name);
     }
     printer_->setFullPage(false);
-    const QPageSize paper = paperSizeCombo_->currentData().value<QPageSize>();
-    if (!printer_->setPageSize(paper)) {
+    QPageSize paper = paperSizeCombo_->currentData().value<QPageSize>();
+    if (!toFile)
+        paper = selectedPaperCapabilities().acceptedPaper(paper);
+    if (!paper.isValid() || !printer_->setPageSize(paper)) {
         *error = tr("This printer does not support the selected paper size.");
         return false;
     }

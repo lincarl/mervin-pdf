@@ -118,6 +118,20 @@ void TstPerfStartup::startupTimeWithRestoredSession()
             qWarning().noquote() << proc.readAllStandardError();
         QCOMPARE(proc.exitStatus(), QProcess::NormalExit);
         QCOMPARE(proc.exitCode(), 0);
+        // Validate each sample before the next run overwrites its session.
+        QFile after(sessionFile);
+        QVERIFY(after.open(QIODevice::ReadOnly));
+        const QJsonArray left = QJsonDocument::fromJson(after.readAll()).object()
+                                    .value(QStringLiteral("open")).toArray();
+        QStringList restored;
+        for (const QJsonValue &value : left)
+            restored.append(QDir::cleanPath(value.toString()));
+        QStringList expected = docs;
+        for (QString &path : expected)
+            path = QDir::cleanPath(path);
+        restored.sort();
+        expected.sort();
+        QCOMPARE(restored, expected);
         if (i == 0)
             first = ms;
         best = std::min(best, ms);
@@ -126,23 +140,6 @@ void TstPerfStartup::startupTimeWithRestoredSession()
     }
     std::printf("startup+session: first=%.0f ms  best=%.0f ms\n", first, best);
     std::fflush(stdout);
-
-    // Prove the timed runs actually created the tabs. The session the app left
-    // behind must list all four (the three it restored plus the command-line one),
-    // which only happens once each has a tab.
-    QFile after(sessionFile);
-    QVERIFY(after.open(QIODevice::ReadOnly));
-    const QJsonArray left =
-        QJsonDocument::fromJson(after.readAll()).object().value(QStringLiteral("open")).toArray();
-    after.close();
-    QCOMPARE(left.size(), docs.size());
-    QStringList names;
-    for (const QJsonValue &v : left)
-        names << QFileInfo(v.toString()).fileName();
-    for (const QString &d : docs)
-        QVERIFY2(names.contains(QFileInfo(d).fileName()),
-                 qPrintable(QStringLiteral("%1 missing from the session the app wrote: %2")
-                                .arg(QFileInfo(d).fileName(), names.join(QLatin1Char(',')))));
 
     QVERIFY2(best < 20000, "startup with a restored session grossly regressed (>20 s)");
 }

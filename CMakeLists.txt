@@ -36,10 +36,13 @@ if(NOT tomlplusplus_FOUND)
         GIT_TAG 30172438cee64926dc41fdd9c11fb3ba5b2ba9de)
     FetchContent_MakeAvailable(tomlplusplus)
 endif()
-# Security and page operations. Requires qpdf >= 11 (setR*EncryptionParametersInsecure);
-# NOT pinned via find_package because qpdf's config is SameMajorVersion-compatible, so a
-# "11.0.0" request would reject qpdf 12.x (vcpkg / Ubuntu 26.04 / Fedora all ship 12).
+# Security and page operations need the Flate decoding limit added in qpdf 11.10.
+# Check the version separately because qpdf's SameMajorVersion package policy would
+# reject qpdf 12 for a find_package request naming 11.10.
 find_package(qpdf CONFIG REQUIRED)
+if(NOT qpdf_VERSION OR qpdf_VERSION VERSION_LESS "11.10.0")
+    message(FATAL_ERROR "qpdf 11.10.0 or newer is required for bounded Flate decoding (found ${qpdf_VERSION}).")
+endif()
 if(WIN32 AND VCPKG_TARGET_TRIPLET STREQUAL "x64-windows-static-md")
     # qpdf 12.4.2 exports bare pkg-config library names without their install
     # directories. Preserve its configuration expressions and other dependencies,

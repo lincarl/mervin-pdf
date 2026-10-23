@@ -10,6 +10,7 @@
 #include "print/PrintPreviewWidget.h"
 #include "render/Document.h"
 #include "render/AnnotModel.h"
+#include "render/FormModel.h"
 #include "render/RenderEngine.h"
 #include "ui/MainWindow.h"
 #include "ui/TabPage.h"
@@ -36,6 +37,7 @@
 #include <QPdfWriter>
 #include <QPrinter>
 #include <QPrinterInfo>
+#include <QRadioButton>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QTemporaryDir>
@@ -47,6 +49,8 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <condition_variable>
+#include <mutex>
 
 using namespace mervin;
 
@@ -59,11 +63,13 @@ class PrintInteraction
 public:
     // Polls real print controls until acceptance or a bounded interaction timeout.
     PrintInteraction(MainWindow &window, QString output,
-                     std::function<void(PrintDialog &)> preview = {})
+                     std::function<void(PrintDialog &)> preview = {},
+                     std::function<void(PrintDialog &)> configure = {})
     {
         elapsed_.start();
         QObject::connect(&timer_, &QTimer::timeout, &window,
-                [this, output = std::move(output), preview = std::move(preview)] {
+                [this, output = std::move(output), preview = std::move(preview),
+                 configure = std::move(configure)] {
             QWidget *modal = QApplication::activeModalWidget();
             if (elapsed_.elapsed() > 20000) {
                 if (messages.isEmpty())
@@ -95,6 +101,8 @@ public:
                     // The red fixture requires colour regardless of the default printer.
                     colour->setCurrentIndex(colour->findData(
                         static_cast<int>(printing::ColourMode::Colour)));
+                    if (configure)
+                        configure(*dialog);
                 }
                 if (!print->isEnabled() || queued_)
                     return;
@@ -138,16 +146,9 @@ private:
     bool saveQueued_ = false;
 };
 
-// Writes a one-page PDF with a complete cross-reference table to `path`.
-bool writePagePdf(const QString &path, const QByteArray &page, const QByteArray &content)
+// Writes explicit PDF objects with a complete cross-reference table.
+bool writePdfObjects(const QString &path, const QList<QByteArray> &objects)
 {
-    const QList<QByteArray> objects{
-        "<< /Type /Catalog /Pages 2 0 R >>",
-        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        "<< /Type /Page /Parent 2 0 R " + page + " /Contents 4 0 R >>",
-        "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content
-            + "\nendstream",
-    };
     QByteArray pdf = "%PDF-1.7\n";
     QByteArray xref = "0000000000 65535 f \n";
     for (qsizetype i = 0; i < objects.size(); ++i) {
@@ -160,6 +161,18 @@ bool writePagePdf(const QString &path, const QByteArray &page, const QByteArray 
            + " /Root 1 0 R >>\nstartxref\n" + start + "\n%%EOF\n";
     QFile file(path);
     return file.open(QIODevice::WriteOnly) && file.write(pdf) == pdf.size();
+}
+
+// Writes a one-page PDF with a complete cross-reference table to `path`.
+bool writePagePdf(const QString &path, const QByteArray &page, const QByteArray &content)
+{
+    return writePdfObjects(path, {
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R " + page + " /Contents 4 0 R >>",
+        "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content
+            + "\nendstream",
+    });
 }
 
 // The printable area of the app's PDF printer on A4. The app creates this same printer
@@ -439,6 +452,12 @@ private slots:
     void printedRasterGeometry();
     void unrenderablePageReportsFailure();
     void printDoesNotWaitForPageAccess();
+    void selectedPagesReachOutput_data();
+    void selectedPagesReachOutput();
+    void activeFormTextAndAnnotationEditsReachOutput();
+    void stopDuringPrinterStart_data();
+    void stopDuringPrinterStart();
+    void independentBandBoundaryCoverage();
     void printDestinationConflict_data();
     void printDestinationConflict();
     void stoppedFileOutputKeepsDestination_data();
@@ -504,6 +523,7 @@ void TstPrintOutput::cleanup()
 {
     job::testing::release();
     job::testing::failWhen({});
+    printing::testing::setHook({});
     TabPage::setSlowDelayForTesting(TabPage::kSlowMs);
     QVERIFY(background::settle(10000));
     QCoreApplication::processEvents();
@@ -926,12 +946,13 @@ void TstPrintOutput::printDoesNotWaitForPageAccess()
         return step == job::Step::Printing;
     });
     PrintInteraction dialogs(window, output);
-    QElapsedTimer command;
-    command.start();
     QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
-    QVERIFY2(command.elapsed() < 1000, qPrintable(QString("Print took %1 ms").arg(command.elapsed())));
     QVERIFY(tab->isBusy());
     QTRY_COMPARE(job::testing::held(), 1);
+    bool heartbeat = false;
+    QTimer::singleShot(0, &window, [&] { heartbeat = true; });
+    QTRY_VERIFY(heartbeat);
+    QCOMPARE(job::testing::held(), 1);
     mervin::testing::Stall access(tab->viewer()->document()->accessMutex(), 10000);
     const int guiSteps = job::testing::stepsOnMainThread();
     const int tasks = background::running() - 1;
@@ -946,6 +967,318 @@ void TstPrintOutput::printDoesNotWaitForPageAccess()
     QTRY_VERIFY_WITH_TIMEOUT(background::running() <= tasks, 10000);
     QVERIFY(!QFileInfo::exists(output));
     QVERIFY(dialogs.messages.isEmpty());
+}
+
+// Selects current-page and non-monotonic repeated-page output requests.
+void TstPrintOutput::selectedPagesReachOutput_data()
+{
+    QTest::addColumn<bool>("current");
+    QTest::newRow("current page 2") << true;
+    QTest::newRow("custom 3,1,3") << false;
+}
+
+// Reopens every printed sheet and checks distinct source-page colour in exact order.
+void TstPrintOutput::selectedPagesReachOutput()
+{
+    QFETCH(bool, current);
+    QTemporaryDir files;
+    const QString source = files.filePath("pages.pdf");
+    const QString output = files.filePath("printed.pdf");
+    const QList<QColor> colours{QColor(220, 20, 20), QColor(20, 170, 20), QColor(20, 20, 220)};
+    {
+        QPdfWriter writer(source);
+        writer.setResolution(72);
+        writer.setPageSize(QPageSize(QSizeF(100, 160), QPageSize::Point));
+        writer.setPageMargins({});
+        QPainter painter(&writer);
+        QVERIFY(painter.isActive());
+        for (int page = 0; page < 3; ++page) {
+            if (page)
+                QVERIFY(writer.newPage());
+            painter.fillRect(QRect(0, 0, 100, 160), colours[page]);
+        }
+        QVERIFY(painter.end());
+    }
+    RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    window.resize(1000, 800);
+    window.show();
+    QVERIFY(testing::openAndWait(window, source));
+    auto *tab = window.findChild<TabPage *>();
+    QVERIFY(tab);
+    tab->viewer()->goToPage(1);
+    QCOMPARE(tab->viewer()->currentPage(), 1);
+    PrintInteraction dialogs(window, output, {}, [current](PrintDialog &dialog) {
+        dialog.findChild<QRadioButton *>(current ? "printCurrentPage" : "printCustomPages")
+            ->setChecked(true);
+        if (!current)
+            dialog.findChild<QLineEdit *>("printPages")->setText("3,1,3");
+    });
+    QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
+    QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable() && QFileInfo::exists(output), 10000);
+    QVERIFY(dialogs.messages.isEmpty());
+    auto printed = engine.openDocument(output);
+    QVERIFY(printed);
+    const QList<int> expected = current ? QList<int>{1} : QList<int>{2, 0, 2};
+    QCOMPARE(printed->pageCount(), expected.size());
+    for (int page = 0; page < expected.size(); ++page) {
+        const QImage image = printed->renderPage(page, 1, 0);
+        QVERIFY(!image.isNull());
+        const QColor sample = image.pixelColor(image.width() / 2, image.height() / 2);
+        const QColor want = colours[expected[page]];
+        QVERIFY(qAbs(sample.red() - want.red()) < 10);
+        QVERIFY(qAbs(sample.green() - want.green()) < 10);
+        QVERIFY(qAbs(sample.blue() - want.blue()) < 10);
+    }
+}
+
+// Print commits the actual form and comment editors, and paints live markup.
+void TstPrintOutput::activeFormTextAndAnnotationEditsReachOutput()
+{
+    QTemporaryDir files;
+    const QString source = files.filePath("editable.pdf");
+    const QString output = files.filePath("edited-print.pdf");
+    QVERIFY(writePdfObjects(source, {
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] "
+        "/DR << /Font << /F1 6 0 R >> >> /DA (/F1 14 Tf 0 g) >> >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 160] /Annots [5 0 R] "
+        "/Resources << /Font << /F1 6 0 R >> >> /Contents 4 0 R >>",
+        "<< /Length 0 >>\nstream\n\nendstream",
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (printed-text) /V () "
+        "/Rect [20 90 180 120] /P 3 0 R /F 4 /DA (/F1 14 Tf 0 g) >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    }));
+    const QByteArray original = bytes(source);
+    RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    window.resize(1000, 800);
+    window.show();
+    QVERIFY(testing::openAndWait(window, source));
+    auto *tab = window.findChild<TabPage *>();
+    QVERIFY(tab);
+    auto *viewer = tab->viewer();
+    viewer->setFormMode(true);
+    QTRY_COMPARE(viewer->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly).size(), 1);
+    auto *editor = viewer->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly).front();
+    editor->setText(QStringLiteral("IIIIIIII"));
+    // setText leaves the live PDF untouched until Print commits the active editor.
+    QCOMPARE(viewer->formModel()->pageFields(0).front().value, QString());
+    const int markup = viewer->annotModel()->addTextMarkup(
+        0, AnnotType::Highlight, {{20, 100, 160, 12}}, QColor(Qt::yellow), {});
+    QVERIFY(markup >= 0);
+    PrintInteraction dialogs(window, output, {}, [](PrintDialog &dialog) {
+        auto *paper = dialog.findChild<QComboBox *>("printPaperSize");
+        paper->setCurrentIndex(paper->findData(QVariant::fromValue(QPageSize(QPageSize::A4))));
+        dialog.findChild<QComboBox *>("printScale")->setCurrentIndex(1); // Actual size
+        dialog.findChild<QComboBox *>("printAlignment")->setCurrentIndex(3); // Top left
+    });
+    QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
+    QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable() && QFileInfo::exists(output), 10000);
+    QVERIFY(dialogs.messages.isEmpty());
+    QCOMPARE(viewer->formModel()->pageFields(0).front().value, QStringLiteral("IIIIIIII"));
+    QCOMPARE(bytes(source), original);
+    auto printed = engine.openDocument(output);
+    QVERIFY(printed);
+    const QImage image = printed->renderPage(0, 2, 0);
+    QVERIFY(!image.isNull());
+    const QRectF printable = applicationPrintable(QPageLayout::Landscape);
+    const QPoint origin = (printable.topLeft() * 2).toPoint();
+    // Each I contributes one separate column group. Blank/stale text or a different
+    // glyph count cannot pass just because some ink was printed in the field.
+    int glyphs = 0;
+    bool previousInk = false;
+    for (int x = 40; x < 360; ++x) {
+        bool ink = false;
+        for (int y = 82; y < 138; ++y)
+            ink |= qGray(image.pixel(origin + QPoint(x, y))) < 100;
+        if (ink && !previousInk)
+            ++glyphs;
+        previousInk = ink;
+    }
+    QCOMPARE(glyphs, 8);
+    const QColor highlight = image.pixelColor(origin + QPoint(200, 212));
+    QVERIFY(highlight.red() > 220 && highlight.green() > 220 && highlight.blue() < 80);
+    QCOMPARE(image.pixelColor(origin + QPoint(200, 240)), QColor(Qt::white));
+
+    // A sticky-note body belongs to popup metadata. Printing commits it but only
+    // the note icon, not its body text, is page content.
+    viewer->setFormMode(false);
+    const int note = viewer->annotModel()->addTextNote(
+        0, QPointF(30, 130), Qt::yellow, {}, QStringLiteral("Before Print"));
+    QVERIFY(note >= 0);
+    viewer->setCommentToolEnabled(true);
+    viewer->setAnnotSubMode(AnnotSubMode::Note);
+    viewer->revealAnnotation(0, note);
+    auto *comment = viewer->findChild<QPlainTextEdit *>();
+    QVERIFY(comment && comment->isVisible());
+    comment->setPlainText(QStringLiteral("Comment committed by Print"));
+    PrintInteraction commentDialogs(window, files.filePath("comment-print.pdf"));
+    QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
+    QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable() && QFileInfo::exists(files.filePath("comment-print.pdf")), 10000);
+    QCOMPARE(viewer->annotModel()->annot(0, note)->contents,
+             QStringLiteral("Comment committed by Print"));
+    QVERIFY(commentDialogs.messages.isEmpty());
+    QCOMPARE(bytes(source), original);
+}
+
+void TstPrintOutput::stopDuringPrinterStart_data()
+{
+    QTest::addColumn<bool>("nextPage");
+    QTest::newRow("begin") << false;
+    QTest::newRow("newPage") << true;
+}
+
+// Holds the successful driver start before control returns to the band loop.
+// Stop must draw that prepared first band and render no following band or page.
+void TstPrintOutput::stopDuringPrinterStart()
+{
+    QFETCH(bool, nextPage);
+    using Phase = printing::testing::Phase;
+    QTemporaryDir files;
+    const QString output = files.filePath("stopped.pdf");
+    const QString partial = files.filePath("partial-evidence.pdf");
+    struct State {
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool held = false;
+        bool released = false;
+        bool timedOut = false;
+        bool copied = false;
+        int startIndex = -1;
+        QList<printing::testing::Event> events;
+    };
+    const auto state = std::make_shared<State>();
+    printing::testing::setHook([state, nextPage, partial](const printing::testing::Event &event,
+                                                       const printing::testing::PrinterCall &call) {
+        const bool success = !call || call();
+        std::unique_lock lock(state->mutex);
+        state->events.append(event);
+        if (event.phase == (nextPage ? Phase::NewPage : Phase::Begin)) {
+            state->startIndex = state->events.size() - 1;
+            state->held = true;
+            state->timedOut = !state->changed.wait_for(lock, std::chrono::seconds(20),
+                                                      [&] { return state->released; });
+        }
+        if (event.phase == Phase::PrinterClosed)
+            state->copied = QFile::copy(event.path, partial);
+        return success;
+    });
+    const auto release = [state] {
+        std::lock_guard lock(state->mutex);
+        state->released = true;
+        state->changed.notify_all();
+    };
+    const auto cleanup = qScopeGuard([&] {
+        release();
+        background::settle(10000);
+        printing::testing::setHook({});
+    });
+    RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    QVERIFY(testing::openAndWait(window, sourcePath_));
+    auto *tab = window.findChild<TabPage *>();
+    QVERIFY(tab);
+    const int tasks = background::running();
+    PrintInteraction dialogs(window, output, {}, [](PrintDialog &dialog) {
+        dialog.findChild<QComboBox *>("printQuality")->setCurrentIndex(2); // 600 dpi
+        dialog.findChild<QRadioButton *>("printCustomPages")->setChecked(true);
+        dialog.findChild<QLineEdit *>("printPages")->setText("1,1,1");
+    });
+    QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
+    const auto held = [state] {
+        std::lock_guard lock(state->mutex);
+        return state->held;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(held(), 10000);
+    QVERIFY(tab->isBusy());
+    tab->stopWaiting();
+    QVERIFY(tab->isUsable());
+    release();
+    QTRY_VERIFY_WITH_TIMEOUT(background::running() <= tasks, 10000);
+    QVERIFY(!QFileInfo::exists(output));
+    QVERIFY(dialogs.messages.isEmpty());
+    std::lock_guard lock(state->mutex);
+    QVERIFY(!state->timedOut);
+    QVERIFY(state->copied);
+    QVERIFY(state->startIndex >= 0);
+    int drawn = 0;
+    for (int index = state->startIndex + 1; index < state->events.size(); ++index) {
+        const auto &event = state->events[index];
+        QVERIFY(event.phase != Phase::RenderBand);
+        if (event.phase == Phase::BandDrawn) {
+            QCOMPARE(event.band, 0);
+            ++drawn;
+        }
+    }
+    QCOMPARE(drawn, 1);
+    QPDF pdf;
+    pdf.processFile(partial.toUtf8().constData());
+    auto pages = QPDFPageDocumentHelper(pdf).getAllPages();
+    QCOMPARE(pages.size(), nextPage ? 2u : 1u);
+    QCOMPARE(pages.back().getImages().size(), 1u);
+    auto printed = engine.openDocument(partial);
+    QVERIFY(printed);
+    const QImage sheet = printed->renderPage(printed->pageCount() - 1, 1, 0);
+    QVERIFY(!sheet.isNull());
+    const QRect red = redPageBounds(sheet);
+    QVERIFY(!red.isEmpty());
+    QVERIFY(red.height() < sheet.height() * 0.7);
+    QCOMPARE(sheet.pixelColor(sheet.width() / 2, sheet.height() * 3 / 4), QColor(Qt::white));
+}
+
+// A vertical strip spans every band boundary. Its independently known placement
+// exposes gaps, shifts and wrong image transforms without reusing raster helpers.
+void TstPrintOutput::independentBandBoundaryCoverage()
+{
+    QTemporaryDir files;
+    const QString source = files.filePath("strip.pdf");
+    const QString output = files.filePath("strip-print.pdf");
+    QVERIFY(writePagePdf(source, "/MediaBox [0 0 200 300]",
+                         "0 g 80 0 20 300 re f"));
+    RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    QVERIFY(testing::openAndWait(window, source));
+    auto *tab = window.findChild<TabPage *>();
+    QVERIFY(tab);
+    PlacementInteraction dialogs(window, output, {0, 0, 100, 2, 600});
+    QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
+    QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable() && QFileInfo::exists(output), 20000);
+    dialogs.stop();
+    QVERIFY2(dialogs.errors.isEmpty(), qPrintable(dialogs.errors.join('\n')));
+    const QRectF printable = applicationPrintable(QPageLayout::Portrait);
+    const double scale = std::min(printable.width() / 200, printable.height() / 300);
+    const QSizeF size(200 * scale, 300 * scale);
+    const QRectF expected(printable.center() - QPointF(size.width(), size.height()) / 2, size);
+    QPDF pdf;
+    pdf.processFile(output.toUtf8().constData());
+    auto page = QPDFPageDocumentHelper(pdf).getAllPages().front();
+    ImagePlacements placed(page.getMediaBox().getArrayItem(3).getNumericValue());
+    page.parseContents(&placed);
+    QVERIFY(placed.rects.size() >= 2);
+    QCOMPARE(placed.rects.size(), page.getImages().size());
+    QRectF coverage;
+    for (int index = 0; index < placed.rects.size(); ++index) {
+        const QRectF rect = placed.rects[index];
+        QVERIFY(qAbs(rect.left() - expected.left()) < 0.2);
+        QVERIFY(qAbs(rect.width() - expected.width()) < 0.2);
+        if (index) {
+            const double overlap = placed.rects[index - 1].bottom() - rect.top();
+            QVERIFY(qAbs(overlap - 72.0 / 600) < 0.01);
+        }
+        coverage |= rect;
+    }
+    QVERIFY(qAbs(coverage.top() - expected.top()) < 0.2);
+    QVERIFY(qAbs(coverage.bottom() - expected.bottom()) < 0.2);
+    auto printed = engine.openDocument(output);
+    QVERIFY(printed);
+    const QImage image = printed->renderPage(0, 2, 0);
+    const int inside = qRound((expected.left() + 90 * scale) * 2);
+    const int outside = qRound((expected.left() + 70 * scale) * 2);
+    for (int y = qCeil(expected.top() * 2) + 2; y < qFloor(expected.bottom() * 2) - 2; ++y) {
+        QVERIFY2(qGray(image.pixel(inside, y)) < 32, qPrintable(QString::number(y)));
+        QVERIFY2(qGray(image.pixel(outside, y)) > 240, qPrintable(QString::number(y)));
+    }
 }
 
 // Selects the source, its alias and another tab as protected print destinations.
@@ -1010,10 +1343,18 @@ void TstPrintOutput::stoppedFileOutputKeepsDestination()
     auto *tab = window.findChild<TabPage *>();
     QVERIFY(tab);
     const int tasks = background::running();
-    job::testing::holdWhen([&, writes = 0](job::Step step, const QString &path) mutable {
+    std::atomic<bool> publishing{false};
+    printing::testing::setHook([&](const printing::testing::Event &event,
+                                  const printing::testing::PrinterCall &call) {
+        if (event.phase == printing::testing::Phase::PublishFile && event.path == output)
+            publishing = true;
+        return !call || call();
+    });
+    const auto clearHook = qScopeGuard([] { printing::testing::setHook({}); });
+    job::testing::holdWhen([&](job::Step step, const QString &path) {
         if (commit)
             return step == job::Step::Commit && path == output;
-        return step == job::Step::Writing && path == files.path() && ++writes == 2;
+        return publishing && step == job::Step::Writing && path == files.path();
     });
     PrintInteraction dialogs(window, output);
     QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
@@ -1035,12 +1376,20 @@ void TstPrintOutput::printEndFailureIsReported()
     MainWindow window(&engine, nullptr);
     QVERIFY(mervin::testing::openAndWait(window, sourcePath_));
     const QString output = files_.filePath("failed-end.pdf");
-    job::testing::failWhen([prints = 0](job::Step step, const QString &) mutable {
-        return step == job::Step::Printing && ++prints == 3;
+    std::atomic<bool> reachedFinish{false};
+    printing::testing::setHook([&](const printing::testing::Event &event,
+                                  const printing::testing::PrinterCall &call) {
+        if (event.phase == printing::testing::Phase::FinishJob) {
+            reachedFinish = true;
+            return false;
+        }
+        return !call || call();
     });
+    const auto clearHook = qScopeGuard([] { printing::testing::setHook({}); });
     PrintInteraction dialogs(window, output);
     QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
     QTRY_COMPARE_WITH_TIMEOUT(dialogs.messages, QStringList{"Could not finish the print job."}, 10000);
+    QVERIFY(reachedFinish);
     QVERIFY(!QFileInfo::exists(output));
 }
 
@@ -1075,14 +1424,14 @@ void TstPrintOutput::measuredPreparationRunsInBackground()
                 .arg(image.width()).arg(image.height()).arg(image.devicePixelRatio());
         }
     });
-    QElapsedTimer command;
-    command.start();
     QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
-    QVERIFY2(command.elapsed() < 1000,
-             qPrintable(QString("Measured preparation took %1 ms").arg(command.elapsed())));
     QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
     QVERIFY(tab->isBusy());
     QVERIFY(!previewReady);
+    bool heartbeat = false;
+    QTimer::singleShot(0, &window, [&] { heartbeat = true; });
+    QTRY_VERIFY(heartbeat);
+    QCOMPARE(job::testing::held(), 1);
     job::testing::release();
     QTRY_VERIFY_WITH_TIMEOUT(previewReady, 10000);
     QVERIFY2(previewInk > 20, qPrintable(previewDetails));

@@ -3,13 +3,20 @@
 #include "ui/RecentFilesPanel.h"
 
 #include <QDir>
+#include <QDialogButtonBox>
 #include <QFile>
+#include <QFileDialog>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QScrollBar>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
 #include <QToolButton>
 
 using mervin::RecentEntry;
@@ -48,6 +55,12 @@ private slots:
     void stopKeepsWhatWasFound();
     void summaryCountsWhatIsListed();
     void checksMarkMissingFilesAndSizes();
+    void duplicateAndRemovedContentHitsDoNotAddRows();
+    void zeroHitCompletionShowsAnEmptyResult();
+    void rowActivationAndStarDoubleClick();
+    void obsoleteMountFactsDoNotChangeTheRow();
+    void missingFileActions_data();
+    void missingFileActions();
 
 private:
     QString file(const QString &name) const { return dir_.filePath(name); }
@@ -496,6 +509,19 @@ void TstRecentPanel::stopKeepsWhatWasFound()
              QStringLiteral("Stopped, 1 file found"));
     QVERIFY(!stop->isVisible());
 
+    // These callbacks were already queued when Stop was pressed.
+    panel_->addContentHit(file("notes.pdf"), 7, QStringLiteral("late hit"));
+    panel_->setContentProgress(2, 3);
+    QCOMPARE(rows(), QStringList({"plan.pdf"}));
+    auto *status = panel_->findChild<QLabel *>(QStringLiteral("recentSearchStatus"));
+    QCOMPARE(status->text(), QStringLiteral("Stopped, 1 file found"));
+    panel_->endContentSearch(false, 2);
+    QCOMPARE(status->text(), QStringLiteral("Stopped, 1 file found"));
+    panel_->endContentSearch(true, 2);
+    QVERIFY(status->isVisible());
+    QVERIFY(!status->property("running").toBool());
+    QVERIFY(!stop->isVisible());
+
     // Stopped on purpose: leaving and returning does not start it again.
     panel_->hide();
     panel_->show();
@@ -515,6 +541,157 @@ void TstRecentPanel::summaryCountsWhatIsListed()
     QCOMPARE(panel_->statusSummary(), QStringLiteral("1 result"));
     field_->setText(QStringLiteral("nothing"));
     QCOMPARE(panel_->statusSummary(), QStringLiteral("0 results"));
+}
+
+/// Duplicate pages and hits for files removed mid-search must not inflate the listing.
+void TstRecentPanel::duplicateAndRemovedContentHitsDoNotAddRows()
+{
+    panel_->setEntries({entry("notes.pdf", 30), entry("plan.pdf", 20)});
+    panel_->setDefaultScope(RecentSearchField::Scope::Contents);
+    QSignalSpy scans(panel_, &RecentFilesPanel::contentSearchRequested);
+    field_->setText(QStringLiteral("pressure"));
+    QTRY_COMPARE(scans.count(), 1);
+    panel_->addContentHit(file("notes.pdf"), 2, QStringLiteral("first match"));
+    const QString firstTip = list_->item(0)->toolTip();
+    panel_->addContentHit(file("notes.pdf"), 9, QStringLiteral("duplicate match"));
+    QCOMPARE(rows(), QStringList({"notes.pdf"}));
+    QCOMPARE(list_->item(0)->toolTip(), firstTip);
+    panel_->setEntries({entry("notes.pdf", 30)});
+    panel_->addContentHit(file("plan.pdf"), 1, QStringLiteral("removed from history"));
+    panel_->endContentSearch(false, 3);
+    QCOMPARE(rows(), QStringList({"notes.pdf"}));
+    QCOMPARE(panel_->statusSummary(), QStringLiteral("1 result"));
+    QCOMPARE(panel_->findChild<QLabel *>(QStringLiteral("recentSearchStatus"))->text(),
+             QStringLiteral("1 file found"));
+}
+
+void TstRecentPanel::zeroHitCompletionShowsAnEmptyResult()
+{
+    panel_->setEntries({entry("notes.pdf", 30)});
+    panel_->setDefaultScope(RecentSearchField::Scope::Contents);
+    QSignalSpy scans(panel_, &RecentFilesPanel::contentSearchRequested);
+    field_->setText(QStringLiteral("absent"));
+    QTRY_COMPARE(scans.count(), 1);
+    panel_->endContentSearch(false, 0);
+    QVERIFY(rows().isEmpty());
+    QCOMPARE(panel_->statusSummary(), QStringLiteral("0 results"));
+    QCOMPARE(list_->count(), 1);
+    QVERIFY(list_->item(0)->text().contains(QStringLiteral("No documents contain")));
+    QVERIFY(!list_->item(0)->flags().testFlag(Qt::ItemIsSelectable));
+    QVERIFY(!panel_->findChild<QToolButton *>(QStringLiteral("recentSearchStop"))->isVisible());
+    QVERIFY(!panel_->findChild<QLabel *>(QStringLiteral("recentSearchStatus"))->isVisible());
+}
+
+/// Keyboard activation opens a file, while the second star click cannot open a moved row.
+void TstRecentPanel::rowActivationAndStarDoubleClick()
+{
+    panel_->setEntries({entry("report-2024.pdf", 40), entry("notes.pdf", 30), entry("plan.pdf", 20)});
+    QSignalSpy opened(panel_, &RecentFilesPanel::openRequested);
+    QSignalSpy starred(panel_, &RecentFilesPanel::favoriteToggled);
+    list_->setCurrentRow(1);
+    QTest::keyClick(list_, Qt::Key_Return);
+    QCOMPARE(opened.count(), 1);
+    QCOMPARE(opened.takeFirst().at(0).toString(), file("notes.pdf"));
+
+    const QRect rect = list_->visualItemRect(list_->item(1));
+    const QPoint star(rect.right() - 26, rect.center().y());
+    QTest::mouseClick(list_->viewport(), Qt::LeftButton, {}, star);
+    QTest::mouseDClick(list_->viewport(), Qt::LeftButton, {}, star);
+    QCOMPARE(starred.count(), 1);
+    QVERIFY(opened.isEmpty());
+    QCOMPARE(rows(), QStringList({"# Favourites", "notes.pdf", "# Recent", "report-2024.pdf", "plan.pdf"}));
+}
+
+void TstRecentPanel::obsoleteMountFactsDoNotChangeTheRow()
+{
+    mervin::FileProbe probe;
+    panel_->setFileProbe(&probe);
+    RecentEntry current = entry("notes.pdf", 30);
+    current.mount = QStringLiteral("current-mount");
+    panel_->setEntries({current});
+    mervin::FileFacts present;
+    present.exists = true;
+    present.size = 42;
+    emit probe.checked({current.path, current.mount}, present);
+    QCOMPARE(list_->item(0)->data(Qt::UserRole + 8).toLongLong(), 42);
+    emit probe.checked({current.path, QStringLiteral("old-mount")}, {});
+    QVERIFY(!list_->item(0)->data(Qt::UserRole + 1).toBool());
+    QCOMPARE(list_->item(0)->data(Qt::UserRole + 8).toLongLong(), 42);
+    emit probe.checked({current.path, current.mount}, {});
+    QVERIFY(list_->item(0)->data(Qt::UserRole + 1).toBool());
+    panel_->setFileProbe(nullptr);
+}
+
+void TstRecentPanel::missingFileActions_data()
+{
+    QTest::addColumn<int>("action");
+    QTest::newRow("cancel") << 0;
+    QTest::newRow("remove") << 1;
+    QTest::newRow("locate") << 2;
+}
+
+void TstRecentPanel::missingFileActions()
+{
+    QFETCH(int, action);
+    // Exercise the Qt picker flow deterministically; native shell interaction is separate.
+    const bool nativeDisabled = QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    const auto restore = qScopeGuard([nativeDisabled] {
+        QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, nativeDisabled);
+    });
+    mervin::FileProbe probe;
+    panel_->setFileProbe(&probe);
+    panel_->setEntries({entry("gone.pdf", 10)});
+    QTRY_VERIFY(list_->item(0)->data(Qt::UserRole + 1).toBool());
+    QSignalSpy removed(panel_, &RecentFilesPanel::removeRequested);
+    QSignalSpy opened(panel_, &RecentFilesPanel::openRequested);
+    bool answered = false;
+    bool picked = false;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, this, [&] {
+        if (auto *picker = qobject_cast<QFileDialog *>(QApplication::activeModalWidget())) {
+            auto *field = picker->findChild<QLineEdit *>(QStringLiteral("fileNameEdit"));
+            auto *buttons = picker->findChild<QDialogButtonBox *>();
+            if (field && buttons && buttons->button(QDialogButtonBox::Open)) {
+                field->setText(file("notes.pdf"));
+                picked = true;
+                buttons->button(QDialogButtonBox::Open)->click();
+            } else {
+                picker->reject();
+            }
+            return;
+        }
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (!box)
+            return;
+        for (auto *button : box->buttons())
+            if ((action == 0 && box->standardButton(button) == QMessageBox::Cancel)
+                || (action == 1 && button->text() == QStringLiteral("Remove from history"))
+                || (action == 2 && button->text() == QStringLiteral("Locate"))) {
+                answered = true;
+                button->click();
+                return;
+            }
+        box->reject(); // an unexpected question must fail without leaving a modal loop open
+    });
+    QTimer watchdog;
+    connect(&watchdog, &QTimer::timeout, this, [] {
+        if (auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+            dialog->reject();
+    });
+    watchdog.start(3000);
+    answer.start(10);
+    list_->setCurrentRow(0);
+    QTest::keyClick(list_, Qt::Key_Return);
+    QVERIFY(answered);
+    QCOMPARE(opened.count(), action == 2 ? 1 : 0);
+    QCOMPARE(picked, action == 2);
+    if (action == 2)
+        QCOMPARE(opened.first().at(0).toString(), file("notes.pdf"));
+    QCOMPARE(removed.count(), action == 0 ? 0 : 1);
+    if (action != 0)
+        QCOMPARE(removed.first().at(0).toString(), file("gone.pdf"));
+    panel_->setFileProbe(nullptr);
 }
 
 QTEST_MAIN(TstRecentPanel)

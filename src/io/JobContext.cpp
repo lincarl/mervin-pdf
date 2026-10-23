@@ -408,6 +408,11 @@ DestinationLock::~DestinationLock()
 
 namespace testing {
 
+bool hasScope()
+{
+    return current != nullptr;
+}
+
 void holdWhen(std::function<bool(Step, const QString &)> match)
 {
     std::lock_guard<std::mutex> lock(hooksMutex);

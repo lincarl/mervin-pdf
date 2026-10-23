@@ -192,7 +192,8 @@ private slots:
         job::testing::release();
         QTRY_COMPARE(ready.size(), 1);
         QVERIFY(TabPage::testing::storedDocument(*page));
-        QTest::qWait(750);
+        QVERIFY(!TabPage::testing::slowPolling(*page));
+        QCoreApplication::processEvents();
         QVERIFY(page->isLoading() && !page->isLoaded());
         QCOMPARE(page->findChild<QLabel *>(QStringLiteral("documentLoadStatus"))->text(),
                  QStringLiteral("Loading"));

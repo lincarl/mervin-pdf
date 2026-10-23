@@ -1,6 +1,7 @@
 #include "recent/RecentStore.h"
 
 #include <QFile>
+#include <QJsonDocument>
 #include <QStringList>
 #include <QTemporaryDir>
 #include <QTest>
@@ -32,8 +33,41 @@ private slots:
     void recordedMountJudgesTheVolume();
     void emptyPathIgnored();
     void jsonRoundTrip();
+    void stableJsonAndMalformedFiles();
     void loadMissingFileLeavesEmpty();
 };
+
+// Authored JSON protects compact keys, favourites and mount identity across versions.
+void TstRecentStore::stableJsonAndMalformedFiles()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("recent.json"));
+    const QByteArray literal = R"([{"p":"/records/a.pdf","t":12345,"n":8,"f":true,"m":"/records"},{"p":"/records/b.pdf","t":12000}])";
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(literal), literal.size());
+    file.close();
+    RecentStore store;
+    QVERIFY(store.load(path));
+    QCOMPARE(store.count(), 2);
+    const auto &first = store.entries().front();
+    QCOMPARE(first.path, QStringLiteral("/records/a.pdf"));
+    QCOMPARE(first.lastOpened, qint64(12345));
+    QCOMPARE(first.pageCount, 8);
+    QVERIFY(first.favorite);
+    QCOMPARE(first.mount, QStringLiteral("/records"));
+    QCOMPARE(store.entries().at(1).pageCount, 0);
+    QVERIFY(!store.entries().at(1).favorite);
+    QVERIFY(store.entries().at(1).mount.isEmpty());
+    QCOMPARE(QJsonDocument::fromJson(store.toJson()), QJsonDocument::fromJson(literal));
+    for (const QByteArray invalid : {QByteArray("{}"), QByteArray("[broken")}) {
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        QCOMPARE(file.write(invalid), invalid.size());
+        file.close();
+        QVERIFY(!store.load(path));
+        QCOMPARE(store.count(), 0);
+    }
+}
 
 void TstRecentStore::addPrependsMostRecent()
 {

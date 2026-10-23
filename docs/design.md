@@ -94,6 +94,12 @@ engine (see Rendering and document access).
 The explicit Duplicate to new window command bypasses normal path deduplication and
 creates a second independent view.
 
+A first-run main window starts at up to 1100 by 820 logical pixels, bounded to
+90 percent of the available work area to leave room for native window decorations.
+Saved geometry continues through Qt's restore path. The permanent Recent and
+document tab row follows its layout's minimum height, so a larger application font
+does not squeeze its text into the old fixed-height row.
+
 ### Tab order across nested event loops
 
 A tab's position changes whenever a tab in front of it arrives or goes, and tabs
@@ -342,12 +348,16 @@ listening fails in /tmp as well, the primary keeps the lock and listens nowhere,
 later launches open their files standalone, as beside a primary that does not
 answer. Without a usable instance folder there is no lock, and each launch runs on
 its own. Two launches of one profile that spell its folder differently, as a
-relative and an absolute `--profile` path, still form different groups, as the group
-name hashes the path as given. On Windows the lock stays in the per-user %TEMP%,
-where released copies keep it too, so that an older and a newer copy still meet
-after an upgrade. Two launches there with different values of `%TEMP%` take
-different locks. The endpoint is a named pipe. A Store copy and each `--profile`
-directory form groups of their own.
+relative and an absolute `--profile` path, form the same group because
+`ConfigPaths` normalizes them before the group name is computed. Group naming also
+resolves profile symlinks, including links in the existing ancestor of a profile
+that has not been created yet. Windows hashes the current user's SID rather than
+an environment username. Its lock and carry file live in the profile's
+`instance-<machine>` folder, independently of `%TEMP%`, and its endpoint is a named
+pipe. A new Windows instance folder gets a protected DACL for the current user and
+SYSTEM. Existing folders must have a matching owner and private protected DACL;
+reparse points are rejected. Failure leaves the process without shared-state
+ownership. A Store copy and each `--profile` directory form groups of their own.
 
 Subsequent launches send newline-delimited JSON containing file paths and open
 behavior, wait for an acknowledgement, and exit. A launch first checks that the
@@ -393,14 +403,19 @@ carried launches stay in the carry file for the next primary within
 ended. While
 Quit or a language restart is in progress, or an update asks about unsaved edits
 before it closes the windows, `WindowManager` holds the Opens that arrive. If that
-is cancelled, they open then. Closing the last window does not hold them, so an Open
-that arrives during its prompt opens in that window. Opens the server acknowledged
+is cancelled, they open then. An ordinary close also holds them while every
+remaining window has a window-wide close request. Cancel resumes those Opens; a
+successful final window close carries them to the next process. Opens the server acknowledged
 before a quit became final and that did not open go to `relaunch::carry()`. Before
 the process lets go of the lock, `~WindowManager` writes them to `<group>.carried`
 next to the lock, as UTF-8 JSON with mode 0600 (`relaunch::writeCarried()`), after
-any a previous primary left there. Whichever copy next becomes the primary reads and
-removes that file when it takes over its server, under its lock, and opens those
-files. It also takes the carry files in the group's other folders whose lock no
+any a previous primary left there. Unreadable or malformed carry data is preserved,
+and a new write refuses to overwrite it. Whichever copy next becomes the primary
+reads that file when it takes over its server, under its lock. It returns the
+launches only after removing the file successfully. This prevents repeat adoption
+after a failed removal but is not a durable acknowledgement of opened tabs. A crash
+between removal and opening can still lose them. It also takes the carry files in
+the group's other folders whose lock no
 live process holds, as a primary that ran in another folder leaves them (see
 below). That is the copy `relaunch::startIfDue()` starts once the process has quit,
 which is also the copy of a language restart, the copy an update starts, or a copy
@@ -411,7 +426,10 @@ absolute paths, so the copy cannot read one as an option. On Windows QProcess bu
 the command line itself and no cmd runs. On Linux the helper shell that waits for
 this process gets them as positional parameters and passes them on with a quoted
 `"$@"`, so it never parses them. A copy an update started before that write failed
-cannot get them, so they are logged instead. A file older than 10 minutes
+cannot get them, so they are logged instead. A failed process start retains unwritten
+launches and the pending-start state in memory for a retry. That state does not
+survive process exit, and the command-line fallback preserves paths but not mixed
+per-launch options or empty-window launches. A file older than 10 minutes
 (`relaunch::kCarriedMaxAgeMs`), as one left by a copy that crashed, is removed
 unread, as is one dated more than a minute ahead (`relaunch::kCarriedMaxAheadMs`),
 which allows for a clock set back a little between the two copies. The age bound
@@ -428,12 +446,11 @@ remove a file that a live process holds.
 If a live process holds the lock but no primary takes the Open in that time, as
 when the lock holder is stopped, the launch opens its files in a standalone process.
 It shows no first-run window, restores no session, adopts no recovery copies, writes
-none of `recent.json`, `viewstate.json` and `session.json`, and has no updater, as
-those belong to the lock holder. Its windows still save settings, such as their
-geometry. If the lock or endpoint cannot be made and nothing answers, nothing owns
-that state, so the launch runs the full UI without a server. There is then no
-single-instance coordination. Each later launch does the same, and those copies
-share the stores, last writer wins.
+none of `recent.json`, `viewstate.json`, `session.json` and `config.toml`, and has
+no updater, as those belong to the lock holder. Preference and geometry changes
+remain in memory through `Settings::setPersistenceEnabled(false)`. If no usable
+lock or endpoint can be made, ownership is unknown. The same restrictions apply
+to that uncoordinated copy, so it cannot overwrite another process's shared state.
 
 While nothing holds this group's lock, `claimOrHandOff()` first looks for a primary
 elsewhere. One of this version can listen in another of the folders above, as when
@@ -465,8 +482,9 @@ files as well once it runs again. If nothing answers, the process is another use
 or it closes the connection without an acknowledgement, as a quitting copy does, the
 launch goes on as above. The reverse case cannot be fixed in the older code. An
 older copy launched while a newer one runs starts a second primary until one of them
-exits. Windows kept its pipe and lock names, so older and newer copies find each
-other there in both directions.
+exits. Windows also probes the legacy environment-username endpoint after acquiring
+the new lock, with the same SID peer check. This supports new-to-old handoff only;
+an already released copy cannot discover the new SID-based endpoint.
 
 Session restoration creates the tab list but opens only the selected document. Other
 restored tabs load when selected.
@@ -746,8 +764,13 @@ references, and the application never calls them.
 
 A closed document can leave decoded images and colour links in the store. A PDF
 purges the glyph cache when it closes, but other formats do not, and a render that
-finishes after the close adds glyphs again, each of which keeps its font. While no
-document is loaded, each activity check (`WindowManager::checkDocumentActivity`,
+finishes after the close adds glyphs again, each of which keeps its font. The
+activity check observes `Document::completedCloses()`, which advances only after
+background destruction finishes, and requests `RenderEngine::scheduleCacheTrim()`.
+It coalesces those requests and posts one trim after the render queue and active
+workers become idle, even while another document stays loaded. This frees closed
+document resources but also discards warm resources for surviving documents,
+which their next render rebuilds. While no document is loaded, each activity check (`WindowManager::checkDocumentActivity`,
 which runs every second) calls `RenderEngine::trimCache()`. The trim shrinks the store
 with `fz_shrink_store`, lowering the target in steps of 1% of the store's limit so
 that freeing thousands of entries takes linear time, and purges the glyph cache, which
@@ -812,8 +835,17 @@ box shows the clamped zoom. The cap applies to the whole document, because one z
 lays out every page and maps page points to the screen for selection, annotations,
 forms and measurements. It only binds for pages longer than about 3.7 m at 100%
 display scaling, or 1.2 m at 300%, so an A0 page keeps 10000% up to 300%. The cap never
-goes below 8%. A page too large to render even at 8%, about 4.6 km at 100%, does not
-count toward it, so a malformed giant page cannot shrink the rest of the document.
+goes below 8% for the raster limit. A separate document-wide geometry cap reserves
+space for every page, spread, margin and gap within `INT_MAX / 4` logical pixels.
+It considers every page and bounds the accumulated canvas as well as individual
+rectangles. For extreme input that cannot fit at 8%, zoom can fall below that
+minimum to retain bounded, reachable rows. Tiny page rectangles retain at least
+one pixel. This fallback favors safe navigation over useful scale and does not
+provide arbitrary-size coordinates or full precision at every zoom. Fixed gaps
+alone exceed the reserved range above 41,297,760 rows; those counts remain bounded
+but are not guaranteed distinct reachable rows. A page too
+large to rasterize at the normal minimum does not control the raster cap, but
+still participates in the geometry cap.
 `RenderEngine` refuses a raster beyond the limit instead of returning a blank image, so
 such a page shows plain paper, as any page whose render fails does. A move to a screen
 with another device pixel ratio (`QEvent::DevicePixelRatioChange`) re-renders at the
@@ -897,8 +929,10 @@ quits, also stops a finished download whose file the folder's thread has not sta
 to install.
 
 Saving `ui_language` consumes the first-run offer before any network request.
-Downloads fail silently, stop after 30 seconds without data, and are cancelled
-on application exit; a model already received is still installed. The folder and
+Downloads fail silently and stop after 30 seconds without data. Explicit cancel,
+including application exit, also cancels queued installations that have not started.
+Destroying the provisioner alone aborts downloads but permits already queued
+completed downloads to install. The folder and
 the staging files are made on the folder's thread first, and a download starts only
 once its staging file exists, so an unwritable folder costs no download. Received
 data and the final check and copy go to the same thread, and a write that fails
@@ -914,8 +948,9 @@ available for manual installation.
 `FormModel` enumerates and edits AcroForm widgets on the live MuPDF PDF document.
 `AnnotModel` performs the same role for supported text markup and note annotations.
 All changes run through `Document::withPdfDocument`, which serializes them against
-render workers. A changed page is evicted from the image cache and rendered again so
-screen, print, and save output agree.
+render workers. A form change refreshes the appearances, cached values and active
+editors on every page sharing the field. Those pages leave the image cache and
+render again so screen, print, and save output agree.
 
 Form fields and annotations are standard PDF objects. `Document::savePdfTo` performs
 one full MuPDF rewrite that captures both kinds of edits and preserves existing
@@ -932,7 +967,8 @@ Extract, Split and Merge build each output from `emptyPDF()`, which has none, so
 `PageOps` gives the writer the source's encryption
 (`QPDFWriter::copyEncryptionParameters`) when every output page comes from one opened
 source. That covers every Extract and Split output, and a merge whose rows all name
-one path. The copy keeps the source's password and permission entries and its first
+one canonical source, including path aliases. The copy keeps the source's password
+and permission entries and its first
 /ID, on which R2-R4 keys depend, so the same passwords open it and its flags stay.
 qpdf writes every V4 copy with AES, so a V4 RC4 source, which Mervin's RC4-128 option
 writes, gives an AES-128 copy, as it does for Rotate and Delete. A revision 3 RC4
@@ -964,6 +1000,15 @@ before qpdf 12.3. A copied field tree comes along whole, so `finish` then remove
 fields that have no widget on an output page, keeping a parent that a copied widget
 shares. The source helpers are built with the `QPDFAcroFormDocumentHelper` constructor,
 as `get` needs qpdf 12.3.
+
+Split avoids copying an entire valid field tree for every output. `SplitFormPages`
+builds an independent one-page QPDF with the selected widgets and their ancestor
+branches, then uses the same annotation transformation and pruning above. It never
+changes the original source's `/Kids`. Malformed or deep trees and object
+dependencies into other fields, pages or annotations use the original copy path.
+Full-source field and movie names are cached separately, so action filtering still
+distinguishes a deleted target from a name that never existed. The fallback retains
+its original cost; the optimization does not change JavaScript or XFA policy.
 
 `transformAnnotations` first copies each field tree whole with `copyForeignObject` and
 then copies that copy field by field, so the actions of the copied annotations, such as a
@@ -1454,10 +1499,13 @@ call. The worker converts a band's colour mode before it draws the band. It begi
 job or starts a sheet only after the sheet's first band converted, so a failed render
 or conversion reports its page instead of leaving a blank sheet. That band is drawn
 even when Stop arrives while the printer starts the sheet. A blocked printer call
-names its printer in the wait bar. Document::renderPage gives MuPDF no cookie, so a
-band that is rendering when Stop arrives runs to its end under its hold, and the tab
-stays covered until then, as for other jobs that hold the document. Then document
-access ends, no further band renders, and completion is suppressed. A print
+names its printer in the wait bar. `Document::renderPage` checks the job's atomic
+cancellation state between paint operations through a passthrough device. The
+rendering thread alone writes its local MuPDF cookie, and cancellation discards a
+partial image. A native page load, image decode or draw call must still return
+before the next check, and a blocked printer call cannot be interrupted. The tab
+stays covered while the document hold remains. Then document access ends, no
+further band renders, and completion is suppressed. A print
 completion already submitted may finish. The worker checks painter.end and reports a
 completion failure.
 
@@ -1537,18 +1585,24 @@ value in both writers. The viewer refuses `setMeasureMode(true)`, calibration, S
 and a resumed measure state for such a document, and the Measure action says why, so no
 new measurements exist that a save would drop.
 
-Opening does not use qpdf, which inflates a whole object stream or cross-reference
-stream into memory when it resolves an object in it (qpdf 11.9.0 `QPDF.cc:1792`). MuPDF
-reads through those streams as it parses them. A crafted file of a few hundred
-kilobytes with a padded object stream can therefore still exhaust memory in every
-operation that parses the file on disk with qpdf: Security, Rotate, Delete, Extract,
-Split, Merge and the Merge and Extract probes. Save with edits, the recovery copy of an
-unloaded tab, Save as copy, export and printing with measurements hand qpdf a copy that
-MuPDF rewrote in full without object streams. qpdf 12.3.2 can cap Flate output for the
-whole process (`Pl_Flate::memory_limit`, in 12.4 also
-`qpdf::global::limits::flate_max_memory`), but qpdf 11.9.0, which CI's Linux tests use,
-has no such cap, and the cap applies to every Flate stream qpdf decodes, so it would also
-refuse legitimate streams larger than its value.
+Opening in the viewer uses MuPDF. Security, page operations and measurement
+exports also use qpdf, which can inflate a whole object stream when it resolves
+one contained object. Mervin requires qpdf 11.10 or later and sets
+`Pl_Flate::memory_limit` to 64 MiB before the first qpdf open. This global setting
+limits cumulative decoded output per Flate decoder. It also refuses legitimate
+Flate streams larger than the limit. It is not a total process memory limit and
+does not bound other codecs, predictor allocations, object counts or aggregate
+retained data. Kernel-limited worker processes would be needed for that stronger
+contract.
+
+qpdf can turn a decoder exception into a warning, skip the affected object and
+still produce output. `checkQpdfWarnings` therefore rejects its specific Flate-limit
+warning after source processing and before atomic publication, checking copied
+output objects too. Other repair warnings remain accepted. `QpdfReadState` also
+retains source I/O failures that qpdf swallows. Every qpdf writer checks that state
+before committing, and page operations retain the input filename for a deferred
+read failure. Real padded required-object and optional-annotation fixtures verify
+rejection without replacing the destination on qpdf 11.10 and current qpdf 12.
 
 `AtomicPdfWriter` streams all qpdf output through `QSaveFile`, including page,
 security and measurement operations. A failed write discards its temporary file;
@@ -1725,12 +1779,24 @@ deletes only its own kind's state and files. Earlier versions kept one shared
 record under `update/` and the downloads in `updates/` itself. A copy still resumes
 and cleans up such a record and such files when the file name is its kind's package
 (`update::isPackageFileName`), leaves other kinds' alone, and uses the shared check
-date until it has its own. Before installing, the updater hashes the file again and
-discards it if the SHA-256 no longer matches. The check that found that download then
-does not count. `update/<kind>/checkDue` makes the next start check again, and the
-next completed check clears it. A record from an older version has no hash and is not
-checked again. `Updater::install` also refuses a file whose name is
-not this kind's package. At each start, also with automatic updates off, an installed
+date until it has its own. Release assets and pending records require a 64-digit
+SHA-256 digest. Hashless legacy pending records are discarded and force a fresh
+HTTPS release check even when the last check is recent. Before installing, the
+updater copies the package into independent private staging and verifies those
+bytes against the expected digest. A mismatch discards the download and sets
+`update/<kind>/checkDue`; the next completed check clears it. `Updater::install`
+also refuses a file whose name is not this kind's package. Replacing the original
+download after validation cannot change the staged installer. Arbitrary same-user
+code that can alter the running process or its private staging is outside this
+guarantee.
+
+AppImage replacement verifies a second staging file beside the destination before
+atomic rename. The detached MSI helper removes its private package and directory
+after the installer exits. Linux package-manager staging stays alive through the
+`QProcess` result and is removed on success, failure or cancellation. Without a
+supported package manager and `pkexec`, a manual check offers the existing download
+page and retains the pending package for retry. It does not hand a temporary file
+to a desktop installer whose completion cannot be observed. At each start, also with automatic updates off, an installed
 copy deletes its kind's downloads that are no longer newer than itself. A response
 to the release check that is not a JSON object with a string `tag_name`, such as a
 network filter's page sent with HTTP 200, does not count as a check. `Updater`
@@ -1855,15 +1921,30 @@ apply the patches with `git apply` to the source release they download and verif
 and record the patch set's SHA-256 in `mervin-patch-set.sha256` beside the
 libraries. `cmake/FindMuPDF.cmake` refuses libraries built without the current set,
 and the CI cache keys use the same identity, so no build links an unpatched or
-outdated MuPDF. `tst_mupdf_store` fails when a patch is missing.
+outdated MuPDF. `tst_mupdf_store` covers the store fixes and `tst_form_model`
+covers inherited list-field appearance properties.
 
-The three patches are Artifex's fixes for MuPDF bug 709849. Artifex committed them to
+The first three patches are Artifex's fixes for MuPDF bug 709849. Artifex committed them to
 MuPDF's master branch on 2026-10-20, but no release has them yet, so Mervin applies
 them to 1.28.5. Each one makes the same
 changes as its MuPDF commit. When MuPDF is updated, delete the patches whose fixes the
 new release has, either as the master commit or as a backport with the same title.
 Backports to a release branch get new commit IDs. Rework a remaining patch that no
 longer applies, and keep a test for each one.
+
+`0004-pdf-inherit-list-widget-options-and-top-index.patch` is a local fix for
+MuPDF's list-field appearance writer. It reads inherited `/Opt` and `/TI`, as the
+field enumerator already does, so a shared field's parent options do not become
+blank appearances after editing. The patch preserves list type, parent hierarchy
+and saved `/V`. MuPDF still does not highlight selected list items in generated
+appearances; saved selection values and visible option text are separate contracts.
+Remove this patch when the pinned upstream release includes the same inheritance fix.
+
+`0005-fitz-account-for-explicit-store-removal.patch` subtracts an explicitly removed
+entry's size while the store lock is held. Without it, `fz_remove_item` leaves the
+byte count inflated and later inserts can evict live cache entries prematurely.
+The regression covers hashed and scanned keys. Remove the patch when the pinned
+release includes the same accounting fix.
 
 - `0001-fitz-read-found-store-values-under-the-lock.patch` is MuPDF commit
   `5ba5c97` and changes `source/fitz/store.c`. `fz_find_item` and the duplicate

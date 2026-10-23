@@ -18,6 +18,7 @@
 #include <QCoreApplication>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTranslator>
@@ -256,6 +257,7 @@ private slots:
     void init() { QVERIFY(dir_.isValid()); }
 
     void serializeParseRoundTrip();
+    void versionOneJsonKeepsItsKeys();
     void overrideOnlyRoundTrip();
     void embedReadRoundTrip();
     void pdfDocKeyedSourceReadsMeasurements();
@@ -279,6 +281,7 @@ private slots:
     void valueLabelsWithoutScale();
     void flattenAppendsContent();
     void transformMapsCornersIntoMediaBox();
+    void flattenRendersAtExactRotatedCoordinates();
     void roundTripsThroughRealDrawing();
 
 private:
@@ -320,6 +323,36 @@ void TstMeasureExport::serializeParseRoundTrip()
     QCOMPARE(static_cast<int>(back.pageScales.size()), 1);
     QCOMPARE(back.pageScales[0].page, 0);
     QVERIFY(back.overridesModel().hasOverride(0));
+}
+
+void TstMeasureExport::versionOneJsonKeepsItsKeys()
+{
+    const QByteArray json = R"({"mervinMeasureVersion":1,"unit":"cm","precision":3,
+        "lineWidth":4,"pageScales":[{"page":2,"mmPerPointX":2,"mmPerPointY":3,
+        "label":"custom","source":"Calibrated"}],"measurements":[{"page":2,
+        "kind":"Polyline","pts":[[10,20],[40,50],[80,20]],"hasLabelPos":true,
+        "labelPos":[25,35]}]})";
+    MeasureDoc parsed;
+    QVERIFY(parseMeasurements(json, &parsed));
+    QCOMPARE(parsed.version, 1);
+    QCOMPARE(parsed.unit, MeasureUnit::Centimeter);
+    QCOMPARE(parsed.precision, 3);
+    QCOMPARE(parsed.lineWidth, 4.0);
+    QCOMPARE(parsed.pageScales.size(), size_t(1));
+    QCOMPARE(parsed.pageScales[0].page, 2);
+    QCOMPARE(parsed.pageScales[0].mmPerPointX, 2.0);
+    QCOMPARE(parsed.pageScales[0].mmPerPointY, 3.0);
+    QCOMPARE(parsed.pageScales[0].label, QStringLiteral("custom"));
+    QCOMPARE(parsed.pageScales[0].source, MeasureSource::Calibrated);
+    QCOMPARE(parsed.measurements.size(), size_t(1));
+    const auto &mark = parsed.measurements[0];
+    QCOMPARE(mark.page, 2);
+    QCOMPARE(mark.kind, MeasureKind::Polyline);
+    const std::vector<QPointF> expected{{10, 20}, {40, 50}, {80, 20}};
+    QCOMPARE(mark.pts, expected);
+    QVERIFY(mark.hasLabelPos);
+    QCOMPARE(mark.labelPos, QPointF(25, 35));
+    QCOMPARE(QJsonDocument::fromJson(serializeMeasurements(parsed)), QJsonDocument::fromJson(json));
 }
 
 void TstMeasureExport::overrideOnlyRoundTrip()
@@ -829,36 +862,98 @@ void TstMeasureExport::flattenAppendsContent()
 
 void TstMeasureExport::transformMapsCornersIntoMediaBox()
 {
-    // A page with a non-zero MediaBox origin and a 90° rotation: the four corners
-    // of app page-point space must map onto the four MediaBox corners.
-    const QString in = p("rot.pdf");
-    makePdf(in, 1, /*rotate=*/90, /*ox=*/100.0, /*oy=*/200.0);
-
+    const std::array<std::array<QPointF, 4>, 4> expected{{
+        {{{100, 992}, {712, 992}, {100, 200}, {712, 200}}},
+        {{{100, 200}, {100, 992}, {712, 200}, {712, 992}}},
+        {{{712, 200}, {100, 200}, {712, 992}, {100, 992}}},
+        {{{712, 992}, {712, 200}, {100, 992}, {100, 200}}}
+    }};
     RenderEngine engine;
-    QString err;
-    bool needsPw = false;
-    auto doc = engine.openDocument(in, QString(), &err, &needsPw);
-    if (!doc) {
-        QSKIP("MuPDF could not open the fixture");
+    for (int turn = 0; turn < 4; ++turn) {
+        const QString in = p(QStringLiteral("rot-%1.pdf").arg(turn));
+        makePdf(in, 1, turn * 90, 100, 200);
+        QString error;
+        auto doc = engine.openDocument(in, {}, &error);
+        QVERIFY2(doc, qPrintable(error));
+        const auto m = doc->pagePointToPdfMatrix(0);
+        const Mat6 mat{m[0], m[1], m[2], m[3], m[4], m[5]};
+        const QSizeF size = turn % 2 == 0 ? QSizeF(612, 792) : QSizeF(792, 612);
+        QCOMPARE(doc->pageSize(0), size);
+        const std::array<QPointF, 4> corners{{{0, 0}, {size.width(), 0},
+                                             {0, size.height()}, {size.width(), size.height()}}};
+        for (size_t corner = 0; corner < corners.size(); ++corner)
+            QCOMPARE(applyMat(mat, corners[corner]), expected[turn][corner]);
     }
-    const std::array<double, 6> m = doc->pagePointToPdfMatrix(0);
-    const QSizeF sz = doc->pageSize(0); // rotated bounds (width/height swapped)
-    const Mat6 mat{m[0], m[1], m[2], m[3], m[4], m[5]};
+}
 
-    const QPointF corners[4] = {QPointF(0, 0), QPointF(sz.width(), 0), QPointF(0, sz.height()),
-                                QPointF(sz.width(), sz.height())};
-    const QPointF mbox[4] = {QPointF(100, 200), QPointF(712, 200), QPointF(100, 992),
-                             QPointF(712, 992)};
-    for (const QPointF &c : corners) {
-        const QPointF pdf = applyMat(mat, c);
-        bool near = false;
-        for (const QPointF &mb : mbox)
-            if (std::abs(pdf.x() - mb.x()) < 1.0 && std::abs(pdf.y() - mb.y()) < 1.0)
-                near = true;
-        QVERIFY2(near, qPrintable(QStringLiteral("corner mapped to (%1,%2)")
-                                      .arg(pdf.x())
-                                      .arg(pdf.y())));
+void TstMeasureExport::flattenRendersAtExactRotatedCoordinates()
+{
+    const QString blank = p("offset-blank.pdf");
+    const QString source = p("offset-source.pdf");
+    const QString output = p("offset-flattened.pdf");
+    makePdf(blank, 1, 90, 100, 200);
+    {
+        QPDF pdf;
+        pdf.processFile(blank.toUtf8().constData());
+        auto page = QPDFPageDocumentHelper(pdf).getAllPages()[0];
+        // The red rectangle is an independent content sentinel. A deliberately
+        // unrestored transform makes graphics-state isolation observable.
+        page.addPageContents(pdf.newStream(
+            "1 0 0 rg 600 700 30 50 re f\n2 0 0 3 19 31 cm\n0.5 g 4 w\n"), false);
+        const QByteArray name = source.toUtf8();
+        QPDFWriter writer(pdf, name.constData());
+        writer.write();
     }
+    RenderEngine engine;
+    auto doc = engine.openDocument(source);
+    QVERIFY(doc);
+    RenderMeasurement mark;
+    mark.page = 0;
+    mark.kind = MeasureKind::Polyline;
+    mark.pts = {{40, 80}, {180, 80}, {180, 140}};
+    mark.lineWidth = 6;
+    mark.label = QStringLiteral("42 mm");
+    mark.hasLabelPos = true;
+    mark.labelPos = {260, 190};
+    const auto matrix = doc->pagePointToPdfMatrix(0);
+    mark.toPdf = {matrix[0], matrix[1], matrix[2], matrix[3], matrix[4], matrix[5]};
+    QString error;
+    QCOMPARE(MeasureExport::flatten(source, output, {mark}, {}, &error), MeasureExport::Status::Ok);
+    QPDF pdf;
+    pdf.processFile(output.toUtf8().constData());
+    auto page = QPDFPageDocumentHelper(pdf).getAllPages()[0].getObjectHandle();
+    const std::string content = pageContent(page);
+    QVERIFY(content.find("180 240 m\n180 380 l\n240 380 l") != std::string::npos);
+    QVERIFY(content.find("6 w") != std::string::npos);
+    QVERIFY(content.find("282.2 458.08 Td (42 mm) Tj") != std::string::npos);
+    auto flattened = engine.openDocument(output);
+    QVERIFY(flattened);
+    const QImage before = engine.renderPageImage(doc.get(), 0, 1, 0);
+    const QImage after = engine.renderPageImage(flattened.get(), 0, 1, 0);
+    QCOMPARE(before.size(), QSize(792, 612));
+    QCOMPARE(after.size(), before.size());
+    QCOMPARE(before.pixelColor(525, 515), QColor(Qt::red));
+    QCOMPARE(after.copy(490, 490, 80, 60), before.copy(490, 490, 80, 60));
+    for (const QPoint point : {QPoint(100, 80), QPoint(180, 110), QPoint(100, 78), QPoint(100, 82)}) {
+        const QColor ink = after.pixelColor(point);
+        QVERIFY(ink.red() < 5 && std::abs(ink.green() - 102) <= 2
+                && std::abs(ink.blue() - 191) <= 2);
+    }
+    for (const QPoint point : {QPoint(100, 75), QPoint(100, 84), QPoint(80, 140)})
+        QCOMPARE(after.pixelColor(point), QColor(Qt::white));
+    const QRect pathBounds(36, 76, 148, 68);
+    const QRect labelBounds(253, 178, 15, 25);
+    int labelInk = 0;
+    for (int y = 0; y < after.height(); ++y) {
+        for (int x = 0; x < after.width(); ++x) {
+            if (labelBounds.contains(x, y) && after.pixelColor(x, y).lightness() < 100)
+                ++labelInk;
+            if (after.pixel(x, y) != before.pixel(x, y))
+                QVERIFY2(pathBounds.contains(x, y) || labelBounds.contains(x, y),
+                         qPrintable(QStringLiteral("Unexpected changed pixel at %1,%2").arg(x).arg(y)));
+        }
+    }
+    QVERIFY(labelInk > 5);
 }
 
 void TstMeasureExport::roundTripsThroughRealDrawing()

@@ -17,6 +17,9 @@
 // The last case pins the other half of a smooth zoom: where the view is anchored.
 #include "render/Document.h"
 #include "render/RenderEngine.h"
+#include "render/PageCache.h"
+#include "render/ThumbnailCache.h"
+#include "render/ZoomAnimation.h"
 #include "ui/ViewerWidget.h"
 #include "ui/ThemeTokens.h"
 
@@ -24,7 +27,11 @@
 #include <QScopeGuard>
 #include <QLabel>
 #include <QPalette>
+#include <QPainter>
+#include <QPdfWriter>
 #include <QScrollBar>
+#include <QTemporaryDir>
+#include <QWheelEvent>
 #include <QtTest>
 
 #include <cstdio>
@@ -54,6 +61,12 @@ private slots:
     void easeSurvivesInterruption();
     void viewportChildrenInheritReadableInk();
     void previewBlitCost();
+    void pageCacheAccountsAndPromotes();
+    void thumbnailReadsDoNotPromote();
+    void animationEndpointsAndFailedStarts();
+    void wheelZoomAccumulatesAndAnchorsAtPointer();
+    void pageModesRotationAndThemesPaintExpectedPixels();
+    void interruptedZoomStartsAtDrawnGeometry();
 
 private:
     // A synchronous repaint of the viewport, with the paint accounting reset
@@ -92,6 +105,245 @@ int TstViewerPreview::centreInk(const QImage &img)
         }
     }
     return ink;
+}
+
+void TstViewerPreview::pageCacheAccountsAndPromotes()
+{
+    QImage red(4, 4, QImage::Format_RGB32);
+    red.fill(Qt::red);
+    QImage blue = red.copy();
+    blue.fill(Qt::blue);
+    QImage green = red.copy();
+    green.fill(Qt::green);
+    mervin::PageCache lru(128);
+    lru.put(0, red, {0, 0, 4, 4});
+    lru.put(1, blue, {10, 20, 4, 4});
+    QCOMPARE(lru.get(0)->image, red); // promote 0, making 1 the oldest
+    lru.put(2, green, {30, 40, 4, 4});
+    QVERIFY(!lru.get(1));
+    QCOMPARE(lru.get(0)->image, red);
+    QCOMPARE(lru.get(2)->image, green);
+
+    mervin::PageCache replacement(128);
+    replacement.put(0, red, {0, 0, 4, 4});
+    replacement.put(1, blue, {10, 20, 4, 4});
+    const QImage small = green.copy(0, 0, 2, 2); // 16 bytes, returns 48 bytes
+    replacement.put(0, small, {100, 200, 2, 2});
+    replacement.put(2, red.copy(0, 0, 3, 4), {300, 400, 3, 4}); // exactly 128 total
+    QVERIFY(replacement.get(1));
+    QCOMPARE(replacement.get(1)->image, blue);
+    QCOMPARE(replacement.get(0)->image, small);
+    QCOMPARE(replacement.get(0)->covered, QRect(100, 200, 2, 2));
+    replacement.erase(1);
+    replacement.erase(1);
+    replacement.put(3, blue, {500, 600, 4, 4});
+    QVERIFY(replacement.get(0) && replacement.get(2) && replacement.get(3));
+    replacement.clear();
+    QVERIFY(!replacement.get(0) && !replacement.get(2) && !replacement.get(3));
+    replacement.put(4, red, {});
+    replacement.put(5, blue, {});
+    QVERIFY(replacement.get(4) && replacement.get(5));
+
+    mervin::PageCache smallBudget(1);
+    smallBudget.put(9, red, {0, 0, 4, 4});
+    QCOMPARE(smallBudget.get(9)->image, red); // the only visible page is retained
+}
+
+void TstViewerPreview::thumbnailReadsDoNotPromote()
+{
+    QPixmap red(4, 4);
+    red.fill(Qt::red);
+    QPixmap blue(4, 4);
+    blue.fill(Qt::blue);
+    mervin::ThumbnailCache cache(2);
+    cache.put(0, red);
+    cache.put(1, blue);
+    QCOMPARE(cache.get(0).toImage(), red.toImage());
+    cache.put(2, red);
+    QVERIFY(!cache.contains(0)); // get() leaves FIFO order unchanged
+    QVERIFY(cache.contains(1) && cache.contains(2));
+    cache.put(1, red); // replacement becomes newest and replaces the pixels
+    QCOMPARE(cache.get(1).toImage(), red.toImage());
+    cache.put(3, blue);
+    QVERIFY(!cache.contains(2));
+    QVERIFY(cache.contains(1) && cache.contains(3));
+    cache.clear();
+    QVERIFY(!cache.contains(1) && cache.get(3).isNull());
+    cache.put(4, blue);
+    cache.put(5, red);
+    QVERIFY(cache.contains(4) && cache.contains(5));
+}
+
+void TstViewerPreview::animationEndpointsAndFailedStarts()
+{
+    mervin::ZoomAnimation animation;
+    const mervin::ZoomAnimation::Snapshot snapshot{{{7, {10, 20, 100, 200}}}, 7};
+    const QRectF final(50, 60, 200, 400);
+    QVERIFY(animation.start(snapshot, final, 130));
+    animation.setProgressForTest(0);
+    QCOMPARE(animation.rect(7, final, final), QRectF(10, 20, 100, 200));
+    QCOMPARE(animation.rect(9, {50, 480, 200, 400}, final), QRectF(10, 230, 100, 200));
+    animation.setProgressForTest(0.5);
+    QVERIFY(std::abs(animation.rect(7, final, final).width() - 183.40080864) < 0.00001);
+    animation.setProgressForTest(1);
+    QCOMPARE(animation.rect(7, final, final), final);
+    const QRectF drawn(7, 9, 80, 90);
+    QCOMPARE(mervin::ZoomAnimation::transform(final, drawn).mapRect(final), drawn);
+
+    for (int invalid = 0; invalid < 5; ++invalid) {
+        QVERIFY(animation.start(snapshot, final, 130));
+        auto candidate = snapshot;
+        QRectF target = final;
+        int duration = 130;
+        switch (invalid) {
+        case 0: duration = 0; break;
+        case 1: target = {}; break;
+        case 2: candidate.repPage = 8; break;
+        case 3: candidate.from[7].setWidth(0); break;
+        case 4: target.setWidth(102); break; // a change smaller than 5%
+        }
+        QVERIFY(!animation.start(candidate, target, duration));
+        QVERIFY(!animation.active());
+        QVERIFY(!animation.finished());
+        QVERIFY(animation.capturedRects().isEmpty());
+        QCOMPARE(animation.rect(7, final, final), final);
+    }
+}
+
+void TstViewerPreview::wheelZoomAccumulatesAndAnchorsAtPointer()
+{
+    viewer_->setZoomEaseMs(0);
+    const auto restore = qScopeGuard([&] { viewer_->setZoomEaseMs(130); });
+    viewer_->setScale(3);
+    QVERIFY(settle());
+    viewer_->horizontalScrollBar()->setValue(viewer_->horizontalScrollBar()->maximum() / 2);
+    viewer_->verticalScrollBar()->setValue(viewer_->verticalScrollBar()->maximum() / 2);
+    const QPoint point(170, 130); // deliberately away from the viewport centre
+    const auto fraction = [&] {
+        const auto anchor = viewer_->scrollAnchor();
+        const QSizeF size = doc_->pageSize(anchor.page);
+        return QPointF(anchor.fracX + point.x() / (size.width() * viewer_->scale()),
+                       anchor.fracY + point.y() / (size.height() * viewer_->scale()));
+    };
+    const auto wheel = [&](int delta) {
+        QWheelEvent event(QPointF(point), QPointF(viewer_->viewport()->mapToGlobal(point)),
+                          {}, QPoint(0, delta), Qt::NoButton, Qt::ControlModifier,
+                          Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(viewer_->viewport(), &event);
+    };
+    const QPointF before = fraction();
+    wheel(40);
+    wheel(40);
+    QCOMPARE(viewer_->scale(), 3);
+    wheel(-40); // reversal discards the positive partial notch
+    QCOMPARE(viewer_->scale(), 3);
+    wheel(-40);
+    QCOMPARE(viewer_->scale(), 3);
+    wheel(-40);
+    QCOMPARE(viewer_->scale(), 2);
+    QVERIFY(QLineF(before, fraction()).length() < 0.002);
+    wheel(120);
+    QCOMPARE(viewer_->scale(), 3);
+    QVERIFY(QLineF(before, fraction()).length() < 0.002);
+}
+
+void TstViewerPreview::pageModesRotationAndThemesPaintExpectedPixels()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("quadrants.pdf"));
+    {
+        QPdfWriter writer(path);
+        writer.setResolution(72);
+        writer.setPageSize(QPageSize(QSizeF(200, 200), QPageSize::Point));
+        writer.setPageMargins(QMarginsF(0, 0, 0, 0));
+        QPainter painter(&writer);
+        QVERIFY(painter.isActive());
+        painter.fillRect(QRect(0, 0, 100, 100), Qt::red);
+        painter.fillRect(QRect(100, 0, 100, 100), Qt::green);
+        painter.fillRect(QRect(0, 100, 100, 100), Qt::blue);
+        painter.fillRect(QRect(100, 100, 100, 100), Qt::yellow);
+        QVERIFY(writer.newPage());
+        painter.fillRect(QRect(0, 0, 200, 200), QColor(128, 128, 128));
+    }
+    auto document = engine_->openDocument(path);
+    QVERIFY(document);
+    const auto restore = qScopeGuard([&] {
+        viewer_->setPageTheme(PageTheme::Light);
+        viewer_->setDocument(doc_.get());
+    });
+    viewer_->setDocument(document.get());
+    viewer_->setZoomMode(ViewerWidget::ZoomMode::FitPage);
+    const auto pixel = [&](int page, double x, double y) {
+        mervin::ViewLayout layout;
+        layout.setDocument(document.get());
+        layout.setMode(viewer_->layoutMode());
+        layout.setScale(viewer_->scale());
+        layout.setRotation(viewer_->rotation());
+        layout.setCurrentPage(viewer_->currentPage());
+        const QSize vp = viewer_->viewport()->size();
+        const QSize total = layout.totalSize();
+        const QPoint offset(std::max(0, (vp.width() - total.width()) / 2) - viewer_->horizontalScrollBar()->value(),
+                            std::max(0, (vp.height() - total.height()) / 2) - viewer_->verticalScrollBar()->value());
+        const QRect shown = layout.pageRect(page).translated(offset);
+        return frame().pixelColor(shown.x() + int(shown.width() * x),
+                                  shown.y() + int(shown.height() * y));
+    };
+    for (const auto scroll : {mervin::ViewLayout::Scroll::Continuous, mervin::ViewLayout::Scroll::Single}) {
+        for (bool spread : {false, true}) {
+            viewer_->setLayoutMode({scroll, spread});
+            viewer_->goToPage(0);
+            QVERIFY(settle());
+            QCOMPARE(pixel(0, 0.25, 0.25), QColor(Qt::red));
+            QCOMPARE(pixel(0, 0.75, 0.25), QColor(Qt::green));
+            QCOMPARE(pixel(0, 0.25, 0.75), QColor(Qt::blue));
+            QCOMPARE(pixel(0, 0.75, 0.75), QColor(Qt::yellow));
+            if (spread) QCOMPARE(pixel(1, 0.5, 0.5), QColor(128, 128, 128));
+        }
+    }
+    viewer_->setLayoutMode({mervin::ViewLayout::Scroll::Single, false});
+    viewer_->rotateRight();
+    QVERIFY(settle());
+    QCOMPARE(pixel(0, 0.25, 0.25), QColor(Qt::blue));
+    QCOMPARE(pixel(0, 0.75, 0.25), QColor(Qt::red));
+    QCOMPARE(pixel(0, 0.25, 0.75), QColor(Qt::yellow));
+    QCOMPARE(pixel(0, 0.75, 0.75), QColor(Qt::green));
+    viewer_->setPageTheme(PageTheme::Inverted);
+    QVERIFY(settle());
+    QCOMPARE(pixel(0, 0.25, 0.25), QColor(Qt::yellow));
+    QCOMPARE(pixel(0, 0.75, 0.25), QColor(Qt::cyan));
+    viewer_->goToPage(1);
+    viewer_->setPageTheme(PageTheme::Comfort);
+    QVERIFY(settle());
+    QCOMPARE(pixel(1, 0.5, 0.5), QColor(119, 121, 126));
+    viewer_->setPageTheme(PageTheme::Light);
+    QVERIFY(settle());
+    QCOMPARE(pixel(1, 0.5, 0.5), QColor(128, 128, 128));
+}
+
+void TstViewerPreview::interruptedZoomStartsAtDrawnGeometry()
+{
+    viewer_->setZoomMode(ViewerWidget::ZoomMode::FitPage);
+    QVERIFY(settle());
+    viewer_->setScale(viewer_->scale() * 0.45);
+    QVERIFY(settle());
+    const double initialScale = viewer_->scale();
+    const int initialSpan = pageSpan(frame());
+    viewer_->setScale(initialScale * 1.5);
+    QVERIFY(viewer_->zoomEaseActive());
+    viewer_->setZoomEaseProgressForTest(0.4);
+    const int interruptedSpan = pageSpan(frame());
+    QVERIFY(interruptedSpan > initialSpan);
+    viewer_->setScale(initialScale * 1.8);
+    viewer_->setZoomEaseProgressForTest(0);
+    QVERIFY(std::abs(pageSpan(frame()) - interruptedSpan) <= 1);
+    viewer_->setZoomEaseProgressForTest(1);
+    const int finalSpan = pageSpan(frame());
+    QVERIFY(std::abs(finalSpan - initialSpan * 1.8) <= 2);
+    viewer_->setZoomEaseProgressForTest(-1);
+    QVERIFY(settle());
+    // Floating eased edges and integer settled edges can cover adjacent pixels.
+    QVERIFY(std::abs(pageSpan(frame()) - finalSpan) <= 1);
 }
 
 int TstViewerPreview::pageSpan(const QImage &img) const
@@ -244,13 +496,41 @@ void TstViewerPreview::pageThemeShowsBlankPaper()
 
 void TstViewerPreview::newDocumentDropsTheOldTiles()
 {
-    QVERIFY(settle());
-    viewer_->setDocument(nullptr);
-    frame();
-    QCOMPARE(viewer_->paintStats().preview, 0);
-
-    viewer_->setDocument(doc_.get());
-    QVERIFY(settle());
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QImage red(400, 400, QImage::Format_RGB32);
+    red.fill(Qt::red);
+    QImage blue(400, 400, QImage::Format_RGB32);
+    blue.fill(Qt::blue);
+    QVERIFY(red.save(dir.filePath(QStringLiteral("red.png"))));
+    QVERIFY(blue.save(dir.filePath(QStringLiteral("blue.png"))));
+    auto first = engine_->openDocument(dir.filePath(QStringLiteral("red.png")));
+    auto second = engine_->openDocument(dir.filePath(QStringLiteral("blue.png")));
+    QVERIFY(first && second);
+    const auto restore = qScopeGuard([&] { viewer_->setDocument(doc_.get()); });
+    const auto middle = [](const QImage &image) {
+        return image.pixelColor(image.width() / 2, image.height() / 2);
+    };
+    // Check both the populated sharp cache and populated zoom-preview path. No new
+    // worker result can arrive between replacement and the synchronous frame grab.
+    for (bool preview : {false, true}) {
+        viewer_->setDocument(first.get());
+        QVERIFY(settle());
+        QCOMPARE(middle(frame()), QColor(Qt::red));
+        if (preview) {
+            viewer_->setScale(viewer_->scale() * 1.25);
+            QCOMPARE(middle(frame()), QColor(Qt::red));
+            QVERIFY(viewer_->paintStats().preview > 0);
+        } else {
+            QVERIFY(viewer_->paintStats().fresh > 0);
+        }
+        viewer_->setDocument(second.get());
+        QCOMPARE(middle(frame()), QColor(Qt::white));
+        QCOMPARE(viewer_->paintStats().preview, 0);
+        QCOMPARE(viewer_->paintStats().fresh, 0);
+        QVERIFY(settle());
+        QCOMPARE(middle(frame()), QColor(Qt::blue));
+    }
 }
 
 // zoomIn / zoomOut / the zoom box have no cursor behind them, so they hold the
@@ -558,6 +838,31 @@ void TstViewerPreview::viewportChildrenInheritReadableInk()
     const double b = luminance(t.popover);
     const double ratio = (std::max(a, b) + 0.05) / (std::min(a, b) + 0.05);
     QVERIFY2(ratio > 4.5, "a panel label's inherited ink must clear AA on the panel surface");
+
+    const QPalette original = viewer_->palette();
+    const auto restore = qScopeGuard([&] { viewer_->setPalette(original); });
+    child.setText(QStringLiteral("Aa"));
+    child.resize(100, 50);
+    QFont font = child.font();
+    font.setPixelSize(26);
+    child.setFont(font);
+    child.setAutoFillBackground(true);
+    child.show();
+    for (QPalette theme : {mervin::theme::lightPalette(QColor(0x4f, 0x8c, 0xff)), pal}) {
+        const QColor background = mervin::theme::chrome(theme).popover;
+        theme.setColor(QPalette::Window, background);
+        viewer_->setPalette(theme);
+        const QImage drawn = child.grab().toImage();
+        int readablePixels = 0;
+        for (int y = 0; y < drawn.height(); ++y) {
+            for (int x = 0; x < drawn.width(); ++x) {
+                const double ink = luminance(drawn.pixelColor(x, y));
+                const double paper = luminance(background);
+                readablePixels += (std::max(ink, paper) + 0.05) / (std::min(ink, paper) + 0.05) > 4.5;
+            }
+        }
+        QVERIFY2(readablePixels > 60, "the label's actual text did not paint with readable contrast");
+    }
 }
 
 QTEST_MAIN(TstViewerPreview)

@@ -67,6 +67,9 @@ public:
     /// reader. nullopt when PDFDocEncoding lacks a character of `password`.
     static std::optional<QByteArray> keyBytes(const QString &password, Algorithm algorithm);
 
+    /// Explains why a password cannot be represented by a legacy encryption algorithm.
+    static QString passwordEncodingError();
+
     // Read encryption / permission metadata. `password` may be empty.
     Status readInfo(const QString &path, const QString &password, Info &out, QString *error = nullptr);
 

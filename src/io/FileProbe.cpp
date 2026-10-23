@@ -68,7 +68,8 @@ QString volumeOf(const QString &path, const QList<mounts::Mount> &mounted)
 
 QString FileProbe::keyOf(const File &file)
 {
-    return normalizePathKey(file.path) + QLatin1Char('\n') + file.mount;
+    const QString key = normalizePathKey(file.path) + QLatin1Char('\n') + file.mount;
+    return file.generation ? key + QLatin1Char('\n') + QString::number(file.generation) : key;
 }
 
 FileProbe::FileProbe(QObject *parent)
@@ -255,9 +256,11 @@ void FileProbe::answer(const File &file, const FileFacts &facts)
 {
     const QString k = keyOf(file);
     checking_.remove(k);
-    Answer &a = answers_[k];
-    a.facts = facts;
-    a.age.start();
+    if (!file.generation) {
+        Answer &a = answers_[k];
+        a.facts = facts;
+        a.age.start();
+    }
     emit checked(file, facts);
 }
 

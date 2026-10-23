@@ -6,12 +6,15 @@
 #include "platform/PlatformIntegration.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QTemporaryFile>
 
 #include <cstdio>
 
@@ -76,29 +79,59 @@ PackageKind installedPackageKind()
 #endif
 }
 
+#ifdef Q_OS_WIN
+bool configureWindowsInstaller(QProcess &process, const QString &file,
+                               const QString &executable, const QString &msiexec)
+{
+    const QString profile = ConfigPaths::overrideDir();
+    for (const QString &path : {file, executable, msiexec, profile}) {
+        if (path.contains(QLatin1Char('"')) || path.contains(QLatin1Char('\r'))
+            || path.contains(QLatin1Char('\n')) || path.contains(QChar::Null))
+            return false;
+    }
+    const QString workDir = QFileInfo(file).absolutePath();
+    const QDir system(systemDir());
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("MERVIN_UPDATE_INSTALLER"), QDir::toNativeSeparators(msiexec));
+    environment.insert(QStringLiteral("MERVIN_UPDATE_PACKAGE"), QDir::toNativeSeparators(file));
+    environment.insert(QStringLiteral("MERVIN_UPDATE_EXECUTABLE"), QDir::toNativeSeparators(executable));
+    environment.insert(QStringLiteral("MERVIN_UPDATE_STAGING"), QDir::toNativeSeparators(workDir));
+    environment.insert(QStringLiteral("MERVIN_UPDATE_SYSTEM"), QDir::toNativeSeparators(system.absolutePath()));
+    QString profileArgument = QDir::toNativeSeparators(profile);
+    // Windows argv parsing treats a backslash before a closing quote as an
+    // escaped quote. A drive-root profile needs the trailing backslash doubled.
+    if (profileArgument.endsWith(QLatin1Char('\\')))
+        profileArgument += QLatin1Char('\\');
+    environment.insert(QStringLiteral("MERVIN_UPDATE_PROFILE"), profileArgument);
+    process.setProcessEnvironment(environment);
+    process.setProgram(system.filePath(QStringLiteral("cmd.exe")));
+    process.setWorkingDirectory(workDir);
+    // Expand only these fixed variable references. Their values are not scanned
+    // again for percent expansion, and /v:off preserves literal exclamation marks.
+    // & relaunches after successful, failed or cancelled installation alike.
+    QString command = QStringLiteral(
+        "/d /v:off /s /c \"start \"\" /wait \"%MERVIN_UPDATE_INSTALLER%\" "
+        "/i \"%MERVIN_UPDATE_PACKAGE%\" /passive /norestart "
+        "& del /q \"%MERVIN_UPDATE_PACKAGE%\" "
+        "& cd /d \"%MERVIN_UPDATE_SYSTEM%\" & rd \"%MERVIN_UPDATE_STAGING%\" "
+        "& start \"\" \"%MERVIN_UPDATE_EXECUTABLE%\"");
+    if (!profile.isEmpty())
+        command += QStringLiteral(" --profile \"%MERVIN_UPDATE_PROFILE%\"");
+    command += QLatin1Char('"');
+    process.setNativeArguments(command);
+    return true;
+}
+#endif
+
 bool startWindowsInstaller(const QString &file)
 {
 #ifdef Q_OS_WIN
     if (PlatformIntegration::hasPackageIdentity())
         return false;
-    const QString installer = QDir::toNativeSeparators(file);
-    const QString workDir = QFileInfo(file).absolutePath(); // not wherever Mervin was started
-    // cmd's /s strips just the outer quotes, leaving every quoted path intact.
-    // "&" (not "&&") relaunches even after a failed or cancelled install, so
-    // the user always gets a running Mervin back.
-    QString relaunch = QStringLiteral("start \"\" \"%1\"")
-                           .arg(QDir::toNativeSeparators(QCoreApplication::applicationFilePath()));
-    const QStringList args = relaunchArguments();
-    if (!args.isEmpty())
-        relaunch += QStringLiteral(" %1 \"%2\"").arg(args.at(0), QDir::toNativeSeparators(args.at(1)));
-    const QDir system(systemDir());
     QProcess cmd;
-    cmd.setProgram(system.filePath(QStringLiteral("cmd.exe")));
-    cmd.setWorkingDirectory(workDir);
-    cmd.setNativeArguments(
-        QStringLiteral("/d /s /c \"start \"\" /wait \"%1\" /i \"%2\" /passive /norestart & %3\"")
-            .arg(QDir::toNativeSeparators(system.filePath(QStringLiteral("msiexec.exe"))),
-                 installer, relaunch));
+    if (!configureWindowsInstaller(cmd, file, QCoreApplication::applicationFilePath(),
+                                   QDir(systemDir()).filePath(QStringLiteral("msiexec.exe"))))
+        return false;
     if (!cmd.startDetached())
         return false; // startIfDue then starts a copy for the launches this one carries
     // The copy the installer starts afterwards opens the launches this one carries,
@@ -112,7 +145,7 @@ bool startWindowsInstaller(const QString &file)
 }
 
 // The messages share the Updater's context: it shows them, inside its own text.
-bool replaceAppImage(const QString &file, QString *error)
+bool replaceAppImage(const QString &file, const QString &sha256, QString *error)
 {
     const QString target = qEnvironmentVariable("APPIMAGE");
     if (target.isEmpty()) {
@@ -123,26 +156,44 @@ bool replaceAppImage(const QString &file, QString *error)
     }
     // Stage beside the target so the final rename stays on one filesystem and
     // is atomic: a crash leaves either the old image or the new one, never half.
-    const QString staged = target + QStringLiteral(".update");
-    QFile::remove(staged);
-    if (!QFile::copy(file, staged)) {
+    QTemporaryFile staged(target + QStringLiteral(".update-XXXXXX"));
+    QFile source(file);
+    bool copied = staged.open() && source.open(QIODevice::ReadOnly);
+    while (copied && !source.atEnd()) {
+        const QByteArray bytes = source.read(1024 * 1024);
+        copied = !bytes.isEmpty() && staged.write(bytes) == bytes.size();
+    }
+    copied = copied && source.error() == QFileDevice::NoError && staged.flush();
+    if (!copied) {
         //: %1 is a folder path.
         *error = QCoreApplication::translate("mervin::Updater", "Couldn't write to %1.")
                      .arg(QFileInfo(target).absolutePath());
         return false;
     }
-    QFile::setPermissions(staged, QFileDevice::ReadOwner | QFileDevice::WriteOwner
-                                      | QFileDevice::ExeOwner | QFileDevice::ReadGroup
-                                      | QFileDevice::ExeGroup | QFileDevice::ReadOther
-                                      | QFileDevice::ExeOther);
+    // Check the destination bytes through the same open file before publishing.
+    // A source pathname replaced during or after copying cannot change this file.
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!isSha256(sha256) || !staged.seek(0) || !hash.addData(&staged)
+        || QString::fromLatin1(hash.result().toHex()) != sha256.toLower()) {
+        *error = QCoreApplication::translate("mervin::Updater",
+            "The downloaded update failed its integrity check and was discarded.");
+        return false;
+    }
+    if (!staged.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                              | QFileDevice::ExeOwner | QFileDevice::ReadGroup
+                              | QFileDevice::ExeGroup | QFileDevice::ReadOther
+                              | QFileDevice::ExeOther)) {
+        *error = QCoreApplication::translate("mervin::Updater", "Couldn't replace %1.").arg(target);
+        return false;
+    }
     // QFile::rename refuses to overwrite; POSIX rename() replaces in place.
-    if (std::rename(QFile::encodeName(staged).constData(), QFile::encodeName(target).constData())
+    if (std::rename(QFile::encodeName(staged.fileName()).constData(), QFile::encodeName(target).constData())
         != 0) {
-        QFile::remove(staged);
         //: %1 is the path of the running AppImage file.
         *error = QCoreApplication::translate("mervin::Updater", "Couldn't replace %1.").arg(target);
         return false;
     }
+    staged.setAutoRemove(false);
     return true;
 }
 

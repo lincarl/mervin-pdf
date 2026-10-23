@@ -67,15 +67,17 @@ constexpr qint64 kCarriedMaxAheadMs = 60 * 1000;
 // Reads and removes the launches a previous primary left in `file`. Call it while
 // holding the lock that guards `file`, or after checking that no live process holds
 // that lock (see SingleInstanceServer::carriedFiles). Empty if there are none, if the
-// file cannot be read, or if it is older than kCarriedMaxAgeMs or dated more than
-// kCarriedMaxAheadMs ahead.
+// file cannot be read or removed, or if it is older than kCarriedMaxAgeMs or dated
+// more than kCarriedMaxAheadMs ahead. Read/format failures preserve the file.
+// A removal failure delivers nothing, so a later primary cannot deliver it twice.
 QList<ipc::Message> takeCarried(const QString &file);
 
 // Starts the next copy if one is due. It is due if a restart was asked for and `restart`
 // allows it, or if launches are carried and no copy was started for them yet. Files of
 // carried launches that no carry file holds go to that copy as arguments (see start).
 // If an update started the next copy instead, those files cannot reach it and are
-// logged. False if a copy was due and did not start.
+// logged. False if a copy was due and did not start, or unwritten launches could
+// not reach an already-started copy. Unwritten launches stay available for retry.
 bool startIfDue(bool restart);
 
 // For tests only. Replaces start() in startIfDue with `starter`, which gets the paths

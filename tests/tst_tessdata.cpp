@@ -23,6 +23,9 @@ class TstTessdata : public QObject
 private slots:
     void initTestCase();
     void acceptsValidContainer();
+    void containerMatrix_data();
+    void containerMatrix();
+    void validatesEveryRequestedLanguage();
     void rejectsEmDashPurgedModel();
     void rejectsTruncatedModel();
     void rejectsFileThatIsNotTessdata();
@@ -46,6 +49,25 @@ QByteArray validContainer()
         qToLittleEndian<qint64>(slot == 21 ? headerSize : -1,
                                bytes.data() + sizeof(quint32) + slot * sizeof(qint64));
     bytes += "3\n- 0 Common 0\n\xE2\x80\x94 0 Common 1\nA 3 Latin 2\n";
+    return bytes;
+}
+
+// Build independent component tables in either byte order, including opaque slots.
+QByteArray container(const QList<QByteArray> &components, bool bigEndian = false)
+{
+    QByteArray bytes(4 + components.size() * 8, '\0');
+    if (bigEndian)
+        qToBigEndian<quint32>(components.size(), bytes.data());
+    else
+        qToLittleEndian<quint32>(components.size(), bytes.data());
+    for (qsizetype i = 0; i < components.size(); ++i) {
+        const qint64 offset = components[i].isNull() ? -1 : bytes.size();
+        if (bigEndian)
+            qToBigEndian<qint64>(offset, bytes.data() + 4 + i * 8);
+        else
+            qToLittleEndian<qint64>(offset, bytes.data() + 4 + i * 8);
+        bytes += components[i];
+    }
     return bytes;
 }
 
@@ -103,6 +125,89 @@ void TstTessdata::acceptsValidContainer()
     QVERIFY2(TessdataFile::validate(path, &err), qPrintable(err));
     QVERIFY2(TessdataFile::validateLanguages(dir.path(), {QStringLiteral("eng")}, &err),
              qPrintable(err));
+}
+
+// Pin accepted byte orders and every structural rejection without a native OCR call.
+void TstTessdata::containerMatrix_data()
+{
+    QTest::addColumn<QByteArray>("bytes");
+    QTest::addColumn<QString>("detail");
+    const QByteArray unichars("2\nNULL 0\nA 1\n");
+    for (bool big : {false, true}) {
+        QList<QByteArray> components(22);
+        components[1] = unichars;
+        components[3] = QByteArrayLiteral("opaque");
+        components[21] = unichars;
+        QTest::newRow(big ? "big-endian offsets" : "little-endian offsets")
+            << container(components, big) << QString();
+    }
+    QTest::newRow("legacy slot") << container({{}, unichars}) << QString();
+    QTest::newRow("opaque component") << container({QByteArrayLiteral("opaque")}) << QString();
+    QTest::newRow("zero count") << QByteArray(4, '\0') << "implausible component count";
+    QByteArray excessive(4, char(0xff));
+    QTest::newRow("excessive count") << excessive << "implausible component count";
+    QTest::newRow("short header") << QByteArray(3, '\0') << "too small";
+    QTest::newRow("short table") << container({{}, unichars}).first(12) << "offset table needs";
+    const auto badOffset = [&](const char *name, int slot, qint64 offset, const char *detail) {
+        QByteArray bytes = container({QByteArrayLiteral("opaque"), unichars});
+        qToLittleEndian<qint64>(offset, bytes.data() + 4 + slot * 8);
+        QTest::newRow(name) << bytes << QString::fromLatin1(detail);
+    };
+    badOffset("inside header", 0, 19, "outside");
+    badOffset("beyond end", 1, 1000, "outside");
+    QByteArray descending = container({QByteArrayLiteral("opaque"), unichars});
+    qToLittleEndian<qint64>(27, descending.data() + 4);
+    QTest::newRow("strictly descending offsets") << descending << "before the previous";
+    badOffset("equal offsets", 1, 20, "before the previous");
+    QByteArray eof = container({QByteArrayLiteral("opaque")});
+    qToLittleEndian<qint64>(eof.size(), eof.data() + 4);
+    QTest::newRow("empty component at EOF") << eof << "non-positive length";
+    QTest::newRow("invalid unichar count") << container({{}, QByteArrayLiteral("no count\n")})
+        << "does not start with a unichar count";
+    QTest::newRow("zero unichar count") << container({{}, QByteArrayLiteral("0\n")})
+        << "does not start with a unichar count";
+    QTest::newRow("unichar count shortfall") << container({{}, QByteArrayLiteral("3\nA 1\n\nB 1\n")})
+        << "declares 3 unichars but holds 2";
+    QTest::newRow("empty unichar token") << container({{}, QByteArrayLiteral("1\n A 1\n")})
+        << "empty unichar entry";
+    QTest::newRow("legacy duplicate") << container({{}, QByteArrayLiteral("2\nA 1\nA 2\n")})
+        << "twice";
+}
+
+void TstTessdata::containerMatrix()
+{
+    QFETCH(QByteArray, bytes);
+    QFETCH(QString, detail);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeModel(dir.path(), bytes);
+    QVERIFY(!path.isEmpty());
+    QString error;
+    QCOMPARE(TessdataFile::validate(path, &error), detail.isEmpty());
+    if (detail.isEmpty())
+        QVERIFY(error.isEmpty());
+    else {
+        QVERIFY2(error.contains(detail), qPrintable(error));
+        QVERIFY(error.contains(QStringLiteral("eng.traineddata")));
+    }
+}
+
+// Missing/empty languages defer to Tesseract, but a later damaged model must fail.
+void TstTessdata::validatesEveryRequestedLanguage()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(!writeModel(dir.path(), validContainer()).isEmpty());
+    QFile bad(dir.filePath(QStringLiteral("swe.traineddata")));
+    QVERIFY(bad.open(QIODevice::WriteOnly));
+    QCOMPARE(bad.write("bad"), qint64(3));
+    bad.close();
+    QString error;
+    QVERIFY(TessdataFile::validateLanguages(dir.path(), {"", "missing", "eng", ""}, &error));
+    QVERIFY(error.isEmpty());
+    QVERIFY(!TessdataFile::validateLanguages(dir.path(), {"", "missing", "eng", "swe"}, &error));
+    QVERIFY(error.contains(QStringLiteral("swe.traineddata")));
+    QVERIFY(error.contains(QStringLiteral("too small")));
 }
 
 // Replacing an em dash with a hyphen once damaged a shipped model. Duplicate
@@ -180,8 +285,7 @@ void TstTessdata::missingLanguageIsNotOurError()
 void TstTessdata::repositoryOffersOnlyBestModels()
 {
     const QString url = mervin::TessdataManager::repositoryUrl();
-    QVERIFY(url.contains(QStringLiteral("/tessdata_best")));
-    QVERIFY(!url.contains(QStringLiteral("tessdata_fast")));
+    QCOMPARE(url, QStringLiteral("https://github.com/tesseract-ocr/tessdata_best"));
 }
 
 // The folder is in the profile, so the UI reads and changes it through calls that
@@ -225,6 +329,10 @@ void TstTessdata::modelsAreListedSavedAndRemovedInOrder()
     QVERIFY(!detail.isEmpty());
     QVERIFY(!QFile::exists(QDir(Models::directory()).filePath(QStringLiteral("swe.traineddata"))));
     QCOMPARE(listed.size(), 1);
+    QFile installed(QDir(Models::directory()).filePath(QStringLiteral("eng.traineddata")));
+    QVERIFY(installed.open(QIODevice::ReadOnly));
+    QCOMPARE(installed.readAll(), validContainer());
+    installed.close();
 
     // An invalid file leaves the installed model as it was.
     invalid = Models::Saved::Ok;
@@ -237,6 +345,9 @@ void TstTessdata::modelsAreListedSavedAndRemovedInOrder()
     QCOMPARE(invalid, Models::Saved::Invalid);
     QCOMPARE(listed.size(), 1);
     QCOMPARE(listed.first().bytes, validContainer().size());
+    QVERIFY(installed.open(QIODevice::ReadOnly));
+    QCOMPARE(installed.readAll(), validContainer());
+    installed.close();
     QCOMPARE(QDir(Models::directory()).entryList(QDir::Files | QDir::Hidden),
              QStringList({QStringLiteral("eng.traineddata")}));
 
@@ -249,6 +360,22 @@ void TstTessdata::modelsAreListedSavedAndRemovedInOrder()
     QTRY_VERIFY(!Models::busy());
     QVERIFY(removed);
     QVERIFY(listed.isEmpty());
+
+    // Insert out of order and check the actual sorted contents, not only their sizes.
+    for (const QString &code : {QStringLiteral("swe"), QStringLiteral("ara"), QStringLiteral("eng")})
+        Models::saveModel(code, validContainer(), &context,
+                          [](Models::Saved, const QString &, const QList<Models::Model> &) {});
+    Models::listModels(&context, [&listed](const QList<Models::Model> &models) { listed = models; });
+    QTRY_VERIFY(!Models::busy());
+    QCOMPARE(listed.size(), 3);
+    QCOMPARE(listed[0].code, QStringLiteral("ara"));
+    QCOMPARE(listed[1].code, QStringLiteral("eng"));
+    QCOMPARE(listed[2].code, QStringLiteral("swe"));
+    for (const auto &model : listed) {
+        QFile file(QDir(Models::directory()).filePath(model.code + QStringLiteral(".traineddata")));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), validContainer());
+    }
 
     // An answer for a window that has closed is dropped.
     bool called = false;

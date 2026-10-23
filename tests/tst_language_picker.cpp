@@ -217,7 +217,11 @@ private slots:
         QCOMPARE(continueButton->text(), continueText);
         QTRY_COMPARE(QApplication::focusWidget(), continueButton);
 
-        dialog.reject();
+        QSignalSpy accepted(&dialog, &QDialog::accepted);
+        QTest::keyClick(continueButton, Qt::Key_Return);
+        QCOMPARE(accepted.count(), 1);
+        QCOMPARE(dialog.result(), int(QDialog::Accepted));
+        QVERIFY(!dialog.isVisible());
         QCOMPARE(dialog.language(), language);
     }
 
@@ -245,7 +249,10 @@ private slots:
         FirstRunDialog dialog(false);
         dialog.show();
         QVERIFY(QTest::qWaitForWindowActive(&dialog));
+        QSignalSpy rejected(&dialog, &QDialog::rejected);
         QTest::keyClick(&dialog, Qt::Key_Escape);
+        QCOMPARE(rejected.count(), 1);
+        QVERIFY(!dialog.isVisible());
         QCOMPARE(dialog.result(), int(QDialog::Rejected));
         QCOMPARE(dialog.language(), QStringLiteral("zh_CN"));
     }

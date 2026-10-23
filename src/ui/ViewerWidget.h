@@ -104,9 +104,11 @@ public:
     double scale() const { return scale_; }
     // The highest zoom at which MuPDF still draws the document's pages exactly. It is
     // 10000%, or less when the largest page would make a raster beyond kMaxDevicePixel
-    // at this device pixel ratio, and never below the 8% floor. A page too large even
+    // at this device pixel ratio. A page too large even
     // at 8% does not count, and the render engine refuses it. Every zoom is clamped to
-    // this one value for the whole document.
+    // this one value for the whole document. The complete canvas must also fit Qt's
+    // integer coordinates. That document-wide cap can force pathological documents
+    // below the usual 8% floor; individual pages never get a different zoom.
     double maximumScale() const;
     ZoomMode zoomMode() const { return zoomMode_; }
     ViewLayout::Mode layoutMode() const { return layoutMode_; }
@@ -579,7 +581,7 @@ private:
     QWidget *createFormEditor(const FormField &f, int page, int fieldIndex);
     void commitFormEditor(int editorIndex); // push the editor's value into the model
     int editorIndexFor(QObject *widget) const;
-    void applyFormFieldChange(int page);  // erase the page image + re-render + repaint
+    void applyFormFieldChange(int page);  // refresh affected controls and page images
     const std::vector<std::pair<int, int>> &formFieldOrder(); // (page,fieldIndex), Tab order
     void focusFormFieldAt(int orderIndex);  // scroll into view + focus editor / mark toggle
     void advanceFormFocus(int delta);       // Tab (+1) / Shift+Tab (-1)

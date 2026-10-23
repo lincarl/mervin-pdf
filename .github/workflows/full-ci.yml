@@ -96,14 +96,7 @@ jobs:
           release_api = re.search(r"^#define MERVIN_RELEASE_API_URL (.+)$", macros, re.MULTILINE)
           if release_api is None or release_api.group(1) != expected_release_api:
               raise SystemExit("ReleaseConfig does not define the public mervin-pdf release API")
-          updater = Path("src/update/Updater.cpp").read_text()
-          if (
-              updater.count("MERVIN_RELEASE_API_URL") != 1
-              or "QStringLiteral(MERVIN_RELEASE_API_URL)" not in updater
-              or "http://" in updater
-              or "https://" in updater
-          ):
-              raise SystemExit("Updater must consume only MERVIN_RELEASE_API_URL")
+          # tst_updater observes the actual metadata request made by Updater.
 
           required_licenses = (
               "MuPDF-AGPL-3.0.txt",
@@ -160,9 +153,11 @@ jobs:
             walk.call(YAML.safe_load(File.read(path), aliases: false), path)
           end
           RUBY
-          bash -n scripts/*.sh \
+          for script in scripts/*.sh \
             packaging/linux/postinst packaging/linux/postrm \
-            packaging/linux/rpm-post.sh packaging/linux/rpm-postun.sh
+            packaging/linux/rpm-post.sh packaging/linux/rpm-postun.sh; do
+            bash -n "$script"
+          done
           python3 resources/icons/export_icon_frames.py --check
 
       - name: Test repository scripts
@@ -173,6 +168,10 @@ jobs:
           python3 -B scripts/test_prepare_prerelease.py
           python3 -B scripts/test_release_versions.py
           python3 -B scripts/test_prune_releases.py
+          python3 -B scripts/test_check_test_results.py
+          python3 -B scripts/test_build_mupdf_linux.py
+          python3 -B scripts/test_workflow_contracts.py
+          python3 -B scripts/test_fetch_test_dependencies.py
           python3 -B scripts/test_windows_payload.py
           python3 -B scripts/test_msix_manifest.py
 
@@ -197,7 +196,21 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build libqpdf-dev libtomlplusplus-dev libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0
+          sudo apt-get install -y ninja-build libjpeg-dev zlib1g-dev libtomlplusplus-dev libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0
+      - name: Build minimum supported qpdf
+        run: |
+          mkdir -p dev-temp/qpdf-source
+          curl --fail --location --retry 3 \
+            https://github.com/qpdf/qpdf/releases/download/v11.10.0/qpdf-11.10.0.tar.gz \
+            -o dev-temp/qpdf-source/qpdf.tar.gz
+          echo '6295349aa18049f5f970bf0717aa76904ce326b6b14ce230cf96895f0c679fe3  dev-temp/qpdf-source/qpdf.tar.gz' | sha256sum --check
+          tar -xzf dev-temp/qpdf-source/qpdf.tar.gz -C dev-temp/qpdf-source
+          cmake -S dev-temp/qpdf-source/qpdf-11.10.0 -B dev-temp/qpdf-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_DOC=OFF -DBUILD_STATIC_LIBS=OFF \
+            -DUSE_IMPLICIT_CRYPTO=OFF -DREQUIRE_CRYPTO_NATIVE=ON \
+            -DCMAKE_INSTALL_PREFIX="$PWD/dev-temp/qpdf" -DCMAKE_INSTALL_LIBDIR=lib
+          cmake --build dev-temp/qpdf-build --parallel 2
+          cmake --install dev-temp/qpdf-build
       - name: Install Qt
         uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125
         with:
@@ -229,17 +242,19 @@ jobs:
             flags+=("-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer")
             flags+=("-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined")
           fi
-          cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMERVIN_BUILD_TESTS=ON "${flags[@]}"
+          cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMERVIN_BUILD_TESTS=ON \
+            -Dqpdf_DIR="$PWD/dev-temp/qpdf/lib/cmake/qpdf" "${flags[@]}"
       - name: Build
         run: cmake --build build/ci --parallel 2
       - name: Test
         run: |
+          ctest --test-dir build/ci --show-only=json-v1 -LE optional-corpus > build/ci/expected-tests.json
           ctest --test-dir build/ci --output-on-failure --output-junit results.xml -LE optional-corpus --parallel 2 --timeout 180
-          python3 scripts/check-test-results.py build/ci/results.xml
+          python3 scripts/check-test-results.py build/ci/results.xml --expected build/ci/expected-tests.json
 
   # The AppImage and .deb build on Ubuntu 26.04 against its Qt and qpdf
   # (release.yml). linux-tests uses aqt's Qt, whose JPEG plugin has its own
-  # libjpeg, and Ubuntu 24.04's qpdf 11, the oldest qpdf the build supports.
+  # libjpeg, and builds qpdf 11.10, the oldest qpdf the build supports.
   # This job tests the AppImage and .deb toolchain, where Qt's JPEG plugin and
   # libqpdf load the system libjpeg. The .rpm builds on Fedora 44 and gets only
   # the exported-symbol check in release.yml.
@@ -287,8 +302,9 @@ jobs:
         run: cmake --build build/ci --parallel 2
       - name: Test
         run: |
+          ctest --test-dir build/ci --show-only=json-v1 -LE optional-corpus > build/ci/expected-tests.json
           ctest --test-dir build/ci --output-on-failure --output-junit results.xml -LE optional-corpus --parallel 2 --timeout 180
-          python3 scripts/check-test-results.py build/ci/results.xml
+          python3 scripts/check-test-results.py build/ci/results.xml --expected build/ci/expected-tests.json
 
   windows-tests:
     if: inputs.msix_artifact_run == ''
@@ -409,9 +425,11 @@ jobs:
       - name: Test
         shell: pwsh
         run: |
+          ctest --test-dir build/x64-release --show-only=json-v1 -LE optional-corpus > build/x64-release/expected-tests.json
+          if ($LASTEXITCODE -ne 0) { throw "Test inventory failed" }
           ctest --test-dir build/x64-release --output-on-failure --output-junit results.xml -LE optional-corpus --parallel 1 --timeout 180
           if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
-          python scripts/check-test-results.py build/x64-release/results.xml
+          python scripts/check-test-results.py build/x64-release/results.xml --expected build/x64-release/expected-tests.json
           if ($LASTEXITCODE -ne 0) { throw "Required tests were skipped" }
 
       - name: Install WiX

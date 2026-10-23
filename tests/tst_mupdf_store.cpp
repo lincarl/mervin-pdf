@@ -8,6 +8,7 @@
 #include <QColor>
 #include <QFile>
 #include <QImage>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -36,8 +37,11 @@ private slots:
     void documentsKeepTheirOwnInlineColourSpace_data();
     void documentsKeepTheirOwnInlineColourSpace();
     void documentsKeepTheirOwnInlineDictionaryKeys();
+    void removedEntriesReleaseTheirBudget_data();
+    void removedEntriesReleaseTheirBudget();
     // Last, because unpatched MuPDF crashes in it, which would hide later results.
     void newEntryFreedWhileStoreEvicts();
+    void newEntryFreedWhileStoreReaps();
 };
 
 namespace {
@@ -298,6 +302,39 @@ const fz_store_type hashedType = {"mervin test hashed", &hashKey, &keepKey, &dro
 const fz_store_type scannedType = {"mervin test scanned", nullptr, &keepKey, &dropKey,
                                    &compareKeys, &formatKey, nullptr};
 
+// The store's reference to this key is the last reference to its owner. Dropping
+// the external owner reference while reaping is deferred forces the do_reap path.
+struct ReapingKey
+{
+    int id;
+    fz_key_storable *owner;
+};
+
+const fz_store_type reapingType = {
+    "mervin test reap",
+    [](fz_context *, fz_store_hash *hash, void *key) {
+        hash->u.pi.i = static_cast<ReapingKey *>(key)->id;
+        return 1;
+    },
+    [](fz_context *ctx, void *key) -> void * {
+        if (auto *owner = static_cast<ReapingKey *>(key)->owner)
+            fz_keep_key_storable_key(ctx, owner);
+        return key;
+    },
+    [](fz_context *ctx, void *key) {
+        if (auto *owner = static_cast<ReapingKey *>(key)->owner)
+            fz_drop_key_storable_key(ctx, owner);
+    },
+    [](fz_context *, void *a, void *b) {
+        return int(static_cast<ReapingKey *>(a)->id != static_cast<ReapingKey *>(b)->id);
+    },
+    [](fz_context *, char *buffer, size_t size, void *) { std::snprintf(buffer, size, "reap key"); },
+    [](fz_context *, void *key) {
+        const auto *owner = static_cast<ReapingKey *>(key)->owner;
+        return int(owner && owner->storable.refs == owner->store_key_refs);
+    },
+};
+
 QByteArray assemblePdf(const QList<QByteArray> &bodies)
 {
     QByteArray pdf = "%PDF-1.7\n";
@@ -531,6 +568,114 @@ void TstMupdfStore::newEntryFreedWhileStoreEvicts()
     // then keeps its reference beside ours.
     QVERIFY(!stored || stored == value);
     QCOMPARE(refsLeft, stored ? 2 : 1);
+}
+
+// Reaping unlocks through a different branch than size eviction. Keep a caller
+// reference to the old value, so size eviction cannot drop it. Only do_reap can
+// remove its store entry; its key's final drop parks the worker in that window.
+void TstMupdfStore::newEntryFreedWhileStoreReaps()
+{
+    PoisoningAllocator allocator;
+    StoreWindow window;
+    const auto alloc = allocator.callbacks();
+    const auto locks = window.callbacks();
+    constexpr size_t full = 1000;
+    fz_context *ctx = fz_new_context(&alloc, &locks, full);
+    QVERIFY(ctx);
+    fz_context *workerCtx = fz_clone_context(ctx);
+    QVERIFY(workerCtx);
+    struct Owner { fz_key_storable key_storable; StoreWindow *window; };
+    auto *owner = static_cast<Owner *>(fz_calloc(ctx, 1, sizeof(Owner)));
+    owner->window = &window;
+    FZ_INIT_KEY_STORABLE(owner, 1, +[](fz_context *context, fz_storable *value) {
+        reinterpret_cast<Owner *>(value)->window->park();
+        fz_free(context, value);
+    });
+    ReapingKey oldKey{1, &owner->key_storable};
+    auto *old = static_cast<TestValue *>(fz_calloc(ctx, 1, sizeof(TestValue)));
+    FZ_INIT_STORABLE(old, 1, &dropValue);
+    QVERIFY(!fz_store_item(ctx, &oldKey, old, full, &reapingType));
+    fz_defer_reap_start(ctx);
+    fz_drop_key_storable(ctx, &owner->key_storable);
+
+    ReapingKey key{2, nullptr};
+    auto *value = static_cast<TestValue *>(fz_calloc(ctx, 1, sizeof(TestValue)));
+    FZ_INIT_STORABLE(value, 1, &dropValue);
+    void *existing = nullptr;
+    std::thread worker([&] {
+        existing = fz_store_item(workerCtx, &key, value, sizeof(TestValue), &reapingType);
+        window.finished();
+    });
+    const bool reached = window.waitForWindow();
+    if (reached) {
+        if (void *early = fz_find_item(ctx, &dropValue, &key, &reapingType))
+            fz_drop_storable(ctx, static_cast<fz_storable *>(early));
+        fz_filter_store(ctx, &isKey, &key, &reapingType);
+    }
+    window.release();
+    worker.join();
+    fz_defer_reap_end(ctx);
+    void *stored = fz_find_item(ctx, &dropValue, &key, &reapingType);
+    if (stored)
+        fz_drop_storable(ctx, static_cast<fz_storable *>(stored));
+    const int refs = value->storable.refs;
+    const int oldRefs = old->storable.refs;
+    const size_t written = allocator.writtenAfterFree();
+    fz_drop_storable(ctx, &old->storable);
+    fz_drop_storable(ctx, &value->storable);
+    fz_drop_context(workerCtx);
+    fz_drop_context(ctx);
+
+    QVERIFY2(reached, "the insertion never reached the deferred reap unlock window");
+    QVERIFY(!window.gaveUp());
+    QVERIFY(!existing);
+    QCOMPARE(oldRefs, 1); // reaped despite the caller's held reference
+    QCOMPARE(written, size_t(0));
+    QVERIFY(!stored || stored == value);
+    QCOMPARE(refs, stored ? 2 : 1);
+}
+
+void TstMupdfStore::removedEntriesReleaseTheirBudget_data()
+{
+    QTest::addColumn<bool>("hashed");
+    QTest::newRow("hashed") << true;
+    QTest::newRow("scanned") << false;
+}
+
+// Removing an entry returns its budget immediately. A later insertion which fits
+// must keep its neighbor; real capacity pressure must still evict that neighbor.
+void TstMupdfStore::removedEntriesReleaseTheirBudget()
+{
+    QFETCH(bool, hashed);
+    const fz_store_type *type = hashed ? &hashedType : &scannedType;
+    fz_context *ctx = fz_new_context(nullptr, nullptr, 1000);
+    QVERIFY(ctx);
+    TestKey keys[] = {{1}, {2}, {3}, {4}};
+    const auto cleanup = qScopeGuard([&] { fz_drop_context(ctx); });
+    const auto store = [&](int index, size_t size) {
+        auto *value = static_cast<TestValue *>(fz_calloc(ctx, 1, sizeof(TestValue)));
+        FZ_INIT_STORABLE(value, 1, &dropValue);
+        fz_store_item(ctx, &keys[index], value, size, type);
+        fz_drop_storable(ctx, &value->storable);
+    };
+    const auto contains = [&](int index) {
+        auto *found = static_cast<fz_storable *>(fz_find_item(ctx, &dropValue, &keys[index], type));
+        const bool exists = found != nullptr;
+        fz_drop_storable(ctx, found);
+        return exists;
+    };
+    store(0, 600);
+    store(1, 300);
+    QVERIFY(contains(0) && contains(1));
+    fz_remove_item(ctx, &dropValue, &keys[0], type);
+    fz_remove_item(ctx, &dropValue, &keys[0], type); // missing removal spends nothing
+    QVERIFY(!contains(0));
+    store(2, 600); // 300 + 600 fits the 1000-byte budget
+    QVERIFY2(contains(1), "a removed entry's stale size evicted an unrelated live cache entry");
+    QVERIFY(contains(2)); // promote it after the neighbor lookup
+    store(3, 400); // 300 + 600 + 400 exceeds the actual budget
+    QVERIFY(!contains(1));
+    QVERIFY(contains(2) && contains(3));
 }
 
 void TstMupdfStore::documentsKeepTheirOwnInlineColourSpace_data()

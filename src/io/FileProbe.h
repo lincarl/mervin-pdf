@@ -42,7 +42,8 @@ public:
     // their volumes, for a decision the user is waiting for.
     void check(const QList<File> &files, int maxAgeMs = 0, bool first = false);
 
-    // The latest answer for `file`, if one has arrived.
+    // The latest cached answer for `file`, if one has arrived. One-shot generation
+    // requests deliver only their checked() signal and retain no cached answer.
     std::optional<FileFacts> facts(const File &file) const;
 
     // Whether a check of `file` is waiting or running.
@@ -52,7 +53,7 @@ public:
     // unreachable drive, so call it only off the UI thread or from tests.
     static FileFacts examine(const File &file);
 
-    // A comparison key for a check: the file, by normalizePathKey, and its mount.
+    // A comparison key from normalized path, recorded mount and request generation.
     static QString keyOf(const File &file);
 
 signals:

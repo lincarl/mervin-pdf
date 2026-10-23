@@ -8,6 +8,10 @@ The pinned dependency set is Qt 6.12.0, MuPDF 1.28.5, qpdf 12.4.2 and toml++
 3.4.0. `vcpkg.json` pins the registry revision for qpdf, toml++ and their
 dependencies. Linux release packages use the supported distribution's Qt and
 qpdf packages; MuPDF is built from the same source release on both platforms.
+The minimum supported qpdf is 11.10.0, whose Flate decoder limit is required.
+The Ubuntu 24.04 compatibility job builds that verified source release because
+its distribution package is older. Current distribution and Windows jobs also
+exercise qpdf 12.
 
 Windows vcpkg libraries use the `x64-windows-static-md` target triplet. This
 links qpdf, toml++ and their library dependencies statically while keeping the

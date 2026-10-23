@@ -5,6 +5,9 @@
 #include <QRect>
 #include <QRectF>
 #include <QSizeF>
+#include <QString>
+
+#include <functional>
 
 class QPainter;
 
@@ -80,5 +83,25 @@ QImage reduceToDevice(const QImage &image, const QSize &deviceSize);
 // remain binary when scaled.
 void drawImage(QPainter &painter, const QImage &prepared, const QRectF &target,
                const QRectF &printableRect, ColourMode mode, bool smoothPreview = false);
+
+// Semantic worker checkpoints for deterministic output, driver-wait and fault tests.
+// Begin, NewPage and FinishJob wrap the real driver calls. Other phases observe work.
+namespace testing {
+enum class Phase { RenderBand, Begin, NewPage, BandDrawn, FinishJob, PublishFile, PrinterClosed };
+struct Event
+{
+    Phase phase;
+    int page = 0; // 1-based source page
+    int band = 0; // 0-based band within that page
+    QString path;
+};
+using PrinterCall = std::function<bool()>;
+// Installs or clears a worker callback. For a driver phase the callback invokes call
+// exactly once, or returns false to inject failure. It may hold the result before
+// returning to model a blocked driver. Other phases have an empty call.
+// Set before starting output and clear after settling its worker.
+void setHook(std::function<bool(const Event &, const PrinterCall &)> hook);
+bool checkpoint(const Event &event, const PrinterCall &call = {});
+} // namespace testing
 
 } // namespace mervin::printing

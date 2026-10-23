@@ -18,18 +18,39 @@ constexpr double kSheetTolerance = 1.02;
 // tst_view_layout.
 constexpr double kOversizedAreaRatio = 1.5;
 
+// Leave room for QRect endpoint/centre arithmetic and viewport offsets. The cap
+// applies to the complete canvas, not independently to each page.
+constexpr int kCanvasLimit = std::numeric_limits<int>::max() / 4;
+
+// Clamp before converting. Tiny pages retain a hit-testable pixel at fallback zoom.
+int pixels(double points, double scale)
+{
+    const double value = points * scale;
+    if (!(value > 1.0))
+        return 1;
+    return static_cast<int>(std::round(std::min(value, double(kCanvasLimit))));
+}
+
+// Wider additions also protect predictors and malformed inputs outside the cap.
+int coordinate(qint64 value)
+{
+    return static_cast<int>(std::clamp<qint64>(value, 0, kCanvasLimit));
+}
+
 } // namespace
 
 void ViewLayout::setDocument(const Document *doc)
 {
     doc_ = doc;
     rebuildSpreadPlan();
+    rebuildScaleLimit();
+    scale_ = boundedScale(scale_);
     relayout();
 }
 
 void ViewLayout::setScale(double scale)
 {
-    scale_ = scale;
+    scale_ = boundedScale(scale);
     relayout();
 }
 
@@ -71,7 +92,37 @@ QSize ViewLayout::displaySize(int pageNo) const
     double h = pt.height() * scale_;
     if (rotation_ == 90 || rotation_ == 270)
         std::swap(w, h);
-    return {static_cast<int>(std::lround(w)), static_cast<int>(std::lround(h))};
+    return {pixels(w, 1.0), pixels(h, 1.0)};
+}
+
+void ViewLayout::rebuildScaleLimit()
+{
+    maximumScale_ = std::numeric_limits<double>::max();
+    const int n = doc_ ? doc_->pageCount() : 0;
+    if (!n)
+        return;
+    long double sum = 0.0;
+    double widest = 1.0;
+    for (int i = 0; i < n; ++i) {
+        const QSizeF pt = doc_->pageSize(i);
+        const double side = std::max({1.0, pt.width(), pt.height()});
+        sum += side;
+        widest = std::max(widest, side);
+    }
+    // One pixel per page covers rounding and the minimum hit-test size. Reserve
+    // every row's gap even in spread/single mode so toggling modes cannot lower
+    // the cap and unexpectedly change the zoom.
+    const qint64 overhead = 2 * margin_ + qint64(n - 1) * gap_ + n;
+    const long double heightBudget = std::max<qint64>(1, kCanvasLimit - overhead);
+    const double heightLimit = static_cast<double>(heightBudget / sum);
+    const double widthLimit = (kCanvasLimit - 2 * margin_ - innerGap_ - 2.0) / (2 * widest);
+    maximumScale_ = std::nextafter(std::min(heightLimit, widthLimit), 0.0);
+}
+
+double ViewLayout::boundedScale(double scale) const
+{
+    return std::isfinite(scale) && scale > 0.0 ? std::min(scale, maximumScale_)
+                                              : std::min(1.0, maximumScale_);
 }
 
 void ViewLayout::rebuildSpreadPlan()
@@ -163,12 +214,20 @@ std::vector<ViewLayout::Row> ViewLayout::rowsFor(Mode mode, int currentPage) con
 
 int ViewLayout::rowStart(int pageNo) const
 {
+    const int n = doc_ ? doc_->pageCount() : 0;
+    if (!n)
+        return 0;
+    pageNo = std::clamp(pageNo, 0, n - 1);
     const Row *r = mode_.spread ? rowFor(pageNo) : nullptr;
     return r ? r->first : pageNo;
 }
 
 int ViewLayout::rowEnd(int pageNo) const
 {
+    const int n = doc_ ? doc_->pageCount() : 0;
+    if (!n)
+        return 0;
+    pageNo = std::clamp(pageNo, 0, n - 1);
     const Row *r = mode_.spread ? rowFor(pageNo) : nullptr;
     return r ? r->first + r->count : pageNo + 1;
 }
@@ -204,41 +263,43 @@ ViewLayout::Columns ViewLayout::columnWidths(const std::vector<Row> &rows,
 
 int ViewLayout::contentWidth(const Columns &c) const
 {
-    const int paired = c.left + (c.right > 0 ? innerGap_ + c.right : 0);
+    const int paired = coordinate(qint64(c.left) + (c.right > 0 ? qint64(innerGap_) + c.right : 0));
     return std::max(paired, c.standalone);
 }
 
 int ViewLayout::heightForScale(double scale, Mode mode, int rotation, int currentPage) const
 {
+    scale = boundedScale(scale);
     const int n = doc_ ? doc_->pageCount() : 0;
     if (n == 0)
         return 0;
     // Same rounding and rotation handling as displaySize(), same rows as
     // relayout(), so the prediction matches the height relayout() will produce.
     const auto pageH = [&](int i) {
-        return static_cast<int>(std::lround(pageHeightPt(i, rotation) * scale));
+        return pixels(pageHeightPt(i, rotation), scale);
     };
 
     const std::vector<Row> rows = rowsFor(mode, currentPage);
     if (rows.empty())
         return 0;
-    int content = -gap_; // k rows contribute k-1 gaps
+    qint64 content = -gap_; // k rows contribute k-1 gaps
     for (const Row &r : rows) {
         int rowH = 0;
         for (int k = 0; k < r.count && r.first + k < n; ++k)
             rowH = std::max(rowH, pageH(r.first + k));
         content += rowH + gap_;
     }
-    return content + 2 * margin_;
+    return coordinate(content + 2 * margin_);
 }
 
 int ViewLayout::widthForScale(double scale, Mode mode, int rotation, int currentPage) const
 {
+    scale = boundedScale(scale);
     const int n = doc_ ? doc_->pageCount() : 0;
     if (n == 0)
         return 0;
     const auto pageW = [&](int i) {
-        return static_cast<int>(std::lround(pageWidthPt(i, rotation) * scale));
+        return pixels(pageWidthPt(i, rotation), scale);
     };
 
     const std::vector<Row> rows = rowsFor(mode, currentPage);
@@ -249,13 +310,13 @@ int ViewLayout::widthForScale(double scale, Mode mode, int rotation, int current
         std::vector<QSize> sizes(n);
         for (int i = 0; i < n; ++i)
             sizes[i] = QSize(pageW(i), 0);
-        return contentWidth(columnWidths(rows, sizes)) + 2 * margin_;
+        return coordinate(qint64(contentWidth(columnWidths(rows, sizes))) + 2 * margin_);
     }
 
     int maxW = 0;
     for (const Row &r : rows)
         maxW = std::max(maxW, pageW(r.first));
-    return maxW + 2 * margin_;
+    return coordinate(qint64(maxW) + 2 * margin_);
 }
 
 ViewLayout::FitBasis ViewLayout::fitBasis(double fullW, double fullH, Mode mode,
@@ -325,9 +386,9 @@ ViewLayout::FitBasis ViewLayout::fitBasis(double fullW, double fullH, Mode mode,
         for (int k = 0; row && k < row->count && row->first + k < n; ++k)
             rowPt = std::max(rowPt, ph(row->first + k));
     }
-    b.heightScale = availH / std::max(1.0, rowPt);
+    b.heightScale = boundedScale(availH / std::max(1.0, rowPt));
 
-    b.widthScale = std::max(1e-6, ws);
+    b.widthScale = boundedScale(std::max(std::numeric_limits<double>::min(), ws));
     // Validate the closed form against the predictor that actually rounds. The
     // algebra above should land it, but margin_ / innerGap_ / the column count
     // can all move later, and a fit mode that grows a horizontal scrollbar is
@@ -335,7 +396,7 @@ ViewLayout::FitBasis ViewLayout::fitBasis(double fullW, double fullH, Mode mode,
     for (int guard = 0; guard < 8
          && widthForScale(b.widthScale, mode, rotation, cur) > fullW - slack_;
          ++guard)
-        b.widthScale = std::max(1e-6, b.widthScale - 1.0 / availW);
+        b.widthScale = std::max(std::numeric_limits<double>::min(), b.widthScale - 1.0 / availW);
     return b;
 }
 
@@ -359,10 +420,10 @@ void ViewLayout::relayout()
         // mode the spine centers the only spread.
         const Columns cols = columnWidths(rows_, sizes);
         const int content = contentWidth(cols);
-        const int paired = cols.left + (cols.right > 0 ? innerGap_ + cols.right : 0);
+        const int paired = coordinate(qint64(cols.left) + (cols.right > 0 ? qint64(innerGap_) + cols.right : 0));
         const int spineX = margin_ + (content - paired) / 2 + cols.left;
         const int rightX = spineX + innerGap_;
-        int y = margin_;
+        qint64 y = margin_;
         for (const Row &r : rows_) {
             if (r.first >= n)
                 break;
@@ -370,23 +431,23 @@ void ViewLayout::relayout()
             for (int k = 0; k < r.count && r.first + k < n; ++k)
                 rowH = std::max(rowH, sizes[r.first + k].height());
             if (r.count == 2 && r.first + 1 < n) {
-                rects_[r.first] = QRect(spineX - sizes[r.first].width(), y,
+                rects_[r.first] = QRect(spineX - sizes[r.first].width(), coordinate(y),
                                         sizes[r.first].width(), sizes[r.first].height());
-                rects_[r.first + 1] = QRect(rightX, y, sizes[r.first + 1].width(),
+                rects_[r.first + 1] = QRect(rightX, coordinate(y), sizes[r.first + 1].width(),
                                             sizes[r.first + 1].height());
             } else if (r.standalone) {
                 // An oversized sheet is centred on the canvas, so its centreline
                 // lands on the gutter and it reads as a title plate.
-                rects_[r.first] = QRect(margin_ + (content - sizes[r.first].width()) / 2, y,
+                rects_[r.first] = QRect(margin_ + (content - sizes[r.first].width()) / 2, coordinate(y),
                                         sizes[r.first].width(), sizes[r.first].height());
             } else {
-                rects_[r.first] = QRect(spineX - sizes[r.first].width(), y,
+                rects_[r.first] = QRect(spineX - sizes[r.first].width(), coordinate(y),
                                         sizes[r.first].width(), sizes[r.first].height());
             }
             y += rowH + gap_;
         }
         y -= gap_;
-        total_ = QSize(content + 2 * margin_, y + margin_);
+        total_ = QSize(coordinate(qint64(content) + 2 * margin_), coordinate(y + margin_));
         return;
     }
 
@@ -396,14 +457,14 @@ void ViewLayout::relayout()
     int maxW = 0;
     for (const Row &r : rows_)
         maxW = std::max(maxW, sizes[r.first].width());
-    int y = margin_;
+    qint64 y = margin_;
     for (const Row &r : rows_) {
         const QSize &s = sizes[r.first];
-        rects_[r.first] = QRect(margin_ + (maxW - s.width()) / 2, y, s.width(), s.height());
+        rects_[r.first] = QRect(margin_ + (maxW - s.width()) / 2, coordinate(y), s.width(), s.height());
         y += s.height() + gap_;
     }
     y -= gap_;
-    total_ = QSize(maxW + 2 * margin_, y + margin_);
+    total_ = QSize(coordinate(qint64(maxW) + 2 * margin_), coordinate(y + margin_));
 }
 
 QRect ViewLayout::pageRect(int pageNo) const

@@ -1,5 +1,6 @@
 #include "render/ContentSearch.h"
 #include "io/JobContext.h"
+#include "io/Background.h"
 #include "recent/PathKey.h"
 
 #include <QByteArray>
@@ -7,12 +8,15 @@
 #include <QFileInfo>
 #include <QList>
 #include <QSignalSpy>
+#include <QScopeGuard>
+#include <QSemaphore>
 #include <QString>
 #include <QStringList>
 #include <QTest>
 #include <QTemporaryDir>
 
 #include <memory>
+#include <atomic>
 
 using mervin::ContentSearch;
 
@@ -27,6 +31,10 @@ private slots:
     void findsTermInRealPdf();
     void missesAbsentTerm();
     void replacedQueryRejectsQueuedResults();
+    void destroyedSearchDropsQueuedResults();
+    void activeSearchStops_data();
+    void activeSearchStops();
+    void keepsOnlyLatestPendingQuery();
     void skipsTakenDestinations_data();
     void skipsTakenDestinations();
 };
@@ -176,20 +184,139 @@ void TstContentSearch::missesAbsentTerm()
 }
 
 
+// Settle workers without GUI dispatch, so old hits, progress and completion are queued.
 void TstContentSearch::replacedQueryRejectsQueuedResults()
 {
+    QTemporaryDir files;
+    const QString pdf = writeSearchPdf(files);
+    QVERIFY(!pdf.isEmpty());
     ContentSearch search;
     QSignalSpy hits(&search, &ContentSearch::hit);
+    QSignalSpy progress(&search, &ContentSearch::progress);
+    QSignalSpy done(&search, &ContentSearch::finished);
+    search.start({pdf, pdf}, "needle");
+    QVERIFY(mervin::background::settle(10000));
+    QVERIFY(hits.isEmpty() && progress.isEmpty() && done.isEmpty());
+    search.start({pdf}, "Opening");
+    QVERIFY(mervin::background::settle(10000));
+    QCoreApplication::processEvents();
+    QCOMPARE(hits.size(), 1);
+    QCOMPARE(hits[0][1].toInt(), 1);
+    QVERIFY(hits[0][2].toString().contains(QStringLiteral("Opening")));
+    QCOMPARE(progress.size(), 1);
+    QCOMPARE(progress[0][0].toInt(), 1);
+    QCOMPARE(progress[0][1].toInt(), 1);
+    QCOMPARE(done.size(), 1);
+    QVERIFY(!done[0][0].toBool());
+    QCOMPARE(done[0][1].toInt(), 1);
+    QVERIFY(!search.isRunning());
+}
+
+// Destruction invalidates deliveries already posted by a completed worker.
+void TstContentSearch::destroyedSearchDropsQueuedResults()
+{
+    QTemporaryDir files;
+    const QString pdf = writeSearchPdf(files);
+    QVERIFY(!pdf.isEmpty());
+    int deliveries = 0;
+    {
+        ContentSearch search;
+        connect(&search, &ContentSearch::hit, this, [&] { ++deliveries; });
+        connect(&search, &ContentSearch::progress, this, [&] { ++deliveries; });
+        connect(&search, &ContentSearch::finished, this, [&] { ++deliveries; });
+        search.start({pdf}, "needle");
+        QVERIFY(mervin::background::settle(10000));
+        QCOMPARE(deliveries, 0);
+    }
+    QCoreApplication::processEvents();
+    QCOMPARE(deliveries, 0);
+    ContentSearch survivor;
+    QSignalSpy hits(&survivor, &ContentSearch::hit);
+    QSignalSpy done(&survivor, &ContentSearch::finished);
+    survivor.start({pdf}, "needle");
+    QTRY_COMPARE(done.size(), 1);
+    QCOMPARE(hits.size(), 1);
+}
+
+void TstContentSearch::activeSearchStops_data()
+{
+    QTest::addColumn<bool>("blank");
+    QTest::newRow("blank supersedes active query") << true;
+    QTest::newRow("cancel is idempotent") << false;
+}
+
+// Acknowledge an active open before cancellation, then drain it and recover.
+void TstContentSearch::activeSearchStops()
+{
+    QFETCH(bool, blank);
+    ContentSearch search;
+    auto entered = std::make_shared<QSemaphore>();
+    auto release = std::make_shared<QSemaphore>();
+    ContentSearch::testing::observe(search, [entered, release](auto phase, const QString &) {
+        if (phase == ContentSearch::testing::Phase::Opening) {
+            entered->release();
+            release->tryAcquire(1, 10000);
+        }
+    });
+    const auto unblock = qScopeGuard([release] { release->release(); });
+    QSignalSpy hits(&search, &ContentSearch::hit);
+    QSignalSpy progress(&search, &ContentSearch::progress);
     QSignalSpy done(&search, &ContentSearch::finished);
     search.start({QStringLiteral(MERVIN_FIXTURE_PDF)}, "STANDARD");
-    // Keep UI delivery queued while the worker finishes the tiny document.
-    QTest::qSleep(100);
-    search.start({QStringLiteral(MERVIN_FIXTURE_PDF)}, "absent");
-    QTRY_COMPARE(done.size(), 1);
-    QCOMPARE(hits.size(), 0);
+    QVERIFY(entered->tryAcquire(1, 5000));
+    QVERIFY(search.isRunning());
+    if (blank)
+        search.start({QStringLiteral(MERVIN_FIXTURE_PDF)}, "  ");
+    else {
+        search.cancel();
+        search.cancel();
+    }
+    QCOMPARE(done.size(), 1);
+    QCOMPARE(done[0][0].toBool(), !blank);
     QCOMPARE(done[0][1].toInt(), 0);
+    QVERIFY(!search.isRunning());
+    release->release();
+    QVERIFY(mervin::background::settle(10000));
+    QCoreApplication::processEvents();
+    QCOMPARE(done.size(), 1);
+    QVERIFY(hits.isEmpty() && progress.isEmpty());
+    ContentSearch::testing::observe(search, {});
     search.start({QStringLiteral(MERVIN_FIXTURE_PDF)}, "STANDARD");
-    QTRY_COMPARE(hits.size(), 1);
+    QTRY_COMPARE(done.size(), 2);
+    QCOMPARE(hits.size(), 1);
+    QCOMPARE(progress.size(), 1);
+}
+
+// While one worker is held, intermediate queries never begin extraction.
+void TstContentSearch::keepsOnlyLatestPendingQuery()
+{
+    ContentSearch search;
+    auto entered = std::make_shared<QSemaphore>();
+    auto release = std::make_shared<QSemaphore>();
+    auto started = std::make_shared<QStringList>();
+    ContentSearch::testing::observe(search, [entered, release, started](auto phase, const QString &query) {
+        if (phase != ContentSearch::testing::Phase::Started)
+            return;
+        started->append(query); // a single serial worker; read only after settle
+        if (query == QLatin1String("held")) {
+            entered->release();
+            release->tryAcquire(1, 10000);
+        }
+    });
+    const auto unblock = qScopeGuard([release] { release->release(); });
+    QSignalSpy hits(&search, &ContentSearch::hit);
+    QSignalSpy done(&search, &ContentSearch::finished);
+    const QStringList paths{QStringLiteral(MERVIN_FIXTURE_PDF)};
+    search.start(paths, "held");
+    QVERIFY(entered->tryAcquire(1, 5000));
+    search.start(paths, "intermediate");
+    search.start(paths, "STANDARD");
+    release->release();
+    QVERIFY(mervin::background::settle(10000));
+    QCoreApplication::processEvents();
+    QCOMPARE(*started, QStringList({"held", "STANDARD"}));
+    QCOMPARE(done.size(), 1);
+    QCOMPARE(hits.size(), 1);
 }
 
 // Selects locked or reserved output keys and aliases that must not be searched.
@@ -227,6 +354,11 @@ void TstContentSearch::skipsTakenDestinations()
         QVERIFY(lock->owns());
     }
     ContentSearch search;
+    auto opens = std::make_shared<std::atomic<int>>(0);
+    ContentSearch::testing::observe(search, [opens](auto phase, const QString &) {
+        if (phase == ContentSearch::testing::Phase::Opening)
+            ++*opens;
+    });
     QSignalSpy hits(&search, &ContentSearch::hit);
     QSignalSpy progress(&search, &ContentSearch::progress);
     QSignalSpy done(&search, &ContentSearch::finished);
@@ -240,6 +372,7 @@ void TstContentSearch::skipsTakenDestinations()
     QCOMPARE(done[0][1].toInt(), 0);
     QVERIFY(!search.isRunning());
 
+    QCOMPARE(opens->load(), 0);
     lock.reset();
     writer.stop();
     done.clear();
@@ -247,6 +380,7 @@ void TstContentSearch::skipsTakenDestinations()
     search.start({path}, QStringLiteral("STANDARD"));
     QTRY_COMPARE(done.size(), 1);
     QCOMPARE(hits.size(), 1);
+    QCOMPARE(opens->load(), 1);
     QCOMPARE(hits[0][0].toString(), path);
     QVERIFY(hits[0][1].toInt() >= 1);
     QVERIFY(hits[0][2].toString().contains(QStringLiteral("STANDARD"), Qt::CaseInsensitive));

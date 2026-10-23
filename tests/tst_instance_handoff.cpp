@@ -29,6 +29,7 @@
 #include <QLockFile>
 #include <QMessageBox>
 #include <QPointer>
+#include <QProcess>
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QSignalSpy>
@@ -117,6 +118,8 @@ private slots:
     void writesInFlightKeepTheLock();
     void standaloneWritesNoStores_data();
     void standaloneWritesNoStores();
+    void realLaunchSelectsStateOwnership_data();
+    void realLaunchSelectsStateOwnership();
     void standaloneSavesNoMounts_data();
     void standaloneSavesNoMounts();
     void launchBeforeFinalQuitGoesToNextCopy_data();
@@ -398,6 +401,74 @@ void TstInstanceHandoff::standaloneWritesNoStores()
     QTRY_VERIFY_WITH_TIMEOUT(!window, 10000);
 }
 
+void TstInstanceHandoff::realLaunchSelectsStateOwnership_data()
+{
+    QTest::addColumn<int>("mode");
+    QTest::newRow("primary") << 0;
+    QTest::newRow("delivered") << 1;
+    QTest::newRow("standalone") << 2;
+}
+
+// Exercise main's actual launch decision in another process with this test's profile.
+void TstInstanceHandoff::realLaunchSelectsStateOwnership()
+{
+    QFETCH(int, mode);
+    QVERIFY(appfiles::flush(10000));
+#ifdef Q_OS_UNIX
+    // The child has the real runtime-root configuration. The profile hash still
+    // isolates these endpoints from every ordinary application instance.
+    ipc::setUserRuntimeRootForTests({});
+    ipc::setSocketRootForTests({});
+    const auto restoreRoots = qScopeGuard([&] {
+        ipc::setUserRuntimeRootForTests(runtime_.path());
+        ipc::setSocketRootForTests(sockets_.path());
+    });
+#endif
+    const ipc::InstancePaths paths = ipc::instancePaths();
+    QVERIFY(!paths.lockFile.isEmpty());
+    SingleInstanceServer primary;
+    QLockFile held(paths.lockFile);
+    held.setStaleLockTime(0);
+    if (mode == 1)
+        QCOMPARE(primary.start(), Start::Started);
+    if (mode == 2)
+        QVERIFY(held.tryLock());
+    QFile config(ConfigPaths::configFile());
+    QVERIFY(config.open(QIODevice::ReadOnly));
+    const QByteArray original = config.readAll();
+    config.close();
+    QProcess child;
+    const auto stopChild = qScopeGuard([&] {
+        if (child.state() != QProcess::NotRunning) {
+            child.kill();
+            child.waitForFinished(5000);
+        }
+    });
+    child.start(QStringLiteral(MERVIN_APP_EXE), {
+        QStringLiteral("--profile"), profile_->path(), QStringLiteral("--language=en"),
+        QStringLiteral("--quit-after-startup"), pdf_,
+    });
+    QVERIFY(child.waitForStarted(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(child.state(), QProcess::NotRunning, ipc::kLaunchWaitMs + 15000);
+    QCOMPARE(child.exitStatus(), QProcess::NormalExit);
+    const QByteArray diagnostics = child.readAllStandardError();
+    QCOMPARE(child.exitCode(), 0);
+    if (mode == 1) {
+        const QList<Message> opens = primary.takeOpens();
+        QCOMPARE(opens.size(), 1);
+        QCOMPARE(opens.front().paths, QStringList{pdf_});
+    }
+    if (mode == 2)
+        QVERIFY2(diagnostics.contains("running copy does not answer"), diagnostics.constData());
+    const QString recent = QDir(profile_->path()).filePath(QStringLiteral("recent.json"));
+    QCOMPARE(QFile::exists(recent), mode == 0);
+    if (mode != 0) {
+        QVERIFY(config.open(QIODevice::ReadOnly));
+        QCOMPARE(config.readAll(), original);
+        QVERIFY(!QFile::exists(QDir(profile_->path()).filePath(QStringLiteral("session.json"))));
+    }
+}
+
 void TstInstanceHandoff::standaloneSavesNoMounts_data()
 {
     QTest::addColumn<bool>("ownsStores");
@@ -455,6 +526,7 @@ void TstInstanceHandoff::launchBeforeFinalQuitGoesToNextCopy_data()
     QTest::newRow("Quit") << 0;
     QTest::newRow("close for an update") << 1;
     QTest::newRow("WindowManager destroyed") << 2;
+    QTest::newRow("last window closed") << 3;
 }
 
 // The server thread can acknowledge a launch just before a quit becomes final, before the
@@ -488,6 +560,9 @@ void TstInstanceHandoff::launchBeforeFinalQuitGoesToNextCopy()
         break;
     case 2:
         manager.reset();
+        break;
+    case 3:
+        window->close();
         break;
     }
     if (manager) {
@@ -756,16 +831,25 @@ void TstInstanceHandoff::carryFileDateBounds()
 
 void TstInstanceHandoff::cancelledQuitOpensHeldLaunch_data()
 {
-    QTest::addColumn<bool>("update");
-    QTest::newRow("Quit") << false;
-    QTest::newRow("close for an update") << true;
+    QTest::addColumn<int>("closePath");
+    QTest::addColumn<int>("answer");
+    QTest::addColumn<bool>("createSurvivor");
+    QTest::newRow("Quit, cancel") << 0 << int(QMessageBox::Cancel) << false;
+    QTest::newRow("update, cancel") << 1 << int(QMessageBox::Cancel) << false;
+    QTest::newRow("last window, cancel") << 2 << int(QMessageBox::Cancel) << false;
+    QTest::newRow("last window, discard") << 2 << int(QMessageBox::Discard) << false;
+    QTest::newRow("last window, save") << 2 << int(QMessageBox::Save) << false;
+    QTest::newRow("window added during discard prompt") << 2 << int(QMessageBox::Discard) << true;
+    QTest::newRow("window added during save prompt") << 2 << int(QMessageBox::Save) << true;
 }
 
-// A quit, or an update's close, that asks about unsaved edits holds a launch that arrives
-// meanwhile, as it would close it again. Cancelling opens it.
+// A final close holds launches through its prompt. Cancel opens them here; an
+// approved close carries them or opens them in a window added during the prompt.
 void TstInstanceHandoff::cancelledQuitOpensHeldLaunch()
 {
-    QFETCH(bool, update);
+    QFETCH(int, closePath);
+    QFETCH(int, answer);
+    QFETCH(bool, createSurvivor);
     std::unique_ptr<SingleInstanceServer> server = startedServer();
     QVERIFY(server);
     WindowManager manager;
@@ -783,7 +867,8 @@ void TstInstanceHandoff::cancelledQuitOpensHeldLaunch()
 
     std::optional<Handoff> offered;
     std::optional<bool> shownWhileAsking;
-    int ticks = 0;
+    std::optional<int> tabsWhileAsking;
+    QPointer<MainWindow> survivor;
     QTimer dialogs;
     connect(&dialogs, &QTimer::timeout, this, [&] {
         auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
@@ -791,25 +876,44 @@ void TstInstanceHandoff::cancelledQuitOpensHeldLaunch()
             return;
         if (!offered) {
             offered = offer(later);
-            return;
+            // Dispatch the acknowledged batch while the close question is still
+            // open, without depending on an arbitrary delay before Cancel.
+            QMetaObject::invokeMethod(&manager, "takeInstanceOpens", Qt::DirectConnection);
+            QMetaObject::invokeMethod(&manager, "openNextInstanceOpen", Qt::DirectConnection);
         }
-        if (++ticks < 20) // the open reaches this copy meanwhile
-            return;
         shownWhileAsking = shows(manager, later);
-        box->button(QMessageBox::Cancel)->click();
+        tabsWhileAsking = tabs->count();
+        if (createSurvivor)
+            survivor = manager.createWindow();
+        box->button(QMessageBox::StandardButton(answer))->click();
     });
     dialogs.start(5);
-    if (update)
+    if (closePath == 1)
         QCOMPARE(manager.tryCloseAllForUpdate(), Updater::CloseResult::Declined);
+    else if (closePath == 2)
+        window->close();
     else
         manager.quitAll();
     QTRY_VERIFY_WITH_TIMEOUT(shownWhileAsking.has_value(), 10000);
     dialogs.stop();
     QCOMPARE(offered, std::optional(Handoff::Delivered));
     QCOMPARE(shownWhileAsking, std::optional(false));
-    QTRY_VERIFY_WITH_TIMEOUT(shows(manager, later), 10000);
-    QVERIFY(window);
-    QVERIFY(!relaunch::carrying());
+    QCOMPARE(tabsWhileAsking, std::optional(1));
+    if (answer == QMessageBox::Cancel) {
+        QTRY_VERIFY_WITH_TIMEOUT(shows(manager, later), 10000);
+        QVERIFY(window);
+        QVERIFY(!relaunch::carrying());
+    } else {
+        QTRY_VERIFY_WITH_TIMEOUT(!window, 10000);
+        if (createSurvivor) {
+            QVERIFY(survivor);
+            QTRY_VERIFY_WITH_TIMEOUT(shows(manager, later), 10000);
+            QVERIFY(!relaunch::carrying());
+        } else {
+            QVERIFY(!shows(manager, later));
+            QVERIFY(relaunch::carrying());
+        }
+    }
 }
 
 QTEST_MAIN(TstInstanceHandoff)

@@ -25,6 +25,12 @@ public:
     // Cancel extraction and release its retained text index when the document unloads.
     void clear();
 
+    struct testing {
+        enum class Phase { Started, CompletionQueued };
+        // Observes worker phases. Copied when start() queues a search.
+        static void observe(std::function<void(Phase, const QString &)> observer);
+    };
+
 private:
     RenderEngine *engine_;
     background::SerialQueue searches_;

@@ -224,12 +224,13 @@ void attachParentConsole()
 // launches cannot reach this copy. Without `ownsState` it is a standalone copy beside
 // a live copy that holds the lock but did not take its files. It opens the initial
 // files only, and leaves the first-run window, the session, the recovery copies, the
-// shared stores and updates to that copy. A copy that could not make the lock or
-// endpoint at all owns its state, as nothing else does.
+// shared stores, persisted settings and updates to that copy. Without a usable
+// lock or endpoint, ownership is unknown and the same restrictions apply.
 int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
           std::unique_ptr<SingleInstanceServer> server, bool ownsState)
 {
     app.setQuitOnLastWindowClosed(false); // WindowManager drives process exit
+    mervin::Settings::setPersistenceEnabled(ownsState);
     QStringList paths = cliPaths;
     const FirstRunChoices firstRun = startUiLanguage(cli, server.get(), ownsState, paths);
     mervin::WindowManager wm(ownsState);
@@ -483,9 +484,9 @@ int main(int argc, char *argv[])
         break;
     }
 
-    // The lock or endpoint cannot be made and nothing answered, so no copy owns the
-    // user's state. This one runs in full, but later launches cannot reach it.
+    // Without a lock, ownership of the shared state cannot be established. Keep
+    // this copy's preferences in memory, as for an unresponsive primary.
     std::fprintf(stderr, "MervinPDF: cannot set up the single-instance lock; this copy "
                          "runs on its own\n");
-    return finish(runUi(*app, cli, paths, nullptr, true));
+    return finish(runUi(*app, cli, paths, nullptr, false));
 }

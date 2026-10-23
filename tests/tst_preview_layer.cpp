@@ -29,6 +29,7 @@ private slots:
     void tilesAreReEncodedForRepeatedBlitting();
     void theNewestTileWins();
     void replacingATileDoesNotDoubleCountBytes();
+    void replacementsUseTheirBudgetCredit();
     void budgetRefusesExtraTilesButNeverTheFirst();
     void freedBudgetIsSpendableAgain();
     void eraseRetainAndClear();
@@ -40,11 +41,11 @@ private slots:
 
 namespace {
 
-// A stand-in for a rendered page image; only its size matters here.
-QImage tileImage(int w, int h)
+// A distinct rendered image for geometry, pixel replacement and budget checks.
+QImage tileImage(int w, int h, QColor color = Qt::white)
 {
     QImage img(w, h, QImage::Format_RGB888);
-    img.fill(Qt::white);
+    img.fill(color);
     return img;
 }
 
@@ -165,13 +166,14 @@ void TstPreviewLayer::theNewestTileWins()
 {
     const QRect page(0, 0, 600, 800);
     mervin::PreviewLayer layer;
-    QVERIFY(layer.add(2, tileImage(600, 800), page, page));
+    QVERIFY(layer.add(2, tileImage(600, 800, Qt::red), page, page));
     QCOMPARE(layer.tile(2)->frac, QRectF(0.0, 0.0, 1.0, 1.0));
 
     // A deep-zoom band replaces the whole-page tile, and brings its own geometry.
-    QVERIFY(layer.add(2, tileImage(600, 100), QRect(0, 300, 600, 100), page));
+    QVERIFY(layer.add(2, tileImage(600, 100, Qt::blue), QRect(0, 300, 600, 100), page));
     QCOMPARE(layer.tileCount(), 1);
     QCOMPARE(layer.tile(2)->frac, QRectF(0.0, 0.375, 1.0, 0.125));
+    QCOMPARE(layer.tile(2)->image.pixelColor(10, 10), QColor(Qt::blue));
 }
 
 void TstPreviewLayer::replacingATileDoesNotDoubleCountBytes()
@@ -179,13 +181,44 @@ void TstPreviewLayer::replacingATileDoesNotDoubleCountBytes()
     const QRect page(0, 0, 100, 100);
 
     mervin::PreviewLayer layer;
-    QVERIFY(layer.add(7, tileImage(100, 100), page, page));
+    QVERIFY(layer.add(7, tileImage(100, 100, Qt::red), page, page));
     const qint64 first = layer.bytes();
     QVERIFY(first > 0);
-    QVERIFY(layer.add(7, tileImage(50, 50), page, page)); // same coverage, fewer pixels
+    QVERIFY(layer.add(7, tileImage(50, 50, Qt::blue), page, page)); // same coverage, fewer pixels
     QCOMPARE(layer.tileCount(), 1);
     QCOMPARE(layer.bytes(), qint64(layer.tile(7)->image.sizeInBytes()));
     QVERIFY(layer.bytes() < first);
+    QCOMPARE(layer.tile(7)->image.pixelColor(10, 10), QColor(Qt::blue));
+}
+
+void TstPreviewLayer::replacementsUseTheirBudgetCredit()
+{
+    const QRect page(0, 0, 40, 40);
+    constexpr qint64 bytes = 40 * 40 * 4;
+    mervin::PreviewLayer layer(2 * bytes);
+    QVERIFY(layer.add(0, tileImage(40, 40, Qt::red), page, page));
+    QVERIFY(layer.add(1, tileImage(40, 40, Qt::green), page, page));
+    QCOMPARE(layer.bytes(), 2 * bytes);
+    QVERIFY(layer.add(0, tileImage(40, 40, Qt::blue), page, page));
+    QCOMPARE(layer.bytes(), 2 * bytes);
+    QCOMPARE(layer.tile(0)->image.pixelColor(10, 10), QColor(Qt::blue));
+
+    mervin::PreviewLayer::Tile replacement{
+        tileImage(40, 40, Qt::yellow).convertToFormat(QImage::Format_RGB32),
+        QRectF(0, 0.5, 1, 0.5)};
+    QVERIFY(layer.adopt(0, replacement));
+    QCOMPARE(layer.tile(0)->image, replacement.image);
+    QCOMPARE(layer.tile(0)->frac, replacement.frac);
+    QCOMPARE(layer.bytes(), 2 * bytes);
+
+    // Both entry points must preserve the old image, geometry and accounting on refusal.
+    QVERIFY(!layer.add(0, tileImage(80, 80, Qt::cyan), page, page));
+    QVERIFY(!layer.adopt(0, {tileImage(80, 80, Qt::magenta), QRectF(0, 0, 1, 1)}));
+    QCOMPARE(layer.tile(0)->image, replacement.image);
+    QCOMPARE(layer.tile(0)->frac, replacement.frac);
+    QCOMPARE(layer.tile(1)->image.pixelColor(10, 10), QColor(Qt::green));
+    QCOMPARE(layer.tileCount(), 2);
+    QCOMPARE(layer.bytes(), 2 * bytes);
 }
 
 void TstPreviewLayer::budgetRefusesExtraTilesButNeverTheFirst()

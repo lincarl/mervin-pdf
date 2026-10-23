@@ -184,10 +184,8 @@ void TstDocument::pageSizesMatchLoadedPageBounds()
 
 void TstDocument::pageSizesMatchOnShippedExamples()
 {
-    // Real files, including the ones the change was made for: schematic.pdf is a
-    // link-annotation-per-component export and form_comment.pdf carries widget and
-    // markup annotations - exactly the pages whose annotations fz_load_page used to
-    // resolve just to hand back a width and a height.
+    // Generated files include images, links, widgets and comments. Assert those
+    // properties so a fixture simplification cannot silently remove the workload.
     const QStringList files = {
 #ifdef MERVIN_SCHEMATIC_PDF
         QStringLiteral(MERVIN_SCHEMATIC_PDF),
@@ -207,18 +205,42 @@ void TstDocument::pageSizesMatchOnShippedExamples()
     RenderEngine engine;
     int tested = 0;
     for (const QString &path : files) {
-        if (!QFileInfo::exists(path))
-            continue;
+        QVERIFY2(QFileInfo::exists(path), qPrintable(path));
         QString err;
         bool needsPw = false;
         auto doc = engine.openDocument(path, QString(), &err, &needsPw);
         QVERIFY2(doc != nullptr, qPrintable(QStringLiteral("%1: %2").arg(path, err)));
         QVERIFY(doc->pageCount() > 0);
+        int links = 0, widgets = 0, comments = 0, images = 0;
+        QVERIFY(doc->withPdfDocument([&](fz_context *ctx, pdf_document *pdf) {
+            pdf_obj *page = pdf_lookup_page_obj(ctx, pdf, 0);
+            pdf_obj *annots = pdf_dict_get(ctx, page, PDF_NAME(Annots));
+            for (int i = 0; i < pdf_array_len(ctx, annots); ++i) {
+                pdf_obj *type = pdf_dict_get(ctx, pdf_array_get(ctx, annots, i), PDF_NAME(Subtype));
+                links += pdf_name_eq(ctx, type, PDF_NAME(Link));
+                widgets += pdf_name_eq(ctx, type, PDF_NAME(Widget));
+                comments += pdf_name_eq(ctx, type, PDF_NAME(Text));
+            }
+            pdf_obj *resources = pdf_dict_get_inheritable(ctx, page, PDF_NAME(Resources));
+            pdf_obj *objects = pdf_dict_get(ctx, resources, PDF_NAME(XObject));
+            for (int i = 0; i < pdf_dict_len(ctx, objects); ++i)
+                images += pdf_name_eq(ctx, pdf_dict_get(ctx, pdf_dict_get_val(ctx, objects, i),
+                                                        PDF_NAME(Subtype)), PDF_NAME(Image));
+        }));
+        const QString name = QFileInfo(path).fileName();
+        if (name == QLatin1String("schematic.pdf"))
+            QCOMPARE(links, 16);
+        if (name == QLatin1String("form_comment.pdf")) {
+            QCOMPARE(widgets, 1);
+            QCOMPARE(comments, 1);
+            QVERIFY(doc->hasForm());
+        }
+        if (name == QLatin1String("images.pdf"))
+            QCOMPARE(images, 1);
         verifyEveryPage(engine, *doc, QFileInfo(path).fileName());
         ++tested;
     }
-    if (tested == 0)
-        QSKIP("optional local PDF fixtures are not present");
+    QCOMPARE(tested, 4);
 }
 
 void TstDocument::pageWithoutAnyBoxFallsBackLikeLoadedPage()

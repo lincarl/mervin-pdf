@@ -42,6 +42,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <atomic>
 #include <condition_variable>
 #include <mutex>
 
@@ -213,6 +214,7 @@ QJsonObject readManifest(const QString &path)
 // How often a tab reads what its load reports.
 constexpr int kPollMs = 250;
 int slowDelayMs = TabPage::kSlowMs;
+std::atomic<int> stoppedLoadWaiters{0};
 
 // The slow notice for document `name` read from `folder`, for a label `width` wide (see
 // fitFileSentence).
@@ -400,6 +402,8 @@ struct TabPage::Job {
     void waitUntilEnded()
     {
         std::unique_lock<std::mutex> lock(mutex);
+        ++stoppedLoadWaiters;
+        const auto waiting = qScopeGuard([] { --stoppedLoadWaiters; });
         changed.wait(lock, [this] { return phase == Phase::Ended; });
     }
 
@@ -721,6 +725,8 @@ void TabPage::stopLoading()
     std::shared_ptr<OpenResult> result;
     {
         std::unique_lock<std::mutex> lock(job->mutex);
+        ++stoppedLoadWaiters;
+        const auto waiting = qScopeGuard([] { --stoppedLoadWaiters; });
         job->changed.wait(lock, [&job] {
             return job->phase == Job::Phase::Stored || job->phase == Job::Phase::Ended;
         });
@@ -2095,6 +2101,16 @@ std::shared_ptr<DocumentLifetime> TabPage::testing::storedDocument(const TabPage
     std::lock_guard<std::mutex> lock(tab.job_->mutex);
     const auto &result = tab.job_->result;
     return result && result->document ? result->document->lifetime() : nullptr;
+}
+
+bool TabPage::testing::slowPolling(const TabPage &tab)
+{
+    return tab.slowPoll_->isActive();
+}
+
+int TabPage::testing::waitingForStoppedLoad()
+{
+    return stoppedLoadWaiters.load();
 }
 
 QString TabPage::testing::slowNotice(const QString &name, const QString &folder,

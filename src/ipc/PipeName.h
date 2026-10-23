@@ -32,8 +32,10 @@ struct InstancePaths
 //   file system holds no sockets (see SingleInstanceServer::start). With no usable
 //   folder for it, `server` is empty, and the lock alone keeps the profile's files to
 //   one copy.
-// All are empty when no folder takes the lock. On Windows the lock is in %TEMP% and
-// `server` is the pipe name.
+// All are empty when no folder takes the lock. Windows keeps the lock in the
+// profile's instance-<host> folder with an owner-and-SYSTEM DACL. Existing
+// nonprivate folders and reparse points are refused. `server` is the SID-based
+// pipe name. Profile links resolve to the same group.
 InstancePaths instancePaths(const QString &name = QString());
 
 // Where the primary of `paths` listens: the path it recorded in `paths.endpointFile`, or
@@ -45,12 +47,13 @@ QString endpointOf(const InstancePaths &paths);
 // removes the record when it listens nowhere. Does nothing without an endpoint file.
 void recordEndpoint(const InstancePaths &paths);
 
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_WIN)
 // Upgrade support for copies built before the lock and socket left the temp folder, which
 // a launch offers its files to while one runs (see claimOrHandOff). Remove it once such
-// copies are no longer expected to run. Returns the socket that such a copy of the group
-// `name`, or of its own group when `name` is empty, listens on. That is the group name in
-// the temp folder, with the user token hashed from $USERNAME or $USER instead of the uid.
+// copies are no longer expected to run. Returns the endpoint that such a copy of the group
+// `name`, or of its own group when `name` is empty, listens on. Windows returns its
+// pipe name; Linux returns the socket in the temp folder. Both use the token
+// hashed from USERNAME or USER instead of the OS identity.
 QString legacyEndpoint(const QString &name = QString());
 #endif
 

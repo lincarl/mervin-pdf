@@ -53,7 +53,8 @@ QpdfService::Status QpdfService::readInfo(const QString &path, const QString &pa
                                           QString *error)
 {
     std::unique_ptr<QPDF> source;
-    const Status st = openQpdf(path, password, source, error);
+    std::shared_ptr<QpdfReadState> readState;
+    const Status st = openQpdf(path, password, source, error, &readState);
     if (st != Status::Ok)
         return st;
     QPDF &q = *source;
@@ -63,6 +64,8 @@ QpdfService::Status QpdfService::readInfo(const QString &path, const QString &pa
         out.encrypted = q.isEncrypted();
         if (!out.encrypted) {
             out.algorithm = methodName(QPDF::e_none);
+            checkQpdfWarnings(q, readState.get());
+            readState->throwIfFailed();
             return Status::Ok;
         }
 
@@ -92,6 +95,8 @@ QpdfService::Status QpdfService::readInfo(const QString &path, const QString &pa
         out.permissions.canAnnotate = q.allowModifyAnnotation();
         out.lowResolutionPrintOnly = !out.permissions.canPrint && q.allowPrintLowRes();
         out.pageAssemblyOnly = !out.permissions.canModify && q.allowModifyAssembly();
+        checkQpdfWarnings(q, readState.get());
+        readState->throwIfFailed();
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)
@@ -119,20 +124,36 @@ QpdfService::Status QpdfService::decrypt(const QString &inPath, const QString &o
                                          const std::function<bool()> &mayCommit)
 {
     std::unique_ptr<QPDF> source;
-    const Status st = openQpdf(inPath, password, source, error);
+    std::shared_ptr<QpdfReadState> readState;
+    const Status st = openQpdf(inPath, password, source, error, &readState);
     if (st != Status::Ok)
         return st;
 
     try {
         AtomicPdfWriter output(*source, outPath);
         output.options().setPreserveEncryption(false); // drop encryption AND all owner restrictions
-        output.write(mayCommit);
+        output.write([&] {
+            checkQpdfWarnings(*source, readState.get());
+            readState->throwIfFailed();
+            return !mayCommit || mayCommit();
+        });
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)
             *error = QString::fromUtf8(e.what());
         return Status::Failed;
     }
+}
+
+QString QpdfService::passwordEncodingError()
+{
+    //: Shown in the security dialog or after an encryption failure. AES-128 and
+    //: RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western
+    //: European letters such as é and ü, and common symbols, but not, for example,
+    //: Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every
+    //: character. Keep the algorithm names as they are.
+    return tr("A password contains characters that AES-128 and RC4-128 cannot "
+              "use. Choose AES-256.");
 }
 
 /// Writes the chosen encryption and permissions after any destination validator approves.
@@ -153,22 +174,16 @@ QpdfService::Status QpdfService::encrypt(const QString &inPath, const QString &o
     const std::optional<QByteArray> userKey = keyBytes(userPassword, algo);
     const std::optional<QByteArray> ownerKey = keyBytes(owner, algo);
     if (!userKey || !ownerKey) {
-        if (error) {
-            //: Reason shown after "The operation failed." when encrypting. AES-128 and
-            //: RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western
-            //: European letters such as é and ü, and common symbols, but not, for example,
-            //: Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every
-            //: character. Keep the algorithm names as they are.
-            *error = tr("A password contains characters that AES-128 and RC4-128 cannot "
-                        "use. Choose AES-256.");
-        }
+        if (error)
+            *error = passwordEncodingError();
         return Status::Failed;
     }
     const std::string userBytes = userKey->toStdString();
     const std::string ownerBytes = ownerKey->toStdString();
 
     std::unique_ptr<QPDF> source;
-    const Status st = openQpdf(inPath, currentPassword, source, error);
+    std::shared_ptr<QpdfReadState> readState;
+    const Status st = openQpdf(inPath, currentPassword, source, error, &readState);
     if (st != Status::Ok)
         return st;
     QPDF &q = *source;
@@ -201,7 +216,11 @@ QpdfService::Status QpdfService::encrypt(const QString &inPath, const QString &o
                                                 /*encrypt_metadata=*/true, /*use_aes=*/false);
             break;
         }
-        output.write(mayCommit);
+        output.write([&] {
+            checkQpdfWarnings(*source, readState.get());
+            readState->throwIfFailed();
+            return !mayCommit || mayCommit();
+        });
         return Status::Ok;
     } catch (const std::exception &e) {
         if (error)

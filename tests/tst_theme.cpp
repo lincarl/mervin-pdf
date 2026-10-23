@@ -1,15 +1,15 @@
 // Guard rails for the colour vocabulary (src/ui/ThemeTokens.h) and the one
 // stylesheet built from it (src/ui/Theme.cpp).
 //
-// The load-bearing case is noStrayLiteralsInSheet(): it extracts every colour
-// literal from the generated sheet and requires each one to be the css() of some
-// token. That is what keeps colours out of Theme.cpp permanently - it fails the
-// moment someone types a hex into a rule instead of adding a token.
+// noStrayLiteralsInSheet checks six-digit hex and rgb/rgba literals against token
+// values. It does not parse every CSS colour spelling or establish how a rule
+// renders. The contrast and widget tests below check those separate contracts.
 
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
 #include "io/AppFiles.h"
 #include "ui/Theme.h"
+#include "ui/Icons.h"
 #include "ui/ThemeTokens.h"
 
 #include <QApplication>
@@ -193,7 +193,43 @@ private slots:
     void spinBoxEditorsRecoverFromQt612Geometry();
     void comboArrowIsDeclared();
     void settingsMenuSelectionDiffersFromHover();
+    void buttonGlyphFollowsPaletteAndStyle();
 };
+
+// Inspect actual icon pixels after palette, disabled-state and polish changes.
+void TstTheme::buttonGlyphFollowsPaletteAndStyle()
+{
+    QToolButton button;
+    button.resize(48, 48);
+    QPalette palette = button.palette();
+    palette.setColor(QPalette::Active, QPalette::ButtonText, Qt::red);
+    palette.setColor(QPalette::Disabled, QPalette::ButtonText, Qt::blue);
+    button.setPalette(palette);
+    icons::setButtonGlyph(&button, icons::Glyph::ZoomOut, 32);
+    button.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&button));
+    const auto peakInk = [&button](QIcon::Mode mode) {
+        const QImage image = button.icon().pixmap(QSize(32, 32), 1.0, mode).toImage();
+        QColor peak(Qt::transparent);
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x)
+                if (const QColor pixel = image.pixelColor(x, y); pixel.alpha() > peak.alpha())
+                    peak = pixel;
+        return peak;
+    };
+    QCOMPARE(peakInk(QIcon::Normal), QColor(Qt::red));
+    button.setEnabled(false);
+    QCOMPARE(peakInk(QIcon::Disabled), QColor(Qt::blue));
+    palette.setColor(QPalette::Active, QPalette::ButtonText, Qt::green);
+    palette.setColor(QPalette::Disabled, QPalette::ButtonText, Qt::magenta);
+    button.setPalette(palette);
+    QCOMPARE(peakInk(QIcon::Disabled), QColor(Qt::magenta));
+    button.setEnabled(true);
+    QCOMPARE(peakInk(QIcon::Normal), QColor(Qt::green));
+    button.setStyleSheet(QStringLiteral("QToolButton { color: #ff8000; }"));
+    button.ensurePolished();
+    QCOMPARE(peakInk(QIcon::Normal), QColor(255, 128, 0));
+}
 
 // css() has to produce exactly the two forms the sheets used before the tokens
 // existed: a bare hex when opaque, rgba() with three decimals when not.
@@ -647,8 +683,8 @@ void TstTheme::noStrayLiteralsInSheet_data()
     QTest::newRow("light") << fixedLightPalette() << QColor(0x00, 0x67, 0xc0);
 }
 
-// No colour may be written into a rule: every literal in the sheet has to be a
-// token. Without this the vocabulary silently rots back into scattered hexes.
+// Supported literal spellings must match a token value. Equal handwritten values
+// are indistinguishable here, so this is a vocabulary check, not source provenance.
 void TstTheme::noStrayLiteralsInSheet()
 {
     QFETCH(QPalette, palette);

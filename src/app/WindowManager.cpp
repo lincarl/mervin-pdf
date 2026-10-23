@@ -386,7 +386,7 @@ void WindowManager::openNextInstanceOpen()
     // would close them again. If it becomes final, endHandoffs hands them to the next
     // copy, and if it is cancelled, resumeInstanceOpens opens them here.
     if (shuttingDown_ || sessionFinal_ || quitting_ || holdingOpens_
-        || instanceOpens_.isEmpty())
+        || CloseFlow::closesEveryWindow(this) || instanceOpens_.isEmpty())
         return;
     // Empty paths means "bring the app up" - openPaths surfaces a window; otherwise
     // files open per behaviour.
@@ -428,6 +428,9 @@ void WindowManager::recordOpen(const QString &canonicalPath, bool restoreViewSta
     // the mount it is on now. A file that is not there, such as a crash recovery
     // tab opened lazily or a tab focused again after its share went away, keeps
     // it, since recording then would store the file system below the empty folder.
+    // A check started before this successful open cannot remove its new entry.
+    const QString openedKey = normalizePathKey(canonicalPath);
+    pruneWanted_.removeIf([&openedKey](const auto &entry) { return entry.value() == openedKey; });
     const QString mount = recordedMount(canonicalPath);
     // The session keeps it too, for when Recent no longer lists the file.
     session_.setMount(canonicalPath, mount);
@@ -596,14 +599,16 @@ void WindowManager::applyRecentSettings(int visibleCount, int retention, bool ke
 
 void WindowManager::pruneMissingRecent()
 {
+    pruneWanted_.clear();
+    ++pruneGeneration_;
     if (keepMissingRecent_ || recent_.count() == 0)
         return;
-    // Each path with the mount recorded for it.
+    // Each pass owns its replies, even when an older check is still running.
     QList<FileCheck> files;
     files.reserve(recent_.count());
     for (const RecentEntry &e : recent_.entries()) {
-        const FileCheck file{e.path, e.mount};
-        pruneWanted_.insert(FileProbe::keyOf(file));
+        const FileCheck file{e.path, e.mount, pruneGeneration_};
+        pruneWanted_.insert(FileProbe::keyOf(file), normalizePathKey(e.path));
         files.append(file);
     }
     probe_.check(files);
@@ -612,6 +617,8 @@ void WindowManager::pruneMissingRecent()
 void WindowManager::onFileChecked(const FileCheck &file, const FileFacts &facts)
 {
     const QString key = FileProbe::keyOf(file);
+    if (file.generation && !pruneWanted_.contains(key))
+        return; // superseded pass or an entry opened again since this request
     const QString &path = file.path;
     if (mountWanted_.remove(key) && facts.exists) {
         if (recent_.setMount(path, facts.mount)) {
@@ -1185,6 +1192,8 @@ void WindowManager::onWindowDestroyed(MainWindow *w)
         if (engine_)
             engine_->shutdown();
         QCoreApplication::quit();
+    } else {
+        resumeInstanceOpens();
     }
 }
 
@@ -1452,6 +1461,11 @@ void WindowManager::checkDocumentActivity()
     for (MainWindow *window : std::as_const(windows_)) {
         window->updateDocumentActivity(now, unloadInactiveMinutes_);
         resident = window->hasResidentDocuments() || resident;
+    }
+    const quint64 completedCloses = Document::completedCloses();
+    if (completedCloses != observedDocumentCloses_) {
+        observedDocumentCloses_ = completedCloses;
+        engine_->scheduleCacheTrim();
     }
     // Closed documents leave decoded images, colour links and glyph-cache fonts in
     // MuPDF's shared caches, and a render that finishes after its document closed adds

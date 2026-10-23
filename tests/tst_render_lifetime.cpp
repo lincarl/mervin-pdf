@@ -1,10 +1,13 @@
 #include "io/Background.h"
+#include "io/JobContext.h"
 #include "render/Document.h"
 #include "render/DocumentSearch.h"
 #include "render/FormModel.h"
 #include "render/RenderEngine.h"
 #include "render/TextIndex.h"
 #include "Stalls.h"
+
+#include <mupdf/fitz.h>
 
 #include <QElapsedTimer>
 #include <QImage>
@@ -152,6 +155,22 @@ class TstRenderLifetime : public QObject
 {
     Q_OBJECT
 private slots:
+    // A reported raster failure must not leave an unhandled MuPDF error behind.
+    void failedRasterClearsCaughtError()
+    {
+        QTemporaryDir dir;
+        const QString path = writeLateObjectsPdf(dir);
+        QVERIFY(!path.isEmpty());
+        RenderEngine engine;
+        auto doc = engine.openDocument(path);
+        QVERIFY(doc);
+        QVERIFY(engine.renderPageImage(doc.get(), 99, 1.0, 0).isNull());
+        QCOMPARE(fz_caught(engine.baseContext().get()), int(FZ_ERROR_NONE));
+        const QImage image = engine.renderPageImage(doc.get(), 1, 1.0, 0);
+        QVERIFY(!image.isNull());
+        QCOMPARE(image.pixelColor(80, 220), QColor(Qt::red));
+    }
+
     void loadedDocumentKeepsItsSourceBytes_data()
     {
         QTest::addColumn<QString>("query");
@@ -263,21 +282,166 @@ private slots:
 
     void canceledJobsDoNotRasterize()
     {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
         RenderEngine engine;
-        auto doc = engine.openDocument(QStringLiteral(MERVIN_FIXTURE_PDF));
+        auto doc = engine.openDocument(writeLateObjectsPdf(dir));
         QVERIFY(doc);
         QSignalSpy results(&engine, &RenderEngine::resultReady);
         {
-            std::lock_guard gate(doc->lifetime()->mutex);
+            Stall stall(doc->lifetime()->mutex);
+            submitAllPages(engine, *doc, 1);
             RenderRequest request;
             request.document = doc.get();
-            request.requester = 1;
+            request.pageNo = 1;
+            request.requester = 2;
             engine.submit(request);
+            // A worker has entered the document wait, so this tests active cancellation
+            // as well as removal from the queue. Keep the engine and survivor running.
+            QTRY_VERIFY_WITH_TIMEOUT(RenderEngine::testing::activeRequests(engine, 1) > 0, 5000);
             engine.cancelRequests(1);
+            QTRY_COMPARE_WITH_TIMEOUT(RenderEngine::testing::pendingRequests(engine, 1), 0, 5000);
+            QCOMPARE(RenderEngine::testing::pendingRequests(engine, 2), 1);
+            QCOMPARE(RenderEngine::testing::rasterizations(engine), 0);
         }
-        engine.shutdown();
-        QCoreApplication::processEvents();
-        QCOMPARE(results.size(), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(results.size(), 1, 5000);
+        const RenderResult result = results.first().first().value<RenderResult>();
+        QCOMPARE(result.requester, quint64(2));
+        QVERIFY2(result.ok, qPrintable(result.error));
+        QCOMPARE(result.image.pixelColor(80, 220), QColor(Qt::red));
+        QTRY_COMPARE_WITH_TIMEOUT(RenderEngine::testing::pendingRequests(engine, 2), 0, 5000);
+        QCOMPARE(RenderEngine::testing::rasterizations(engine), 1);
+    }
+
+    // Replacement is scoped to one requester and page. The survivor keeps a
+    // different render identity, and the replacement carries its own pixels.
+    void replacementKeepsOtherRequestersAndCompleteIdentity()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        RenderEngine engine;
+        auto doc = engine.openDocument(writeLateObjectsPdf(dir));
+        QVERIFY(doc);
+        QSignalSpy results(&engine, &RenderEngine::resultReady);
+        RenderRequest replacement;
+        replacement.document = doc.get();
+        replacement.pageNo = 1;
+        replacement.requester = 41;
+        replacement.epoch = 0x123456789;
+        replacement.token = 0xfedcba987;
+        replacement.scale = 2;
+        replacement.rotation = 180;
+        replacement.clip = QRect(350, 70, 60, 40); // inside the authored red rectangle
+        RenderRequest survivor = replacement;
+        survivor.requester = 42;
+        survivor.epoch = 77;
+        survivor.token = 88;
+        survivor.scale = 1;
+        survivor.rotation = 0;
+        survivor.clip = QRect(200, 200, 30, 20); // blank white
+        {
+            Stall stall(doc->lifetime()->mutex);
+            RenderRequest old = replacement;
+            old.epoch = 1;
+            old.token = 2;
+            old.scale = 1;
+            old.rotation = 0;
+            engine.submit(old);
+            QTRY_COMPARE_WITH_TIMEOUT(RenderEngine::testing::activeRequests(engine, 41), 1, 5000);
+            engine.submit(survivor);
+            engine.submit(replacement);
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(results.size(), 2, 10000);
+        QTRY_COMPARE_WITH_TIMEOUT(RenderEngine::testing::pendingRequests(engine, 41), 0, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(RenderEngine::testing::pendingRequests(engine, 42), 0, 5000);
+        QCOMPARE(RenderEngine::testing::rasterizations(engine), 2);
+        for (const auto &args : results) {
+            const auto result = args.front().value<RenderResult>();
+            QVERIFY(result.requester == 41 || result.requester == 42);
+            const auto &expected = result.requester == 41 ? replacement : survivor;
+            QCOMPARE(result.pageNo, expected.pageNo);
+            QCOMPARE(result.requester, expected.requester);
+            QCOMPARE(result.scale, expected.scale);
+            QCOMPARE(result.rotation, expected.rotation);
+            QCOMPARE(result.epoch, expected.epoch);
+            QCOMPARE(result.token, expected.token);
+            QVERIFY2(result.ok, qPrintable(result.error));
+            QCOMPARE(result.image.size(), expected.clip.size());
+            QCOMPARE(result.image.pixelColor(10, 10), QColor(result.requester == 41 ? Qt::red : Qt::white));
+        }
+    }
+
+    // Stop arrives inside an active band after two paint calls. The next check
+    // aborts MuPDF on its own thread and discards the partially painted image.
+    void jobStopAbortsAnActiveRaster()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QByteArray content = "0 0 1 rg 0 0 100 100 re f\n";
+        for (int i = 0; i < 100; ++i)
+            content += "1 0 0 rg 20 20 40 40 re f\n";
+        const QString path = writePdf(dir, QStringLiteral("many-paints.pdf"), {
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R >>",
+            "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content + "endstream",
+        });
+        RenderEngine engine;
+        auto doc = engine.openDocument(path);
+        QVERIFY(doc);
+        const QImage expected = doc->renderPage(0, 1, 0);
+        QCOMPARE(expected.pixelColor(30, 60), QColor(Qt::red));
+        QCOMPARE(expected.pixelColor(10, 10), QColor(Qt::blue));
+        job::State state;
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool inside = false;
+        bool release = false;
+        bool timedOut = false;
+        int operations = 0;
+        QImage result;
+        std::thread worker([&] {
+            job::Scope scope(state);
+            state.beginHolding();
+            {
+                const Document::Hold hold(doc->lifetime());
+                Document::testing::setRasterObserver([&] {
+                    if (++operations != 3)
+                        return;
+                    std::unique_lock lock(mutex);
+                    inside = true;
+                    changed.notify_all();
+                    timedOut = !changed.wait_for(lock, std::chrono::seconds(10), [&] { return release; });
+                });
+                const auto clear = qScopeGuard([] { Document::testing::setRasterObserver({}); });
+                result = hold.document()->renderPage(0, 1, 0, {}, false);
+            }
+            state.setHolding(false);
+        });
+        const auto finish = qScopeGuard([&] {
+            {
+                std::lock_guard lock(mutex);
+                release = true;
+            }
+            changed.notify_all();
+            if (worker.joinable()) worker.join();
+        });
+        {
+            std::unique_lock lock(mutex);
+            QVERIFY(changed.wait_for(lock, std::chrono::seconds(10), [&] { return inside; }));
+        }
+        QCOMPARE(state.stop(), job::State::Stop::Holding);
+        {
+            std::lock_guard lock(mutex);
+            release = true;
+        }
+        changed.notify_all();
+        worker.join();
+        QVERIFY(!timedOut);
+        QCOMPARE(operations, 3); // delivery-only suppression would paint all 101 operations
+        QVERIFY(result.isNull());
+        QCOMPARE(state.stop(), job::State::Stop::Done);
+        QCOMPARE(doc->renderPage(0, 1, 0), expected); // device, lock and AA state were restored
     }
 
     void closingDoesNotWaitForAStuckRender()
@@ -312,6 +476,10 @@ private slots:
         QVERIFY(doc);
         const auto release = std::make_shared<std::atomic<bool>>(false);
         const auto ran = std::make_shared<std::atomic<bool>>(false);
+        const auto releaseOnExit = qScopeGuard([release] {
+            release->store(true);
+            Document::waitForCloses(10000);
+        });
         Document::closeInBackground(std::move(doc), [release, ran] {
             while (!release->load())
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));

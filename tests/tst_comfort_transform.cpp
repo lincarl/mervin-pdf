@@ -27,6 +27,8 @@ private slots:
     void backdropRampChoice();
     void imageModeClassifier();
     void cachedRegionsMatchIndependentRows();
+    void overlappingModesHaveAbsolutePrecedence_data();
+    void overlappingModesHaveAbsolutePrecedence();
 };
 
 namespace {
@@ -35,6 +37,41 @@ const QColor kComfortBg(24, 26, 30);    // comfortPixel(#FFFFFF), exact
 const QColor kComfortFg(214, 217, 222); // comfortPixel(#000000), exact
 
 } // namespace
+
+void TstComfortTransform::overlappingModesHaveAbsolutePrecedence_data()
+{
+    using Mode = mervin::ComfortImageMode;
+    QTest::addColumn<QVector<mervin::ComfortImageRect>>("rects");
+    QTest::addColumn<QColor>("expected");
+    const QRect all(0, 0, 3, 3);
+    // 253 grey distinguishes authored (253), gentle photo ramp (60,61,65),
+    // aggressive photo ramp (24,26,30), and neutral page/split ink (25,27,32).
+    const mervin::ComfortImageRect ink{all, Mode::PageInk};
+    const mervin::ComfortImageRect keep{all, Mode::KeepAuthored};
+    const mervin::ComfortImageRect split{all, Mode::Split};
+    const mervin::ComfortImageRect gentle{all, Mode::PhotoOnWhite, 1, 5};
+    const mervin::ComfortImageRect aggressive{all, Mode::PhotoOnWhite, 8, 24};
+    QTest::newRow("ink-last") << QVector{split, gentle, keep, ink} << QColor(25, 27, 32);
+    QTest::newRow("ink-first") << QVector{ink, keep, gentle, split} << QColor(25, 27, 32);
+    QTest::newRow("keep-last") << QVector{split, gentle, keep} << QColor(253, 253, 253);
+    QTest::newRow("keep-first") << QVector{keep, gentle, split} << QColor(253, 253, 253);
+    QTest::newRow("photo-over-split") << QVector{split, gentle} << QColor(60, 61, 65);
+    QTest::newRow("photo-first") << QVector{gentle, split} << QColor(60, 61, 65);
+    QTest::newRow("first-photo-ramp") << QVector{gentle, aggressive} << QColor(60, 61, 65);
+    QTest::newRow("reverse-photo-ramps") << QVector{aggressive, gentle} << QColor(24, 26, 30);
+}
+
+void TstComfortTransform::overlappingModesHaveAbsolutePrecedence()
+{
+    QFETCH(QVector<mervin::ComfortImageRect>, rects);
+    QFETCH(QColor, expected);
+    QImage image(4, 4, QImage::Format_RGB888);
+    image.fill(QColor(253, 253, 253));
+    mervin::applyComfortTransform(image, rects);
+    QCOMPARE(image.pixelColor(1, 1), expected);
+    QCOMPARE(image.pixelColor(2, 2), expected);
+    QCOMPARE(image.pixelColor(3, 3), QColor(25, 27, 32)); // excluded endpoint
+}
 
 void TstComfortTransform::cachedRegionsMatchIndependentRows()
 {
