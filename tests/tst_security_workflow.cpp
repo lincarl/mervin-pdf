@@ -528,18 +528,31 @@ private slots:
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 
-    /// Covers an ASCII password and one that AES-128 stores in PDFDocEncoding.
+    /// Covers ASCII and Latin-1 passwords and distinguishes each permission control.
     void encryptedResultOpensWithItsNewPassword_data()
     {
         QTest::addColumn<QString>("password");
-        QTest::newRow("ASCII") << QStringLiteral("new password");
-        QTest::newRow("Latin-1") << QStringLiteral("Müller");
+        QTest::addColumn<bool>("canPrint");
+        QTest::addColumn<bool>("canCopy");
+        QTest::addColumn<bool>("canModify");
+        QTest::addColumn<bool>("canAnnotate");
+        const QString ascii = QStringLiteral("new password");
+        QTest::newRow("ASCII") << ascii << false << false << false << false;
+        QTest::newRow("Latin-1") << QStringLiteral("Müller") << false << false << false << false;
+        QTest::newRow("deny printing only") << ascii << false << true << true << true;
+        QTest::newRow("deny copying only") << ascii << true << false << true << true;
+        QTest::newRow("deny modifying only") << ascii << true << true << false << true;
+        QTest::newRow("deny annotating only") << ascii << true << true << true << false;
     }
 
     /// Checks that the result opens using its new password and retains chosen restrictions.
     void encryptedResultOpensWithItsNewPassword()
     {
         QFETCH(QString, password);
+        QFETCH(bool, canPrint);
+        QFETCH(bool, canCopy);
+        QFETCH(bool, canModify);
+        QFETCH(bool, canAnnotate);
         QTemporaryDir files;
         const QString source = files.filePath(QStringLiteral("plan.pdf"));
         const QString output = files.filePath(QStringLiteral("protected.pdf"));
@@ -555,6 +568,10 @@ private slots:
         dialogs.answers.append(QMessageBox::Yes);
         dialogs.security = [&](SecurityDialog &dialog) {
             setEncryptionChoices(dialog, password);
+            dialog.findChild<QCheckBox *>(QStringLiteral("securityAllowPrint"))->setChecked(canPrint);
+            dialog.findChild<QCheckBox *>(QStringLiteral("securityAllowCopy"))->setChecked(canCopy);
+            dialog.findChild<QCheckBox *>(QStringLiteral("securityAllowModify"))->setChecked(canModify);
+            dialog.findChild<QCheckBox *>(QStringLiteral("securityAllowAnnotate"))->setChecked(canAnnotate);
             dialog.findChild<QPushButton *>(QStringLiteral("securityEncrypt"))->click();
         };
         QVERIFY(QMetaObject::invokeMethod(&window, "openSecurity"));
@@ -568,8 +585,10 @@ private slots:
         QCOMPARE(QpdfService().readInfo(output, password, info), QpdfService::Status::Ok);
         QVERIFY(info.encrypted);
         QCOMPARE(info.keyLengthBits, 128);
-        QVERIFY(!info.permissions.canPrint && !info.permissions.canCopy
-                && !info.permissions.canModify && !info.permissions.canAnnotate);
+        QCOMPARE(info.permissions.canPrint, canPrint);
+        QCOMPARE(info.permissions.canCopy, canCopy);
+        QCOMPARE(info.permissions.canModify, canModify);
+        QCOMPARE(info.permissions.canAnnotate, canAnnotate);
         QCOMPARE(bytes(source), original);
         QVERIFY(dialogs.unexpected.isEmpty());
     }

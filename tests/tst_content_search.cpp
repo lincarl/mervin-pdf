@@ -2,8 +2,10 @@
 #include "io/JobContext.h"
 #include "recent/PathKey.h"
 
+#include <QByteArray>
 #include <QFile>
 #include <QFileInfo>
+#include <QList>
 #include <QSignalSpy>
 #include <QString>
 #include <QStringList>
@@ -14,15 +16,7 @@
 
 using mervin::ContentSearch;
 
-// ContentSearch drives MuPDF text extraction across files on a worker thread, so
-// a meaningful test needs a real PDF. It uses an optional local fixture when
-// available. Overrides:
-//   MERVIN_TEST_PDF  - absolute path to a PDF known to contain the term
-//   MERVIN_TEST_TERM - a string present somewhere in that PDF (default below)
-//
-// These cases used to QSKIP unless MERVIN_TEST_PDF was set, which meant they
-// never ran anywhere - and a skip is reported by ctest as a pass unless the
-// suite is set up to notice (see tests/CMakeLists.txt).
+// Exercises worker-thread searches using real PDFs with deterministic page text.
 class TstContentSearch : public QObject
 {
     Q_OBJECT
@@ -39,17 +33,66 @@ private slots:
 
 namespace {
 
-// The document the data-dependent cases search, or empty if none is available.
-QByteArray searchPdf()
+// Assembles numbered PDF objects and their cross-reference table.
+QByteArray assemblePdf(const QList<QByteArray> &bodies)
 {
-    QByteArray pdf = qgetenv("MERVIN_TEST_PDF");
-#ifdef MERVIN_SEARCH_PDF
-    if (pdf.isEmpty())
-        pdf = QByteArray(MERVIN_SEARCH_PDF);
-#endif
-    if (!pdf.isEmpty() && !QFileInfo::exists(QString::fromUtf8(pdf)))
-        return {}; // tree without the sample documents
+    QByteArray pdf = "%PDF-1.7\n";
+    QList<int> offsets;
+    for (int i = 0; i < bodies.size(); ++i) {
+        offsets << pdf.size();
+        pdf += QByteArray::number(i + 1) + " 0 obj\n" + bodies[i] + "\nendobj\n";
+    }
+    const int xrefOff = pdf.size();
+    const int n = bodies.size() + 1;
+    pdf += "xref\n0 " + QByteArray::number(n) + "\n";
+    pdf += "0000000000 65535 f \n";
+    for (int off : offsets) {
+        QByteArray rec = QByteArray::number(off);
+        while (rec.size() < 10)
+            rec.prepend('0');
+        pdf += rec + " 00000 n \n";
+    }
+    pdf += "trailer\n<< /Size " + QByteArray::number(n)
+           + " /Root 1 0 R >>\nstartxref\n" + QByteArray::number(xrefOff) + "\n%%EOF\n";
     return pdf;
+}
+
+// Writes three pages with distinct matches on pages 2 and 3, or returns empty on failure.
+QString writeSearchPdf(const QTemporaryDir &dir)
+{
+    const QList<QByteArray> contents = {
+        "BT /F1 10 Tf 50 740 Td (Opening page without the requested text.) Tj ET",
+        "BT /F1 10 Tf 14 TL 50 740 Td "
+        "(STARTMARK This introduction belongs outside the short preview.) Tj T* "
+        "(More introductory text keeps the match away from the page start.) Tj T* "
+        "(Amber context) Tj T* "
+        "(pineNeedlework follows the wrapped line with cedar context.) Tj T* "
+        "(Additional trailing text keeps the preview shorter than this page.) Tj T* "
+        "(Further trailing words belong outside the preview for this result.) Tj T* "
+        "(ENDMARK) Tj ET",
+        "BT /F1 10 Tf 50 740 Td (Later context has another pineNeedlework match.) Tj ET",
+    };
+
+    QList<QByteArray> objs;
+    objs << "<< /Type /Catalog /Pages 2 0 R >>";
+    objs << "<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R] /Count 3 >>";
+    for (int page = 0; page < contents.size(); ++page) {
+        const QByteArray &content = contents[page];
+        objs << "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                "/Resources << /Font << /F1 9 0 R >> >> /Contents "
+                + QByteArray::number(4 + 2 * page) + " 0 R >>";
+        objs << "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n"
+                + content + "\nendstream";
+    }
+    objs << "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
+
+    const QString path = dir.filePath(QStringLiteral("search.pdf"));
+    const QByteArray pdf = assemblePdf(objs);
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(pdf) != pdf.size())
+        return {};
+    file.close();
+    return path;
 }
 
 } // namespace
@@ -73,43 +116,63 @@ void TstContentSearch::emptyPathListFinishes()
     QCOMPARE(done.at(0).at(1).toInt(), 0);
 }
 
+// Checks the first matching page, snippet context and continuation after an unreadable input.
 void TstContentSearch::findsTermInRealPdf()
 {
-    const QByteArray pdf = searchPdf();
-    if (pdf.isEmpty())
-        QSKIP("no search document: set MERVIN_TEST_PDF to a PDF containing the term");
-    QString term = QString::fromUtf8(qgetenv("MERVIN_TEST_TERM"));
-    if (term.isEmpty())
-        term = QStringLiteral("the");
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    const QString pdf = writeSearchPdf(files);
+    QVERIFY(!pdf.isEmpty());
+    const QString missing = files.filePath(QStringLiteral("missing.pdf"));
 
     ContentSearch cs;
     QSignalSpy hits(&cs, &ContentSearch::hit);
+    QSignalSpy progress(&cs, &ContentSearch::progress);
     QSignalSpy done(&cs, &ContentSearch::finished);
 
-    cs.start({QString::fromUtf8(pdf)}, term);
-    QVERIFY(done.wait(60000)); // extraction can be slow on huge / corrupt PDFs
+    // Match a differently cased substring within pineNeedlework on pages 2 and 3.
+    cs.start({missing, pdf}, QStringLiteral("nEeDlE"));
+    QTRY_COMPARE_WITH_TIMEOUT(done.count(), 1, 10000);
     QCOMPARE(hits.count(), 1);
-    QCOMPARE(hits.at(0).at(0).toString(), QString::fromUtf8(pdf));
-    QVERIFY(hits.at(0).at(1).toInt() >= 1); // a 1-based page number
-    QVERIFY(!done.at(0).at(0).toBool());    // not canceled
-    QCOMPARE(done.at(0).at(1).toInt(), 1);  // one file matched
+    QCOMPARE(hits.at(0).at(0).toString(), pdf);
+    QCOMPARE(hits.at(0).at(1).toInt(), 2);
+    const QString snippet = hits.at(0).at(2).toString();
+    QVERIFY2(snippet.contains(QStringLiteral("Amber context pineNeedlework")), qPrintable(snippet));
+    QVERIFY2(snippet.contains(QStringLiteral("cedar context")), qPrintable(snippet));
+    QVERIFY(!snippet.contains(QLatin1Char('\n')));
+    QVERIFY(!snippet.contains(QLatin1Char('\r')));
+    QVERIFY(!snippet.contains(QStringLiteral("STARTMARK")));
+    QVERIFY(!snippet.contains(QStringLiteral("ENDMARK")));
+    QVERIFY(!progress.isEmpty());
+    QCOMPARE(progress.last().at(0).toInt(), 2);
+    QCOMPARE(progress.last().at(1).toInt(), 2);
+    QVERIFY(!done.at(0).at(0).toBool());
+    QCOMPARE(done.at(0).at(1).toInt(), 1);
+    QVERIFY(!cs.isRunning());
 }
 
+// Checks that a known absent query finishes with no hits.
 void TstContentSearch::missesAbsentTerm()
 {
-    const QByteArray pdf = searchPdf();
-    if (pdf.isEmpty())
-        QSKIP("no search document: set MERVIN_TEST_PDF to a PDF containing the term");
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    const QString pdf = writeSearchPdf(files);
+    QVERIFY(!pdf.isEmpty());
 
     ContentSearch cs;
     QSignalSpy hits(&cs, &ContentSearch::hit);
+    QSignalSpy progress(&cs, &ContentSearch::progress);
     QSignalSpy done(&cs, &ContentSearch::finished);
 
-    // A term overwhelmingly unlikely to appear in any document.
-    cs.start({QString::fromUtf8(pdf)}, QStringLiteral("zqxjk_no_such_term_42"));
-    QVERIFY(done.wait(60000));
+    cs.start({pdf}, QStringLiteral("zqxjk_no_such_term_42"));
+    QTRY_COMPARE_WITH_TIMEOUT(done.count(), 1, 10000);
     QCOMPARE(hits.count(), 0);
+    QVERIFY(!progress.isEmpty());
+    QCOMPARE(progress.last().at(0).toInt(), 1);
+    QCOMPARE(progress.last().at(1).toInt(), 1);
+    QVERIFY(!done.at(0).at(0).toBool());
     QCOMPARE(done.at(0).at(1).toInt(), 0);
+    QVERIFY(!cs.isRunning());
 }
 
 

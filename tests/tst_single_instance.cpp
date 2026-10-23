@@ -413,7 +413,8 @@ void TstSingleInstance::acksWhileMainThreadBlocked()
         elapsed = timer.elapsed();
     }));
     launch->start();
-    QThread::sleep(3); // this thread runs no events meanwhile
+    // Joining blocks this thread without dispatching GUI events. The handoff
+    // must finish on the server thread within its own deadline.
     QVERIFY(launch->wait(5000));
     QCOMPARE(result, std::optional(Handoff::Delivered));
     QVERIFY2(elapsed < 1000, qPrintable(QString::number(elapsed)));

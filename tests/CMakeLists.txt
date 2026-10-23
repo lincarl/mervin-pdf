@@ -355,11 +355,6 @@ target_link_libraries(tst_mupdf_store PRIVATE MuPDF::MuPDF)
 # tst_view_layout builds its own /MediaBox-only fixtures, with exact integer page
 # sizes so the layout arithmetic can be checked by hand.
 
-# tst_content_search searches a real document through MuPDF text extraction. It
-# uses an optional local fixture; MERVIN_TEST_PDF still overrides it.
-target_compile_definitions(tst_content_search PRIVATE
-    MERVIN_SEARCH_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
-
 # tst_tessdata validates generated model containers without a network dependency.
 # Real OCR uses a pinned model downloaded only for tests, never for packaging.
 # MERVIN_TEST_TESSDATA_DIR can override the default at runtime.

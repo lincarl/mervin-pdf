@@ -26,6 +26,12 @@ ENV = {
     "CI_WORKFLOW_SHA": CONTROL_SHA, "GITHUB_WORKFLOW_SHA": CONTROL_SHA,
     "GITHUB_SHA": OTHER_SHA,
 }
+# These are the five aggregates supplied by full-ci.yml, independent of the
+# checker's list so dropping a required result cannot shrink the test cases.
+EXPECTED_RESULT_VARIABLES = (
+    "CI_REPOSITORY_RESULT", "CI_LINUX_RESULT", "CI_LINUX_SYSTEM_RESULT",
+    "CI_WINDOWS_RESULT", "CI_MSIX_RESULT",
+)
 
 
 def changed(document, path, value):
@@ -251,8 +257,9 @@ class ReuseTests(unittest.TestCase):
         for response in (None, {}, changed(event()["pull_request"], "head.repo", None)):
             api = EvidenceAPI()
             api.responses[f"{ROOT}/pulls/7"] = response
-            with self.subTest(response=response), self.assertRaises(ci.CIError):
-                ci.prepare(event(), ENV, api)
+            with self.subTest(response=response):
+                with self.assertRaises(ci.CIError):
+                    ci.prepare(event(), ENV, api)
                 self.assertEqual(api.calls, [f"{ROOT}/pulls/7"])
 
     def test_rerun_starting_during_jobs_read_builds_fresh(self):
@@ -432,9 +439,9 @@ class DiagnosticTests(unittest.TestCase):
 
 class AggregateTests(unittest.TestCase):
     def test_normal_full_build_requires_all_five_aggregates(self):
-        results = {name: "success" for name in ci.RESULT_VARIABLES}
+        results = {name: "success" for name in EXPECTED_RESULT_VARIABLES}
         ci.check_results({**results, "CI_DIAGNOSTIC": "false"})
-        for name in ci.RESULT_VARIABLES:
+        for name in EXPECTED_RESULT_VARIABLES:
             for result in ("failure", "cancelled", "skipped", "", None):
                 with self.subTest(name=name, result=result), self.assertRaises(ci.CIError):
                     ci.check_results({**results, name: result, "CI_DIAGNOSTIC": "false"})
@@ -443,11 +450,11 @@ class AggregateTests(unittest.TestCase):
                 ci.check_results({**missing, "CI_DIAGNOSTIC": "false"})
 
     def test_diagnostic_requires_repository_and_msix_success_and_only_expected_skips(self):
-        diagnostic = dict(zip(ci.RESULT_VARIABLES, ("success", "skipped", "skipped", "skipped", "success")))
+        diagnostic = dict(zip(EXPECTED_RESULT_VARIABLES, ("success", "skipped", "skipped", "skipped", "success")))
         ci.check_results({**diagnostic, "CI_DIAGNOSTIC": "true"})
         with self.assertRaises(ci.CIError):
             ci.check_results({**diagnostic, "CI_DIAGNOSTIC": "false"})
-        for name in ci.RESULT_VARIABLES:
+        for name in EXPECTED_RESULT_VARIABLES:
             for result in ("failure", "cancelled", "", None,
                            "skipped" if diagnostic[name] == "success" else "success"):
                 with self.subTest(name=name, result=result), self.assertRaises(ci.CIError):
@@ -460,7 +467,7 @@ class AggregateTests(unittest.TestCase):
     def test_diagnostic_flag_must_be_explicit(self):
         for flag in (None, "", "TRUE", "1"):
             with self.subTest(flag=flag), self.assertRaises(ci.CIError):
-                ci.check_results({**dict.fromkeys(ci.RESULT_VARIABLES, "success"), "CI_DIAGNOSTIC": flag})
+                ci.check_results({**dict.fromkeys(EXPECTED_RESULT_VARIABLES, "success"), "CI_DIAGNOSTIC": flag})
 
 
 class CLITests(unittest.TestCase):
@@ -560,7 +567,7 @@ print(json.dumps(response))
         self.assertNotEqual(self.run_cli("diagnostic", **{**environment, "DIAGNOSTIC_RUN_ID": "0"}).returncode, 0)
 
     def test_check_results_executes_without_event_or_api_dependencies(self):
-        results = dict.fromkeys(ci.RESULT_VARIABLES, "success")
+        results = dict.fromkeys(EXPECTED_RESULT_VARIABLES, "success")
         result = self.run_cli("check-results", **results, CI_DIAGNOSTIC="false", GITHUB_EVENT_PATH="")
         self.assertEqual(result.returncode, 0, result.stderr)
         result = self.run_cli("check-results", **{**results, "CI_LINUX_RESULT": "cancelled"}, CI_DIAGNOSTIC="false")

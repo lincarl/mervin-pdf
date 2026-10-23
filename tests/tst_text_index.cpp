@@ -16,6 +16,8 @@ class TstTextIndex : public QObject
     Q_OBJECT
 
 private slots:
+    void searchRespectsOptions_data();
+    void searchRespectsOptions();
     void plainWebTextHitTestNormalizesWww();
     void pdfLinkAnnotationHitTestReturnsUri();
     void pdfInternalLinkAnnotationResolvesTargetPage();
@@ -70,6 +72,26 @@ QByteArray makeWebTextPdf()
     objs << "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content
             + "\nendstream";
     objs << "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
+    return assemblePdf(objs);
+}
+
+// Two text pages distinguish word boundaries, case, page order and overlapping matches.
+QByteArray makeSearchPdf()
+{
+    const QList<QByteArray> texts{
+        "Cat cat scatter cat_cat cat2 2cat cat-cat.", "cat CAT cat banana"};
+    QList<QByteArray> objs;
+    objs << "<< /Type /Catalog /Pages 2 0 R >>";
+    objs << "<< /Type /Pages /Kids [4 0 R 6 0 R] /Count 2 >>";
+    objs << "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
+    for (int i = 0; i < texts.size(); ++i) {
+        const QByteArray content = "BT /F1 12 Tf 20 160 Td (" + texts.at(i) + ") Tj ET";
+        objs << "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 500 200] "
+                "/Resources << /Font << /F1 3 0 R >> >> /Contents "
+                    + QByteArray::number(5 + 2 * i) + " 0 R >>";
+        objs << "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n"
+                    + content + "\nendstream";
+    }
     return assemblePdf(objs);
 }
 
@@ -132,6 +154,55 @@ std::unique_ptr<Document> openTempPdf(RenderEngine &engine, const QTemporaryDir 
 }
 
 } // namespace
+
+// Literal offsets come from the authored page text, independently of the matcher.
+void TstTextIndex::searchRespectsOptions_data()
+{
+    QTest::addColumn<QString>("query");
+    QTest::addColumn<bool>("caseSensitive");
+    QTest::addColumn<bool>("wholeWord");
+    QTest::addColumn<QList<int>>("pages");
+    QTest::addColumn<QList<int>>("starts");
+
+    QTest::newRow("insensitive substring") << "cat" << false << false
+        << QList<int>({0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1})
+        << QList<int>({0, 4, 9, 16, 20, 24, 30, 34, 38, 0, 4, 8});
+    QTest::newRow("sensitive substring") << "cat" << true << false
+        << QList<int>({0, 0, 0, 0, 0, 0, 0, 0, 1, 1})
+        << QList<int>({4, 9, 16, 20, 24, 30, 34, 38, 0, 8});
+    QTest::newRow("insensitive whole word") << "cat" << false << true
+        << QList<int>({0, 0, 0, 0, 1, 1, 1}) << QList<int>({0, 4, 34, 38, 0, 4, 8});
+    QTest::newRow("sensitive whole word") << "cat" << true << true
+        << QList<int>({0, 0, 0, 1, 1}) << QList<int>({4, 34, 38, 0, 8});
+    QTest::newRow("non-overlapping substring") << "ana" << true << false
+        << QList<int>({1}) << QList<int>({13});
+    QTest::newRow("absent") << "dog" << false << false << QList<int>() << QList<int>();
+    QTest::newRow("empty") << "" << false << false << QList<int>() << QList<int>();
+}
+
+// Searches real extracted text and checks every match, including rejected boundary cases.
+void TstTextIndex::searchRespectsOptions()
+{
+    QFETCH(QString, query);
+    QFETCH(bool, caseSensitive);
+    QFETCH(bool, wholeWord);
+    QFETCH(QList<int>, pages);
+    QFETCH(QList<int>, starts);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    RenderEngine engine;
+    const auto doc = openTempPdf(engine, dir, QStringLiteral("search.pdf"), makeSearchPdf());
+    QVERIFY(doc);
+    TextIndex index(engine.baseContext(), doc.get());
+
+    const auto matches = index.search(query, caseSensitive, wholeWord);
+    QCOMPARE(matches.size(), size_t(pages.size()));
+    for (size_t i = 0; i < matches.size(); ++i) {
+        QCOMPARE(matches[i].page, pages.at(qsizetype(i)));
+        QCOMPARE(matches[i].start, starts.at(qsizetype(i)));
+        QCOMPARE(matches[i].length, query.size());
+    }
+}
 
 void TstTextIndex::plainWebTextHitTestNormalizesWww()
 {
