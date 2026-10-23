@@ -889,8 +889,12 @@ private slots:
         for (size_t page = 0; page < originalPages.size(); ++page) {
             auto originalPage = originalPages[page];
             auto rotatedPage = rotatedPages[page];
-            const int beforeAngle = int(originalPage.getAttribute("/Rotate", false).getIntValue());
-            const int afterAngle = int(rotatedPage.getAttribute("/Rotate", false).getIntValue());
+            auto originalRotation = originalPage.getAttribute("/Rotate", false);
+            auto rotatedRotation = rotatedPage.getAttribute("/Rotate", false);
+            QVERIFY(originalRotation.isNull() || originalRotation.isInteger());
+            QVERIFY(rotatedRotation.isInteger());
+            const int beforeAngle = originalRotation.isInteger() ? int(originalRotation.getIntValue()) : 0;
+            const int afterAngle = int(rotatedRotation.getIntValue());
             QCOMPARE((afterAngle % 360 + 360) % 360, (beforeAngle + 90) % 360);
             QCOMPARE(rotated->renderPage(int(page), 0.5, 0),
                      tab->viewer()->document()->renderPage(int(page), 0.5, 90));
