@@ -597,6 +597,8 @@ void TstInstanceHandoff::realLaunchSelectsStateOwnership()
             child.waitForFinished(5000);
         }
     });
+    QElapsedTimer launchTime;
+    launchTime.start();
     child.start(QStringLiteral(MERVIN_APP_EXE), {
         QStringLiteral("--profile"), profile_->path(), QStringLiteral("--language=en"),
         QStringLiteral("--quit-after-startup"), pdf_,
@@ -604,15 +606,22 @@ void TstInstanceHandoff::realLaunchSelectsStateOwnership()
     QVERIFY(child.waitForStarted(5000));
     QTRY_COMPARE_WITH_TIMEOUT(child.state(), QProcess::NotRunning, ipc::kLaunchWaitMs + 15000);
     QCOMPARE(child.exitStatus(), QProcess::NormalExit);
-    const QByteArray diagnostics = child.readAllStandardError();
     QCOMPARE(child.exitCode(), 0);
     if (mode == 1) {
         const QList<Message> opens = primary.takeOpens();
         QCOMPARE(opens.size(), 1);
         QCOMPARE(opens.front().paths, QStringList{pdf_});
     }
-    if (mode == 2)
+    if (mode == 2) {
+        // A held lock must exhaust the handoff wait before opening standalone.
+        QVERIFY(launchTime.elapsed() >= ipc::kLaunchWaitMs);
+#ifndef Q_OS_WIN
+        // On Windows, main attaches to the native parent console and reopens stderr
+        // as CONOUT$, overriding QProcess redirection. Check the launch behavior above.
+        const QByteArray diagnostics = child.readAllStandardError();
         QVERIFY2(diagnostics.contains("running copy does not answer"), diagnostics.constData());
+#endif
+    }
     const QString recent = QDir(profile_->path()).filePath(QStringLiteral("recent.json"));
     QCOMPARE(QFile::exists(recent), mode == 0);
     if (mode != 0) {

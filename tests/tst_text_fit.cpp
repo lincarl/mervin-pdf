@@ -421,14 +421,19 @@ void TstTextFit::listRowsAccountForIconsAndItemFonts()
     QFont font = list.font();
     font.setPointSize(22);
     item->setFont(font);
-    item->setSizeHint(QSize(440, 65));
-    list.setFixedSize(500, 100);
+    list.ensurePolished();
+    // The delegate measures the item font, icon and style margins for this platform.
+    const QSize rowSize = list.sizeHintForIndex(list.indexFromItem(item));
+    item->setSizeHint(rowSize);
+    const QSize listSize = rowSize + QSize(2 * list.frameWidth(), 2 * list.frameWidth());
+    list.setFixedSize(listSize);
     showAndSettle(list);
     QVERIFY2(textfit::check(list).isEmpty(), qPrintable(textfit::check(list).join('\n')));
-    list.setFixedWidth(100);
+    list.setFixedWidth(listSize.width() / 2);
     QVERIFY(!textfit::check(list).isEmpty());
-    list.setFixedWidth(500);
-    item->setSizeHint(QSize(440, 10));
+    list.setFixedWidth(listSize.width());
+    QVERIFY2(textfit::check(list).isEmpty(), qPrintable(textfit::check(list).join('\n')));
+    item->setSizeHint(QSize(rowSize.width(), QFontMetrics(font).height() / 2));
     QCoreApplication::processEvents();
     QVERIFY(!textfit::check(list).isEmpty());
 }

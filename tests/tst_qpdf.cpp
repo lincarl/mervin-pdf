@@ -36,6 +36,10 @@
 #include <string>
 #include <vector>
 
+#ifdef Q_OS_WIN
+#  include <qt_windows.h>
+#endif
+
 using mervin::PageOps;
 using mervin::QpdfService;
 
@@ -2606,7 +2610,8 @@ void TstQpdf::splitProjectsSelectedFieldBranches()
         pageTree.replaceKey("/CropBox", parse("[0 0 250 700]"));
         for (auto page : q.getAllPages())
             page.removeKey("/Resources");
-        QPDFWriter writer(q, src.toUtf8().constData());
+        const QByteArray outputName = src.toUtf8();
+        QPDFWriter writer(q, outputName.constData());
         writer.write();
     }
     QFile source(src);
@@ -2724,7 +2729,8 @@ void TstQpdf::splitFallsBackForFieldDependencies()
             root.replaceKey("/P", QPDFObjectHandle::newString("unknown-property"));
         }
         installForm(q, {root});
-        QPDFWriter writer(q, src.toUtf8().constData());
+        const QByteArray outputName = src.toUtf8();
+        QPDFWriter writer(q, outputName.constData());
         writer.write();
     }
     QFile source(src);
@@ -3325,7 +3331,7 @@ void TstQpdf::mergeReportsFailedIndex()
 void TstQpdf::lateSourceReadNamesInput_data()
 {
     QTest::addColumn<QString>("operation");
-    QTest::addColumn<bool>("truncate");
+    QTest::addColumn<bool>("sourceFailure");
     for (const QString &operation : {QStringLiteral("merge"), QStringLiteral("extract"),
                                      QStringLiteral("delete")}) {
         QTest::newRow(qPrintable(operation + " source")) << operation << true;
@@ -3333,11 +3339,11 @@ void TstQpdf::lateSourceReadNamesInput_data()
     }
 }
 
-/// A shortened deferred stream fails without publishing, and a write failure stays an output error.
+/// A deferred read fails without publishing, and a write failure stays an output error.
 void TstQpdf::lateSourceReadNamesInput()
 {
     QFETCH(QString, operation);
-    QFETCH(bool, truncate);
+    QFETCH(bool, sourceFailure);
     const QString src = in(QStringLiteral("late-source.pdf"));
     const QString other = in(QStringLiteral("late-other.pdf"));
     const QString out = in(QStringLiteral("late-output.pdf"));
@@ -3351,7 +3357,8 @@ void TstQpdf::lateSourceReadNamesInput()
         QPDFPageDocumentHelper pages(pdf);
         pages.addPage(QPDFPageObjectHelper(page), false);
         pages.addPage(QPDFPageObjectHelper(textPage(pdf, "REMOVE")), false);
-        QPDFWriter writer(pdf, src.toUtf8().constData());
+        const QByteArray outputName = src.toUtf8();
+        QPDFWriter writer(pdf, outputName.constData());
         writer.setCompressStreams(false);
         writer.setObjectStreamMode(qpdf_o_disable);
         writer.write();
@@ -3362,16 +3369,39 @@ void TstQpdf::lateSourceReadNamesInput()
     QCOMPARE(destination.write(before), before.size());
     destination.close();
     bool reachedWrite = false;
-    bool shortened = false;
+    bool disrupted = false;
+#ifdef Q_OS_WIN
+    HANDLE lockedSource = INVALID_HANDLE_VALUE;
+    OVERLAPPED range{};
+    const auto unlock = qScopeGuard([&] {
+        if (lockedSource != INVALID_HANDLE_VALUE) {
+            if (disrupted)
+                UnlockFileEx(lockedSource, 0, MAXDWORD, 0, &range);
+            CloseHandle(lockedSource);
+        }
+    });
+#endif
     mervin::job::testing::failWhen([&](mervin::job::Step step, const QString &path) {
         if (step != mervin::job::Step::Writing || path != dir_.path() || reachedWrite)
             return false;
         reachedWrite = true;
-        if (truncate) {
+        if (sourceFailure) {
+#ifdef Q_OS_WIN
+            // qpdf's MSVC reader denies write access, so truncation cannot be used.
+            // An exclusive byte-range lock makes its existing handle's reads fail.
+            const std::wstring native = QDir::toNativeSeparators(src).toStdWString();
+            lockedSource = CreateFileW(native.c_str(), GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            disrupted = lockedSource != INVALID_HANDLE_VALUE
+                && LockFileEx(lockedSource, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                              0, MAXDWORD, 0, &range);
+#else
             QFile source(src);
-            shortened = source.open(QIODevice::ReadWrite) && source.resize(0);
+            disrupted = source.open(QIODevice::ReadWrite) && source.resize(0);
+#endif
         }
-        return !truncate;
+        return !sourceFailure;
     });
     const auto clear = qScopeGuard([] { mervin::job::testing::failWhen({}); });
     int failed = -7;
@@ -3387,10 +3417,10 @@ void TstQpdf::lateSourceReadNamesInput()
         result = PageOps::merge(inputs, out, &error, &failed);
     }
     QVERIFY(reachedWrite);
-    QCOMPARE(shortened, truncate);
+    QCOMPARE(disrupted, sourceFailure);
     QCOMPARE(result, PageOps::Status::Failed);
     QVERIFY(!error.isEmpty());
-    QCOMPARE(failed, truncate ? (operation == "merge" ? 1 : 0) : -1);
+    QCOMPARE(failed, sourceFailure ? (operation == "merge" ? 1 : 0) : -1);
     QVERIFY(destination.open(QIODevice::ReadOnly));
     QCOMPARE(destination.readAll(), before);
 }
