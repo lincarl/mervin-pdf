@@ -518,7 +518,7 @@ set_tests_properties(tst_document_suspension PROPERTIES
 # Rotate Pages and Split as their tab's operation, with the wait bar, Stop waiting and
 # a window that stays usable while one tab waits.
 qt_add_executable(tst_tab_operations tst_tab_operations.cpp Stalls.h)
-target_link_libraries(tst_tab_operations PRIVATE mervin_app Qt6::Test)
+target_link_libraries(tst_tab_operations PRIVATE mervin_app Qt6::Test qpdf::libqpdf)
 set_target_properties(tst_tab_operations PROPERTIES WIN32_EXECUTABLE OFF)
 target_compile_definitions(tst_tab_operations PRIVATE MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
 add_test(NAME tst_tab_operations COMMAND tst_tab_operations)
