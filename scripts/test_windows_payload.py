@@ -97,8 +97,8 @@ class WindowsPayloadTests(unittest.TestCase):
         })
         report = self.check()
         self.assertEqual(report["errors"], [])
-        self.assertEqual({binary["file"] for binary in report["binaries"]},
-                         {*REQUIRED_RUNTIME_FILES, "Qt6Core.dll"})
+        self.assertCountEqual([binary["file"] for binary in report["binaries"]],
+                              (*REQUIRED_RUNTIME_FILES, "Qt6Core.dll"))
         self.assertIn("kernel32.dll", report["system_imports"])
 
     def test_forbidden_dlls_fail_in_inventory_and_both_import_tables(self):
