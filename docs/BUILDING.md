@@ -289,20 +289,24 @@ the native installer and application work.
 
 Release builds use the `linux-bundled` preset with official Qt 6.12.0 and the
 manifest's vcpkg libraries. Install a C++20 compiler, git, curl, tar, zip, unzip,
-pkg-config, NASM, patchelf and the distribution's OpenGL, X11/XCB, xkbcommon,
+pkg-config, NASM and patchelf. Qt Gui configuration also needs OpenGL development
+headers and linker files, provided by `libgl1-mesa-dev` on Ubuntu or
+`mesa-libGL-devel` on Fedora. Install the distribution's X11/XCB, xkbcommon,
 font, GTK 3, CUPS and Wayland runtime packages. Keep Ubuntu 26.04 as the minimum
-package baseline. Fedora packages
-build on Fedora 44. The compiler and operating-system libraries remain managed
-by those supported distributions.
+package baseline. Fedora packages build on Fedora 44. The compiler and
+operating-system libraries remain managed by those supported distributions.
 
 Use a separate Python environment for build tools. The portable Python helper
-requires a new destination and does not replace the system interpreter.
+requires a new destination and does not replace the system interpreter. Its
+recorded extension compiler is Clang. The example selects GCC explicitly when
+pip builds archive-extraction extensions that have no Python 3.15 wheels.
 
 ```bash
 build_python="$(scripts/bootstrap-python-linux.sh "$HOME/dev-tools/mervin-python-3.15.1")"
 "$build_python" -m venv "$HOME/dev-tools/mervin-build-venv"
 source "$HOME/dev-tools/mervin-build-venv/bin/activate"
 python scripts/install-build-tools.py
+CC=gcc CXX=g++ LDSHARED="gcc -shared" \
 python -m pip install "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b" "py7zr==1.1.4"
 python -m aqt install-qt linux desktop 6.12.0 linux_gcc_64 --outputdir "$HOME/dev-tools/Qt"
 export QT6_DIR="$HOME/dev-tools/Qt/6.12.0/gcc_64"

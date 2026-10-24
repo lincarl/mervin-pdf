@@ -490,7 +490,14 @@ jobs:
 
       - name: Install Qt 6.12.0
         uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
+        env:
+          # Portable Python records Clang, but this builder supplies GCC.
+          CC: gcc
+          CXX: g++
+          LDSHARED: gcc -shared
         with:
+          # Fedora dependencies are installed by DNF above. The action defaults to apt.
+          install-deps: false
           setup-python: false
           aqtsource: "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
           py7zrversion: "==1.1.4"

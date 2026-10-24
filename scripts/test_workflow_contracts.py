@@ -215,6 +215,11 @@ class WorkflowContractTests(unittest.TestCase):
                 self.assertEqual(qt["with"]["version"], "6.12.0")
                 self.assertEqual(qt["with"]["py7zrversion"], "==1.1.4")
                 self.assertNotIn("archives", qt["with"])
+                if job.get("container") == "fedora:44":
+                    self.assertIs(qt["with"].get("install-deps"), False)
+                    self.assertEqual(qt["env"]["CC"], "gcc")
+                    self.assertEqual(qt["env"]["CXX"], "g++")
+                    self.assertEqual(qt["env"]["LDSHARED"], "gcc -shared")
                 self.require_effective_step(job, qt)
         presets = json.loads((ROOT / "CMakePresets.json").read_text())
         bundled = next(preset for preset in presets["configurePresets"] if preset["name"] == "linux-bundled")

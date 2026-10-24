@@ -7,8 +7,11 @@ Qt's own license texts are in the parent directory.
   complete upstream license texts. Each entry names its source URL, version
   when available, and applicable documents. Each complete document includes
   its source URL and SHA-256 hash. Upstream text is unchanged.
-- `Wayland-NOTICES.txt` retains notices from 29 runtime protocol XML files,
-  including Qt extension protocols, plus full supporting license texts. It also covers compiled protocols omitted from Qt's binary SBOM.
+- `Wayland-NOTICES.txt` retains notices from 33 runtime protocol XML files,
+  including Qt extension protocols, plus full supporting license texts. The
+  inventory covers the shared Wayland client library and all deployed
+  platform, decoration, shell, and graphics integration client plugins. It
+  also covers compiled protocols omitted from Qt's binary SBOM.
 - `ICU-LICENSE.txt` is the complete, unchanged ICU 73.2 license, including ICU's
   own third-party notices. It accompanies the ICU libraries deployed from the
   official Linux Qt SDK.
@@ -63,11 +66,17 @@ Selected versions recorded by Qt are listed below.
 The selection covers third-party code and data attributed to Qt Core, Gui,
 Network, Widgets, PrintSupport, Svg, and their desktop platform dependencies.
 It includes embedded algorithms, MIME and Unicode data, XCB input support,
-D-Bus headers, Windows tablet and graphics support, and Wayland client and
-shell protocols. Source build rules and installed binaries supplement the
-SDK SBOMs, which omit seven compiled Wayland protocol attributions and
-Qt Svg's XSVG attribution. The KDE appmenu protocol carries LGPL-2.1-or-later,
+D-Bus headers, Windows tablet and graphics support, and Wayland client,
+shell, and graphics integration protocols. Source build rules and installed
+binaries supplement the SDK SBOMs, which omit seven compiled Wayland
+protocol attributions and Qt Svg's XSVG attribution. The KDE appmenu protocol
+carries LGPL-2.1-or-later,
 whose full text is included in `Wayland-NOTICES.txt`.
+
+The deployed `dmabuf-server`, `drm-egl-server`, `shm-emulation-server`, and
+`vulkan-server` plugins are Wayland client plugins despite their names. Their
+Qt server-buffer protocol notices are included with the BSD-3-Clause terms.
+The inventory follows each deployed plugin's protocol generation build inputs.
 
 The set deliberately covers some optional desktop backends as well. Including
 FreeType, zlib, OpenGL ES, Vulkan, D3D12, and Windows notices here does not mean
@@ -79,9 +88,10 @@ copied into the application's private runtime directory. System libraries
 that the installer does not copy are outside this notice selection.
 
 Test fixtures, Qt build tools, SQL drivers, Android, WebAssembly, macOS-only
-code, ARM-only Pixman assembly, and Wayland compositor-only protocols are
-excluded. Notices for other application dependencies remain in the parent
-directory.
+code, and ARM-only Pixman assembly are excluded. Wayland protocol exclusions
+follow the deployed client libraries and plugins, rather than protocol names
+or source directory labels. Notices for other application dependencies remain
+in the parent directory.
 
 The bundled public suffix data is under MPL-2.0. Qt records its original
 [source list at commit `e452c7058d6946bd76952b128c12f5ce87a5acb8`](https://github.com/publicsuffix/list/blob/e452c7058d6946bd76952b128c12f5ce87a5acb8/public_suffix_list.dat).
@@ -94,5 +104,6 @@ For a Qt update, compare the new SDK's module SBOMs and configuration summary
 with the files actually deployed. Recheck the selected desktop attribution
 files at that Qt release tag, including referenced license and copyright files,
 and retain their text unchanged. Update ICU from the release identified by the
-SDK, rather than assuming its version matches Qt. Recheck optional backends
-when the deployed plugin set changes.
+SDK, rather than assuming its version matches Qt. When the deployed plugin set
+changes, reconcile every plugin's generated protocol inputs with the notice
+inventory, including graphics integration plugins whose names contain `server`.

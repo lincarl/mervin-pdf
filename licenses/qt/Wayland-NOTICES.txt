@@ -2,11 +2,23 @@ Qt 6.12.0 Wayland protocol notices
 =================================
 
 These copyright blocks accompany code generated into the Wayland client and
-its shell plugins. They include protocols missing from Qt's binary SBOM.
+its shell and graphics integration plugins. The source inventory follows the
+build inputs of the deployed client plugins, including those named "server".
+They include protocols missing from Qt's binary SBOM.
 Sources are from the official qt/qtbase v6.12.0 tag. The original XML block
 contents are preserved, with XML and CDATA delimiters omitted. The pointer
 gestures XML has no copyright block, so its Qt attribution supplies the notice.
 Full licenses for SPDX-only notices follow the protocol notices.
+
+------------------------------------------------------------------------------
+Source URL: https://raw.githubusercontent.com/qt/qtbase/v6.12.0/src/3rdparty/wayland/extensions/drm-egl-server-buffer.xml
+Source SHA-256: 80c581c65de140bae525aa44dc98f701b812e75e92287aa345bd16fc7b4520a8
+BEGIN UPSTREAM COPYRIGHT BLOCK
+
+ Copyright (C) 2015 The Qt Company Ltd.
+ SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
+    
+END UPSTREAM COPYRIGHT BLOCK
 
 ------------------------------------------------------------------------------
 Source URL: https://raw.githubusercontent.com/qt/qtbase/v6.12.0/src/3rdparty/wayland/extensions/hardware-integration.xml
@@ -14,6 +26,16 @@ Source SHA-256: 6160d445b16d3e30237f240c6ab38ca110af08608fdaf95d55cbd2f1fad357d9
 BEGIN UPSTREAM COPYRIGHT BLOCK
 
  Copyright (C) 2015 The Qt Company Ltd.
+ SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
+    
+END UPSTREAM COPYRIGHT BLOCK
+
+------------------------------------------------------------------------------
+Source URL: https://raw.githubusercontent.com/qt/qtbase/v6.12.0/src/3rdparty/wayland/extensions/qt-dmabuf-server-buffer.xml
+Source SHA-256: 90f198535161d059b88184dbf4145cfd51f80d3ce529514442453d2517ecf712
+BEGIN UPSTREAM COPYRIGHT BLOCK
+
+ Copyright (C) 2018 The Qt Company Ltd.
  SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
     
 END UPSTREAM COPYRIGHT BLOCK
@@ -49,6 +71,16 @@ BEGIN UPSTREAM COPYRIGHT BLOCK
 END UPSTREAM COPYRIGHT BLOCK
 
 ------------------------------------------------------------------------------
+Source URL: https://raw.githubusercontent.com/qt/qtbase/v6.12.0/src/3rdparty/wayland/extensions/qt-vulkan-server-buffer-unstable-v1.xml
+Source SHA-256: ff52356ddc57c63bfde3f35b11ec982446f8d0e681dbf03a60dbc5e2ed23d8ac
+BEGIN UPSTREAM COPYRIGHT BLOCK
+
+ Copyright (C) 2019 The Qt Company Ltd.
+ SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
+    
+END UPSTREAM COPYRIGHT BLOCK
+
+------------------------------------------------------------------------------
 Source URL: https://raw.githubusercontent.com/qt/qtbase/v6.12.0/src/3rdparty/wayland/extensions/qt-windowmanager.xml
 Source SHA-256: 9be2dc028de17f03b8d878bc50cc90c596450f30a737564b70642a2c56abed35
 BEGIN UPSTREAM COPYRIGHT BLOCK
@@ -64,6 +96,16 @@ Source SHA-256: d2a0e2760406aaf8bc062df18726474b32d60c51b2bf456c3c06c9ce0e84e3dc
 BEGIN UPSTREAM COPYRIGHT BLOCK
 
  Copyright (C) 2015 The Qt Company Ltd.
+ SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
+    
+END UPSTREAM COPYRIGHT BLOCK
+
+------------------------------------------------------------------------------
+Source URL: https://raw.githubusercontent.com/qt/qtbase/v6.12.0/src/3rdparty/wayland/extensions/shm-emulation-server-buffer.xml
+Source SHA-256: 3275deb7a561e897046d9d96c8d4bb54b5fdab8ce1782f4c9d6040cae899cd95
+BEGIN UPSTREAM COPYRIGHT BLOCK
+
+ Copyright (C) 2017 The Qt Company Ltd.
  SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
     
 END UPSTREAM COPYRIGHT BLOCK
