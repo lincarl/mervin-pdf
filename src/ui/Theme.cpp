@@ -565,6 +565,11 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
         add(QStringLiteral("QTabBar::close-button { image:url(%1/tab_close.png);"
                            " border-radius:4px; padding:1px; }")
                 .arg(assetDir));
+        // Qt positions close widgets outside the tab padding. Reserve space on
+        // both sides of the painted button without widening the scroll arrows.
+        add(QStringLiteral("QTabBar#docTabBar QAbstractButton { min-width:36px; }"));
+        add(QStringLiteral("QTabBar#docTabBar QToolButton { min-width:0; }"));
+        add(QStringLiteral("QTabBar#docTabBar::close-button { margin:0 8px; }"));
         add(QStringLiteral("QTabBar::close-button:hover { image:url(%1/tab_close_hover.png);"
                            " background:%2; }")
                 .arg(assetDir, css(t.pressed)));
