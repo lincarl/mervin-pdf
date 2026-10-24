@@ -84,6 +84,8 @@
 #include <QTextDocument>
 #include <QTimeZone>
 #include <QTimer>
+#include <QStyleOptionToolButton>
+#include <QToolBar>
 #include <QToolButton>
 #include <QToolTip>
 #include <QXmlStreamReader>
@@ -536,16 +538,62 @@ void TstTranslationLayout::languagePicker()
     combo.hidePopup();
 }
 
-// The permanent tab row must accommodate the current font in both Recent states.
+// The document tabs and Recent toolbar button must fit in both Recent states.
 void TstTranslationLayout::recentTabRow()
 {
     mervin::RenderEngine engine;
     MainWindow window(&engine, nullptr);
     auto *row = window.findChild<QWidget *>(QStringLiteral("tabRowWidget"));
+    auto *toolbar = window.findChild<QToolBar *>(QStringLiteral("mainToolBar"));
     QVERIFY(row);
+    QVERIFY(toolbar);
+    auto *recent = toolbar->findChild<QToolButton *>(QStringLiteral("recentButton"));
+    auto *open = toolbar->findChild<QToolButton *>(QStringLiteral("openButton"));
+    QVERIFY(recent);
+    QVERIFY(open);
+    QVERIFY(!row->findChild<QToolButton *>(QStringLiteral("recentButton")));
+    QVERIFY(recent->isChecked());
     inspect(window, QStringLiteral("Recent tab row"), row);
+    QCOMPARE(recent->iconSize(), open->iconSize());
+    QCOMPARE(recent->toolButtonStyle(), open->toolButtonStyle());
+    QCOMPARE(recent->height(), open->height());
+    int recentIndex = -1;
+    int openIndex = -1;
+    for (int i = 0; i < toolbar->actions().size(); ++i) {
+        QWidget *button = toolbar->widgetForAction(toolbar->actions().at(i));
+        if (button == recent)
+            recentIndex = i;
+        if (button == open)
+            openIndex = i;
+    }
+    QVERIFY(recentIndex >= 0);
+    QCOMPARE(openIndex, recentIndex + 1);
+    QVERIFY(!recent->icon().isNull());
+    QVERIFY(!recent->toolTip().isEmpty());
+    if (recent->toolButtonStyle() == Qt::ToolButtonIconOnly) {
+        for (const auto *name : {"openButton", "saveButton", "documentButton"}) {
+            auto *split = toolbar->findChild<QToolButton *>(QLatin1String(name));
+            QVERIFY(split);
+            QStyleOptionToolButton option;
+            option.initFrom(split);
+            option.features = QStyleOptionToolButton::MenuButtonPopup | QStyleOptionToolButton::HasMenu;
+            const QRect menu = split->style()->subControlRect(
+                QStyle::CC_ToolButton, &option, QStyle::SC_ToolButtonMenu, split);
+            // The icon keeps its ordinary button space, separate from the menu hit area.
+            QVERIFY2(split->width() >= recent->width() + menu.width(), name);
+        }
+    }
+    inspect(window, QStringLiteral("Recent toolbar"), toolbar);
     QVERIFY(mervin::testing::openAndWait(window, plain_));
     inspect(window, QStringLiteral("Document tab row"), row);
+    inspect(window, QStringLiteral("Document toolbar"), toolbar);
+    QVERIFY(!recent->isChecked());
+    // The whole toolbar must remain reachable, including controls after the zoom field.
+    for (QAbstractButton *button : toolbar->findChildren<QAbstractButton *>()) {
+        if (!button->isVisibleTo(&window))
+            continue;
+        QVERIFY(toolbar->rect().contains(QRect(button->mapTo(toolbar, QPoint()), button->size())));
+    }
 }
 
 // The notice a tab shows in place of its pages when the drive stops answering while

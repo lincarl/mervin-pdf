@@ -88,7 +88,9 @@
 #include <QPushButton>
 #include <QProgressDialog>
 #include <QSaveFile>
+#include <QStyleOptionToolButton>
 #include <QScreen>
+#include <QWindow>
 #include <QSet>
 #include <QToolButton>
 #include <QStackedWidget>
@@ -174,9 +176,11 @@ protected:
         QToolButton::paintEvent(event);
         if (menu() == nullptr)
             return;
-        constexpr int kMenuWidth = 18; // matches ::menu-button width in applyControlStyle()
+        QStyleOptionToolButton option;
+        initStyleOption(&option);
+        const QRect arrow = style()->subControlRect(
+            QStyle::CC_ToolButton, &option, QStyle::SC_ToolButtonMenu, this);
         const QColor ink = mervin::Theme::iconInk(palette());
-        const QRect arrow(width() - kMenuWidth, 0, kMenuWidth, height());
         QPainter p(this);
         const int px = qMax(8, height() * 40 / 100);
         // At this button's own pixel ratio: the application's is the highest of all
@@ -362,7 +366,7 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
                     statusInfo_->setText(text);
             });
 
-    // Permanent tab row: Recent pill + visible QTabBar.
+    // Permanent document tab row.
     // This row stays visible at all times (Recent view or document view).
     // The QTabWidget's own built-in tab bar is hidden so it does not double up.
     tabRow_ = new QWidget(this);
@@ -373,14 +377,6 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
     tabRowLayout->setSizeConstraint(QLayout::SetMinimumSize);
     tabRowLayout->setContentsMargins(8, 6, 8, 6);
     tabRowLayout->setSpacing(0);
-
-    //: Button left of the document tabs that shows the recently opened files.
-    recentBtn_ = new QPushButton(tr("Recent"), tabRow_);
-    recentBtn_->setObjectName(QStringLiteral("recentPillBtn"));
-    recentBtn_->setFlat(true);
-    connect(recentBtn_, &QPushButton::clicked, this, &MainWindow::showRecentPanel);
-    tabRowLayout->addWidget(recentBtn_);
-    tabRowLayout->addSpacing(8);
 
     // The visible bar IS a DetachableTabBar (M9): dragging a tab out of it
     // detaches to a new window, and dropping it on another window's bar merges
@@ -502,12 +498,7 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
     createMenus();
     applyControlStyle();
 
-    // Don't let the window shrink narrower than the toolbar's natural width, or
-    // its controls would collapse into an overflow ">>" menu. The document
-    // controls stay visible on the Recent view too (greyed out, not hidden), so
-    // the toolbar keeps this width in both modes.
-    mainToolBar_->ensurePolished();
-    setMinimumWidth(mainToolBar_->sizeHint().width() + 24);
+    updateToolBarLayout();
 
     statusInfo_ = new QLabel(this);
     statusBar()->addWidget(statusInfo_);
@@ -711,6 +702,9 @@ void MainWindow::changeEvent(QEvent *event)
         applyDocumentThemeToViewers();
     }
     QMainWindow::changeEvent(event);
+    if (event->type() == QEvent::FontChange || event->type() == QEvent::StyleChange
+        || event->type() == QEvent::LayoutDirectionChange)
+        QTimer::singleShot(0, this, &MainWindow::updateToolBarLayout);
     if (event->type() == QEvent::WindowStateChange) {
         if (wm_)
             wm_->checkDocumentActivity();
@@ -1083,7 +1077,7 @@ void MainWindow::createToolBar()
     mainToolBar_ = bar;
     bar->setObjectName(QStringLiteral("mainToolBar")); // for saveState/restoreState
     bar->setMovable(false);
-    // Most buttons are icon-only; Open keeps label beside icon.
+    // Most buttons are icon-only. File commands keep their labels beside the icons.
     bar->setToolButtonStyle(Qt::ToolButtonIconOnly);
     bar->setIconSize(QSize(20, 20));
 
@@ -1107,21 +1101,31 @@ void MainWindow::createToolBar()
     //: Tooltip of the toolbar button that opens the main menu.
     moreButton_->setToolTip(tr("Menu"));
     bar->addWidget(moreButton_);
-    bar->addWidget(makeToolSep(bar)); // divider between the hamburger and Open
+    bar->addWidget(makeToolSep(bar)); // divider before the file commands
 
-    // Open anchors the left side of the bar and keeps its text label. It is a
-    // split button: clicking the main part opens a file as a new tab in this
+    recentBtn_ = new QToolButton(this);
+    recentBtn_->setObjectName(QStringLiteral("recentButton"));
+    //: Toolbar button left of Open that shows the recently opened files.
+    recentBtn_->setText(tr("Recent"));
+    recentBtn_->setToolTip(recentBtn_->text());
+    recentBtn_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    recentBtn_->setIconSize(QSize(20, 20));
+    recentBtn_->setCheckable(true);
+    connect(recentBtn_, &QToolButton::clicked, this, &MainWindow::showRecentPanel);
+    bar->addWidget(recentBtn_);
+
+    // Open keeps its text label. Clicking the main part opens a file as a new tab in this
     // window (openAction_); the dropdown arrow offers "Open in New Window".
-    auto *openButton = new SplitToolButton(this);
-    openButton->setObjectName(QStringLiteral("openButton")); // scopes the menu-section QSS
-    openButton->setDefaultAction(openAction_);
-    openButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    openButton->setIconSize(QSize(20, 20));
-    openButton->setPopupMode(QToolButton::MenuButtonPopup);
-    auto *openMenu = new QMenu(openButton);
+    openButton_ = new SplitToolButton(this);
+    openButton_->setObjectName(QStringLiteral("openButton")); // scopes the menu-section QSS
+    openButton_->setDefaultAction(openAction_);
+    openButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    openButton_->setIconSize(QSize(20, 20));
+    openButton_->setPopupMode(QToolButton::MenuButtonPopup);
+    auto *openMenu = new QMenu(openButton_);
     openMenu->addAction(openInNewWindowAction_);
-    openButton->setMenu(openMenu);
-    bar->addWidget(openButton);
+    openButton_->setMenu(openMenu);
+    bar->addWidget(openButton_);
 
     // Save sits immediately right of Open and mirrors its split-button look, but is
     // dropdown-only: it carries no default action, so a click anywhere (main area or
@@ -1437,7 +1441,7 @@ void MainWindow::applyControlStyle()
     // app-wide stylesheet on qApp), so this per-window hook only refreshes what
     // QSS cannot express and what must track the active palette: the custom-
     // painted toolbar dividers (below) and the Lucide glyph icons, plus the
-    // Recent pill / tab-bar selected state, which a dynamic property drives.
+    // Recent button and document tab selection states.
     const mervin::theme::Chrome t = mervin::theme::chrome(palette());
 
     // Colour the custom-painted toolbar dividers with the hairline token: a faint
@@ -1449,11 +1453,45 @@ void MainWindow::applyControlStyle()
     }
 
     applyTitleBarTheme(); // system caption colours on Windows 11 (no-op elsewhere)
-    updateRecentButton(); // re-apply pill style with the updated palette
+    updateRecentButton(); // refresh selection states with the updated palette
     applyActionIcons();   // re-draw icons with the current text colour
 
     // Reapplying the stylesheet can remove WA_Hover; restore it on toolbar controls.
     QTimer::singleShot(0, this, [this] { reassertHoverAttributes(); });
+}
+
+// Keep toolbar controls visible. Long labels use icons and tooltips when the screen is too narrow.
+void MainWindow::updateToolBarLayout()
+{
+    if (!mainToolBar_ || !recentBtn_ || !openButton_ || !saveButton_ || !documentButton_)
+        return;
+    const QList<QToolButton *> fileButtons{recentBtn_, openButton_, saveButton_, documentButton_};
+    const auto setButtonStyle = [&](Qt::ToolButtonStyle style) {
+        for (QToolButton *button : fileButtons) {
+            button->setToolButtonStyle(style);
+            const QString menuSide = style == Qt::ToolButtonIconOnly
+                ? (button->isRightToLeft() ? QStringLiteral("left") : QStringLiteral("right"))
+                : QString();
+            if (button->property("compactMenuSide").toString() != menuSide) {
+                button->setProperty("compactMenuSide", menuSide);
+                button->style()->unpolish(button);
+                button->style()->polish(button);
+                button->updateGeometry();
+            }
+        }
+        mainToolBar_->ensurePolished();
+        mainToolBar_->layout()->invalidate();
+    };
+    connect(screen(), &QScreen::availableGeometryChanged,
+            this, &MainWindow::updateToolBarLayout, Qt::UniqueConnection);
+    const int frameWidth = qMax(0, frameGeometry().width() - width());
+    const int availableWidth = screen()->availableGeometry().width() - frameWidth;
+    setButtonStyle(Qt::ToolButtonTextBesideIcon);
+    if (mainToolBar_->sizeHint().width() + 24 > availableWidth)
+        setButtonStyle(Qt::ToolButtonIconOnly);
+    setMinimumWidth(mainToolBar_->sizeHint().width() + 24);
+    if (!isMaximized() && width() > availableWidth)
+        resize(availableWidth, height());
 }
 
 void MainWindow::reassertHoverAttributes()
@@ -1497,6 +1535,10 @@ void MainWindow::applyTitleBarTheme()
 void MainWindow::showEvent(QShowEvent *event)
 {
     QMainWindow::showEvent(event);
+    if (windowHandle())
+        connect(windowHandle(), &QWindow::screenChanged,
+                this, &MainWindow::updateToolBarLayout, Qt::UniqueConnection);
+    updateToolBarLayout();
     applyTitleBarTheme(); // the native window handle exists by now
     hiddenToTray_ = false;
     scheduleCurrentResume();
@@ -1511,6 +1553,7 @@ void MainWindow::applyActionIcons()
         copyAction_->setIcon(mervin::icons::glyph(Glyph::Copy, col));
     if (ocrAction_)
         ocrAction_->setIcon(mervin::icons::glyph(Glyph::Ocr, col));
+    recentBtn_->setIcon(mervin::icons::glyph(Glyph::Recent, col));
     openAction_->setIcon(mervin::icons::glyph(Glyph::Open, col));
     prevPageAction_->setIcon(mervin::icons::glyph(Glyph::PrevPage, col));
     nextPageAction_->setIcon(mervin::icons::glyph(Glyph::NextPage, col));
@@ -1976,7 +2019,7 @@ void MainWindow::showRecentPanel()
 
 void MainWindow::updateRecentButton()
 {
-    // Apply the Recent state to both tab controls and refresh their stylesheet-dependent appearance.
+    // Keep the toolbar selection and document tab appearance in sync.
     const auto setRecentActive = [this](QWidget *w) {
         if (!w || w->property("recentActive").toBool() == recentActive_)
             return;
@@ -1986,7 +2029,8 @@ void MainWindow::updateRecentButton()
         w->update();
     };
     setRecentActive(docTabBar_);
-    setRecentActive(recentBtn_);
+    if (recentBtn_)
+        recentBtn_->setChecked(recentActive_);
     // The active-tab accent glyph depends on the same recent/document state, so
     // refresh it here too (covers switching to Recent, where no tab is active).
     updateTabGlyphs();

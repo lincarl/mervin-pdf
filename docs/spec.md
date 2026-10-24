@@ -53,6 +53,11 @@ exits the application and offers Save, Discard, or Cancel for unsaved edits. If
 Close to tray is off or the system tray is unavailable, windows close normally and
 closing the last window exits. Mervin does not install a login service.
 
+The Recent button sits immediately before Open on the toolbar and uses a list-clock
+icon. Both buttons use an icon beside their label. If the toolbar would exceed the
+screen's available width, Recent, Open, Save, and Document show icons with tooltips
+instead. Their labels return when the font and screen width allow them to fit.
+
 The Recent screen provides:
 
 - recent files, with starred favourites in their own section at the top.

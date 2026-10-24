@@ -96,8 +96,8 @@ creates a second independent view.
 
 A first-run main window starts at up to 1100 by 820 logical pixels, bounded to
 90 percent of the available work area to leave room for native window decorations.
-Saved geometry continues through Qt's restore path. The permanent Recent and
-document tab row follows its layout's minimum height, so a larger application font
+Saved geometry continues through Qt's restore path. The permanent document
+tab row follows its layout's minimum height, so a larger application font
 does not squeeze its text into the old fixed-height row.
 
 ### Tab order across nested event loops

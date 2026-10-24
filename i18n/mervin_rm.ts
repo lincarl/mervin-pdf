@@ -270,7 +270,7 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     </message>
     <message>
         <source>Recent</source>
-        <extracomment>Button left of the document tabs that shows the recently opened files.</extracomment>
+        <extracomment>Toolbar button left of Open that shows the recently opened files.</extracomment>
         <translation>Ultimas datotecas</translation>
     </message>
     <message>
