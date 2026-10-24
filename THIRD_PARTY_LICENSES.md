@@ -14,19 +14,22 @@ in the [`licenses/`](licenses/) directory.
 | Component | Version (pinned) | Licence | Linking | Notes |
 |---|---|---|---|---|
 | MuPDF | 1.28.5 | AGPL v3 or commercial (Artifex) | Static | Dominant distribution constraint. Built from the official source release with Mervin's patches in `scripts/mupdf-patches`, unavailable in vcpkg. |
-| Qt 6 | Windows 6.12.0; Linux distribution Qt (Ubuntu 26.04 uses 6.10) | LGPL v3 or commercial | **Dynamic** | Dynamic linking satisfies the LGPL. Do not static-link. |
-| qpdf | Windows 12.4.2 (vcpkg baseline); Linux distribution package | Apache 2.0 | Windows static; Linux distribution library | Page operations and security. |
-| toml++ | 3.4.0 (vcpkg baseline, Linux distribution package or pinned fallback) | MIT | Windows static; Linux distribution library or header-only fallback | Config-file parsing and saving. |
-| Lucide icons | lucide-static 1.49.0 | ISC; icons derived from Feather are MIT | Compiled in (Qt resource) | Every UI icon, vendored unmodified in `resources/icons/lucide`. The licence text, including the Feather MIT notice for icons such as check, x, the chevrons, plus, minus and lock, is `licenses/lucide-LICENSE.txt`. |
+| Qt 6 | 6.12.0 official binaries on Windows and Linux | LGPL v3 or commercial | **Dynamic** | Packages include Qt's libraries and plugins. Do not static-link. |
+| qpdf | 12.4.2 (vcpkg baseline) | Apache 2.0 | Windows static; Linux bundled shared library | Page operations and security. |
+| toml++ | 3.4.0 (vcpkg baseline or pinned development fallback) | MIT | Windows static; Linux bundled shared library or development header-only fallback | Config-file parsing and saving. |
+| Lucide icons | lucide-static 1.61.0 | ISC; icons derived from Feather are MIT | Compiled in (Qt resource) | Every UI icon, vendored unmodified in `resources/icons/lucide`. The licence text, including the Feather MIT notice for icons such as check, x, the chevrons, plus, minus and lock, is `licenses/lucide-LICENSE.txt`. |
 
-## Windows vcpkg dependencies
+## vcpkg dependencies
 
 The `x64-windows-static-md` triplet links the vcpkg libraries statically and keeps
 the Microsoft runtime dynamic. qpdf uses libjpeg-turbo and zlib. The selected
 libjpeg-turbo port also builds libspng and TurboJPEG support. The deployment does
-not ship the vcpkg command-line tools or DLLs.
+not ship the vcpkg command-line tools or DLLs on Windows. Linux uses
+`x64-linux-dynamic` and bundles its shared libraries in the private application
+directory. Keeping qpdf's JPEG implementation in a shared library avoids binding
+it to MuPDF's incompatible static JPEG implementation.
 
-Static linking does not remove notice requirements. Windows packages include the
+Static linking does not remove notice requirements. Packages include the
 target packages' complete vcpkg copyright files under `licenses/vcpkg`, covering
 qpdf, toml++, libjpeg-turbo, libspng and zlib in addition to the maintained notices
 in this repository. libjpeg-turbo carries IJG, BSD and zlib-style terms; libspng
@@ -75,6 +78,12 @@ with every installer.
 
 ## LGPL implications for Qt (relevant only on distribution)
 
-- Qt is linked **dynamically** (the standard installer ships the Qt DLLs).
+- Qt is linked **dynamically**. Installers ship its DLLs on Windows and private shared libraries on Linux.
 - Include the Qt LGPL notice on the About page in Settings and in bundled documentation.
 - Avoid static linking unless prepared to meet the additional LGPL obligations.
+
+Qt's embedded third-party components and deployed Wayland protocols have
+additional license and notice requirements. Their complete notices, including
+the ICU 73.2 license for Linux SDK libraries, are included under
+[`licenses/qt/`](licenses/qt/README.md). Keep that directory with the other
+license files when redistributing packages.

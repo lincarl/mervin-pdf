@@ -52,6 +52,11 @@ jobs:
             exit 1
           }
 
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.15.1"
+
       - name: Prepare release metadata
         id: metadata
         env:
@@ -115,6 +120,15 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Install pinned PowerShell and .NET SDK
+        shell: pwsh
+        run: scripts\install-windows-host-tools.ps1 -IncludeDotNet
+
+      - name: Verify PowerShell selection
+        shell: pwsh
+        run: |
+          if ($PSVersionTable.PSVersion.ToString() -ne '7.6.8') { throw 'Pinned PowerShell was not selected.' }
+
       - name: Set up MSVC (x64)
         # Maintained, Node-24 vcvars action (fork of the now-unmaintained
         # ilammy/msvc-dev-cmd). Exports the MSVC dev env to later steps via
@@ -123,15 +137,23 @@ jobs:
         with:
           arch: x64
 
-      - name: Install Ninja
-        run: choco install ninja -y
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.15.1"
+
+      - name: Install pinned CMake and Ninja
+        run: python scripts/install-build-tools.py
 
       - name: Install Qt 6.12.0
         uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
         with:
           # aqtinstall 3.3.0 cannot read Qt 6.11+ Windows repository paths.
           # Pin the merged fix until it ships in a release: miurahr/aqtinstall#1000.
+          setup-python: false
           aqtsource: "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
+          # Override the action's 1.1.0 default with the security release.
+          py7zrversion: "==1.1.4"
           version: "6.12.0"
           host: windows
           target: desktop
@@ -203,8 +225,14 @@ jobs:
 
       - name: Install WiX
         shell: pwsh
+        env:
+          # Select only our stable .NET installation for WiX's net8.0 apphost.
+          DOTNET_ROOT: ${{ env.MERVIN_DOTNET_ROOT }}
+          DOTNET_ROOT_X64: ${{ env.MERVIN_DOTNET_ROOT }}
+          DOTNET_ROLL_FORWARD: Major
+          DOTNET_ROLL_FORWARD_TO_PRERELEASE: "0"
         run: |
-          dotnet tool install --global wix --version 7.0.0
+          & "$env:DOTNET_ROOT_X64\dotnet.exe" tool install --global wix --version 7.0.0
           if ($LASTEXITCODE -ne 0) { throw "Installing WiX failed" }
           & "$env:USERPROFILE\.dotnet\tools\wix.exe" eula accept wix7
           if ($LASTEXITCODE -ne 0) { throw "Accepting the WiX EULA failed" }
@@ -216,13 +244,19 @@ jobs:
 
       - name: Stage app and build MSI
         shell: pwsh
+        env:
+          # Select only our stable .NET installation for WiX's net8.0 apphost.
+          DOTNET_ROOT: ${{ env.MERVIN_DOTNET_ROOT }}
+          DOTNET_ROOT_X64: ${{ env.MERVIN_DOTNET_ROOT }}
+          DOTNET_ROLL_FORWARD: Major
+          DOTNET_ROLL_FORWARD_TO_PRERELEASE: "0"
         run: |
           $env:QT6_DIR = $env:QT_ROOT_DIR
           scripts\deploy.ps1 -Installer
 
       - name: Upload MSI
         if: github.event_name != 'workflow_dispatch'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-msi
           path: |
@@ -234,20 +268,15 @@ jobs:
         run: scripts\build-msix.ps1 -Version $env:MERVIN_VERSION
 
       - name: Upload Microsoft Store package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-msix-store-upload
           path: build/x64-release/MervinPDF-*-x64.msix
           if-no-files-found: error
           retention-days: 30
 
-  # --------------------------------------------------------------- AppImage ---
-  # Built on Ubuntu 26.04 - the only supported release - against that release's
-  # system Qt 6.10, exactly like the .deb. Building on the older 24.04 and leaning
-  # on glibc forward-compatibility did NOT hold up in practice, so the bundle is
-  # now made on the release it targets. linuxdeploy still copies Qt into the
-  # AppDir, so the AppImage stays self-contained; it is just no longer portable
-  # to releases older than the one it was built on.
+  # Official Qt and the pinned upstream libraries are bundled on every Linux
+  # target. Build on Ubuntu 26.04 and Fedora 44 to retain their platform ABI.
   appimage:
     if: github.event_name != 'workflow_dispatch'
     needs: prepare
@@ -261,25 +290,40 @@ jobs:
           persist-credentials: false
 
       - name: Install build deps
-        # qt6-base-dev pulls in libqt6gui6, which is what actually ships the xcb
-        # platform plugin (qt6/plugins/platforms/libqxcb.so) that linuxdeploy has to
-        # bundle - so --no-install-recommends is safe here. qt6-base-dev-tools
-        # provides qmake6, which linuxdeploy-plugin-qt uses to locate that plugin dir.
-        # qt6-svg-dev: the icons are Lucide SVGs rendered through Qt SVG. Linking Qt
-        # SVG makes linuxdeploy-plugin-qt bundle the SVG icon engine plugin too, which
-        # ships separately in qt6-svg-plugins (not pulled in without recommends).
-        # qt6-tools-dev: Qt's LinguistTools CMake package; it pulls lupdate,
-        # lrelease and lprodump. qt6-translations-l10n: Qt's own catalogs
-        # (qtbase_<id>.qm), which the build merges into Mervin's; configure stops
-        # without them. make-appimage.sh keeps the loose copies out of the bundle.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build curl ca-certificates file wget \
-            qt6-base-dev qt6-base-dev-tools qt6-svg-dev qt6-svg-plugins \
-            qt6-tools-dev qt6-translations-l10n \
-            libqpdf-dev libtomlplusplus-dev \
-            libgl1-mesa-dev libxkbcommon-dev libxcb-cursor0
+            build-essential curl ca-certificates file git unzip zip tar pkg-config nasm patchelf \
+            libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 libxcb-cursor0 \
+            libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 \
+            libgtk-3-0t64 libcups2t64 libwayland-client0 libwayland-cursor0 libwayland-egl1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.15.1"
+
+      - name: Install pinned CMake and Ninja
+        run: python scripts/install-build-tools.py
+
+      - name: Install Qt 6.12.0
+        uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
+        with:
+          setup-python: false
+          aqtsource: "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
+          py7zrversion: "==1.1.4"
+          version: "6.12.0"
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          # Keep the complete base archive set, including Qt's translations.
+          cache: true
+
+      - name: Prepare pinned upstream dependencies
+        run: |
+          vcpkg_root=$(bash scripts/bootstrap-vcpkg-linux.sh dev-temp/vcpkg)
+          echo "VCPKG_ROOT=$vcpkg_root" >> "$GITHUB_ENV"
+          echo "QT6_DIR=$QT_ROOT_DIR" >> "$GITHUB_ENV"
 
       - name: Hash MuPDF patches
         id: mupdf-patches
@@ -298,7 +342,7 @@ jobs:
 
       - name: Configure + build
         run: |
-          cmake -S . -B build -G Ninja \
+          cmake --preset linux-bundled -B build \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DMERVIN_VERSION="$MERVIN_VERSION" \
             -DCMAKE_INSTALL_PREFIX=/usr \
@@ -314,57 +358,74 @@ jobs:
       - name: Install into AppDir
         run: DESTDIR="$PWD/AppDir" cmake --install build
 
+      - name: Verify bundled install
+        run: python3 scripts/check-linux-runtime.py AppDir/usr
+
       - name: Build AppImage
         run: bash scripts/make-appimage.sh "$MERVIN_VERSION" AppDir
 
       - name: Upload AppImage
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-appimage
           path: MervinPDF-*-x86_64.AppImage
           if-no-files-found: error
 
-  # ------------------------------------------------------------------- .deb ---
-  # Native .deb built against the distro's system Qt. Only Ubuntu 26.04 (Qt 6.10):
-  # 24.04 ships Qt 6.4, below the Qt 6.9 the build needs (merging Qt's own
-  # translations) and without the 6.6/6.8 APIs Mervin uses (accent colour,
-  # color-scheme control), and the AppImage no longer covers 24.04 either - 26.04
-  # is the minimum supported release. (Matrix kept for easy re-add of later ones.)
+  # Native packages use the same upstream dependency versions as the AppImage.
   deb:
     if: github.event_name != 'workflow_dispatch'
     needs: prepare
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       MERVIN_VERSION: ${{ needs.prepare.outputs.version }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { image: "ubuntu:26.04", release: "26.04" }
-    container: ${{ matrix.image }}
     steps:
-      - name: Install build deps
-        # qt6-tools-dev and qt6-translations-l10n: the UI translations, as in the
-        # appimage job. The catalogs are compiled into the binary, so the .deb
-        # needs neither at run time.
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build curl ca-certificates file git dpkg-dev python3 \
-            qt6-base-dev qt6-base-dev-tools qt6-svg-dev qt6-tools-dev qt6-translations-l10n \
-            libqpdf-dev libtomlplusplus-dev
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential curl ca-certificates file git unzip zip tar pkg-config nasm patchelf \
+            libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 libxcb-cursor0 \
+            libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 \
+            libgtk-3-0t64 libcups2t64 libwayland-client0 libwayland-cursor0 libwayland-egl1 dpkg-dev
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.15.1"
+
+      - name: Install pinned CMake and Ninja
+        run: python scripts/install-build-tools.py
+
+      - name: Install Qt 6.12.0
+        uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
+        with:
+          setup-python: false
+          aqtsource: "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
+          py7zrversion: "==1.1.4"
+          version: "6.12.0"
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          # Keep the complete base archive set, including Qt's translations.
+          cache: true
+
+      - name: Prepare pinned upstream dependencies
+        run: |
+          vcpkg_root=$(bash scripts/bootstrap-vcpkg-linux.sh dev-temp/vcpkg)
+          echo "VCPKG_ROOT=$vcpkg_root" >> "$GITHUB_ENV"
+          echo "QT6_DIR=$QT_ROOT_DIR" >> "$GITHUB_ENV"
 
       - name: Build MuPDF
         run: echo "MUPDF_DIR=$(bash scripts/build-mupdf-linux.sh)" >> "$GITHUB_ENV"
 
       - name: Configure + build
         run: |
-          cmake -S . -B build -G Ninja \
+          cmake --preset linux-bundled -B build \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DMERVIN_VERSION="$MERVIN_VERSION" \
             -DMERVIN_PACKAGE_FORMAT=deb \
@@ -380,14 +441,19 @@ jobs:
       - name: Package .deb
         run: |
           cd build && cpack -G DEB
-          REL="${{ matrix.release }}"
+          REL=26.04
           mv "mervin-pdf_${MERVIN_VERSION}_amd64.deb" "mervin-pdf_${MERVIN_VERSION}_ubuntu${REL}_amd64.deb"
           dpkg-deb -I "mervin-pdf_${MERVIN_VERSION}_ubuntu${REL}_amd64.deb"
 
+      - name: Verify .deb payload
+        run: |
+          dpkg-deb -x build/mervin-pdf_*_amd64.deb dev-temp/deb-payload
+          python3 scripts/check-linux-runtime.py dev-temp/deb-payload/usr
+
       - name: Upload .deb
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: linux-deb-ubuntu-${{ matrix.release }}
+          name: linux-deb-ubuntu-26.04
           path: build/mervin-pdf_*_amd64.deb
           if-no-files-found: error
 
@@ -400,29 +466,60 @@ jobs:
       MERVIN_VERSION: ${{ needs.prepare.outputs.version }}
     container: fedora:44
     steps:
-      - name: Install build deps
-        # qt6-qttools-devel: Qt's LinguistTools CMake package; it requires
-        # qt6-linguist (lupdate, lrelease). qt6-qttranslations: Qt's own catalogs,
-        # listed so the build does not depend on dnf installing weak dependencies.
-        # The container image installs files for en_US only (%_install_langs), so
-        # it would skip the Swedish and Chinese catalogs, which are %lang files.
+      - name: Install platform build dependencies
         run: |
-          echo '%_install_langs all' > /etc/rpm/macros.image-language-conf
-          dnf install -y gcc-c++ make cmake ninja-build rpm-build \
-            qt6-qtbase-devel qt6-qtsvg-devel qt6-qttools-devel qt6-qttranslations \
-            qpdf-devel git tar curl findutils which python3
+          dnf install -y gcc-c++ make rpm-build git tar curl findutils which \
+            unzip zip pkgconf nasm cpio patchelf \
+            mesa-libGL-devel libxkbcommon-devel libxkbcommon-x11 xcb-util-cursor \
+            xcb-util-wm xcb-util-keysyms xcb-util-image xcb-util-renderutil \
+            fontconfig dbus-libs gtk3 cups-libs libwayland-client libwayland-cursor libwayland-egl
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Set up portable Python 3.15.1
+        run: |
+          python_bin=$(bash scripts/bootstrap-python-linux.sh dev-temp/python)
+          "$python_bin" -m venv dev-temp/build-tools
+          echo "$PWD/dev-temp/build-tools/bin" >> "$GITHUB_PATH"
+
+      - name: Install pinned CMake and Ninja
+        run: python scripts/install-build-tools.py
+
+      - name: Install Qt 6.12.0
+        uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
+        env:
+          # Portable Python records Clang, but this builder supplies GCC.
+          CC: gcc
+          CXX: g++
+          LDSHARED: gcc -shared
+        with:
+          # Fedora dependencies are installed by DNF above. The action defaults to apt.
+          install-deps: false
+          setup-python: false
+          aqtsource: "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
+          py7zrversion: "==1.1.4"
+          version: "6.12.0"
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          # Keep the complete base archive set, including Qt's translations.
+          cache: true
+
+      - name: Prepare pinned upstream dependencies
+        run: |
+          vcpkg_root=$(bash scripts/bootstrap-vcpkg-linux.sh dev-temp/vcpkg)
+          echo "VCPKG_ROOT=$vcpkg_root" >> "$GITHUB_ENV"
+          echo "QT6_DIR=$QT_ROOT_DIR" >> "$GITHUB_ENV"
+
       - name: Build MuPDF
         run: echo "MUPDF_DIR=$(bash scripts/build-mupdf-linux.sh)" >> "$GITHUB_ENV"
 
       - name: Configure + build
         run: |
-          cmake -S . -B build -G Ninja \
+          cmake --preset linux-bundled -B build \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DMERVIN_VERSION="$MERVIN_VERSION" \
             -DMERVIN_PACKAGE_FORMAT=rpm \
@@ -440,8 +537,14 @@ jobs:
           cd build && cpack -G RPM
           rpm -qp --requires mervin-pdf-*.rpm
 
+      - name: Verify .rpm payload
+        run: |
+          mkdir -p dev-temp/rpm-payload
+          rpm2cpio build/mervin-pdf-*.rpm | (cd dev-temp/rpm-payload && cpio -idm --quiet)
+          python3 scripts/check-linux-runtime.py dev-temp/rpm-payload/usr
+
       - name: Upload .rpm
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-rpm
           path: build/mervin-pdf-*.rpm
@@ -464,8 +567,13 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.15.1"
+
       - name: Download package artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           # The reusable workflow shares the CI run, including its separate

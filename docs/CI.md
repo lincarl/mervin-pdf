@@ -37,10 +37,17 @@ The reusable full CI workflow runs the following jobs.
 
 - Repository metadata, script, workflow, and license checks.
 - Linux release and sanitizer tests on Ubuntu 24.04 with aqt's Qt and qpdf 11.
-- Linux tests on Ubuntu 26.04 with the distribution's Qt and qpdf, matching the
-  AppImage and DEB toolchain.
+- Linux tests on Ubuntu 26.04 with official Qt and the pinned upstream vcpkg
+  libraries, matching the AppImage and DEB toolchain, plus a staged runtime check.
 - Windows tests, MSI installation, upgrade, repair, uninstall, and wizard checks.
 - Windows MSIX installation, activation, upgrade, and uninstall checks.
+
+Windows CI and release jobs bootstrap PowerShell 7.6.8 from its official archive
+with a pinned SHA-256. WiX installation, MSI packaging, and MSI lifecycle checks
+use an isolated .NET SDK 10.0.402 with runtime 10.0.13, verified against the
+official archive's SHA-512. Their runtime selection excludes the runner's other
+.NET versions and previews. The bootstrap still uses runner PowerShell, and the
+MSIX lifecycle test retains Windows PowerShell 5.1 for native Appx support.
 
 A final job explicitly checks every expected result. The outer `reviewed-ci`
 check requires that job and the rest of full CI to succeed. The optional MSIX
@@ -51,7 +58,8 @@ from a completed main-push CI run with successful Windows build, test, MSI
 verification, and artifact-upload steps. MSIX packaging or testing may have
 failed, since that can be the reason to diagnose the package.
 
-The Fedora RPM retains its exported-symbol check in the release workflow.
+The Fedora RPM builds the same upstream libraries and checks exported symbols
+and its staged private runtime in the release workflow.
 Verification artifacts remain on the run that produced them, with their existing
 retention periods.
 

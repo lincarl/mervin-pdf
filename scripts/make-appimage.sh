@@ -1,65 +1,58 @@
 #!/usr/bin/env bash
-# Package a built+installed MervinPDF AppDir into an AppImage using linuxdeploy +
-# the Qt plugin. Run after `DESTDIR=$PWD/AppDir cmake --install <build>`.
+# Package the private runtime installed with MERVIN_BUNDLE_LINUX_RUNTIME=ON.
+# Run after `DESTDIR=$PWD/AppDir cmake --install <build> --prefix /usr`.
 #
-#   Usage: scripts/make-appimage.sh <VERSION> [APPDIR]
-#
-# Produces MervinPDF-<VERSION>-x86_64.AppImage in the current directory and prints
-# its name. Build this on Ubuntu 26.04, the minimum supported release: building on
-# an older one and relying on glibc forward-compatibility did not work in practice,
-# so the bundle is made on the same release it targets. OCR language models
+# Usage: scripts/make-appimage.sh <VERSION> [APPDIR]
+# Build on Ubuntu 26.04, the minimum supported release. OCR language models
 # are downloaded into the user profile and are not part of the AppDir.
 set -euo pipefail
 
 VERSION="${1:?usage: make-appimage.sh <VERSION> [APPDIR]}"
-APPDIR="${2:-AppDir}"
+APPDIR="$(realpath "${2:-AppDir}")"
+OUT="$PWD/MervinPDF-${VERSION}-x86_64.AppImage"
+TOOLS_DIR="${MERVIN_APPIMAGE_TOOLS_DIR:-$HOME/dev-tools/mervin-appimage-tools}"
 
-# No FUSE on CI runners: make every AppImage (the tools and the one we produce's
-# build step) self-extract instead of mounting.
+# The install step already gathered Qt and application dependencies. Redeploying
+# here could pull in a different Qt or create a second runtime under usr/lib.
+for required in usr/bin/MervinPDF usr/lib/mervin-pdf/bin/MervinPDF \
+    usr/lib/mervin-pdf/bin/qt.conf usr/lib/mervin-pdf/lib/libQt6Core.so.6 \
+    usr/lib/mervin-pdf/plugins/platforms/libqxcb.so \
+    usr/lib/mervin-pdf/plugins/platforms/libqwayland.so; do
+  if [[ ! -f "$APPDIR/$required" ]]; then
+    echo "Missing $required. Install with MERVIN_BUNDLE_LINUX_RUNTIME=ON first." >&2
+    exit 1
+  fi
+done
+
+# No FUSE is needed on the builder.
 export APPIMAGE_EXTRACT_AND_RUN=1
 export VERSION
+mkdir -p "$TOOLS_DIR"
 
+# Reuse only a verified tool. Pin a numbered release instead of continuous.
 dl() {
   local url="$1" out="$2" sha256="$3" tmp
+  if [[ -f "$out" ]] && printf '%s  %s\n' "$sha256" "$out" | sha256sum --check --status; then
+    return
+  fi
   tmp="$(mktemp "${out}.download.XXXXXX")"
   curl -fsSL --retry 3 "$url" -o "$tmp"
   printf '%s  %s\n' "$sha256" "$tmp" | sha256sum --check -
   chmod 0755 "$tmp"
   mv -f "$tmp" "$out"
 }
-dl https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage \
-  linuxdeploy c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d
-dl https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-qt-x86_64.AppImage \
-  linuxdeploy-plugin-qt 15106be885c1c48a021198e7e1e9a48ce9d02a86dd0a1848f00bdbf3c1c92724
-# A numbered release, not "continuous": upstream rebuilds continuous on every
-# change, which breaks the pinned checksum (it failed the v1.64.7 release).
 dl https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage \
-  appimagetool ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
-export PATH="$PWD:$PATH"   # linuxdeploy locates the qt plugin + appimagetool here
+  "$TOOLS_DIR/appimagetool" ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
 
-# Help the Qt plugin find the Qt install. On the 26.04 builder this is the system
-# Qt 6.10, and qmake6 comes from qt6-base-dev-tools; the lookup fails loudly under
-# `set -e` if neither binary is on PATH, rather than silently deploying no plugins.
-export QMAKE="${QMAKE:-$(command -v qmake6 || command -v qmake)}"
-
-./linuxdeploy \
-  --appdir "$APPDIR" \
-  --plugin qt \
-  --desktop-file "$APPDIR/usr/share/applications/mervin-pdf.desktop" \
-  --icon-file "$APPDIR/usr/share/icons/hicolor/256x256/apps/mervin-pdf.png"
-
-# The Qt plugin copies Qt's own catalogs (qtbase_<id>.qm) into usr/translations
-# when the builder has them, which the build needs. Mervin compiles them into its
-# own catalogs instead, so the loose copies would only add size.
-rm -rf "$APPDIR/usr/translations"
-
-# Pack the deployed AppDir. linuxdeploy rechecks the libraries it already
-# deployed, then builds the AppImage.
-./linuxdeploy --appdir "$APPDIR" --output appimage
-
-# linuxdeploy names the output from the desktop "Name" (spaces -> underscores).
-produced="$(find . -maxdepth 1 -iname '*.AppImage' \
-            ! -iname 'linuxdeploy*' ! -iname 'appimagetool*' | head -n1)"
-out="MervinPDF-${VERSION}-x86_64.AppImage"
-mv "$produced" "$out"
-echo "$out"
+cp "$APPDIR/usr/share/applications/mervin-pdf.desktop" "$APPDIR/mervin-pdf.desktop"
+cp "$APPDIR/usr/share/icons/hicolor/256x256/apps/mervin-pdf.png" "$APPDIR/mervin-pdf.png"
+ln -sfn mervin-pdf.png "$APPDIR/.DirIcon"
+cat > "$APPDIR/AppRun" <<'APPRUN'
+#!/bin/sh
+set -eu
+appdir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+exec "$appdir/usr/bin/MervinPDF" "$@"
+APPRUN
+chmod 0755 "$APPDIR/AppRun"
+ARCH=x86_64 "$TOOLS_DIR/appimagetool" "$APPDIR" "$OUT"
+echo "$OUT"

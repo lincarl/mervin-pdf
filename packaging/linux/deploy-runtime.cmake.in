@@ -1,0 +1,65 @@
+# Deploy from the build executable while its dependency search paths still point
+# at the selected upstream libraries. Qt discovers plugins from that same prefix.
+set(QT_DEPLOY_BIN_DIR "@MERVIN_LINUX_RUNTIME_DIR@/bin")
+set(QT_DEPLOY_LIB_DIR "@MERVIN_LINUX_RUNTIME_DIR@/lib")
+set(QT_DEPLOY_PLUGINS_DIR "@MERVIN_LINUX_RUNTIME_DIR@/plugins")
+qt_deploy_runtime_dependencies(
+    EXECUTABLE "$<TARGET_FILE:MervinPDF>"
+    NO_TRANSLATIONS
+    POST_INCLUDE_REGEXES "/lib(Qt6[^/]*|qpdf|tomlplusplus)[.]so"
+    INCLUDE_PLUGINS qxcb qwayland qoffscreen
+    EXCLUDE_PLUGIN_TYPES egldeviceintegrations generic
+    EXCLUDE_PLUGINS qeglfs qlinuxfb qminimalegl qvkkhrdisplay qvnc)
+
+# vcpkg's manifest contains the application libraries and their dependencies.
+# Copy its release shared libraries explicitly. Qt's system-directory exclusion
+# can otherwise omit an indirect dependency with the same SONAME in /usr/lib.
+set(_mervin_dependency_prefix "@MERVIN_LINUX_DEPENDENCY_PREFIX@")
+if(_mervin_dependency_prefix)
+    file(GLOB _mervin_dependency_libraries "${_mervin_dependency_prefix}/lib/*.so*")
+    if(NOT _mervin_dependency_libraries)
+        message(FATAL_ERROR "No shared application libraries in ${_mervin_dependency_prefix}/lib")
+    endif()
+    file(INSTALL ${_mervin_dependency_libraries}
+        DESTINATION "${CMAKE_INSTALL_PREFIX}/${QT_DEPLOY_LIB_DIR}"
+        FOLLOW_SYMLINK_CHAIN)
+endif()
+# Translations are compiled into the application. qt.conf keeps plugin discovery
+# relative to this private runtime instead of the Qt build machine's prefix.
+qt_deploy_qt_conf("${QT_DEPLOY_PREFIX}/${QT_DEPLOY_BIN_DIR}/qt.conf" PREFIX "..")
+if(NOT EXISTS "${QT_DEPLOY_PREFIX}/${QT_DEPLOY_LIB_DIR}/libQt6Core.so.6")
+    message(FATAL_ERROR
+        "Qt was not bundled. Select the official Qt prefix with CMAKE_PREFIX_PATH.")
+endif()
+
+# Check the installed tree, including dlopen-loaded plugins. Qt's deployment
+# helper can otherwise leave unresolved dependencies without failing the install.
+file(GLOB_RECURSE _mervin_plugins "${QT_DEPLOY_PREFIX}/${QT_DEPLOY_PLUGINS_DIR}/*.so")
+file(GET_RUNTIME_DEPENDENCIES
+    EXECUTABLES "${QT_DEPLOY_PREFIX}/${QT_DEPLOY_BIN_DIR}/MervinPDF"
+    MODULES ${_mervin_plugins}
+    RESOLVED_DEPENDENCIES_VAR _mervin_resolved
+    UNRESOLVED_DEPENDENCIES_VAR _mervin_unresolved
+    CONFLICTING_DEPENDENCIES_PREFIX _mervin_conflicting)
+if(_mervin_unresolved)
+    message(FATAL_ERROR "Unresolved packaged dependencies: ${_mervin_unresolved}")
+endif()
+# CMake scans plugins separately from the executable. A system library reached
+# through a plugin can also resolve in /usr, although the running application's
+# inherited RPATH selects the bundled copy. Only accept those duplicate SONAMEs
+# when the private runtime contains the library.
+foreach(_mervin_name IN LISTS _mervin_conflicting_FILENAMES)
+    if(NOT EXISTS "${QT_DEPLOY_PREFIX}/${QT_DEPLOY_LIB_DIR}/${_mervin_name}")
+        message(FATAL_ERROR "Conflicting packaged dependency: ${_mervin_name}")
+    endif()
+    list(APPEND _mervin_resolved ${_mervin_conflicting_${_mervin_name}})
+endforeach()
+foreach(_mervin_library IN LISTS _mervin_resolved)
+    string(FIND "${_mervin_library}" "${QT_DEPLOY_PREFIX}/" _mervin_in_bundle)
+    if(NOT _mervin_in_bundle EQUAL 0)
+        if(NOT _mervin_library MATCHES "^(/usr)?/lib(64)?/"
+                OR _mervin_library MATCHES "/lib(Qt6[^/]*|qpdf|tomlplusplus)[.]so")
+            message(FATAL_ERROR "Packaged runtime uses an unbundled library: ${_mervin_library}")
+        endif()
+    endif()
+endforeach()

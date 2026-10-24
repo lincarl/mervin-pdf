@@ -45,11 +45,26 @@
       "displayName": "Linux RelWithDebInfo (GCC/Ninja)",
       "inherits": "linux-base",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+    },
+    {
+      "name": "linux-bundled",
+      "displayName": "Linux with bundled upstream libraries",
+      "inherits": "linux-release",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "environment": { "VCPKG_FORCE_SYSTEM_BINARIES": "1" },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-linux-dynamic",
+        "VCPKG_HOST_TRIPLET": "x64-linux",
+        "CMAKE_PREFIX_PATH": "$env{QT6_DIR}",
+        "CMAKE_INSTALL_PREFIX": "/usr",
+        "MERVIN_BUNDLE_LINUX_RUNTIME": "ON"
+      }
     }
   ],
   "buildPresets": [
     { "name": "x64-debug", "configurePreset": "x64-debug" },
     { "name": "x64-release", "configurePreset": "x64-release" },
-    { "name": "linux-release", "configurePreset": "linux-release" }
+    { "name": "linux-release", "configurePreset": "linux-release" },
+    { "name": "linux-bundled", "configurePreset": "linux-bundled" }
   ]
 }

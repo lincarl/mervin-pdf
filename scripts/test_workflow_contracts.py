@@ -90,7 +90,9 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(job["steps"][0]["with"], {
             "ref": "refs/heads/${{ github.event.repository.default_branch }}", "persist-credentials": False,
         })
-        self.assertEqual(job["steps"][1]["run"], "python3 -B scripts/cancel_pr_ci.py")
+        commands = [step for step in job["steps"] if "run" in step]
+        self.assertEqual([step["run"] for step in commands], ["python3 -B scripts/cancel_pr_ci.py"])
+        self.require_effective_step(job, commands[0])
 
     def test_full_ci_gate_requires_all_test_aggregates(self):
         jobs = workflow("full-ci.yml")["jobs"]
@@ -192,6 +194,37 @@ class WorkflowContractTests(unittest.TestCase):
         packaging = workflow("release.yml")
         self.assertEqual(packaging["on"]["push"], {"tags": ["v*"]})
         self.assertIs(packaging["concurrency"]["cancel-in-progress"], False)
+
+    def test_linux_release_dependencies_are_bundled_and_legacy_lane_remains(self):
+        full = workflow("full-ci.yml")["jobs"]
+        legacy = "\n".join(step.get("run", "") for step in full["linux-tests"]["steps"])
+        self.assertIn("qpdf-11.10.0.tar.gz", legacy)
+        release = workflow("release.yml")["jobs"]
+        for job in [full["linux-system-qt-tests"], *(release[name] for name in ("appimage", "deb", "rpm"))]:
+            with self.subTest(runner=job["runs-on"], container=job.get("container")):
+                steps = job["steps"]
+                scripts = "\n".join(step.get("run", "") for step in steps)
+                self.assertIn("cmake --preset linux-bundled", scripts)
+                self.assertIn("scripts/bootstrap-vcpkg-linux.sh", scripts)
+                self.assertIn("scripts/install-build-tools.py", scripts)
+                verification = next(step for step in steps if "scripts/check-linux-runtime.py" in step.get("run", ""))
+                self.require_effective_step(job, verification)
+                for distro_library in ("qt6-base-dev", "qt6-qtbase-devel", "libqpdf-dev", "qpdf-devel", "libtomlplusplus-dev"):
+                    self.assertNotIn(distro_library, scripts)
+                qt = next(step for step in steps if step.get("uses", "").startswith("jurplel/install-qt-action@"))
+                self.assertEqual(qt["with"]["version"], "6.12.0")
+                self.assertEqual(qt["with"]["py7zrversion"], "==1.1.4")
+                self.assertNotIn("archives", qt["with"])
+                if job.get("container") == "fedora:44":
+                    self.assertIs(qt["with"].get("install-deps"), False)
+                    self.assertEqual(qt["env"]["CC"], "gcc")
+                    self.assertEqual(qt["env"]["CXX"], "g++")
+                    self.assertEqual(qt["env"]["LDSHARED"], "gcc -shared")
+                self.require_effective_step(job, qt)
+        presets = json.loads((ROOT / "CMakePresets.json").read_text())
+        bundled = next(preset for preset in presets["configurePresets"] if preset["name"] == "linux-bundled")
+        self.assertEqual(bundled["cacheVariables"]["VCPKG_TARGET_TRIPLET"], "x64-linux-dynamic")
+        self.assertEqual(bundled["cacheVariables"]["MERVIN_BUNDLE_LINUX_RUNTIME"], "ON")
 
 
 if __name__ == "__main__":

@@ -38,6 +38,11 @@ jobs:
           path: dev-temp/workflow-controls
           persist-credentials: false
 
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.15.1"
+
       - name: Validate metadata and scripts
         shell: bash
         run: |
@@ -165,6 +170,7 @@ jobs:
           python3 -B dev-temp/workflow-controls/scripts/test_reviewed_ci.py
           python3 -B dev-temp/workflow-controls/scripts/test_cancel_pr_ci.py
           python3 -B scripts/test_linux_exports.py
+          python3 -B scripts/test_linux_runtime.py
           python3 -B scripts/test_prepare_prerelease.py
           python3 -B scripts/test_release_versions.py
           python3 -B scripts/test_prune_releases.py
@@ -196,7 +202,15 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build libjpeg-dev zlib1g-dev libtomlplusplus-dev libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0
+          sudo apt-get install -y libjpeg-dev zlib1g-dev libtomlplusplus-dev libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.15.1"
+
+      - name: Install pinned CMake and Ninja
+        run: python scripts/install-build-tools.py
+
       - name: Build minimum supported qpdf
         run: |
           mkdir -p dev-temp/qpdf-source
@@ -214,7 +228,10 @@ jobs:
       - name: Install Qt
         uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125
         with:
+          setup-python: false
           aqtsource: "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
+          # Override the action's 1.1.0 default with the security release.
+          py7zrversion: "==1.1.4"
           version: "6.12.0"
           host: linux
           target: desktop
@@ -252,12 +269,8 @@ jobs:
           ctest --test-dir build/ci --output-on-failure --output-junit results.xml -LE optional-corpus --parallel 2 --timeout 180
           python3 scripts/check-test-results.py build/ci/results.xml --expected build/ci/expected-tests.json
 
-  # The AppImage and .deb build on Ubuntu 26.04 against its Qt and qpdf
-  # (release.yml). linux-tests uses aqt's Qt, whose JPEG plugin has its own
-  # libjpeg, and builds qpdf 11.10, the oldest qpdf the build supports.
-  # This job tests the AppImage and .deb toolchain, where Qt's JPEG plugin and
-  # libqpdf load the system libjpeg. The .rpm builds on Fedora 44 and gets only
-  # the exported-symbol check in release.yml.
+  # Preserve the job ID used by reviewed-ci while testing the bundled release
+  # dependencies. linux-tests remains the intentional qpdf 11.10 support lane.
   linux-system-qt-tests:
     if: inputs.msix_artifact_run == ''
     runs-on: ubuntu-26.04
@@ -272,15 +285,40 @@ jobs:
           ref: ${{ inputs.sha }}
           persist-credentials: false
       - name: Install build dependencies
-        # The appimage job's packages in release.yml. qt6-base-dev includes Qt Test.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build curl ca-certificates file wget \
-            qt6-base-dev qt6-base-dev-tools qt6-svg-dev qt6-svg-plugins \
-            qt6-tools-dev qt6-translations-l10n \
-            libqpdf-dev libtomlplusplus-dev \
-            libgl1-mesa-dev libxkbcommon-dev libxcb-cursor0
+            build-essential curl ca-certificates file git unzip zip tar pkg-config nasm patchelf \
+            libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 libxcb-cursor0 \
+            libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 \
+            libgtk-3-0t64 libcups2t64 libwayland-client0 libwayland-cursor0 libwayland-egl1
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.15.1"
+
+      - name: Install pinned CMake and Ninja
+        run: python scripts/install-build-tools.py
+
+      - name: Install Qt 6.12.0
+        uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
+        with:
+          setup-python: false
+          aqtsource: "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
+          py7zrversion: "==1.1.4"
+          version: "6.12.0"
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          # Keep the complete base archive set, including Qt's translations.
+          cache: true
+
+      - name: Prepare pinned upstream dependencies
+        run: |
+          vcpkg_root=$(bash scripts/bootstrap-vcpkg-linux.sh dev-temp/vcpkg)
+          echo "VCPKG_ROOT=$vcpkg_root" >> "$GITHUB_ENV"
+          echo "QT6_DIR=$QT_ROOT_DIR" >> "$GITHUB_ENV"
+
       - name: Hash MuPDF patches
         id: mupdf-patches
         run: echo "id=$(bash scripts/build-mupdf-linux.sh --patch-set)" >> "$GITHUB_OUTPUT"
@@ -297,14 +335,21 @@ jobs:
         run: |
           python3 scripts/fetch-test-font.py build/test-fonts
           python3 scripts/fetch-test-tessdata.py build/test-tessdata
-          cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMERVIN_BUILD_TESTS=ON
+          cmake --preset linux-bundled -B build/ci -DMERVIN_BUILD_TESTS=ON
       - name: Build
         run: cmake --build build/ci --parallel 2
       - name: Test
         run: |
+          # Qt has its own RUNPATH, so build-tree tests need the selected zlib path.
+          export LD_LIBRARY_PATH="$PWD/build/ci/vcpkg_installed/x64-linux-dynamic/lib"
           ctest --test-dir build/ci --show-only=json-v1 -LE optional-corpus > build/ci/expected-tests.json
           ctest --test-dir build/ci --output-on-failure --output-junit results.xml -LE optional-corpus --parallel 2 --timeout 180
           python3 scripts/check-test-results.py build/ci/results.xml --expected build/ci/expected-tests.json
+
+      - name: Verify bundled install
+        run: |
+          DESTDIR="$PWD/dev-temp/bundled-install" cmake --install build/ci
+          python3 scripts/check-linux-runtime.py dev-temp/bundled-install/usr
 
   windows-tests:
     if: inputs.msix_artifact_run == ''
@@ -324,6 +369,15 @@ jobs:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.sha }}
           persist-credentials: false
+      - name: Install pinned PowerShell and .NET SDK
+        shell: pwsh
+        run: scripts\install-windows-host-tools.ps1 -IncludeDotNet
+
+      - name: Verify PowerShell selection
+        shell: pwsh
+        run: |
+          if ($PSVersionTable.PSVersion.ToString() -ne '7.6.8') { throw 'Pinned PowerShell was not selected.' }
+
       - name: Set up MSVC (x64)
         # Maintained, Node-24 vcvars action (fork of the now-unmaintained
         # ilammy/msvc-dev-cmd). Exports the MSVC dev env to later steps via
@@ -332,8 +386,13 @@ jobs:
         with:
           arch: x64
 
-      - name: Install Ninja
-        run: choco install ninja -y
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.15.1"
+
+      - name: Install pinned CMake and Ninja
+        run: python scripts/install-build-tools.py
 
       - name: Fetch test data
         run: |
@@ -345,7 +404,10 @@ jobs:
         with:
           # aqtinstall 3.3.0 cannot read Qt 6.11+ Windows repository paths.
           # Pin the merged fix until it ships in a release: miurahr/aqtinstall#1000.
+          setup-python: false
           aqtsource: "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
+          # Override the action's 1.1.0 default with the security release.
+          py7zrversion: "==1.1.4"
           version: "6.12.0"
           host: windows
           target: desktop
@@ -434,8 +496,14 @@ jobs:
 
       - name: Install WiX
         shell: pwsh
+        env:
+          # Select only our stable .NET installation for WiX's net8.0 apphost.
+          DOTNET_ROOT: ${{ env.MERVIN_DOTNET_ROOT }}
+          DOTNET_ROOT_X64: ${{ env.MERVIN_DOTNET_ROOT }}
+          DOTNET_ROLL_FORWARD: Major
+          DOTNET_ROLL_FORWARD_TO_PRERELEASE: "0"
         run: |
-          dotnet tool install --global wix --version 7.0.0
+          & "$env:DOTNET_ROOT_X64\dotnet.exe" tool install --global wix --version 7.0.0
           if ($LASTEXITCODE -ne 0) { throw "Installing WiX failed" }
           & "$env:USERPROFILE\.dotnet\tools\wix.exe" eula accept wix7
           if ($LASTEXITCODE -ne 0) { throw "Accepting the WiX EULA failed" }
@@ -447,12 +515,24 @@ jobs:
 
       - name: Stage app and build MSI
         shell: pwsh
+        env:
+          # Select only our stable .NET installation for WiX's net8.0 apphost.
+          DOTNET_ROOT: ${{ env.MERVIN_DOTNET_ROOT }}
+          DOTNET_ROOT_X64: ${{ env.MERVIN_DOTNET_ROOT }}
+          DOTNET_ROLL_FORWARD: Major
+          DOTNET_ROLL_FORWARD_TO_PRERELEASE: "0"
         run: |
           $env:QT6_DIR = $env:QT_ROOT_DIR
           scripts\deploy.ps1 -Installer
 
       - name: Verify MSI install, upgrade, repair, and uninstall
         shell: pwsh
+        env:
+          # Select only our stable .NET installation for WiX's net8.0 apphost.
+          DOTNET_ROOT: ${{ env.MERVIN_DOTNET_ROOT }}
+          DOTNET_ROOT_X64: ${{ env.MERVIN_DOTNET_ROOT }}
+          DOTNET_ROLL_FORWARD: Major
+          DOTNET_ROLL_FORWARD_TO_PRERELEASE: "0"
         run: scripts\test-windows-installer.ps1 -Msi (Get-Item build\x64-release\MervinPDF-*.msi).FullName
 
       - name: Verify MSI wizard and launch after Finish
@@ -463,7 +543,7 @@ jobs:
 
       - name: Upload Windows installer diagnostics
         if: always() && env.MERVIN_INSTALLER_TEST_DIR != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-installer-diagnostics
           overwrite: true
@@ -477,7 +557,7 @@ jobs:
 
       - name: Upload Windows verification artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-verification
           overwrite: true
@@ -508,13 +588,25 @@ jobs:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.sha }}
           persist-credentials: false
+      - name: Install pinned PowerShell
+        shell: pwsh
+        run: scripts\install-windows-host-tools.ps1
+      - name: Verify PowerShell selection
+        shell: pwsh
+        run: |
+          if ($PSVersionTable.PSVersion.ToString() -ne '7.6.8') { throw 'Pinned PowerShell was not selected.' }
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.15.1"
+
       - name: Validate diagnostic artifact provenance
         if: inputs.msix_artifact_run != ''
         env:
           GH_TOKEN: ${{ github.token }}
           DIAGNOSTIC_RUN_ID: ${{ inputs.msix_artifact_run }}
         run: python -B scripts/reviewed_ci.py diagnostic
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: windows-verification
           path: build/x64-release
@@ -535,7 +627,7 @@ jobs:
             -Fixture build\x64-release\tests\fixtures\Birch-courtyard-studio.pdf
       - name: Upload MSIX diagnostics
         if: always() && env.MERVIN_MSIX_TEST_DIR != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-msix-diagnostics
           overwrite: true
@@ -555,6 +647,11 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.15.1"
+
       - name: Require every expected test job to succeed
         env:
           CI_REPOSITORY_RESULT: ${{ needs.repository-checks.result }}

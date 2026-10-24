@@ -20,13 +20,13 @@ Mervin is a C++20 desktop application built with CMake.
 MuPDF is built from source with Mervin's [patches](#mupdf-patches) and linked
 statically. Windows also statically links qpdf, toml++ and their vcpkg library
 dependencies using `x64-windows-static-md`.
-Qt, its plugins and the Microsoft runtime remain dynamic. Linux uses its
-distribution's qpdf and toml++ packages without changing their linking
-configuration. MuPDF's archives bundle their own copies of libjpeg, FreeType, zlib
+Qt, its plugins and the Microsoft runtime remain dynamic. Linux packages bundle
+the upstream Qt binaries and vcpkg's `x64-linux-dynamic` libraries under
+`/usr/lib/mervin-pdf`, with a launcher in `/usr/bin`. MuPDF's archives bundle their own copies of libjpeg, FreeType, zlib
 and Brotli, libraries that qpdf and Qt also use. On Windows, MuPDF's build prefixes
 its JPEG symbols (`FZ_HIDE_INTERNAL_JPEG`). On Linux, `--exclude-libs` keeps every
 MuPDF archive symbol out of the executable's dynamic symbol table, so the shared
-system libraries and Qt's plugins keep using the system copies. The application is
+libraries and Qt's plugins keep using their separate copies. The application is
 licensed under AGPL-3.0; dependency notices are maintained in
 [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md).
 
@@ -2012,8 +2012,10 @@ The Windows script also adds `#define FZ_HIDE_INTERNAL_JPEG` to MuPDF's
 
 The project supports Windows x64 and Linux x86-64. CMake builds the targets; the
 platform release pipeline adds a Windows MSI installer and Linux
-AppImage/DEB/RPM artifacts. Windows uses Qt 6.12.0; Linux requires Qt 6.9 or newer
-for the supported translation toolchain.
+AppImage/DEB/RPM artifacts. Release packages use official Qt 6.12.0 on both
+platforms. Linux development builds still support Qt 6.9 or newer for the
+translation toolchain. Bundled dependencies and accepted upstream gaps are
+documented in [BUILDING.md](BUILDING.md#bundled-dependency-limits).
 MuPDF 1.28.5 is built from source with OCR support and the patches described in
 [MuPDF patches](#mupdf-patches).
 
