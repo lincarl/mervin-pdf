@@ -84,6 +84,7 @@
 #include <QTextDocument>
 #include <QTimeZone>
 #include <QTimer>
+#include <QStyleOptionToolButton>
 #include <QToolBar>
 #include <QToolButton>
 #include <QToolTip>
@@ -569,6 +570,19 @@ void TstTranslationLayout::recentTabRow()
     QCOMPARE(openIndex, recentIndex + 1);
     QVERIFY(!recent->icon().isNull());
     QVERIFY(!recent->toolTip().isEmpty());
+    if (recent->toolButtonStyle() == Qt::ToolButtonIconOnly) {
+        for (const auto *name : {"openButton", "saveButton", "documentButton"}) {
+            auto *split = toolbar->findChild<QToolButton *>(QLatin1String(name));
+            QVERIFY(split);
+            QStyleOptionToolButton option;
+            option.initFrom(split);
+            option.features = QStyleOptionToolButton::MenuButtonPopup | QStyleOptionToolButton::HasMenu;
+            const QRect menu = split->style()->subControlRect(
+                QStyle::CC_ToolButton, &option, QStyle::SC_ToolButtonMenu, split);
+            // The icon keeps its ordinary button space, separate from the menu hit area.
+            QVERIFY2(split->width() >= recent->width() + menu.width(), name);
+        }
+    }
     inspect(window, QStringLiteral("Recent toolbar"), toolbar);
     QVERIFY(mervin::testing::openAndWait(window, plain_));
     inspect(window, QStringLiteral("Document tab row"), row);

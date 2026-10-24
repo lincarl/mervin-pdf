@@ -1463,8 +1463,16 @@ void MainWindow::updateToolBarLayout()
         return;
     const QList<QToolButton *> fileButtons{recentBtn_, openButton_, saveButton_, documentButton_};
     const auto setButtonStyle = [&](Qt::ToolButtonStyle style) {
-        for (QToolButton *button : fileButtons)
+        for (QToolButton *button : fileButtons) {
             button->setToolButtonStyle(style);
+            const bool compact = style == Qt::ToolButtonIconOnly;
+            if (button->property("compact").toBool() != compact) {
+                button->setProperty("compact", compact);
+                button->style()->unpolish(button);
+                button->style()->polish(button);
+                button->updateGeometry();
+            }
+        }
         mainToolBar_->ensurePolished();
         mainToolBar_->layout()->invalidate();
     };
