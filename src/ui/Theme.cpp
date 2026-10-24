@@ -570,6 +570,10 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
         add(QStringLiteral("QTabBar#docTabBar QAbstractButton { min-width:36px; }"));
         add(QStringLiteral("QTabBar#docTabBar QToolButton { min-width:0; }"));
         add(QStringLiteral("QTabBar#docTabBar::close-button { margin:0 8px; }"));
+        // Show keyboard focus on the pill border, clear of the inset close glyph.
+        add(QStringLiteral("QTabBar#docTabBar { outline:0; }"));
+        add(QStringLiteral("QTabBar#docTabBar::tab:selected:focus { border-color:%1; }")
+                .arg(css(t.accent)));
         add(QStringLiteral("QTabBar::close-button:hover { image:url(%1/tab_close_hover.png);"
                            " background:%2; }")
                 .arg(assetDir, css(t.pressed)));
