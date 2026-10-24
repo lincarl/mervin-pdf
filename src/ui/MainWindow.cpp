@@ -88,6 +88,7 @@
 #include <QPushButton>
 #include <QProgressDialog>
 #include <QSaveFile>
+#include <QStyleOptionToolButton>
 #include <QScreen>
 #include <QWindow>
 #include <QSet>
@@ -175,9 +176,11 @@ protected:
         QToolButton::paintEvent(event);
         if (menu() == nullptr)
             return;
-        constexpr int kMenuWidth = 18; // matches ::menu-button width in applyControlStyle()
+        QStyleOptionToolButton option;
+        initStyleOption(&option);
+        const QRect arrow = style()->subControlRect(
+            QStyle::CC_ToolButton, &option, QStyle::SC_ToolButtonMenu, this);
         const QColor ink = mervin::Theme::iconInk(palette());
-        const QRect arrow(width() - kMenuWidth, 0, kMenuWidth, height());
         QPainter p(this);
         const int px = qMax(8, height() * 40 / 100);
         // At this button's own pixel ratio: the application's is the highest of all
@@ -699,7 +702,8 @@ void MainWindow::changeEvent(QEvent *event)
         applyDocumentThemeToViewers();
     }
     QMainWindow::changeEvent(event);
-    if (event->type() == QEvent::FontChange || event->type() == QEvent::StyleChange)
+    if (event->type() == QEvent::FontChange || event->type() == QEvent::StyleChange
+        || event->type() == QEvent::LayoutDirectionChange)
         QTimer::singleShot(0, this, &MainWindow::updateToolBarLayout);
     if (event->type() == QEvent::WindowStateChange) {
         if (wm_)
@@ -1465,9 +1469,11 @@ void MainWindow::updateToolBarLayout()
     const auto setButtonStyle = [&](Qt::ToolButtonStyle style) {
         for (QToolButton *button : fileButtons) {
             button->setToolButtonStyle(style);
-            const bool compact = style == Qt::ToolButtonIconOnly;
-            if (button->property("compact").toBool() != compact) {
-                button->setProperty("compact", compact);
+            const QString menuSide = style == Qt::ToolButtonIconOnly
+                ? (button->isRightToLeft() ? QStringLiteral("left") : QStringLiteral("right"))
+                : QString();
+            if (button->property("compactMenuSide").toString() != menuSide) {
+                button->setProperty("compactMenuSide", menuSide);
                 button->style()->unpolish(button);
                 button->style()->polish(button);
                 button->updateGeometry();

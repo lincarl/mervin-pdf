@@ -509,9 +509,12 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
     add(QStringLiteral("QToolButton#menuButton::menu-indicator { image:none; width:0; }"));
     // In icon-only mode Qt does not add the split menu strip to the size hint.
     // Keep the icon in the usual 8 px padding and reserve another 18 px for the menu.
-    add(QStringLiteral("QToolButton#openButton[compact=\"true\"],"
-                       " QToolButton#saveButton[compact=\"true\"],"
-                       " QToolButton#documentButton[compact=\"true\"] { padding-right:26px; }"));
+    add(QStringLiteral("QToolButton#openButton[compactMenuSide=\"right\"],"
+                       " QToolButton#saveButton[compactMenuSide=\"right\"],"
+                       " QToolButton#documentButton[compactMenuSide=\"right\"] { padding-right:26px; }"));
+    add(QStringLiteral("QToolButton#openButton[compactMenuSide=\"left\"],"
+                       " QToolButton#saveButton[compactMenuSide=\"left\"],"
+                       " QToolButton#documentButton[compactMenuSide=\"left\"] { padding-left:26px; }"));
     add(QStringLiteral("QToolButton#openButton::menu-button { border:none; width:18px; }"));
     add(QStringLiteral("QToolButton#openButton::menu-arrow { image:none; width:0; height:0; }"));
     add(QStringLiteral("QToolButton#saveButton::menu-button { border:none; width:18px; }"));

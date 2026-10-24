@@ -19,6 +19,7 @@
 #include "ui/TabPage.h"
 #include "ui/FindCard.h"
 #include "ui/ThemeTokens.h"
+#include "ui/Theme.h"
 #include "ui/ViewerWidget.h"
 
 #include <QAction>
@@ -38,6 +39,8 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QScopeGuard>
+#include <QScreen>
+#include <QStyleOptionToolButton>
 #include <QSignalSpy>
 #include <QSemaphore>
 #include <QTabBar>
@@ -274,6 +277,71 @@ private slots:
         QCOMPARE(seen, SettingsDialog::Page::General);
         QCOMPARE(viewer->zoomMode(), ViewerWidget::ZoomMode::FitPage);
         QCOMPARE(Settings::load().defaultZoom, QStringLiteral("fit-page"));
+    }
+
+    void compactOpenButtonKeepsSeparateClickTargets_data()
+    {
+        QTest::addColumn<QString>("scheme");
+        QTest::addColumn<bool>("rightToLeft");
+        QTest::newRow("light-ltr") << QStringLiteral("light") << false;
+        QTest::newRow("dark-ltr") << QStringLiteral("dark") << false;
+        QTest::newRow("light-rtl") << QStringLiteral("light") << true;
+        QTest::newRow("dark-rtl") << QStringLiteral("dark") << true;
+    }
+
+    // A click on the icon opens the file picker, while its separate arrow opens the menu.
+    void compactOpenButtonKeepsSeparateClickTargets()
+    {
+        QFETCH(QString, scheme);
+        QFETCH(bool, rightToLeft);
+        const QString originalSheet = qApp->styleSheet();
+        const QPalette originalPalette = qApp->palette();
+        const auto restoreTheme = qScopeGuard([&] {
+            qApp->setPalette(originalPalette);
+            qApp->setStyleSheet(originalSheet);
+        });
+        Settings settings = Settings::load();
+        settings.colorScheme = scheme;
+        QVERIFY(settings.save());
+        QVERIFY(mervin::appfiles::flush(10000));
+        Theme::applyApp();
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        window.setLayoutDirection(rightToLeft ? Qt::RightToLeft : Qt::LeftToRight);
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        window.show();
+        auto *open = window.findChild<QToolButton *>(QStringLiteral("openButton"));
+        auto *recent = window.findChild<QToolButton *>(QStringLiteral("recentButton"));
+        QVERIFY(open && recent);
+        QAction *action = open->defaultAction();
+        QVERIFY(action && open->menu());
+        // Exercise the width fallback independently of the test machine's desktop size.
+        action->setText(QString(window.screen()->availableGeometry().width(), QLatin1Char('W')));
+        QEvent changed(QEvent::FontChange);
+        QCoreApplication::sendEvent(&window, &changed);
+        QTRY_COMPARE(open->toolButtonStyle(), Qt::ToolButtonIconOnly);
+        QCoreApplication::processEvents();
+        // Observe dispatch without opening a platform-owned file picker in this test.
+        QObject::disconnect(action, nullptr, &window, nullptr);
+        QSignalSpy opened(action, &QAction::triggered);
+        QSignalSpy menus(open->menu(), &QMenu::aboutToShow);
+        QStyleOptionToolButton option;
+        option.initFrom(open);
+        option.features = QStyleOptionToolButton::MenuButtonPopup | QStyleOptionToolButton::HasMenu;
+        const QRect menu = open->style()->subControlRect(
+            QStyle::CC_ToolButton, &option, QStyle::SC_ToolButtonMenu, open);
+        const int iconEdge = recent->width() / 2 + open->iconSize().width() / 2 - 1
+                           + (rightToLeft ? menu.width() : 0);
+        // Also close an incorrectly opened menu so a regression reports a failure instead of hanging.
+        QTimer::singleShot(50, open->menu(), &QMenu::hide);
+        QTest::mouseClick(open, Qt::LeftButton, Qt::NoModifier,
+                          QPoint(iconEdge, open->height() / 2));
+        QCOMPARE(opened.count(), 1);
+        QCOMPARE(menus.count(), 0);
+        QTimer::singleShot(50, open->menu(), &QMenu::hide);
+        QTest::mouseClick(open, Qt::LeftButton, Qt::NoModifier, menu.center());
+        QCOMPARE(opened.count(), 1);
+        QCOMPARE(menus.count(), 1);
     }
 
     // Each fit button always selects its own preset. Home keeps the keyboard toggle.
