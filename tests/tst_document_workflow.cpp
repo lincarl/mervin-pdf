@@ -339,12 +339,12 @@ private slots:
         toggle->trigger();
         QCOMPARE(viewer->zoomMode(), ViewerWidget::ZoomMode::FitWidth);
 
-        auto *recent = window.findChild<QPushButton *>(QStringLiteral("recentPillBtn"));
+        auto *recent = window.findChild<QToolButton *>(QStringLiteral("recentButton"));
         auto *bar = window.findChild<QTabBar *>(QStringLiteral("docTabBar"));
         QVERIFY(recent);
         QVERIFY(bar);
         QTest::mouseClick(recent, Qt::LeftButton);
-        QVERIFY(recent->property("recentActive").toBool());
+        QVERIFY(recent->isChecked());
         for (QAction *action : {page, width, toggle}) {
             QVERIFY(!action->isEnabled());
             action->trigger();
@@ -353,7 +353,7 @@ private slots:
         QVERIFY(!pageButton->isEnabled());
         QVERIFY(!widthButton->isEnabled());
         QTest::mouseClick(bar, Qt::LeftButton, Qt::NoModifier, bar->tabRect(0).center());
-        QVERIFY(!recent->property("recentActive").toBool());
+        QVERIFY(!recent->isChecked());
         QVERIFY(pageButton->isEnabled());
         QVERIFY(widthButton->isEnabled());
         QVERIFY(toggle->isEnabled());
@@ -669,7 +669,7 @@ private slots:
             QVERIFY2(a->isEnabled(), qPrintable(a->text()));
         }
 
-        auto *recent = window.findChild<QPushButton *>(QStringLiteral("recentPillBtn"));
+        auto *recent = window.findChild<QToolButton *>(QStringLiteral("recentButton"));
         auto *bar = window.findChild<QTabBar *>(QStringLiteral("docTabBar"));
         QVERIFY(recent);
         QVERIFY(bar);
@@ -718,7 +718,7 @@ private slots:
         QVERIFY(entered->tryAcquire(1, 5000));
         QVERIFY(QMetaObject::invokeMethod(&window, "onOcrRegionSelected", Q_ARG(int, 0),
                                           Q_ARG(QRectF, QRectF(10, 10, 100, 40))));
-        auto *recent = window.findChild<QPushButton *>(QStringLiteral("recentPillBtn"));
+        auto *recent = window.findChild<QToolButton *>(QStringLiteral("recentButton"));
         QVERIFY(recent);
         QTest::mouseClick(recent, Qt::LeftButton);
         release->release();
@@ -1236,10 +1236,10 @@ private slots:
                                  QStringLiteral("plan.pdf"), QStringLiteral("shown.pdf")};
         QCOMPARE(tabFiles(*window), before);
         QCOMPARE(window->unloadedTabs().size(), 5);
-        auto *recent = window->findChild<QPushButton *>(QStringLiteral("recentPillBtn"));
+        auto *recent = window->findChild<QToolButton *>(QStringLiteral("recentButton"));
         QVERIFY(recent);
         QTest::mouseClick(recent, Qt::LeftButton);
-        QVERIFY(recent->property("recentActive").toBool());
+        QVERIFY(recent->isChecked());
 
         QVERIFY(QFile::remove(gone));
         QVERIFY(QDir(root.filePath(QStringLiteral("folder"))).removeRecursively());
@@ -1248,7 +1248,7 @@ private slots:
                                 QStringLiteral("plan.pdf"), QStringLiteral("shown.pdf")};
         // Checking the share that is away can take a while on Windows.
         QTRY_COMPARE_WITH_TIMEOUT(tabFiles(*window), after, 30000);
-        QVERIFY(recent->property("recentActive").toBool());
+        QVERIFY(recent->isChecked());
         SessionStore onDisk;
         QVERIFY(loadSaved(onDisk));
         QVERIFY(!onDisk.paths().contains(gone));

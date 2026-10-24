@@ -1062,7 +1062,7 @@ private slots:
         showForLayout(window);
         QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         auto *tab = window.findChild<TabPage *>();
-        auto *recent = window.findChild<QPushButton *>(QStringLiteral("recentPillBtn"));
+        auto *recent = window.findChild<QToolButton *>(QStringLiteral("recentButton"));
         auto *bar = window.findChild<QTabBar *>(QStringLiteral("docTabBar"));
         QVERIFY(tab);
         QVERIFY(recent);
@@ -1078,7 +1078,7 @@ private slots:
         QVERIFY(ocr->isEnabled());
 
         QTest::mouseClick(recent, Qt::LeftButton);
-        QVERIFY(recent->property("recentActive").toBool());
+        QVERIFY(recent->isChecked());
         QVERIFY(!ocr->isEnabled());
         QVERIFY(!ocr->isChecked());
         QCOMPARE(viewer->ocrMode(), armed);
@@ -1097,7 +1097,7 @@ private slots:
 
         // Returning through the same tab does not emit currentChanged.
         QTest::mouseClick(bar, Qt::LeftButton, Qt::NoModifier, bar->tabRect(0).center());
-        QVERIFY(!recent->property("recentActive").toBool());
+        QVERIFY(!recent->isChecked());
         QVERIFY(ocr->isEnabled());
         QCOMPARE(ocr->isChecked(), armed);
         QCOMPARE(viewer->ocrMode(), armed);
@@ -1702,10 +1702,10 @@ private slots:
         } else {
             if (fromRecent) {
                 tabs->setCurrentIndex(0);
-                auto *recent = window.findChild<QPushButton *>(QStringLiteral("recentPillBtn"));
+                auto *recent = window.findChild<QToolButton *>(QStringLiteral("recentButton"));
                 QVERIFY(recent);
                 QTest::mouseClick(recent, Qt::LeftButton);
-                QVERIFY(recent->property("recentActive").toBool());
+                QVERIFY(recent->isChecked());
                 QCoreApplication::processEvents(); // Finish the earlier tab selection before unloading.
             }
             window.updateDocumentActivity(0, 30);

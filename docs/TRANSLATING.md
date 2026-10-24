@@ -337,7 +337,7 @@ app uses installed system fonts. Linux installations need fonts covering the
 selected language, such as Noto Sans and the corresponding Noto CJK families.
 
 `tst_translation_layout` opens the ten custom dialogs in `src/dialogs/`, plus the
-measurement and annotation panels, the permanent Recent/document tab row, and a
+measurement and annotation panels, the Recent toolbar button and document tab row, and a
 tab's slow load notice and wait bar in the main window, using real Qt widgets and
 the default dark stylesheet. It discovers every
 compiled language through `i18n::availableLanguages()` and repeats each scenario at

@@ -97,6 +97,7 @@ constexpr int kSizes[] = {16, 20, 24, 32, 48};
 const char *lucideName(Glyph id)
 {
     switch (id) {
+    case Glyph::Recent: return "list-clock";
     case Glyph::Open: return "folder-open";
     case Glyph::PrevPage: return "chevron-left";
     case Glyph::NextPage: return "chevron-right";

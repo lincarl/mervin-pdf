@@ -583,26 +583,6 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
     add(QStringLiteral("QWidget#tabRowWidget { background:%1; border-bottom:1px solid %2; }")
             .arg(css(t.bar), css(dark ? t.borderBar : t.border)));
 
-    // ── Recent pill (mirrors the selected-tab treatment) ────────────────────
-    // Both themes use the dark spec's rounded-rectangle shape (6px radius, snug
-    // padding); light previously drew a fully-rounded stadium pill, which read as
-    // a different control than the dark one.
-    add(QStringLiteral("QPushButton#recentPillBtn { background:transparent; color:%1;"
-                       " border:1px solid %2; border-radius:6px; padding:5px 12px; }")
-            .arg(css(t.inkBody), css(t.borderPush)));
-    add(QStringLiteral("QPushButton#recentPillBtn:hover { background:%1; border-color:%2; }")
-            .arg(css(t.hover), css(dark ? t.borderStrong : t.border)));
-    // Active pill (the Recent view is showing): mirror a selected document tab -
-    // the lifted fill and primary ink - but carry the accent border
-    // (the same blue the active document tab's glyph takes) so the lone pill reads
-    // as highlighted. A selected tab gets its contrast from its transparent
-    // neighbours; the pill stands alone, so a neutral border left it looking inert.
-    add(QStringLiteral("QPushButton#recentPillBtn[recentActive=\"true\"] {"
-                       " background:%1; color:%2; border-color:%3; font-weight:%4; }")
-            .arg(css(t.fill), dark ? css(t.inkPrimary) : css(t.accent),
-                 css(t.accent),
-                 dark ? QStringLiteral("400") : QStringLiteral("600")));
-
     // Exclusive segmented choices use a solid accent fill: Measure/Comment kinds.
     const QString segSel = QStringLiteral("QWidget#segmentBar QToolButton%1");
     add(segSel.arg(QString()) + QStringLiteral(" { border:1px solid %1; background:%2; color:%3;"

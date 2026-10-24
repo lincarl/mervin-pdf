@@ -20,6 +20,7 @@ QIcon applicationIcon();
 // device pixel, so a 16 px icon at 100% gets about 1.6 units.
 enum class Glyph {
     // Toolbar
+    Recent,        // list-clock
     Open,          // folder-open (also "open containing folder")
     PrevPage,      // chevron-left
     NextPage,      // chevron-right

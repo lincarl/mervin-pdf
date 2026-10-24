@@ -308,7 +308,8 @@ private:
     // Builds flattened-output values from the viewer while its document is protected.
     std::vector<mervin::RenderMeasurement> collectRenderMeasurements(
         mervin::ViewerWidget *viewer) const;
-    void applyControlStyle(); // re-tint palette-driven chrome: toolbar dividers, Recent pill, icons
+    void applyControlStyle(); // refresh palette-driven toolbar dividers, selections and icons
+    void updateToolBarLayout(); // fit file button labels to the available screen width
     // Re-assert WA_Hover on the chrome buttons after a theme switch re-polishes
     // them (a dropped WA_Hover leaves a button stuck without its :hover highlight).
     void reassertHoverAttributes();
@@ -322,11 +323,11 @@ private:
     void applyDocumentThemeToViewers(); // re-apply the document theme to every tab
     void applyAnnotationDefaultsToTabs(); // settings_ colour + author to every tab's new marks
     void syncComfortButton();       // moon/sun glyph + tooltip on the toolbar toggle
-    void showRecentPanel();         // switch to Recent view (called by pill button)
+    void showRecentPanel();         // switch to Recent view from the toolbar button
     void setCommandBarMode(bool recentActive); // hide/show doc-only toolbar widget
     void syncFindToggle();          // toolbar search button follows the current find card
     void syncOcrAction();           // OCR follows the visible document and stays inactive on Recent
-    void updateRecentButton();      // sync pill button accent state
+    void updateRecentButton();      // sync Recent button and document tab selection
     void syncDocTabBar();           // rebuild docTabBar_ to match tabs_
     void updateTabGlyphs();         // tint each doc tab's glyph (accent on the active tab)
     void applyActionIcons();        // set the Lucide icons on every action (theme-aware)
@@ -497,12 +498,13 @@ private:
     QAction *singleAction_ = nullptr;
     QAction *twoPageAction_ = nullptr;
 
-    // Tab row: always visible strip containing the Recent pill + doc tabs.
+    // Always visible document tab row.
     QWidget *tabRow_ = nullptr;
     mervin::DetachableTabBar *docTabBar_ = nullptr; // visible tab bar, synced with tabs_
 
-    // Toolbar doc-only controls (hidden in recent mode).
-    QPushButton *recentBtn_ = nullptr;
+    // Toolbar controls. Document controls stay visible but disabled on Recent.
+    QToolButton *recentBtn_ = nullptr;
+    QToolButton *openButton_ = nullptr;
     QWidget *docControls_ = nullptr;
     QToolBar *mainToolBar_ = nullptr;   // the top button row; sets the window's min width
     QToolButton *moreButton_ = nullptr; // ⋯ popup holding the former menu-bar entries
