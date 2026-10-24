@@ -117,6 +117,7 @@ are generated from `resources/icons/mervin-icon/128.png` and `48.png` without
 resizing or redrawing the logo. To regenerate them with Python and Pillow:
 
 ```sh
+python -m pip install Pillow==13.0.0
 python packaging/wix/generate-branding.py
 ```
 

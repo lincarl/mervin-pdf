@@ -49,7 +49,7 @@ python3 packaging/wix/generate-branding.py
 `--render` uses Chrome, Chromium or Edge from `PATH`, or the executable given with
 `--chrome`. Windows usually needs `--chrome` with the full path to `chrome.exe` or
 `msedge.exe`. Without `--render`, the script only extracts the existing ICO's
-frames. `generate-branding.py` needs Pillow. Then upload the new
+frames. `generate-branding.py` needs Pillow 13.0.0. Then upload the new
 `packaging/windows/msix/Listing/StoreIcon.png` in Partner Center, because the
 Store listing does not take its icon from the package.
 

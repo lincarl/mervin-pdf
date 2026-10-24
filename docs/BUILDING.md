@@ -5,12 +5,13 @@ most C/C++ deps, Qt 6 from aqtinstall, and **MuPDF built from source** (it is no
 in the vcpkg registry).
 
 The pinned dependency set is Qt 6.12.0, MuPDF 1.28.5, qpdf 12.4.2 and toml++
-3.4.0. `vcpkg.json` pins the registry revision for qpdf, toml++ and their
-dependencies. Linux release packages use the supported distribution's Qt and
-qpdf packages; MuPDF is built from the same source release on both platforms.
+3.4.0. `vcpkg.json` pins the 2026.10.16 registry release for qpdf, toml++ and
+their dependencies, including zlib 1.3.2, libjpeg-turbo 3.2.0 and libspng 0.7.4.
+Linux release packages bundle the same upstream Qt and vcpkg library versions.
+MuPDF is built from the same source release on both platforms.
 The minimum supported qpdf is 11.10.0, whose Flate decoder limit is required.
 The Ubuntu 24.04 compatibility job builds that verified source release because
-its distribution package is older. Current distribution and Windows jobs also
+its distribution package is older. Current bundled Linux and Windows jobs also
 exercise qpdf 12.
 
 Windows vcpkg libraries use the `x64-windows-static-md` target triplet. This
@@ -18,7 +19,41 @@ links qpdf, toml++ and their library dependencies statically while keeping the
 Microsoft C/C++ runtime dynamic (`/MD`, or `/MDd` for Debug), matching the
 prebuilt Qt and MuPDF libraries. Build tools use the separate `x64-windows`
 host triplet. Qt, its plugins and the redistributable Microsoft runtime remain
-DLLs. Linux continues to use its distribution's linking configuration.
+DLLs. Linux uses `x64-linux-dynamic` and keeps its bundled shared libraries in
+Mervin's private application directory. Linux must not use static qpdf with
+MuPDF's unprefixed static JPEG implementation. MuPDF's hidden symbols and the
+shared qpdf dependencies keep their different JPEG ABIs separate.
+
+## Bundled dependency limits
+
+The official Qt 6.12.0 binaries include libpng 1.6.58. They do not contain the
+[libpng 1.6.59 fix for CVE-2026-46675](http://www.libpng.org/pub/png/libpng.html).
+They also include PCRE2 10.48, which predates the
+[10.49 security fix](https://github.com/PCRE2Project/pcre2/releases/tag/pcre2-10.49).
+The PCRE2 advisory requires attacker-controlled regular expressions; Mervin's
+current patterns are fixed. These observations do not establish an exploit
+through the application. The project retains official Qt binaries, so replacing
+separate vcpkg libraries does not fix Qt's embedded copies. A later Qt release or
+a custom Qt build is required to replace them.
+
+MuPDF 1.28.5 also retains its upstream-selected third-party bundle and Mervin's
+existing patches. Its Tesseract 5.5.2 predates the model-deserialization fixes in
+[5.5.3](https://github.com/tesseract-ocr/tesseract/releases/tag/5.5.3), and its
+MuJS 1.3.10 predates the fixes in
+[1.3.11](https://github.com/ArtifexSoftware/mujs/compare/1.3.10...1.3.11).
+Mervin does not enable PDF JavaScript. Its OCR model-container checks do not
+replace Tesseract's internal neural-network validation. Independent updates must
+preserve Artifex's integration changes and pass both platform builds. MuPDF's
+Brotli fork already includes the security fix later released in Brotli 1.2.1.
+
+Bundled Linux libraries receive updates through new Mervin packages rather than
+the distribution's Qt or qpdf packages. Core operating-system and display-driver
+libraries remain system dependencies. The supported distribution baselines and
+compiler toolchains remain separate from the upstream application-library pins.
+The latest released vcpkg registry also retains its tested Meson 1.9.0,
+NASM 3.01 and Windows pkgconf 3.0.7 acquisition helpers. These build-only tools
+are older than their individual upstream releases and are not shipped with
+Mervin. Updating them requires vcpkg port changes beyond the registry update.
 
 ## Toolchain (one-time)
 
@@ -26,21 +61,27 @@ DLLs. Linux continues to use its distribution's linking configuration.
 # Compiler + Windows SDK (one UAC prompt)
 winget install --id Microsoft.VisualStudio.2022.BuildTools --source winget --accept-source-agreements --accept-package-agreements `
   --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.Windows11SDK.22621"
-winget install --id Kitware.CMake     --scope machine --source winget --accept-source-agreements --accept-package-agreements
-winget install --id Ninja-build.Ninja --source winget --accept-source-agreements --accept-package-agreements
 winget install --id WiXToolset.WiXCLI --version 7.0.0.0 --source winget --accept-source-agreements --accept-package-agreements
 wix eula accept wix7
 wix extension add --global WixToolset.UI.wixext/7.0.0
 wix extension add --global WixToolset.Util.wixext/7.0.0
-winget install --id Python.Python.3.12 --source winget --accept-source-agreements --accept-package-agreements
+winget install --id Python.PythonInstallManager --source winget --accept-source-agreements --accept-package-agreements
+# Open a new shell if pymanager is not yet on PATH.
+pymanager install 3.15.1
+pymanager exec -V:3.15 -m venv C:\dev-tools\mervin-build-venv
+$env:Path = "C:\dev-tools\mervin-build-venv\Scripts;" + $env:Path
+# Run from the repository. Downloads verified CMake 4.4.4 and Ninja 1.13.2 wheels.
+python scripts\install-build-tools.py
 
 # Qt 6.12.0 (official prebuilt dynamic DLLs, no Qt account)
 # aqtinstall 3.3.0 cannot read Qt 6.11+ Windows repository paths; use the same
 # merged fix as the release workflow until it ships in an aqtinstall release.
-& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m pip install --user --upgrade "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
+python -m pip install --upgrade "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b" "py7zr==1.1.4"
+# py7zr 1.1.4 fixes archive extraction vulnerabilities. CI overrides the Qt
+# installation action's older default and uses Python 3.15.1.
 # Without --archives aqt installs every archive, including the qttools,
 # qtdeclarative and qttranslations ones the UI translations need (see below).
-& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m aqt install-qt windows desktop 6.12.0 win64_msvc2022_64 --outputdir C:\dev\Qt
+python -m aqt install-qt windows desktop 6.12.0 win64_msvc2022_64 --outputdir C:\dev\Qt
 # => C:\dev\Qt\6.12.0\msvc2022_64
 
 # vcpkg
@@ -246,19 +287,66 @@ the native installer and application work.
 
 ## Linux development and verification
 
-Install Qt 6.9+ (Core, Gui, Widgets, Network, PrintSupport, Svg, Test, LinguistTools,
-and Qt's translation catalogs), qpdf development headers, toml++, CMake, Ninja, a C++20
-compiler, Python 3 and git. Build the pinned MuPDF with `scripts/build-mupdf-linux.sh`,
-which applies Mervin's [MuPDF patches](#mupdf-patches). Run it again with the same
-destination when CMake reports that MuPDF lacks the current patches. Then:
+Release builds use the `linux-bundled` preset with official Qt 6.12.0 and the
+manifest's vcpkg libraries. Install a C++20 compiler, git, curl, tar, zip, unzip,
+pkg-config, NASM, patchelf and the distribution's OpenGL, X11/XCB, xkbcommon,
+font, GTK 3, CUPS and Wayland runtime packages. Keep Ubuntu 26.04 as the minimum
+package baseline. Fedora packages
+build on Fedora 44. The compiler and operating-system libraries remain managed
+by those supported distributions.
+
+Use a separate Python environment for build tools. The portable Python helper
+requires a new destination and does not replace the system interpreter.
 
 ```bash
-export MUPDF_DIR="$(scripts/build-mupdf-linux.sh /path/to/mupdf-1.28.5-source)"
-cmake --preset linux-release
-cmake --build --preset linux-release --parallel 2
-python3 scripts/fetch-test-tessdata.py build/linux-release/test-tessdata
-QT_QPA_PLATFORM=offscreen ctest --test-dir build/linux-release --output-on-failure -LE optional-corpus
+build_python="$(scripts/bootstrap-python-linux.sh "$HOME/dev-tools/mervin-python-3.15.1")"
+"$build_python" -m venv "$HOME/dev-tools/mervin-build-venv"
+source "$HOME/dev-tools/mervin-build-venv/bin/activate"
+python scripts/install-build-tools.py
+python -m pip install "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b" "py7zr==1.1.4"
+python -m aqt install-qt linux desktop 6.12.0 linux_gcc_64 --outputdir "$HOME/dev-tools/Qt"
+export QT6_DIR="$HOME/dev-tools/Qt/6.12.0/gcc_64"
+export VCPKG_ROOT="$(scripts/bootstrap-vcpkg-linux.sh)"
+export MUPDF_DIR="$(scripts/build-mupdf-linux.sh "$HOME/dev-tools/mupdf-1.28.5-source")"
+cmake --preset linux-bundled
+cmake --build --preset linux-bundled --parallel 2
+python scripts/fetch-test-font.py build/linux-bundled/test-fonts
+python scripts/fetch-test-tessdata.py build/linux-bundled/test-tessdata
+QT_QPA_PLATFORM=offscreen \
+LD_LIBRARY_PATH="$PWD/build/linux-bundled/vcpkg_installed/x64-linux-dynamic/lib" \
+MERVIN_TEST_FONT="$PWD/build/linux-bundled/test-fonts/NotoSansCJKsc-Regular.otf" \
+ctest --test-dir build/linux-bundled --output-on-failure -LE optional-corpus
 ```
+
+MuPDF's helper applies the current [patches](#mupdf-patches). Run it again at the
+same destination when CMake reports an older patch set. Existing local development
+builds can continue using the `linux-release` preset with compatible system
+libraries, including Qt 6.9 or newer and qpdf 11.10 or newer. That preset does not
+produce the bundled release layout.
+
+The build-tree test command supplies the vcpkg library path because Qt's own
+search path can otherwise select the system zlib. Installed packages use their
+private libraries without this environment variable.
+
+The bundled install keeps its executable, shared libraries and Qt plugins under
+`/usr/lib/mervin-pdf`, with a launcher at `/usr/bin/MervinPDF`. The application
+uses relative library search paths and its own `qt.conf`. It does not replace
+system Qt files or export library paths to applications it launches.
+
+Stage and inspect a package without installing it on the development machine.
+
+```bash
+DESTDIR="$PWD/dev-temp/AppDir" cmake --install build/linux-bundled --prefix /usr
+python scripts/check-linux-runtime.py dev-temp/AppDir/usr
+cpack --config build/linux-bundled/CPackConfig.cmake -G DEB -B dev-temp/packages
+# On a Fedora builder, use -G RPM instead.
+bash scripts/make-appimage.sh 0.0.0 dev-temp/AppDir
+```
+
+The AppImage uses the same private runtime as the native packages. Packaging
+checks verify library resolution and startup with an isolated profile. Native
+DEB/RPM dependency metadata describes external operating-system libraries rather
+than requiring a second Qt or qpdf from the distribution.
 
 CMake generates required PDF fixtures from `tests/generate_fixtures.py`. No personal
 documents are needed. Encryption/form tests generate their own inputs. Real OCR
@@ -275,8 +363,8 @@ For memory and undefined-behavior checks, configure a separate Debug build with
 `-DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"`. CI disables leak detection
 for the prebuilt Qt/dependency binaries; address and undefined-behavior checks remain enabled.
 
-MuPDF's archives bundle libjpeg, FreeType, zlib and Brotli. The system libqpdf,
-Qt and Qt's JPEG plugin load the system copies of these libraries.
+MuPDF's archives bundle libjpeg, FreeType, zlib and Brotli. Shared qpdf,
+Qt and Qt's plugins must resolve their own dependencies separately.
 `cmake/FindMuPDF.cmake` links the archives with `-Wl,--exclude-libs`, which keeps
 all of MuPDF's symbols out of the executables' dynamic symbol tables. Without it,
 GNU ld exports MuPDF's definitions of the names those libraries use, the dynamic
@@ -289,12 +377,13 @@ without tests and run the script on the application:
 python3 scripts/check-linux-exports.py build/linux-release/MervinPDF
 ```
 
-CI's `linux-tests` jobs build with Qt 6.12.0 from aqtinstall on Ubuntu 24.04, whose
-qpdf 11 is the oldest version the build supports. aqt's JPEG plugin contains its
-own libjpeg. The `linux-system-qt-tests` job builds on Ubuntu 26.04 with the
-distribution's Qt 6.10 and qpdf 12, as the AppImage and .deb do, and runs the same
-tests. The .rpm builds on Fedora 44 against Fedora's Qt, qpdf and libjpeg-turbo,
-and only the release job's exported-symbol check covers it.
+CI's `linux-tests` jobs retain Ubuntu 24.04 and qpdf 11.10 to test minimum-version
+compatibility, with official Qt 6.12.0. Those older qpdf binaries are test-only.
+The `linux-system-qt-tests` job keeps its historical identifier for the required
+CI gate, but now builds and tests the upstream libraries on Ubuntu 26.04. It also
+checks a staged bundled runtime. AppImage and DEB packages use that dependency
+set. RPM packages build it on Fedora 44 and check exported symbols and the staged
+runtime. Native Windows CI verifies the application, MSI and MSIX installers.
 
 ## Qt modules for the UI translations
 
@@ -304,7 +393,7 @@ and Qt's translation catalogs (`qtbase_<id>.qm`). Configure stops with an error
 when a language has neither an installed Qt catalog nor a maintained supplement.
 Packages and installers need neither at run time.
 
-| Qt install | What to add |
+| Qt install for local development | What to add |
 | --- | --- |
 | aqtinstall | Nothing for a plain `install-qt`, which installs every archive. With `--archives`, include `qttools`, `qtdeclarative` (`lupdate` and `lrelease` link Qt Qml) and `qttranslations`. |
 | Ubuntu 26.04 | `qt6-tools-dev`, which pulls `qt6-tools-dev-tools` and `qt6-l10n-tools` (`lprodump`, `lupdate`, `lrelease`; `qt6-l10n-tools` alone lacks the CMake package), and `qt6-translations-l10n`. |

@@ -484,7 +484,44 @@ endif()
 if(UNIX AND NOT APPLE)
     include(GNUInstallDirs)
 
-    install(TARGETS MervinPDF RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    option(MERVIN_BUNDLE_LINUX_RUNTIME "Install a private application and Qt runtime" OFF)
+    if(MERVIN_BUNDLE_LINUX_RUNTIME)
+        if(Qt6_VERSION VERSION_LESS "6.12.0")
+            message(FATAL_ERROR "Linux runtime bundling requires Qt 6.12.0 or newer.")
+        endif()
+        # Keep the application runtime out of the distribution's shared Qt paths.
+        # A fixed relative layout also lets AppImage reuse the installed tree.
+        set(MERVIN_LINUX_RUNTIME_DIR "lib/mervin-pdf")
+        set(MERVIN_LINUX_DEPENDENCY_PREFIX "")
+        if(VCPKG_INSTALLED_DIR AND VCPKG_TARGET_TRIPLET)
+            set(MERVIN_LINUX_DEPENDENCY_PREFIX
+                "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+            install(DIRECTORY "${MERVIN_LINUX_DEPENDENCY_PREFIX}/share/"
+                DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/mervin-pdf/licenses/vcpkg"
+                FILES_MATCHING PATTERN copyright PATTERN "*LICENSE*" PATTERN "*NOTICE*")
+        endif()
+        set_target_properties(MervinPDF PROPERTIES
+            INSTALL_RPATH "$ORIGIN/../lib"
+            INSTALL_RPATH_USE_LINK_PATH FALSE)
+        # RPATH covers indirect dependencies too, including vcpkg libraries
+        # without their own search paths. It avoids exporting LD_LIBRARY_PATH
+        # into browsers or other applications started by Mervin.
+        target_link_options(MervinPDF PRIVATE "LINKER:--disable-new-dtags")
+        install(TARGETS MervinPDF RUNTIME DESTINATION "${MERVIN_LINUX_RUNTIME_DIR}/bin")
+        configure_file(packaging/linux/MervinPDF.in generated/MervinPDF-launcher @ONLY)
+        install(PROGRAMS "${CMAKE_BINARY_DIR}/generated/MervinPDF-launcher"
+                DESTINATION ${CMAKE_INSTALL_BINDIR} RENAME MervinPDF)
+        configure_file(packaging/linux/deploy-runtime.cmake.in
+            generated/deploy-linux-runtime.cmake @ONLY)
+        file(READ "${CMAKE_BINARY_DIR}/generated/deploy-linux-runtime.cmake"
+             _mervin_deploy_content)
+        qt_policy(SET QTP0008 NEW)
+        qt_generate_deploy_script(TARGET MervinPDF
+            OUTPUT_SCRIPT _mervin_deploy_script CONTENT "${_mervin_deploy_content}")
+        install(SCRIPT "${_mervin_deploy_script}")
+    else()
+        install(TARGETS MervinPDF RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    endif()
     install(FILES packaging/linux/mervin-pdf.desktop
             DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES ${CMAKE_BINARY_DIR}/generated/mervin-pdf.metainfo.xml
@@ -518,7 +555,7 @@ if(UNIX AND NOT APPLE)
     set(CPACK_STRIP_FILES ON)
     set(CPACK_PACKAGE_FILE_NAME "mervin-pdf_${MERVIN_VERSION}_amd64")
 
-    # ---- DEB (dpkg-shlibdeps auto-resolves the Qt/qpdf/system deps) ----------
+    # ---- DEB (dpkg-shlibdeps resolves external shared libraries) ------------
     set(CPACK_DEBIAN_PACKAGE_MAINTAINER "${CPACK_PACKAGE_CONTACT}")
     set(CPACK_DEBIAN_PACKAGE_VERSION "${MERVIN_PACKAGE_VERSION}")
     set(CPACK_DEBIAN_PACKAGE_SECTION "graphics")
@@ -527,12 +564,25 @@ if(UNIX AND NOT APPLE)
     set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "${CPACK_PACKAGE_HOMEPAGE_URL}")
     set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
         "${CMAKE_SOURCE_DIR}/packaging/linux/postinst;${CMAKE_SOURCE_DIR}/packaging/linux/postrm")
+    if(MERVIN_BUNDLE_LINUX_RUNTIME)
+        set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS_PRIVATE_DIRS
+            "/usr/${MERVIN_LINUX_RUNTIME_DIR}/lib")
+        set(CPACK_DEBIAN_PACKAGE_GENERATE_SHLIBS OFF)
+        # The official Qt TLS plugin loads OpenSSL with dlopen, which ELF
+        # dependency scanning cannot see. Trust roots remain OS-managed.
+        set(CPACK_DEBIAN_PACKAGE_DEPENDS "libssl3t64, ca-certificates")
+    endif()
 
     # ---- RPM (rpmdeps AUTOREQ auto-resolves the runtime deps) ----------------
     set(CPACK_RPM_PACKAGE_LICENSE "AGPL-3.0-only")
     set(CPACK_RPM_PACKAGE_VERSION "${MERVIN_PACKAGE_VERSION}")
     set(CPACK_RPM_PACKAGE_GROUP "Applications/Productivity")
     set(CPACK_RPM_PACKAGE_AUTOREQ ON)
+    if(MERVIN_BUNDLE_LINUX_RUNTIME)
+        set(CPACK_RPM_PACKAGE_REQUIRES "openssl-libs, ca-certificates")
+        list(APPEND CPACK_PRE_BUILD_SCRIPTS
+            "${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/package-runtime.cmake")
+    endif()
     set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
     set(CPACK_RPM_FILE_NAME "mervin-pdf-${MERVIN_VERSION}.x86_64.rpm")
     set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE "${CMAKE_SOURCE_DIR}/packaging/linux/rpm-post.sh")
