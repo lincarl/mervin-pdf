@@ -56,7 +56,8 @@ constexpr int kRecheckMs = 2000;
 constexpr int kContentDebounceMs = 400;
 constexpr int kRowHeight = 64;
 constexpr int kContentRowHeight = 88; // taller: fits name + snippet + path
-constexpr int kIconSize  = 34;
+constexpr int kIconSlotSize = 34;
+constexpr int kIconSize  = 26;
 constexpr int kMetaW     = 180; // right-column minimum width
 constexpr int kHPad      = 16;  // left/right outer margin
 constexpr int kVPad      =  9;  // top/bottom inner padding
@@ -255,11 +256,11 @@ public:
 
         // ── Icon ──────────────────────────────────────────────────────────
         const QRect iconR(r.left() + kHPad,
-                          r.top()  + (r.height() - kIconSize) / 2,
-                          kIconSize, kIconSize);
-        const QPixmap documentIcon = icons::applicationIcon().pixmap(
-            iconR.size(), p->device()->devicePixelRatioF());
-        p->drawPixmap(iconR.topLeft(), documentIcon);
+                          r.top()  + (r.height() - kIconSlotSize) / 2,
+                          kIconSlotSize, kIconSlotSize);
+        const QRect glyphR = QStyle::alignedRect(Qt::LeftToRight, Qt::AlignCenter,
+                                                QSize(kIconSize, kIconSize), iconR);
+        icons::glyph(icons::Glyph::Document, Theme::iconInk(opt.palette)).paint(p, glyphR);
 
         // ── Star (right edge, only for regular entries) ───────────────────
         if (hasEntry) {
