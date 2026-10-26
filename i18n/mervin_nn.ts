@@ -1222,6 +1222,16 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
 Opne Innstillingar → Standardprogram i systemet (eller høgreklikk på ei PDF-fil → Opne med) og vel Mervin PDF for PDF-filer.</translation>
     </message>
     <message>
+        <source>Microsoft Store manages updates for this app.</source>
+        <extracomment>Settings &gt; Updates for a Microsoft Store installation. Microsoft Store handles update checks and installation; updates are not disabled.</extracomment>
+        <translation>Microsoft Store handterer oppdateringar for denne appen.</translation>
+    </message>
+    <message>
+        <source>Open Microsoft Store</source>
+        <extracomment>Button in Settings &gt; Updates for a Microsoft Store installation. Opens the Microsoft Store app&apos;s updates page; does not itself check for updates.</extracomment>
+        <translation>Opne Microsoft Store</translation>
+    </message>
+    <message>
         <source>Application</source>
         <extracomment>Group title: the look of Mervin&apos;s windows, as opposed to the document pages.</extracomment>
         <translation>Program</translation>

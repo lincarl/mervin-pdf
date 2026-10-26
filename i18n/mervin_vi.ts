@@ -1218,6 +1218,16 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
 Mở Cài đặt của hệ thống → Ứng dụng mặc định (hoặc nhấp chuột phải vào tệp PDF → Mở bằng) và chọn Mervin PDF cho tệp PDF.</translation>
     </message>
     <message>
+        <source>Microsoft Store manages updates for this app.</source>
+        <extracomment>Settings &gt; Updates for a Microsoft Store installation. Microsoft Store handles update checks and installation; updates are not disabled.</extracomment>
+        <translation>Microsoft Store quản lý các bản cập nhật cho ứng dụng này.</translation>
+    </message>
+    <message>
+        <source>Open Microsoft Store</source>
+        <extracomment>Button in Settings &gt; Updates for a Microsoft Store installation. Opens the Microsoft Store app&apos;s updates page; does not itself check for updates.</extracomment>
+        <translation>Mở Microsoft Store</translation>
+    </message>
+    <message>
         <source>Application</source>
         <extracomment>Group title: the look of Mervin&apos;s windows, as opposed to the document pages.</extracomment>
         <translation>Ứng dụng</translation>

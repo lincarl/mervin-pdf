@@ -269,6 +269,8 @@ private slots:
     void saveRecoveryWarning();
     void settings_data() { addLanguageMatrix(); }
     void settings();
+    void storeUpdates_data() { addLanguageMatrix(); }
+    void storeUpdates();
     void splitMessages_data() { addLanguageMatrix(); }
     void splitMessages();
     void toolPanels_data() { addLanguageMatrix(); }
@@ -1673,6 +1675,20 @@ void TstTranslationLayout::settings()
     inspectMessage(dialog, QStringLiteral("Settings save failure"), [&] {
         buttons->button(QDialogButtonBox::Apply)->click();
     });
+}
+
+// Checks the Store message and action independently of unrelated Settings pages.
+void TstTranslationLayout::storeUpdates()
+{
+    mervin::Settings values;
+    values.uiLanguage = i18n::current();
+    SettingsDialog::UpdateInfo updates;
+    updates.checkAvailable = true;
+    updates.storeManaged = true;
+    updates.lastCheck = QDateTime(QDate(2026, 10, 20), QTime(12, 0), QTimeZone::utc());
+    SettingsDialog dialog(values, updates, SettingsDialog::Page::Updates);
+    QTRY_VERIFY(!mervin::TessdataManager::busy());
+    inspect(dialog, QStringLiteral("Settings updates managed by Microsoft Store"));
 }
 
 // Opens the tool's actual help and context-menu widgets through Qt input events.

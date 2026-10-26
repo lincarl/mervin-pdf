@@ -1218,6 +1218,16 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
 시스템의 설정 → 기본 응용 프로그램을 열고(또는 PDF를 마우스 오른쪽 버튼으로 클릭 → 연결 프로그램) PDF 파일의 경우 Mervin PDF 를 선택합니다.</translation>
     </message>
     <message>
+        <source>Microsoft Store manages updates for this app.</source>
+        <extracomment>Settings &gt; Updates for a Microsoft Store installation. Microsoft Store handles update checks and installation; updates are not disabled.</extracomment>
+        <translation>이 앱의 업데이트는 Microsoft Store에서 관리합니다.</translation>
+    </message>
+    <message>
+        <source>Open Microsoft Store</source>
+        <extracomment>Button in Settings &gt; Updates for a Microsoft Store installation. Opens the Microsoft Store app&apos;s updates page; does not itself check for updates.</extracomment>
+        <translation>Microsoft Store 열기</translation>
+    </message>
+    <message>
         <source>Application</source>
         <extracomment>Group title: the look of Mervin&apos;s windows, as opposed to the document pages.</extracomment>
         <translation>애플리케이션</translation>

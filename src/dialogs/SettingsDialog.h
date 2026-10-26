@@ -46,8 +46,9 @@ public:
     // Updater itself: it emits checkForUpdatesRequested and is told the result.
     struct UpdateInfo
     {
-        bool checkAvailable = false; // an Updater exists, so Check for Updates is offered
+        bool checkAvailable = false; // an Updater exists, so an update action is offered
         bool canSelfUpdate = false;  // this copy downloads and installs updates itself
+        bool storeManaged = false;  // Microsoft Store handles updates; lastCheck does not apply
         QDateTime lastCheck;         // last check with a definite answer (UTC); invalid = never
     };
 

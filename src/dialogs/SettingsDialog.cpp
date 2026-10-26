@@ -606,26 +606,38 @@ QWidget *SettingsDialog::buildUpdatesPage()
     updatesCheck_->setChecked(base_.autoUpdate);
     updateLayout->addWidget(updatesCheck_);
     if (!selfUpdating()) {
-        // Portable and dev copies never check on their own (Updater::onStartup),
+        // Store, portable and dev copies never check on their own (Updater::onStartup),
         // so there is no switch to show. The saved value is kept for an
         // installed copy that shares this profile.
         updatesCheck_->hide();
-        //: Check for Updates is the button below.
-        updateLayout->addWidget(hintLabel(tr("This copy can't update itself. Check for Updates "
-                                             "shows where to download a new version."),
-                                          updateBox));
+        if (updates_.storeManaged) {
+            //: Settings > Updates for a Microsoft Store installation. Microsoft Store
+            //: handles update checks and installation; updates are not disabled.
+            updateLayout->addWidget(hintLabel(tr("Microsoft Store manages updates for this app."),
+                                              updateBox));
+        } else {
+            //: Check for Updates is the button below.
+            updateLayout->addWidget(hintLabel(tr("This copy can't update itself. Check for Updates "
+                                                 "shows where to download a new version."),
+                                              updateBox));
+        }
     }
     if (updates_.checkAvailable) {
         auto *checkRow = new QHBoxLayout;
         checkRow->setSpacing(10);
-        auto *checkButton = new QPushButton(tr("Check for Updates"), updateBox);
+        //: Button in Settings > Updates for a Microsoft Store installation. Opens
+        //: the Microsoft Store app's updates page; does not itself check for updates.
+        const QString checkText = updates_.storeManaged ? tr("Open Microsoft Store") : tr("Check for Updates");
+        auto *checkButton = new QPushButton(checkText, updateBox);
         checkButton->setObjectName(QStringLiteral("checkForUpdatesButton"));
         checkButton->setAutoDefault(false);
         connect(checkButton, &QPushButton::clicked, this, &SettingsDialog::checkForUpdatesRequested);
-        lastCheckLabel_ = hintLabel(QString(), updateBox);
-        lastCheckLabel_->setWordWrap(false);
         checkRow->addWidget(checkButton);
-        checkRow->addWidget(lastCheckLabel_);
+        if (!updates_.storeManaged) {
+            lastCheckLabel_ = hintLabel(QString(), updateBox);
+            lastCheckLabel_->setWordWrap(false);
+            checkRow->addWidget(lastCheckLabel_);
+        }
         checkRow->addStretch(1);
         updateLayout->addSpacing(4);
         updateLayout->addLayout(checkRow);

@@ -2276,6 +2276,7 @@ void MainWindow::openSettings(SettingsDialog::Page page)
     if (updater) {
         updates.checkAvailable = true;
         updates.canSelfUpdate = updater->canSelfUpdate();
+        updates.storeManaged = updater->storeManaged();
         updates.lastCheck = mervin::Updater::lastCheck();
     }
     SettingsDialog dlg(settings_, updates, page, this);
