@@ -53,5 +53,8 @@ __pycache__/
 # CTest run artifacts
 /Testing/
 
+# Maintainer agent instructions are private. A Git hook copies them into each
+# maintainer checkout as AGENTS.md, so never commit that file.
+/AGENTS.md
 # Local assistant configuration
 /CLAUDE.md
