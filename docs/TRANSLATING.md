@@ -137,6 +137,11 @@ language distinguishes these meanings.
 Preserve recovery states such as retained, kept, saved and open. A path alone does
 not say that the app kept the edits, and a retained copy need not already be open.
 
+For update messages, distinguish an app that updates itself from one whose updates
+are managed by Microsoft Store. Naming another update provider does not mean that
+updates are disabled. A button that opens that provider must describe opening it,
+without implying that the app has checked for updates.
+
 When a translation service batches strings, verify each source-to-target pairing.
 Matching output counts or separator counts do not prove alignment. Redraft broken
 entries individually. Preserve product names, command-line switches, file-filter

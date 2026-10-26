@@ -1218,6 +1218,16 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
 Nyissa meg a rendszer Beállítások → Alapértelmezett alkalmazások menüpontját (vagy kattintson jobb gombbal egy PDF-re → Megnyitás ezzel), és válassza a Mervin PDF lehetőséget a PDF-fájlokhoz.</translation>
     </message>
     <message>
+        <source>Microsoft Store manages updates for this app.</source>
+        <extracomment>Settings &gt; Updates for a Microsoft Store installation. Microsoft Store handles update checks and installation; updates are not disabled.</extracomment>
+        <translation>Az alkalmazás frissítéseit a Microsoft Store kezeli.</translation>
+    </message>
+    <message>
+        <source>Open Microsoft Store</source>
+        <extracomment>Button in Settings &gt; Updates for a Microsoft Store installation. Opens the Microsoft Store app&apos;s updates page; does not itself check for updates.</extracomment>
+        <translation>Microsoft Store megnyitása</translation>
+    </message>
+    <message>
         <source>Application</source>
         <extracomment>Group title: the look of Mervin&apos;s windows, as opposed to the document pages.</extracomment>
         <translation>Alkalmazás</translation>

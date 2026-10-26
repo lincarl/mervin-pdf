@@ -1222,6 +1222,16 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
 Բացեք ձեր համակարգի Կարգավորումներ → Կանխադրված հավելվածներ (կամ սեղմեք աջ PDF-ի վրա → Բացեք հետ) և ընտրեք Mervin PDF ֆայլերը PDF ֆայլերի համար:</translation>
     </message>
     <message>
+        <source>Microsoft Store manages updates for this app.</source>
+        <extracomment>Settings &gt; Updates for a Microsoft Store installation. Microsoft Store handles update checks and installation; updates are not disabled.</extracomment>
+        <translation>Այս հավելվածի թարմացումները կառավարում է Microsoft Store-ը։</translation>
+    </message>
+    <message>
+        <source>Open Microsoft Store</source>
+        <extracomment>Button in Settings &gt; Updates for a Microsoft Store installation. Opens the Microsoft Store app&apos;s updates page; does not itself check for updates.</extracomment>
+        <translation>Բացել Microsoft Store-ը</translation>
+    </message>
+    <message>
         <source>Application</source>
         <extracomment>Group title: the look of Mervin&apos;s windows, as opposed to the document pages.</extracomment>
         <translation>Ծրագիր</translation>

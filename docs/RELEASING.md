@@ -72,9 +72,10 @@ MSIX test script. It skips compilation and application tests, so it cannot
 qualify a Store release. The Store build requires successful full push CI on
 its main commit.
 
-Store copies delegate updates to Microsoft Store. Their Check for Updates
-action opens the Store's Downloads and updates page. Their PDF registration
-comes from the package manifest, and Windows Settings controls the default.
+Store copies delegate updates to Microsoft Store. Their Open Microsoft Store
+action opens the Store's Downloads and updates page. Settings names Microsoft
+Store as the update provider and omits Mervin's unrelated last-check date. Their
+PDF registration comes from the package manifest, and Windows Settings controls the default.
 The existing MSI and Linux update paths remain available.
 
 Store and MSI copies use separate single-instance groups. Windows AppData

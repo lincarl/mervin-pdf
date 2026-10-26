@@ -58,6 +58,9 @@ public:
         return kind_ != update::PackageKind::None && kind_ != update::PackageKind::Msix;
     }
 
+    // Store copies open Microsoft Store instead of checking releases themselves.
+    bool storeManaged() const { return kind_ == update::PackageKind::Msix; }
+
     // Run once after the first window is up. When automatic updates are enabled,
     // resumes a pending installation or checks when due. The check and download
     // are asynchronous, so startup never waits on the network. Either way it

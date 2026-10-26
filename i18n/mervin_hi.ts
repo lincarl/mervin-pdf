@@ -1222,6 +1222,16 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
 अपने सिस्टम की सेटिंग्स खोलें → डिफ़ॉल्ट एप्लिकेशन (या पीडीएफ → ओपन विथ पर राइट-क्लिक करें) और पीडीएफ फाइलों के लिए Mervin PDF चुनें।</translation>
     </message>
     <message>
+        <source>Microsoft Store manages updates for this app.</source>
+        <extracomment>Settings &gt; Updates for a Microsoft Store installation. Microsoft Store handles update checks and installation; updates are not disabled.</extracomment>
+        <translation>Microsoft Store इस ऐप के अद्यतन प्रबंधित करता है।</translation>
+    </message>
+    <message>
+        <source>Open Microsoft Store</source>
+        <extracomment>Button in Settings &gt; Updates for a Microsoft Store installation. Opens the Microsoft Store app&apos;s updates page; does not itself check for updates.</extracomment>
+        <translation>Microsoft Store खोलें</translation>
+    </message>
+    <message>
         <source>Application</source>
         <extracomment>Group title: the look of Mervin&apos;s windows, as opposed to the document pages.</extracomment>
         <translation>ऐप</translation>

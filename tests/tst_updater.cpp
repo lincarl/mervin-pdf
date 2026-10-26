@@ -961,7 +961,7 @@ void TestUpdater::msixDelegatesToStore()
     if (pending)
         QVERIFY(savePending(PackageKind::Msi));
     const QDateTime previousCheck = QDateTime::currentDateTimeUtc().addDays(-31);
-    // Never checking itself, the Store copy shows the date an older MSI copy saved.
+    // Store copies retain the legacy check date without presenting it as a Store check.
     QSettings().setValue(kLegacyLastCheck, previousCheck);
     const QString previousPending =
         QSettings().value(stateKey(u"pendingFile", PackageKind::Msi)).toString();
@@ -972,6 +972,7 @@ void TestUpdater::msixDelegatesToStore()
     QSignalSpy checked(&updater, &Updater::checked);
 
     QVERIFY(!updater.canSelfUpdate());
+    QVERIFY(updater.storeManaged());
     updater.onStartup();
     updater.checkNow();
     updater.onAutoUpdateChanged(false);

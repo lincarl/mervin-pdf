@@ -1047,6 +1047,7 @@ void TstSettingsDialog::updateControlsFollowTheUpdater()
         auto *automatic = checkBox(&dialog, QStringLiteral("Update automatically at start (every 30 days)"));
         auto *stack = dialog.findChild<QStackedWidget *>();
         QVERIFY(button && automatic && stack);
+        QCOMPARE(button->text(), QStringLiteral("Check for Updates"));
         QVERIFY(stack->currentWidget()->isAncestorOf(button));
         QVERIFY(stack->currentWidget()->isAncestorOf(automatic));
         dialog.showPage(Page::General);
@@ -1081,6 +1082,34 @@ void TstSettingsDialog::updateControlsFollowTheUpdater()
         QVERIFY(checkBox(&dialog, QStringLiteral("Update automatically at start (every 30 days)"))->isHidden());
         QVERIFY(labelStartingWith(&dialog, QStringLiteral("This copy can't update itself")));
         QVERIFY(dialog.findChild<QPushButton *>(QStringLiteral("checkForUpdatesButton")));
+        QVERIFY(dialog.settings().autoUpdate);
+    }
+
+    // Store updates use the same handoff signal, with no app check date even
+    // when a legacy MSI date arrives before or after the dialog opens.
+    for (const bool hasSavedDate : {false, true}) {
+        SettingsDialog::UpdateInfo info;
+        info.checkAvailable = true;
+        info.storeManaged = true;
+        const QDateTime savedDate(QDate(2026, 10, 20), QTime(12, 0), QTimeZone::UTC);
+        if (hasSavedDate)
+            info.lastCheck = savedDate;
+        mervin::Settings in;
+        in.autoUpdate = true;
+        SettingsDialog dialog(in, info, Page::Updates);
+        auto *button = dialog.findChild<QPushButton *>(QStringLiteral("checkForUpdatesButton"));
+        QVERIFY(button);
+        QCOMPARE(button->text(), QStringLiteral("Open Microsoft Store"));
+        QVERIFY(labelStartingWith(&dialog, QStringLiteral("Microsoft Store manages updates for this app.")));
+        QVERIFY(!labelStartingWith(&dialog, QStringLiteral("This copy can't update itself")));
+        QVERIFY(checkBox(&dialog, QStringLiteral("Update automatically at start (every 30 days)"))->isHidden());
+        QVERIFY(!labelStartingWith(&dialog, QStringLiteral("Never checked")));
+        QVERIFY(!labelStartingWith(&dialog, QStringLiteral("Last checked ")));
+        dialog.setLastUpdateCheck(savedDate);
+        QVERIFY(!labelStartingWith(&dialog, QStringLiteral("Last checked ")));
+        QSignalSpy requested(&dialog, &SettingsDialog::checkForUpdatesRequested);
+        button->click();
+        QCOMPARE(requested.count(), 1);
         QVERIFY(dialog.settings().autoUpdate);
     }
 }
