@@ -260,7 +260,12 @@ public:
                           kIconSlotSize, kIconSlotSize);
         const QRect glyphR = QStyle::alignedRect(Qt::LeftToRight, Qt::AlignCenter,
                                                 QSize(kIconSize, kIconSize), iconR);
-        icons::glyph(icons::Glyph::Document, Theme::iconInk(opt.palette)).paint(p, glyphR);
+        const QPalette::ColorGroup group = !(opt.state & QStyle::State_Enabled)
+            ? QPalette::Disabled : (opt.state & QStyle::State_Active)
+            ? QPalette::Active : QPalette::Inactive;
+        const QColor iconInk = (opt.state & QStyle::State_Selected)
+            ? opt.palette.color(group, QPalette::HighlightedText) : Theme::iconInk(opt.palette);
+        icons::glyph(icons::Glyph::Document, iconInk).paint(p, glyphR);
 
         // ── Star (right edge, only for regular entries) ───────────────────
         if (hasEntry) {
