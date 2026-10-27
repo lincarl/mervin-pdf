@@ -433,6 +433,10 @@ void Updater::onDisk(Work work, Done done, bool forOperation)
 
 Updater::~Updater()
 {
+    // The package manager's completion handler closes the note, and it never runs
+    // once this updater is gone. A note left behind blocks the other windows and
+    // can keep the application from quitting.
+    delete busyNote_;
     clearStaging();
     if (g_instance == this)
         g_instance = nullptr;
@@ -1053,6 +1057,7 @@ void Updater::runPackageManager(const QStringList &command, const QString &file,
     // pkexec asks for the password in its own window.
     //: %1 is the version number being installed.
     auto *note = new BusyNote(tr("Installing Mervin PDF %1…").arg(version), dialogParent());
+    busyNote_ = note;
     note->show();
 
     auto *proc = new QProcess(this);
