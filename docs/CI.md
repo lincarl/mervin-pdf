@@ -1,8 +1,8 @@
 # Pull request CI
 
 Complete local code reviews and valid fixes before pushing the branch and opening
-a regular pull request. Automatic GitHub CodeRabbit reviews are disabled. PR creation,
-new commits, reopening, and marking a draft ready run full CI automatically.
+a regular pull request. PR creation, new commits, reopening, and marking a draft
+ready run full CI automatically.
 No GitHub reviewer result or manual CI authorization is required. Draft PRs do
 not start full CI, and converting a regular PR to draft cancels its builds.
 
