@@ -1,5 +1,0 @@
-# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
-# Reviews run through the local CLI before the branch is pushed.
-reviews:
-  auto_review:
-    enabled: false
