@@ -13,6 +13,7 @@
 #include <utility>
 
 QT_BEGIN_NAMESPACE
+class QDialog;
 class QNetworkAccessManager;
 class QNetworkReply;
 class QProgressDialog;
@@ -166,6 +167,9 @@ private:
     std::shared_ptr<QTemporaryDir> staging_;
     QString stagedFile_;
     QPointer<QProgressDialog> progress_;
+    // "Installing..." while the package manager runs. The process is a child of
+    // this updater and stops with it, so the destructor deletes the note too.
+    QPointer<QDialog> busyNote_;
     std::function<CloseResult()> closeWindows_;
     QDateTime lastCheck_;
     bool lastCheckKnown_ = false; // read at start, or set by a check

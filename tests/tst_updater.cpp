@@ -27,7 +27,9 @@
 #include <QPointer>
 #include <QProgressDialog>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QStandardPaths>
+#include <QSaveFile>
 #include <QScopeGuard>
 #include <QSettings>
 
@@ -347,6 +349,7 @@ private slots:
     void hashlessPendingRequiresRelease();
     void stagedPackageManagerLifetime_data();
     void stagedPackageManagerLifetime();
+    void busyNoteGoesWithTheUpdater();
     void missingPackageManagerKeepsRetry_data();
     void missingPackageManagerKeepsRetry();
     void alteredDownloadIsNotInstalled_data();
@@ -1268,6 +1271,14 @@ void TestUpdater::stagedPackageManagerLifetime()
     Updater updater;
     updater.setCloseWindowsHandler([] { return Updater::CloseResult::Declined; });
     PromptObserver observer;
+    // A failed check returns early. The fixture is still released and the
+    // installation ends, so no process, note or busy state reaches the next case.
+    // QTRY_* stops waiting once the case has failed, so this waits with qWaitFor.
+    const auto endInstall = qScopeGuard([&] {
+        QFile release(proceed);
+        QVERIFY(release.open(QIODevice::WriteOnly));
+        QVERIFY(QTest::qWaitFor([&] { return !updater.busy_; }, 10000));
+    });
     updater.onStartup();
     QTRY_VERIFY(packageCommandReady.load());
     QVERIFY(changed);
@@ -1290,6 +1301,36 @@ void TestUpdater::stagedPackageManagerLifetime()
     QCOMPARE(QSettings().value(stateKey(u"pendingFile")).toString(), downloadedPath());
     QCOMPARE(QSettings().value(stateKey(u"pendingSha256")).toString(), kDownloadSha256);
     QCOMPARE(observer.messages.isEmpty(), !launchFails && (exitCode == 0 || exitCode == 126));
+}
+
+// The note blocks the windows while the package manager runs. An updater that
+// goes first, such as one whose test case failed, must not leave it behind.
+void TestUpdater::busyNoteGoesWithTheUpdater()
+{
+    installedKind = PackageKind::Deb;
+    QVERIFY(savePending());
+    const QString read = profile_.filePath(QStringLiteral("child-read"));
+    const QString proceed = profile_.filePath(QStringLiteral("child-proceed"));
+    QFile::remove(read);
+    QFile::remove(proceed);
+    packageCommand = QStringList{QCoreApplication::applicationFilePath(),
+                                 QStringLiteral("--installer-fixture"), read, proceed,
+                                 QStringLiteral("0")};
+    QPointer<QWidget> note;
+    const auto removeNote = qScopeGuard([&] { delete note.data(); });
+    {
+        Updater updater;
+        updater.setCloseWindowsHandler([] { return Updater::CloseResult::Declined; });
+        updater.onStartup();
+        QTRY_VERIFY(QFileInfo::exists(read)); // the package manager is running
+        note = QApplication::activeModalWidget();
+        QVERIFY(note);
+        // The process is the updater's child and stops with it.
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral(
+            "^QProcess: Destroyed while process \\(.*\\) is still running\\.$")));
+    }
+    QVERIFY(!note);
+    QVERIFY(!QApplication::activeModalWidget());
 }
 
 void TestUpdater::missingPackageManagerKeepsRetry_data()
@@ -1990,13 +2031,13 @@ int main(int argc, char **argv)
         QCoreApplication app(argc, argv);
         const QStringList args = app.arguments();
         QFile staged(args.at(5));
-        QFile result(args.at(2));
+        // The test reads the copy as soon as its name appears, so it appears whole.
+        QSaveFile result(args.at(2));
         if (!staged.open(QIODevice::ReadOnly) || !result.open(QIODevice::WriteOnly))
             return 2;
         const QByteArray bytes = staged.readAll();
-        if (result.write(bytes) != bytes.size() || !result.flush())
+        if (result.write(bytes) != bytes.size() || !result.commit())
             return 3;
-        result.close();
         for (int i = 0; i < 500 && !QFileInfo::exists(args.at(3)); ++i)
             QThread::msleep(10);
         if (!QFileInfo::exists(args.at(3)))
