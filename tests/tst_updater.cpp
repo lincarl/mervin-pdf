@@ -1321,6 +1321,7 @@ void TestUpdater::busyNoteGoesWithTheUpdater()
     {
         Updater updater;
         updater.setCloseWindowsHandler([] { return Updater::CloseResult::Declined; });
+        PromptObserver observer; // a fixture that cannot start reports it in a message box
         updater.onStartup();
         QTRY_VERIFY(QFileInfo::exists(read)); // the package manager is running
         note = QApplication::activeModalWidget();
