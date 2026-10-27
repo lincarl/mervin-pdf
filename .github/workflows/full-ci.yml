@@ -92,6 +92,14 @@ jobs:
           )
           if generated:
               raise SystemExit(f"Generated Python artifacts must not be committed: {generated}")
+          # The maintainers' agent instructions are private. A Git hook copies
+          # them into each maintainer checkout as an ignored AGENTS.md, which a
+          # merge or `git add -f` could still commit.
+          agent_files = sorted(
+              path for path in tracked if path in (Path("AGENTS.md"), Path("CLAUDE.md"))
+          )
+          if agent_files:
+              raise SystemExit(f"Agent instruction files must not be committed: {agent_files}")
 
           expected_release_api = '"https://api.github.com/repos/lincarl/mervin-pdf/releases/latest"'
           macros = subprocess.check_output(
