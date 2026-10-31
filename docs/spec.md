@@ -57,9 +57,10 @@ The Recent button sits immediately before Open on the toolbar and uses a list-cl
 icon. Both buttons use an icon beside their label. If the toolbar would exceed the
 screen's available width, Recent, Open, Save, and Document show icons with tooltips
 instead. Their labels return when the font and screen width allow them to fit.
-The main menu button (⋯) sits at the far end of the toolbar. The main menu does not
-repeat commands that have a toolbar button, such as Print, the fit modes, Comment,
-OCR Selection and Measure.
+The main menu button (⋯) sits at the far end of the toolbar, which is always shown.
+The main menu does not repeat commands that have a toolbar button, such as Print,
+the fit modes, Comment, OCR Selection and Measure. Its Text & Forms section holds
+Select All, Fill Forms and Highlight Form Fields.
 
 The Recent screen provides:
 

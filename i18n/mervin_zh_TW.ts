@@ -478,7 +478,7 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     </message>
     <message>
         <source>Main</source>
-        <extracomment>Name of the main toolbar, listed when the user right-clicks the toolbar area.</extracomment>
+        <extracomment>Name of the main toolbar, which screen readers announce.</extracomment>
         <translation>主要工具列</translation>
     </message>
     <message>
@@ -498,6 +498,11 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     <message>
         <source>Rotate, delete, extract, split or merge pages; document security</source>
         <translation>旋轉、刪除、擷取、分割或合併頁面，以及文件安全性</translation>
+    </message>
+    <message>
+        <source>Text &amp; Forms</source>
+        <extracomment>Section heading in the main menu (nouns). Its items select all of the document&apos;s text and fill in or highlight form fields. The ampersand means &quot;and&quot;, not a keyboard mnemonic.</extracomment>
+        <translation>文字與表單</translation>
     </message>
     <message>
         <source>Mervin cannot read this file&apos;s measurements. Measuring is off so that they stay unchanged.</source>
@@ -538,11 +543,6 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
         <source>Panels</source>
         <extracomment>Section heading in the main menu: the side panels (outline, thumbnails, comments).</extracomment>
         <translation>面板</translation>
-    </message>
-    <message>
-        <source>Select &amp; Annotate</source>
-        <extracomment>Section heading in the main menu: selecting text and filling in forms. Plain menu section heading. The ampersand means &quot;and&quot;, not a keyboard mnemonic.</extracomment>
-        <translation>選取與註解</translation>
     </message>
     <message>
         <source>Switch to the traditional document theme</source>

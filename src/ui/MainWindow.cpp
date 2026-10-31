@@ -554,8 +554,11 @@ MainWindow::MainWindow(mervin::RenderEngine *engine, mervin::WindowManager *wm, 
         const QSize available = screen()->availableGeometry().size() * 0.9;
         resize(QSize(1100, 820).boundedTo(available));
     }
-    if (!settings_.windowState.isEmpty())
+    if (!settings_.windowState.isEmpty()) {
         restoreState(settings_.windowState);
+        // Earlier versions let the toolbar be hidden, and their saved state keeps it so.
+        mainToolBar_->show();
+    }
     mervin::dockSidebarsOnLeft(*this, {thumbnailDock_, outlineDock_, commentsDock_});
     updateForCurrentTab();
 }
@@ -1072,11 +1075,14 @@ void MainWindow::createActions()
 
 void MainWindow::createToolBar()
 {
-    //: Name of the main toolbar, listed when the user right-clicks the toolbar area.
+    //: Name of the main toolbar, which screen readers announce.
     QToolBar *bar = addToolBar(tr("Main"));
     mainToolBar_ = bar;
     bar->setObjectName(QStringLiteral("mainToolBar")); // for saveState/restoreState
     bar->setMovable(false);
+    // The toolbar holds the main menu, so it stays shown. Its entry in the window's
+    // right-click menu would hide it with nothing left to bring it back.
+    bar->toggleViewAction()->setVisible(false);
     // Most buttons are icon-only. File commands keep their labels beside the icons.
     bar->setToolButtonStyle(Qt::ToolButtonIconOnly);
     bar->setIconSize(QSize(20, 20));
@@ -1345,10 +1351,11 @@ void MainWindow::createMenus()
     }
     mainMenu->addSeparator();
 
-    // Select & Annotate - selection plus the form tools.
-    //: Section heading in the main menu: selecting text and filling in forms.
-    //: Plain menu section heading. The ampersand means "and", not a keyboard mnemonic.
-    addSectionHeader(mainMenu, tr("Select & Annotate"));
+    // Text & Forms - Select All plus the form tools.
+    //: Section heading in the main menu (nouns). Its items select all of the document's
+    //: text and fill in or highlight form fields. The ampersand means "and", not a
+    //: keyboard mnemonic.
+    addSectionHeader(mainMenu, tr("Text & Forms"));
     mainMenu->addAction(selectAllAction_);
     mainMenu->addAction(formAction_);
     mainMenu->addAction(highlightFormFieldsAction_);
@@ -1376,7 +1383,8 @@ void MainWindow::createMenus()
     hideShortcutHints(mainMenu);
 
     // Register shortcut actions on the window even when they are absent from the menu.
-    // Toolbar buttons alone would not keep them working while the toolbar is hidden.
+    // A toolbar button passes on its shortcut only while it is enabled, and Recent
+    // disables the whole document group.
     for (QAction *a : {newTabAction_, newWindowAction_, closeTabAction_, findAction_,
                        findNextAction_, findPrevAction_, copyAction_, zoomInAction_,
                        zoomOutAction_, fitPageAction_, fitWidthAction_, rotateLeftAction_,

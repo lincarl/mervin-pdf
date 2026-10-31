@@ -474,7 +474,7 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     </message>
     <message>
         <source>Main</source>
-        <extracomment>Name of the main toolbar, listed when the user right-clicks the toolbar area.</extracomment>
+        <extracomment>Name of the main toolbar, which screen readers announce.</extracomment>
         <translation>หลัก</translation>
     </message>
     <message>
@@ -494,6 +494,11 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     <message>
         <source>Rotate, delete, extract, split or merge pages; document security</source>
         <translation>หมุน ลบ แยก แยกหรือรวมหน้า ความปลอดภัยของเอกสาร</translation>
+    </message>
+    <message>
+        <source>Text &amp; Forms</source>
+        <extracomment>Section heading in the main menu (nouns). Its items select all of the document&apos;s text and fill in or highlight form fields. The ampersand means &quot;and&quot;, not a keyboard mnemonic.</extracomment>
+        <translation>ข้อความและแบบฟอร์ม</translation>
     </message>
     <message>
         <source>Mervin cannot read this file&apos;s measurements. Measuring is off so that they stay unchanged.</source>
@@ -534,11 +539,6 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
         <source>Panels</source>
         <extracomment>Section heading in the main menu: the side panels (outline, thumbnails, comments).</extracomment>
         <translation>แผง</translation>
-    </message>
-    <message>
-        <source>Select &amp; Annotate</source>
-        <extracomment>Section heading in the main menu: selecting text and filling in forms. Plain menu section heading. The ampersand means &quot;and&quot;, not a keyboard mnemonic.</extracomment>
-        <translation>เลือกและใส่คำอธิบายประกอบ</translation>
     </message>
     <message>
         <source>Switch to the traditional document theme</source>
