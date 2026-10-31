@@ -668,10 +668,10 @@ private slots:
         QVERIFY(tab.isSuspended());
         QVERIFY(placeholder.retry->isVisible());
 
-        // A new read would start a background task at once.
-        const int tasks = mervin::background::running();
+        // A new read increments this tab's generation before its worker starts.
+        const quint64 generation = tab.loadGeneration();
         QTest::mouseClick(placeholder.retry, Qt::LeftButton);
-        QCOMPARE(mervin::background::running(), tasks);
+        QCOMPARE(tab.loadGeneration(), generation);
         QVERIFY(tab.isLoading());
         QCOMPARE(placeholder.status->text(), QStringLiteral("Loading"));
         QTest::qWait(300);
