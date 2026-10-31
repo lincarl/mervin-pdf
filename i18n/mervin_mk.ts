@@ -482,7 +482,7 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     </message>
     <message>
         <source>Main</source>
-        <extracomment>Name of the main toolbar, listed when the user right-clicks the toolbar area.</extracomment>
+        <extracomment>Name of the main toolbar, which screen readers announce.</extracomment>
         <translation>Главна</translation>
     </message>
     <message>

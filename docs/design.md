@@ -1904,10 +1904,13 @@ with stacked lines. Qt opens a tool button's menu from the button's near edge, s
 the window lines the menu's far edge up with the button instead, keeping it inside
 a window that is not maximized. The menu leaves out the commands that have a
 toolbar button: Print, Fit page, Fit width, Comment, OCR Selection and Measure.
-Their shortcuts are registered on the window, so they work while the toolbar is
-hidden. As the last toolbar item, the menu button is the first that `QToolBar`
-would move into its overflow popup. The window's minimum width therefore follows
-the toolbar's width, also when a longer page count widens it.
+Their shortcuts stay registered on the window, because a toolbar button passes on
+its shortcut only while it is enabled, and Recent disables the document group. The
+toolbar cannot be hidden, because it holds the main menu. The window's right-click
+menu leaves out its entry, and a toolbar hidden by an earlier version shows again.
+As the last toolbar item, the menu button is the first that `QToolBar` would move
+into its overflow popup. The window's minimum width therefore follows the
+toolbar's width, also when a longer page count widens it.
 
 The application and packages share the repository's approved icon assets.
 

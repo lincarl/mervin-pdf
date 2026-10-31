@@ -60,8 +60,8 @@ private slots:
     }
 
     // The menu button ends the toolbar. The menu repeats no toolbar command, and the
-    // commands that left it keep their shortcuts on the window, which still work
-    // while the toolbar is hidden.
+    // commands that left it keep their shortcuts on the window, where Recent does
+    // not disable them along with the toolbar's document group.
     void leavesToolbarCommandsOut()
     {
         RenderEngine engine;
@@ -92,6 +92,32 @@ private slots:
             QVERIFY2(found != commands.cend(), qPrintable(key.toString()));
             QVERIFY2(window.actions().contains(*found), qPrintable(key.toString()));
         }
+    }
+
+    // The toolbar holds the main menu. The window's right-click menu offers no way to
+    // hide it, and a toolbar that an earlier version saved as hidden shows again.
+    void toolbarStaysShown()
+    {
+        QByteArray hidden;
+        {
+            RenderEngine engine;
+            MainWindow window(&engine, nullptr);
+            toolbarOf(window)->hide();
+            hidden = window.saveState();
+        }
+        Settings settings = Settings::load();
+        settings.windowState = hidden;
+        QVERIFY(settings.save());
+
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        QToolBar *toolbar = toolbarOf(window);
+        QVERIFY(toolbar);
+        QVERIFY(!toolbar->isHidden());
+        const std::unique_ptr<QMenu> menu(window.createPopupMenu());
+        QVERIFY(menu);
+        for (QAction *action : menu->actions())
+            QVERIFY(action != toolbar->toggleViewAction() || !action->isVisible());
     }
 
     // Most of the window is on the left monitor, so Qt assigns the window to it, but
