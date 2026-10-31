@@ -408,6 +408,11 @@ layout. Verify that the item contains its controls and that scrolling can reach
 the full content. A child's own text can fit while the list still hides it or
 overlaps it with the next row.
 
+For a composite form field, give its nested layout a `SetMinimumSize` constraint.
+Qt can allocate less than its minimum size hint near a form's wrapping boundary.
+Check widths around that boundary, including with the page scrollbar present,
+and verify that the controls fit their field and the field fits its group.
+
 Layout checks cover only the states and widgets the tests exercise. Inspect
 custom rendering, native platform dialogs, the separate open-file picker and
 untested states manually, and record any remaining verification limits with the

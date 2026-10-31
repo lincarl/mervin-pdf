@@ -479,6 +479,9 @@ QWidget *SettingsDialog::buildGeneralPage()
     auto *durationLayout = new QHBoxLayout(durationRow);
     durationLayout->setContentsMargins(0, 0, 0, 0);
     durationLayout->setSpacing(12);
+    // QFormLayout can undersize a field near its wrap boundary. Keep this
+    // container wide enough for both controls as their size requirements change.
+    durationLayout->setSizeConstraint(QLayout::SetMinimumSize);
     unloadInactiveSpin_ = new QSpinBox(durationRow);
     unloadInactiveSpin_->setObjectName(QStringLiteral("unloadInactiveMinutes"));
     unloadInactiveSpin_->setRange(1, mervin::Settings::kMaxUnloadInactiveMinutes);
