@@ -1893,10 +1893,21 @@ Save Page As uses the same mirrored icon.
 
 Fit page and Fit width have separate toolbar buttons, each selecting its mode
 without toggling. Their icons overlay a centered directional arrow at 65% scale
-inside Lucide's square, with the same stroke weight on both layers. The menu uses
-the same actions and icons. Ctrl+1 selects Fit page, Ctrl+2 selects Fit width,
-and Home continues to toggle between them, selecting Fit page from custom zoom.
-The fit actions are disabled while the Recent view is active or no document is open.
+inside Lucide's square, with the same stroke weight on both layers. Ctrl+1 selects
+Fit page, Ctrl+2 selects Fit width, and Home continues to toggle between them,
+selecting Fit page from custom zoom. The fit actions are disabled while the Recent
+view is active or no document is open.
+
+The main menu button sits at the far end of the toolbar and uses Lucide's ellipsis
+(⋯). It used to be a ☰ directly before Recent, whose list-clock icon also starts
+with stacked lines. Qt opens a tool button's menu from the button's near edge, so
+the window lines the menu's far edge up with the button instead, keeping it inside
+a window that is not maximized. The menu leaves out the commands that have a
+toolbar button: Print, Fit page, Fit width, Comment, OCR Selection and Measure.
+Their shortcuts are registered on the window, so they work while the toolbar is
+hidden. As the last toolbar item, the menu button is the first that `QToolBar`
+would move into its overflow popup. The window's minimum width therefore follows
+the toolbar's width, also when a longer page count widens it.
 
 The application and packages share the repository's approved icon assets.
 

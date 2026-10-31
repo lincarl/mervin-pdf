@@ -545,7 +545,7 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     </message>
     <message>
         <source>Select &amp; Annotate</source>
-        <extracomment>Section heading in the main menu: selecting text and the comment, OCR, measuring and form tools. Plain menu section heading. The ampersand means &quot;and&quot;, not a keyboard mnemonic.</extracomment>
+        <extracomment>Section heading in the main menu: selecting text and filling in forms. Plain menu section heading. The ampersand means &quot;and&quot;, not a keyboard mnemonic.</extracomment>
         <translation>Wybierz tekst i dodaj adnotację</translation>
     </message>
     <message>

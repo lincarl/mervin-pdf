@@ -506,6 +506,15 @@ foreach(lang IN ITEMS ${QT_I18N_SOURCE_LANGUAGE} ${QT_I18N_TRANSLATED_LANGUAGES}
         SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 endforeach()
 
+# The main menu button and its menu. The test sets up two offscreen monitors itself.
+qt_add_executable(tst_main_menu tst_main_menu.cpp)
+target_link_libraries(tst_main_menu PRIVATE mervin_app Qt6::Test)
+set_target_properties(tst_main_menu PROPERTIES WIN32_EXECUTABLE OFF)
+add_test(NAME tst_main_menu COMMAND tst_main_menu)
+set_tests_properties(tst_main_menu PROPERTIES
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
+
 qt_add_executable(tst_document_suspension tst_document_suspension.cpp Stalls.h)
 target_link_libraries(tst_document_suspension PRIVATE mervin_app Qt6::Test)
 set_target_properties(tst_document_suspension PROPERTIES WIN32_EXECUTABLE OFF)
