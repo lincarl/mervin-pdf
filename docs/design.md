@@ -244,6 +244,14 @@ Each `TabPage` groups one tab with its viewer, document when loaded, and retaine
 state when unloaded. Tab detachment and merging reparent this tab object rather
 than reopening the file.
 
+Open from URL creates its download folder, streams to a `QSaveFile` and commits
+on one background worker. The reply and each write use a 64 KiB buffer, so a slow
+drive stops further reads instead of queuing the download in memory. Cancellation
+or window destruction abandons the worker without waiting for storage. It skips
+remaining work when the current OS call returns, although a commit already in
+progress may complete. The progress dialog stays available through the commit.
+Only successful completion queues the local PDF through the background loader.
+
 #### Disk access still on the UI thread
 
 These still touch the disk on the UI thread and are planned work:
@@ -257,8 +265,6 @@ These still touch the disk on the UI thread and are planned work:
   run on the UI thread by design.
 - Opening a folder or a link with the system's handler (`QDesktopServices::openUrl`),
   which on Windows waits for `ShellExecute`.
-- Open from URL creates its cache folder and writes and commits its download on
-  the UI thread. Opening the completed local PDF uses the background loader.
 - Two small updater steps: telling how this copy was installed when the updater
   starts (a registry read on Windows, a check that `$APPIMAGE` is a file on Linux),
   and starting the Windows installer, whose working folder is the download's folder.

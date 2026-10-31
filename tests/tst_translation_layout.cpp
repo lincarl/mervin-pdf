@@ -620,45 +620,78 @@ void TstTranslationLayout::recentTabRow()
     settle();
     checkToolbar(QStringLiteral("Long document toolbar"));
 
-    // Qt opens a tool button's menu from the button's near edge, which would leave the
-    // main menu hanging past the window. It lines up with the button's far edge
-    // instead. Centre the button on the screen first, so that Qt's own placement
-    // would fit there too: a plain offscreen screen is narrower than the window.
-    const QRect screen = menu->screen()->availableGeometry();
-    window.move(window.pos()
-                + QPoint(screen.center().x() - menu->mapToGlobal(menu->rect().center()).x(), 0));
-    settle();
-    bool inspected = false;
-    QTimer inspectMenu;
-    inspectMenu.setSingleShot(true);
-    connect(&inspectMenu, &QTimer::timeout, this, [&] {
-        QPointer<QMenu> popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
-        const auto close = qScopeGuard([popup] { if (popup) popup->close(); });
-        QVERIFY(popup && popup == menu->menu());
+    // Reopening after the theme changes also exercises the menu's size refresh.
+    for (const bool dark : {true, false}) {
+        QGuiApplication::styleHints()->setColorScheme(dark ? Qt::ColorScheme::Dark
+                                                         : Qt::ColorScheme::Light);
+        qApp->setPalette(dark ? mervin::theme::darkPalette(QColor())
+                             : mervin::theme::lightPalette(QColor()));
+        mervin::Theme::applyApp();
         settle();
-        // Qt wraps a menu taller than the screen into columns. Arabic at 15 pt needs
-        // 914 px, more than the 800 px offscreen screen and the 826 px baseline work
-        // area, and the offscreen screen is too narrow for the second column. Text fit
-        // is checked where the menu has one column, as in every language at 10 pt.
-        const QList<QAction *> rows = popup->actions();
-        const int firstColumn = popup->actionGeometry(rows.constFirst()).left();
-        if (std::all_of(rows.cbegin(), rows.cend(), [&](QAction *row) {
-                return popup->actionGeometry(row).left() == firstColumn;
-            }))
-            inspectPopup(*popup, QStringLiteral("Main menu"));
-        const QRect button(menu->mapToGlobal(QPoint()), menu->size());
-        const QRect shown = popup->geometry();
-        const int lined = window.isRightToLeft() ? button.left() : button.right() + 1 - shown.width();
-        // A menu too wide for the room beside the button stays on the screen instead.
-        if (lined >= screen.left() && lined + shown.width() <= screen.right() + 1)
-            QCOMPARE(shown.left(), lined);
-        else
-            QVERIFY(shown.left() >= screen.left() && shown.right() <= screen.right());
-        inspected = true;
-    });
-    inspectMenu.start(0);
-    menu->showMenu();
-    QVERIFY(inspected);
+        // The menu follows the button's far edge and stays within the available
+        // desktop. Keep the window in its ordinary position for the desktop capture.
+        const QRect screen = menu->screen()->availableGeometry();
+        bool inspected = false;
+        QTimer inspectMenu;
+        inspectMenu.setSingleShot(true);
+        connect(&inspectMenu, &QTimer::timeout, this, [&] {
+            QPointer<QMenu> popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            const auto close = qScopeGuard([popup] { if (popup) popup->close(); });
+            QVERIFY(popup && popup == menu->menu());
+            settle();
+            // A tall menu can wrap into columns. Every column must keep its labels
+            // visible and its actions reachable on the baseline desktop.
+            inspectPopup(*popup, dark ? QStringLiteral("Main menu dark")
+                                      : QStringLiteral("Main menu light"));
+            // Check the painted state mark, not only the action's bounding box.
+            // It must appear opposite the icon, including in right-to-left menus.
+            QCOMPARE(popup->isRightToLeft(), qApp->isRightToLeft());
+            const QImage pixels = popup->grab().toImage();
+            const QColor accent = mervin::Theme::accentColor(
+                mervin::Settings::load().accentColor, QApplication::palette());
+            const auto accentPixels = [&](const QRect &area) {
+                const qreal ratio = pixels.devicePixelRatio();
+                const QRect sample = QRectF(area.x() * ratio, area.y() * ratio,
+                                             area.width() * ratio, area.height() * ratio)
+                                         .toAlignedRect().intersected(pixels.rect());
+                int count = 0;
+                for (int y = sample.top(); y <= sample.bottom(); ++y) {
+                    for (int x = sample.left(); x <= sample.right(); ++x) {
+                        const QColor color = pixels.pixelColor(x, y);
+                        if (std::abs(color.red() - accent.red()) <= 20
+                            && std::abs(color.green() - accent.green()) <= 20
+                            && std::abs(color.blue() - accent.blue()) <= 20)
+                            ++count;
+                    }
+                }
+                return count;
+            };
+            int checked = 0;
+            for (QAction *action : popup->actions()) {
+                if (!action->isChecked() || !action->property("rightCheck").toBool())
+                    continue;
+                const QRect row = popup->actionGeometry(action);
+                const QRect left(row.left(), row.top(), 40, row.height());
+                const QRect right(row.right() - 39, row.top(), 40, row.height());
+                QVERIFY2(accentPixels(popup->isRightToLeft() ? left : right) > 3,
+                         qPrintable(action->text()));
+                ++checked;
+            }
+            QVERIFY(checked > 0);
+            const QRect button(menu->mapToGlobal(QPoint()), menu->size());
+            const QRect shown = popup->geometry();
+            const int lined = window.isRightToLeft() ? button.left() : button.right() + 1 - shown.width();
+            // A menu too wide for the room beside the button stays on the screen instead.
+            if (lined >= screen.left() && lined + shown.width() <= screen.right() + 1)
+                QCOMPARE(shown.left(), lined);
+            else
+                QVERIFY(shown.left() >= screen.left() && shown.right() <= screen.right());
+            inspected = true;
+        });
+        inspectMenu.start(0);
+        menu->showMenu();
+        QVERIFY(inspected);
+    }
 }
 
 // The notice a tab shows in place of its pages when the drive stops answering while
@@ -993,21 +1026,6 @@ void TstTranslationLayout::inspect(QWidget &widget, const QString &state, QWidge
 void TstTranslationLayout::inspectPopup(QWidget &widget, const QString &state)
 {
     QVERIFY(widget.isVisible());
-    if (!qEnvironmentVariableIsEmpty("MERVIN_LAYOUT_DESKTOP"))
-        QVERIFY2(widget.screen()->availableGeometry().contains(widget.frameGeometry()),
-                 qPrintable(state));
-    const QStringList problems = textfit::check(widget);
-    QVERIFY2(problems.isEmpty(), qPrintable(state + QLatin1Char('\n') + problems.join(u'\n')));
-    if (auto *menu = qobject_cast<QMenu *>(&widget)) {
-        for (QAction *action : menu->actions()) {
-            if (action->isSeparator())
-                continue;
-            const QRect rect = menu->actionGeometry(action);
-            QVERIFY(menu->rect().contains(rect));
-            QVERIFY(menu->fontMetrics().horizontalAdvance(action->text()) <= rect.width());
-            QVERIFY(menu->fontMetrics().height() <= rect.height());
-        }
-    }
     const QString directory = qEnvironmentVariable("MERVIN_LAYOUT_SCREENSHOTS");
     if (!directory.isEmpty()) {
         QVERIFY(QDir().mkpath(directory));
@@ -1018,6 +1036,27 @@ void TstTranslationLayout::inspectPopup(QWidget &widget, const QString &state)
         if (!qEnvironmentVariableIsEmpty("MERVIN_LAYOUT_DESKTOP"))
             QVERIFY(widget.screen()->grabWindow(0).save(
                 QDir(directory).filePath(QStringLiteral("desktop-") + name)));
+    }
+    if (!qEnvironmentVariableIsEmpty("MERVIN_LAYOUT_DESKTOP"))
+        QVERIFY2(widget.screen()->availableGeometry().contains(widget.frameGeometry()),
+                 qPrintable(state));
+    const QStringList problems = textfit::check(widget);
+    QVERIFY2(problems.isEmpty(), qPrintable(state + QLatin1Char('\n') + problems.join(u'\n')));
+    if (auto *menu = qobject_cast<QMenu *>(&widget)) {
+        QList<int> columns;
+        for (QAction *action : menu->actions()) {
+            if (!action->isVisible() || action->isSeparator())
+                continue;
+            const QRect rect = menu->actionGeometry(action);
+            QVERIFY2(rect.isValid() && menu->rect().contains(rect), qPrintable(action->text()));
+            QVERIFY(menu->fontMetrics().horizontalAdvance(action->text()) <= rect.width());
+            QVERIFY(menu->fontMetrics().height() <= rect.height());
+            QCOMPARE(menu->actionAt(rect.center()), action);
+            if (!columns.contains(rect.left()))
+                columns.append(rect.left());
+        }
+        if (!qEnvironmentVariableIsEmpty("MERVIN_LAYOUT_DESKTOP"))
+            qInfo() << state << "geometry" << menu->geometry() << "columns" << columns.size();
     }
 }
 
@@ -1895,5 +1934,29 @@ void TstTranslationLayout::toolPanels()
     inspect(card, QStringLiteral("Annotation card"));
 }
 
-QTEST_MAIN(TstTranslationLayout)
+// Match the baseline work area in headless catalog checks. Qt's default 800 by
+// 800 screen is too narrow for the columns of the large-font Arabic main menu.
+// Real desktop acceptance still uses its window manager's available geometry.
+int main(int argc, char **argv)
+{
+    const QString workingDirectory = QDir::currentPath();
+    QTemporaryDir configuration;
+    if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen")) {
+        if (!configuration.isValid() || !QDir::setCurrent(configuration.path()))
+            return 1;
+        QFile file(QStringLiteral("screen.json"));
+        const QByteArray screen = R"({"windowFrameMargins": false, "screens": [
+            {"name": "baseline", "x": 0, "y": 0, "width": 1536, "height": 835}]})";
+        if (!file.open(QIODevice::WriteOnly) || file.write(screen) != screen.size())
+            return 1;
+        file.close();
+        qputenv("QT_QPA_PLATFORM", "offscreen:configfile=screen.json");
+    }
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    if (!QDir::setCurrent(workingDirectory))
+        return 1;
+    TstTranslationLayout test;
+    return QTest::qExec(&test, argc, argv);
+}
 #include "tst_translation_layout.moc"

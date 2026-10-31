@@ -13,12 +13,12 @@ inline QString downloadDirectory()
     // the OS-configured Downloads location (including Windows folder redirection
     // and OneDrive). A --profile run stays fully isolated as promised by that flag.
     if (!ConfigPaths::overrideDir().isEmpty()) {
-        return QDir(ConfigPaths::configDir()).filePath(QStringLiteral("downloads"));
+        return QDir(ConfigPaths::configDirPath()).filePath(QStringLiteral("downloads"));
     }
 
     const QString standard = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
     return standard.isEmpty()
-               ? QDir(ConfigPaths::configDir()).filePath(QStringLiteral("downloads"))
+               ? QDir(ConfigPaths::configDirPath()).filePath(QStringLiteral("downloads"))
                : standard;
 }
 

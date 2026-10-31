@@ -40,6 +40,7 @@ set(_mervin_tests
     tst_print_range
     tst_print_layout
     tst_url_open
+    tst_url_download
     tst_merge_plan
     tst_extract_plan
     tst_text_index

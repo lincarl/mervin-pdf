@@ -73,6 +73,10 @@ passed as an argument, so put braces around such a body. When a fix reveals a
 reusable translation lesson, add it to this guide in the same change so later
 translators and agents can apply it.
 
+When a command moves out of a menu, update its translator notes and remove
+unneeded menu mnemonic markers. Reuse its existing toolbar wording and
+translations when the meaning is unchanged.
+
 ## Terminology
 
 Use the same term for the same concept throughout each language. These meanings
@@ -308,9 +312,14 @@ QT_QPA_PLATFORM=offscreen ctest --test-dir "$mervin_build_dir" \
   -R 'i18n_catalogs|i18n_content|tst_text_fit|tst_translation_layout' --output-on-failure
 ```
 
+With `QT_QPA_PLATFORM=offscreen`, the translation-layout executable supplies a
+1536 by 835 logical screen, matching the baseline Linux work area. It checks
+every main-menu column at both font sizes in dark and light themes. An explicit
+offscreen configuration remains unchanged.
+
 For offscreen checks at 125 percent scaling, configure the virtual screen as well
-as `QT_SCALE_FACTOR=1.25`. Qt's default 800 by 800 screen becomes only 640 by 640
-logical pixels and can produce unrelated dialog-sizing failures. Use
+as `QT_SCALE_FACTOR=1.25`. Scaling either the suite's logical screen or Qt's default
+800 by 800 screen reduces the work area and can produce unrelated sizing failures. Use
 `QT_QPA_PLATFORM=offscreen:configfile=<path>` with a screen configuration matching
 the 1920 by 1080 physical baseline and its measured available work area. Verify
 that Qt reports 1536 by 864 logical pixels and device pixel ratio 1.25. An available

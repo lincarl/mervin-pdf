@@ -32,8 +32,8 @@ QColor iconInk(const QPalette &pal);
 
 // The resolved accent colour: a custom "#RRGGBB" accent setting as-is, or for
 // "system"/empty the OS accent in `pal` (see systemAccent) - exactly the
-// resolution the stylesheet uses. The main menu paints its right-side check
-// marks with it so they match the design's blue menu checks in both themes.
+// resolution the stylesheet uses. The main menu paints its check
+// marks opposite the icons with it so they match the design's blue menu checks in both themes.
 QColor accentColor(const QString &accentSetting, const QPalette &pal);
 
 // The accent the last applyApp() resolved, for painters the stylesheet cannot

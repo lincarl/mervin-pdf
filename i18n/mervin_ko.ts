@@ -507,28 +507,22 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
     </message>
     <message>
         <source>Fit Page</source>
-        <extracomment>Zoom choice: scale the page so the whole page fits the window.</extracomment>
+        <extracomment>Toolbar command that fits the whole page in the window.
+----------
+Zoom choice: scale the page so the whole page fits the window.</extracomment>
         <translation>페이지에 맞춤</translation>
     </message>
     <message>
         <source>Fit Width</source>
-        <extracomment>Zoom choice: scale the page so its width fits the window.</extracomment>
+        <extracomment>Toolbar command that fits the page width in the window.
+----------
+Zoom choice: scale the page so its width fits the window.</extracomment>
         <translation>너비에 맞춤</translation>
     </message>
     <message>
         <source>View</source>
         <extracomment>Section heading in the main menu (noun): how the document is shown.</extracomment>
         <translation>보기</translation>
-    </message>
-    <message>
-        <source>Fit &amp;Page</source>
-        <extracomment>Zoom command that fits the whole page in the window. The ampersand marks the menu keyboard access key.</extracomment>
-        <translation>&amp;페이지에 맞춤</translation>
-    </message>
-    <message>
-        <source>Fit &amp;Width</source>
-        <extracomment>Zoom command that fits the page width in the window. The ampersand marks the menu keyboard access key.</extracomment>
-        <translation>&amp;너비에 맞춤</translation>
     </message>
     <message>
         <source>Scroll</source>
