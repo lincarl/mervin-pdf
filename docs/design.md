@@ -1944,7 +1944,7 @@ model downloads, and update checks/downloads.
 
 ## MuPDF patches
 
-Mervin builds MuPDF 1.28.5 with the patches in `scripts/mupdf-patches`. Each patch
+Mervin builds MuPDF 1.28.6 with the patches in `scripts/mupdf-patches`. Each patch
 file starts with a note that says what it changes in MuPDF, why, and when Mervin
 changed it. `scripts/build-mupdf-linux.sh` and `scripts/build-mupdf-windows.ps1`
 apply the patches with `git apply` to the source release they download and verify,
@@ -1952,11 +1952,13 @@ and record the patch set's SHA-256 in `mervin-patch-set.sha256` beside the
 libraries. `cmake/FindMuPDF.cmake` refuses libraries built without the current set,
 and the CI cache keys use the same identity, so no build links an unpatched or
 outdated MuPDF. `tst_mupdf_store` covers the store fixes and `tst_form_model`
-covers inherited list-field appearance properties.
+covers inherited list-field appearance properties. MuPDF 1.28.6 changes its
+Brotli dependency but leaves all five patch targets unchanged. The patches
+retain their original 1.28.5 provenance and apply unchanged to 1.28.6.
 
 The first three patches are Artifex's fixes for MuPDF bug 709849. Artifex committed them to
 MuPDF's master branch on 2026-10-20, but no release has them yet, so Mervin applies
-them to 1.28.5. Each one makes the same
+them to 1.28.6. Each one makes the same
 changes as its MuPDF commit. When MuPDF is updated, delete the patches whose fixes the
 new release has, either as the master commit or as a backport with the same title.
 Backports to a release branch get new commit IDs. Rework a remaining patch that no
@@ -2027,7 +2029,7 @@ AppImage/DEB/RPM artifacts. Release packages use official Qt 6.12.0 on both
 platforms. Linux development builds still support Qt 6.9 or newer for the
 translation toolchain. Bundled dependencies and accepted upstream gaps are
 documented in [BUILDING.md](BUILDING.md#bundled-dependency-limits).
-MuPDF 1.28.5 is built from source with OCR support and the patches described in
+MuPDF 1.28.6 is built from source with OCR support and the patches described in
 [MuPDF patches](#mupdf-patches).
 
 QtTest targets cover the core stores, IPC, rendering helpers, document tools,

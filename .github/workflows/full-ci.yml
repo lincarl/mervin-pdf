@@ -251,10 +251,10 @@ jobs:
       - name: Cache MuPDF
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: ~/src/mupdf-1.28.5-source
+          path: ~/src/mupdf-1.28.6-source
           # The patch set's identity, as the build script records it, gives each
           # MuPDF patch set its own cached build.
-          key: mupdf-1.28.5-ubuntu24-tests-v1-${{ steps.mupdf-patches.outputs.id }}
+          key: mupdf-1.28.6-ubuntu24-tests-v1-${{ steps.mupdf-patches.outputs.id }}
       - name: Build MuPDF
         run: echo "MUPDF_DIR=$(scripts/build-mupdf-linux.sh)" >> "$GITHUB_ENV"
       - name: Configure
@@ -333,10 +333,10 @@ jobs:
       - name: Cache MuPDF
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: ~/src/mupdf-1.28.5-source
+          path: ~/src/mupdf-1.28.6-source
           # The patch set's identity, as the build script records it, gives each
           # MuPDF patch set its own cached build.
-          key: mupdf-1.28.5-ubuntu2604-tests-v1-${{ steps.mupdf-patches.outputs.id }}
+          key: mupdf-1.28.6-ubuntu2604-tests-v1-${{ steps.mupdf-patches.outputs.id }}
       - name: Build MuPDF
         run: echo "MUPDF_DIR=$(scripts/build-mupdf-linux.sh)" >> "$GITHUB_ENV"
       - name: Configure
@@ -366,8 +366,8 @@ jobs:
       # Store manifests require a nonzero major version. Verification packages
       # use this fixed test version and are never submitted to Microsoft Store.
       MERVIN_VERSION: "1.0.0"
-      MUPDF_VERSION: "1.28.5"
-      MUPDF_SHA256: "98a5c10cda20c3992cdf76ff6b2a1149c32bd79cc796d3f703230b1185b7e934"
+      MUPDF_VERSION: "1.28.6"
+      MUPDF_SHA256: "dc85000640a45d90ca9b77b061f6ca67cce0c4d4fbecf8819647baf573eef101"
       QT_QPA_PLATFORM: offscreen
       MERVIN_TEST_FONT: ${{ github.workspace }}/build/test-fonts/NotoSansCJKsc-Regular.otf
       MERVIN_TEST_TESSDATA_DIR: ${{ github.workspace }}/build/test-tessdata

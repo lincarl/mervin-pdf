@@ -2,7 +2,7 @@
 
 This directory contains the license and notice texts shipped with Mervin PDF distributions.
 
-- `MuPDF-AGPL-3.0.txt` and the bundled-component files were extracted from the verified MuPDF 1.28.5 source archive used by the build.
+- `MuPDF-AGPL-3.0.txt` and the bundled-component files were extracted from the verified MuPDF 1.28.6 source archive used by the build.
 - `Qt-*` comes from Qt Base 6.12.0.
 - [`qt/`](qt/README.md) contains Qt's bundled third-party notices and the Linux SDK's ICU license.
 - `qpdf-*` comes from qpdf 12.4.2.

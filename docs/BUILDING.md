@@ -4,7 +4,7 @@ Windows 11, x64, MSVC. The build uses CMake + Ninja, vcpkg (manifest mode) for
 most C/C++ deps, Qt 6 from aqtinstall, and **MuPDF built from source** (it is not
 in the vcpkg registry).
 
-The pinned dependency set is Qt 6.12.0, MuPDF 1.28.5, qpdf 12.4.2 and toml++
+The pinned dependency set is Qt 6.12.0, MuPDF 1.28.6, qpdf 12.4.2 and toml++
 3.4.0. `vcpkg.json` pins the 2026.10.16 registry release for qpdf, toml++ and
 their dependencies, including zlib 1.3.2, libjpeg-turbo 3.2.0 and libspng 0.7.4.
 Linux release packages bundle the same upstream Qt and vcpkg library versions.
@@ -36,15 +36,15 @@ through the application. The project retains official Qt binaries, so replacing
 separate vcpkg libraries does not fix Qt's embedded copies. A later Qt release or
 a custom Qt build is required to replace them.
 
-MuPDF 1.28.5 also retains its upstream-selected third-party bundle and Mervin's
+MuPDF 1.28.6 also retains its upstream-selected third-party bundle and Mervin's
 existing patches. Its Tesseract 5.5.2 predates the model-deserialization fixes in
 [5.5.3](https://github.com/tesseract-ocr/tesseract/releases/tag/5.5.3), and its
 MuJS 1.3.10 predates the fixes in
 [1.3.11](https://github.com/ArtifexSoftware/mujs/compare/1.3.10...1.3.11).
 Mervin does not enable PDF JavaScript. Its OCR model-container checks do not
 replace Tesseract's internal neural-network validation. Independent updates must
-preserve Artifex's integration changes and pass both platform builds. MuPDF's
-Brotli fork already includes the security fix later released in Brotli 1.2.1.
+preserve Artifex's integration changes and pass both platform builds. MuPDF 1.28.6
+updates its Brotli fork to a revision after 1.2.1.
 
 Bundled Linux libraries receive updates through new Mervin packages rather than
 the distribution's Qt or qpdf packages. Core operating-system and display-driver
@@ -96,7 +96,7 @@ C:\dev\vcpkg\bootstrap-vcpkg.bat
 
 ```powershell
 # Run from a VS Dev Shell. Use a new destination to retain earlier MuPDF builds.
-$env:MUPDF_DIR = & scripts\build-mupdf-windows.ps1 -Dest C:\dev\src\mupdf-1.28.5-static-deps-source | Select-Object -Last 1
+$env:MUPDF_DIR = & scripts\build-mupdf-windows.ps1 -Dest C:\dev\src\mupdf-1.28.6-static-deps-source | Select-Object -Last 1
 # => platform\win32\x64\Release\*.lib below MUPDF_DIR
 ```
 
@@ -151,7 +151,7 @@ Set the Qt, vcpkg and MuPDF roots before configuring.
 ```powershell
 $env:VCPKG_ROOT = "C:\dev\vcpkg"
 $env:QT6_DIR    = "C:\dev\Qt\6.12.0\msvc2022_64"
-$env:MUPDF_DIR  = "C:\dev\src\mupdf-1.28.5-static-deps-source"
+$env:MUPDF_DIR  = "C:\dev\src\mupdf-1.28.6-static-deps-source"
 & "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -SkipAutomaticLocation
 cmake --preset x64-release
 cmake --build --preset x64-release
@@ -311,7 +311,7 @@ python -m pip install "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e
 python -m aqt install-qt linux desktop 6.12.0 linux_gcc_64 --outputdir "$HOME/dev-tools/Qt"
 export QT6_DIR="$HOME/dev-tools/Qt/6.12.0/gcc_64"
 export VCPKG_ROOT="$(scripts/bootstrap-vcpkg-linux.sh)"
-export MUPDF_DIR="$(scripts/build-mupdf-linux.sh "$HOME/dev-tools/mupdf-1.28.5-source")"
+export MUPDF_DIR="$(scripts/build-mupdf-linux.sh "$HOME/dev-tools/mupdf-1.28.6-source")"
 cmake --preset linux-bundled
 cmake --build --preset linux-bundled --parallel 2
 python scripts/fetch-test-font.py build/linux-bundled/test-fonts

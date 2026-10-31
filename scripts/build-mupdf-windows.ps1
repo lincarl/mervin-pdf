@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-  Build MuPDF 1.28.5 static libraries on Windows (MSVC) via its VS solution,
+  Build MuPDF 1.28.6 static libraries on Windows (MSVC) via its VS solution,
   exactly as mervin-pdf's cmake/FindMuPDF.cmake expects.
 
 .DESCRIPTION
-  Downloads the official 1.28.5 source release (the tarball ships every
+  Downloads the official 1.28.6 source release (the tarball ships every
   thirdparty submodule pre-extracted, incl. tesseract/leptonica), applies the
   patches in scripts\mupdf-patches with git apply, builds
   platform\win32\mupdf.sln in Release|x64, and verifies libmupdf.lib landed in
@@ -26,7 +26,7 @@
   already includes Tesseract OCR and the codecs.
 
 .PARAMETER Dest
-  MuPDF source root to build in / extract to. Default C:\dev\src\mupdf-1.28.5-source
+  MuPDF source root to build in / extract to. Default C:\dev\src\mupdf-1.28.6-source
   (C:\dev is where this project keeps its development tools; the CI job caches the
   same path and so relies on this default).
 
@@ -38,14 +38,14 @@
   Only write the patch set's identity to stdout, which the CI cache keys use.
 #>
 param(
-    [string]$Dest = "C:\dev\src\mupdf-1.28.5-source",
+    [string]$Dest = "C:\dev\src\mupdf-1.28.6-source",
     [switch]$NoLtcg,
     [switch]$PrintPatchSet
 )
 
 $ErrorActionPreference = "Stop"
-$version = "1.28.5"
-$sha256 = "98a5c10cda20c3992cdf76ff6b2a1149c32bd79cc796d3f703230b1185b7e934"
+$version = "1.28.6"
+$sha256 = "dc85000640a45d90ca9b77b061f6ca67cce0c4d4fbecf8819647baf573eef101"
 $url = "https://mupdf.com/downloads/archive/mupdf-$version-source.tar.gz"
 $lib = Join-Path $Dest "platform\win32\x64\Release\libmupdf.lib"
 $flavorFile = Join-Path (Split-Path $lib -Parent) "mervin-build-flavor.txt"

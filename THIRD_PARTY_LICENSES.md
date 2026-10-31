@@ -13,7 +13,7 @@ in the [`licenses/`](licenses/) directory.
 
 | Component | Version (pinned) | Licence | Linking | Notes |
 |---|---|---|---|---|
-| MuPDF | 1.28.5 | AGPL v3 or commercial (Artifex) | Static | Dominant distribution constraint. Built from the official source release with Mervin's patches in `scripts/mupdf-patches`, unavailable in vcpkg. |
+| MuPDF | 1.28.6 | AGPL v3 or commercial (Artifex) | Static | Dominant distribution constraint. Built from the official source release with Mervin's patches in `scripts/mupdf-patches`, unavailable in vcpkg. |
 | Qt 6 | 6.12.0 official binaries on Windows and Linux | LGPL v3 or commercial | **Dynamic** | Packages include Qt's libraries and plugins. Do not static-link. |
 | qpdf | 12.4.2 (vcpkg baseline) | Apache 2.0 | Windows static; Linux bundled shared library | Page operations and security. |
 | toml++ | 3.4.0 (vcpkg baseline or pinned development fallback) | MIT | Windows static; Linux bundled shared library or development header-only fallback | Config-file parsing and saving. |
@@ -67,14 +67,14 @@ with every installer.
   be purchased from Artifex.
 - **Modified MuPDF:** Mervin changes MuPDF with the patch files in
   `scripts/mupdf-patches`. Each one states what it changes and the date of the
-  change. The build scripts apply them to the MuPDF 1.28.5 source release, which
+  change. The build scripts apply them to the MuPDF 1.28.6 source release, which
   they download and verify by SHA-256. Windows builds also define
   `FZ_HIDE_INTERNAL_JPEG` in MuPDF's `scripts/libjpeg/jconfig.h` through
   `scripts/build-mupdf-windows.ps1`, which renames MuPDF's bundled JPEG symbols.
   The source of a released build is <https://github.com/lincarl/mervin-pdf> at
   the release's tag together with
-  <https://mupdf.com/downloads/archive/mupdf-1.28.5-source.tar.gz> (SHA-256
-  `98a5c10cda20c3992cdf76ff6b2a1149c32bd79cc796d3f703230b1185b7e934`).
+  <https://mupdf.com/downloads/archive/mupdf-1.28.6-source.tar.gz> (SHA-256
+  `dc85000640a45d90ca9b77b061f6ca67cce0c4d4fbecf8819647baf573eef101`).
 
 ## LGPL implications for Qt (relevant only on distribution)
 

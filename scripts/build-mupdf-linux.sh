@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build MuPDF 1.28.5 static libraries (with bundled Tesseract OCR + codecs) on
+# Build MuPDF 1.28.6 static libraries (with bundled Tesseract OCR + codecs) on
 # Linux, exactly as mervin-pdf's cmake/FindMuPDF.cmake expects.
 #
 #   Usage: scripts/build-mupdf-linux.sh [DEST_DIR]
@@ -36,8 +36,8 @@ set -euo pipefail
 # the locale.
 export LC_ALL=C
 
-VERSION="1.28.5"
-SHA256="98a5c10cda20c3992cdf76ff6b2a1149c32bd79cc796d3f703230b1185b7e934"
+VERSION="1.28.6"
+SHA256="dc85000640a45d90ca9b77b061f6ca67cce0c4d4fbecf8819647baf573eef101"
 DEST="${1:-$HOME/src/mupdf-${VERSION}-source}"
 URL="https://mupdf.com/downloads/archive/mupdf-${VERSION}-source.tar.gz"
 PATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)/mupdf-patches"
