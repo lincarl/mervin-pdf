@@ -15,8 +15,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "build-mupdf-linux.sh"
-SOURCE_NAME = "mupdf-1.28.5-source"
-RELEASE_SHA256 = "98a5c10cda20c3992cdf76ff6b2a1149c32bd79cc796d3f703230b1185b7e934"
+SOURCE_NAME = "mupdf-1.28.6-source"
+RELEASE_SHA256 = "dc85000640a45d90ca9b77b061f6ca67cce0c4d4fbecf8819647baf573eef101"
 MARKER = Path("build/release/mervin-patch-set.sha256")
 
 # Real tar, mv and make exercise filesystem behavior. Only download/hash and

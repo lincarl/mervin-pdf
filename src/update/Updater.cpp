@@ -433,9 +433,9 @@ void Updater::onDisk(Work work, Done done, bool forOperation)
 
 Updater::~Updater()
 {
-    // The package manager's completion handler closes the note, and it never runs
-    // once this updater is gone. A note left behind blocks the other windows and
-    // can keep the application from quitting.
+    // Completion handlers cannot close these dialogs once this updater is gone.
+    // Delete them now, even when the event loop has already stopped.
+    delete progress_;
     delete busyNote_;
     clearStaging();
     if (g_instance == this)

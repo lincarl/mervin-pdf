@@ -349,6 +349,8 @@ private slots:
     void hashlessPendingRequiresRelease();
     void stagedPackageManagerLifetime_data();
     void stagedPackageManagerLifetime();
+    void downloadProgressGoesWithTheUpdater_data();
+    void downloadProgressGoesWithTheUpdater();
     void busyNoteGoesWithTheUpdater();
     void missingPackageManagerKeepsRetry_data();
     void missingPackageManagerKeepsRetry();
@@ -1301,6 +1303,56 @@ void TestUpdater::stagedPackageManagerLifetime()
     QCOMPARE(QSettings().value(stateKey(u"pendingFile")).toString(), downloadedPath());
     QCOMPARE(QSettings().value(stateKey(u"pendingSha256")).toString(), kDownloadSha256);
     QCOMPARE(observer.messages.isEmpty(), !launchFails && (exitCode == 0 || exitCode == 126));
+}
+
+void TestUpdater::downloadProgressGoesWithTheUpdater_data()
+{
+    QTest::addColumn<bool>("hasParent");
+    QTest::addColumn<bool>("destroyParentFirst");
+    QTest::newRow("parentless") << false << false;
+    QTest::newRow("live-parent") << true << false;
+    QTest::newRow("destroyed-parent") << true << true;
+}
+
+// The dialog must go immediately with its updater, regardless of widget ownership.
+void TestUpdater::downloadProgressGoesWithTheUpdater()
+{
+    QFETCH(bool, hasParent);
+    QFETCH(bool, destroyParentFirst);
+    std::unique_ptr<QDialog> settingsDialog;
+    if (hasParent) {
+        settingsDialog = std::make_unique<QDialog>();
+        settingsDialog->setAttribute(Qt::WA_DontShowOnScreen);
+        settingsDialog->setModal(true);
+        settingsDialog->show();
+        QTRY_COMPARE(QApplication::activeModalWidget(), settingsDialog.get());
+    } else {
+        QVERIFY(!QApplication::activeWindow());
+        QVERIFY(!QApplication::activeModalWidget());
+    }
+
+    QPointer<QProgressDialog> progress;
+    const auto removeProgress = qScopeGuard([&] { delete progress.data(); });
+    {
+        Updater updater;
+        updater.downloadVersion_ = kVersion;
+        auto *reply = new DownloadReply(&updater);
+        updater.reply_ = reply;
+        updater.showProgress();
+        progress = updater.progress_;
+        QVERIFY(progress);
+        QCOMPARE(progress->parentWidget(), settingsDialog.get());
+        QTRY_VERIFY(progress->isVisible());
+
+        if (destroyParentFirst) {
+            settingsDialog.reset();
+            QVERIFY(!progress);
+            QVERIFY(!updater.progress_);
+        }
+    }
+    // No event processing here, so deleteLater cannot satisfy the ownership rule.
+    QVERIFY(!progress);
+    QCOMPARE(QApplication::activeModalWidget(), settingsDialog.get());
 }
 
 // The note blocks the windows while the package manager runs. An updater that
