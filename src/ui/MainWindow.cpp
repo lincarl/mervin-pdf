@@ -2251,13 +2251,17 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     // Qt opens a tool button's menu from the button's near edge, so the main menu
     // would hang past the far end of a window that is not maximized. Line its far
     // edge up with the button instead, as browsers do with their menus, and keep it
-    // on the screen. The show event comes before the popup appears.
+    // on the button's screen, which for a window across two monitors need not be
+    // the window's. The show event comes before the popup appears.
     if (moreButton_ && watched == moreButton_->menu() && event->type() == QEvent::Show) {
         auto *menu = static_cast<QWidget *>(watched);
         const QRect button(moreButton_->mapToGlobal(QPoint()), moreButton_->size());
-        const QRect screen = moreButton_->screen()->availableGeometry();
+        QScreen *screen = moreButton_->screen()->virtualSiblingAt(button.center());
+        if (!screen)
+            screen = moreButton_->screen();
+        const QRect area = screen->availableGeometry();
         const int x = isRightToLeft() ? button.left() : button.right() + 1 - menu->width();
-        menu->move(qMax(screen.left(), qMin(x, screen.right() + 1 - menu->width())), menu->y());
+        menu->move(qMax(area.left(), qMin(x, area.right() + 1 - menu->width())), menu->y());
     }
 
     if (watched == docTabBar_ && event->type() == QEvent::MouseButtonRelease) {
