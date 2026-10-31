@@ -1351,10 +1351,11 @@ void MainWindow::createMenus()
     }
     mainMenu->addSeparator();
 
-    // Select & Annotate - selection plus the form tools.
-    //: Section heading in the main menu: selecting text and filling in forms.
-    //: Plain menu section heading. The ampersand means "and", not a keyboard mnemonic.
-    addSectionHeader(mainMenu, tr("Select & Annotate"));
+    // Text & Forms - Select All plus the form tools.
+    //: Section heading in the main menu (nouns). Its items select all of the document's
+    //: text and fill in or highlight form fields. The ampersand means "and", not a
+    //: keyboard mnemonic.
+    addSectionHeader(mainMenu, tr("Text & Forms"));
     mainMenu->addAction(selectAllAction_);
     mainMenu->addAction(formAction_);
     mainMenu->addAction(highlightFormFieldsAction_);

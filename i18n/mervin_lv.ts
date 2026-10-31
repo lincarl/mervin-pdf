@@ -504,6 +504,11 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
         <translation>Pagriezt, dzēst, izvilkt, sadalīt vai apvienot lapas; dokumentu drošība</translation>
     </message>
     <message>
+        <source>Text &amp; Forms</source>
+        <extracomment>Section heading in the main menu (nouns). Its items select all of the document&apos;s text and fill in or highlight form fields. The ampersand means &quot;and&quot;, not a keyboard mnemonic.</extracomment>
+        <translation>Teksts un veidlapas</translation>
+    </message>
+    <message>
         <source>Mervin cannot read this file&apos;s measurements. Measuring is off so that they stay unchanged.</source>
         <extracomment>Shown when the user chooses Measure on a PDF whose saved measurements Mervin cannot read, because they are too large or stored in a form it does not accept. Mervin keeps them unchanged when it saves, so it offers no measuring.</extracomment>
         <translation>Mervin nevar nolasīt šī faila mērījumus. Mērīšana ir izslēgta, lai tie paliktu nemainīti.</translation>
@@ -542,11 +547,6 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
         <source>Panels</source>
         <extracomment>Section heading in the main menu: the side panels (outline, thumbnails, comments).</extracomment>
         <translation>Paneļi</translation>
-    </message>
-    <message>
-        <source>Select &amp; Annotate</source>
-        <extracomment>Section heading in the main menu: selecting text and filling in forms. Plain menu section heading. The ampersand means &quot;and&quot;, not a keyboard mnemonic.</extracomment>
-        <translation>Atlasiet tekstu un komentējiet</translation>
     </message>
     <message>
         <source>Switch to the traditional document theme</source>

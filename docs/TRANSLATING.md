@@ -122,8 +122,10 @@ after Stop waiting. Distinguish a failure to finish submitting a print job from 
 failure to open the document. Earlier pages may already have reached the printer.
 
 Distinguish access-key ampersands from literal conjunctions. The plain menu
-heading "Select & Annotate" means "Select and Annotate". A translation that spells
-out the conjunction must not gain an access-key marker.
+heading "Text & Forms" means "Text and Forms". A translation that spells
+out the conjunction must not gain an access-key marker. A menu section heading
+reuses the words of the items under it, such as the word for forms in Fill Forms
+and Highlight Form Fields.
 
 For document failures, keep a failed read separate from a damaged format or a rejected
 open password. A read failure means the app could not obtain all the file bytes.
