@@ -17,6 +17,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFontDatabase>
+#include <QFormLayout>
 #include <QHash>
 #include <QKeySequence>
 #include <QLabel>
@@ -78,6 +79,8 @@ private slots:
     void wheelDoesNotEditSettings();
     void wheelOverInputsScrollsThePage();
     void generalFitsWhenScreenSpaceAllows();
+    void unloadRowFitsAtWrapBoundary_data();
+    void unloadRowFitsAtWrapBoundary();
     void applyHandsOverPendingChanges();
     void editedChoicesReachApplyAndCancelKeepsTheAppliedValues();
     void okAppliesPendingChangesAndCancelDropsThem();
@@ -789,6 +792,58 @@ void TstSettingsDialog::generalFitsWhenScreenSpaceAllows()
     QCOMPARE(dialog.height(), qMin(availableHeight, wantedHeight));
     if (contentHeight + footer->height() <= availableHeight)
         QCOMPARE(page->verticalScrollBar()->maximum(), 0);
+}
+
+/// Cover the two translations exposed by the Windows baseline.
+void TstSettingsDialog::unloadRowFitsAtWrapBoundary_data()
+{
+    QTest::addColumn<QString>("language");
+    QTest::newRow("Indonesian") << QStringLiteral("id");
+    QTest::newRow("Ukrainian") << QStringLiteral("uk");
+}
+
+/// Keep the composite field and both controls contained as a long form row wraps.
+void TstSettingsDialog::unloadRowFitsAtWrapBoundary()
+{
+    QFETCH(QString, language);
+    const QString previousLanguage = mervin::i18n::current();
+    const QString previousStyle = qApp->styleSheet();
+    const auto restore = qScopeGuard([&] {
+        mervin::i18n::apply(previousLanguage);
+        qApp->setStyleSheet(previousStyle);
+    });
+    mervin::i18n::apply(language);
+    QCOMPARE(mervin::i18n::current(), language);
+    const QPalette palette = mervin::theme::darkPalette(QColor(QStringLiteral("#62C9FF")));
+    qApp->setStyleSheet(mervin::Theme::buildStyleSheet(palette, QStringLiteral("#62C9FF")));
+    SettingsDialog dialog(mervin::Settings{});
+    // Keep the vertical scrollbar present across the wrapping transition.
+    dialog.resize(1000, dialog.minimumHeight());
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    auto *duration = dialog.findChild<QSpinBox *>(QStringLiteral("unloadInactiveMinutes"));
+    auto *never = dialog.findChild<QCheckBox *>(QStringLiteral("neverUnloadDocuments"));
+    QVERIFY(duration && never);
+    QVERIFY(never->text() != QStringLiteral("Never"));
+    QWidget *row = never->parentWidget();
+    QWidget *group = row->parentWidget();
+    auto *form = group->findChild<QFormLayout *>();
+    QVERIFY(form && form->rowCount() == 1);
+    const int threshold = dialog.width() - form->geometry().width()
+        + form->itemAt(0, QFormLayout::LabelRole)->sizeHint().width()
+        + form->itemAt(0, QFormLayout::FieldRole)->minimumSize().width();
+    const int spacing = qMax(0, form->horizontalSpacing());
+    QVERIFY(threshold > dialog.minimumWidth());
+    for (int width = threshold - 1; width <= threshold + spacing + 1; ++width) {
+        dialog.resize(width, dialog.minimumHeight());
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 1000);
+        QVERIFY2(row->rect().contains(duration->geometry()), qPrintable(QString::number(width)));
+        QVERIFY2(row->rect().contains(never->geometry()), qPrintable(QString::number(width)));
+        QVERIFY2(group->rect().contains(row->geometry()), qPrintable(QString::number(width)));
+        QVERIFY(!duration->geometry().intersects(never->geometry()));
+        QVERIFY(duration->width() >= duration->minimumSizeHint().width());
+        QVERIFY(never->width() >= never->sizeHint().width());
+    }
 }
 
 // Apply hands the pending changes over and keeps the dialog open. It is

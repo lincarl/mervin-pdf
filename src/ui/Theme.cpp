@@ -462,12 +462,16 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
                 .arg(css(t.popover), css(t.ink), css(t.border)));
         add(QStringLiteral("QMenu::item { background:transparent; padding:6px 10px;"
                            " border-radius:6px; margin:1px 0; }"));
+        // The main menu paints checks opposite its icons. Reserve their 15 px
+        // width plus an 8 px gap in every column, matching RightCheckMenu.
+        add(QStringLiteral("QMenu[separateChecks=\"true\"]::item { padding-%1:33px; }")
+                .arg(qApp->isRightToLeft() ? QStringLiteral("left") : QStringLiteral("right")));
         add(QStringLiteral("QMenu::item:selected { background:%1; }").arg(css(t.rowHover)));
         // No background on checked rows: hover is the only row tint in a menu, so
         // a filled row always means "the cursor is here". Active state is carried
-        // by the accent check mark alone (the indicator below, or the right-edge
-        // check MainWindow's RightCheckMenu paints for the icon-bearing toggles
-        // whose left indicator the item pipeline suppresses).
+        // by the accent check mark alone (the indicator below, or the trailing-edge
+        // check MainWindow's RightCheckMenu paints opposite the toggles' icons
+        // whose built-in indicator the item pipeline suppresses).
         add(QStringLiteral("QMenu::item:disabled { color:%1; }").arg(css(t.inkDisabled)));
         add(QStringLiteral("QMenu::separator { height:1px; background:%1; margin:6px 4px; }")
                 .arg(css(t.separator)));

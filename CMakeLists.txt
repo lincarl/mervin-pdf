@@ -150,6 +150,8 @@ add_library(mervin_core STATIC
     src/print/PrintLayout.h
     src/net/UrlOpen.cpp
     src/net/UrlOpen.h
+    src/net/UrlDownload.cpp
+    src/net/UrlDownload.h
     src/net/UrlDownloadLocation.h
     src/merge/MergePlan.cpp
     src/merge/MergePlan.h

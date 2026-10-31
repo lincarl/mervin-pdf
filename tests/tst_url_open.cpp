@@ -5,6 +5,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QRegularExpression>
+#include <QScopeGuard>
 #include <QTest>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -23,6 +24,7 @@ private slots:
     void buildsCompatibleRequest();
     void makesSafeCacheName();
     void choosesDownloadDirectory();
+    void downloadDirectoryDoesNotCreateTheProfile();
     void downloadsConfiguredUrl();
 };
 
@@ -132,6 +134,21 @@ void TstUrlOpen::choosesDownloadDirectory()
     QCOMPARE(urlopen::downloadDirectory(),
              QDir(profile.path()).filePath(QStringLiteral("downloads")));
     ConfigPaths::setOverrideDir(originalOverride);
+}
+
+/// Looking up a download path must not create a profile on the caller's thread.
+void TstUrlOpen::downloadDirectoryDoesNotCreateTheProfile()
+{
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString originalOverride = ConfigPaths::overrideDir();
+    const auto restore = qScopeGuard([originalOverride] {
+        ConfigPaths::setOverrideDir(originalOverride);
+    });
+    const QString profile = root.filePath(QStringLiteral("missing/profile"));
+    ConfigPaths::setOverrideDir(profile);
+    QCOMPARE(urlopen::downloadDirectory(), QDir(profile).filePath(QStringLiteral("downloads")));
+    QVERIFY(!QDir(profile).exists());
 }
 
 void TstUrlOpen::downloadsConfiguredUrl()

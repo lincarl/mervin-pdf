@@ -38,6 +38,7 @@
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QProcess>
+#include <QProgressDialog>
 #include <QKeyEvent>
 #include <QSessionManager>
 #include <QWindow>
@@ -1714,6 +1715,42 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(opened->tabCount(), 1, 10000);
         QTRY_VERIFY_WITH_TIMEOUT(currentTab(*opened)->isUsable(), 10000);
         QCOMPARE(currentTab(*opened)->path(), destination);
+        QVERIFY(dialogs.unexpected.isEmpty());
+    }
+
+    /// The real progress Cancel button abandons an idle download without opening a tab.
+    void cancelDownloadKeepsTheWindowAndExistingTabs()
+    {
+        QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost, 0));
+        const QUrl url(QStringLiteral("http://127.0.0.1:%1/source.pdf").arg(server.serverPort()));
+        const QString destination = QDir(urlopen::downloadDirectory()).filePath(urlopen::cachedFileName(url));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        showWindow(*window);
+        QVERIFY(testing::openAndWait(*window, QStringLiteral(MERVIN_FIXTURE_PDF)));
+        Interaction dialogs;
+        dialogs.files << url.toString();
+        QVERIFY(QMetaObject::invokeMethod(window, "onOpen"));
+        QTRY_VERIFY_WITH_TIMEOUT(server.hasPendingConnections(), 10000);
+        QTcpSocket *peer = server.nextPendingConnection();
+        QVERIFY(peer);
+        QTRY_VERIFY_WITH_TIMEOUT(peer->bytesAvailable() > 0, 10000);
+        QVERIFY(peer->readAll().startsWith("GET /source.pdf "));
+        QPointer<QProgressDialog> progress = window->findChild<QProgressDialog *>();
+        QVERIFY(progress);
+        QVERIFY(progress->isVisible());
+        QPushButton *cancel = progress->findChild<QPushButton *>();
+        QVERIFY(cancel);
+        cancel->click();
+        QTRY_VERIFY_WITH_TIMEOUT(!progress, 10000);
+        QTRY_COMPARE_WITH_TIMEOUT(peer->state(), QAbstractSocket::UnconnectedState, 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(QDir(urlopen::downloadDirectory()).entryList(
+                                     QDir::Files | QDir::Hidden).isEmpty(), 10000);
+        QCOMPARE(window->tabCount(), 1);
+        QVERIFY(currentTab(*window)->isUsable());
+        QVERIFY(!QFile::exists(destination));
+        QVERIFY(dialogs.messages.isEmpty());
         QVERIFY(dialogs.unexpected.isEmpty());
     }
 

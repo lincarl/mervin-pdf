@@ -23,6 +23,7 @@
 #include "recent/RecentEntry.h"
 #include "net/UrlOpen.h"
 #include "net/UrlDownloadLocation.h"
+#include "net/UrlDownload.h"
 #include "render/ContentSearch.h"
 #include "render/Document.h"
 #include "render/FormModel.h"
@@ -57,7 +58,6 @@
 #include <QDockWidget>
 #include <QDragEnterEvent>
 #include <QDropEvent>
-#include <QEventLoop>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -74,8 +74,6 @@
 #include <QScopedValueRollback>
 #include <QMessageBox>
 #include <QMouseEvent>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
 #include <QPageLayout>
 #include <QPageSize>
 #include <QPainter>
@@ -86,8 +84,8 @@
 #include <QAbstractButton>
 #include <QPointer>
 #include <QPushButton>
+#include <QProxyStyle>
 #include <QProgressDialog>
-#include <QSaveFile>
 #include <QStyleOptionToolButton>
 #include <QScreen>
 #include <QWindow>
@@ -192,37 +190,43 @@ protected:
     }
 };
 
-// Paint right-edge accent checks for actions tagged "rightCheck". Qt uses the left column for
-// either an icon or a check, so icon-bearing toggles need this separate mark and reserved
-// padding. Checked rows receive no background tint. Resolve the accent on every popup to
-// reflect changes in other windows.
+// Native menus reserve check space in every item, so Qt can size each column.
+// Dark menus use the matching item padding in Theme.cpp because Qt's stylesheet
+// style computes those item sizes without asking its proxy base style.
+class MenuCheckStyle final : public QProxyStyle
+{
+public:
+    explicit MenuCheckStyle(int reserve) : reserve_(reserve) {}
+
+    QSize sizeFromContents(ContentsType type, const QStyleOption *option, const QSize &contents,
+                           const QWidget *widget) const override
+    {
+        QSize size = QProxyStyle::sizeFromContents(type, option, contents, widget);
+        if (type == CT_MenuItem && !mervin::theme::isDark(QApplication::palette()))
+            size.rwidth() += reserve_;
+        return size;
+    }
+
+private:
+    int reserve_;
+};
+
+// Paint accent checks opposite the icons for actions tagged "rightCheck". Qt
+// shares one column between icons and checks, so icon-bearing toggles need their
+// own mark and reserved space. Resolve the accent on every popup.
 class RightCheckMenu : public QMenu
 {
 public:
     explicit RightCheckMenu(QWidget *parent = nullptr)
         : QMenu(parent)
     {
-        // Reserve the check column (see the note above). The first popup is the
-        // earliest point where sizeHint() reflects the polished style metrics,
-        // and aboutToShow still runs before the popup geometry is computed.
-        // minimumWidth is 0 until then, so the reserve is added exactly once and
-        // cannot compound across popups.
-        connect(this, &QMenu::aboutToShow, this, [this] {
-            if (minimumWidth() == 0)
-                setMinimumWidth(sizeHint().width() + kCheckColumn);
-        });
+        setProperty("separateChecks", true);
+        auto *menuStyle = new MenuCheckStyle(kCheckColumn);
+        menuStyle->setParent(this);
+        setStyle(menuStyle);
     }
 
 protected:
-    void changeEvent(QEvent *event) override
-    {
-        // A new style or font re-measures every row: drop the reserve so the next
-        // popup recomputes it against the new metrics.
-        if (event->type() == QEvent::StyleChange || event->type() == QEvent::FontChange)
-            setMinimumWidth(0);
-        QMenu::changeEvent(event);
-    }
-
     void showEvent(QShowEvent *event) override
     {
         // Resolve against the APPLICATION palette, not the menu's own: a popup
@@ -251,8 +255,10 @@ protected:
             const QRect r = actionGeometry(a);
             if (!r.isValid())
                 continue;
-            // Right-aligned inside the item's horizontal padding.
-            const QPointF org(r.right() - kCheckInset - sz, r.top() + (r.height() - sz) / 2.0);
+            // The trailing edge is opposite the icon in either reading direction.
+            const double x = isRightToLeft() ? r.left() + kCheckInset
+                                             : r.right() - kCheckInset - sz;
+            const QPointF org(x, r.top() + (r.height() - sz) / 2.0);
             const double s = sz / 16.0;
             QPainterPath check(org + QPointF(3.2 * s, 8.6 * s));
             check.lineTo(org + QPointF(6.6 * s, 12.0 * s));
@@ -263,8 +269,8 @@ protected:
 
 private:
     static constexpr int kCheckSize = 15;  // matches the QSS QMenu::indicator size
-    static constexpr int kCheckInset = 10; // the row's right padding, from the QSS
-    // Width added to the popup so the check clears the longest label with a gap.
+    static constexpr int kCheckInset = 10; // the row's edge padding, from the QSS
+    // Item space for the check and its gap, also reserved by Theme.cpp.
     static constexpr int kCheckColumn = kCheckSize + 8;
 
     QColor checkColor_; // refreshed in showEvent; falls back to QPalette::Accent
@@ -967,11 +973,10 @@ void MainWindow::createActions()
             v->zoomOut();
     });
 
-    // Separate actions serve the toolbar and menu. Repeating a fit command
-    // keeps that mode; the Home shortcut below still toggles between the two.
-    //: Zoom command that fits the whole page in the window.
-    //: The ampersand marks the menu keyboard access key.
-    fitPageAction_ = new QAction(tr("Fit &Page"), this);
+    // Separate toolbar actions keep the chosen fit mode. The Home shortcut
+    // below still toggles between the two.
+    //: Toolbar command that fits the whole page in the window.
+    fitPageAction_ = new QAction(tr("Fit Page"), this);
     //: Zoom choice: scale the page so the whole page fits the window.
     fitPageAction_->setToolTip(tr("Fit Page"));
     fitPageAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
@@ -979,9 +984,8 @@ void MainWindow::createActions()
         if (auto *v = currentViewer())
             v->setZoomMode(ViewerWidget::ZoomMode::FitPage);
     });
-    //: Zoom command that fits the page width in the window.
-    //: The ampersand marks the menu keyboard access key.
-    fitWidthAction_ = new QAction(tr("Fit &Width"), this);
+    //: Toolbar command that fits the page width in the window.
+    fitWidthAction_ = new QAction(tr("Fit Width"), this);
     //: Zoom choice: scale the page so its width fits the window.
     fitWidthAction_->setToolTip(tr("Fit Width"));
     fitWidthAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_2));
@@ -1030,8 +1034,8 @@ void MainWindow::createActions()
     singleAction_->setData(static_cast<int>(ViewLayout::Scroll::Single));
     for (QAction *a : {continuousAction_, singleAction_}) {
         a->setCheckable(true);
-        // These carry a left glyph icon, so the menu marks the active mode with
-        // a right-side check instead of the (icon-suppressed) left indicator.
+        // These carry a glyph icon, so the menu marks the active mode with
+        // a check on the opposite edge instead of the icon-suppressed indicator.
         a->setProperty("rightCheck", true);
         connect(a, &QAction::triggered, this, [this, a] {
             if (auto *v = currentViewer())
@@ -1300,7 +1304,7 @@ void MainWindow::createMenus()
     // The former menu bar (File / Edit / View / Document / Help) now lives in the
     // toolbar's ⋯ popup. Build it as that button's menu and hide the classic bar.
     // RightCheckMenu (not a plain QMenu) so the scroll-mode items can show their
-    // active check on the right, beside their left glyph icons.
+    // active check opposite their glyph icons in either reading direction.
     QMenu *mainMenu = new RightCheckMenu(this);
     moreButton_->setMenu(mainMenu);
     mainMenu->installEventFilter(this); // lines the popup up with the button, see eventFilter
@@ -1339,7 +1343,7 @@ void MainWindow::createMenus()
     mainMenu->addAction(singleAction_);
     mainMenu->addSeparator();
 
-    // Panels - the navigation docks (icon + right-side check when shown).
+    // Panels - the navigation docks (icon and a separate check when shown).
     //: Section heading in the main menu: the side panels (outline, thumbnails, comments).
     addSectionHeader(mainMenu, tr("Panels"));
     for (QDockWidget *d : {outlineDock_, thumbnailDock_, commentsDock_}) {
@@ -1800,7 +1804,7 @@ void MainWindow::queueOpenPaths(const QStringList &paths, bool inNewWindow)
                 localPaths.append(path);
             else
                 self->openFile(path);
-            // URL setup processes events. Retain the rest if session end or a
+            // Opening can process events. Retain the rest if session end or a
             // newly opened modal blocks delivery, without repeating this URL.
             if (!self)
                 return;
@@ -1822,23 +1826,12 @@ void MainWindow::queueOpenPaths(const QStringList &paths, bool inNewWindow)
     });
 }
 
+/// Keeps download storage work off the UI thread until its local PDF can open.
 void MainWindow::openUrl(const QUrl &url, bool inNewWindow)
 {
     const QString fileName = mervin::urlopen::suggestedFileName(url);
-    const QString cachedName = mervin::urlopen::cachedFileName(url);
-    const QString downloadDir = mervin::urlopen::downloadDirectory();
-    if (!QDir().mkpath(downloadDir)) {
-        QMessageBox::warning(this, tr("Open from URL"),
-                             tr("Could not create the download folder."));
-        return;
-    }
-
-    const QString destination = QDir(downloadDir).filePath(cachedName);
-    auto output = std::make_shared<QSaveFile>(destination);
-    if (!output->open(QIODevice::WriteOnly)) {
-        QMessageBox::warning(this, tr("Open from URL"), output->errorString());
-        return;
-    }
+    const QString destination = QDir(mervin::urlopen::downloadDirectory()).filePath(
+        mervin::urlopen::cachedFileName(url));
 
     //: %1 is the name of the file being downloaded.
     const QString downloading = tr("Downloading %1...").arg(fileName);
@@ -1847,48 +1840,35 @@ void MainWindow::openUrl(const QUrl &url, bool inNewWindow)
     progress->setWindowModality(Qt::WindowModal);
     progress->setMinimumWidth(420);
     progress->setMinimumDuration(0);
-    progress->show();
-    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false); // the final commit may still be waiting for storage
 
-    auto *network = new QNetworkAccessManager(progress);
-    const QNetworkRequest request = mervin::urlopen::makeRequest(url);
-    QNetworkReply *reply = network->get(request);
-    auto writeFailed = std::make_shared<bool>(false);
-    connect(progress, &QProgressDialog::canceled, reply, &QNetworkReply::abort);
-    connect(reply, &QNetworkReply::downloadProgress, progress,
+    using Download = mervin::urlopen::UrlDownload;
+    auto *download = new Download(progress);
+    connect(progress, &QProgressDialog::canceled, download, &Download::cancel);
+    connect(download, &Download::downloadProgress, progress,
             [progress](qint64 received, qint64 total) {
                 if (total > 0 && total <= std::numeric_limits<int>::max()) {
                     progress->setRange(0, static_cast<int>(total));
                     progress->setValue(static_cast<int>(received));
                 }
             });
-    connect(reply, &QIODevice::readyRead, this, [reply, output, writeFailed] {
-        const QByteArray chunk = reply->readAll();
-        if (output->write(chunk) != chunk.size()) {
-            *writeFailed = true;
-            reply->abort();
-        }
-    });
-    connect(reply, &QNetworkReply::finished, this,
-            [this, reply, progress, output, writeFailed, destination, inNewWindow] {
-                progress->hide(); // completion must not emit canceled() and abort the reply
-                const auto networkError = reply->error();
-                const QString error = reply->errorString();
-                const bool saved = networkError == QNetworkReply::NoError && output->commit();
-                reply->deleteLater();
+    connect(download, &Download::finished, this,
+            [this, progress, destination, inNewWindow](Download::Error error,
+                                                      const QString &message) {
+                progress->hide(); // completion must not emit canceled()
                 progress->deleteLater();
-                if (!saved) {
-                    output->cancelWriting();
-                    if (*writeFailed || networkError != QNetworkReply::OperationCanceledError) {
-                        QMessageBox::warning(this, tr("Open from URL"),
-                                             (*writeFailed || networkError == QNetworkReply::NoError)
-                                                 ? output->errorString()
-                                                 : error);
-                    }
-                    return;
+                if (error == Download::Error::None) {
+                    queueOpenPaths({destination}, inNewWindow);
+                } else if (error != Download::Error::Canceled) {
+                    QMessageBox::warning(this, tr("Open from URL"),
+                                         error == Download::Error::Directory
+                                             ? tr("Could not create the download folder.")
+                                             : message);
                 }
-                queueOpenPaths({destination}, inNewWindow);
             });
+    download->start(mervin::urlopen::makeRequest(url), destination);
+    progress->show();
 }
 
 /// Captures accepted picker choices and queues the new-window open mode.
