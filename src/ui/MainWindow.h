@@ -334,6 +334,7 @@ private:
     void setUiEnabled(bool enabled);
     void updateForCurrentTab();
     void updatePageLabels(int current, int total);
+    void setPageCountText(const QString &text); // relayouts the toolbar when the width changes
     void syncZoomCombo(mervin::ViewerWidget *viewer);
     void syncViewActions(mervin::ViewerWidget *viewer);
     void wireCurrentViewer(mervin::ViewerWidget *viewer); // connect only the current viewer
@@ -492,8 +493,8 @@ private:
     QAction *fullScreenAction_ = nullptr;
     QAction *alwaysOnTopAction_ = nullptr;
     QAction *settingsAction_ = nullptr;
-    QAction *fitPageAction_ = nullptr;           // toolbar and menu Fit Page
-    QAction *fitWidthAction_ = nullptr;          // toolbar and menu Fit Width
+    QAction *fitPageAction_ = nullptr;           // toolbar Fit Page (Ctrl+1)
+    QAction *fitWidthAction_ = nullptr;          // toolbar Fit Width (Ctrl+2)
     QAction *continuousAction_ = nullptr;
     QAction *singleAction_ = nullptr;
     QAction *twoPageAction_ = nullptr;

@@ -1090,19 +1090,6 @@ void MainWindow::createToolBar()
         return new ToolSeparator(parent);
     };
 
-    // Hamburger menu (☰): first button on the row, holds the former menu-bar
-    // entries. Stays visible in Recent mode (docControls_ hides) so
-    // File/Settings/Help remain reachable. Populated by createMenus(), next.
-    moreButton_ = new QToolButton(this);
-    moreButton_->setObjectName(QStringLiteral("menuButton")); // scopes the arrow-hiding QSS
-    moreButton_->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    moreButton_->setIconSize(QSize(20, 20));
-    moreButton_->setPopupMode(QToolButton::InstantPopup);
-    //: Tooltip of the toolbar button that opens the main menu.
-    moreButton_->setToolTip(tr("Menu"));
-    bar->addWidget(moreButton_);
-    bar->addWidget(makeToolSep(bar)); // divider before the file commands
-
     recentBtn_ = new QToolButton(this);
     recentBtn_->setObjectName(QStringLiteral("recentButton"));
     //: Toolbar button left of Open that shows the recently opened files.
@@ -1282,6 +1269,24 @@ void MainWindow::createToolBar()
     // ⋯ menu (and Ctrl+Shift+F). The toolbar stays focused on the common actions.
 
     bar->addWidget(docControls_);
+
+    // Main menu (⋯): pinned to the far end of the row, away from Recent, whose
+    // list-clock icon also starts with stacked lines. The spacer takes the spare
+    // width. As the last item, the button is the first QToolBar would move into its
+    // overflow popup, so updateToolBarLayout() keeps the window wide enough for the
+    // whole row. Recent only disables docControls_, so Settings stays reachable.
+    // Populated by createMenus(), next.
+    auto *menuSpacer = new QWidget(bar);
+    menuSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    bar->addWidget(menuSpacer);
+    moreButton_ = new QToolButton(this);
+    moreButton_->setObjectName(QStringLiteral("menuButton")); // scopes the arrow-hiding QSS
+    moreButton_->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    moreButton_->setIconSize(QSize(20, 20));
+    moreButton_->setPopupMode(QToolButton::InstantPopup);
+    //: Tooltip of the toolbar button that opens the main menu.
+    moreButton_->setToolTip(tr("Menu"));
+    bar->addWidget(moreButton_);
 }
 
 void MainWindow::createMenus()
@@ -1292,11 +1297,12 @@ void MainWindow::createMenus()
     // active check on the right, beside their left glyph icons.
     QMenu *mainMenu = new RightCheckMenu(this);
     moreButton_->setMenu(mainMenu);
+    mainMenu->installEventFilter(this); // lines the popup up with the button, see eventFilter
     menuBar()->hide();
 
     // Flat overflow menu: actions sit directly on the popup, grouped by
     // separators. This used to mirror a classic File/Edit/View/Document/Help
-    // menu bar, but a single ☰ button reads better as one flat list than as
+    // menu bar, but a single menu button reads better as one flat list than as
     // five hover-to-open submenus. Only Color Scheme and Document remain
     // submenus - a small radio group and a deep set of dialog-driven page ops.
 
@@ -1304,17 +1310,13 @@ void MainWindow::createMenus()
     // section headers (addSectionHeader), with an icon on every
     // command and a check on the toggle/layout items. Icons are assigned in
     // applyActionIcons() so they re-tint with the theme. Page operations are no
-    // longer here - they moved to the toolbar's Document button.
+    // longer here - they moved to the toolbar's Document button. Nor are the
+    // commands that have a toolbar button: Print, Fit Page, Fit Width, Comment,
+    // OCR Selection and Measure.
 
-    // Print sits at the very top (file-level), alone above the first group.
-    mainMenu->addAction(printAction_);
-    mainMenu->addSeparator();
-
-    // View - fit presets, then the two window-level view toggles.
+    // View - full screen, the spread toggle and Always on Top.
     //: Section heading in the main menu (noun): how the document is shown.
     addSectionHeader(mainMenu, tr("View"));
-    mainMenu->addAction(fitPageAction_);
-    mainMenu->addAction(fitWidthAction_);
     mainMenu->addAction(fullScreenAction_);
     // Two-Page Spread belongs here and not in Scroll: it is an on/off view of the
     // document that composes with either scrolling mode, so it is a toggle rather
@@ -1343,15 +1345,11 @@ void MainWindow::createMenus()
     }
     mainMenu->addSeparator();
 
-    // Select & Annotate - selection plus the annotate / OCR / measure / forms tools.
-    //: Section heading in the main menu: selecting text and the comment, OCR, measuring
-    //: and form tools.
+    // Select & Annotate - selection plus the form tools.
+    //: Section heading in the main menu: selecting text and filling in forms.
     //: Plain menu section heading. The ampersand means "and", not a keyboard mnemonic.
     addSectionHeader(mainMenu, tr("Select & Annotate"));
     mainMenu->addAction(selectAllAction_);
-    mainMenu->addAction(commentAction_);
-    mainMenu->addAction(ocrAction_);
-    mainMenu->addAction(measureAction_);
     mainMenu->addAction(formAction_);
     mainMenu->addAction(highlightFormFieldsAction_);
     mainMenu->addSeparator();
@@ -1378,10 +1376,11 @@ void MainWindow::createMenus()
     hideShortcutHints(mainMenu);
 
     // Register shortcut actions on the window even when they are absent from the menu.
+    // Toolbar buttons alone would not keep them working while the toolbar is hidden.
     for (QAction *a : {newTabAction_, newWindowAction_, closeTabAction_, findAction_,
                        findNextAction_, findPrevAction_, copyAction_, zoomInAction_,
-                       zoomOutAction_, rotateLeftAction_, rotateRightAction_,
-                       printAction_})
+                       zoomOutAction_, fitPageAction_, fitWidthAction_, rotateLeftAction_,
+                       rotateRightAction_, ocrAction_, measureAction_, printAction_})
         addAction(a);
 }
 
@@ -2041,8 +2040,8 @@ void MainWindow::setCommandBarMode(bool recentActive)
     // Keep document controls visible but disabled on Recent; action shortcuts are disabled separately.
     if (docControls_)
         docControls_->setEnabled(!recentActive);
-    // The shared fit actions also appear in the menu and own window shortcuts.
-    // Disabling their toolbar parent alone does not disable those entry points.
+    // The fit actions also own window shortcuts, which disabling their toolbar
+    // parent alone does not disable.
     const bool fitEnabled = !recentActive && currentViewer() != nullptr;
     for (QAction *action : {fitPageAction_, fitWidthAction_, fitModeAction_})
         action->setEnabled(fitEnabled);
@@ -2145,8 +2144,7 @@ void MainWindow::updateForCurrentTab()
             statusInfo_->clear();
         if (pageEdit_)
             pageEdit_->clear();
-        if (pageCountLabel_)
-            pageCountLabel_->setText(QStringLiteral(" / 0 "));
+        setPageCountText(QStringLiteral(" / 0 "));
         return;
     }
 
@@ -2166,8 +2164,20 @@ void MainWindow::updatePageLabels(int current, int total)
         QSignalBlocker blocker(pageEdit_);
         pageEdit_->setText(current > 0 ? QString::number(current) : QString());
     }
-    if (pageCountLabel_)
-        pageCountLabel_->setText(QStringLiteral(" / %1 ").arg(total));
+    setPageCountText(QStringLiteral(" / %1 ").arg(total));
+}
+
+void MainWindow::setPageCountText(const QString &text)
+{
+    if (!pageCountLabel_ || pageCountLabel_->text() == text)
+        return;
+    const int width = pageCountLabel_->sizeHint().width();
+    pageCountLabel_->setText(text);
+    // A longer count widens the toolbar. In a window at its minimum width, the
+    // last controls, the menu button included, would otherwise move into the
+    // toolbar's overflow popup until the window was resized.
+    if (pageCountLabel_->sizeHint().width() != width)
+        QTimer::singleShot(0, this, &MainWindow::updateToolBarLayout);
 }
 
 void MainWindow::syncZoomCombo(ViewerWidget *viewer)
@@ -2236,6 +2246,18 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             le->deselect();
             le->setReadOnly(true);
         }
+    }
+
+    // Qt opens a tool button's menu from the button's near edge, so the main menu
+    // would hang past the far end of a window that is not maximized. Line its far
+    // edge up with the button instead, as browsers do with their menus, and keep it
+    // on the screen. The show event comes before the popup appears.
+    if (moreButton_ && watched == moreButton_->menu() && event->type() == QEvent::Show) {
+        auto *menu = static_cast<QWidget *>(watched);
+        const QRect button(moreButton_->mapToGlobal(QPoint()), moreButton_->size());
+        const QRect screen = moreButton_->screen()->availableGeometry();
+        const int x = isRightToLeft() ? button.left() : button.right() + 1 - menu->width();
+        menu->move(qMax(screen.left(), qMin(x, screen.right() + 1 - menu->width())), menu->y());
     }
 
     if (watched == docTabBar_ && event->type() == QEvent::MouseButtonRelease) {

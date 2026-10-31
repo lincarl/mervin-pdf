@@ -77,15 +77,16 @@ int inkCount(const QImage &img, int minAlpha = 40)
     return n;
 }
 
-// Glyphs drawn as one straight stroke, where the "short side" of the ink is the
-// stroke width itself and nothing more. ZoomOut is Lucide's "minus" - the
-// toolbar's counterpart to the ZoomIn plus - so no
-// correct drawing of it can reach the short-side floor the two-dimensional glyphs
-// are held to. Keep this list to glyphs that really are one stroke: a glyph that
-// merely came out thin is the bug this file exists to catch.
-bool isSingleStroke(Glyph id)
+// Glyphs drawn as a single row one stroke high, where the "short side" of the ink
+// is the width of the stroke, or of a dot drawn with it, and nothing more. ZoomOut
+// is Lucide's "minus" - the toolbar's counterpart to the ZoomIn plus - and Menu is
+// its "ellipsis", three dots in a row, so no correct drawing of either can reach
+// the short-side floor the two-dimensional glyphs are held to. Keep this list to
+// glyphs that really are one row: a glyph that merely came out thin is the bug
+// this file exists to catch.
+bool isSingleRow(Glyph id)
 {
-    return id == Glyph::ZoomOut;
+    return id == Glyph::ZoomOut || id == Glyph::Menu;
 }
 
 // The bounding box of everything inked.
@@ -259,7 +260,7 @@ void TestIcons::everyGlyphPaints()
     // Elongated glyphs are legitimate (a chevron is about 6x12 in a 16 px box, a
     // double arrow 14x6), so the long axis carries the "fills its box" duty and
     // the short one only has to be more than a hairline.
-    // A single-stroke glyph is the limit case of "elongated": its short side is the
+    // A single-row glyph is the limit case of "elongated": its short side is the
     // stroke width, so it answers to a visible-stroke floor instead of the 28% one.
     // That still catches a hairline or a drawing clipped to nothing, and it gives up
     // no coverage on the pair it could hide - ZoomIn losing its vertical stroke would
@@ -270,8 +271,8 @@ void TestIcons::everyGlyphPaints()
     // 8% with a 1px allowance, not the measured width: the stroke renders 2px wide at
     // 16-24px and 4px at 32-48px here, and pinning that exactly would be the kind of
     // rasteriser-detail assertion v1.54.1 already had to unpick once.
-    const int shortFloor = isSingleStroke(Glyph(id)) ? qMax(1, size * 8 / 100)
-                                                     : size * 28 / 100;
+    const int shortFloor = isSingleRow(Glyph(id)) ? qMax(1, size * 8 / 100)
+                                                  : size * 28 / 100;
     QVERIFY2(longSide >= size * 55 / 100 && shortSide >= shortFloor,
              qPrintable(QStringLiteral("glyph only spans %1x%2 of %3 px")
                             .arg(box.width()).arg(box.height()).arg(size)));
@@ -366,10 +367,9 @@ void TestIcons::relatedGlyphsAreDistinct_data()
         {"fit page vs fit width", Glyph::FitPage, Glyph::FitWidth, 0.85},
         {"fit page vs full screen", Glyph::FitPage, Glyph::FullScreen, 0.75},
         {"select all vs single page", Glyph::SelectAll, Glyph::SinglePage, 0.90},
-        // Both are "a stack of marks in the middle of the box". If the grip ever
-        // gets redrawn as stacked lines it becomes the hamburger, and the merge
-        // dialog's drag affordance stops reading as one.
-        {"grip vs hamburger", Glyph::DragHandle, Glyph::Menu, 0.75},
+        // Recent's list-clock starts with stacked lines. The ☰ that once opened the
+        // main menu shared 38% of its ink and sat beside it; the ⋯ shares about 10%.
+        {"recent vs menu", Glyph::Recent, Glyph::Menu, 0.25},
     };
     for (const auto &p : pairs)
         QTest::newRow(p.name) << int(p.a) << int(p.b) << p.max;

@@ -38,7 +38,7 @@ inline constexpr std::array<GlyphEntry, 53> kGlyphs{{
     {Glyph::Measure, "Measure"},
     {Glyph::Document, "Document"},
     {Glyph::Menu, "Menu"},
-    // Hamburger menu
+    // Main menu
     {Glyph::FullScreen, "FullScreen"},
     {Glyph::ContinuousScroll, "ContinuousScroll"},
     {Glyph::SinglePage, "SinglePage"},

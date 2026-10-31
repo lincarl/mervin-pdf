@@ -117,7 +117,7 @@ const char *lucideName(Glyph id)
     case Glyph::Ocr: return "scan-text";
     case Glyph::Measure: return "ruler-dimension-line";
     case Glyph::Document: return "file";
-    case Glyph::Menu: return "menu";
+    case Glyph::Menu: return "ellipsis";
     case Glyph::FullScreen: return "maximize";
     case Glyph::ContinuousScroll: return "gallery-vertical";
     case Glyph::SinglePage: return "rectangle-vertical";

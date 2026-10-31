@@ -40,9 +40,9 @@ enum class Glyph {
     Ocr,           // scan-text: read the text inside a selection
     Measure,       // ruler-dimension-line
     Document,      // file (Document button, tab glyph, generic page)
-    Menu,          // menu
+    Menu,          // ellipsis: the main menu button
 
-    // Hamburger menu
+    // Main menu
     FullScreen,       // maximize
     ContinuousScroll, // gallery-vertical
     SinglePage,       // rectangle-vertical

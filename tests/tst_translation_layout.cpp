@@ -90,6 +90,7 @@
 #include <QToolTip>
 #include <QXmlStreamReader>
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <functional>
@@ -301,6 +302,7 @@ private:
     QString originalLanguage_;
     QString fontFamily_;
     QString plain_;
+    QString long_; // 10,000 pages
     QString encrypted_;
     bool minimumSize_ = false;
 };
@@ -393,6 +395,7 @@ void TstTranslationLayout::initTestCase()
     const QString fixtures = QStringLiteral(MERVIN_FIXTURES_DIR);
     plain_ = profile_.filePath(QStringLiteral("structural-engineering-report-revised-for-construction.pdf"));
     QVERIFY(QFile::copy(QDir(fixtures).filePath(QStringLiteral("images.pdf")), plain_));
+    long_ = QDir(fixtures).filePath(QStringLiteral("long.pdf"));
     encrypted_ = profile_.filePath(QStringLiteral("protected-engineering-report.pdf"));
     mervin::QpdfService::Permissions permissions;
     permissions.canPrint = permissions.canCopy = permissions.canModify = permissions.canAnnotate = false;
@@ -540,7 +543,8 @@ void TstTranslationLayout::languagePicker()
     combo.hidePopup();
 }
 
-// The document tabs and Recent toolbar button must fit in both Recent states.
+// The document tabs and Recent toolbar button must fit in both Recent states. The
+// main menu button ends the toolbar, also once a 10,000-page count has widened it.
 void TstTranslationLayout::recentTabRow()
 {
     mervin::RenderEngine engine;
@@ -555,6 +559,24 @@ void TstTranslationLayout::recentTabRow()
     QVERIFY(open);
     QVERIFY(!row->findChild<QToolButton *>(QStringLiteral("recentButton")));
     QVERIFY(recent->isChecked());
+    auto *menu = toolbar->findChild<QToolButton *>(QStringLiteral("menuButton"));
+    QVERIFY(menu);
+    QCOMPARE(toolbar->widgetForAction(toolbar->actions().constLast()), menu);
+    // Every visible control sits inside the toolbar, and the menu button sits at its
+    // far end in either reading direction. QToolBar hides the controls it moves into
+    // its overflow popup, and the menu button would be the first to go.
+    const auto checkToolbar = [&](const QString &state) {
+        for (QAbstractButton *button : toolbar->findChildren<QAbstractButton *>()) {
+            if (!button->isVisibleTo(&window))
+                continue;
+            QVERIFY2(toolbar->rect().contains(QRect(button->mapTo(toolbar, QPoint()), button->size())),
+                     qPrintable(state));
+        }
+        QVERIFY2(menu->isVisibleTo(&window), qPrintable(state));
+        const QRect bounds(menu->mapTo(toolbar, QPoint()), menu->size());
+        const int gap = toolbar->isRightToLeft() ? bounds.left() : toolbar->width() - 1 - bounds.right();
+        QVERIFY2(gap >= 0 && gap < menu->width(), qPrintable(state));
+    };
     inspect(window, QStringLiteral("Recent tab row"), row);
     QCOMPARE(recent->iconSize(), open->iconSize());
     QCOMPARE(recent->toolButtonStyle(), open->toolButtonStyle());
@@ -586,16 +608,57 @@ void TstTranslationLayout::recentTabRow()
         }
     }
     inspect(window, QStringLiteral("Recent toolbar"), toolbar);
+    checkToolbar(QStringLiteral("Recent toolbar"));
     QVERIFY(mervin::testing::openAndWait(window, plain_));
     inspect(window, QStringLiteral("Document tab row"), row);
     inspect(window, QStringLiteral("Document toolbar"), toolbar);
     QVERIFY(!recent->isChecked());
-    // The whole toolbar must remain reachable, including controls after the zoom field.
-    for (QAbstractButton *button : toolbar->findChildren<QAbstractButton *>()) {
-        if (!button->isVisibleTo(&window))
-            continue;
-        QVERIFY(toolbar->rect().contains(QRect(button->mapTo(toolbar, QPoint()), button->size())));
-    }
+    checkToolbar(QStringLiteral("Document toolbar"));
+    // The minimum width was set for a shorter page count. In the minimum-size rows,
+    // the window has to widen for " / 10000 ".
+    QVERIFY(mervin::testing::openAndWait(window, long_));
+    settle();
+    checkToolbar(QStringLiteral("Long document toolbar"));
+
+    // Qt opens a tool button's menu from the button's near edge, which would leave the
+    // main menu hanging past the window. It lines up with the button's far edge
+    // instead. Centre the button on the screen first, so that Qt's own placement
+    // would fit there too: a plain offscreen screen is narrower than the window.
+    const QRect screen = menu->screen()->availableGeometry();
+    window.move(window.pos()
+                + QPoint(screen.center().x() - menu->mapToGlobal(menu->rect().center()).x(), 0));
+    settle();
+    bool inspected = false;
+    QTimer inspectMenu;
+    inspectMenu.setSingleShot(true);
+    connect(&inspectMenu, &QTimer::timeout, this, [&] {
+        QPointer<QMenu> popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        const auto close = qScopeGuard([popup] { if (popup) popup->close(); });
+        QVERIFY(popup && popup == menu->menu());
+        settle();
+        // Qt wraps a menu taller than the screen into columns. Arabic at 15 pt needs
+        // 914 px, more than the 800 px offscreen screen and the 826 px baseline work
+        // area, and the offscreen screen is too narrow for the second column. Text fit
+        // is checked where the menu has one column, as in every language at 10 pt.
+        const QList<QAction *> rows = popup->actions();
+        const int firstColumn = popup->actionGeometry(rows.constFirst()).left();
+        if (std::all_of(rows.cbegin(), rows.cend(), [&](QAction *row) {
+                return popup->actionGeometry(row).left() == firstColumn;
+            }))
+            inspectPopup(*popup, QStringLiteral("Main menu"));
+        const QRect button(menu->mapToGlobal(QPoint()), menu->size());
+        const QRect shown = popup->geometry();
+        const int lined = window.isRightToLeft() ? button.left() : button.right() + 1 - shown.width();
+        // A menu too wide for the room beside the button stays on the screen instead.
+        if (lined >= screen.left() && lined + shown.width() <= screen.right() + 1)
+            QCOMPARE(shown.left(), lined);
+        else
+            QVERIFY(shown.left() >= screen.left() && shown.right() <= screen.right());
+        inspected = true;
+    });
+    inspectMenu.start(0);
+    menu->showMenu();
+    QVERIFY(inspected);
 }
 
 // The notice a tab shows in place of its pages when the drive stops answering while
