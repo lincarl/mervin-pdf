@@ -13,6 +13,7 @@
 #include "render/RenderEngine.h"
 #include "security/QpdfService.h"
 #include "session/SessionStore.h"
+#include "ui/DetachableTabBar.h"
 #include "ui/MainWindow.h"
 #include "ui/TabPage.h"
 #include "ui/ViewerWidget.h"
@@ -37,6 +38,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QWindow>
 
 #include <atomic>
 
@@ -200,6 +202,103 @@ private slots:
         QVERIFY(stop->isHidden());
         guard.close();
         QTRY_VERIFY(page->isLoaded());
+    }
+
+    // Qt can report a button as held when no release will follow. On Windows a
+    // click on the title bar or on a caption button such as Minimize leaves it so
+    // until the next mouse move over the app (QTBUG-75678), and a file opened from
+    // Explorer meanwhile stayed at Loading. Only a press on a tab, which can be an
+    // in-bar move, holds the load back.
+    void onlyAPressOnATabHoldsAFreshLoad()
+    {
+        QTemporaryDir files;
+        const QString first = files.filePath(QStringLiteral("first.pdf"));
+        const QString second = files.filePath(QStringLiteral("second.pdf"));
+        for (const QString &path : {first, second})
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        showWindow(*window);
+        QWidget elsewhere;
+        elsewhere.setAttribute(Qt::WA_DontShowOnScreen);
+        elsewhere.resize(100, 100);
+        elsewhere.show();
+        QWindow *held = nullptr; // the window of a press not yet released
+        QPoint heldAt;
+        const auto release = qScopeGuard([&] {
+            if (held)
+                QTest::mouseRelease(held, Qt::LeftButton, {}, heldAt);
+        });
+
+        held = elsewhere.windowHandle();
+        heldAt = QPoint(10, 10);
+        QTest::mousePress(held, Qt::LeftButton, {}, heldAt);
+        QVERIFY(QApplication::mouseButtons().testFlag(Qt::LeftButton));
+        manager.openPaths({first}, {}); // as from another instance
+        auto *page = current(*window);
+        QVERIFY(page && page->freshOpen());
+        QTRY_VERIFY(page->isLoaded());
+        QTest::mouseRelease(held, Qt::LeftButton, {}, heldAt);
+        held = nullptr;
+
+        auto *bar = window->findChild<DetachableTabBar *>(QStringLiteral("docTabBar"));
+        QVERIFY(bar && bar->isVisible() && bar->count() == 1);
+        held = window->windowHandle();
+        heldAt = bar->mapTo(window, bar->tabRect(0).center());
+        QTest::mousePress(held, Qt::LeftButton, {}, heldAt);
+        QVERIFY(DetachableTabBar::pressInProgress());
+        manager.openPaths({second}, {});
+        page = current(*window);
+        QVERIFY(page && page->freshOpen());
+        QSignalSpy ready(page, &TabPage::freshLoadReady);
+        QTRY_COMPARE(ready.size(), 1);
+        QCoreApplication::processEvents();
+        window->runTabChanges(); // as the activity tick would
+        QVERIFY(page->isLoading() && !page->isLoaded());
+        QVERIFY(MainWindow::testing::hasQueuedTabChanges(*window));
+        QTest::mouseRelease(held, Qt::LeftButton, {}, heldAt);
+        held = nullptr;
+        QVERIFY(!DetachableTabBar::pressInProgress());
+        QTRY_VERIFY(page->isLoaded());
+    }
+
+    // Qt drops a release meant for a window that a modal dialog blocks, so no
+    // widget sees it. The press on the tab must still end. A later press, such as
+    // on the dialog's title bar, must not make it count again, also when nothing
+    // asked about the press in between.
+    void aDroppedReleaseEndsATabPress()
+    {
+        DetachableTabBar bar;
+        bar.addTab(QStringLiteral("tab"));
+        bar.setAttribute(Qt::WA_DontShowOnScreen);
+        bar.show();
+        const QPoint tab = bar.tabRect(0).center();
+        QDialog blocker;
+        blocker.setAttribute(Qt::WA_DontShowOnScreen);
+        blocker.setWindowModality(Qt::ApplicationModal);
+        blocker.resize(100, 100);
+        const QPoint inside(10, 10);
+        const auto release = qScopeGuard([&] {
+            if (QApplication::mouseButtons() != Qt::NoButton)
+                QTest::mouseRelease(blocker.windowHandle(), Qt::LeftButton, {}, inside);
+        });
+
+        QTest::mousePress(bar.windowHandle(), Qt::LeftButton, {}, tab);
+        QVERIFY(DetachableTabBar::pressInProgress());
+        blocker.show();
+        QTest::mouseRelease(bar.windowHandle(), Qt::LeftButton, {}, tab);
+        QVERIFY(!QApplication::mouseButtons().testFlag(Qt::LeftButton));
+        QTest::mousePress(blocker.windowHandle(), Qt::LeftButton, {}, inside);
+        QVERIFY(!DetachableTabBar::pressInProgress());
+        QTest::mouseRelease(blocker.windowHandle(), Qt::LeftButton, {}, inside);
+        blocker.hide();
+
+        QTest::mousePress(bar.windowHandle(), Qt::LeftButton, {}, tab);
+        QVERIFY(DetachableTabBar::pressInProgress());
+        blocker.show();
+        QTest::mouseRelease(bar.windowHandle(), Qt::LeftButton, {}, tab);
+        QVERIFY(!DetachableTabBar::pressInProgress());
+        blocker.hide();
     }
 
 #ifdef Q_OS_UNIX

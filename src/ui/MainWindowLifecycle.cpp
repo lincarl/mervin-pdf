@@ -10,7 +10,6 @@
 
 #include <QApplication>
 #include <QDir>
-#include <QGuiApplication>
 #include <QHideEvent>
 #include <QInputDialog>
 #include <QLineEdit>
@@ -28,12 +27,15 @@ using mervin::TabPage;
 
 namespace {
 
-// No mouse button is held and no tab is dragged. A held button can be an in-bar
-// tab move, and a tab drag can end on the bar of any window, so a drag from any
-// window counts.
+// No tab is pressed or dragged. A press on a tab can be an in-bar tab move, and
+// a tab drag can end on the bar of any window, so a press or drag in any window
+// counts. Qt's application-wide button state alone does not count. On Windows it
+// stays held after a click on the title bar or a caption button such as Minimize,
+// as Windows sends no release (QTBUG-75678). Qt makes one up only at the next mouse
+// move over one of its windows, so a tab opened from Explorer stayed at Loading.
 bool tabInputIdle()
 {
-    return QGuiApplication::mouseButtons() == Qt::NoButton
+    return !mervin::DetachableTabBar::pressInProgress()
         && !mervin::DetachableTabBar::dragInProgress();
 }
 

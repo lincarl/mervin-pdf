@@ -21,6 +21,16 @@ constexpr int kDetachMargin = 28;
 
 DetachableTabBar *DetachableTabBar::s_source = nullptr;
 QPointer<QObject> DetachableTabBar::s_sourcePage;
+QPointer<DetachableTabBar> DetachableTabBar::s_pressed;
+
+bool DetachableTabBar::pressInProgress()
+{
+    // Qt drops a release meant for a window that a modal dialog blocks, so no
+    // filter sees it, but it still records the button as up.
+    if (s_pressed && !QApplication::mouseButtons().testFlag(Qt::LeftButton))
+        s_pressed->endPress();
+    return s_pressed != nullptr;
+}
 
 DetachableTabWidget::DetachableTabWidget(QWidget *parent)
     : QTabWidget(parent)
@@ -65,8 +75,44 @@ void DetachableTabBar::mousePressEvent(QMouseEvent *event)
         pressPage_ = pageAt(tabAt(event->pos()));
         pressPos_ = event->pos();
         dragging_ = false;
+        if (tabAt(event->pos()) >= 0) {
+            s_pressed = this;
+            // The release can go to another widget or window, such as a popup.
+            qApp->installEventFilter(this);
+        }
     }
     QTabBar::mousePressEvent(event);
+}
+
+bool DetachableTabBar::eventFilter(QObject *watched, QEvent *event)
+{
+    // A later press also ends it, as its release went unseen. A press on a tab
+    // reaches mousePressEvent after this filter and records itself again.
+    switch (event->type()) {
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonRelease:
+    case QEvent::NonClientAreaMouseButtonPress:
+    case QEvent::NonClientAreaMouseButtonRelease:
+        if (static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton)
+            endPress();
+        break;
+    default:
+        break;
+    }
+    return QTabBar::eventFilter(watched, event);
+}
+
+void DetachableTabBar::hideEvent(QHideEvent *event)
+{
+    endPress(); // a hidden bar gets no release
+    QTabBar::hideEvent(event);
+}
+
+void DetachableTabBar::endPress()
+{
+    if (s_pressed == this)
+        s_pressed = nullptr;
+    qApp->removeEventFilter(this);
 }
 
 void DetachableTabBar::mouseMoveEvent(QMouseEvent *event)
@@ -128,6 +174,7 @@ void DetachableTabBar::startDetachDrag()
 
     s_source = nullptr;
     s_sourcePage = nullptr;
+    endPress();
     dragging_ = false;
     pressPage_ = nullptr;
     dropIndicator_ = -1;

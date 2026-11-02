@@ -122,8 +122,8 @@ public:
 
     // True when nothing may hold a position in this window's tab bar across a
     // nested event loop. That means no modal dialog or popup in the application,
-    // no document operation or unload in this window, no mouse button held and no
-    // tab drag. It stays false once a quit or restart closes the window
+    // no document operation or unload in this window, and no tab pressed or dragged
+    // in any window. It stays false once a quit or restart closes the window
     // (closeForQuit), so changes still queued then go with the window.
     bool canChangeTabs() const;
     // Run `change` once this window can change its tabs, after every change queued
