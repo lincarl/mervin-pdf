@@ -86,10 +86,19 @@ void DetachableTabBar::mousePressEvent(QMouseEvent *event)
 
 bool DetachableTabBar::eventFilter(QObject *watched, QEvent *event)
 {
-    if ((event->type() == QEvent::MouseButtonRelease
-         || event->type() == QEvent::NonClientAreaMouseButtonRelease)
-        && static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton)
-        endPress();
+    // A later press also ends it, as its release went unseen. A press on a tab
+    // reaches mousePressEvent after this filter and records itself again.
+    switch (event->type()) {
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonRelease:
+    case QEvent::NonClientAreaMouseButtonPress:
+    case QEvent::NonClientAreaMouseButtonRelease:
+        if (static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton)
+            endPress();
+        break;
+    default:
+        break;
+    }
     return QTabBar::eventFilter(watched, event);
 }
 

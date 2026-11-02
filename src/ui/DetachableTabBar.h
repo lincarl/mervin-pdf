@@ -36,8 +36,8 @@ public:
     // True while a tab is dragged out of any bar (QDrag::exec runs).
     static bool dragInProgress() { return s_source != nullptr; }
     // True while the left button is held on a tab of any bar, which can be an
-    // in-bar move. A left release anywhere in the application ends it, as does
-    // Qt reporting the button up.
+    // in-bar move. Any later left press or release in the application ends it,
+    // as does Qt reporting the button up.
     static bool pressInProgress();
 
 signals:

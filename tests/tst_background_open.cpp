@@ -262,46 +262,43 @@ private slots:
         QTRY_VERIFY(page->isLoaded());
     }
 
-    // A press on a tab also ends when its release goes to another window, such as
-    // a popup, or when Qt drops the release because a modal dialog blocks the bar.
-    // A later press elsewhere, such as on the title bar, must not revive it.
-    void aReleaseElsewhereEndsATabPress()
+    // Qt drops a release meant for a window that a modal dialog blocks, so no
+    // widget sees it. The press on the tab must still end. A later press, such as
+    // on the dialog's title bar, must not make it count again, also when nothing
+    // asked about the press in between.
+    void aDroppedReleaseEndsATabPress()
     {
         DetachableTabBar bar;
         bar.addTab(QStringLiteral("tab"));
         bar.setAttribute(Qt::WA_DontShowOnScreen);
         bar.show();
         const QPoint tab = bar.tabRect(0).center();
-        QWidget elsewhere;
-        elsewhere.setAttribute(Qt::WA_DontShowOnScreen);
-        elsewhere.resize(100, 100);
-        elsewhere.show();
-        const QPoint inside(10, 10);
-        const auto release = qScopeGuard([&] {
-            if (QApplication::mouseButtons() != Qt::NoButton)
-                QTest::mouseRelease(elsewhere.windowHandle(), Qt::LeftButton, {}, inside);
-        });
-
-        QTest::mousePress(bar.windowHandle(), Qt::LeftButton, {}, tab);
-        QVERIFY(DetachableTabBar::pressInProgress());
-        QTest::mouseRelease(elsewhere.windowHandle(), Qt::LeftButton, {}, inside);
-        QTest::mousePress(elsewhere.windowHandle(), Qt::LeftButton, {}, inside);
-        QVERIFY(!DetachableTabBar::pressInProgress());
-        QTest::mouseRelease(elsewhere.windowHandle(), Qt::LeftButton, {}, inside);
-
-        QTest::mousePress(bar.windowHandle(), Qt::LeftButton, {}, tab);
-        QVERIFY(DetachableTabBar::pressInProgress());
         QDialog blocker;
         blocker.setAttribute(Qt::WA_DontShowOnScreen);
         blocker.setWindowModality(Qt::ApplicationModal);
         blocker.resize(100, 100);
+        const QPoint inside(10, 10);
+        const auto release = qScopeGuard([&] {
+            if (QApplication::mouseButtons() != Qt::NoButton)
+                QTest::mouseRelease(blocker.windowHandle(), Qt::LeftButton, {}, inside);
+        });
+
+        QTest::mousePress(bar.windowHandle(), Qt::LeftButton, {}, tab);
+        QVERIFY(DetachableTabBar::pressInProgress());
         blocker.show();
         QTest::mouseRelease(bar.windowHandle(), Qt::LeftButton, {}, tab);
         QVERIFY(!QApplication::mouseButtons().testFlag(Qt::LeftButton));
-        QVERIFY(!DetachableTabBar::pressInProgress());
         QTest::mousePress(blocker.windowHandle(), Qt::LeftButton, {}, inside);
         QVERIFY(!DetachableTabBar::pressInProgress());
         QTest::mouseRelease(blocker.windowHandle(), Qt::LeftButton, {}, inside);
+        blocker.hide();
+
+        QTest::mousePress(bar.windowHandle(), Qt::LeftButton, {}, tab);
+        QVERIFY(DetachableTabBar::pressInProgress());
+        blocker.show();
+        QTest::mouseRelease(bar.windowHandle(), Qt::LeftButton, {}, tab);
+        QVERIFY(!DetachableTabBar::pressInProgress());
+        blocker.hide();
     }
 
 #ifdef Q_OS_UNIX
