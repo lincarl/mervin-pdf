@@ -36,8 +36,8 @@ public:
     // True while a tab is dragged out of any bar (QDrag::exec runs).
     static bool dragInProgress() { return s_source != nullptr; }
     // True while the left button is held on a tab of any bar, which can be an
-    // in-bar move. Qt must also still see the button held, so a release that
-    // went to another widget ends it too.
+    // in-bar move. A left release anywhere in the application ends it, as does
+    // Qt reporting the button up.
     static bool pressInProgress();
 
 signals:
@@ -51,7 +51,7 @@ signals:
 protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
-    void mouseReleaseEvent(QMouseEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
     void hideEvent(QHideEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dragMoveEvent(QDragMoveEvent *event) override;
@@ -61,6 +61,7 @@ protected:
 
 private:
     void startDetachDrag();
+    void endPress(); // forgets this bar's press on a tab and its release filter
     int insertionIndexAt(int x) const; // where a drop at x would insert
     QObject *pageAt(int index) const;     // the page a tab shows, or null
     int indexOfPage(const QObject *page) const; // -1 when no tab shows it

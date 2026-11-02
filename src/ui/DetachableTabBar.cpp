@@ -25,7 +25,11 @@ QPointer<DetachableTabBar> DetachableTabBar::s_pressed;
 
 bool DetachableTabBar::pressInProgress()
 {
-    return s_pressed && QApplication::mouseButtons().testFlag(Qt::LeftButton);
+    // Qt drops a release meant for a window that a modal dialog blocks, so no
+    // filter sees it, but it still records the button as up.
+    if (s_pressed && !QApplication::mouseButtons().testFlag(Qt::LeftButton))
+        s_pressed->endPress();
+    return s_pressed != nullptr;
 }
 
 DetachableTabWidget::DetachableTabWidget(QWidget *parent)
@@ -71,25 +75,35 @@ void DetachableTabBar::mousePressEvent(QMouseEvent *event)
         pressPage_ = pageAt(tabAt(event->pos()));
         pressPos_ = event->pos();
         dragging_ = false;
-        if (tabAt(event->pos()) >= 0)
+        if (tabAt(event->pos()) >= 0) {
             s_pressed = this;
+            // The release can go to another widget or window, such as a popup.
+            qApp->installEventFilter(this);
+        }
     }
     QTabBar::mousePressEvent(event);
 }
 
-void DetachableTabBar::mouseReleaseEvent(QMouseEvent *event)
+bool DetachableTabBar::eventFilter(QObject *watched, QEvent *event)
 {
-    QTabBar::mouseReleaseEvent(event);
-    if (event->button() == Qt::LeftButton && s_pressed == this)
-        s_pressed = nullptr;
+    if ((event->type() == QEvent::MouseButtonRelease
+         || event->type() == QEvent::NonClientAreaMouseButtonRelease)
+        && static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton)
+        endPress();
+    return QTabBar::eventFilter(watched, event);
 }
 
 void DetachableTabBar::hideEvent(QHideEvent *event)
 {
-    // A hidden bar gets no release.
+    endPress(); // a hidden bar gets no release
+    QTabBar::hideEvent(event);
+}
+
+void DetachableTabBar::endPress()
+{
     if (s_pressed == this)
         s_pressed = nullptr;
-    QTabBar::hideEvent(event);
+    qApp->removeEventFilter(this);
 }
 
 void DetachableTabBar::mouseMoveEvent(QMouseEvent *event)
@@ -151,8 +165,7 @@ void DetachableTabBar::startDetachDrag()
 
     s_source = nullptr;
     s_sourcePage = nullptr;
-    if (s_pressed == this)
-        s_pressed = nullptr;
+    endPress();
     dragging_ = false;
     pressPage_ = nullptr;
     dropIndicator_ = -1;

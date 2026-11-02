@@ -262,6 +262,48 @@ private slots:
         QTRY_VERIFY(page->isLoaded());
     }
 
+    // A press on a tab also ends when its release goes to another window, such as
+    // a popup, or when Qt drops the release because a modal dialog blocks the bar.
+    // A later press elsewhere, such as on the title bar, must not revive it.
+    void aReleaseElsewhereEndsATabPress()
+    {
+        DetachableTabBar bar;
+        bar.addTab(QStringLiteral("tab"));
+        bar.setAttribute(Qt::WA_DontShowOnScreen);
+        bar.show();
+        const QPoint tab = bar.tabRect(0).center();
+        QWidget elsewhere;
+        elsewhere.setAttribute(Qt::WA_DontShowOnScreen);
+        elsewhere.resize(100, 100);
+        elsewhere.show();
+        const QPoint inside(10, 10);
+        const auto release = qScopeGuard([&] {
+            if (QApplication::mouseButtons() != Qt::NoButton)
+                QTest::mouseRelease(elsewhere.windowHandle(), Qt::LeftButton, {}, inside);
+        });
+
+        QTest::mousePress(bar.windowHandle(), Qt::LeftButton, {}, tab);
+        QVERIFY(DetachableTabBar::pressInProgress());
+        QTest::mouseRelease(elsewhere.windowHandle(), Qt::LeftButton, {}, inside);
+        QTest::mousePress(elsewhere.windowHandle(), Qt::LeftButton, {}, inside);
+        QVERIFY(!DetachableTabBar::pressInProgress());
+        QTest::mouseRelease(elsewhere.windowHandle(), Qt::LeftButton, {}, inside);
+
+        QTest::mousePress(bar.windowHandle(), Qt::LeftButton, {}, tab);
+        QVERIFY(DetachableTabBar::pressInProgress());
+        QDialog blocker;
+        blocker.setAttribute(Qt::WA_DontShowOnScreen);
+        blocker.setWindowModality(Qt::ApplicationModal);
+        blocker.resize(100, 100);
+        blocker.show();
+        QTest::mouseRelease(bar.windowHandle(), Qt::LeftButton, {}, tab);
+        QVERIFY(!QApplication::mouseButtons().testFlag(Qt::LeftButton));
+        QVERIFY(!DetachableTabBar::pressInProgress());
+        QTest::mousePress(blocker.windowHandle(), Qt::LeftButton, {}, inside);
+        QVERIFY(!DetachableTabBar::pressInProgress());
+        QTest::mouseRelease(blocker.windowHandle(), Qt::LeftButton, {}, inside);
+    }
+
 #ifdef Q_OS_UNIX
     void aliasAdmissionSurvivesQueuedAndInstalledResults()
     {
