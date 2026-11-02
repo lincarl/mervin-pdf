@@ -10,6 +10,7 @@
 #include "render/Document.h"
 #include "render/AnnotModel.h"
 #include "render/RenderEngine.h"
+#include "ui/DetachableTabBar.h"
 #include "ui/MainWindow.h"
 #include "ui/TabPage.h"
 #include "ui/ViewerWidget.h"
@@ -399,10 +400,12 @@ private slots:
         auto *page = currentTab(*window);
         if (prompted)
             page->setPassword({});
-        QWidget mouseGate;
+        // A press on a tab holds the queue, as when the user starts to move it.
+        DetachableTabBar mouseGate;
+        mouseGate.addTab(QStringLiteral("gate"));
         mouseGate.setAttribute(Qt::WA_DontShowOnScreen);
-        mouseGate.resize(100, 100);
         mouseGate.show();
+        const QPoint gateTab = mouseGate.tabRect(0).center();
         bool mouseHeld = false;
         const int guiSteps = job::testing::stepsOnMainThread();
         const int expectedMetadataReads = prompted ? 2 : 1;
@@ -447,7 +450,7 @@ private slots:
         };
         const auto releaseMouse = qScopeGuard([&] {
             if (mouseHeld)
-                QTest::mouseRelease(mouseGate.windowHandle(), Qt::LeftButton, {}, QPoint(10, 10));
+                QTest::mouseRelease(mouseGate.windowHandle(), Qt::LeftButton, {}, gateTab);
         });
         QVERIFY(QMetaObject::invokeMethod(window, "openSecurity"));
         QTRY_COMPARE(job::testing::held(), 1);
@@ -457,7 +460,7 @@ private slots:
         QVERIFY(!window->updateDocumentActivity(-61000, 1));
         QVERIFY(page->isBusy() && page->isLoaded() && !page->isSuspended());
         mouseHeld = true;
-        QTest::mousePress(mouseGate.windowHandle(), Qt::LeftButton, {}, QPoint(10, 10));
+        QTest::mousePress(mouseGate.windowHandle(), Qt::LeftButton, {}, gateTab);
         QVERIFY(QApplication::mouseButtons().testFlag(Qt::LeftButton));
         QVERIFY(!window->canChangeTabs());
         QCoreApplication::processEvents();
@@ -474,7 +477,7 @@ private slots:
         QCOMPARE(metadataReads.load(), expectedMetadataReads);
         QCOMPARE(resumeReads.load(), 0);
         QVERIFY(!QApplication::activeModalWidget());
-        QTest::mouseRelease(mouseGate.windowHandle(), Qt::LeftButton, {}, QPoint(10, 10));
+        QTest::mouseRelease(mouseGate.windowHandle(), Qt::LeftButton, {}, gateTab);
         mouseHeld = false;
         QTRY_VERIFY(!MainWindow::testing::hasQueuedTabChanges(*window));
         QVERIFY(page->isSuspended());

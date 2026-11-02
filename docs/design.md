@@ -124,9 +124,14 @@ that was already inserted, so they retain that tab's identity.
 
 Removing a tab later, from a background answer, waits until the window can change
 its tabs (`MainWindow::canChangeTabs`). That means no modal dialog or popup in the
-application, no document operation or unload in the window, no mouse button held and
-no tab drag. A modal dialog in one window therefore holds back changes in the others
-too. `MainWindow::whenTabsCanChange` queues such a change and never runs it inside
+application, no document operation or unload in the window, and no tab pressed or
+dragged in any window. A modal dialog in one window therefore holds back changes in
+the others too. Only a press on a tab counts as held input
+(`DetachableTabBar::pressInProgress`), not Qt's application-wide button state. On
+Windows that state stays held after a click on the title bar or a caption button
+such as Minimize, as Windows sends no release (QTBUG-75678). Qt makes one up only
+at the next mouse move over one of its windows. A new tab opened from Explorer
+while Mervin was minimized or in the tray therefore stayed at Loading until then. `MainWindow::whenTabsCanChange` queues such a change and never runs it inside
 the call. The window runs its queue in order on the next turn of the event loop,
 after a mouse button release, after a modal window closes, when a document operation
 ends (`MainWindow::OperationScope`) and on the one-second activity tick. A change

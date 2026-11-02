@@ -21,6 +21,12 @@ constexpr int kDetachMargin = 28;
 
 DetachableTabBar *DetachableTabBar::s_source = nullptr;
 QPointer<QObject> DetachableTabBar::s_sourcePage;
+QPointer<DetachableTabBar> DetachableTabBar::s_pressed;
+
+bool DetachableTabBar::pressInProgress()
+{
+    return s_pressed && QApplication::mouseButtons().testFlag(Qt::LeftButton);
+}
 
 DetachableTabWidget::DetachableTabWidget(QWidget *parent)
     : QTabWidget(parent)
@@ -65,8 +71,25 @@ void DetachableTabBar::mousePressEvent(QMouseEvent *event)
         pressPage_ = pageAt(tabAt(event->pos()));
         pressPos_ = event->pos();
         dragging_ = false;
+        if (tabAt(event->pos()) >= 0)
+            s_pressed = this;
     }
     QTabBar::mousePressEvent(event);
+}
+
+void DetachableTabBar::mouseReleaseEvent(QMouseEvent *event)
+{
+    QTabBar::mouseReleaseEvent(event);
+    if (event->button() == Qt::LeftButton && s_pressed == this)
+        s_pressed = nullptr;
+}
+
+void DetachableTabBar::hideEvent(QHideEvent *event)
+{
+    // A hidden bar gets no release.
+    if (s_pressed == this)
+        s_pressed = nullptr;
+    QTabBar::hideEvent(event);
 }
 
 void DetachableTabBar::mouseMoveEvent(QMouseEvent *event)
@@ -128,6 +151,8 @@ void DetachableTabBar::startDetachDrag()
 
     s_source = nullptr;
     s_sourcePage = nullptr;
+    if (s_pressed == this)
+        s_pressed = nullptr;
     dragging_ = false;
     pressPage_ = nullptr;
     dropIndicator_ = -1;
