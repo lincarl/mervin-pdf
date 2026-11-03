@@ -547,6 +547,7 @@ jobs:
         shell: pwsh
         run: |
           scripts\test-windows-installer-ui.ps1 -Msi (Get-Item build\x64-release\MervinPDF-*.msi).FullName `
+            -UpgradeMsi "$env:MERVIN_INSTALLER_TEST_DIR\MervinPDF-upgrade-test.msi" `
             -OutputDir "$env:MERVIN_INSTALLER_TEST_DIR\ui"
 
       - name: Upload Windows installer diagnostics

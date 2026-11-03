@@ -144,6 +144,11 @@ function Test-InstalledDocument([string]$Document, [string]$Case, [bool]$Expecte
 }
 
 try {
+    # Exercise the real native action against a read-only MSI session and isolated
+    # fixture processes before changing this disposable account's installation.
+    & (Join-Path $build 'tests\tst_installer_action.exe') $msiPath (Join-Path $work 'close-action')
+    Assert-Installer ($LASTEXITCODE -eq 0) 'Native installer close-action integration checks failed.'
+
     # Synthetic versions retain the real application binary. The intermediate
     # payload owns an extra file so the next upgrade must remove obsolete files.
     $repository = Split-Path $PSScriptRoot -Parent
@@ -166,6 +171,7 @@ try {
             -d "Version=$($package.Version)" -d "DisplayVersion=$($metadata.version) upgrade verification" `
             -d "DeployDir=$($package.Payload)" -d "IconFile=$repository\resources\icons\mervin-icon.ico" `
             -d "DirectoryCleanup=$build\generated\installer-remove-folders.wxi" `
+            -d "InstallerActions=$build\MervinInstallerActions.dll" `
             -o $package.Path "$repository\packaging\wix\mervin.wxs"
         Assert-Installer ($LASTEXITCODE -eq 0) 'Building the verification-only upgrade MSI failed.'
     }

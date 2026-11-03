@@ -689,6 +689,7 @@ void TstInstanceHandoff::launchBeforeFinalQuitGoesToNextCopy_data()
     QTest::newRow("close for an update") << 1;
     QTest::newRow("WindowManager destroyed") << 2;
     QTest::newRow("last window closed") << 3;
+    QTest::newRow("installer defers carried launch") << 4;
 }
 
 // The server thread can acknowledge a launch just before a quit becomes final, before the
@@ -726,6 +727,10 @@ void TstInstanceHandoff::launchBeforeFinalQuitGoesToNextCopy()
     case 3:
         window->close();
         break;
+    case 4:
+        QCOMPARE(manager->installerClose(installerclose::Command::Begin, 17),
+                 installerclose::Reply::Pending);
+        break;
     }
     if (manager) {
         QTRY_VERIFY_WITH_TIMEOUT(!window, 10000);
@@ -736,12 +741,12 @@ void TstInstanceHandoff::launchBeforeFinalQuitGoesToNextCopy()
     // Written next to the lock before this copy let go of it.
     const QString carried = ipc::instancePaths(kGroup).carriedFile;
     QVERIFY(QFile::exists(carried));
-    QVERIFY(relaunch::carrying());
+    QCOMPARE(relaunch::carrying(), path != 4);
     QCOMPARE(starts, 0);
 
     // As main() does once runUi has returned. The file, not the command line, has them.
     QVERIFY(relaunch::startIfDue(true));
-    QCOMPARE(starts, 1);
+    QCOMPARE(starts, path == 4 ? 0 : 1);
     QVERIFY(passed.isEmpty());
     QVERIFY(!relaunch::carrying());
 
@@ -1232,6 +1237,7 @@ void TstInstanceHandoff::cancelledQuitOpensHeldLaunch_data()
     QTest::addColumn<bool>("createSurvivor");
     QTest::newRow("Quit, cancel") << 0 << int(QMessageBox::Cancel) << false;
     QTest::newRow("update, cancel") << 1 << int(QMessageBox::Cancel) << false;
+    QTest::newRow("installer, cancel") << 3 << int(QMessageBox::Cancel) << false;
     QTest::newRow("last window, cancel") << 2 << int(QMessageBox::Cancel) << false;
     QTest::newRow("last window, discard") << 2 << int(QMessageBox::Discard) << false;
     QTest::newRow("last window, save") << 2 << int(QMessageBox::Save) << false;
@@ -1288,6 +1294,9 @@ void TstInstanceHandoff::cancelledQuitOpensHeldLaunch()
         QCOMPARE(manager.tryCloseAllForUpdate(), Updater::CloseResult::Declined);
     else if (closePath == 2)
         window->close();
+    else if (closePath == 3)
+        QCOMPARE(manager.installerClose(installerclose::Command::Begin, 17),
+                 installerclose::Reply::Pending);
     else
         manager.quitAll();
     QTRY_VERIFY_WITH_TIMEOUT(shownWhileAsking.has_value(), 10000);

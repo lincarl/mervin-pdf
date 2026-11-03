@@ -179,6 +179,19 @@ bool WindowManager::nativeEventFilter(const QByteArray &eventType, void *message
     if (eventType == QByteArrayLiteral("windows_generic_MSG")
         || eventType == QByteArrayLiteral("windows_dispatcher_MSG")) {
         const auto *event = static_cast<const MSG *>(message);
+        static const UINT installerMessage = RegisterWindowMessageW(installerclose::messageName);
+        if (installerMessage && event->message == installerMessage) {
+            const auto windows = QGuiApplication::allWindows();
+            const bool owned = std::any_of(windows.cbegin(), windows.cend(), [event](QWindow *window) {
+                return window->handle() && reinterpret_cast<HWND>(window->winId()) == event->hwnd;
+            });
+            if (owned) {
+                *result = static_cast<qintptr>(installerClose(
+                    static_cast<installerclose::Command>(event->wParam),
+                    static_cast<std::uintptr_t>(event->lParam)));
+                return true;
+            }
+        }
 #if QT_CONFIG(sessionmanager)
         constexpr LPARAM logoffFlag = static_cast<LPARAM>(ENDSESSION_LOGOFF);
         if (event->message == WM_QUERYENDSESSION && (event->lParam & logoffFlag)
@@ -1100,6 +1113,10 @@ WindowManager::~WindowManager()
 #endif
     shuttingDown_ = true;
     endHandoffs();
+    // The installer owns the next launch. Carried opens remain in the profile
+    // for it, without starting another executable while MSI replaces the files.
+    if (installerExit_)
+        relaunch::nextCopyStarted();
     if (activityTimer_)
         activityTimer_->stop();
     if (tray_)
@@ -1382,12 +1399,51 @@ void WindowManager::closeAllForQuit()
 
 void WindowManager::restart()
 {
+    if (installerCloseFlow_ && !installerCloseFlow_->ended())
+        return; // An installer-owned Quit must not relaunch into files being replaced.
     CloseFlow::requestQuit(this, true);
 }
 
 Updater::CloseResult WindowManager::tryCloseAllForUpdate()
 {
     return CloseFlow::tryCloseForUpdate(this);
+}
+
+installerclose::Reply WindowManager::installerClose(installerclose::Command command,
+                                                   std::uintptr_t request)
+{
+    using installerclose::Command;
+    using installerclose::Reply;
+    if (command == Command::Probe)
+        return Reply::Ready;
+    if (!request)
+        return Reply::Unsupported;
+    if (command == Command::Cancel) {
+        // A timed-out native send can reach us after its installer gave up.
+        // Remember Cancel even when the matching Begin has not arrived yet.
+        installerCancelledRequest_ = request;
+        if (request != installerCloseRequest_)
+            return Reply::Declined;
+    }
+    if (command == Command::Begin && request == installerCancelledRequest_)
+        return Reply::Declined;
+    if (command == Command::Begin && request != installerCloseRequest_) {
+        // Do not join a separate Quit or Restart. Its owner may still cancel it,
+        // or a restart may launch another process during file replacement.
+        if (quitting_ || isClosing())
+            return Reply::Busy;
+        installerCloseRequest_ = request;
+        installerCloseFlow_ = CloseFlow::requestQuit(this);
+    }
+    if (request != installerCloseRequest_)
+        return Reply::Busy;
+    if (command == Command::Cancel && installerCloseFlow_ && !installerCloseFlow_->ended())
+        installerCloseFlow_->cancel();
+    if (command != Command::Begin && command != Command::Poll && command != Command::Cancel)
+        return Reply::Unsupported;
+    if (sessionFinal_)
+        return Reply::Closing;
+    return installerCloseFlow_ && !installerCloseFlow_->ended() ? Reply::Pending : Reply::Declined;
 }
 
 bool WindowManager::canCloseToTray(const MainWindow *window) const

@@ -1130,6 +1130,113 @@ private slots:
                                          QStringLiteral("Save changes to arrived.pdf?")}));
     }
 
+    // Exercises every unsaved-edit decision through the installer-owned quit request.
+    void installerQuitDecisions_data()
+    {
+        QTest::addColumn<int>("answer");
+        QTest::addColumn<bool>("failSave");
+        QTest::newRow("Save") << int(QMessageBox::Save) << false;
+        QTest::newRow("Discard") << int(QMessageBox::Discard) << false;
+        QTest::newRow("Cancel") << int(QMessageBox::Cancel) << false;
+        QTest::newRow("failed Save") << int(QMessageBox::Save) << true;
+    }
+
+    // Saves before exit, preserves edits on Cancel, and bypasses close-to-tray.
+    void installerQuitDecisions()
+    {
+        using namespace installerclose;
+        QFETCH(int, answer);
+        QFETCH(bool, failSave);
+        QTemporaryDir files;
+        const QString path = copy(files, "plan.pdf");
+        QFile original(path);
+        QVERIFY(original.open(QIODevice::ReadOnly));
+        const QByteArray before = original.readAll();
+        original.close();
+        WindowManager manager;
+        manager.applyMemorySettings(0, true);
+        const QPointer<MainWindow> window = manager.createWindow();
+        QVERIFY(testing::openAndWait(*window, path));
+        const QPointer<TabPage> tab = currentTab(window);
+        QVERIFY(addNote(tab, "Installer save") >= 0);
+        window->hideToTray();
+        answers_ << static_cast<QMessageBox::StandardButton>(answer);
+        if (failSave) {
+            job::testing::failWhen([path](job::Step step, const QString &file) {
+                return step == job::Step::Commit && file == path;
+            });
+            answers_ << QMessageBox::Ok;
+        }
+        const auto clearFailure = qScopeGuard([] { job::testing::failWhen({}); });
+        QCOMPARE(manager.installerClose(Command::Probe, 0), Reply::Ready);
+        QCOMPARE(manager.installerClose(Command::Begin, 17), Reply::Pending);
+        QCOMPARE(manager.installerClose(Command::Begin, 17), Reply::Pending);
+        manager.restart(); // A nested restart must not change this Quit into a relaunch.
+        if (answer == QMessageBox::Cancel || failSave) {
+            QTRY_COMPARE(manager.installerClose(Command::Poll, 17), Reply::Declined);
+            QVERIFY(window && tab && tab->hasUnsavedEdits());
+            QVERIFY(!tab->isClosing());
+        } else {
+            QTRY_VERIFY_WITH_TIMEOUT(!window, 10000);
+            QCOMPARE(manager.installerClose(Command::Poll, 17), Reply::Closing);
+        }
+        QVERIFY(!relaunch::requested());
+        QCOMPARE(questions_.front(), QStringLiteral("Save changes to plan.pdf?"));
+        QCOMPARE(questions_.size(), failSave ? 2 : 1);
+        if (answer == QMessageBox::Save && !failSave) {
+            auto saved = manager.engine()->openDocument(path);
+            QVERIFY(saved);
+            QCOMPARE(AnnotModel(*saved).pageAnnots(0).front().contents,
+                     QStringLiteral("Installer save"));
+        } else {
+            QVERIFY(original.open(QIODevice::ReadOnly));
+            QCOMPARE(original.readAll(), before);
+        }
+    }
+
+    // An installer timeout cancels its pending Quit without a later surprise exit.
+    void installerCancelDuringOperationKeepsWindow()
+    {
+        using namespace installerclose;
+        QTemporaryDir files;
+        const QString path = copy(files, "plan.pdf");
+        WindowManager manager;
+        const QPointer<MainWindow> window = manager.createWindow();
+        QVERIFY(testing::openAndWait(*window, path));
+        const QPointer<TabPage> tab = currentTab(window);
+        holdOperation(tab, path);
+        QTRY_COMPARE(job::testing::held(), 1);
+        QCOMPARE(manager.installerClose(Command::Begin, 17), Reply::Pending);
+        QTRY_VERIFY(tab->isClosing());
+        QCOMPARE(manager.installerClose(Command::Begin, 18), Reply::Busy);
+        QCOMPARE(manager.installerClose(Command::Cancel, 18), Reply::Declined);
+        QCOMPARE(manager.installerClose(Command::Poll, 17), Reply::Pending);
+        QCOMPARE(manager.installerClose(Command::Cancel, 17), Reply::Declined);
+        job::testing::release();
+        QTRY_VERIFY(tab->isUsable() && !tab->isClosing());
+        QVERIFY(window);
+        QCOMPARE(manager.installerClose(Command::Poll, 17), Reply::Declined);
+        QCOMPARE(manager.installerClose(Command::Begin, 19), Reply::Pending);
+        QTRY_VERIFY(!window);
+        QVERIFY(questions_.isEmpty());
+    }
+
+    // Probes and stale commands must not start a Quit or cancel another owner's request.
+    void installerMessagesCannotJoinOrdinaryQuit()
+    {
+        using namespace installerclose;
+        WindowManager manager;
+        const QPointer<MainWindow> window = manager.createWindow();
+        QCOMPARE(manager.installerClose(Command::Begin, 0), Reply::Unsupported);
+        QCOMPARE(manager.installerClose(Command::Poll, 17), Reply::Busy);
+        QCOMPARE(manager.installerClose(Command::Cancel, 17), Reply::Declined);
+        QCOMPARE(manager.installerClose(Command::Begin, 17), Reply::Declined);
+        QVERIFY(window);
+        manager.quitAll();
+        QCOMPARE(manager.installerClose(Command::Begin, 18), Reply::Busy);
+        QTRY_VERIFY(!window);
+    }
+
     // Checks that updater refusal returns promptly and never closes windows after work finishes.
     void updaterDeclinesHeldOperationWithoutLaterClose()
     {

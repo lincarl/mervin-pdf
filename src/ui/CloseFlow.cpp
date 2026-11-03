@@ -78,10 +78,9 @@ void CloseFlow::request(MainWindow *window, Intent intent, TabPage *tab, bool re
         start(window->wm_, window, intent, tab, remember);
 }
 
-void CloseFlow::requestQuit(WindowManager *manager, bool restart)
+CloseFlow *CloseFlow::requestQuit(WindowManager *manager, bool restart)
 {
-    if (manager)
-        start(manager, nullptr, restart ? Intent::Restart : Intent::Quit);
+    return manager ? start(manager, nullptr, restart ? Intent::Restart : Intent::Quit) : nullptr;
 }
 
 bool CloseFlow::closesEveryWindow(const WindowManager *manager)
@@ -609,6 +608,7 @@ void CloseFlow::finish()
     const Intent intent = intent_;
     deleteLater();
     if (global(intent) && manager) {
+        manager->installerExit_ = manager->installerCloseFlow_ == this;
         manager->updateSession();
         manager->sessionFinal_ = true;
         manager->endHandoffs();

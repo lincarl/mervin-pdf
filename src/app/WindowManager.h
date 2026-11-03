@@ -2,6 +2,7 @@
 
 #include "io/FileProbe.h"
 #include "ipc/Message.h"
+#include "platform/InstallerCloseProtocol.h"
 #include "recent/RecentEntry.h"
 #include "recent/RecentStore.h"
 #include "recent/ViewState.h"
@@ -121,6 +122,8 @@ public:
     // The updater closes windows only if no wait or Save is required. Any answer
     // but Closed may queue chosen saves, but never schedules a later shutdown.
     Updater::CloseResult tryCloseAllForUpdate();
+    // Starts or observes an installer-owned ordinary Quit, preserving Save/Discard/Cancel.
+    installerclose::Reply installerClose(installerclose::Command command, std::uintptr_t request);
     // Whether closing `window` hides it in the tray instead of closing it. A window
     // without documents closes for real while another window remains.
     bool canCloseToTray(const MainWindow *window) const;
@@ -413,6 +416,10 @@ private:
     bool holdingOpens_ = false; // an update asks about unsaved edits; instanceOpens_ waits
     QList<MainWindow *> windows_;
     QList<QPointer<CloseFlow>> closeFlows_;
+    QPointer<CloseFlow> installerCloseFlow_;
+    std::uintptr_t installerCloseRequest_ = 0;
+    std::uintptr_t installerCancelledRequest_ = 0;
+    bool installerExit_ = false;
     QList<StagedOpen> stagedQueue_;      // documents still to open, front first
     QStringList stagedOrder_;            // the session's saved order, for tab placement
     MainWindow *stagedWindow_ = nullptr; // the window the batch opens into

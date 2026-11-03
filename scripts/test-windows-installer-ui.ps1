@@ -8,6 +8,7 @@
 #>
 param(
     [Parameter(Mandatory)][string]$Msi,
+    [Parameter(Mandatory)][string]$UpgradeMsi,
     [Parameter(Mandatory)][string]$OutputDir
 )
 
@@ -17,6 +18,7 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows' -or $env:RUN
     throw 'This test requires a disposable GitHub-hosted Windows runner.'
 }
 $Msi = (Resolve-Path $Msi).Path
+$UpgradeMsi = (Resolve-Path $UpgradeMsi).Path
 $OutputDir = [IO.Path]::GetFullPath($OutputDir)
 if (-not $OutputDir.StartsWith('C:\dev-temp\', [StringComparison]::OrdinalIgnoreCase)) {
     throw 'OutputDir must be inside C:\dev-temp.'
@@ -78,6 +80,7 @@ public static class MervinInstallerUi
     [DllImport("user32.dll", SetLastError = true)] public static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr dc, uint flags);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hwnd, int command);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wparam, IntPtr lparam);
     [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint message, IntPtr wparam, IntPtr lparam, uint flags, uint timeout, out IntPtr result);
     [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -187,6 +190,8 @@ public static class MervinInstallerUi
 
 $setup = $null
 $launchedApp = $null
+$hiddenApp = $null
+$portableApp = $null
 $currentDialog = $null
 $installAttempted = $false
 $progressSeen = $false
@@ -275,7 +280,7 @@ function Click-Control($State, [string]$TextPattern) {
     }
 }
 
-function Start-InstallerSession([string]$Name) {
+function Start-InstallerSession([string]$Name, [string]$Package = $Msi) {
     if ($script:setup) {
         if (-not $script:setup.HasExited) { throw 'The previous installer session is still running.' }
         $script:setup.Dispose()
@@ -283,7 +288,7 @@ function Start-InstallerSession([string]$Name) {
     }
     $script:log = Join-Path $OutputDir "$Name.log"
     $script:currentDialog = $null
-    $script:setup = Start-Process $msiexec -ArgumentList "/i `"$Msi`" /norestart /l*v `"$script:log`"" -PassThru
+    $script:setup = Start-Process $msiexec -ArgumentList "/i `"$Package`" /norestart /l*v `"$script:log`"" -PassThru
     $script:installAttempted = $true
     Write-Host "$Name installer process $($script:setup.Id)."
 }
@@ -337,6 +342,9 @@ function Wait-SuccessfulFinish([string]$EvidencePrefix) {
             }
             if ($state.Text -match 'ended prematurely|installation failed|Could not|Error [0-9]') {
                 throw "Installation failed. $($state.Text)"
+            }
+            if ($state.Text -match 'files that need to be updated|automatically close applications') {
+                throw "The installer showed an unexpected files-in-use confirmation. $($state.Text)"
             }
         }
         if ($setup.HasExited) { throw "Installer exited before successful Finish with $($setup.ExitCode)." }
@@ -524,6 +532,67 @@ close_to_tray = false
     }
     Start-Sleep -Milliseconds 500
     Save-WindowEvidence $appWindow '06-launched-application'
+    $launchedPath = $launchedApp.Path
+    $launchedId = $launchedApp.Id
+
+    # Different profiles ensure that both installed processes remain running.
+    # A third process from staging must survive, despite sharing the exe name.
+    $build = Split-Path $Msi -Parent
+    $portableExe = Join-Path $build 'deploy\MervinPDF.exe'
+    foreach ($name in @('hidden', 'portable')) {
+        $profile = Join-Path $OutputDir "$name-profile"
+        New-Item -ItemType Directory $profile | Out-Null
+        @'
+ui_language = 'en'
+auto_update = false
+prompted_set_default_app = true
+close_to_tray = true
+'@ | Set-Content (Join-Path $profile 'config.toml')
+        $program = if ($name -eq 'hidden') { $appExe } else { $portableExe }
+        $process = Start-Process $program -PassThru -ArgumentList @('--profile', "`"$profile`"", '--language', 'en')
+        if ($name -eq 'hidden') { $hiddenApp = $process } else { $portableApp = $process }
+        Write-Host "$name application process $($process.Id)."
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        $window = $null
+        while ($watch.Elapsed.TotalSeconds -lt 45 -and -not $window -and -not $process.HasExited) {
+            $window = [MervinInstallerUi]::Windows($process.Id) |
+                Where-Object { $_.Text -match 'Mervin PDF' } | Select-Object -First 1
+            if (-not $window) { Start-Sleep -Milliseconds 100 }
+        }
+        if (-not $window) { throw "The $name application did not open a window." }
+        if ($name -eq 'hidden') {
+            # Hide the real native window even when this runner has no Explorer tray.
+            [MervinInstallerUi]::ShowWindow($window.Handle, 0) | Out-Null
+            if ($process.HasExited) { throw 'Hiding the installed copy exited it before the upgrade.' }
+        }
+    }
+    Start-InstallerSession 'running-app-upgrade' $UpgradeMsi
+    $state = Wait-InstallerPage 'Upgrade welcome' 'Welcome to' '^Next\s*>?$'
+    Click-Control $state '^Next\s*>?$'
+    $state = Wait-InstallerPage 'Upgrade destination' 'Destination Folder' '^Next\s*>?$'
+    if ((Get-DestinationField $state).Text.TrimEnd('\') -ne $installDir) { throw 'Upgrade lost the recorded destination.' }
+    Click-Control $state '^Next\s*>?$'
+    $state = Wait-InstallerPage 'Ready to upgrade' 'Ready to install' '^Install$'
+    # Merely opening the wizard must not close the application.
+    if ($launchedApp.HasExited -or $hiddenApp.HasExited) { throw 'Mervin closed before Install was clicked.' }
+    Click-Control $state '^Install$'
+    $finish = Wait-SuccessfulFinish 'running-app-upgrade'
+    if (-not $launchedApp.WaitForExit(10000) -or -not $hiddenApp.WaitForExit(10000)) {
+        throw 'Upgrade did not close every installed process.'
+    }
+    if ($launchedApp.ExitCode -ne 0 -or $hiddenApp.ExitCode -ne 0) { throw 'An installed process did not exit cleanly.' }
+    if ($portableApp.HasExited) { throw 'Upgrade closed an unrelated portable copy.' }
+    if (-not (Select-String -LiteralPath $log -Quiet -Pattern 'Action start [^\r\n]*: CloseMervin\.')) {
+        throw 'Upgrade did not execute the automatic-close action.'
+    }
+    if (Select-String -LiteralPath $log -Quiet -Pattern 'Dialog created: (MsiRMFilesInUse|FilesInUse)') {
+        throw 'Upgrade displayed a files-in-use confirmation.'
+    }
+    Save-WindowEvidence $finish.Window '07-running-app-upgrade-finish'
+    Click-Control $finish '^Launch Mervin PDF$'
+    Click-Control $finish '^Finish$'
+    Complete-InstallerSession
+    if (@(Get-MervinProducts).Count -ne 1) { throw 'Upgrade left incorrect product registrations.' }
     [pscustomobject]@{
         installDirectory = $installDir
         installerExitCode = $setup.ExitCode
@@ -532,8 +601,10 @@ close_to_tray = false
         cancelledBeforeInstall = $true
         destinationSurvivesBack = $true
         maintenanceRepairNoLaunch = $true
-        launchedExecutable = $launchedApp.Path
-        launchedProcessId = $launchedApp.Id
+        launchedExecutable = $launchedPath
+        launchedProcessId = $launchedId
+        runningAppUpgradeClosedVisibleAndHiddenCopies = $true
+        separatePortableCopyPreserved = $true
         runtimeModules = @($runtimeModules)
         progressObserved = $progressSeen
         windowTitle = $appWindow.Text
@@ -561,19 +632,28 @@ close_to_tray = false
         $process.Dispose()
     }
     if ($launchedApp) { $launchedApp.Dispose() }
+    if ($hiddenApp) { $hiddenApp.Dispose() }
+    if ($portableApp) {
+        if (-not $portableApp.HasExited) { $portableApp.Kill(); $portableApp.WaitForExit(10000) | Out-Null }
+        $portableApp.Dispose()
+    }
     if ($setup) {
         if (-not $setup.HasExited) { $setup.Kill(); $setup.WaitForExit(10000) | Out-Null }
         $setup.Dispose()
     }
     if ($installAttempted) {
-        $log = Join-Path $OutputDir 'ui-test-uninstall.log'
-        $uninstall = Start-Process $msiexec -ArgumentList "/x `"$Msi`" /qn /norestart /l*v `"$log`"" -PassThru
-        Write-Host "Uninstaller process $($uninstall.Id)."
-        if (-not $uninstall.WaitForExit(120000)) {
-            $uninstall.Kill(); $uninstall.WaitForExit(10000) | Out-Null
-            throw 'UI test cleanup timed out.'
+        foreach ($package in @($UpgradeMsi, $Msi)) {
+            $log = Join-Path $OutputDir ((Split-Path $package -Leaf) + '-uninstall.log')
+            $uninstall = Start-Process $msiexec -ArgumentList "/x `"$package`" /qn /norestart /l*v `"$log`"" -PassThru
+            Write-Host "Uninstaller process $($uninstall.Id)."
+            try {
+                if (-not $uninstall.WaitForExit(120000)) {
+                    $uninstall.Kill(); $uninstall.WaitForExit(10000) | Out-Null
+                    throw 'UI test cleanup timed out.'
+                }
+                if ($uninstall.ExitCode -notin @(0, 1605)) { throw "UI test uninstall returned $($uninstall.ExitCode)." }
+            } finally { $uninstall.Dispose() }
         }
-        if ($uninstall.ExitCode -notin @(0, 1605)) { throw "UI test uninstall returned $($uninstall.ExitCode)." }
         if (Test-Path $appExe) { throw 'UI test uninstall left the application installed.' }
     }
 }

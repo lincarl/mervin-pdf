@@ -26,7 +26,10 @@ public:
     static void request(MainWindow *window, Intent intent, TabPage *tab = nullptr,
                         bool remember = true);
     // Requests process-wide close approval, optionally followed by relaunch.
-    static void requestQuit(WindowManager *manager, bool restart = false);
+    static CloseFlow *requestQuit(WindowManager *manager, bool restart = false);
+    // Ends a pending request without closing its windows or discarding edits.
+    void cancel();
+    bool ended() const { return ended_; }
     // Whether every current window has an active window-wide close request.
     // Incoming launches wait until cancellation or handoff to the next process.
     static bool closesEveryWindow(const WindowManager *manager);
@@ -85,8 +88,6 @@ private:
     void attention(TabPage *tab);
     // Applies approved closes and requests exit or relaunch only after final approval.
     void finish();
-    // Ends the request while preserving tabs, releasing claims and resuming selected documents.
-    void cancel();
     // Releases owned tab claims and queues ordinary selection-driven resume again.
     void releaseClaims();
 

@@ -397,6 +397,14 @@ if(WIN32)
     target_sources(MervinPDF PRIVATE ${CMAKE_BINARY_DIR}/generated/mervin.rc)
     # Native caption colour defaults (DwmSetWindowAttribute in MainWindow.cpp).
     target_link_libraries(mervin_app PUBLIC comctl32 dwmapi ole32 shell32 uuid)
+    # MSI runs this before installing any payload, so it uses only Windows DLLs
+    # and a static CRT, independently of the application's Qt/runtime files.
+    add_library(MervinInstallerActions SHARED packaging/wix/CloseMervin.cpp)
+    target_include_directories(MervinInstallerActions PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(MervinInstallerActions PRIVATE msi user32 bcrypt)
+    set_target_properties(MervinInstallerActions PROPERTIES
+        AUTOMOC OFF AUTOUIC OFF AUTORCC OFF
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
 # Build as a Windows GUI (no-console) app by DEFAULT so launching Mervin never

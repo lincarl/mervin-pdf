@@ -27,6 +27,22 @@ installation, including a major upgrade. Repair, uninstall, `/passive` and `/qn`
 never launch the application. The in-app updater relaunches it after its own
 `/passive` installation.
 
+Interactive installation, upgrade, repair and removal ask the installed Mervin
+processes to quit before Windows checks for files in use. Clean documents and
+windows hidden in the tray need no extra confirmation. Unsaved documents keep
+their normal Save, Discard and Cancel choices. Save finishes before installation
+continues. Cancel, a failed save, or a shutdown timeout cancels installation
+before it changes installed files. The installer never force-terminates Mervin.
+It targets the executable in the current or previous installation folder in the
+installing user's session, leaving separate portable and Store copies alone.
+
+This shutdown protocol is available from 1.65.14. When upgrading an older running
+version, Windows still shows its existing files-in-use confirmation. Updating the
+installer cannot add the protocol to the older process already running. Choosing
+**Quit Mervin** before this first upgrade avoids that confirmation. Silent and
+passive installations retain their existing behavior; the in-app updater closes
+Mervin before starting its passive installer.
+
 The default destination is `%LOCALAPPDATA%\Mervin PDF`. Upgrades reuse the recorded
 installation folder; an explicit `INSTALLFOLDER` command-line property takes
 precedence. The installer adds a Start menu shortcut and an entry in Windows
@@ -62,7 +78,12 @@ development directories on `PATH` to satisfy dependencies.
 Windows account or a hosted CI runner. It refuses existing Mervin installations
 or data, installs into a test folder, launches with a separate profile, and checks
 upgrade, downgrade rejection, repair and uninstall. It also checks the installed
-payload and writes `installed-payload.json`. Retain the staging directory,
+payload and writes `installed-payload.json`. Before installation, its native
+`tst_installer_action` executable exercises the real close action against isolated
+fixture processes and an MSI session that executes no installation sequence. It
+checks visible and hidden processes, separate copies, application refusal,
+installer cancellation, legacy fallback and a changed installation folder.
+Retain the staging directory, `MervinInstallerActions.dll`,
 generated package metadata and WiX toolchain for its verification-only upgrade
 package. Configure with `MERVIN_BUILD_TESTS=ON` and retain `build/x64-release/tests/fixtures`
 for the generated PDF used in the startup check. The script checks for that
@@ -74,7 +95,8 @@ pwsh -File scripts/test-windows-installer.ps1 -Msi build/x64-release/MervinPDF-0
 
 The separate `scripts/test-windows-installer-ui.ps1` test runs the interactive
 wizard on a disposable GitHub-hosted Windows runner. It checks the installation
-folder, launch option and native application window. These
+folder, launch option, native application window and automatic shutdown during a
+major upgrade with visible and hidden installed copies. These
 tests preserve the selected default PDF handler. Do not run them against a
 daily-driver installation. For a clean-machine acceptance check, install and
 launch in a disposable VM without development tools or dependency directories
