@@ -127,16 +127,18 @@ void MainWindow::queueFreshLoad(TabPage *tab, const QString &canonical, quint64 
             return;
         }
         if (!canonical.isEmpty() && !options.allowDuplicate && !page->hasRecoverySnapshot()
-            && (owner->wm_ ? owner->wm_->isOpenAnywhere(canonical, page)
-                           : owner->indexOfPath(canonical, page) >= 0)) {
+            && (owner->wm_ ? owner->wm_->isOpenAnywhere(canonical, page, true)
+                           : owner->indexOfPath(canonical, page, true) >= 0)) {
             const bool focus = owner->currentTab() == page && !owner->recentActive_;
-            owner->removeTabAt(owner->tabs_->indexOf(page));
-            if (!self || !focus)
-                return;
-            if (owner->wm_)
-                owner->wm_->focusExistingTab(canonical);
-            else
-                owner->focusTabIfOpen(canonical);
+            // Select the matching version while the candidate still owns its metadata.
+            if (focus) {
+                if (owner->wm_)
+                    owner->wm_->focusExistingTab(canonical, page, options.reason);
+                else
+                    owner->focusTabIfOpen(canonical, true, page);
+            }
+            if (self && page)
+                owner->removeTabAt(owner->tabs_->indexOf(page));
             return;
         }
         if (!page->acceptFreshLoad(generation) || !self || !page)
@@ -156,8 +158,12 @@ void MainWindow::queueFreshLoad(TabPage *tab, const QString &canonical, quint64 
         if (!self || !page)
             return;
         if (owner->wm_) {
-            owner->wm_->recordOpen(page->canonicalPath(), /*restoreViewState=*/!options.allowDuplicate && !page->hasRecoverySnapshot(),
-                                   page->viewer()->pageCount());
+            // A reused filename now identifies different content. Do not restore
+            // its old saved view into either the replacement or the retained tab.
+            const bool restoreView = !options.allowDuplicate && !page->hasRecoverySnapshot()
+                && !owner->wm_->isOpenAnywhere(page->canonicalPath(), page);
+            owner->wm_->recordOpen(page->canonicalPath(), restoreView,
+                                  page->viewer()->pageCount(), options.reason);
             if (self)
                 owner->wm_->updateSession();
         }

@@ -566,6 +566,11 @@ Zoom choice: scale the page so its width fits the window.</extracomment>
         <translation>취소</translation>
     </message>
     <message>
+        <source>Tab closed. The file was deleted.</source>
+        <extracomment>Status bar notice after automatic cleanup closes an unedited document tab because its file is confirmed deleted. This action does not delete any file.</extracomment>
+        <translation>탭을 닫았습니다. 파일이 삭제되었습니다.</translation>
+    </message>
+    <message>
         <source>No recently closed tab to reopen</source>
         <translation>다시 열 수 있는 최근 닫은 탭이 없습니다.</translation>
     </message>

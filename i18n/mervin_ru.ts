@@ -574,6 +574,11 @@ Zoom choice: scale the page so its width fits the window.</extracomment>
         <translation>Отмена</translation>
     </message>
     <message>
+        <source>Tab closed. The file was deleted.</source>
+        <extracomment>Status bar notice after automatic cleanup closes an unedited document tab because its file is confirmed deleted. This action does not delete any file.</extracomment>
+        <translation>Вкладка закрыта. Файл был удалён.</translation>
+    </message>
+    <message>
         <source>No recently closed tab to reopen</source>
         <translation>Нет недавно закрытой вкладки, которую можно было бы открыть снова.</translation>
     </message>

@@ -623,19 +623,20 @@ ViewerWidget *MainWindow::currentViewer() const
     return t && t->isUsable() ? t->viewer() : nullptr;
 }
 
-int MainWindow::indexOfPath(const QString &canonicalPath, const TabPage *except) const
+int MainWindow::indexOfPath(const QString &canonicalPath, const TabPage *except, bool verifySource) const
 {
     const QString key = mervin::normalizePathKey(canonicalPath);
     for (int i = 0; i < tabs_->count(); ++i)
         if (auto *t = qobject_cast<TabPage *>(tabs_->widget(i)))
-            if (t != except && mervin::normalizePathKey(t->canonicalPath()) == key)
+            if (t != except && mervin::normalizePathKey(t->canonicalPath()) == key
+                && (!verifySource || t->canReuseForOpen(except)))
                 return i;
     return -1;
 }
 
-bool MainWindow::focusTabIfOpen(const QString &canonicalPath)
+bool MainWindow::focusTabIfOpen(const QString &canonicalPath, bool verifySource, const TabPage *fresh)
 {
-    const int idx = indexOfPath(canonicalPath);
+    const int idx = indexOfPath(canonicalPath, fresh, verifySource);
     if (idx < 0)
         return false;
     recentActive_ = false;       // showing a document leaves the Recent view
@@ -1720,7 +1721,8 @@ void MainWindow::setUiEnabled(bool enabled)
 
 bool MainWindow::openFile(const QString &path, bool allowDuplicate, int atIndex, bool makeCurrent,
                           const QString &knownPassword, bool lazy,
-                          const std::optional<mervin::ViewState> &initialView, bool closeOnFailure)
+                          const std::optional<mervin::ViewState> &initialView, bool closeOnFailure,
+                          mervin::OpenReason reason)
 {
     if (closeConfirmed_ || (wm_ && wm_->isClosing()))
         return false;
@@ -1728,12 +1730,12 @@ bool MainWindow::openFile(const QString &path, bool allowDuplicate, int atIndex,
     const QString key = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
     if (!allowDuplicate) {
         if (!makeCurrent) {
-            if (indexOfPath(key) >= 0 || (wm_ && wm_->isOpenAnywhere(key)))
+            if (indexOfPath(key, nullptr, !lazy) >= 0 || (wm_ && wm_->isOpenAnywhere(key, nullptr, !lazy)))
                 return true;
         } else if (wm_) {
-            if (wm_->focusExistingTab(key))
+            if (wm_->focusExistingTab(key, nullptr, reason))
                 return true;
-        } else if (focusTabIfOpen(key)) {
+        } else if (focusTabIfOpen(key, !lazy)) {
             return true;
         }
     }
@@ -1744,7 +1746,7 @@ bool MainWindow::openFile(const QString &path, bool allowDuplicate, int atIndex,
     if (lazy)
         page->initializeSuspended(key);
     else
-        page->initializeFresh(key, {allowDuplicate, closeOnFailure, initialView});
+        page->initializeFresh(key, {allowDuplicate, closeOnFailure, initialView, reason});
     const bool admitted = page->claimPath(key);
     page->setPassword(knownPassword);
     const bool takeView = makeCurrent || tabs_->count() == 0;
@@ -1763,7 +1765,8 @@ bool MainWindow::openFile(const QString &path, bool allowDuplicate, int atIndex,
         scheduleCurrentResume();
     if (wm_) {
         if (lazy && admitted)
-            wm_->recordOpen(page->canonicalPath(), !allowDuplicate && !page->hasRecoverySnapshot());
+            wm_->recordOpen(page->canonicalPath(), !allowDuplicate && !page->hasRecoverySnapshot(),
+                            0, reason);
         wm_->updateSession(); // fresh placeholders belong to the session, not Recent yet
     }
     return true;
@@ -1928,7 +1931,7 @@ void MainWindow::removeTabAt(int index)
         wm_->updateSession();
 }
 
-bool MainWindow::closeRemovedTabs(const QString &canonicalPath)
+bool MainWindow::closeRemovedTabs(const QString &canonicalPath, const TabPage *only)
 {
     if (hiddenToTray_)
         return true;
@@ -1939,14 +1942,36 @@ bool MainWindow::closeRemovedTabs(const QString &canonicalPath)
         auto *tab = qobject_cast<TabPage *>(tabs_->widget(i));
         // A tab that is loading stays. If its file is gone, the failed load
         // starts another check.
-        if (!tab || tab->freshOpen()
+        if (!tab || (only && tab != only) || tab->freshOpen()
             || mervin::normalizePathKey(tab->canonicalPath()) != mervin::normalizePathKey(canonicalPath)
-            || !tab->isSuspended()
+            || tab->isLoading() || tab->isBusy() || tab->isClosing()
             || tab->hasUnsavedEdits())
             continue;
         if (busy)
             return false;
+        if (tab->isLoaded()) {
+            const QPointer<MainWindow> self(this);
+            const QPointer<TabPage> page(tab);
+            // Inline editors may hold changes that their models do not know yet.
+            // Capture them as an explicit close would, before judging the tab clean.
+            tab->viewer()->commitActiveFormEditor();
+            if (!self || !page)
+                return true;
+            tab->viewer()->commitActiveAnnotEditor();
+            if (!self || !page)
+                return true;
+            if (tab->window() != this || tabs_->indexOf(tab) != i
+                || mervin::normalizePathKey(tab->canonicalPath()) != mervin::normalizePathKey(canonicalPath)
+                || tab->isBusy() || tab->isClosing() || tab->hasUnsavedEdits()
+                || !tab->viewer()->captureResumeState().inProgress.empty())
+                continue;
+            if (!canChangeTabs() || !tabChanges_.empty())
+                return false;
+        }
         removeTabAt(i);
+        //: Status bar notice after automatic cleanup closes an unedited document tab
+        //: because its file is confirmed deleted. This action does not delete any file.
+        statusBar()->showMessage(tr("Tab closed. The file was deleted."), 5000);
     }
     return true;
 }

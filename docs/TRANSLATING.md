@@ -136,6 +136,10 @@ open password. A read failure means the app could not obtain all the file bytes.
 Damage is a format error the reader could not repair. Do not turn an unclassified
 reader message into a diagnosis. Follow each source's note for those distinctions.
 
+When a status notice explains an automatic action, keep its cause separate from
+its effect. Closing a tab after its source file was deleted does not delete the
+file. Preserve that order of events instead of attributing the deletion to the app.
+
 An "operation" in a document failure means a software action. Use the same term
 as the related failure title, and avoid a medical sense such as surgery when the
 language distinguishes these meanings.

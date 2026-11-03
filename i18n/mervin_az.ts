@@ -570,6 +570,11 @@ Zoom choice: scale the page so its width fits the window.</extracomment>
         <translation>Ləğv et</translation>
     </message>
     <message>
+        <source>Tab closed. The file was deleted.</source>
+        <extracomment>Status bar notice after automatic cleanup closes an unedited document tab because its file is confirmed deleted. This action does not delete any file.</extracomment>
+        <translation>Nişan bağlandı. Fayl silinib.</translation>
+    </message>
+    <message>
         <source>No recently closed tab to reopen</source>
         <translation>Yenidən açmaq üçün yaxınlarda bağlanmış tab yoxdur</translation>
     </message>

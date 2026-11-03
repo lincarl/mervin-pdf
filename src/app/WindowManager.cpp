@@ -433,7 +433,8 @@ void WindowManager::writeStore(const QString &file, const QByteArray &data) cons
         appfiles::write(file, data);
 }
 
-void WindowManager::recordOpen(const QString &canonicalPath, bool restoreViewState, int pageCount)
+void WindowManager::recordOpen(const QString &canonicalPath, bool restoreViewState, int pageCount,
+                                OpenReason reason)
 {
     if (canonicalPath.isEmpty())
         return;
@@ -447,7 +448,8 @@ void WindowManager::recordOpen(const QString &canonicalPath, bool restoreViewSta
     const QString mount = recordedMount(canonicalPath);
     // The session keeps it too, for when Recent no longer lists the file.
     session_.setMount(canonicalPath, mount);
-    if (recent_.add(canonicalPath, QDateTime::currentMSecsSinceEpoch(), pageCount, mount)) {
+    if (reason == OpenReason::User
+        && recent_.add(canonicalPath, QDateTime::currentMSecsSinceEpoch(), pageCount, mount)) {
         writeStore(recentFile_, recent_.toJson());
         emit recentListChanged(recent_.entries());
     }
@@ -673,44 +675,62 @@ void WindowManager::closeRemovedTabs()
         tabScanPending_ = true;
         return;
     }
-    // Each unloaded tab's file, once per canonical path, with the mount recorded
-    // for it. Tabs with unsaved edits reload from their recovery copy.
+    // Capture tab identity as well as the path. A delayed answer must not close a
+    // newer load or a different tab that has since reused that path.
     struct File
     {
+        QPointer<TabPage> tab;
         QString path;
         QString canonicalPath;
         QString mount;
+        SourceStamp source;
+        quint64 generation;
     };
     QList<File> files;
-    QSet<QString> listed;
     for (MainWindow *w : std::as_const(windows_)) {
         if (w->isInTray())
             continue;
-        for (const TabPage *tab : w->unloadedTabs()) {
-            if (tab->freshOpen() || tab->hasUnsavedEdits() || listed.contains(tab->canonicalPath()))
+        for (TabPage *tab : w->findChildren<TabPage *>()) {
+            if (tab->freshOpen() || tab->hasUnsavedEdits() || tab->isLoading()
+                || tab->isBusy() || tab->isClosing())
                 continue;
-            listed.insert(tab->canonicalPath());
-            files.append({tab->path(), tab->canonicalPath(), recordedMount(tab->canonicalPath())});
+            files.append({tab, tab->path(), tab->canonicalPath(), recordedMount(tab->canonicalPath()),
+                          tab->source(), tab->loadGeneration()});
         }
     }
     if (files.isEmpty())
         return;
     tabScanRunning_ = true;
     const QPointer<QObject> self(this);
-    background::start([self, cancel = scanCancel_, files] {
+    background::start([self, cancel = scanCancel_, files, queued = tabScanQueuedObserver_] {
         for (const File &f : files) {
             if (*cancel)
                 return;
-            // The rule session restore uses (SessionStore::prepareRestore): gone only
-            // from a folder that is still there. A missing folder can also be a
-            // volume away, such as another USB stick under the same drive letter.
-            const QFileInfo file(f.canonicalPath);
-            if (!QFileInfo::exists(f.path) && file.absoluteDir().exists()
-                && RecentStore::isRemovedFromDisk(f.canonicalPath, f.mount)) {
+            const SourceStamp current = sourceStamp(f.canonicalPath);
+            if (!current.missing || !sourceStamp(f.path).missing
+                || !RecentStore::isVolumeAttached(f.canonicalPath, f.mount))
+                continue;
+            // A known volume survives deleting the entire temporary folder. A
+            // swapped drive with the same letter has a different volume identity.
+            // Older, never-loaded tabs retain the conservative parent-folder rule.
+            const bool sameVolume = f.source.identity
+                && sourceAncestorVolume(f.canonicalPath) == f.source.identity->volume;
+            if (f.source.identity ? sameVolume : QFileInfo(f.canonicalPath).absoluteDir().exists()) {
                 // Close it now. Waiting for the other files, which can stall on a
                 // network path, would leave time for this one to come back.
-                background::post(self, [self, path = f.canonicalPath] {
-                    static_cast<WindowManager *>(self.data())->closeFoundRemovedTabs({path});
+                background::post(self, [self, f] {
+                    if (!f.tab || f.tab->loadGeneration() != f.generation
+                        || f.tab->canonicalPath() != f.canonicalPath || f.tab->source() != f.source)
+                        return;
+                    auto *manager = static_cast<WindowManager *>(self.data());
+                    auto *owner = qobject_cast<MainWindow *>(f.tab->window());
+                    if (!manager->isClosing() && owner && manager->windows_.contains(owner)
+                        && !owner->closeRemovedTabs(f.canonicalPath, f.tab)) {
+                        owner->whenTabsCanChange([self] {
+                            if (self)
+                                static_cast<WindowManager *>(self.data())->closeRemovedTabs();
+                        });
+                    }
                 });
             }
         }
@@ -720,28 +740,9 @@ void WindowManager::closeRemovedTabs()
             if (std::exchange(manager->tabScanPending_, false))
                 manager->closeRemovedTabs();
         });
+        if (queued)
+            queued();
     });
-}
-
-void WindowManager::closeFoundRemovedTabs(const QStringList &canonicalPaths)
-{
-    if (shuttingDown_ || quitting_)
-        return;
-    const QPointer<WindowManager> self(this);
-    for (MainWindow *w : std::as_const(windows_)) { // closing a tab keeps its window
-        for (const QString &path : canonicalPaths) {
-            if (w->closeRemovedTabs(path))
-                continue;
-            // The window has to keep the tab for now. Check again once its
-            // earlier changes have run and it can change its tabs, rather than
-            // act on this answer, as the file may be back by then.
-            w->whenTabsCanChange([self] {
-                if (self)
-                    self->closeRemovedTabs();
-            });
-            break;
-        }
-    }
 }
 
 void WindowManager::restoreSession(std::function<void(const QStringList &)> done)
@@ -821,7 +822,8 @@ void WindowManager::restoreLate(const QString &path, const FileFacts &facts)
         || isOpenAnywhere(path))
         return;
     const int at = insertIndexForSaved(w->tabPaths(), restoreOrder_, restoreOrder_.indexOf(path));
-    w->openFile(path, /*allowDuplicate=*/false, at, /*makeCurrent=*/false, {}, /*lazy=*/true);
+    w->openFile(path, /*allowDuplicate=*/false, at, /*makeCurrent=*/false, {}, /*lazy=*/true,
+                {}, /*closeOnFailure=*/false, OpenReason::Restore);
 }
 
 void WindowManager::holdSession(bool hold)
@@ -952,7 +954,8 @@ void WindowManager::stagedStep()
     // leaves the remaining documents in their saved order instead of shifting
     // every one of them.
     const int atIndex = insertIndexForSaved(w->tabPaths(), stagedOrder_, o.savedIndex);
-    w->openFile(o.path, o.allowDuplicate, atIndex, o.makeCurrent, {}, o.lazy);
+    w->openFile(o.path, o.allowDuplicate, atIndex, o.makeCurrent, {}, o.lazy,
+                {}, /*closeOnFailure=*/false, o.reason);
 
     // One document per event-loop turn: Qt gets to paint and handle input between
     // documents, so the window stays live through a slow cold-cache batch.
@@ -1079,14 +1082,15 @@ void WindowManager::serveReopen()
     }
 }
 
-bool WindowManager::isOpenAnywhere(const QString &canonicalPath, const TabPage *except) const
+bool WindowManager::isOpenAnywhere(const QString &canonicalPath, const TabPage *except, bool verifySource) const
 {
     if (canonicalPath.isEmpty())
         return false;
     const QString key = normalizePathKey(canonicalPath);
     for (MainWindow *w : windows_)
         for (const TabPage *tab : w->findChildren<TabPage *>())
-            if (tab != except && normalizePathKey(tab->canonicalPath()) == key)
+            if (tab != except && normalizePathKey(tab->canonicalPath()) == key
+                && (!verifySource || tab->canReuseForOpen(except)))
                 return true;
     return false;
 }
@@ -1210,6 +1214,9 @@ void WindowManager::onWindowDestroyed(MainWindow *w)
             engine_->shutdown();
         QCoreApplication::quit();
     } else {
+        // A closed window no longer belongs to the running session. Final Quit
+        // keeps its saved session through updateSession's sessionFinal_ guard.
+        updateSession();
         resumeInstanceOpens();
     }
 }
@@ -1231,20 +1238,20 @@ MainWindow *WindowManager::emptyWindow() const
     return nullptr;
 }
 
-bool WindowManager::focusExistingTab(const QString &canonicalPath)
+bool WindowManager::focusExistingTab(const QString &canonicalPath, const TabPage *fresh, OpenReason reason)
 {
     if (canonicalPath.isEmpty())
         return false;
     const QString key = normalizePathKey(canonicalPath);
     for (MainWindow *w : std::as_const(windows_)) {
-        if (w->focusTabIfOpen(canonicalPath)) {
+        if (w->focusTabIfOpen(canonicalPath, reason == OpenReason::User, fresh)) {
             surfaceWindow(w);
             active_ = w;
             // Re-opening an already-open file (e.g. from Explorer) still bumps
             // its recency, but there is no view state to restore - it's live.
             for (const TabPage *tab : w->findChildren<TabPage *>())
                 if (!tab->freshOpen() && normalizePathKey(tab->canonicalPath()) == key) {
-                    recordOpen(tab->canonicalPath(), /*restoreViewState=*/false);
+                    recordOpen(tab->canonicalPath(), /*restoreViewState=*/false, 0, reason);
                     break;
                 }
             return true;

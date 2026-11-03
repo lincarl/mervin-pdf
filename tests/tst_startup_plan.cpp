@@ -106,6 +106,8 @@ void TstStartupPlan::commandLineFileOpensFirstAndTakesTheView()
     QCOMPARE(plan.size(), 3);
     QCOMPARE(plan.at(0).path, QStringLiteral("X.pdf")); // opened first
     QCOMPARE(plan.at(0).savedIndex, -1);                // not from the session: appends
+    QCOMPARE(plan.at(0).reason, mervin::OpenReason::User);
+    QCOMPARE(plan.at(1).reason, mervin::OpenReason::Restore);
 
     const Replay r = applyPlan(plan, saved);
     QCOMPARE(r.current, QStringLiteral("X.pdf"));
@@ -123,6 +125,8 @@ void TstStartupPlan::restoreOpensActiveDocumentFirst()
     QCOMPARE(plan.at(0).path, QStringLiteral("C.pdf")); // the document being read
     QVERIFY(plan.at(0).makeCurrent);
     QCOMPARE(currentCount(plan), 1); // and nothing else steals the view later
+    for (const StagedOpen &open : plan)
+        QCOMPARE(open.reason, mervin::OpenReason::Restore);
 
     const Replay r = applyPlan(plan, saved);
     QCOMPARE(r.tabs, saved); // order preserved

@@ -570,6 +570,11 @@ Zoom choice: scale the page so its width fits the window.</extracomment>
         <translation>रद्द करें</translation>
     </message>
     <message>
+        <source>Tab closed. The file was deleted.</source>
+        <extracomment>Status bar notice after automatic cleanup closes an unedited document tab because its file is confirmed deleted. This action does not delete any file.</extracomment>
+        <translation>टैब बंद कर दिया गया। फ़ाइल हटा दी गई है।</translation>
+    </message>
+    <message>
         <source>No recently closed tab to reopen</source>
         <translation>हाल ही में बंद किया गया कोई टैब दोबारा खोलने के लिए नहीं है</translation>
     </message>

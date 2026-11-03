@@ -29,6 +29,7 @@
 
 #include <functional>
 #include <memory>
+#include <utility>
 
 class MainWindow;
 class QSystemTrayIcon;
@@ -90,7 +91,9 @@ public:
     // True when `canonicalPath` is open in any window of this process. Unlike
     // focusExistingTab this only answers the question - it does not select the tab
     // or raise the window, which a background open must not do.
-    bool isOpenAnywhere(const QString &canonicalPath, const TabPage *except = nullptr) const;
+    // verifySource compares a completed fresh candidate in `except` before reuse.
+    bool isOpenAnywhere(const QString &canonicalPath, const TabPage *except = nullptr,
+                        bool verifySource = false) const;
     // Reports whether shutdown or an active session request blocks new window work.
     bool isClosing() const { return shuttingDown_ || sessionFinal_ || sessionend::active(); }
     bool hasLoadingDocuments() const;
@@ -107,8 +110,10 @@ public:
     QStringList openTabPaths() const;
 
     // Cross-window: focus an already-open file by canonical path; raises and
-    // activates the owning window. Returns true if found.
-    bool focusExistingTab(const QString &canonicalPath);
+    // activates the owning window. User opens require the loaded source version
+    // to match `fresh`; without a candidate they reuse only clean unloaded tabs.
+    bool focusExistingTab(const QString &canonicalPath, const TabPage *fresh = nullptr,
+                          OpenReason reason = OpenReason::User);
 
     void newWindow(); // Ctrl+N: an empty window
     void quitAll();   // close every window (process then exits)
@@ -187,8 +192,10 @@ public:
     // restoreViewState is true (a freshly opened tab), the file's saved view
     // state (if any) is applied to the matching tab immediately. The entry keeps
     // the mount recorded for it until a check on a background thread finds the
-    // file and records the mount it is on now.
-    void recordOpen(const QString &canonicalPath, bool restoreViewState, int pageCount = 0);
+    // file and records the mount it is on now. Restore preserves Recent entries
+    // and their last-opened times while still restoring view state and mounts.
+    void recordOpen(const QString &canonicalPath, bool restoreViewState, int pageCount = 0,
+                    OpenReason reason = OpenReason::User);
 
     // Persist a tab's current view state (called on tab/window close).
     void saveViewState(const QString &canonicalPath, const ViewState &state);
@@ -250,15 +257,11 @@ public:
     // every window, so each file is checked once whichever list shows it.
     FileProbe *fileProbe() { return &probe_; }
 
-    // Close the unloaded tabs whose file is gone: deleted, moved or renamed from a
-    // folder that is still there, while its drive, share or mount is attached
-    // (RecentStore::isRemovedFromDisk, given the mount recorded for the file). That
-    // is the rule session restore uses to drop a document. Other tabs
-    // stay. A loaded tab still shows its document, a tab with unsaved edits reloads
-    // from its recovery copy, and a tab whose folder or volume is away keeps Retry. Windows in the tray
-    // keep their tabs until they are shown again. The disk is checked on a worker
-    // thread, since network paths can stall. Runs when a window is activated and
-    // after an unloaded tab fails to load.
+    // Close clean, idle tabs after a worker confirms deletion on their original
+    // volume. Known volume identity also permits deleting an entire temporary
+    // folder. Never-loaded tabs require their parent folder to remain. Edits,
+    // inaccessible paths and detached volumes stay, and tray windows wait until
+    // shown. Runs on activation and after an unloaded tab fails to load.
     void closeRemovedTabs();
 
     struct testing {
@@ -266,6 +269,11 @@ public:
         static bool removedTabScanRunning(const WindowManager &manager)
         {
             return manager.tabScanRunning_;
+        }
+        // Runs on the scan worker after its GUI callbacks have been queued.
+        static void observeRemovedTabScan(WindowManager &manager, std::function<void()> queued)
+        {
+            manager.tabScanQueuedObserver_ = std::move(queued);
         }
     };
 
@@ -381,11 +389,6 @@ private:
     void applyViewStateIfStored(const QString &canonicalPath);
     // The mount recorded for a document, from the session's copy, else Recent's.
     QString recordedMount(const QString &canonicalPath) const;
-    // Close the tabs of files a closeRemovedTabs scan has just found gone, each as
-    // soon as it is found. A window that has to keep a tab for now
-    // (MainWindow::closeRemovedTabs) queues the whole check again
-    // (MainWindow::whenTabsCanChange), so a late close follows a fresh answer.
-    void closeFoundRemovedTabs(const QStringList &canonicalPaths);
     // Run every window's queued tab changes (MainWindow::runTabChanges) now, or
     // on the next turn of the event loop.
     void runTabChanges();
@@ -447,6 +450,7 @@ private:
     bool movingTab_ = false;           // detachTab or mergeTab is moving a tab
     bool tabScanRunning_ = false;      // a closeRemovedTabs scan is on its worker
     bool tabScanPending_ = false;      // ...and another was asked for meanwhile
+    std::function<void()> tabScanQueuedObserver_; // testing, copied before each worker starts
     bool tabChangesPosted_ = false;    // postTabChanges has a run on its way
     bool stagedStepPosted_ = false;
     bool stagedSessionPaused_ = false;

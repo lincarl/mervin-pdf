@@ -570,6 +570,11 @@ Zoom choice: scale the page so its width fits the window.</extracomment>
         <translation>Ακύρωση</translation>
     </message>
     <message>
+        <source>Tab closed. The file was deleted.</source>
+        <extracomment>Status bar notice after automatic cleanup closes an unedited document tab because its file is confirmed deleted. This action does not delete any file.</extracomment>
+        <translation>Η καρτέλα έκλεισε. Το αρχείο διαγράφηκε.</translation>
+    </message>
+    <message>
         <source>No recently closed tab to reopen</source>
         <translation>Καμία καρτέλα που έκλεισε πρόσφατα για να ανοίξει ξανά</translation>
     </message>
