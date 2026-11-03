@@ -31,7 +31,10 @@ Interactive installation, upgrade, repair and removal ask the installed Mervin
 processes to quit before Windows checks for files in use. Clean documents and
 windows hidden in the tray need no extra confirmation. Unsaved documents keep
 their normal Save, Discard and Cancel choices. Save finishes before installation
-continues. Cancel, a failed save, or a shutdown timeout cancels installation
+continues. Settings and About close automatically when no settings are pending.
+Unfinished settings and other decision dialogs stay open and are brought forward.
+Canceling installation also dismisses its unanswered unsaved-document question.
+Cancel, a failed save, or a shutdown timeout cancels installation
 before it changes installed files. The installer never force-terminates Mervin.
 It targets the executable in the current or previous installation folder in the
 installing user's session, leaving separate portable and Store copies alone.

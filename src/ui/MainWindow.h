@@ -37,6 +37,7 @@ class QLineEdit;
 class QLabel;
 class QComboBox;
 class QMenu;
+class QMessageBox;
 class QDockWidget;
 class QPushButton;
 class QStackedWidget;
@@ -359,6 +360,8 @@ private:
     // Returns the unsaved-edit decision after committing active editors, without applying it.
     // The window-modal question guards tab and window lifetimes across its event loop.
     int askClose(mervin::TabPage *tab);
+    QPointer<QMessageBox> closeQuestion_;
+    QPointer<SettingsDialog> settingsDialog_;
     void saveTab(mervin::TabPage *tab,
                  std::function<void(mervin::TabPage::SaveResult)> completion);
     static void askSaveReplacement(QPointer<mervin::TabPage> page,

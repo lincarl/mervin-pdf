@@ -583,10 +583,15 @@ void CloseFlow::releaseClaims()
             window->scheduleCurrentResume();
 }
 
-void CloseFlow::cancel()
+void CloseFlow::cancel(bool dismissQuestion)
 {
     if (ended_)
         return;
+    QList<QPointer<QMessageBox>> questions;
+    if (dismissQuestion)
+        for (const auto &window : windows())
+            if (window && window->closeQuestion_)
+                questions.append(window->closeQuestion_);
     ended_ = true;
     clearWait();
     releaseClaims();
@@ -596,6 +601,9 @@ void CloseFlow::cancel()
         manager_->resumeInstanceOpens();
     }
     deleteLater();
+    for (const auto &question : questions)
+        if (question)
+            question->reject();
 }
 
 void CloseFlow::finish()

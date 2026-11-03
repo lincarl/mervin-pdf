@@ -50,7 +50,7 @@ namespace {
 
 // Restore without losing maximized state and activate. Windows uses foreground rights granted
 // by the forwarding process; without a grant, fall back to taskbar flashing.
-void surfaceWindow(MainWindow *w)
+void surfaceWindow(QWidget *w)
 {
     if (!w)
         return;
@@ -1433,16 +1433,33 @@ installerclose::Reply WindowManager::installerClose(installerclose::Command comm
         if (quitting_ || isClosing())
             return Reply::Busy;
         installerCloseRequest_ = request;
+        installerDialog_.clear();
         installerCloseFlow_ = CloseFlow::requestQuit(this);
     }
     if (request != installerCloseRequest_)
         return Reply::Busy;
     if (command == Command::Cancel && installerCloseFlow_ && !installerCloseFlow_->ended())
-        installerCloseFlow_->cancel();
+        installerCloseFlow_->cancel(true);
     if (command != Command::Begin && command != Command::Poll && command != Command::Cancel)
         return Reply::Unsupported;
     if (sessionFinal_)
         return Reply::Closing;
+    if (installerCloseFlow_ && !installerCloseFlow_->ended()
+        && (command == Command::Begin || command == Command::Poll)) {
+        const QPointer<QWidget> dialog = QApplication::activeModalWidget();
+        if (auto *settings = qobject_cast<SettingsDialog *>(dialog.data());
+            settings && !settings->hasPendingChanges()) {
+            settings->reject();
+        } else if (dialog && dialog != installerDialog_) {
+            // Leave decisions and unfinished edits to the user, but make the
+            // blocking dialog visible instead of waiting behind the installer.
+            for (MainWindow *window : windows_)
+                if (window->isAncestorOf(dialog))
+                    surfaceWindow(window);
+            surfaceWindow(dialog);
+        }
+        installerDialog_ = dialog;
+    }
     return installerCloseFlow_ && !installerCloseFlow_->ended() ? Reply::Pending : Reply::Declined;
 }
 

@@ -61,6 +61,8 @@ public:
     // The language picked differs from the one Mervin is showing. It takes effect at
     // startup, so OK or Apply then closes the dialog and the caller restarts Mervin.
     bool restartNeeded() const;
+    // Includes invalid edits, so external shutdown cannot discard an unfinished setting.
+    bool hasPendingChanges() const;
 
     void showPage(Page page);
     Page currentPage() const;

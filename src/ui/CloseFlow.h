@@ -28,7 +28,8 @@ public:
     // Requests process-wide close approval, optionally followed by relaunch.
     static CloseFlow *requestQuit(WindowManager *manager, bool restart = false);
     // Ends a pending request without closing its windows or discarding edits.
-    void cancel();
+    // External cancellation can dismiss its unanswered unsaved-edit question.
+    void cancel(bool dismissQuestion = false);
     bool ended() const { return ended_; }
     // Whether every current window has an active window-wide close request.
     // Incoming launches wait until cancellation or handoff to the next process.

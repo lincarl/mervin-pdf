@@ -358,7 +358,7 @@ bool MainWindow::canSuspendDocuments() const
 {
     // Nested dialogs and document operations may hold raw document pointers. Defer until
     // their event loops return, including native print and save dialogs.
-    return documentsFree() && !QApplication::activeModalWidget()
+    return documentsFree() && !settingsDialog_ && !QApplication::activeModalWidget()
         && !QApplication::activePopupWidget();
 }
 

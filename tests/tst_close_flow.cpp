@@ -15,6 +15,7 @@
 #include "TestWaits.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QDialog>
 #include <QElapsedTimer>
 #include <QFile>
@@ -1192,6 +1193,160 @@ private slots:
             QVERIFY(original.open(QIODevice::ReadOnly));
             QCOMPARE(original.readAll(), before);
         }
+    }
+
+    // Covers both a new quit question and one inherited from a narrower close.
+    void installerCancelDismissesUnsavedQuestion_data()
+    {
+        QTest::addColumn<bool>("inherited");
+        QTest::newRow("installer question") << false;
+        QTest::newRow("existing tab question") << true;
+    }
+
+    // Cancelling installation removes the obsolete question and retains all edits.
+    void installerCancelDismissesUnsavedQuestion()
+    {
+        using namespace installerclose;
+        QFETCH(bool, inherited);
+        QTemporaryDir files;
+        const QString path = copy(files, "plan.pdf");
+        WindowManager manager;
+        const QPointer<MainWindow> window = manager.createWindow();
+        QVERIFY(testing::openAndWait(*window, path));
+        const QPointer<TabPage> tab = currentTab(window);
+        QVERIFY(addNote(tab, "Keep after cancelled installation") >= 0);
+        dialogs_.stop();
+        QPointer<QMessageBox> question;
+        bool observed = false;
+        QTimer cancel;
+        connect(&cancel, &QTimer::timeout, this, [&] {
+            question = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            if (!question)
+                return;
+            cancel.stop();
+            observed = true;
+            const auto dismissOnFailure = qScopeGuard([&] {
+                if (question)
+                    question->reject();
+            });
+            if (inherited)
+                QCOMPARE(manager.installerClose(Command::Begin, 17), Reply::Pending);
+            QCOMPARE(manager.installerClose(Command::Cancel, 17), Reply::Declined);
+            QVERIFY(!question || !question->isVisible());
+        });
+        cancel.start(5);
+        if (inherited)
+            closeTab(window);
+        else
+            QCOMPARE(manager.installerClose(Command::Begin, 17), Reply::Pending);
+        QTRY_VERIFY(observed && !question);
+        QVERIFY(window && tab && tab->hasUnsavedEdits() && !tab->isClosing());
+        QCOMPARE(manager.installerClose(Command::Poll, 17), Reply::Declined);
+        // A later ordinary Save question must still work after the installer cancels.
+        answers_ << QMessageBox::Save;
+        dialogs_.start(5);
+        manager.quitAll();
+        QTRY_VERIFY_WITH_TIMEOUT(!window, 10000);
+        auto saved = manager.engine()->openDocument(path);
+        QVERIFY(saved);
+        QCOMPARE(AnnotModel(*saved).pageAnnots(0).front().contents,
+                 QStringLiteral("Keep after cancelled installation"));
+    }
+
+    // Clean Settings closes automatically, but its stack frame must unwind first.
+    void installerClosesCleanSettings()
+    {
+        using namespace installerclose;
+        WindowManager manager;
+        const QPointer<MainWindow> window = manager.createWindow();
+        bool observed = false;
+        QTimer begin;
+        connect(&begin, &QTimer::timeout, this, [&] {
+            const QPointer<SettingsDialog> settings =
+                qobject_cast<SettingsDialog *>(QApplication::activeModalWidget());
+            if (!settings)
+                return;
+            begin.stop();
+            observed = true;
+            const auto dismissOnFailure = qScopeGuard([&] {
+                if (settings)
+                    settings->reject();
+            });
+            QVERIFY(!settings->hasPendingChanges());
+            QCOMPARE(manager.installerClose(Command::Begin, 17), Reply::Pending);
+            QVERIFY(settings && !settings->isVisible());
+            QCoreApplication::processEvents();
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            QVERIFY(window && settings);
+        });
+        begin.start(5);
+        // The real MainWindow slot owns the stack-based Settings dialog.
+        QVERIFY(QMetaObject::invokeMethod(window, "showAbout"));
+        QVERIFY(observed);
+        QTRY_VERIFY(!window);
+        QCOMPARE(manager.installerClose(Command::Poll, 17), Reply::Closing);
+    }
+
+    // Both unfinished settings and a decision nested over Settings need user input.
+    void installerKeepsPendingSettings_data()
+    {
+        QTest::addColumn<bool>("nested");
+        QTest::newRow("unfinished settings") << false;
+        QTest::newRow("nested decision") << true;
+    }
+
+    // Installer cancellation leaves the user's pending Settings work intact.
+    void installerKeepsPendingSettings()
+    {
+        using namespace installerclose;
+        QFETCH(bool, nested);
+        WindowManager manager;
+        const QPointer<MainWindow> window = manager.createWindow();
+        bool observed = false;
+        QTimer begin;
+        connect(&begin, &QTimer::timeout, this, [&] {
+            const QPointer<SettingsDialog> settings =
+                qobject_cast<SettingsDialog *>(QApplication::activeModalWidget());
+            if (!settings)
+                return;
+            begin.stop();
+            observed = true;
+            const auto dismissSettings = qScopeGuard([&] {
+                if (settings)
+                    settings->reject();
+            });
+            auto *closeToTray = settings->findChild<QCheckBox *>(QStringLiteral("closeToTray"));
+            QVERIFY(closeToTray);
+            if (!nested) {
+                closeToTray->setChecked(!closeToTray->isChecked());
+                QVERIFY(settings->hasPendingChanges());
+            }
+            QDialog decision(settings);
+            const auto checkPending = [&] {
+                const auto dismissDecision = qScopeGuard([&] { decision.reject(); });
+                QCOMPARE(manager.installerClose(Command::Begin, 17), Reply::Pending);
+                QCoreApplication::processEvents();
+                QCOMPARE(manager.installerClose(Command::Poll, 17), Reply::Pending);
+                QVERIFY(window && settings && settings->isVisible());
+                if (nested)
+                    QVERIFY(decision.isVisible());
+                QCOMPARE(manager.installerClose(Command::Cancel, 17), Reply::Declined);
+                QVERIFY(settings->isVisible());
+                if (!nested)
+                    QVERIFY(settings->hasPendingChanges());
+            };
+            if (nested) {
+                QTimer::singleShot(0, &decision, checkPending);
+                decision.exec();
+            } else {
+                checkPending();
+            }
+        });
+        begin.start(5);
+        QVERIFY(QMetaObject::invokeMethod(window, "showAbout"));
+        QVERIFY(observed);
+        QVERIFY(window && !Settings::load().closeToTray);
+        QCOMPARE(manager.installerClose(Command::Poll, 17), Reply::Declined);
     }
 
     // An installer timeout cancels its pending Quit without a later surprise exit.

@@ -34,6 +34,7 @@ class MainWindow;
 class QSystemTrayIcon;
 class QMenu;
 class QTimer;
+class QWidget;
 
 namespace mervin {
 
@@ -417,6 +418,7 @@ private:
     QList<MainWindow *> windows_;
     QList<QPointer<CloseFlow>> closeFlows_;
     QPointer<CloseFlow> installerCloseFlow_;
+    QPointer<QWidget> installerDialog_;
     std::uintptr_t installerCloseRequest_ = 0;
     std::uintptr_t installerCancelledRequest_ = 0;
     bool installerExit_ = false;
