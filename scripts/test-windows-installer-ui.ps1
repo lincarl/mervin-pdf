@@ -280,6 +280,20 @@ function Click-Control($State, [string]$TextPattern) {
     }
 }
 
+# Wait for the queued checkbox click before another control takes focus.
+function Uncheck-LaunchOption($State) {
+    $checkbox = @(Get-EnabledButtons $State '^Launch Mervin PDF$')
+    if ($checkbox.Count -ne 1 -or [MervinInstallerUi]::CheckState($checkbox[0].Handle) -ne 1) {
+        throw 'Launch Mervin PDF must be checked by default.'
+    }
+    Click-Control $State '^Launch Mervin PDF$'
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while ([MervinInstallerUi]::CheckState($checkbox[0].Handle) -ne 0 -and $watch.Elapsed.TotalSeconds -lt 5) {
+        Start-Sleep -Milliseconds 100
+    }
+    if ([MervinInstallerUi]::CheckState($checkbox[0].Handle) -ne 0) { throw 'The launch checkbox did not become unchecked.' }
+}
+
 function Start-InstallerSession([string]$Name, [string]$Package = $Msi) {
     if ($script:setup) {
         if (-not $script:setup.HasExited) { throw 'The previous installer session is still running.' }
@@ -415,16 +429,7 @@ close_to_tray = false
     $state = Wait-InstallerPage 'Ready to install' 'Ready to install' '^Install$'
     Click-Control $state '^Install$'
     $finish = Wait-SuccessfulFinish 'unchecked'
-    $checkbox = @(Get-EnabledButtons $finish '^Launch Mervin PDF$')
-    if ($checkbox.Count -ne 1 -or [MervinInstallerUi]::CheckState($checkbox[0].Handle) -ne 1) {
-        throw 'Launch Mervin PDF must be checked by default.'
-    }
-    Click-Control $finish '^Launch Mervin PDF$'
-    $watch = [Diagnostics.Stopwatch]::StartNew()
-    while ([MervinInstallerUi]::CheckState($checkbox[0].Handle) -ne 0 -and $watch.Elapsed.TotalSeconds -lt 5) {
-        Start-Sleep -Milliseconds 100
-    }
-    if ([MervinInstallerUi]::CheckState($checkbox[0].Handle) -ne 0) { throw 'The launch checkbox did not become unchecked.' }
+    Uncheck-LaunchOption $finish
     Save-WindowEvidence $finish.Window 'unchecked-finish'
     Assert-NoLaunch
     Click-Control $finish '^Finish$'
@@ -598,9 +603,12 @@ close_to_tray = true
         throw 'Upgrade displayed a files-in-use confirmation.'
     }
     Save-WindowEvidence $finish.Window '07-running-app-upgrade-finish'
-    Click-Control $finish '^Launch Mervin PDF$'
+    Uncheck-LaunchOption $finish
     Click-Control $finish '^Finish$'
     Complete-InstallerSession
+    if (Select-String -LiteralPath $log -Quiet -Pattern 'Doing action: LaunchMervin\b|Action start [^\r\n]*: LaunchMervin\.') {
+        throw 'Unchecked upgrade Finish executed the launch action.'
+    }
     if (@(Get-MervinProducts).Count -ne 1) { throw 'Upgrade left incorrect product registrations.' }
     [pscustomobject]@{
         installDirectory = $installDir
