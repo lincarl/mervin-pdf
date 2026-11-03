@@ -28,6 +28,7 @@
 #include "session/SessionEnd.h"
 #include "ui/TabPage.h"
 #include "ui/Theme.h"
+#include "ui/WindowPlacement.h"
 #include "update/Updater.h"
 
 #ifdef Q_OS_WIN
@@ -391,6 +392,7 @@ int main(int argc, char *argv[])
     // (see finish): its teardown hands the clipboard over to the system.
     std::optional<QApplication> app;
     app.emplace(argc, argv);
+    mervin::keepWindowsOnScreen(*app);
     QApplication::setApplicationName(QStringLiteral(MERVIN_APP_NAME));
     QApplication::setOrganizationName(QStringLiteral(MERVIN_ORG_NAME));
     QApplication::setApplicationVersion(QStringLiteral(MERVIN_VERSION_STRING));

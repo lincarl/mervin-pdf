@@ -14,9 +14,11 @@
 
 QT_BEGIN_NAMESPACE
 class QDialog;
+class QMessageBox;
 class QNetworkAccessManager;
 class QNetworkReply;
 class QProgressDialog;
+class QPushButton;
 class QTemporaryDir;
 QT_END_NAMESPACE
 
@@ -24,7 +26,7 @@ namespace mervin {
 
 // Primary-process updater singleton. On startup, auto-update checks the release API
 // when 30 days have passed, downloads the matching package, verifies SHA-256,
-// installs it and restarts. Manual checks use the same installation flow and show
+// offers to install it now or on the next start. Manual checks install and show
 // progress. Unsupported/dev/portable copies link to the release. MSIX copies
 // open Microsoft Store for manual checks and never contact the release API.
 // Asset URLs come only from the configured release API response. Its state in
@@ -97,6 +99,10 @@ public:
     // What a manual installation says when Mervin is too busy to close for it.
     static QString closeRefusedText();
 
+    // Sets up the downloaded-update choice and returns its Now button. Shared
+    // with layout checks so they exercise the actual translated prompt.
+    static QPushButton *configureRestartPrompt(QMessageBox &box, const QString &version);
+
     // Waits up to `ms` milliseconds for the disk work asked for so far, such as a
     // pending update put back as the app quits. For the end of the process; works
     // after the updater is gone. True when nothing is left.
@@ -128,6 +134,8 @@ private:
     void onDownloadFinished();
     void installWhenIdle(); // manual checks can finish over Settings
     void pollInstall();
+    // Keeps the saved download until the next start unless the user chooses Now.
+    void offerRestart(const QString &version);
     bool shouldWaitForDialogs() const;
     // Copies and verifies `file` into private staging before installation.
     // Requires the expected SHA-256 obtained from the HTTPS release API.
@@ -151,8 +159,9 @@ private:
     const QString exePath_; // captured at start: a package upgrade replaces the file behind it
     QNetworkAccessManager *nam_;
     bool busy_ = false;        // a check, download or installation is running or queued
-    bool manual_ = false;      // ...on behalf of Settings, so progress and outcomes show
+    bool manual_ = false;      // ...explicitly requested, so progress and outcomes show
     bool installQueued_ = false; // a verified download is waiting for other dialogs
+    bool confirmationRequired_ = false; // this session downloaded an automatic update
     bool installing_ = false;  // do not remove the package once installation starts
     QPointer<QNetworkReply> reply_;
     // While a download runs: whether a write to its .part file failed. The file
@@ -167,6 +176,7 @@ private:
     std::shared_ptr<QTemporaryDir> staging_;
     QString stagedFile_;
     QPointer<QProgressDialog> progress_;
+    QPointer<QMessageBox> restartPrompt_;
     // "Installing..." while the package manager runs. The process is a child of
     // this updater and stops with it, so the destructor deletes the note too.
     QPointer<QDialog> busyNote_;

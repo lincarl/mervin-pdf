@@ -34,8 +34,15 @@ private:
     {
         window_.ensurePolished(); // stylesheet padding and fonts count
         QSize minimum = floor_.expandedTo(window_.minimumSizeHint());
-        if (const QLayout *layout = window_.layout())
-            minimum.setHeight(qMax(minimum.height(), layout->totalHeightForWidth(minimum.width())));
+        if (const QLayout *layout = window_.layout()) {
+            // Preferred height includes a scroll area's full viewport hint.
+            // Its minimum permits scrolling while still covering wrapped labels.
+            const QMargins margins = window_.contentsMargins();
+            const int height = layout->minimumHeightForWidth(
+                minimum.width() - margins.left() - margins.right());
+            if (height >= 0)
+                minimum.setHeight(qMax(minimum.height(), height + margins.top() + margins.bottom()));
+        }
         // A larger minimum also enlarges a window that is now smaller.
         window_.setMinimumSize(minimum);
     }

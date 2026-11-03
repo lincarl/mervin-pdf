@@ -4211,6 +4211,30 @@ Mervin PDF %1 is the latest version.</source>
 Mervin PDF %1이(가) 최신 버전입니다.</translation>
     </message>
     <message>
+        <source>Update ready</source>
+        <translation>업데이트 준비 완료</translation>
+    </message>
+    <message>
+        <source>Mervin PDF %1 has been downloaded.</source>
+        <extracomment>%1 is the version number of the downloaded update.</extracomment>
+        <translation>Mervin PDF %1 다운로드가 완료되었습니다.</translation>
+    </message>
+    <message>
+        <source>Restart now to install the update, or choose Later to install it the next time you start Mervin.</source>
+        <extracomment>Shown after an automatic update downloads. Later keeps the download and installs it on the next app launch. Now installs and requests a restart; save prompts can still postpone restarting. Later and Now are button labels.</extracomment>
+        <translation>지금 Mervin을 다시 시작하여 업데이트를 설치하거나, ‘나중에’를 선택하여 다음에 Mervin을 시작할 때 설치하세요.</translation>
+    </message>
+    <message>
+        <source>Later</source>
+        <extracomment>Defers installing the downloaded update until the next app launch.</extracomment>
+        <translation>나중에</translation>
+    </message>
+    <message>
+        <source>Now</source>
+        <extracomment>Installs the downloaded update and restarts the application now.</extracomment>
+        <translation>지금</translation>
+    </message>
+    <message>
         <source>Update Available</source>
         <translation>업데이트 사용 가능</translation>
     </message>

@@ -26,6 +26,7 @@
 #include <QNetworkReply>
 #include <QPointer>
 #include <QProgressDialog>
+#include <QPushButton>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QStandardPaths>
@@ -240,8 +241,8 @@ protected:
     }
 };
 
-// Dismiss result/error dialogs so failures cannot hang the suite. Any obsolete
-// install-confirmation question is recorded and rejected, never accepted.
+// Dismiss result/error dialogs so failures cannot hang the suite. Tests that
+// exercise a successful automatic installation explicitly choose Now.
 class PromptObserver
 {
 public:
@@ -252,8 +253,20 @@ public:
                 auto *box = qobject_cast<QMessageBox *>(widget);
                 if (!box || !box->isVisible())
                     continue;
-                if (box->windowTitle() == QStringLiteral("Update Ready"))
+                if (box->objectName() == QStringLiteral("updateRestartPrompt")) {
                     ++confirmations;
+                    if (installNow) {
+                        for (QAbstractButton *button : box->buttons()) {
+                            if (box->buttonRole(button) == QMessageBox::AcceptRole) {
+                                button->click();
+                                break;
+                            }
+                        }
+                    } else {
+                        box->reject();
+                    }
+                    continue;
+                }
                 messages.append(box->text());
                 box->reject();
             }
@@ -262,6 +275,7 @@ public:
     }
 
     int confirmations = 0;
+    bool installNow = false;
     QStringList messages;
 
 private:
@@ -331,6 +345,7 @@ private slots:
     void automaticHandoffWaitsForADialogOpenedMeanwhile();
 #ifndef Q_OS_WIN // read-only folders do not stop writes on Windows
     void unwrittenConsumeStopsTheHandoff();
+    void unwrittenPendingDoesNotOfferRestart();
 #endif
     void automaticRestartWaitsForADialogOpenedDuringTheCopy();
     void quittingWaitsForTheDiskWithinItsTime();
@@ -367,8 +382,12 @@ private slots:
     void recordStoreUrl(const QUrl &url);
     void recordOpenedFile(const QUrl &url);
     void recordReleaseUrl(const QUrl &url);
-    void releaseInstallsWithoutConfirmation_data();
-    void releaseInstallsWithoutConfirmation();
+    void releaseInstallationChoices_data();
+    void releaseInstallationChoices();
+    void laterKeepsDownloadUntilStartup_data();
+    void laterKeepsDownloadUntilStartup();
+    void disablingDismissesRestartPrompt();
+    void restartPromptGoesWithTheUpdater();
     void disablingCancelsQueuedInstall();
     void disablingDuringStaging_data();
     void disablingDuringStaging();
@@ -419,7 +438,7 @@ private:
 
 void TestUpdater::initTestCase()
 {
-    // PromptObserver detects the removed confirmation by its English title.
+    // The prompt checks use the English button labels.
     i18n::apply(QStringLiteral("en"));
     QVERIFY(profile_.isValid());
     previousProfile_ = ConfigPaths::overrideDir();
@@ -774,6 +793,39 @@ void TestUpdater::unwrittenConsumeStopsTheHandoff()
     QVERIFY(file.open(QIODevice::ReadOnly));
     QVERIFY(file.readAll().contains("pendingFile"));
 }
+
+// A Later choice must not promise an update that could not be recorded on disk.
+void TestUpdater::unwrittenPendingDoesNotOfferRestart()
+{
+    if (::geteuid() == 0)
+        QSKIP("Read-only files do not stop root");
+    Updater updater;
+    DownloadReply *reply = prepareDownload(updater, false);
+    QVERIFY(reply);
+    QSettings state;
+    state.setValue(stateKey(u"lastCheckUtc"), QDateTime::currentDateTimeUtc().addDays(-31));
+    state.sync();
+    const QString ini = state.fileName();
+    const QString folder = QFileInfo(ini).absolutePath();
+    const auto folderPermissions = QFile::permissions(folder);
+    const auto iniPermissions = QFile::permissions(ini);
+    const auto writable = qScopeGuard([&] {
+        QFile::setPermissions(folder, folderPermissions);
+        QFile::setPermissions(ini, iniPermissions);
+    });
+    QVERIFY(QFile::setPermissions(ini, QFileDevice::ReadOwner));
+    QVERIFY(QFile::setPermissions(folder, QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+    PromptObserver observer;
+    reply->finish();
+    QTRY_VERIFY(!updater.busy_);
+    QVERIFY(settled());
+    QCOMPARE(observer.confirmations, 0);
+    QVERIFY(installerFiles.isEmpty());
+    QVERIFY(!updater.restartPrompt_);
+    QFile metadata(ini);
+    QVERIFY(metadata.open(QIODevice::ReadOnly));
+    QVERIFY(!metadata.readAll().contains("pendingFile"));
+}
 #endif
 
 // The AppImage copy runs in the background while the windows stay usable. An
@@ -846,6 +898,7 @@ void TestUpdater::automaticCompletionWaitsForSettings()
     DownloadReply *reply = prepareDownload(updater, false);
     QVERIFY(reply);
     PromptObserver observer;
+    observer.installNow = true;
     reply->finish();
 
     // Let the initial queued poll run while Settings is still modal, then allow
@@ -856,9 +909,10 @@ void TestUpdater::automaticCompletionWaitsForSettings()
     QVERIFY(updater.installQueued_);
     QVERIFY(updater.busy_);
     QVERIFY(QFile::exists(downloadedPath()));
+    QCOMPARE(observer.confirmations, 0);
     settingsDialog.close();
     QTRY_COMPARE_WITH_TIMEOUT(installerFiles.size(), 1, 2000);
-    QCOMPARE(observer.confirmations, 0);
+    QCOMPARE(observer.confirmations, 1);
     QVERIFY(!updater.installQueued_);
     QVERIFY(updater.busy_);
 }
@@ -1092,6 +1146,7 @@ void TestUpdater::pendingUpdateOfThisKindOnly()
     network->offeredAsset = assetName(copyKind);
     QDesktopServices::setUrlHandler(QStringLiteral("file"), this, "recordOpenedFile");
     PromptObserver observer;
+    observer.installNow = true; // a hashless legacy record needs a new download
     if (manual)
         updater.checkNow();
     else
@@ -1101,6 +1156,7 @@ void TestUpdater::pendingUpdateOfThisKindOnly()
     QCoreApplication::processEvents();
 
     const QStringList installed = appImageReplacements + packageInstalls;
+    QCOMPARE(observer.confirmations, !manual && legacy && recordKind == copyKind ? 1 : 0);
     if (recordKind == copyKind) {
         // Legacy metadata is discarded and reacquired from the release API.
         QCOMPARE(installed.size(), 1);
@@ -1219,10 +1275,13 @@ void TestUpdater::hashlessPendingRequiresRelease()
     if (networkFailure)
         network->error = QNetworkReply::ConnectionRefusedError;
     updater.setCloseWindowsHandler([] { return Updater::CloseResult::Declined; });
+    PromptObserver observer;
+    observer.installNow = true;
     updater.onStartup();
     QTRY_VERIFY(!updater.busy_);
     QVERIFY(settled());
     const bool refreshed = !networkFailure && update::isSha256(digest);
+    QCOMPARE(observer.confirmations, refreshed ? 1 : 0);
     QCOMPARE(network->requests, refreshed ? 2 : 1);
     QVERIFY(installerFiles.isEmpty());
     QCOMPARE(QSettings().contains(stateKey(u"pendingFile")), refreshed);
@@ -1682,7 +1741,7 @@ void TestUpdater::installRefusesAnotherKindsPackage()
     QVERIFY(QFile::exists(downloadedPath(fileKind)));
 }
 
-void TestUpdater::releaseInstallsWithoutConfirmation_data()
+void TestUpdater::releaseInstallationChoices_data()
 {
     QTest::addColumn<bool>("manual");
     QTest::addColumn<bool>("pending");
@@ -1692,7 +1751,7 @@ void TestUpdater::releaseInstallsWithoutConfirmation_data()
     QTest::newRow("manual-reuses-pending-auto-disabled") << true << true;
 }
 
-void TestUpdater::releaseInstallsWithoutConfirmation()
+void TestUpdater::releaseInstallationChoices()
 {
     QFETCH(bool, manual);
     QFETCH(bool, pending);
@@ -1707,6 +1766,7 @@ void TestUpdater::releaseInstallsWithoutConfirmation()
         auto *network = useLocalNetwork(updater);
         network->hasUpdate = true;
         PromptObserver observer;
+        observer.installNow = true;
         QTimer timeout;
         timeout.setSingleShot(true);
         QObject::connect(&timeout, &QTimer::timeout, qApp, [] { QCoreApplication::exit(42); });
@@ -1722,6 +1782,7 @@ void TestUpdater::releaseInstallsWithoutConfirmation()
         QVERIFY(installerFiles.first() != downloadedPath());
         QCOMPARE(installedBytes.last(), kDownload);
         QVERIFY(observer.messages.isEmpty());
+        QCOMPARE(observer.confirmations, !manual && !pending ? 1 : 0);
         QVERIFY(!update::automaticCheckDue(Updater::lastCheck(), QDateTime::currentDateTimeUtc()));
         QFile download(downloadedPath());
         QVERIFY(download.open(QIODevice::ReadOnly));
@@ -1742,6 +1803,144 @@ void TestUpdater::releaseInstallsWithoutConfirmation()
     QVERIFY(!resumed.busy_);
     // The handed-off package goes at the next start, also without automatic updates.
     QVERIFY(!QFile::exists(downloadedPath()));
+}
+
+void TestUpdater::laterKeepsDownloadUntilStartup_data()
+{
+    QTest::addColumn<PackageKind>("kind");
+    QTest::addColumn<int>("action");
+    QTest::newRow("MSI Later") << PackageKind::Msi << 0;
+    QTest::newRow("AppImage Later") << PackageKind::AppImage << 0;
+    QTest::newRow("Deb Later") << PackageKind::Deb << 0;
+    QTest::newRow("RPM Later") << PackageKind::Rpm << 0;
+    QTest::newRow("Escape defers") << PackageKind::Msi << 1;
+    QTest::newRow("window close defers") << PackageKind::Msi << 2;
+    QTest::newRow("Enter defaults to Later") << PackageKind::Msi << 3;
+    QTest::newRow("manual check preserves open choice") << PackageKind::Msi << 4;
+}
+
+// Exercise the actual download, prompt and new-start path with inert installers.
+void TestUpdater::laterKeepsDownloadUntilStartup()
+{
+    QFETCH(PackageKind, kind);
+    QFETCH(int, action);
+    installedKind = kind;
+    {
+        Updater updater;
+        auto *network = useLocalNetwork(updater);
+        // Begin at the transfer so every package kind can be exercised on each
+        // host OS, independent of distribution-specific release asset selection.
+        DownloadReply *reply = prepareDownload(updater, false);
+        QVERIFY(reply);
+        int closeAttempts = 0;
+        updater.setCloseWindowsHandler([&] {
+            ++closeAttempts;
+            return Updater::CloseResult::Closed;
+        });
+        reply->finish();
+        QTRY_VERIFY(updater.restartPrompt_ && updater.restartPrompt_->isVisible());
+        QMessageBox *prompt = updater.restartPrompt_;
+        QCOMPARE(network->requests, 0);
+        QVERIFY(installerFiles.isEmpty());
+        QVERIFY(appImageReplacements.isEmpty());
+        QVERIFY(packageInstalls.isEmpty());
+        QVERIFY(!updater.installing_);
+        QVERIFY(!updater.staging_);
+        QCOMPARE(closeAttempts, 0);
+        QCOMPARE(prompt->defaultButton()->text(), QStringLiteral("Later"));
+        QCOMPARE(prompt->escapeButton(), prompt->defaultButton());
+        if (action == 4) {
+            updater.checkNow();
+            updater.checkNow();
+            QCOMPARE(network->requests, 0);
+            QVERIFY(prompt->isVisible());
+            QVERIFY(installerFiles.isEmpty());
+            prompt->defaultButton()->click();
+        } else if (action == 0)
+            prompt->defaultButton()->click();
+        else if (action == 1)
+            QTest::keyClick(prompt, Qt::Key_Escape);
+        else if (action == 2)
+            prompt->close();
+        else
+            QTest::keyClick(prompt, Qt::Key_Return);
+        QTRY_VERIFY(!updater.busy_);
+        QVERIFY(settled());
+        QCOMPARE(closeAttempts, 0);
+        QVERIFY(!updater.restartPrompt_);
+        QVERIFY(installerFiles.isEmpty());
+        QVERIFY(appImageReplacements.isEmpty());
+        QVERIFY(packageInstalls.isEmpty());
+        QCOMPARE(quitRequests_, 0);
+        QFile download(downloadedPath());
+        QVERIFY(download.open(QIODevice::ReadOnly));
+        QCOMPARE(download.readAll(), kDownload);
+        QSettings state;
+        state.sync();
+        QCOMPARE(state.value(stateKey(u"pendingFile")).toString(), downloadedPath());
+        QCOMPARE(state.value(stateKey(u"pendingVersion")).toString(), kVersion);
+        QCOMPARE(state.value(stateKey(u"pendingSha256")).toString(), kDownloadSha256);
+        QFile metadata(state.fileName());
+        QVERIFY(metadata.open(QIODevice::ReadOnly));
+        QVERIFY(metadata.readAll().contains(kDownloadSha256.toUtf8()));
+    }
+    Updater next;
+    auto *network = useLocalNetwork(next);
+    next.setCloseWindowsHandler([] { return Updater::CloseResult::Closed; });
+    PromptObserver observer;
+    appImageReplaced = true;
+    next.onStartup();
+    if (kind == PackageKind::Msi)
+        QTRY_COMPARE(installerFiles.size(), 1);
+    else if (kind == PackageKind::AppImage)
+        QTRY_VERIFY(appImageCopyStarted.load());
+    else
+        QTRY_VERIFY(packageCommandReady.load());
+    QVERIFY(settled());
+    QCOMPARE(network->requests, 0);
+    QCOMPARE(observer.confirmations, 0);
+    QVERIFY(observer.messages.isEmpty());
+    if (kind == PackageKind::Msi)
+        QCOMPARE(installedBytes.last(), kDownload);
+}
+
+// Disabling updates while the choice is open must not leave a live Now button.
+void TestUpdater::disablingDismissesRestartPrompt()
+{
+    Updater updater;
+    DownloadReply *reply = prepareDownload(updater, false);
+    QVERIFY(reply);
+    reply->finish();
+    QTRY_VERIFY(updater.restartPrompt_ && updater.restartPrompt_->isVisible());
+    QPointer<QMessageBox> prompt = updater.restartPrompt_;
+    QVERIFY(setAutoUpdate(false));
+    updater.onAutoUpdateChanged(false);
+    QVERIFY(!updater.busy_);
+    QVERIFY(!prompt || !prompt->isVisible());
+    QTRY_VERIFY(!prompt);
+    QVERIFY(settled());
+    QVERIFY(installerFiles.isEmpty());
+    QVERIFY(!QSettings().contains(stateKey(u"pendingFile")));
+    QVERIFY(!QFile::exists(downloadedPath()));
+}
+
+// The updater can be destroyed while the asynchronous choice remains open.
+void TestUpdater::restartPromptGoesWithTheUpdater()
+{
+    QPointer<QMessageBox> prompt;
+    {
+        Updater updater;
+        DownloadReply *reply = prepareDownload(updater, false);
+        QVERIFY(reply);
+        reply->finish();
+        QTRY_VERIFY(updater.restartPrompt_ && updater.restartPrompt_->isVisible());
+        prompt = updater.restartPrompt_;
+    }
+    QVERIFY(!prompt);
+    QVERIFY(settled());
+    QVERIFY(installerFiles.isEmpty());
+    QVERIFY(QFile::exists(downloadedPath()));
+    QCOMPARE(QSettings().value(stateKey(u"pendingFile")).toString(), downloadedPath());
 }
 
 void TestUpdater::disablingCancelsQueuedInstall()
@@ -1877,6 +2076,7 @@ void TestUpdater::closeVetoRetainsPendingUpdate()
         return Updater::CloseResult::Declined; // the user cancels an unsaved-document prompt
     });
     PromptObserver observer;
+    observer.installNow = true;
     reply->finish();
     QTRY_COMPARE(closeAttempts, 1);
     QVERIFY(settled()); // the consumed update is put back
@@ -1886,6 +2086,7 @@ void TestUpdater::closeVetoRetainsPendingUpdate()
     QVERIFY(QFile::exists(downloadedPath()));
     QCOMPARE(QSettings().value(stateKey(u"pendingVersion")).toString(), kVersion);
     QVERIFY(observer.messages.isEmpty());
+    QCOMPARE(observer.confirmations, 1);
 
     // An explicit retry can use the same download without another transfer.
     auto *network = useLocalNetwork(updater);
@@ -1907,13 +2108,13 @@ void TestUpdater::busyCloseExplainsManualInstall_data()
         QTest::addRow("%s, manual, busy", name) << kind << true << Updater::CloseResult::Busy << true;
         QTest::addRow("%s, manual, declined", name)
             << kind << true << Updater::CloseResult::Declined << false;
-        QTest::addRow("%s, automatic, busy", name)
-            << kind << false << Updater::CloseResult::Busy << false;
+        QTest::addRow("%s, automatic choosing Now, busy", name)
+            << kind << false << Updater::CloseResult::Busy << true;
     }
 }
 
 // A manual installation that finds Mervin too busy to close says so, as nothing
-// else would happen. Cancel in a save prompt and automatic updates stay quiet.
+// else would happen. Cancel in a save prompt needs no further message.
 void TestUpdater::busyCloseExplainsManualInstall()
 {
     QFETCH(PackageKind, kind);
@@ -1931,6 +2132,7 @@ void TestUpdater::busyCloseExplainsManualInstall()
         return answer;
     });
     PromptObserver observer;
+    observer.installNow = true;
     reply->finish();
     QTRY_COMPARE(closeAttempts, 1);
     QTRY_VERIFY(!updater.busy_);
@@ -1953,6 +2155,7 @@ void TestUpdater::failedInstallerLaunchRetainsPendingUpdate()
     QVERIFY(reply);
     installerLaunchSucceeds = false;
     PromptObserver observer;
+    observer.installNow = true;
     reply->finish();
     QTRY_COMPARE(installerFiles.size(), 1);
     QVERIFY(settled()); // the consumed update is put back
@@ -1962,7 +2165,7 @@ void TestUpdater::failedInstallerLaunchRetainsPendingUpdate()
     QCOMPARE(QSettings().value(stateKey(u"pendingVersion")).toString(), kVersion);
     QCOMPARE(observer.messages.size(), 1);
     QVERIFY(observer.messages.first().contains(QStringLiteral("Couldn't start the installer")));
-    QCOMPARE(observer.confirmations, 0);
+    QCOMPARE(observer.confirmations, 1);
 }
 
 void TestUpdater::installingIgnoresDuplicateCheckAndDisable()
@@ -1980,6 +2183,7 @@ void TestUpdater::installingIgnoresDuplicateCheckAndDisable()
         keptDownload = QFile::exists(downloadedPath());
     };
     PromptObserver observer;
+    observer.installNow = true;
     reply->finish();
     QTRY_COMPARE(installerFiles.size(), 1);
     QVERIFY(stayedBusy);
@@ -1987,7 +2191,7 @@ void TestUpdater::installingIgnoresDuplicateCheckAndDisable()
     QCOMPARE(network->requests, 0);
     QVERIFY(updater.busy_);
     QVERIFY(updater.installing_);
-    QCOMPARE(observer.confirmations, 0);
+    QCOMPARE(observer.confirmations, 1);
 }
 
 void TestUpdater::cancelStillAborts_data()

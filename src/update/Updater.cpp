@@ -149,13 +149,15 @@ Pending loadPending(update::PackageKind kind)
     return isPackageOf(kind, pending.file) ? pending : Pending{};
 }
 
-void savePending(update::PackageKind kind, const QString &version, const QString &file,
+bool savePending(update::PackageKind kind, const QString &version, const QString &file,
                  const QString &sha256)
 {
     QSettings st;
     st.setValue(stateKey(kind, kPendingVersion), version);
     st.setValue(stateKey(kind, kPendingFile), file);
     st.setValue(stateKey(kind, kPendingSha256), sha256);
+    st.sync();
+    return st.status() == QSettings::NoError;
 }
 
 // Forgets this kind's pending update, including one an older version recorded in
@@ -436,6 +438,7 @@ Updater::~Updater()
     // Completion handlers cannot close these dialogs once this updater is gone.
     // Delete them now, even when the event loop has already stopped.
     delete progress_;
+    delete restartPrompt_;
     delete busyNote_;
     clearStaging();
     if (g_instance == this)
@@ -742,7 +745,7 @@ void Updater::onDownloadFinished()
         && QString::fromLatin1(hash_.result().toHex()) == asset_.sha256.toLower();
 
     // The rest of the file, then the verdict, on the disk thread.
-    enum class Outcome { Saved, WriteFailed, NetworkFailed, BadHash, RenameFailed };
+    enum class Outcome { Saved, WriteFailed, NetworkFailed, BadHash, SaveFailed };
     struct Finish
     {
         Outcome outcome;
@@ -775,7 +778,7 @@ void Updater::onDownloadFinished()
             QFile::remove(file);
             if (!QFile::rename(partPath, file)) {
                 QFile::remove(partPath);
-                return Finish{Outcome::RenameFailed, {}};
+                return Finish{Outcome::SaveFailed, {}};
             }
             // The new download supersedes any older pending one of this kind.
             const Pending previous = loadPending(kind);
@@ -784,7 +787,10 @@ void Updater::onDownloadFinished()
                 QFile::remove(previous.file);
             QSettings st;
             clearPending(kind, st);
-            savePending(kind, version, file, sha256);
+            // Offer Later only after the pending record has reached disk, so a
+            // normal exit can always resume this download on the next start.
+            if (!savePending(kind, version, file, sha256))
+                return Finish{Outcome::SaveFailed, {}};
             return Finish{Outcome::Saved, {}};
         },
         [this, networkError, canceled](const Finish &finish) {
@@ -807,13 +813,14 @@ void Updater::onDownloadFinished()
                     warn(tr("The downloaded update failed its integrity check and was discarded."));
                 endOperation();
                 return;
-            case Outcome::RenameFailed:
+            case Outcome::SaveFailed:
                 if (manual_)
                     warn(tr("Couldn't save the update."));
                 endOperation();
                 return;
             case Outcome::Saved:
                 markChecked();
+                confirmationRequired_ = !manual_;
                 installWhenIdle();
                 return;
             }
@@ -859,8 +866,55 @@ void Updater::pollInstall()
                 installWhenIdle();
                 return;
             }
+            if (confirmationRequired_ && !manual_) {
+                offerRestart(pending->version.toString());
+                return;
+            }
             install(pending->file, pending->version.toString(), pending->sha256);
         });
+}
+
+QPushButton *Updater::configureRestartPrompt(QMessageBox &box, const QString &version)
+{
+    box.setObjectName(QStringLiteral("updateRestartPrompt"));
+    box.setWindowTitle(tr("Update ready"));
+    box.setIcon(QMessageBox::Information);
+    box.setWindowModality(Qt::ApplicationModal);
+    //: %1 is the version number of the downloaded update.
+    box.setText(tr("Mervin PDF %1 has been downloaded.").arg(version));
+    //: Shown after an automatic update downloads. Later keeps the download and
+    //: installs it on the next app launch. Now installs and requests a restart;
+    //: save prompts can still postpone restarting. Later and Now are button labels.
+    box.setInformativeText(tr("Restart now to install the update, or choose Later to install "
+                              "it the next time you start Mervin."));
+    //: Defers installing the downloaded update until the next app launch.
+    QPushButton *later = box.addButton(tr("Later"), QMessageBox::RejectRole);
+    //: Installs the downloaded update and restarts the application now.
+    QPushButton *now = box.addButton(tr("Now"), QMessageBox::AcceptRole);
+    box.setDefaultButton(later);
+    box.setEscapeButton(later);
+    return now;
+}
+
+void Updater::offerRestart(const QString &version)
+{
+    auto *box = new QMessageBox(dialogParent());
+    QPushButton *now = configureRestartPrompt(*box, version);
+    restartPrompt_ = box;
+    connect(box, &QDialog::finished, this, [this, box, now] {
+        const bool accepted = box->clickedButton() == now;
+        restartPrompt_ = nullptr;
+        box->deleteLater();
+        confirmationRequired_ = false;
+        if (!accepted) {
+            endOperation(); // the saved package remains pending until next start
+            return;
+        }
+        // Now is an explicit install request, so failures should be reported.
+        manual_ = true;
+        installWhenIdle();
+    });
+    box->show();
 }
 
 // Automatic updates wait for other dialogs. A manual check must be able to
@@ -1141,11 +1195,18 @@ void Updater::offerManualDownload(const QString &version, const QString &pageUrl
 
 void Updater::endOperation()
 {
+    if (restartPrompt_) {
+        restartPrompt_->disconnect(this);
+        restartPrompt_->hide();
+        restartPrompt_->deleteLater();
+        restartPrompt_ = nullptr;
+    }
     clearStaging();
     ++operation_; // what its disk work answers no longer applies
     busy_ = false;
     manual_ = false;
     installQueued_ = false;
+    confirmationRequired_ = false;
     installing_ = false;
 }
 

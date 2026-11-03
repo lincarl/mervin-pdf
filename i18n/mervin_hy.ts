@@ -4233,6 +4233,30 @@ Mervin PDF %1 is the latest version.</source>
 Mervin PDF %1-ը վերջին տարբերակն է:</translation>
     </message>
     <message>
+        <source>Update ready</source>
+        <translation>Թարմացումը պատրաստ է</translation>
+    </message>
+    <message>
+        <source>Mervin PDF %1 has been downloaded.</source>
+        <extracomment>%1 is the version number of the downloaded update.</extracomment>
+        <translation>Mervin PDF %1-ը ներբեռնվել է։</translation>
+    </message>
+    <message>
+        <source>Restart now to install the update, or choose Later to install it the next time you start Mervin.</source>
+        <extracomment>Shown after an automatic update downloads. Later keeps the download and installs it on the next app launch. Now installs and requests a restart; save prompts can still postpone restarting. Later and Now are button labels.</extracomment>
+        <translation>Վերագործարկեք Mervin-ը հիմա՝ թարմացումը տեղադրելու համար, կամ ընտրեք «Ավելի ուշ»՝ այն Mervin-ի հաջորդ գործարկման ժամանակ տեղադրելու համար։</translation>
+    </message>
+    <message>
+        <source>Later</source>
+        <extracomment>Defers installing the downloaded update until the next app launch.</extracomment>
+        <translation>Ավելի ուշ</translation>
+    </message>
+    <message>
+        <source>Now</source>
+        <extracomment>Installs the downloaded update and restarts the application now.</extracomment>
+        <translation>Հիմա</translation>
+    </message>
+    <message>
         <source>Update Available</source>
         <translation>Հասանելի է թարմացում</translation>
     </message>
