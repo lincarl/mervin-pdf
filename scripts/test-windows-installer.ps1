@@ -27,6 +27,7 @@ if (-not $DisposableUser -and
 $msiPath = (Resolve-Path -LiteralPath $Msi).Path
 $build = Split-Path $msiPath -Parent
 $fixture = Join-Path $build 'tests\fixtures\properties.pdf'
+$actionTest = Join-Path $build 'tst_installer_action.exe'
 $dataDir = Join-Path $env:APPDATA 'MervinPDF'
 $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Mervin PDF.lnk'
 $installKey = 'HKCU:\Software\Mervin PDF'
@@ -46,6 +47,7 @@ function Read-RegistryValue([string]$Key, [string]$Name) {
 }
 
 Assert-Installer (Test-Path -LiteralPath $fixture) 'Generated PDF fixture is missing. Configure with MERVIN_BUILD_TESTS=ON.'
+Assert-Installer (Test-Path -LiteralPath $actionTest -PathType Leaf) 'Native installer test executable is missing. Build with MERVIN_BUILD_TESTS=ON.'
 
 # Per-user MSI registration can live in Installer\UserData rather than the
 # conventional Uninstall key. Query Windows Installer's supported product API.
@@ -146,7 +148,7 @@ function Test-InstalledDocument([string]$Document, [string]$Case, [bool]$Expecte
 try {
     # Exercise the real native action against a read-only MSI session and isolated
     # fixture processes before changing this disposable account's installation.
-    & (Join-Path $build 'tests\tst_installer_action.exe') $msiPath (Join-Path $work 'close-action')
+    & $actionTest $msiPath (Join-Path $work 'close-action')
     Assert-Installer ($LASTEXITCODE -eq 0) 'Native installer close-action integration checks failed.'
 
     # Synthetic versions retain the real application binary. The intermediate
