@@ -522,6 +522,9 @@ close_to_tray = false
         if (-not $appWindow) { Start-Sleep -Milliseconds 200 }
     }
     if (-not $appWindow) { throw 'Finish did not open a window from the installed application.' }
+    # Get-Process starts with only a PID. Retain its handle while it is alive so
+    # the upgrade can inspect its exit code after the process has disappeared.
+    $null = $launchedApp.Handle
     $launchedApp.Refresh()
     $runtimeModules = foreach ($name in @('msvcp140.dll', 'vcruntime140.dll')) {
         $module = @($launchedApp.Modules | Where-Object { $_.ModuleName -eq $name })
@@ -580,7 +583,13 @@ close_to_tray = true
     if (-not $launchedApp.WaitForExit(10000) -or -not $hiddenApp.WaitForExit(10000)) {
         throw 'Upgrade did not close every installed process.'
     }
-    if ($launchedApp.ExitCode -ne 0 -or $hiddenApp.ExitCode -ne 0) { throw 'An installed process did not exit cleanly.' }
+    # Direct getters report unavailable exit codes as errors.
+    $visibleExitCode = $launchedApp.get_ExitCode()
+    $hiddenExitCode = $hiddenApp.get_ExitCode()
+    Write-Host "Installed application exit codes. Visible $visibleExitCode, hidden $hiddenExitCode."
+    if ($visibleExitCode -ne 0 -or $hiddenExitCode -ne 0) {
+        throw "Installed application shutdown failed. Visible exit code $visibleExitCode, hidden exit code $hiddenExitCode."
+    }
     if ($portableApp.HasExited) { throw 'Upgrade closed an unrelated portable copy.' }
     if (-not (Select-String -LiteralPath $log -Quiet -Pattern 'Action start [^\r\n]*: CloseMervin\.')) {
         throw 'Upgrade did not execute the automatic-close action.'
@@ -603,6 +612,8 @@ close_to_tray = true
         maintenanceRepairNoLaunch = $true
         launchedExecutable = $launchedPath
         launchedProcessId = $launchedId
+        visibleApplicationExitCode = $visibleExitCode
+        hiddenApplicationExitCode = $hiddenExitCode
         runningAppUpgradeClosedVisibleAndHiddenCopies = $true
         separatePortableCopyPreserved = $true
         runtimeModules = @($runtimeModules)
