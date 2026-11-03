@@ -6,7 +6,10 @@
 #include <QApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QFontDatabase>
 #include <QLabel>
 #include <QMenu>
 #include <QPrinter>
@@ -23,6 +26,22 @@ class TstWindowPlacement : public QObject
     Q_OBJECT
 
 private slots:
+    // Offscreen Windows needs an explicit font, just like the Print layout suite.
+    void initTestCase()
+    {
+        const QString fontPath = qEnvironmentVariable("MERVIN_TEST_FONT");
+        if (!fontPath.isEmpty()) {
+            const QString latinPath = QFileInfo(fontPath).absoluteDir().filePath(
+                QStringLiteral("NotoSans-Regular.ttf"));
+            QVERIFY2(QFontDatabase::addApplicationFont(latinPath) >= 0,
+                     qPrintable(QStringLiteral("Could not load %1. Run scripts/fetch-test-font.py.")
+                                    .arg(latinPath)));
+        }
+        QVERIFY2(QFontDatabase::families().contains(QStringLiteral("Noto Sans")),
+                 "Noto Sans is required. Set MERVIN_TEST_FONT after running scripts/fetch-test-font.py.");
+        QApplication::setFont(QFont(QStringLiteral("Noto Sans"), 10));
+    }
+
     // An oversized client and its native frame must both fit, even when the
     // dialog was explicitly positioned beyond the bottom-right screen edge.
     void oversizedDialogFits()
