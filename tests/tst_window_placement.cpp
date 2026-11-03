@@ -64,6 +64,42 @@ private slots:
         QTRY_VERIFY(available.contains(dialog.frameGeometry()));
     }
 
+    // A document's toolbar text can change without growing the window. Preserve
+    // a user's deliberate placement across adjacent monitors in that case.
+    void layoutChangesPreservePlacementAcrossScreens()
+    {
+        QWidget window;
+        auto *layout = new QVBoxLayout(&window);
+        auto *label = new QLabel(QStringLiteral("Page 1 of 2"));
+        layout->addWidget(label);
+        window.resize(400, 300);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QTest::qWait(50);
+        window.move(-200, 100);
+        QTest::qWait(50);
+        const QRect placed = window.frameGeometry();
+        const QSize size = window.size();
+        const auto screens = QGuiApplication::screens();
+        QVERIFY(!screens.at(0)->availableGeometry().contains(placed));
+        QVERIFY(!screens.at(1)->availableGeometry().contains(placed));
+        QVERIFY((QRegion(screens.at(0)->availableGeometry())
+                 | QRegion(screens.at(1)->availableGeometry())).contains(placed));
+
+        label->setText(QStringLiteral("Page 10000 of 10000"));
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        QTest::qWait(50);
+        QCOMPARE(window.size(), size);
+        QCOMPARE(window.frameGeometry(), placed);
+
+        window.resize(size - QSize(20, 20));
+        QTest::qWait(50);
+        // The offscreen platform can shift frame margins during resize. The
+        // application must still leave this smaller window spanning both screens.
+        QVERIFY(window.frameGeometry().left() < screens.at(0)->availableGeometry().left());
+        QVERIFY(window.frameGeometry().right() >= screens.at(0)->availableGeometry().left());
+    }
+
     // The real print settings can scroll while every footer action stays visible.
     void printFitsWithReachableSettings_data()
     {

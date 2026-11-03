@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QEvent>
 #include <QLayout>
+#include <QResizeEvent>
 #include <QScreen>
 #include <QTimer>
 #include <QWidget>
@@ -12,9 +13,9 @@
 namespace mervin {
 namespace {
 
-// Application windows can grow after showing when translated text or native
-// frame metrics arrive. Recheck after those events, without intercepting moves
-// made by a user dragging a window between screens.
+// Fit new windows and actual growth, including later translated text or native
+// frame metrics. Routine layout requests and shrinking must preserve a user's
+// deliberate placement across screens.
 class WindowPlacement final : public QObject
 {
 public:
@@ -26,9 +27,14 @@ public:
 
     bool eventFilter(QObject *object, QEvent *event) override
     {
-        if (event->type() != QEvent::Show && event->type() != QEvent::Resize
-            && event->type() != QEvent::LayoutRequest)
+        if (event->type() != QEvent::Show && event->type() != QEvent::Resize)
             return false;
+        if (event->type() == QEvent::Resize) {
+            const auto *resize = static_cast<QResizeEvent *>(event);
+            if (resize->size().width() <= resize->oldSize().width()
+                && resize->size().height() <= resize->oldSize().height())
+                return false;
+        }
         auto *window = qobject_cast<QWidget *>(object);
         if (!window || !window->isWindow() || !window->isVisible())
             return false;
