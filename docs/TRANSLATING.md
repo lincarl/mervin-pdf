@@ -148,6 +148,10 @@ are managed by Microsoft Store. Naming another update provider does not mean tha
 updates are disabled. A button that opens that provider must describe opening it,
 without implying that the app has checked for updates.
 
+In the downloaded-update prompt, Later means install at the next application
+start, not after a timed delay. When the explanation names Later or Now, use the
+same words as the translated buttons.
+
 When a translation service batches strings, verify each source-to-target pairing.
 Matching output counts or separator counts do not prove alignment. Redraft broken
 entries individually. Preserve product names, command-line switches, file-filter
@@ -390,6 +394,18 @@ such as a list gaining its scroll bar or a longer translated choice. Give the
 dialog's smallest comfortable size to `followLayoutMinimum()` in
 `src/dialogs/LayoutMinimum.h` instead of calling `setMinimumSize()`. Settings keeps a
 fixed minimum because its pages scroll.
+
+New windows also pass through `keepWindowsOnScreen()` in
+`src/ui/WindowPlacement.h`. It fits their native frames to the current screen's
+available work area after Qt finishes placement. A layout's minimum still needs
+to fit, with scrolling for content that needs more room. Desktop checks must map
+the native window after clearing `WA_DontShowOnScreen`, not only capture its
+widgets.
+
+Use a layout's minimum height for width when measuring a dialog's minimum.
+Its preferred height can include an entire scroll viewport and prevent the
+window from shrinking. Elided filename labels with an ignored size policy still
+need enough minimum width for the ellipsis when a scrollbar appears.
 
 A message that appears in an open dialog, such as Security's refusal below the owner
 password, needs that minimum too, or Qt squeezes the message and the controls below

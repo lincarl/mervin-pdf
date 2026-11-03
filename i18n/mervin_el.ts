@@ -4233,6 +4233,30 @@ Mervin PDF %1 is the latest version.</source>
 Το Mervin PDF %1 είναι η πιο πρόσφατη έκδοση.</translation>
     </message>
     <message>
+        <source>Update ready</source>
+        <translation>Η ενημέρωση είναι έτοιμη</translation>
+    </message>
+    <message>
+        <source>Mervin PDF %1 has been downloaded.</source>
+        <extracomment>%1 is the version number of the downloaded update.</extracomment>
+        <translation>Έγινε λήψη του Mervin PDF %1.</translation>
+    </message>
+    <message>
+        <source>Restart now to install the update, or choose Later to install it the next time you start Mervin.</source>
+        <extracomment>Shown after an automatic update downloads. Later keeps the download and installs it on the next app launch. Now installs and requests a restart; save prompts can still postpone restarting. Later and Now are button labels.</extracomment>
+        <translation>Επανεκκινήστε το Mervin τώρα για να εγκαταστήσετε την ενημέρωση ή επιλέξτε «Αργότερα» για να εγκατασταθεί την επόμενη φορά που θα ξεκινήσετε το Mervin.</translation>
+    </message>
+    <message>
+        <source>Later</source>
+        <extracomment>Defers installing the downloaded update until the next app launch.</extracomment>
+        <translation>Αργότερα</translation>
+    </message>
+    <message>
+        <source>Now</source>
+        <extracomment>Installs the downloaded update and restarts the application now.</extracomment>
+        <translation>Τώρα</translation>
+    </message>
+    <message>
         <source>Update Available</source>
         <translation>Διαθέσιμη ενημέρωση</translation>
     </message>

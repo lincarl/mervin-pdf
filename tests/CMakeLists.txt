@@ -451,7 +451,7 @@ set_tests_properties(tst_document_workflow PROPERTIES
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 
 # Print dialog checks exercise worker-rendered previews and the actual PDF output path.
-foreach(_t tst_print_dialog tst_print_output)
+foreach(_t tst_print_dialog tst_print_output tst_window_placement)
     qt_add_executable(${_t} ${_t}.cpp)
     target_link_libraries(${_t} PRIVATE mervin_app Qt6::Test)
     set_target_properties(${_t} PROPERTIES WIN32_EXECUTABLE OFF)

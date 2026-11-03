@@ -298,6 +298,8 @@ add_library(mervin_app STATIC
     src/ui/OpenPdfDialog.h
     src/ui/Theme.cpp
     src/ui/Theme.h
+    src/ui/WindowPlacement.cpp
+    src/ui/WindowPlacement.h
     src/ui/DocumentThemePicker.cpp
     src/ui/DocumentThemePicker.h
     src/ui/ThemeCard.cpp

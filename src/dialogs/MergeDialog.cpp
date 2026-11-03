@@ -560,6 +560,9 @@ void MergeDialog::rebuild(int selectRow)
         list_->addRow([&](QWidget *row, QHBoxLayout *h) {
             auto *name = new QLabel(row);
             name->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+            // Eliding may reduce a filename to an ellipsis, but never to zero
+            // width when the list needs its vertical scrollbar.
+            name->setMinimumWidth(name->fontMetrics().horizontalAdvance(QStringLiteral("…")));
             nameLabels_.append(name);
             nameTexts_.append(plan_.displayName(i));
             name->setToolTip(e.loadError.isEmpty()

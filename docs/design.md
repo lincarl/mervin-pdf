@@ -1818,6 +1818,16 @@ download after validation cannot change the staged installer. Arbitrary same-use
 code that can alter the running process or its private staging is outside this
 guarantee.
 
+After a new automatic download and its pending record are saved, the updater waits
+for other dialogs and asks whether to restart Now or Later. Later is the default;
+Escape and closing the prompt also defer the update. No installer or AppImage
+replacement runs before that choice. Later keeps the verified package for the next
+application start, when automatic updates resume it without downloading it again or
+asking the same question. Turning automatic updates off cancels pending automatic
+work as before. Now follows the existing save prompts and close checks, and reports
+installation errors as a manual request. A canceled save keeps the package for
+retry. Manual Check for Updates keeps its existing immediate installation flow.
+
 AppImage replacement verifies a second staging file beside the destination before
 atomic rename. The detached MSI helper removes its private package and directory
 after the installer exits. Linux package-manager staging stays alive through the

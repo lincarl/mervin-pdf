@@ -4233,6 +4233,30 @@ Mervin PDF %1 is the latest version.</source>
 Mervin PDF %1 é a versão mais recente.</translation>
     </message>
     <message>
+        <source>Update ready</source>
+        <translation>Atualização pronta</translation>
+    </message>
+    <message>
+        <source>Mervin PDF %1 has been downloaded.</source>
+        <extracomment>%1 is the version number of the downloaded update.</extracomment>
+        <translation>O Mervin PDF %1 foi baixado.</translation>
+    </message>
+    <message>
+        <source>Restart now to install the update, or choose Later to install it the next time you start Mervin.</source>
+        <extracomment>Shown after an automatic update downloads. Later keeps the download and installs it on the next app launch. Now installs and requests a restart; save prompts can still postpone restarting. Later and Now are button labels.</extracomment>
+        <translation>Reinicie o Mervin agora para instalar a atualização ou escolha “Mais tarde” para instalá-la na próxima vez que iniciar o Mervin.</translation>
+    </message>
+    <message>
+        <source>Later</source>
+        <extracomment>Defers installing the downloaded update until the next app launch.</extracomment>
+        <translation>Mais tarde</translation>
+    </message>
+    <message>
+        <source>Now</source>
+        <extracomment>Installs the downloaded update and restarts the application now.</extracomment>
+        <translation>Agora</translation>
+    </message>
+    <message>
         <source>Update Available</source>
         <translation>Atualização disponível</translation>
     </message>

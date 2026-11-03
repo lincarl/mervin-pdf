@@ -12,6 +12,7 @@
 #include "dialogs/MergeDialog.h"
 #include "dialogs/OcrPopup.h"
 #include "dialogs/PrintDialog.h"
+#include "ui/WindowPlacement.h"
 #include "dialogs/SecurityDialog.h"
 #include "dialogs/SettingsDialog.h"
 #include "i18n/UiLanguage.h"
@@ -282,6 +283,8 @@ private slots:
     void updateCheckWarning();
     void updateCloseWarning_data() { addLanguageMatrix(); }
     void updateCloseWarning();
+    void updateRestartPrompt_data() { addLanguageMatrix(); }
+    void updateRestartPrompt();
     void waitBar_data() { addLanguageMatrix(); }
     void waitBar();
 
@@ -791,6 +794,19 @@ void TstTranslationLayout::updateCloseWarning()
     inspect(warning, QStringLiteral("Mervin too busy to close for an update"));
 }
 
+// Covers the real update prompt, including long version numbers and both actions.
+void TstTranslationLayout::updateRestartPrompt()
+{
+    QMessageBox box;
+    auto *now = mervin::Updater::configureRestartPrompt(box, QStringLiteral("123.456.789"));
+    QVERIFY(now);
+    inspect(box, QStringLiteral("Downloaded update restart choice"));
+    QVERIFY(box.defaultButton());
+    QCOMPARE(box.defaultButton()->text(), mervin::Updater::tr("Later"));
+    QCOMPARE(box.escapeButton(), box.defaultButton());
+    QCOMPARE(now->text(), mervin::Updater::tr("Now"));
+}
+
 // The bar over a tab whose operation waits for a drive that stopped answering, saving
 // to a long folder and reading a file name that cannot wrap from it. The main window
 // sets the tab's size, down to the narrowest the window gets, as for the slow load.
@@ -909,9 +925,15 @@ void TstTranslationLayout::waitBar()
 void TstTranslationLayout::inspect(QWidget &widget, const QString &state, QWidget *part)
 {
     const bool desktop = !qEnvironmentVariableIsEmpty("MERVIN_LAYOUT_DESKTOP");
+    // A window shown while WA_DontShowOnScreen was set has no mapped native
+    // window on X11. Clear it while hidden so desktop checks see the dialog.
+    if (desktop && widget.isVisible() && widget.testAttribute(Qt::WA_DontShowOnScreen))
+        widget.hide();
     widget.setAttribute(Qt::WA_DontShowOnScreen, !desktop);
     widget.ensurePolished();
     widget.show();
+    if (desktop && widget.isWindow())
+        QVERIFY(QTest::qWaitForWindowExposed(&widget));
     settle();
     if (minimumSize_) {
         // The smallest size the user can reach. A window can be dragged down to
@@ -1953,6 +1975,7 @@ int main(int argc, char **argv)
         qputenv("QT_QPA_PLATFORM", "offscreen:configfile=screen.json");
     }
     QApplication app(argc, argv);
+    mervin::keepWindowsOnScreen(app);
     app.setAttribute(Qt::AA_Use96Dpi, true);
     if (!QDir::setCurrent(workingDirectory))
         return 1;
