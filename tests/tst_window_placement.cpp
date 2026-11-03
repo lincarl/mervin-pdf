@@ -1,3 +1,4 @@
+#include "config/ConfigPaths.h"
 #include "ui/WindowPlacement.h"
 #include "dialogs/PrintDialog.h"
 #include "ui/Theme.h"
@@ -194,6 +195,9 @@ int main(int argc, char **argv)
         return 1;
     file.close();
     qputenv("QT_QPA_PLATFORM", "offscreen:configfile=screens.json");
+    // Theme loading creates the settings directory even when no settings exist.
+    // Keep it inside the temporary directory for the whole application lifetime.
+    mervin::ConfigPaths::setOverrideDir(configuration.filePath(QStringLiteral("profile")));
     QApplication app(argc, argv);
     mervin::keepWindowsOnScreen(app);
     if (!QDir::setCurrent(workingDirectory))
