@@ -24,6 +24,8 @@
 #include <QDialog>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
+#include <QFontDatabase>
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -92,7 +94,7 @@ bool writeDocumentPages(const QString &path, const QStringList &pages)
     QPainter painter(&writer);
     if (!painter.isActive())
         return false;
-    painter.setFont(QFont(QStringLiteral("Helvetica"), 12));
+    painter.setFont(QFont(QStringLiteral("Noto Sans"), 12));
     for (qsizetype page = 0; page < pages.size(); ++page) {
         if (page && !writer.newPage())
             return false;
@@ -108,6 +110,21 @@ class TstBackgroundOpen : public QObject
     Q_OBJECT
 
 private slots:
+    // Registers the pinned fixture font when offscreen Qt cannot see system fonts.
+    void initTestCase()
+    {
+        const QString fontPath = qEnvironmentVariable("MERVIN_TEST_FONT");
+        if (!fontPath.isEmpty()) {
+            const QString latinPath = QFileInfo(fontPath).absoluteDir().filePath(
+                QStringLiteral("NotoSans-Regular.ttf"));
+            QVERIFY2(QFontDatabase::addApplicationFont(latinPath) >= 0,
+                     qPrintable(QStringLiteral("Could not load %1. Run scripts/fetch-test-font.py.")
+                                    .arg(latinPath)));
+        }
+        QVERIFY2(QFontDatabase::families().contains(QStringLiteral("Noto Sans")),
+                 "Noto Sans is required. Set MERVIN_TEST_FONT after running scripts/fetch-test-font.py.");
+    }
+
     void init()
     {
         profile_ = std::make_unique<QTemporaryDir>();
