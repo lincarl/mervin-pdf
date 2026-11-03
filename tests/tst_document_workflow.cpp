@@ -8,6 +8,7 @@
 #include "dialogs/ExtractDialog.h"
 #include "dialogs/SettingsDialog.h"
 #include "render/AnnotModel.h"
+#include "render/FormModel.h"
 #include "render/MeasureContent.h"
 #include "recent/RecentStore.h"
 #include "render/RenderEngine.h"
@@ -37,11 +38,13 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPointer>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QScreen>
 #include <QStyleOptionToolButton>
 #include <QSignalSpy>
+#include <QSignalBlocker>
 #include <QSemaphore>
 #include <QTabBar>
 #include <QTabWidget>
@@ -52,6 +55,7 @@
 #include <QWindow>
 #include <QtTest>
 
+#include <algorithm>
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -1131,6 +1135,142 @@ private slots:
         QTRY_COMPARE(QApplication::activeWindow(), later);
     }
 
+    // Closing one window persists the surviving tabs before any later user action.
+    void windowCloseSavesTheRemainingSession_data()
+    {
+        QTest::addColumn<bool>("quitAll");
+        QTest::newRow("close-one-window") << false;
+        QTest::newRow("quit-all-keeps-every-window") << true;
+    }
+
+    void windowCloseSavesTheRemainingSession()
+    {
+        QFETCH(bool, quitAll);
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        const QString firstPath = root.filePath(QStringLiteral("first.pdf"));
+        const QString secondPath = root.filePath(QStringLiteral("second.pdf"));
+        for (const QString &path : {firstPath, secondPath})
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        WindowManager manager;
+        manager.applyMemorySettings(0, false);
+        QPointer<MainWindow> first = manager.createWindow();
+        QVERIFY(mervin::testing::openAndWait(*first, firstPath));
+        QPointer<MainWindow> second = manager.createWindow();
+        QVERIFY(mervin::testing::openAndWait(*second, secondPath));
+        // Mount replies can save the session. Finish them before closing so they
+        // cannot accidentally hide a missing save in the window-close path.
+        for (const QString &path : {firstPath, secondPath})
+            QTRY_VERIFY(!manager.fileProbe()->isChecking({path, {}}));
+        SessionStore onDisk;
+        QVERIFY(loadSaved(onDisk));
+        QCOMPARE(onDisk.paths(), (QStringList{firstPath, secondPath}));
+
+        if (quitAll)
+            manager.closeAllForQuit();
+        else
+            second->close();
+        QTRY_VERIFY(!second);
+        QVERIFY(loadSaved(onDisk));
+        if (quitAll) {
+            QTRY_VERIFY(!first);
+            QCOMPARE(onDisk.paths(), (QStringList{firstPath, secondPath}));
+        } else {
+            QVERIFY(first);
+            QCOMPARE(onDisk.paths(), QStringList{firstPath});
+            QCOMPARE(onDisk.activePath(), firstPath);
+            first->close();
+            QTRY_VERIFY(!first);
+            QVERIFY(loadSaved(onDisk));
+            QCOMPARE(onDisk.paths(), QStringList{firstPath});
+        }
+    }
+
+    // Startup and late restore preserve Recent order and timestamps, including
+    // documents the user removed from history, while retaining saved view state.
+    void sessionRestorePreservesRecentHistory_data()
+    {
+        QTest::addColumn<bool>("late");
+        QTest::newRow("startup-batch") << false;
+        QTest::newRow("late-file-check") << true;
+    }
+
+    void sessionRestorePreservesRecentHistory()
+    {
+        QFETCH(bool, late);
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        const QString first = root.filePath(QStringLiteral("first.pdf"));
+        const QString second = root.filePath(QStringLiteral("second.pdf"));
+        const QString removed = root.filePath(QStringLiteral("removed-from-recent.pdf"));
+        const QString newest = root.filePath(QStringLiteral("newest.pdf"));
+        for (const QString &path : {first, second, removed, newest})
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        RecentStore recent;
+        QVERIFY(recent.add(first, 10, 1, RecentStore::mountOf(first)));
+        QVERIFY(recent.add(second, 20, 1, RecentStore::mountOf(second)));
+        QVERIFY(recent.add(newest, 30, 1, RecentStore::mountOf(newest)));
+        QVERIFY(recent.save(RecentStore::defaultFile()));
+        SessionStore saved;
+        saved.setPaths({first, second, removed});
+        saved.setActivePath(first);
+        for (const QString &path : saved.paths())
+            saved.setMount(path, RecentStore::mountOf(path));
+        QVERIFY(saved.save());
+        ViewState state;
+        state.rotation = 90;
+        ViewStateStore views;
+        views.put(first, state, 10);
+        QVERIFY(views.save(ViewStateStore::defaultFile()));
+
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        manager.holdSession(true);
+        FileProbe *probe = manager.fileProbe();
+        QSignalBlocker blocked(probe);
+        if (!late)
+            blocked.unblock();
+        const QStringList restore = restoredSession(manager);
+        QCOMPARE(restore, late ? QStringList{} : saved.paths());
+        bool staged = false;
+        manager.openStaged(planStartupOpens({}, restore, manager.sessionActivePath()), restore,
+                            [&] { staged = true; }, window);
+        manager.holdSession(false);
+        QTRY_VERIFY(staged);
+        if (late) {
+            blocked.unblock();
+            for (const QString &path : saved.paths())
+                probe->check({{path, saved.mount(path)}}, 60000);
+        }
+        QTRY_COMPARE(window->tabPaths(), saved.paths());
+        auto *tabs = window->findChild<QTabWidget *>();
+        auto *active = qobject_cast<TabPage *>(tabs->currentWidget());
+        QVERIFY(active);
+        QTRY_VERIFY(active->isLoaded());
+        QCOMPARE(active->canonicalPath(), first);
+        QCOMPARE(active->viewer()->rotation(), state.rotation);
+
+        RecentStore onDisk;
+        QVERIFY(loadSaved(onDisk, RecentStore::defaultFile()));
+        QCOMPARE(manager.recentEntries().size(), recent.entries().size());
+        QCOMPARE(onDisk.entries().size(), recent.entries().size());
+        for (qsizetype i = 0; i < recent.entries().size(); ++i) {
+            QCOMPARE(manager.recentEntries().at(i).path, recent.entries().at(i).path);
+            QCOMPARE(manager.recentEntries().at(i).lastOpened, recent.entries().at(i).lastOpened);
+            QCOMPARE(onDisk.entries().at(i).path, recent.entries().at(i).path);
+            QCOMPARE(onDisk.entries().at(i).lastOpened, recent.entries().at(i).lastOpened);
+        }
+
+        // A user-requested lazy open, as for a command-line recovery document,
+        // still records a new open. Lazy loading alone does not mean restore.
+        QVERIFY(window->openFile(newest, false, -1, true, {}, /*lazy=*/true));
+        QCOMPARE(manager.recentEntries().first().path, newest);
+        QVERIFY(manager.recentEntries().first().lastOpened > 30);
+        manager.openPaths({second}, QStringLiteral("new-tab"));
+        QCOMPARE(manager.recentEntries().first().path, second);
+        QVERIFY(manager.recentEntries().first().lastOpened > 20);
+    }
+
     // A session document on an unavailable drive stays in the saved session through
     // later saves until the user opens it again. Then it is an ordinary tab.
     void sessionKeepsDocumentsOnUnavailableDrives()
@@ -1270,9 +1410,9 @@ private slots:
 
     // An unloaded tab whose file was deleted, such as a mail attachment's temporary
     // copy, closes without a question and without entering the reopen history.
-    // Other tabs stay: a file that is there, a file whose folder is gone too, as
-    // when another volume took the drive letter, a file on a drive that is away,
-    // and the document on screen. The window keeps showing Recent while tabs go.
+    // A deleted parent folder counts when the captured source identifies its
+    // volume. Unloaded tabs without a captured source and unavailable drives
+    // remain. The window keeps showing Recent while tabs go.
     void unloadedTabsOfRemovedFilesClose()
     {
         QTemporaryDir files;
@@ -1281,13 +1421,15 @@ private slots:
         const QString kept = root.filePath(QStringLiteral("kept.pdf"));
         const QString shown = root.filePath(QStringLiteral("shown.pdf"));
         const QString inFolder = root.filePath(QStringLiteral("folder/inside.pdf"));
+        const QString unverified = root.filePath(QStringLiteral("unverified/never-loaded.pdf"));
         QVERIFY(root.mkpath(QStringLiteral("folder")));
+        QVERIFY(root.mkpath(QStringLiteral("unverified")));
 #ifdef Q_OS_WIN
         const QString away = QStringLiteral("//mervin-test-no-such-server/share/plan.pdf");
 #else
         const QString away = QStringLiteral("/mnt/mervin-test-absent/plan.pdf");
 #endif
-        for (const QString &path : {gone, kept, shown, inFolder})
+        for (const QString &path : {gone, kept, shown, inFolder, unverified})
             QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
 
         WindowManager manager;
@@ -1296,14 +1438,16 @@ private slots:
         QVERIFY(mervin::testing::openAndWait(*window, gone, /*allowDuplicate=*/true)); // a second view
         QVERIFY(mervin::testing::openAndWait(*window, kept));
         QVERIFY(mervin::testing::openAndWait(*window, inFolder));
+        QVERIFY(window->openFile(unverified, false, -1, /*makeCurrent=*/false, {}, /*lazy=*/true));
         QVERIFY(window->openFile(away, false, -1, /*makeCurrent=*/false, {}, /*lazy=*/true));
         QVERIFY(mervin::testing::openAndWait(*window, shown));
         unloadBackgroundTabs(*window);
         const QStringList before{QStringLiteral("attachment.pdf"), QStringLiteral("attachment.pdf"),
                                  QStringLiteral("kept.pdf"), QStringLiteral("inside.pdf"),
+                                 QStringLiteral("never-loaded.pdf"),
                                  QStringLiteral("plan.pdf"), QStringLiteral("shown.pdf")};
         QCOMPARE(tabFiles(*window), before);
-        QCOMPARE(window->unloadedTabs().size(), 5);
+        QCOMPARE(window->unloadedTabs().size(), 6);
         auto *recent = window->findChild<QToolButton *>(QStringLiteral("recentButton"));
         QVERIFY(recent);
         QTest::mouseClick(recent, Qt::LeftButton);
@@ -1311,8 +1455,9 @@ private slots:
 
         QVERIFY(QFile::remove(gone));
         QVERIFY(QDir(root.filePath(QStringLiteral("folder"))).removeRecursively());
+        QVERIFY(QDir(root.filePath(QStringLiteral("unverified"))).removeRecursively());
         manager.closeRemovedTabs();
-        const QStringList after{QStringLiteral("kept.pdf"), QStringLiteral("inside.pdf"),
+        const QStringList after{QStringLiteral("kept.pdf"), QStringLiteral("never-loaded.pdf"),
                                 QStringLiteral("plan.pdf"), QStringLiteral("shown.pdf")};
         // Checking the share that is away can take a while on Windows.
         QTRY_COMPARE_WITH_TIMEOUT(tabFiles(*window), after, 30000);
@@ -1320,12 +1465,43 @@ private slots:
         SessionStore onDisk;
         QVERIFY(loadSaved(onDisk));
         QVERIFY(!onDisk.paths().contains(gone));
+        QVERIFY(!onDisk.paths().contains(inFolder));
         QCOMPARE(onDisk.paths().size(), 4);
 
         // The file coming back does not make Ctrl+Shift+T offer the tab.
         QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), gone));
         QCOMPARE(reopened(manager, window), WindowManager::Reopen::NothingToReopen);
         QCOMPARE(tabFiles(*window), after);
+    }
+
+    // Clean loaded tabs also close, including the current tab and a document
+    // whose temporary parent folder was removed from the same local volume.
+    void loadedTabsOfRemovedFilesClose()
+    {
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        const QString gone = root.filePath(QStringLiteral("attachment.pdf"));
+        const QString inFolder = root.filePath(QStringLiteral("folder/inside.pdf"));
+        QVERIFY(root.mkpath(QStringLiteral("folder")));
+        for (const QString &path : {gone, inFolder})
+            QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        QVERIFY(mervin::testing::openAndWait(*window, QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(mervin::testing::openAndWait(*window, gone));
+        QVERIFY(mervin::testing::openAndWait(*window, inFolder));
+        for (const TabPage *tab : window->findChildren<TabPage *>())
+            QVERIFY(tab->isLoaded());
+        QCOMPARE(window->currentTabPath(), inFolder);
+
+        QVERIFY(QFile::remove(gone));
+        QVERIFY(QDir(root.filePath(QStringLiteral("folder"))).removeRecursively());
+        manager.closeRemovedTabs();
+        QTRY_COMPARE(tabFiles(*window), QStringList{QStringLiteral("properties.pdf")});
+        SessionStore onDisk;
+        QVERIFY(loadSaved(onDisk));
+        QCOMPARE(onDisk.paths(), window->tabPaths());
+        QCOMPARE(reopened(manager, window), WindowManager::Reopen::NothingToReopen);
     }
 
     // A tab of a file on a share mounted by hand keeps Retry while the share is
@@ -1505,11 +1681,18 @@ private slots:
         QVERIFY(window->findChild<TabPage *>()->isLoaded());
     }
 
-    // A tab with unsaved edits reloads from its recovery copy, so it stays when
-    // its original is deleted. A clean tab of a deleted file closing in the same
-    // check shows that the check ran.
+    // Loaded edits and suspended recovery copies survive original-file deletion.
+    // A clean tab closing in the same check establishes that the scan ran.
+    void editedTabOfARemovedFileStays_data()
+    {
+        QTest::addColumn<bool>("unload");
+        QTest::newRow("loaded-edits") << false;
+        QTest::newRow("suspended-recovery") << true;
+    }
+
     void editedTabOfARemovedFileStays()
     {
+        QFETCH(bool, unload);
         QTemporaryDir files;
         const QDir root(QFileInfo(files.path()).canonicalFilePath());
         const QString edited = root.filePath(QStringLiteral("edited.pdf"));
@@ -1526,8 +1709,10 @@ private slots:
                     0, {40, 40}, Qt::yellow, {}, QStringLiteral("Kept edit")) >= 0);
         QVERIFY(mervin::testing::openAndWait(*window, clean));
         QVERIFY(mervin::testing::openAndWait(*window, QStringLiteral(MERVIN_FIXTURE_PDF)));
-        unloadBackgroundTabs(*window);
-        QVERIFY(editedTab->isSuspended());
+        if (unload)
+            unloadBackgroundTabs(*window);
+        QCOMPARE(editedTab->isSuspended(), unload);
+        QCOMPARE(editedTab->isLoaded(), !unload);
         QVERIFY(editedTab->hasUnsavedEdits());
         QVERIFY(QFile::remove(edited));
         QVERIFY(QFile::remove(clean));
@@ -1545,6 +1730,130 @@ private slots:
         answers_.append(QMessageBox::Discard);
         QVERIFY(QMetaObject::invokeMethod(window, "closeTab", Q_ARG(int, 0)));
         QTRY_COMPARE(window->tabCount(), 1);
+    }
+
+    // Pending inline text has not made the document dirty yet. Automatic cleanup
+    // must commit that text and retain the edited tab instead of discarding it.
+    void pendingEditorsSurviveSourceDeletion_data()
+    {
+        QTest::addColumn<bool>("annotation");
+        QTest::newRow("form-field") << false;
+        QTest::newRow("annotation-note") << true;
+    }
+
+    void pendingEditorsSurviveSourceDeletion()
+    {
+        QFETCH(bool, annotation);
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("edited.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FORM_PDF), path));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        QVERIFY(mervin::testing::openAndWait(*window, path));
+        const QPointer<TabPage> tab = window->findChild<TabPage *>();
+        QVERIFY(tab);
+        auto *viewer = tab->viewer();
+        const QString text = QStringLiteral("Pending text survives deletion");
+        int note = -1;
+        if (annotation) {
+            const auto notes = viewer->annotModel()->pageAnnots(0);
+            const auto found = std::find_if(notes.begin(), notes.end(), [](const auto &entry) {
+                return entry.type == AnnotType::Text;
+            });
+            QVERIFY(found != notes.end());
+            note = found->id;
+            viewer->setCommentToolEnabled(true);
+            viewer->setAnnotSubMode(AnnotSubMode::Note);
+            viewer->revealAnnotation(0, note);
+            auto *editor = viewer->viewport()->findChild<QPlainTextEdit *>();
+            QVERIFY(editor && editor->isVisible() && !editor->isReadOnly());
+            editor->setPlainText(text);
+        } else {
+            viewer->setFormMode(true);
+            viewer->setZoomMode(ViewerWidget::ZoomMode::FitPage);
+            QTRY_VERIFY(viewer->viewport()->findChild<QLineEdit *>(Qt::FindDirectChildrenOnly));
+            auto *editor = viewer->viewport()->findChild<QLineEdit *>(Qt::FindDirectChildrenOnly);
+            QVERIFY(editor->isVisible() && !editor->isReadOnly());
+            editor->setText(text);
+        }
+        QVERIFY(!tab->hasUnsavedEdits());
+        QVERIFY(QFile::remove(path));
+        manager.closeRemovedTabs();
+        QTRY_VERIFY(!WindowManager::testing::removedTabScanRunning(manager));
+        QVERIFY(tab);
+        QVERIFY(tab->hasUnsavedEdits());
+        QCOMPARE(window->tabCount(), 1);
+        if (annotation) {
+            QCOMPARE(viewer->annotModel()->annot(0, note)->contents, text);
+        } else {
+            const auto fields = viewer->formModel()->pageFields(0);
+            QVERIFY(std::any_of(fields.begin(), fields.end(), [&text](const auto &field) {
+                return field.value == text;
+            }));
+        }
+    }
+
+    // An unfinished measurement has no committed mark or dirty flag yet, but its
+    // points must survive cleanup until the user finishes or cancels the drawing.
+    void unfinishedMeasurementSurvivesSourceDeletion()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("drawing.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        QVERIFY(mervin::testing::openAndWait(*window, path));
+        const QPointer<TabPage> tab = window->findChild<TabPage *>();
+        QVERIFY(tab);
+        auto state = tab->viewer()->captureResumeState();
+        state.tool = ViewerWidget::ToolMode::Measure;
+        state.measureEnabled = true;
+        state.measureKind = MeasureKind::Polyline;
+        state.inProgressPage = 0;
+        state.inProgress = {{20, 20}, {40, 40}};
+        tab->viewer()->restoreResumeState(state);
+        QVERIFY(!tab->hasUnsavedEdits());
+        QVERIFY(QFile::remove(path));
+        manager.closeRemovedTabs();
+        QTRY_VERIFY(!WindowManager::testing::removedTabScanRunning(manager));
+        QVERIFY(tab);
+        QCOMPARE(tab->viewer()->captureResumeState().inProgress, state.inProgress);
+
+        state.inProgress.clear();
+        state.inProgressPage = -1;
+        tab->viewer()->restoreResumeState(state);
+        manager.closeRemovedTabs();
+        QTRY_VERIFY(!tab);
+        QCOMPARE(window->tabCount(), 0);
+    }
+
+    // A queued scan result belongs to the tab it examined, not another tab that
+    // reused its path before the GUI thread received the result.
+    void staleRemovedFileScanKeepsAReplacementTab()
+    {
+        QTemporaryDir files;
+        const QDir root(QFileInfo(files.path()).canonicalFilePath());
+        const QString path = root.filePath(QStringLiteral("attachment.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        QVERIFY(mervin::testing::openAndWait(*window, path));
+        QVERIFY(mervin::testing::openAndWait(*window, QStringLiteral(MERVIN_FIXTURE_PDF)));
+        unloadBackgroundTabs(*window);
+        QTRY_VERIFY(!WindowManager::testing::removedTabScanRunning(manager));
+        const auto queued = std::make_shared<QSemaphore>();
+        WindowManager::testing::observeRemovedTabScan(manager, [queued] { queued->release(); });
+        QVERIFY(QFile::remove(path));
+        manager.closeRemovedTabs();
+        // Wait only for this scan, without dispatching its queued GUI removal.
+        QVERIFY(queued->tryAcquire(1, 10000));
+        QVERIFY(WindowManager::testing::removedTabScanRunning(manager));
+        delete window->releaseTab(0);
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
+        QVERIFY(window->openFile(path, false, -1, /*makeCurrent=*/false, {}, /*lazy=*/true));
+        QTRY_VERIFY(!WindowManager::testing::removedTabScanRunning(manager));
+        QCOMPARE(tabFiles(*window),
+                 (QStringList{QStringLiteral("properties.pdf"), QStringLiteral("attachment.pdf")}));
     }
 
     // While a dialog is open the window keeps the tab, since the dialog may depend

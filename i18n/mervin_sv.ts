@@ -570,6 +570,11 @@ Zoom choice: scale the page so its width fits the window.</extracomment>
         <translation>Avbryt</translation>
     </message>
     <message>
+        <source>Tab closed. The file was deleted.</source>
+        <extracomment>Status bar notice after automatic cleanup closes an unedited document tab because its file is confirmed deleted. This action does not delete any file.</extracomment>
+        <translation>Fliken stängdes. Filen har tagits bort.</translation>
+    </message>
+    <message>
         <source>No recently closed tab to reopen</source>
         <translation>Ingen nyligen stängd flik att öppna igen</translation>
     </message>

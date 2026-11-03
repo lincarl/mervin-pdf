@@ -566,6 +566,11 @@ Zoom choice: scale the page so its width fits the window.</extracomment>
         <translation>Hủy bỏ</translation>
     </message>
     <message>
+        <source>Tab closed. The file was deleted.</source>
+        <extracomment>Status bar notice after automatic cleanup closes an unedited document tab because its file is confirmed deleted. This action does not delete any file.</extracomment>
+        <translation>Đã đóng tab. Tệp đã bị xóa.</translation>
+    </message>
+    <message>
         <source>No recently closed tab to reopen</source>
         <translation>Không có tab nào đã đóng gần đây để mở lại</translation>
     </message>

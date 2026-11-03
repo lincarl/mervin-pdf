@@ -168,6 +168,8 @@ add_library(mervin_core STATIC
     src/io/Background.h
     src/io/FileFacts.h
     src/io/FileProbe.cpp
+    src/io/SourceStamp.cpp
+    src/io/SourceStamp.h
     src/io/FileProbe.h
     src/io/JobContext.cpp
     src/io/JobContext.h

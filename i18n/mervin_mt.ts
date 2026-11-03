@@ -578,6 +578,11 @@ Zoom choice: scale the page so its width fits the window.</extracomment>
         <translation>Ikkanċella</translation>
     </message>
     <message>
+        <source>Tab closed. The file was deleted.</source>
+        <extracomment>Status bar notice after automatic cleanup closes an unedited document tab because its file is confirmed deleted. This action does not delete any file.</extracomment>
+        <translation>It-tab ingħalqet. Il-fajl tħassar.</translation>
+    </message>
+    <message>
         <source>No recently closed tab to reopen</source>
         <translation>L-ebda tab magħluqa reċentement biex terġa &apos;tinfetaħ</translation>
     </message>

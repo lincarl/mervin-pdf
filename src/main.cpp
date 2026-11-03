@@ -321,7 +321,8 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
         QSet<QString> recovered;
         for (const QString &path : recovery) {
             if (recovered.contains(path))
-                batch.append({path, static_cast<int>(restore.indexOf(path)), false, true, true});
+                batch.append({path, static_cast<int>(restore.indexOf(path)), false, true, true,
+                              mervin::OpenReason::Restore});
             recovered.insert(path);
         }
         wm.openStaged(batch, restore, onDone, startWindow.data());

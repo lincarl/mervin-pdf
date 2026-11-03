@@ -288,6 +288,14 @@ before installation. An output reserved by a page tool keeps a reason and Retry
 until that writer finishes or releases its reservation. A denied private result
 closes in the background, and Duplicate follows its failure policy below.
 
+A path match alone cannot reuse a loaded or edited tab. A fresh background read
+compares the source's file and volume identity, size and precise timestamps with
+the existing tab's captured version. Unchanged sources return to the existing tab;
+replacements keep the new tab and preserve the earlier document and its edits.
+The metadata must remain stable across the read. A replacement that needs a
+password keeps its own prompt. Recovery manifests retain the optional identity
+and timestamp precision while remaining compatible with older manifests.
+
 The worker admits a fresh load's resolved canonical path before reading the file
 and retains that admission until installation transfers it to the tab. Retry also
 checks the known path before starting another read. The result waits in the tab's
@@ -513,7 +521,9 @@ SID peer check. This supports new-to-old handoff only;
 an already released copy cannot discover the new SID-based endpoint.
 
 Session restoration creates the tab list but opens only the selected document. Other
-restored tabs load when selected.
+restored tabs load when selected. Restoring a tab preserves Recent order and its
+last-opened time, and does not re-add a document removed from Recent. Explicit file
+opens still update Recent, including command-line opens that use a recovery copy.
 
 The first window is shown before any document is checked, and command-line files
 create their placeholders at once. Staged batches finish when their shells are queued,
@@ -555,6 +565,9 @@ or explicitly quit, including the usual unsaved-edit checks. Disabling Close to 
 or having no available system tray preserves normal window closing. The process
 exits when its final window is actually closed. A file-open handoff can bring a
 hidden window back without creating a second copy of its document.
+Closing one window while others remain saves the surviving tabs to the session
+immediately. Closing the final window or choosing Quit saves the complete final
+session for the next start and keeps it while the windows are destroyed.
 
 On Windows, `commitDataRequest` uses a direct connection to
 `WindowManager::prepareSessionEnd`. `sessionend::RecoveryWrite` counts scheduled
@@ -744,20 +757,22 @@ waits on the UI thread. Snapshot failure leaves the live document available and
 reports through the tab's current window. Reload failure keeps the tab and its
 saved recovery state for retry.
 
-`WindowManager::closeRemovedTabs` closes unloaded tabs without unsaved edits whose
-file is gone, by the rule session restore uses to drop a saved document. The file
-must be missing from a folder that is still there, on a volume that is attached
-(`RecentStore::isRemovedFromDisk`, judged by the mount the session or Recent recorded
-for the document). A missing folder can be another volume under the same drive
-letter, so it keeps the tab, as it keeps a session document. Tabs with unsaved edits
+`WindowManager::closeRemovedTabs` closes loaded and unloaded idle tabs without
+unsaved edits after a native metadata lookup confirms absence. Access and I/O
+errors do not prove deletion. The mount recorded by the session or Recent must
+remain attached, and the nearest surviving parent must belong to the source's
+captured volume. This permits deleting a whole temporary folder while preserving
+tabs when another drive takes the same letter. A never-loaded tab without captured
+identity retains the older parent-folder requirement. Tabs with unsaved edits
 reload from their recovery snapshot and stay. The check runs on window activation and
 after a failed asynchronous reload, on its own worker thread, since network paths can
 stall. Each file found gone is reported at once, not after the other files. The window then removes the tab on the UI thread without a prompt, a
 view-state write or a reopen history entry, and without touching the disk. While the
 window cannot change its tabs (see Tab order across nested event loops), or older tab
 changes still wait in its queue, it keeps the tab and queues the whole check again
-behind them. A close therefore always follows a fresh check, which also spares a tab whose file came back meanwhile. Windows in the tray keep their tabs until shown. Loaded tabs stay open,
-because they still show their document. Removing a tab never leaves the Recent
+behind them. Results also validate the original tab, load generation and source
+metadata before closing. Windows in the tray keep their tabs until shown. Each
+automatic close displays a translated status message. Removing a tab never leaves the Recent
 screen, and moving a tab between windows saves the session once, after the move, so
 the document keeps its recorded mount.
 

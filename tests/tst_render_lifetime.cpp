@@ -467,6 +467,38 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(closed(lifetime), 10000);
     }
 
+    // A pending open owns the cloned context and its base after the last window
+    // releases the render engine. Its eventual result must remain usable.
+    void openerCanFinishAfterEngineIsDestroyed()
+    {
+        auto engine = std::make_unique<RenderEngine>();
+        job::testing::holdWhen([](job::Step step, const QString &path) {
+            return step == job::Step::Reading && path == QStringLiteral(MERVIN_FIXTURE_PDF);
+        });
+        std::unique_ptr<Document> document;
+        std::thread worker([opener = engine->opener(), &document] {
+            document = opener->open(QStringLiteral(MERVIN_FIXTURE_PDF));
+        });
+        const auto finishWorker = qScopeGuard([&] {
+            job::testing::release();
+            if (worker.joinable())
+                worker.join();
+        });
+        QTRY_COMPARE_WITH_TIMEOUT(job::testing::held(), 1, 10000);
+        QElapsedTimer timer;
+        timer.start();
+        engine.reset();
+        QVERIFY2(timer.elapsed() < 1000, qPrintable(took("destroying the engine", timer)));
+        QCOMPARE(job::testing::held(), 1);
+        job::testing::release();
+        worker.join();
+        QVERIFY(document);
+        QVERIFY(document->pageCount() > 0);
+        QVERIFY(!document->renderPage(0, 1.0, 0).isNull());
+        document.reset();
+        QVERIFY(background::settle(10000));
+    }
+
     // Quitting waits for a close whose follow-up removes a file, such as a tab's
     // recovery copy, and not for one without.
     void closesWithFollowUpsCanBeAwaited()

@@ -39,6 +39,7 @@ QList<StagedOpen> planStartupOpens(const QStringList &cliPaths, const QStringLis
         o.savedIndex = order.at(k);
         o.makeCurrent = (k == 0 && cliPaths.isEmpty());
         o.lazy = true;
+        o.reason = OpenReason::Restore;
         batch.append(o);
     }
     return batch;

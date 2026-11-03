@@ -132,13 +132,18 @@ open actions and completed results wait for that outcome. Eligible actions
 continue after cancellation and remain suppressed during successful logoff.
 The four-second limit bounds Mervin's own wait. OS scheduling can delay its return.
 
-The exception is an unloaded tab without unsaved edits whose file was deleted, moved
-or renamed, such as the temporary copy of a mail attachment. It closes without a
-question, and Reopen Closed Tab does not offer it. Mervin judges the file as session
-restore judges a saved one, so a tab whose folder, drive or share is away keeps
-Retry. It checks when one of its windows becomes active and when such a tab fails to
-reload. A window in the tray keeps its tabs until it is shown, and a loaded document
-stays open.
+The exception is an idle tab without unsaved edits whose file was deleted, moved
+or renamed, such as the temporary copy of a mail attachment. It closes even when
+loaded, shows a status message, and stays out of Reopen Closed Tab. A deleted
+temporary folder also closes its tabs when Mervin can verify the original volume.
+Disconnected drives, inaccessible files and unsaved edits stay open. A tab that
+has never loaded and lacks volume identity still requires its parent folder to
+remain before automatic closure. Mervin checks on window activation and after a
+failed reload. A window in the tray keeps its tabs until shown.
+
+Opening a path already shown in a loaded or edited tab checks its current file
+version in the background. An unchanged file returns to the existing tab. A
+replacement opens separately, preserving the earlier document and any edits.
 
 ## Measuring drawings
 

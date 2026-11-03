@@ -11,6 +11,7 @@
 #include "render/AnnotModel.h"
 #include "render/Document.h"
 #include "render/RenderEngine.h"
+#include "render/TextIndex.h"
 #include "security/QpdfService.h"
 #include "session/SessionStore.h"
 #include "ui/DetachableTabBar.h"
@@ -23,12 +24,16 @@
 #include <QDialog>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
+#include <QFontDatabase>
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
 #include <QList>
+#include <QPainter>
+#include <QPdfWriter>
 #include <QPointer>
 #include <QProcess>
 #include <QPushButton>
@@ -80,6 +85,23 @@ bool write(const QString &path, const QByteArray &data)
     QFile file(path);
     return file.open(QIODevice::WriteOnly) && file.write(data) == data.size();
 }
+
+// Writes distinguishable page contents for source replacement and retained-edit checks.
+bool writeDocumentPages(const QString &path, const QStringList &pages)
+{
+    QPdfWriter writer(path);
+    writer.setResolution(72);
+    QPainter painter(&writer);
+    if (!painter.isActive())
+        return false;
+    painter.setFont(QFont(QStringLiteral("Noto Sans"), 12));
+    for (qsizetype page = 0; page < pages.size(); ++page) {
+        if (page && !writer.newPage())
+            return false;
+        painter.drawText(QPointF(50, 80), pages.at(page));
+    }
+    return painter.end();
+}
 } // namespace
 
 // Checks placeholder opens, queued load results and their ownership across windows.
@@ -88,6 +110,21 @@ class TstBackgroundOpen : public QObject
     Q_OBJECT
 
 private slots:
+    // Registers the pinned fixture font when offscreen Qt cannot see system fonts.
+    void initTestCase()
+    {
+        const QString fontPath = qEnvironmentVariable("MERVIN_TEST_FONT");
+        if (!fontPath.isEmpty()) {
+            const QString latinPath = QFileInfo(fontPath).absoluteDir().filePath(
+                QStringLiteral("NotoSans-Regular.ttf"));
+            QVERIFY2(QFontDatabase::addApplicationFont(latinPath) >= 0,
+                     qPrintable(QStringLiteral("Could not load %1. Run scripts/fetch-test-font.py.")
+                                    .arg(latinPath)));
+        }
+        QVERIFY2(QFontDatabase::families().contains(QStringLiteral("Noto Sans")),
+                 "Noto Sans is required. Set MERVIN_TEST_FONT after running scripts/fetch-test-font.py.");
+    }
+
     void init()
     {
         profile_ = std::make_unique<QTemporaryDir>();
@@ -137,6 +174,176 @@ private slots:
         job::testing::release();
         QTRY_VERIFY(tab->isLoaded());
         QVERIFY(!tab->freshOpen());
+    }
+
+    void reopeningPathChecksItsCurrentSource_data()
+    {
+        QTest::addColumn<QString>("replacement");
+        QTest::addColumn<bool>("suspended");
+        QTest::addColumn<bool>("otherWindow");
+        QTest::addColumn<bool>("edited");
+        QTest::newRow("unchanged-edited") << QString() << false << false << true;
+        QTest::newRow("renamed-replacement-edited") << QStringLiteral("rename") << false << false << true;
+        QTest::newRow("in-place-overwrite-edited") << QStringLiteral("overwrite") << false << false << true;
+        QTest::newRow("unchanged-other-window") << QString() << false << true << true;
+        QTest::newRow("replacement-other-window") << QStringLiteral("rename") << false << true << true;
+        QTest::newRow("unchanged-recovery") << QString() << true << false << true;
+        QTest::newRow("replacement-recovery") << QStringLiteral("rename") << true << false << true;
+        QTest::newRow("unchanged-clean") << QString() << false << false << false;
+        QTest::newRow("renamed-replacement-clean") << QStringLiteral("rename") << false << false << false;
+    }
+
+    // Compare a fresh read with the shown document's original source before
+    // reusing its tab. Replacement bytes must not hide the old content or edits.
+    void reopeningPathChecksItsCurrentSource()
+    {
+        QFETCH(QString, replacement);
+        QFETCH(bool, suspended);
+        QFETCH(bool, otherWindow);
+        QFETCH(bool, edited);
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("plan.pdf"));
+        const QString originalText = QStringLiteral("Original drawing");
+        const QString note = QStringLiteral("Keep this unsaved note");
+        QVERIFY(writeDocumentPages(path, {originalText}));
+        const QByteArray originalBytes = bytes(path);
+        WindowManager manager;
+        MainWindow *sourceWindow = manager.createWindow();
+        QVERIFY(testing::openAndWait(*sourceWindow, path));
+        QPointer<TabPage> original = current(*sourceWindow);
+        original->viewer()->setRotation(90);
+        if (edited)
+            QVERIFY(original->viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {}, note) >= 0);
+        QCOMPARE(original->hasUnsavedEdits(), edited);
+        if (suspended) {
+            QVERIFY(testing::suspendAndWait(*original));
+            QVERIFY(original->isSuspended());
+            QVERIFY(!original->recoveryPath().isEmpty());
+        }
+        const QString recovery = original->recoveryPath();
+        const QStringList replacementText{QStringLiteral("Replacement drawing"),
+                                           QStringLiteral("Replacement second page")};
+        if (!replacement.isEmpty()) {
+            const QString next = files.filePath(QStringLiteral("replacement.pdf"));
+            QVERIFY(writeDocumentPages(next, replacementText));
+            QVERIFY(bytes(next).size() != originalBytes.size());
+            if (replacement == QLatin1String("rename")) {
+                QVERIFY(QFile::rename(path, files.filePath(QStringLiteral("previous.pdf"))));
+                QVERIFY(QFile::rename(next, path));
+            } else {
+                QVERIFY(write(path, bytes(next)));
+            }
+        }
+
+        MainWindow *destination = otherWindow ? manager.createWindow() : sourceWindow;
+        holdRead(path);
+        if (otherWindow)
+            manager.openPaths({path}, QStringLiteral("new-window"));
+        else
+            QVERIFY(destination->openFile(path));
+        QPointer<TabPage> candidate = current(*destination);
+        QVERIFY(candidate && candidate != original);
+        QTRY_VERIFY_WITH_TIMEOUT(job::testing::held() > 0, 10000);
+        QVERIFY(candidate->isLoading());
+        QCOMPARE(original->hasUnsavedEdits(), edited);
+        // A path's older persisted view must not overwrite either live document
+        // when the completed read is kept as a separate replacement tab.
+        ViewState storedView = original->capturedViewState();
+        QCOMPARE(storedView.rotation, 90);
+        storedView.rotation = 180;
+        manager.saveViewState(path, storedView);
+        job::testing::release();
+
+        if (replacement.isEmpty()) {
+            QTRY_VERIFY_WITH_TIMEOUT(!candidate, 10000);
+            QCOMPARE(sourceWindow->tabCount(), 1);
+            QCOMPARE(current(*sourceWindow), original.data());
+            if (otherWindow)
+                QCOMPARE(destination->tabCount(), 0);
+        } else {
+            QTRY_VERIFY_WITH_TIMEOUT(candidate && candidate->isLoaded(), 10000);
+            QCOMPARE(destination->tabCount(), otherWindow ? 1 : 2);
+            QCOMPARE(sourceWindow->tabCount(), otherWindow ? 1 : 2);
+            QVERIFY(!candidate->hasUnsavedEdits());
+            QCOMPARE(candidate->viewer()->document()->pageCount(), 2);
+            QCOMPARE(candidate->capturedViewState().rotation, 0);
+            QCOMPARE(original->capturedViewState().rotation, 90);
+            TextIndex text(manager.engine()->baseContext(), candidate->viewer()->document());
+            for (int page = 0; page < 2; ++page) {
+                QVERIFY(text.pageText(page).contains(replacementText.at(page)));
+                QVERIFY(candidate->viewer()->annotModel()->pageAnnots(page).empty());
+            }
+            if (suspended) {
+                QVERIFY(original->isSuspended());
+                QCOMPARE(original->recoveryPath(), recovery);
+                QVERIFY(QFile::exists(recovery));
+                original->resumeAsync();
+            }
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(original && original->isLoaded(), 10000);
+        QCOMPARE(original->capturedViewState().rotation, 90);
+        QCOMPARE(original->hasUnsavedEdits(), edited);
+        QCOMPARE(original->viewer()->document()->pageCount(), 1);
+        QCOMPARE(original->viewer()->annotModel()->pageAnnots(0).size(), edited ? size_t(1) : size_t(0));
+        if (edited)
+            QCOMPARE(original->viewer()->annotModel()->pageAnnots(0).front().contents, note);
+        TextIndex retained(manager.engine()->baseContext(), original->viewer()->document());
+        QVERIFY(retained.pageText(0).contains(originalText));
+    }
+
+    // A replacement that needs its own password must reach authentication instead
+    // of being mistaken for the edited document at the same path.
+    void encryptedReplacementKeepsOldEditsAndAsksForItsPassword()
+    {
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("plan.pdf"));
+        const QString replacement = files.filePath(QStringLiteral("replacement.pdf"));
+        const QString encrypted = files.filePath(QStringLiteral("encrypted.pdf"));
+        const QString password = QStringLiteral("replacement-password");
+        const QString note = QStringLiteral("Retained private note");
+        QVERIFY(writeDocumentPages(path, {QStringLiteral("Original drawing")}));
+        QVERIFY(writeDocumentPages(replacement,
+                                   {QStringLiteral("Protected replacement"),
+                                    QStringLiteral("Protected second page")}));
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        QVERIFY(testing::openAndWait(*window, path));
+        QPointer<TabPage> original = current(*window);
+        QVERIFY(original->viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {}, note) >= 0);
+        QpdfService service;
+        QCOMPARE(service.encrypt(replacement, encrypted, {}, password, QStringLiteral("owner"),
+                                 QpdfService::Algorithm::AES256, {}), QpdfService::Status::Ok);
+        QVERIFY(QFile::rename(path, files.filePath(QStringLiteral("previous.pdf"))));
+        QVERIFY(QFile::rename(encrypted, path));
+        int prompts = 0;
+        QTimer answerPassword;
+        answerPassword.setInterval(5);
+        connect(&answerPassword, &QTimer::timeout, this, [&] {
+            auto *prompt = qobject_cast<QInputDialog *>(QApplication::activeModalWidget());
+            if (!prompt || prompt->property("testSubmitted").toBool())
+                return;
+            prompt->setProperty("testSubmitted", true);
+            ++prompts;
+            prompt->setTextValue(password);
+            prompt->accept();
+        });
+        answerPassword.start();
+        QVERIFY(window->openFile(path));
+        QPointer<TabPage> replacementTab = current(*window);
+        QVERIFY(replacementTab && replacementTab != original);
+        QTRY_VERIFY_WITH_TIMEOUT(replacementTab && replacementTab->isLoaded(), 10000);
+        answerPassword.stop();
+        QCOMPARE(prompts, 1);
+        QCOMPARE(window->tabCount(), 2);
+        QCOMPARE(replacementTab->password(), password);
+        QVERIFY(!replacementTab->hasUnsavedEdits());
+        QCOMPARE(replacementTab->viewer()->document()->pageCount(), 2);
+        TextIndex replacementText(manager.engine()->baseContext(), replacementTab->viewer()->document());
+        QVERIFY(replacementText.pageText(1).contains(QStringLiteral("Protected second page")));
+        QVERIFY(original && original->hasUnsavedEdits());
+        QCOMPARE(original->viewer()->document()->pageCount(), 1);
+        QCOMPARE(original->viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
+        QCOMPARE(original->viewer()->annotModel()->pageAnnots(0).front().contents, note);
     }
 
     void lazyRetryWaitsForTheOutputReservation()
@@ -351,6 +558,72 @@ private slots:
         QTRY_COMPARE(window.tabCount(), 0);
         writer.release();
         QTest::qWait(100);
+    }
+
+    void closingBlockedLoadDoesNotWait_data()
+    {
+        QTest::addColumn<bool>("resumed");
+        QTest::addColumn<bool>("closeWindow");
+        QTest::newRow("fresh-tab") << false << false;
+        QTest::newRow("resumed-tab") << true << false;
+        QTest::newRow("fresh-window") << false << true;
+        QTest::newRow("resumed-window") << true << true;
+    }
+
+    // Normal close must discard a pending load while its OS file call remains
+    // blocked. The reader also retains its context after the last window closes.
+    void closingBlockedLoadDoesNotWait()
+    {
+        QFETCH(bool, resumed);
+        QFETCH(bool, closeWindow);
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("held.pdf"));
+        QVERIFY(::mkfifo(QFile::encodeName(path).constData(), 0600) == 0);
+        testing::PipeWriter writer(path, 10000);
+        std::atomic<int> reads{0};
+        job::testing::failWhen([&](job::Step step, const QString &file) {
+            if (step == job::Step::Reading && file == path)
+                ++reads;
+            return false;
+        });
+        const auto clearHook = qScopeGuard([] { job::testing::failWhen({}); });
+        auto manager = std::make_unique<WindowManager>();
+        QPointer<MainWindow> window = manager->createWindow();
+        showWindow(*window);
+        QVERIFY(testing::openAndWait(*window, QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QPointer<TabPage> kept = current(*window);
+        QVERIFY(window->openFile(path, false, -1, true, {}, resumed));
+        QPointer<TabPage> blocked = current(*window);
+        QVERIFY(blocked && blocked != kept);
+        QSignalSpy installed(blocked, &TabPage::resumeFinished);
+        QTRY_VERIFY_WITH_TIMEOUT(reads.load() >= 2, 5000);
+        QTest::qWait(50); // the reader proceeds from its report into the blocking open
+        QVERIFY(blocked->isLoading());
+        QVERIFY(writer.holding());
+
+        if (closeWindow)
+            window->close();
+        else
+            QVERIFY(QMetaObject::invokeMethod(window, "closeTab", Q_ARG(int, 1)));
+        QTRY_VERIFY_WITH_TIMEOUT(!blocked, 1000);
+        QVERIFY(writer.holding());
+        QCOMPARE(installed.size(), 0);
+        if (closeWindow) {
+            QTRY_VERIFY_WITH_TIMEOUT(!window, 1000);
+        } else {
+            QCOMPARE(window->tabCount(), 1);
+            QCOMPARE(current(*window), kept.data());
+            QVERIFY(kept->isLoaded());
+            bool answered = false;
+            QTimer::singleShot(0, window, [&] { answered = true; });
+            QTRY_VERIFY_WITH_TIMEOUT(answered, 1000);
+        }
+        manager.reset();
+        QVERIFY(writer.holding());
+        writer.release();
+        QVERIFY(background::settle(10000));
+        QCoreApplication::processEvents();
+        QCOMPARE(installed.size(), 0);
     }
 
     void linkedFolderDeduplicatesBeforeInstallation()

@@ -566,6 +566,11 @@ Zoom choice: scale the page so its width fits the window.</extracomment>
         <translation>取消</translation>
     </message>
     <message>
+        <source>Tab closed. The file was deleted.</source>
+        <extracomment>Status bar notice after automatic cleanup closes an unedited document tab because its file is confirmed deleted. This action does not delete any file.</extracomment>
+        <translation>标签页已关闭。文件已被删除。</translation>
+    </message>
+    <message>
         <source>No recently closed tab to reopen</source>
         <translation>没有最近关闭的标签页可重新打开</translation>
     </message>

@@ -63,15 +63,18 @@ public:
     // Open or focus an existing tab across this process. allowDuplicate creates an independent
     // view whose state the caller seeds. atIndex=-1 appends; makeCurrent=false preserves focus
     // during staged restore. Returns whether a tab was accepted or focused, before
-    // the background reader finishes. Try knownPassword before prompting.
+    // the background reader finishes. Try knownPassword before prompting. lazy defers
+    // loading until selected. Restored tabs keep their existing Recent entry and time.
     bool openFile(const QString &path, bool allowDuplicate = false, int atIndex = -1,
                   bool makeCurrent = true, const QString &knownPassword = QString(),
                   bool lazy = false, const std::optional<mervin::ViewState> &initialView = {},
-                  bool closeOnFailure = false);
+                  bool closeOnFailure = false,
+                  mervin::OpenReason reason = mervin::OpenReason::User);
 
     // If the given canonical path is open in THIS window, select its tab and
     // return true. (Cross-window focusing is orchestrated by WindowManager.)
-    bool focusTabIfOpen(const QString &canonicalPath);
+    bool focusTabIfOpen(const QString &canonicalPath, bool verifySource = false,
+                        const mervin::TabPage *fresh = nullptr);
 
     // If the given canonical path is open in THIS window, restore the saved
     // view state (page / zoom / rotation) into its viewer. Returns true if the
@@ -113,13 +116,14 @@ public:
     bool hasLoadingDocuments() const;
     // Tabs without their document in memory: unloaded, or failed to load.
     QList<mervin::TabPage *> unloadedTabs() const;
-    // Close, without asking, every unloaded tab of `canonicalPath` that has no
+    // Close, without asking, every idle tab of `canonicalPath` that has no
     // unsaved edits. WindowManager::closeRemovedTabs has just found the file gone,
     // so this touches no disk. The tab is neither remembered for Ctrl+Shift+T nor
     // given a view state. A window in the tray keeps its tabs. False when a tab has
     // to stay for now, because the window cannot change its tabs (canChangeTabs) or
     // tab changes queued earlier still wait (whenTabsCanChange), which go first.
-    bool closeRemovedTabs(const QString &canonicalPath);
+    // A worker result names `only` to avoid affecting another tab of that path.
+    bool closeRemovedTabs(const QString &canonicalPath, const mervin::TabPage *only = nullptr);
 
     // True when nothing may hold a position in this window's tab bar across a
     // nested event loop. That means no modal dialog or popup in the application,
@@ -378,7 +382,8 @@ private:
 
     mervin::TabPage *currentTab() const;
     mervin::ViewerWidget *currentViewer() const;
-    int indexOfPath(const QString &canonicalPath, const mervin::TabPage *except = nullptr) const;
+    int indexOfPath(const QString &canonicalPath, const mervin::TabPage *except = nullptr,
+                    bool verifySource = false) const;
 
     void wireTabLifecycle(mervin::TabPage *tab);
     void queueFreshLoad(mervin::TabPage *tab, const QString &canonical, quint64 generation);

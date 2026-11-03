@@ -49,25 +49,6 @@
 namespace mervin {
 
 namespace {
-struct SourceStamp {
-    bool exists = false;
-    qint64 size = -1;
-    qint64 modified = 0;
-    qint64 changed = 0;
-    bool operator==(const SourceStamp &) const = default;
-};
-
-SourceStamp sourceStamp(const QString &path)
-{
-    const QFileInfo file(path);
-    SourceStamp stamp;
-    stamp.exists = file.exists();
-    stamp.size = file.size();
-    stamp.modified = file.lastModified().toMSecsSinceEpoch();
-    stamp.changed = file.fileTime(QFileDevice::FileMetadataChangeTime).toMSecsSinceEpoch();
-    return stamp;
-}
-
 /// Calculates the recovery folder without creating or inspecting it.
 QString recoveryDirectory()
 {
@@ -126,11 +107,20 @@ QJsonObject recoveryJson(const QString &original, const QString &canonical,
                          const QString &snapshot, const ViewerWidget::ResumeState &viewer,
                          const SourceStamp &stamp)
 {
+    QJsonObject source{{"exists", stamp.exists}, {"size", QString::number(stamp.size)},
+                       {"modified", QString::number(stamp.modified)},
+                       {"changed", QString::number(stamp.changed)}};
+    if (stamp.identity) {
+        source.insert("volume", QString::number(stamp.identity->volume));
+        source.insert("file", QString::number(stamp.identity->file));
+    }
+    if (stamp.modifiedSubMs)
+        source.insert("modified_sub_ms", *stamp.modifiedSubMs);
+    if (stamp.changedSubMs)
+        source.insert("changed_sub_ms", *stamp.changedSubMs);
     return {{"version", 1}, {"original", original}, {"canonical", canonical},
             {"snapshot", QFileInfo(snapshot).fileName()}, {"view", resumeJson(viewer)},
-            {"source", QJsonObject{{"exists", stamp.exists}, {"size", QString::number(stamp.size)},
-                                   {"modified", QString::number(stamp.modified)},
-                                   {"changed", QString::number(stamp.changed)}}}};
+            {"source", source}};
 }
 
 // The PDF is complete before this durability write starts. Adoption and the
@@ -276,6 +266,7 @@ struct TabPage::OpenResult {
     std::optional<MeasureDoc> measurements;
     SourceStamp source;
     QString canonical;
+    bool stableSource = false;
     std::unique_ptr<job::OpenPath> admission;
     QString error;
     bool needsPassword = false;
@@ -747,8 +738,10 @@ std::shared_ptr<TabPage::OpenResult> TabPage::readDocument(DocumentOpener &opene
     result->source = sourceStamp(path);
     result->document.reset(
         opener.open(path, password, &result->error, &result->needsPassword).release());
-    if (!result->document)
+    if (!result->document) {
+        result->stableSource = result->source == sourceStamp(path);
         return result;
+    }
     result->document->hasForm(); // cache the answer before the viewer installs it
     if (const auto blob = result->document->mervinMeasurements()) {
         MeasureDoc measurements;
@@ -757,6 +750,9 @@ std::shared_ptr<TabPage::OpenResult> TabPage::readDocument(DocumentOpener &opene
         else
             result->document->markMeasurementsUnreadable(); // saves keep it as it is
     }
+    // A replacement during the read cannot establish that this is an existing
+    // edited tab's version, even if its initial metadata matched.
+    result->stableSource = result->source == sourceStamp(path);
     return result;
 }
 
@@ -929,6 +925,13 @@ bool TabPage::adoptRecovery()
         saved_->source.size = stamp.value("size").toVariant().toLongLong();
         saved_->source.modified = stamp.value("modified").toVariant().toLongLong();
         saved_->source.changed = stamp.value("changed").toVariant().toLongLong();
+        if (stamp.contains("volume") && stamp.contains("file"))
+            saved_->source.identity = FileIdentity{stamp.value("volume").toString().toULongLong(),
+                                                   stamp.value("file").toString().toULongLong()};
+        if (stamp.contains("modified_sub_ms"))
+            saved_->source.modifiedSubMs = stamp.value("modified_sub_ms").toInt();
+        if (stamp.contains("changed_sub_ms"))
+            saved_->source.changedSubMs = stamp.value("changed_sub_ms").toInt();
         retainedEdits_ = true;
         claimedRecoveries.insert(path);
         return true;
@@ -1323,6 +1326,27 @@ void TabPage::resumeAsync()
     if (busy_ || doc_ || loading_ || loadStopped_)
         return;
     startLoad();
+}
+
+SourceStamp TabPage::source() const
+{
+    return saved_->source;
+}
+
+bool TabPage::canReuseForOpen(const TabPage *fresh) const
+{
+    // A clean unloaded tab will read the current file when selected. A loaded
+    // document or retained edits need a version check, whatever the path says.
+    if (!isLoaded() && !hasUnsavedEdits())
+        return true;
+    if (!fresh || !fresh->job_)
+        return false;
+    std::lock_guard<std::mutex> lock(fresh->job_->mutex);
+    const auto &result = fresh->job_->result;
+    // Unavailable metadata establishes no replacement. An existing replacement
+    // still keeps its own password/error flow even when its document did not open.
+    return result && ((!result->source.exists && !result->document)
+                      || (result->stableSource && saved_->source == result->source));
 }
 
 void TabPage::startLoad(std::shared_ptr<Job> after)

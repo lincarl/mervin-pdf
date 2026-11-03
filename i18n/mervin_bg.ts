@@ -570,6 +570,11 @@ Zoom choice: scale the page so its width fits the window.</extracomment>
         <translation>Отказ</translation>
     </message>
     <message>
+        <source>Tab closed. The file was deleted.</source>
+        <extracomment>Status bar notice after automatic cleanup closes an unedited document tab because its file is confirmed deleted. This action does not delete any file.</extracomment>
+        <translation>Разделът е затворен. Файлът е изтрит.</translation>
+    </message>
+    <message>
         <source>No recently closed tab to reopen</source>
         <translation>Няма наскоро затворен раздел за повторно отваряне</translation>
     </message>

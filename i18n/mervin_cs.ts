@@ -574,6 +574,11 @@ Zoom choice: scale the page so its width fits the window.</extracomment>
         <translation>Zrušit</translation>
     </message>
     <message>
+        <source>Tab closed. The file was deleted.</source>
+        <extracomment>Status bar notice after automatic cleanup closes an unedited document tab because its file is confirmed deleted. This action does not delete any file.</extracomment>
+        <translation>Karta zavřena. Soubor byl smazán.</translation>
+    </message>
+    <message>
         <source>No recently closed tab to reopen</source>
         <translation>Žádná nedávno zavřená karta pro opětovné otevření</translation>
     </message>

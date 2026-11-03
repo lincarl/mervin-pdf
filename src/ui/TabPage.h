@@ -1,10 +1,13 @@
 #pragma once
 
+#include "io/SourceStamp.h"
+
 #include <QElapsedTimer>
 #include <QPointer>
 #include <QWidget>
 #include "io/JobContext.h"
 #include "recent/ViewState.h"
+#include "session/StartupPlan.h"
 
 #include <functional>
 #include <memory>
@@ -64,6 +67,7 @@ public:
         bool allowDuplicate = false;
         bool closeOnFailure = false;
         std::optional<ViewState> view;
+        OpenReason reason = OpenReason::User;
     };
     void initializeFresh(const QString &path, const FreshOpen &options);
     const std::optional<FreshOpen> &freshOpen() const { return freshOpen_; }
@@ -75,6 +79,10 @@ public:
     // Its private result closes in the background, without becoming a document tab.
     void rejectFreshLoad(quint64 generation);
     bool isLoaded() const { return doc_ != nullptr; }
+    /// Returns the source version captured by the last successful load or Save.
+    SourceStamp source() const;
+    /// Requires a fresh version check before reusing a loaded or edited tab for an open request.
+    bool canReuseForOpen(const TabPage *fresh = nullptr) const;
     bool isLoading() const { return loading_; }
     bool isSuspended() const { return !doc_ && !loading_ && !busy_; }
     // A document operation freezes the tab, with or without a loaded document.

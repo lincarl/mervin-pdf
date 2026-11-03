@@ -602,6 +602,9 @@ private slots:
         QCoreApplication::processEvents();
         QCoreApplication::processEvents();
         QVERIFY(!source->canChangeTabs());
+        // The failed result is already captured. Keep its moved tab eligible to
+        // survive after the modal closes, independently of deleted-file cleanup.
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), source_));
         modal.hide();
         QTRY_VERIFY(!source);
         QTRY_COMPARE_WITH_TIMEOUT(dialogsSeen_, 2, 10000);

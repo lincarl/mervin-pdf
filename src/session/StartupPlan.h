@@ -6,6 +6,9 @@
 
 namespace mervin {
 
+// Explicit opens update Recent; restoring a saved tab preserves its last-opened time.
+enum class OpenReason { User, Restore };
+
 // One document in a staged open (see WindowManager::openStaged): which document,
 // where its tab belongs, and whether it takes the view when it lands.
 struct StagedOpen
@@ -20,6 +23,7 @@ struct StagedOpen
     bool makeCurrent = true;
     bool lazy = false;
     bool allowDuplicate = false; // independent recovery copies of the same original
+    OpenReason reason = OpenReason::User;
 };
 
 // Open command-line files first, then the restored active document, then remaining session

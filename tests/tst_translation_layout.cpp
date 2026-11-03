@@ -74,10 +74,12 @@
 #include <QRadioButton>
 #include <QRegularExpression>
 #include <QScreen>
+#include <QSizeGrip>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QStatusBar>
 #include <QStyleHints>
 #include <QTabWidget>
 #include <QTemporaryDir>
@@ -254,6 +256,8 @@ private slots:
     void languagePicker();
     void loadPlaceholder_data() { addLanguageMatrix(); }
     void loadPlaceholder();
+    void removedFileNotice_data() { addLanguageMatrix(); }
+    void removedFileNotice();
     void recentTabRow_data() { addLanguageMatrix(); }
     void recentTabRow();
     void manageLanguages_data() { addLanguageMatrix(); }
@@ -774,6 +778,44 @@ void TstTranslationLayout::loadPlaceholder()
     QCOMPARE(reserved->findChild<QLabel *>(QStringLiteral("documentLoadStatus"))->text(),
              mervin::TabPage::pathBeingWrittenError());
     inspect(window, QStringLiteral("Opening an output that is being written"), reserved);
+}
+
+// Checks the actual automatic-close status notice, including its painted text
+// area, which ordinary QLabel layout checks cannot inspect.
+void TstTranslationLayout::removedFileNotice()
+{
+    mervin::RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    window.show();
+    settle();
+    const QString missing = profile_.filePath(QStringLiteral("deleted-attachment.pdf"));
+    QVERIFY(window.openFile(missing, false, -1, false, {}, /*lazy=*/true));
+    // Remove the lazy shell before its queued foreground resume starts.
+    QVERIFY(window.closeRemovedTabs(missing));
+    QCOMPARE(window.tabCount(), 0);
+    auto *bar = window.statusBar();
+    QCOMPARE(bar->currentMessage(), MainWindow::tr("Tab closed. The file was deleted."));
+    inspect(window, QStringLiteral("Automatic close of a deleted file"), bar);
+    QVERIFY(bar->isVisibleTo(&window));
+
+    // QStatusBarPrivate::messageRect uses the full height, horizontal margins,
+    // and the size grip's edge. Normal status widgets hide during the message.
+    int left = 6;
+    int right = bar->width() - 12;
+    for (const QSizeGrip *grip : bar->findChildren<QSizeGrip *>()) {
+        if (!grip->isVisibleTo(bar))
+            continue;
+        const QRect bounds(grip->mapTo(bar, QPoint()), grip->size());
+        if (bar->isRightToLeft())
+            left = bounds.x() + bounds.width();
+        else
+            right = bounds.x();
+    }
+    const QRect area(left, 0, right - left, bar->height());
+    const QSize text = bar->fontMetrics().size(Qt::TextSingleLine, bar->currentMessage());
+    QVERIFY2(text.width() <= area.width(), qPrintable(bar->currentMessage()));
+    QVERIFY2(text.height() <= area.height(), qPrintable(bar->currentMessage()));
 }
 
 /// Checks the warning a manual update check shows when the server's answer is not a release.

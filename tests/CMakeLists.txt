@@ -53,6 +53,7 @@ set(_mervin_tests
     tst_session_store
     tst_session_end
     tst_file_probe
+    tst_source_stamp
     tst_app_files
     tst_background
     tst_job_context
@@ -444,7 +445,9 @@ set_tests_properties(tst_recent_prune PROPERTIES
 
 qt_add_executable(tst_document_workflow tst_document_workflow.cpp)
 target_link_libraries(tst_document_workflow PRIVATE mervin_app Qt6::Test)
-target_compile_definitions(tst_document_workflow PRIVATE MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")
+target_compile_definitions(tst_document_workflow PRIVATE
+    MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf"
+    MERVIN_FORM_PDF="${MERVIN_FIXTURES_DIR}/form_comment.pdf")
 add_test(NAME tst_document_workflow COMMAND tst_document_workflow)
 set_tests_properties(tst_document_workflow PROPERTIES
     ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
