@@ -156,6 +156,10 @@ if ($Installer) {
     $icon = Join-Path $root "resources\icons\mervin-icon.ico"
     $wxs  = Join-Path $root "packaging\wix\mervin.wxs"
     $msi  = Join-Path $build "MervinPDF-$Version.msi"
+    $installerActions = Join-Path $build 'MervinInstallerActions.dll'
+    if (-not (Test-Path -LiteralPath $installerActions)) {
+        throw 'Build MervinInstallerActions before packaging the MSI.'
+    }
     # Remove only empty directories owned by this payload on uninstall. Derive
     # the list from staging so new Qt plugin directories cannot be left behind.
     $cleanupFile = Join-Path $build 'generated\installer-remove-folders.wxi'
@@ -174,7 +178,7 @@ if ($Installer) {
                  "-ext", "WixToolset.Util.wixext",
                  "-d", "Version=$msiVersion", "-d", "DisplayVersion=$Version",
                  "-d", "DeployDir=$deploy", "-d", "IconFile=$icon",
-                 "-d", "DirectoryCleanup=$cleanupFile")
+                 "-d", "DirectoryCleanup=$cleanupFile", "-d", "InstallerActions=$installerActions")
     $wixArgs += @("-o", $msi, $wxs)
     & $wix @wixArgs
     if ($LASTEXITCODE -ne 0) { throw "wix build failed ($LASTEXITCODE)" }

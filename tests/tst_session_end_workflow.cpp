@@ -1941,6 +1941,30 @@ private slots:
     }
 
 #ifdef Q_OS_WIN
+    // The native installer message reaches hidden Qt windows without ending the OS session.
+    void nativeInstallerCloseReachesHiddenWindow()
+    {
+        using namespace installerclose;
+        WindowManager manager;
+        const QPointer<MainWindow> window = manager.createWindow();
+        const auto hwnd = reinterpret_cast<HWND>(window->winId());
+        window->hideToTray();
+        const UINT message = RegisterWindowMessageW(messageName);
+        QVERIFY(message);
+        const auto send = [&](Command command, LPARAM request) {
+            return static_cast<Reply>(SendMessageW(hwnd, message, static_cast<WPARAM>(command), request));
+        };
+        QCOMPARE(send(Command::Probe, 0), Reply::Ready);
+        QCOMPARE(send(Command::Begin, 71), Reply::Pending);
+        QCOMPARE(send(Command::Cancel, 71), Reply::Declined);
+        QCoreApplication::processEvents();
+        QVERIFY(window);
+        QVERIFY(!sessionend::active());
+        QCOMPARE(send(Command::Begin, 72), Reply::Pending);
+        QTRY_VERIFY(!window);
+        QVERIFY(!sessionend::active());
+    }
+
     // Checks forwarding, callbacks, native input and cancellation across owned Qt windows.
     void nativeQueryAndCanceledEndReachQtAndRestoreAdmission()
     {

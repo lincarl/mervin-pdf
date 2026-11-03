@@ -27,6 +27,7 @@ if (-not $DisposableUser -and
 $msiPath = (Resolve-Path -LiteralPath $Msi).Path
 $build = Split-Path $msiPath -Parent
 $fixture = Join-Path $build 'tests\fixtures\properties.pdf'
+$actionTest = Join-Path $build 'tst_installer_action.exe'
 $dataDir = Join-Path $env:APPDATA 'MervinPDF'
 $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Mervin PDF.lnk'
 $installKey = 'HKCU:\Software\Mervin PDF'
@@ -46,6 +47,7 @@ function Read-RegistryValue([string]$Key, [string]$Name) {
 }
 
 Assert-Installer (Test-Path -LiteralPath $fixture) 'Generated PDF fixture is missing. Configure with MERVIN_BUILD_TESTS=ON.'
+Assert-Installer (Test-Path -LiteralPath $actionTest -PathType Leaf) 'Native installer test executable is missing. Build with MERVIN_BUILD_TESTS=ON.'
 
 # Per-user MSI registration can live in Installer\UserData rather than the
 # conventional Uninstall key. Query Windows Installer's supported product API.
@@ -144,6 +146,11 @@ function Test-InstalledDocument([string]$Document, [string]$Case, [bool]$Expecte
 }
 
 try {
+    # Exercise the real native action against a read-only MSI session and isolated
+    # fixture processes before changing this disposable account's installation.
+    & $actionTest $msiPath (Join-Path $work 'close-action')
+    Assert-Installer ($LASTEXITCODE -eq 0) 'Native installer close-action integration checks failed.'
+
     # Synthetic versions retain the real application binary. The intermediate
     # payload owns an extra file so the next upgrade must remove obsolete files.
     $repository = Split-Path $PSScriptRoot -Parent
@@ -166,6 +173,7 @@ try {
             -d "Version=$($package.Version)" -d "DisplayVersion=$($metadata.version) upgrade verification" `
             -d "DeployDir=$($package.Payload)" -d "IconFile=$repository\resources\icons\mervin-icon.ico" `
             -d "DirectoryCleanup=$build\generated\installer-remove-folders.wxi" `
+            -d "InstallerActions=$build\MervinInstallerActions.dll" `
             -o $package.Path "$repository\packaging\wix\mervin.wxs"
         Assert-Installer ($LASTEXITCODE -eq 0) 'Building the verification-only upgrade MSI failed.'
     }

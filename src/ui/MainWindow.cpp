@@ -2294,6 +2294,8 @@ void MainWindow::openSettings(SettingsDialog::Page page)
         updates.lastCheck = mervin::Updater::lastCheck();
     }
     SettingsDialog dlg(settings_, updates, page, this);
+    const QPointer<MainWindow> self(this);
+    settingsDialog_ = &dlg;
     if (updater) {
         connect(&dlg, &SettingsDialog::checkForUpdatesRequested, updater,
                 &mervin::Updater::checkNow);
@@ -2315,6 +2317,12 @@ void MainWindow::openSettings(SettingsDialog::Page page)
                     dlg.reportSaveFailure(error);
             });
     dlg.exec();
+    if (!self)
+        return;
+    // A native close request can dismiss Settings inside its event loop. Keep
+    // ordinary close operations queued until this call has unwound the dialog.
+    settingsDialog_.clear();
+    postTabChanges();
     // A new UI language takes effect at startup, so OK or Apply with one restarts
     // Mervin. Queued: the restart closes this window, which is still in this call.
     if (dlg.result() == QDialog::Accepted && dlg.restartNeeded() && wm_) {

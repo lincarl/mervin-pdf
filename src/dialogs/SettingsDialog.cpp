@@ -1110,6 +1110,11 @@ bool SettingsDialog::restartNeeded() const
     return languageCombo_->language() != mervin::i18n::current();
 }
 
+bool SettingsDialog::hasPendingChanges() const
+{
+    return !unloadMinutes() || settings() != applied_;
+}
+
 void SettingsDialog::accept()
 {
     if (applyChanges())

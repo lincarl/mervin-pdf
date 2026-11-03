@@ -551,6 +551,19 @@ set_tests_properties(tst_background_open PROPERTIES
     TIMEOUT 180
     SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 qt_add_executable(tst_close_flow tst_close_flow.cpp)
+if(WIN32)
+    # This integration test needs the built MSI and runs in test-windows-installer.ps1
+    # after packaging. Its fixture processes have no Qt or app-local runtime dependency.
+    add_executable(tst_installer_action tst_installer_action.cpp ../packaging/wix/CloseMervin.cpp)
+    target_include_directories(tst_installer_action PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(tst_installer_action PRIVATE msi user32 bcrypt)
+    set_target_properties(tst_installer_action PROPERTIES
+        AUTOMOC OFF AUTOUIC OFF AUTORCC OFF WIN32_EXECUTABLE OFF
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    if(MINGW)
+        target_link_options(tst_installer_action PRIVATE -municode)
+    endif()
+endif()
 target_link_libraries(tst_close_flow PRIVATE mervin_app Qt6::Test)
 set_target_properties(tst_close_flow PROPERTIES WIN32_EXECUTABLE OFF)
 target_compile_definitions(tst_close_flow PRIVATE MERVIN_FIXTURE_PDF="${MERVIN_FIXTURES_DIR}/properties.pdf")

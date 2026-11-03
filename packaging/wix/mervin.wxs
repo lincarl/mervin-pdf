@@ -12,6 +12,7 @@
     -d DeployDir=<dir>     staged application tree (exe + Qt/Microsoft DLLs)
     -d IconFile=<file>     mervin-icon.ico for the ARP entry + Start-menu shortcut
     -d DirectoryCleanup=<file> generated empty-directory removal entries
+    -d InstallerActions=<file> native graceful-close action DLL
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package
@@ -51,6 +52,17 @@
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
     <UIRef Id="MervinInstallDir" />
     <UIRef Id="WixUI_ErrorProgressText" />
+
+    <!-- Close before files-in-use detection and before removing an old product.
+         Older apps without this protocol retain Windows' standard confirmation.
+         Passive in-app updates have already completed their own close flow. -->
+    <Binary Id="MervinInstallerActions" SourceFile="$(var.InstallerActions)" />
+    <CustomAction Id="CloseMervin" BinaryRef="MervinInstallerActions"
+                  DllEntry="CloseMervin" Execute="immediate" Return="check" />
+    <InstallExecuteSequence>
+      <Custom Action="CloseMervin" Before="InstallValidate"
+              Condition="UILevel = 5 AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
 
     <!-- Only the successful, full-UI finish button calls this action. Passive
          in-app updates already relaunch through the application's updater. -->

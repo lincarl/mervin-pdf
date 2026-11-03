@@ -1480,6 +1480,7 @@ int MainWindow::askClose(TabPage *tab)
     //: Button in the unsaved-changes question. Closes the document and loses the
     //: changes made since it was last saved. The file on disk stays as it is.
     box->button(QMessageBox::Discard)->setText(tr("Don't save"));
+    closeQuestion_ = box; // External installer cancellation can dismiss this exact question.
     const int answer = box->exec();
     delete box.data();
     return answer;

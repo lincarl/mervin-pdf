@@ -78,10 +78,9 @@ void CloseFlow::request(MainWindow *window, Intent intent, TabPage *tab, bool re
         start(window->wm_, window, intent, tab, remember);
 }
 
-void CloseFlow::requestQuit(WindowManager *manager, bool restart)
+CloseFlow *CloseFlow::requestQuit(WindowManager *manager, bool restart)
 {
-    if (manager)
-        start(manager, nullptr, restart ? Intent::Restart : Intent::Quit);
+    return manager ? start(manager, nullptr, restart ? Intent::Restart : Intent::Quit) : nullptr;
 }
 
 bool CloseFlow::closesEveryWindow(const WindowManager *manager)
@@ -584,10 +583,15 @@ void CloseFlow::releaseClaims()
             window->scheduleCurrentResume();
 }
 
-void CloseFlow::cancel()
+void CloseFlow::cancel(bool dismissQuestion)
 {
     if (ended_)
         return;
+    QList<QPointer<QMessageBox>> questions;
+    if (dismissQuestion)
+        for (const auto &window : windows())
+            if (window && window->closeQuestion_)
+                questions.append(window->closeQuestion_);
     ended_ = true;
     clearWait();
     releaseClaims();
@@ -597,6 +601,9 @@ void CloseFlow::cancel()
         manager_->resumeInstanceOpens();
     }
     deleteLater();
+    for (const auto &question : questions)
+        if (question)
+            question->reject();
 }
 
 void CloseFlow::finish()
@@ -609,6 +616,7 @@ void CloseFlow::finish()
     const Intent intent = intent_;
     deleteLater();
     if (global(intent) && manager) {
+        manager->installerExit_ = manager->installerCloseFlow_ == this;
         manager->updateSession();
         manager->sessionFinal_ = true;
         manager->endHandoffs();
