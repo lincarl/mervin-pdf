@@ -1187,6 +1187,7 @@ private slots:
             QTRY_VERIFY_WITH_TIMEOUT(!window, 10000);
             QCOMPARE(manager.installerClose(Command::Poll, 17), Reply::Closing);
         }
+        QTRY_VERIFY(answers_.isEmpty());
         QVERIFY(!relaunch::requested());
         QCOMPARE(questions_.front(), QStringLiteral("Save changes to plan.pdf?"));
         QCOMPARE(questions_.size(), failSave ? 2 : 1);

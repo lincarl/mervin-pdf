@@ -2157,6 +2157,7 @@ private slots:
         answers_.append(QMessageBox::Ok);
         QVERIFY(QMetaObject::invokeMethod(&window, "saveMeasurements"));
         QTRY_VERIFY(tab->hasRecoverySnapshot() && tab->isUsable());
+        QTRY_VERIFY(answers_.isEmpty());
         QCOMPARE(tab->path(), path);
         QVERIFY(tab->viewer()->document());
         QTRY_COMPARE(tab->viewer()->annotModel()->pageAnnots(0).size(), 1u);
