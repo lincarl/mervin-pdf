@@ -36,8 +36,8 @@ from external contributors still applies.
 The reusable full CI workflow runs the following jobs.
 
 - Repository metadata, script, workflow, and license checks.
-- Linux release and sanitizer tests on Ubuntu 24.04 with aqt's Qt and qpdf 11.
-- Linux tests on Ubuntu 26.04 with official Qt and the pinned upstream vcpkg
+- Linux release and sanitizer tests on Ubuntu 24.04 with patched Qt and qpdf 11.
+- Linux tests on Ubuntu 26.04 with patched Qt and the pinned upstream vcpkg
   libraries, matching the AppImage and DEB toolchain, plus a staged runtime check.
 - Windows tests, MSI installation, upgrade, repair, uninstall, and wizard checks.
 - Windows MSIX installation, activation, upgrade, and uninstall checks.
@@ -62,6 +62,43 @@ The Fedora RPM builds the same upstream libraries and checks exported symbols
 and its staged private runtime in the release workflow.
 Verification artifacts remain on the run that produced them, with their existing
 retention periods.
+
+## Patched Qt SDK caches
+
+Every Linux and Windows build lane uses `.github/actions/prepare-qt`, including
+both Ubuntu 24.04 test variants, Ubuntu 26.04, Windows MSI and MSIX packaging,
+and Fedora RPM packaging. The MSIX lifecycle job consumes the Windows test job's
+verified payload. Existing job IDs and required gates remain unchanged.
+
+The action installs source-build headers and the pinned official support SDK
+without exporting the latter's environment. `scripts/prepare-qt-sdk.py` hashes
+the Qt source recipe, patches, builder, API checks, selection helper, action,
+dependency installation script and support binaries. It also includes the native
+OS, compiler, CMake, Ninja and development-package context. Windows identities
+include the MSVC compiler hash, Windows SDK and runner image versions. SDK caches
+have exact keys with no prefix fallback and contain only the installed SDK.
+Matching main and release lanes can share them. Cold jobs can each build an SDK;
+PR jobs cannot populate a cache for another job because their tokens are read-only.
+
+A restore must match its recorded build inputs, support hashes, complete file
+inventory and toolchain identity. Extra, missing or changed files and links outside
+the SDK fail validation. Each use compiles and runs the current PNG, PCRE2 JIT
+and CBOR API checks against the selected SDK, including cache hits. An invalid
+cache or failed source build stops the job. Delete an invalid cache or change the
+inputs after fixing the cause; there is no official-Qt fallback. A failed local
+source build can be resumed with `build-qt-patched.py`, but an incomplete cache
+cannot be treated as a verified SDK.
+
+Only successful validation exports the SDK paths to subsequent build and package
+steps. Windows deployment checks the configured Qt path and rejects DLLs from a
+different SDK. The existing PE import, plugin, staged Linux runtime and native
+installer checks remain mandatory. Cache saves happen after SDK validation and
+only outside PRs. GitHub's `cache-mode: read` additionally prevents PR code from
+writing caches regardless of its checked-out action code.
+
+The rebuilt Windows Qt DLLs and plugins lose Qt's original Authenticode
+signatures. The copied support DLLs retain theirs. Full native Windows CI must
+qualify the resulting application and installers before this selection ships.
 
 ## Retries and repeated commits
 

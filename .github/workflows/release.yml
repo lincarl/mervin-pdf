@@ -145,20 +145,8 @@ jobs:
       - name: Install pinned CMake and Ninja
         run: python scripts/install-build-tools.py
 
-      - name: Install Qt 6.12.0
-        uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
-        with:
-          # aqtinstall 3.3.0 cannot read Qt 6.11+ Windows repository paths.
-          # Pin the merged fix until it ships in a release: miurahr/aqtinstall#1000.
-          setup-python: false
-          aqtsource: "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
-          # Override the action's 1.1.0 default with the security release.
-          py7zrversion: "==1.1.4"
-          version: "6.12.0"
-          host: windows
-          target: desktop
-          arch: win64_msvc2022_64
-          cache: true
+      - name: Prepare patched Qt SDK
+        uses: ./.github/actions/prepare-qt
 
       - name: Hash MuPDF patches
         id: mupdf-patches
@@ -194,10 +182,9 @@ jobs:
         shell: pwsh
         run: |
           # Read these in-shell ($env:) rather than via GitHub Actions expression
-          # interpolation: QT_ROOT_DIR (exported by install-qt-action) and the
+          # interpolation: QT6_DIR (exported by prepare-qt) and the
           # VCPKG_INSTALLATION_ROOT. The windows-base preset reads $env:QT6_DIR ->
           # CMAKE_PREFIX_PATH and $env:VCPKG_ROOT -> the vcpkg toolchainFile.
-          $env:QT6_DIR = $env:QT_ROOT_DIR
           $vcpkg = $env:VCPKG_INSTALLATION_ROOT
           if (-not $vcpkg) { $vcpkg = 'C:\vcpkg' }
           $env:VCPKG_ROOT = $vcpkg
@@ -251,7 +238,6 @@ jobs:
           DOTNET_ROLL_FORWARD: Major
           DOTNET_ROLL_FORWARD_TO_PRERELEASE: "0"
         run: |
-          $env:QT6_DIR = $env:QT_ROOT_DIR
           scripts\deploy.ps1 -Installer
 
       - name: Upload MSI
@@ -275,7 +261,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # Official Qt and the pinned upstream libraries are bundled on every Linux
+  # Patched Qt and the pinned upstream libraries are bundled on every Linux
   # target. Build on Ubuntu 26.04 and Fedora 44 to retain their platform ABI.
   appimage:
     if: github.event_name != 'workflow_dispatch'
@@ -306,24 +292,13 @@ jobs:
       - name: Install pinned CMake and Ninja
         run: python scripts/install-build-tools.py
 
-      - name: Install Qt 6.12.0
-        uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
-        with:
-          setup-python: false
-          aqtsource: "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
-          py7zrversion: "==1.1.4"
-          version: "6.12.0"
-          host: linux
-          target: desktop
-          arch: linux_gcc_64
-          # Keep the complete base archive set, including Qt's translations.
-          cache: true
+      - name: Prepare patched Qt SDK
+        uses: ./.github/actions/prepare-qt
 
       - name: Prepare pinned upstream dependencies
         run: |
           vcpkg_root=$(bash scripts/bootstrap-vcpkg-linux.sh dev-temp/vcpkg)
           echo "VCPKG_ROOT=$vcpkg_root" >> "$GITHUB_ENV"
-          echo "QT6_DIR=$QT_ROOT_DIR" >> "$GITHUB_ENV"
 
       - name: Hash MuPDF patches
         id: mupdf-patches
@@ -401,24 +376,13 @@ jobs:
       - name: Install pinned CMake and Ninja
         run: python scripts/install-build-tools.py
 
-      - name: Install Qt 6.12.0
-        uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
-        with:
-          setup-python: false
-          aqtsource: "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
-          py7zrversion: "==1.1.4"
-          version: "6.12.0"
-          host: linux
-          target: desktop
-          arch: linux_gcc_64
-          # Keep the complete base archive set, including Qt's translations.
-          cache: true
+      - name: Prepare patched Qt SDK
+        uses: ./.github/actions/prepare-qt
 
       - name: Prepare pinned upstream dependencies
         run: |
           vcpkg_root=$(bash scripts/bootstrap-vcpkg-linux.sh dev-temp/vcpkg)
           echo "VCPKG_ROOT=$vcpkg_root" >> "$GITHUB_ENV"
-          echo "QT6_DIR=$QT_ROOT_DIR" >> "$GITHUB_ENV"
 
       - name: Build MuPDF
         run: echo "MUPDF_DIR=$(bash scripts/build-mupdf-linux.sh)" >> "$GITHUB_ENV"
@@ -488,31 +452,13 @@ jobs:
       - name: Install pinned CMake and Ninja
         run: python scripts/install-build-tools.py
 
-      - name: Install Qt 6.12.0
-        uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
-        env:
-          # Portable Python records Clang, but this builder supplies GCC.
-          CC: gcc
-          CXX: g++
-          LDSHARED: gcc -shared
-        with:
-          # Fedora dependencies are installed by DNF above. The action defaults to apt.
-          install-deps: false
-          setup-python: false
-          aqtsource: "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
-          py7zrversion: "==1.1.4"
-          version: "6.12.0"
-          host: linux
-          target: desktop
-          arch: linux_gcc_64
-          # Keep the complete base archive set, including Qt's translations.
-          cache: true
+      - name: Prepare patched Qt SDK
+        uses: ./.github/actions/prepare-qt
 
       - name: Prepare pinned upstream dependencies
         run: |
           vcpkg_root=$(bash scripts/bootstrap-vcpkg-linux.sh dev-temp/vcpkg)
           echo "VCPKG_ROOT=$vcpkg_root" >> "$GITHUB_ENV"
-          echo "QT6_DIR=$QT_ROOT_DIR" >> "$GITHUB_ENV"
 
       - name: Build MuPDF
         run: echo "MUPDF_DIR=$(bash scripts/build-mupdf-linux.sh)" >> "$GITHUB_ENV"

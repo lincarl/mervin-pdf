@@ -18,6 +18,21 @@ continues any higher RC target already in use. All numeric tags count as occupie
 including historical prereleases. Preserve the old `v1.64.8` and `v1.64.9` tags.
 The first candidate under this policy is therefore `v1.64.10-rc1`.
 
+CI and all packaging lanes select the patched Qt 6.12.0 source SDK with libpng
+1.6.59, PCRE2 10.49 and Qt's CVE-2026-105924 fix. See
+[SDK preparation and caching](CI.md#patched-qt-sdk-caches). A restored SDK must
+pass provenance, inventory and API checks before packaging. Source and workflow
+revision requirements, every main build and all installer checks remain in force.
+Rebuilt Windows Qt DLLs and plugins are unsigned and do not retain Qt's original
+Authenticode signatures. Copied non-Qt graphics DLLs and Microsoft runtime DLLs
+retain their existing signatures. Store signing of the package does not add
+Qt's original vendor signatures to its DLLs.
+
+Distribute the matching Qt source archives, tracked patches and reproducible
+build scripts under the applicable Qt source obligations. Retain them at the
+release's source revision and keep the notices in `licenses/qt/` with every
+package. The modified shared Qt libraries remain replaceable.
+
 ## Stable releases
 
 Publish a stable release only when the user explicitly asks. Wait for CI to pass
@@ -28,7 +43,8 @@ The tag must be unused. Do not rename or move an existing tag.
 A numeric tag publishes a stable release. An RC tag publishes a prerelease.
 Both use the same packaging workflow, which accepts only commits on `main`.
 After `v1.64.10` exists, the next automatic candidate becomes `v1.64.11-rc1`.
-Packaging runs no tests, so the successful CI run must precede a stable tag push.
+Packaging skips application tests, so the successful CI run must precede a stable
+tag push. SDK validation still runs during packaging, including on cache hits.
 
 After publication, update the release notes with the
 [Microsoft Store link](https://apps.microsoft.com/detail/9PPM4Z5G1LD0) as the

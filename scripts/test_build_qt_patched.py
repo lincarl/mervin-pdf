@@ -1,4 +1,4 @@
-"""Check the optional Qt builder's destination and archive safety contracts."""
+"""Check the Qt builder's destination and archive safety contracts."""
 
 import hashlib
 import importlib.util

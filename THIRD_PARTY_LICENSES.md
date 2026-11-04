@@ -14,7 +14,7 @@ in the [`licenses/`](licenses/) directory.
 | Component | Version (pinned) | Licence | Linking | Notes |
 |---|---|---|---|---|
 | MuPDF | 1.28.6 | AGPL v3 or commercial (Artifex) | Static | Dominant distribution constraint. Built from the official source release with Mervin's patches in `scripts/mupdf-patches`, unavailable in vcpkg. |
-| Qt 6 | 6.12.0 official binaries on Windows and Linux | LGPL v3 or commercial | **Dynamic** | Packages include Qt's libraries and plugins. Do not static-link. |
+| Qt 6 | 6.12.0 patched source build on Windows and Linux | LGPL v3 or commercial | **Dynamic** | Packages include Qt's libraries and plugins. Do not static-link. |
 | qpdf | 12.4.2 (vcpkg baseline) | Apache 2.0 | Windows static; Linux bundled shared library | Page operations and security. |
 | toml++ | 3.4.0 (vcpkg baseline or pinned development fallback) | MIT | Windows static; Linux bundled shared library or development header-only fallback | Config-file parsing and saving. |
 | Lucide icons | lucide-static 1.61.0 | ISC; icons derived from Feather are MIT | Compiled in (Qt resource) | Every UI icon, vendored unmodified in `resources/icons/lucide`. The licence text, including the Feather MIT notice for icons such as check, x, the chevrons, plus, minus and lock, is `licenses/lucide-LICENSE.txt`. |
@@ -89,7 +89,7 @@ as the patch records. The patch files are part of the corresponding modified sou
 
 ## LGPL implications for Qt (relevant only on distribution)
 
-- Qt is linked **dynamically**. Installers ship its DLLs on Windows and private shared libraries on Linux.
+- Qt is linked **dynamically**. Installers ship its DLLs on Windows and private shared libraries on Linux. The selected build includes libpng 1.6.59, PCRE2 10.49 and Qt's CVE-2026-105924 fix. Keep the pinned Qt sources, patches and build scripts with the corresponding source offer.
 - Include the Qt LGPL notice on the About page in Settings and in bundled documentation.
 - Avoid static linking unless prepared to meet the additional LGPL obligations.
 

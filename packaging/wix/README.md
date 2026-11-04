@@ -6,8 +6,9 @@ and through deployment tools.
 
 No administrator access is needed. The package uses `Scope="perUser"`.
 
-The payload retains Qt, its plugins and app-local Microsoft runtime DLLs with
-their existing signatures. The Windows vcpkg libraries use
+The payload uses the patched Qt source SDK. Its rebuilt Qt DLLs and plugins
+do not carry Qt's original Authenticode signatures. Copied non-Qt graphics and
+app-local Microsoft runtime DLLs retain their existing signatures. The Windows vcpkg libraries use
 `x64-windows-static-md` and contribute no runtime DLLs. Their notices remain
 under `licenses/`, including the target packages' copyright files under
 `licenses/vcpkg`. Mervin's executable and MSI remain unsigned.

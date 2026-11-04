@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build an isolated Qt 6.12.0 SDK with the bundled security updates.
 
-This opt-in builder does not modify the official SDK or select itself in CI.
+CI and packaging select this SDK through prepare-qt-sdk.py.
 It rebuilds the modules Mervin uses, including Linguist, from verified sources.
 The official SDK supplies only ICU 73.2 on Linux and graphics DLLs on Windows.
 Use Python 3.12 or newer and a matching x64 compiler environment.

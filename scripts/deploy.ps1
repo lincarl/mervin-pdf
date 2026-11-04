@@ -37,6 +37,12 @@ $cache = @{}
 Get-Content (Join-Path $build 'CMakeCache.txt') | ForEach-Object {
     if ($_ -match '^([^#/:][^:]*):[^=]+=(.*)$') { $cache[$Matches[1]] = $Matches[2] }
 }
+# Packaging must use the same Qt SDK that compiled and tested the executable.
+$configuredQt = (Resolve-Path -LiteralPath $cache['Qt6_DIR']).Path
+$selectedQt = (Resolve-Path -LiteralPath (Join-Path $env:QT6_DIR 'lib\cmake\Qt6')).Path
+if ($configuredQt -ne $selectedQt) {
+    throw 'QT6_DIR differs from the Qt SDK in CMakeCache.txt. Rebuild before packaging.'
+}
 if ($cache['VCPKG_TARGET_TRIPLET'] -ne 'x64-windows-static-md') {
     throw 'Reconfigure and rebuild with the x64-windows-static-md target triplet before packaging.'
 }
@@ -84,7 +90,7 @@ Copy-Item $exe $deploy
     --no-compiler-runtime (Join-Path $deploy "MervinPDF.exe")
 if ($LASTEXITCODE -ne 0) { throw "windeployqt failed ($LASTEXITCODE)" }
 
-# Keep the signed Qt binaries unchanged. Resolve plugins relative to the app
+# Keep the selected Qt binaries unchanged. Resolve plugins relative to the app
 # through configuration instead of patching Qt6Core's embedded install paths.
 @'
 [Paths]
@@ -98,9 +104,11 @@ foreach ($dll in Get-ChildItem $deploy -Filter '*.dll' -Recurse) {
     } else {
         Join-Path $env:QT6_DIR "plugins\$relative"
     }
-    if ((Test-Path -LiteralPath $qtSource) -and
-        (Get-FileHash -LiteralPath $qtSource).Hash -ne (Get-FileHash -LiteralPath $dll.FullName).Hash) {
-        throw "Deployment modified a Qt DLL and may have invalidated its signature: $relative"
+    if (-not (Test-Path -LiteralPath $qtSource)) {
+        throw "Deployment used a DLL outside the selected Qt SDK: $relative"
+    }
+    if ((Get-FileHash -LiteralPath $qtSource).Hash -ne (Get-FileHash -LiteralPath $dll.FullName).Hash) {
+        throw "Deployment modified a selected SDK DLL: $relative"
     }
 }
 
