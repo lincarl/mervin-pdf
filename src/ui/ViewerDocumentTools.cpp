@@ -454,6 +454,7 @@ void ViewerWidget::applyAnnotChange(int page)
     cache_.erase(page);
     preview_.erase(page);
     pending_.remove(page);
+    renderFailures_.remove(page);
     const QPoint off = contentOffset();
     const QRect vpCanvas(off, viewport()->size());
     const QRect pageCanvas = layout_.pageRect(page);
@@ -760,6 +761,7 @@ void ViewerWidget::applyFormFieldChange(int page)
         cache_.erase(affected);
         preview_.erase(affected);
         pending_.remove(affected);
+        renderFailures_.remove(affected);
     }
     const QPoint off = contentOffset();
     const QRect vpCanvas(off, viewport()->size());

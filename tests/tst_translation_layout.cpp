@@ -266,6 +266,8 @@ private slots:
     void merge();
     void ocr_data() { addLanguageMatrix(); }
     void ocr();
+    void renderFailure_data() { addLanguageMatrix(); }
+    void renderFailure();
     void print_data() { addLanguageMatrix(); }
     void print();
     void security_data() { addLanguageMatrix(); }
@@ -569,15 +571,23 @@ void TstTranslationLayout::recentTabRow()
     auto *menu = toolbar->findChild<QToolButton *>(QStringLiteral("menuButton"));
     QVERIFY(menu);
     QCOMPARE(toolbar->widgetForAction(toolbar->actions().constLast()), menu);
-    // Every visible control sits inside the toolbar, and the menu button sits at its
-    // far end in either reading direction. QToolBar hides the controls it moves into
-    // its overflow popup, and the menu button would be the first to go.
+    auto *scroll = toolbar->findChild<QScrollArea *>(QStringLiteral("commandScroll"));
+    QVERIFY(scroll);
+    // Every command can scroll into view. The main menu remains pinned.
     const auto checkToolbar = [&](const QString &state) {
         for (QAbstractButton *button : toolbar->findChildren<QAbstractButton *>()) {
             if (!button->isVisibleTo(&window))
                 continue;
-            QVERIFY2(toolbar->rect().contains(QRect(button->mapTo(toolbar, QPoint()), button->size())),
-                     qPrintable(state));
+            if (scroll->widget()->isAncestorOf(button)) {
+                scroll->ensureWidgetVisible(button);
+                settle();
+                QVERIFY2(scroll->viewport()->rect().contains(
+                    QRect(button->mapTo(scroll->viewport(), QPoint()), button->size())),
+                    qPrintable(state));
+            } else {
+                QVERIFY2(toolbar->rect().contains(
+                    QRect(button->mapTo(toolbar, QPoint()), button->size())), qPrintable(state));
+            }
         }
         QVERIFY2(menu->isVisibleTo(&window), qPrintable(state));
         const QRect bounds(menu->mapTo(toolbar, QPoint()), menu->size());
@@ -588,17 +598,9 @@ void TstTranslationLayout::recentTabRow()
     QCOMPARE(recent->iconSize(), open->iconSize());
     QCOMPARE(recent->toolButtonStyle(), open->toolButtonStyle());
     QCOMPARE(recent->height(), open->height());
-    int recentIndex = -1;
-    int openIndex = -1;
-    for (int i = 0; i < toolbar->actions().size(); ++i) {
-        QWidget *button = toolbar->widgetForAction(toolbar->actions().at(i));
-        if (button == recent)
-            recentIndex = i;
-        if (button == open)
-            openIndex = i;
-    }
+    const int recentIndex = scroll->widget()->layout()->indexOf(recent);
     QVERIFY(recentIndex >= 0);
-    QCOMPARE(openIndex, recentIndex + 1);
+    QCOMPARE(scroll->widget()->layout()->indexOf(open), recentIndex + 1);
     QVERIFY(!recent->icon().isNull());
     QVERIFY(!recent->toolTip().isEmpty());
     if (recent->toolButtonStyle() == Qt::ToolButtonIconOnly) {
@@ -621,8 +623,7 @@ void TstTranslationLayout::recentTabRow()
     inspect(window, QStringLiteral("Document toolbar"), toolbar);
     QVERIFY(!recent->isChecked());
     checkToolbar(QStringLiteral("Document toolbar"));
-    // The minimum width was set for a shorter page count. In the minimum-size rows,
-    // the window has to widen for " / 10000 ".
+    // A longer page count must remain reachable without growing the window.
     QVERIFY(mervin::testing::openAndWait(window, long_));
     settle();
     checkToolbar(QStringLiteral("Long document toolbar"));
@@ -780,8 +781,7 @@ void TstTranslationLayout::loadPlaceholder()
     inspect(window, QStringLiteral("Opening an output that is being written"), reserved);
 }
 
-// Checks the actual automatic-close status notice, including its painted text
-// area, which ordinary QLabel layout checks cannot inspect.
+// Checks the automatic-close status notice, including wrapping at compact widths.
 void TstTranslationLayout::removedFileNotice()
 {
     mervin::RenderEngine engine;
@@ -795,27 +795,14 @@ void TstTranslationLayout::removedFileNotice()
     QVERIFY(window.closeRemovedTabs(missing));
     QCOMPARE(window.tabCount(), 0);
     auto *bar = window.statusBar();
-    QCOMPARE(bar->currentMessage(), MainWindow::tr("Tab closed. The file was deleted."));
+    auto *notice = bar->findChild<QLabel *>(QStringLiteral("statusNotice"));
+    QVERIFY(notice);
+    QCOMPARE(notice->text(), MainWindow::tr("Tab closed. The file was deleted."));
     inspect(window, QStringLiteral("Automatic close of a deleted file"), bar);
     QVERIFY(bar->isVisibleTo(&window));
+    QVERIFY(notice->isVisibleTo(bar));
+    QVERIFY(bar->rect().contains(QRect(notice->mapTo(bar, QPoint()), notice->size())));
 
-    // QStatusBarPrivate::messageRect uses the full height, horizontal margins,
-    // and the size grip's edge. Normal status widgets hide during the message.
-    int left = 6;
-    int right = bar->width() - 12;
-    for (const QSizeGrip *grip : bar->findChildren<QSizeGrip *>()) {
-        if (!grip->isVisibleTo(bar))
-            continue;
-        const QRect bounds(grip->mapTo(bar, QPoint()), grip->size());
-        if (bar->isRightToLeft())
-            left = bounds.x() + bounds.width();
-        else
-            right = bounds.x();
-    }
-    const QRect area(left, 0, right - left, bar->height());
-    const QSize text = bar->fontMetrics().size(Qt::TextSingleLine, bar->currentMessage());
-    QVERIFY2(text.width() <= area.width(), qPrintable(bar->currentMessage()));
-    QVERIFY2(text.height() <= area.height(), qPrintable(bar->currentMessage()));
 }
 
 /// Checks the warning a manual update check shows when the server's answer is not a release.
@@ -1572,6 +1559,41 @@ void TstTranslationLayout::ocr()
     inspect(empty, QStringLiteral("OCR no installed languages"));
 }
 
+/// Checks the actual failed-page notice and recovery control at compact widths.
+void TstTranslationLayout::renderFailure()
+{
+    const QString path = profile_.filePath(QStringLiteral("oversized-page.pdf"));
+    const QList<QByteArray> objects{
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 20000000 842] >>"};
+    QByteArray pdf = "%PDF-1.7\n";
+    QByteArray xref = "0000000000 65535 f \n";
+    for (qsizetype i = 0; i < objects.size(); ++i) {
+        xref += QByteArray::number(pdf.size()).rightJustified(10, '0') + " 00000 n \n";
+        pdf += QByteArray::number(i + 1) + " 0 obj\n" + objects[i] + "\nendobj\n";
+    }
+    const auto start = QByteArray::number(pdf.size());
+    pdf += "xref\n0 4\n" + xref + "trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n"
+        + start + "\n%%EOF\n";
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(pdf), pdf.size());
+    file.close();
+    mervin::RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    window.show();
+    window.resize(640, 700);
+    QVERIFY(mervin::testing::openAndWait(window, path));
+    auto *viewer = window.findChild<mervin::ViewerWidget *>();
+    QVERIFY(viewer);
+    auto *notice = viewer->findChild<QWidget *>(QStringLiteral("renderFailureNotice"));
+    QVERIFY(notice);
+    QTRY_VERIFY(notice->isVisible());
+    inspect(window, QStringLiteral("Page render failure"), notice);
+    QVERIFY(viewer->viewport()->rect().contains(notice->geometry()));
+}
+
 void TstTranslationLayout::print()
 {
     mervin::RenderEngine engine;
@@ -1606,6 +1628,11 @@ void TstTranslationLayout::print()
     QTRY_VERIFY(!confirm->isEnabled());
     QVERIFY(!preview->isReady());
     inspect(dialog, QStringLiteral("Print invalid page selection"));
+    QMessageBox warning(QMessageBox::Warning, MainWindow::tr("Print"),
+        MainWindow::tr("Could not finish the print job.") + QStringLiteral("\n\n")
+            + MainWindow::tr("Pages sent to the printer may already have printed."),
+        QMessageBox::Ok);
+    inspect(warning, QStringLiteral("Native print submission warning"));
 }
 
 /// Checks Security information, retained choices and destination-consent messages in every language.

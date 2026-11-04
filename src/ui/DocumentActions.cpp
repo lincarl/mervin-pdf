@@ -49,6 +49,7 @@
 #include <QStatusBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
+#include <QTemporaryFile>
 
 #include <QTimer>
 #include <QToolButton>
@@ -117,6 +118,7 @@ struct PrintResult
     Failure failure = Failure::None;
     QString error;
     int page = 0;
+    int submittedPages = 0; // counted once per page, never once per band
 };
 
 // The most raster pixels one printed band holds. While Qt's PDF engine, which Print to
@@ -129,19 +131,10 @@ struct PrintResult
 // budget costs time for little memory.
 constexpr qint64 kPrintBandPixels = qint64(1) << 24;
 
-// Paints on the worker that owns `printer`. A page renders at renderDpi on paper,
-// whatever its scale, and only its part inside the printable area, in bands of whole
-// raster rows (printing::rasterPlan and rasterBands). Each band holds live document
-// access only while it renders, then converts its colour mode and draws. A sheet, and
-// the job with the first one, starts only after its first band converted, and that band
-// is drawn even when Stop arrives while the printer starts the sheet, so no sheet starts
-// without being drawn on. A band rendering when Stop arrives finishes (renderPage has no
-// cookie), then document access ends and no further band renders. Stop or a failure
-// between the bands of a page printed in several bands therefore leaves that sheet
-// partly drawn. Qt's print engines cannot cancel a job (QPrinter::abort does nothing in
-// the PDF, CUPS and Windows engines), so when Stop or a failure returns early, the
-// painter's destructor still ends the job and a printer receives the sheets drawn so
-// far. Print to file discards its staged PDF instead.
+// Prepares a whole page before starting it. Multi-band pages use a private raw
+// spool so the application holds one band at a time. Once a sheet starts, Stop
+// finishes its prepared bands before asking the backend to abort. A disk/driver
+// failure can still leave part of a page, and submitted sheets cannot be retracted.
 void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetime> &lifetime,
                 const QList<int> &pages, int rotation, const mervin::printing::Settings &settings,
                 const QString &printerName, bool liveDocument, PrintResult &result)
@@ -171,45 +164,68 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
             use(*hold.document());
     };
     QPainter painter;
+    bool finished = false;
+    bool started = false;
+    // Call abort on the printer's owning worker before QPainter's fallback end.
+    // Backends that cannot cancel return false. Neither outcome retracts paper.
+    const auto cancel = qScopeGuard([&] {
+        if (!finished && started)
+            printing::testing::checkpoint({printing::testing::Phase::CancelJob,
+                0, 0, {}, result.submittedPages}, [&] { return printer.abort(); });
+    });
     for (int page : pages) {
         if (mervin::job::stopped())
             return;
         QSizeF pagePoints;
         printing::RasterPlan plan;
         QList<QRect> bands;
-        QImage band;
-        // Each band but the last also renders the next band's first row, which that
-        // band then draws over. Qt's Windows print engine truncates an image's top and
-        // height to whole device pixels, so abutting bands could leave a blank row.
-        const auto clip = [&bands](qsizetype index) {
-            return index + 1 < bands.size() ? bands.at(index).adjusted(0, 0, 0, 1)
-                                            : bands.at(index);
-        };
         withDocument([&](const Document &document) {
             pagePoints = document.pageSize(page - 1);
             if (rotation == 90 || rotation == 270)
                 pagePoints.transpose();
             plan = printing::rasterPlan(pagePoints, printable, settings, renderDpi);
             bands = printing::rasterBands(plan.source, kPrintBandPixels);
-            if (!bands.isEmpty()) {
-                printing::testing::checkpoint({printing::testing::Phase::RenderBand, page, 0});
-                band = document.renderPage(page - 1, plan.scale, rotation, clip(0), antialias);
-            }
         });
-        if (bands.isEmpty() && !mervin::job::stopped()) {
-            result.failure = PrintResult::Failure::Render;
-            result.page = page;
+        if (bands.isEmpty()) {
+            if (!mervin::job::stopped()) {
+                result.failure = PrintResult::Failure::Render;
+                result.page = page;
+            }
             return;
         }
-        for (qsizetype index = 0; index < bands.size(); ++index) {
-            if (index > 0) {
-                withDocument([&](const Document &document) {
-                    printing::testing::checkpoint(
-                        {printing::testing::Phase::RenderBand, page, int(index)});
-                    band = document.renderPage(page - 1, plan.scale, rotation, clip(index),
-                                               antialias);
-                });
+        // The extra row overlaps the next band to cover Windows device rounding.
+        const auto clip = [&bands](qsizetype index) {
+            return index + 1 < bands.size() ? bands.at(index).adjusted(0, 0, 0, 1)
+                                            : bands.at(index);
+        };
+        struct StoredBand {
+            qint64 offset;
+            QSize size;
+            QImage::Format format;
+        };
+        QList<StoredBand> stored;
+        QTemporaryFile spool;
+        QImage single;
+        const auto spoolFailure = [&] {
+            result.failure = PrintResult::Failure::TemporaryFile;
+            result.error = spool.errorString();
+        };
+        if (bands.size() > 1) {
+            if (!mervin::job::writing(QDir::tempPath()))
+                return;
+            if (!spool.open()) {
+                spoolFailure();
+                return;
             }
+        }
+        for (qsizetype index = 0; index < bands.size(); ++index) {
+            QImage band;
+            withDocument([&](const Document &document) {
+                if (!printing::testing::checkpoint(
+                        {printing::testing::Phase::RenderBand, page, int(index)}))
+                    return;
+                band = document.renderPage(page - 1, plan.scale, rotation, clip(index), antialias);
+            });
             if (mervin::job::stopped())
                 return;
             const QImage prepared = printing::convertColour(band, settings.colourMode);
@@ -219,23 +235,54 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
                 result.page = page;
                 return;
             }
-            if (index == 0) {
-                if (!mervin::job::printing(printerName)) {
-                    result.failure = PrintResult::Failure::NextPage;
+            if (bands.size() == 1) {
+                single = prepared;
+            } else {
+                stored.append({spool.pos(), prepared.size(), prepared.format()});
+                if (!mervin::job::writing(QDir::tempPath()))
+                    return;
+                if (spool.write(reinterpret_cast<const char *>(prepared.constBits()),
+                                prepared.sizeInBytes()) != prepared.sizeInBytes()) {
+                    spoolFailure();
                     return;
                 }
+            }
+            mervin::job::progressed();
+        }
+        if (spool.isOpen() && !spool.flush()) {
+            spoolFailure();
+            return;
+        }
+        if (!mervin::job::printing(printerName))
+            return;
+        for (qsizetype index = 0; index < bands.size(); ++index) {
+            QImage prepared = single;
+            if (spool.isOpen()) {
+                const auto &saved = stored.at(index);
+                prepared = QImage(saved.size, saved.format);
+                if (prepared.isNull() || !spool.seek(saved.offset)
+                    || spool.read(reinterpret_cast<char *>(prepared.bits()), prepared.sizeInBytes())
+                        != prepared.sizeInBytes()) {
+                    spoolFailure();
+                    return;
+                }
+            }
+            if (index == 0) {
+                // Stop before a sheet begins discards it. Stop during begin/newPage
+                // finishes the already prepared page, without further document access.
+                if (mervin::job::stopped())
+                    return;
                 if (!painter.isActive()) {
                     if (!printing::testing::checkpoint({printing::testing::Phase::Begin, page},
                                                        [&] { return painter.begin(&printer); })) {
                         result.failure = PrintResult::Failure::Start;
                         return;
                     }
-                } else {
-                    if (!printing::testing::checkpoint({printing::testing::Phase::NewPage, page},
-                                                       [&] { return printer.newPage(); })) {
-                        result.failure = PrintResult::Failure::NextPage;
-                        return;
-                    }
+                    started = true;
+                } else if (!printing::testing::checkpoint({printing::testing::Phase::NewPage, page},
+                                                           [&] { return printer.newPage(); })) {
+                    result.failure = PrintResult::Failure::NextPage;
+                    return;
                 }
             }
             const QRectF target = printing::rasterTarget(
@@ -247,6 +294,11 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
                 painter.translate(-printable.topLeft());
             printing::drawImage(painter, prepared, target, printable, settings.colourMode);
             painter.restore();
+            if (index == 0) {
+                ++result.submittedPages;
+                printing::testing::checkpoint({printing::testing::Phase::PageSubmitted,
+                    page, 0, {}, result.submittedPages});
+            }
             printing::testing::checkpoint({printing::testing::Phase::BandDrawn, page, int(index)});
             mervin::job::progressed();
         }
@@ -258,6 +310,7 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
     const bool ended = printing::testing::checkpoint({printing::testing::Phase::FinishJob},
                                                      [&] { return painter.end(); });
     mervin::job::endCommit();
+    finished = ended;
     if (!ended)
         result.failure = PrintResult::Failure::End;
 }
@@ -317,6 +370,7 @@ struct MainWindow::PageTool
 {
     QString title;       // of its messages, such as "Rotate Pages"
     QString destination; // the folder it writes to, which its tab's wait bar names
+    bool rememberPassword = true; // Split's retry password lives only in retained consent
     // The outputs' states that the user approved replacing, empty before any approval.
     OutputStates approved;
     // On the job's thread, with the password to open the source with and `approved`.
@@ -325,56 +379,185 @@ struct MainWindow::PageTool
     std::function<void(MainWindow &window, TabPage &tab, const PageToolResult &result)> succeeded;
 };
 
+// Owns one page-tool attempt and its consent across tab moves. Passwords stay here
+// only until a retry completes, consent is declined, or the source is replaced.
+struct MainWindow::RetainedPageTool : QObject
+{
+    /// Captures the source identity before the worker starts.
+    RetainedPageTool(TabPage *tab, std::shared_ptr<const PageTool> tool)
+        : QObject(tab), page(tab), tool(std::move(tool)),
+          source(tab->viewer()->document()->lifetime()), path(tab->path()), stamp(tab->source())
+    {
+        setObjectName(QStringLiteral("retainedPageTool"));
+        page->installEventFilter(this);
+        connect(page, &TabPage::stateChanged, this, [this] {
+            if (!validSource())
+                deleteLater();
+            else
+                schedule();
+        });
+        connect(page, &TabPage::waitingStopped, this, &QObject::deleteLater);
+    }
+
+    /// Rejects callbacks for another loaded document or a saved replacement.
+    bool validSource() const
+    {
+        return page && page->viewer()->document()
+            && page->viewer()->document()->lifetime() == source
+            && page->path() == path && page->source() == stamp;
+    }
+
+    /// Starts a retry without changing the retained operation's identity.
+    void run(QString supplied, bool prompted)
+    {
+        if (!validSource() || !page->isUsable()) {
+            deleteLater();
+            return;
+        }
+        ++generation; // invalidate callbacks queued for an earlier attempt
+        queued = false;
+        password = std::move(supplied);
+        asked = prompted;
+        result.reset();
+        const auto answer = std::make_shared<PageToolResult>();
+        TabPage::Operation operation;
+        operation.destination = tool->destination;
+        operation.work = [tool = tool, password = password, answer] {
+            *answer = tool->work(password, tool->approved);
+        };
+        operation.finished = [self = QPointer<RetainedPageTool>(this), answer] {
+            if (self) {
+                self->result = answer;
+                self->schedule();
+            }
+        };
+        page->startOperation(std::move(operation));
+    }
+
+    /// Observes selection, owner changes and restoration without opening a modal in an event.
+    bool eventFilter(QObject *, QEvent *event) override
+    {
+        if (event->type() == QEvent::Show || event->type() == QEvent::Hide
+            || event->type() == QEvent::ParentChange || event->type() == QEvent::WindowStateChange)
+            schedule();
+        return false;
+    }
+
+    /// Coalesces events without polling an inactive tab.
+    void schedule()
+    {
+        if (scheduled)
+            return;
+        scheduled = true;
+        QTimer::singleShot(0, this, [this] { scheduled = false; tryQueue(); });
+    }
+
+    /// Consent belongs only to the selected, visible source tab.
+    bool canAsk(MainWindow *owner) const
+    {
+        return validSource() && page->isUsable() && owner && !owner->closeConfirmed_
+            && !owner->hiddenToTray_ && owner->isVisible() && !owner->isMinimized()
+            && !owner->recentActive_ && owner->currentTab() == page;
+    }
+
+    /// Queues completion through the current owner's ordinary tab-change queue.
+    void tryQueue()
+    {
+        if (presenting)
+            return;
+        if (!validSource()) {
+            deleteLater();
+            return;
+        }
+        auto *owner = qobject_cast<MainWindow *>(page->window());
+        if (owner != observedOwner) {
+            disconnect(selectionChanged);
+            if (observedOwner)
+                observedOwner->removeEventFilter(this);
+            observedOwner = owner;
+            queued = false;
+            ++generation;
+            if (owner) {
+                owner->installEventFilter(this);
+                selectionChanged = connect(owner->tabs_, &QTabWidget::currentChanged,
+                                            this, [this] { schedule(); });
+            }
+        }
+        if (!owner || !result || queued || !page->isUsable())
+            return;
+        const bool consent = !result->toApprove.isEmpty()
+            || (result->status == PageOps::Status::NeedsPassword && !asked);
+        if (consent && !canAsk(owner))
+            return;
+        queued = true;
+        const quint64 delivery = ++generation;
+        owner->whenTabsCanChange([self = QPointer<RetainedPageTool>(this),
+                                  owner = QPointer<MainWindow>(owner), delivery, consent] {
+            if (!self || self->generation != delivery)
+                return;
+            self->queued = false;
+            if (!owner || owner != self->page->window()
+                || (consent && !self->canAsk(owner))) {
+                self->schedule();
+                return;
+            }
+            if (!self->validSource() || owner->closeConfirmed_
+                || (owner->wm_ && owner->wm_->isClosing())) {
+                self->deleteLater();
+                return;
+            }
+            const auto result = self->result;
+            if (!result)
+                return;
+            const auto tool = self->tool;
+            const QString password = consent
+                || (tool->rememberPassword && result->status == PageOps::Status::Ok)
+                ? self->password : QString();
+            self->presenting = true;
+            const auto presented = qScopeGuard([self] {
+                if (self)
+                    self->presenting = false;
+            });
+            owner->finishPageTool(self->page, tool, password, self->asked, *result, self);
+        });
+    }
+
+    QPointer<TabPage> page;
+    std::shared_ptr<const PageTool> tool;
+    std::shared_ptr<mervin::DocumentLifetime> source;
+    QString path;
+    mervin::SourceStamp stamp;
+    QString password;
+    bool asked = false;
+    std::shared_ptr<PageToolResult> result;
+    QPointer<MainWindow> observedOwner;
+    QMetaObject::Connection selectionChanged;
+    quint64 generation = 0;
+    bool scheduled = false;
+    bool queued = false;
+    bool presenting = false;
+};
+
+/// Starts a new command and drops superseded consent for this tab.
 void MainWindow::runPageTool(TabPage *tab, const std::shared_ptr<const PageTool> &tool,
                              const QString &password, bool asked)
 {
-    const auto result = std::make_shared<PageToolResult>();
-    TabPage::Operation operation;
-    operation.destination = tool->destination;
-    operation.work = [tool, password, result] { *result = tool->work(password, tool->approved); };
-    operation.finished = [page = QPointer<TabPage>(tab), tool, password, asked, result] {
-        if (page)
-            deliverPageTool(page, tool, password, asked, result);
-    };
-    tab->startOperation(std::move(operation));
-}
-
-void MainWindow::deliverPageTool(TabPage *tab, const std::shared_ptr<const PageTool> &tool,
-                                 const QString &password, bool asked,
-                                 const std::shared_ptr<PageToolResult> &result)
-{
-    const QPointer<TabPage> page(tab);
-    auto *window = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
-    if (!window)
-        return;
-    // The previous owner drops its queue on destruction. A moved tab still needs
-    // its result delivered through the surviving owner's queue.
-    const auto discarded = connect(window, &QObject::destroyed, tab,
-        [page, tool, password, asked, result] {
-            QTimer::singleShot(0, page, [page, tool, password, asked, result] {
-                if (page)
-                    deliverPageTool(page, tool, password, asked, result);
-            });
-        });
-    window->whenTabsCanChange([page, owner = QPointer<MainWindow>(window),
-                              tool, password, asked, result, discarded] {
-        disconnect(discarded);
-        auto *current = page ? qobject_cast<MainWindow *>(page->window()) : nullptr;
-        if (!current)
-            return;
-        if (current != owner) {
-            deliverPageTool(page, tool, password, asked, result);
-            return;
-        }
-        current->finishPageTool(page, tool, password, asked, *result);
-    });
+    const auto previous = tab->findChildren<QObject *>(QStringLiteral("retainedPageTool"),
+                                                      Qt::FindDirectChildrenOnly);
+    for (QObject *pending : previous)
+        delete pending;
+    (new RetainedPageTool(tab, tool))->run(password, asked);
 }
 
 void MainWindow::finishPageTool(TabPage *tab, const std::shared_ptr<const PageTool> &tool,
                                 const QString &password, bool asked,
-                                const PageToolResult &result)
+                                const PageToolResult &result, RetainedPageTool *retained)
 {
     const OperationScope operation(this);
+    const QPointer<RetainedPageTool> request(retained);
+    const QPointer<MainWindow> ownerGuard(this);
+    bool retrying = false;
+    const auto clear = qScopeGuard([&] { if (request && !retrying) delete request.data(); });
     // The boxes below run their own event loops, in which the tab can go.
     const QPointer<TabPage> page(tab);
     if (result.status == PageOps::Status::NeedsPassword && !asked && !hiddenToTray_) {
@@ -386,26 +569,16 @@ void MainWindow::finishPageTool(TabPage *tab, const std::shared_ptr<const PageTo
         const bool accepted = prompt->exec() == QDialog::Accepted;
         const QString supplied = prompt ? prompt->textValue() : QString();
         delete prompt.data();
-        if (accepted && page && page->isUsable())
-            runPageTool(page, tool, supplied, true);
+        if (accepted && ownerGuard && request && request->canAsk(ownerGuard)) {
+            retrying = true;
+            request->run(supplied, true);
+        }
         return;
     }
     // Outputs that exist and are not open in a tab. The tool wrote nothing yet.
     if (!result.toApprove.isEmpty()) {
         const int existing = int(std::count_if(result.toApprove.cbegin(), result.toApprove.cend(),
             [](const mervin::DestinationConsent &state) { return state.exists; }));
-        if (hiddenToTray_) {
-            if (wm_) {
-                //: Tray message after Split found that some of the files it would write,
-                //: such as plan-002.pdf, already exist while its window was hidden in the
-                //: tray, so it could not ask whether to replace them. %n is the number of
-                //: those files, %1 the folder Split writes to. Split wrote no file.
-                wm_->notifyInTray(tool->title,
-                    tr("%n file(s) in %1 already exist. Split wrote nothing.", nullptr, existing)
-                        .arg(isolated(QDir::toNativeSeparators(tool->destination))));
-            }
-            return;
-        }
         // Yes approves the states the job found. The next run replaces each file
         // only if it is still in that state when its part commits.
         auto approved = std::make_shared<PageTool>(*tool);
@@ -429,11 +602,18 @@ void MainWindow::finishPageTool(TabPage *tab, const std::shared_ptr<const PageTo
             }, {}, tool->destination));
         const bool replace = question->exec() == QMessageBox::Yes;
         delete question.data();
-        if (replace && self && page && page->isUsable() && !closeConfirmed_
-            && !(wm_ && wm_->isClosing()))
-            runPageTool(page, approved, retry, asked);
+        if (replace && self && request && request->canAsk(this)
+            && !(wm_ && wm_->isClosing())) {
+            retrying = true;
+            request->tool = approved;
+            request->run(retry, asked);
+        }
         return;
     }
+    // Terminal results need no retained consent or retry password, even while
+    // their informational message runs a nested event loop.
+    if (request)
+        delete request.data();
     if (!result.changed.isEmpty()) {
         const QString name = QFileInfo(result.changed).fileName();
         const mervin::FileSentence kept = [](const QString &shown, const QString &) {
@@ -467,7 +647,7 @@ void MainWindow::finishPageTool(TabPage *tab, const std::shared_ptr<const PageTo
             wm_->notifyInTray(title, failure);
         return;
     }
-    if (asked)
+    if (asked && tool->rememberPassword)
         page->setPassword(password);
     if (!hiddenToTray_)
         tool->succeeded(*this, *page, result);
@@ -1787,12 +1967,14 @@ void MainWindow::finishPagesJob(TabPage *tab, const std::shared_ptr<PagesJob> &r
 void MainWindow::splitDocument()
 {
     const OperationScope operation(this);
-    TabPage *t = currentTab();
+    const QPointer<TabPage> t(currentTab());
     if (!t || !t->isUsable())
         return;
+    const auto source = t->viewer()->document()->lifetime();
     const QString dir = QFileDialog::getExistingDirectory(this, tr("Choose Output Folder"),
                                                           QFileInfo(t->path()).absolutePath());
-    if (dir.isEmpty())
+    if (dir.isEmpty() || !t || !t->isUsable()
+        || t->viewer()->document()->lifetime() != source)
         return;
     // Only the tab waits. qpdf reads the file on disk and writes the pages in the
     // background.
@@ -1800,6 +1982,7 @@ void MainWindow::splitDocument()
     //: Title of the action that saves each PDF page as a separate file. Split is
     //: an action, not an adjective describing pages that have already been split.
     tool->title = tr("Split Pages");
+    tool->rememberPassword = false;
     tool->destination = dir;
     tool->work = [in = t->path(), dir, base = QFileInfo(t->path()).completeBaseName(),
                   open = openFileKeys(wm_ ? wm_->openTabPaths() : tabPaths())](
@@ -2313,7 +2496,16 @@ void MainWindow::showPrintDialog(TabPage *tab, const std::shared_ptr<PrintReques
                                                output, &result->error))
             result->failure = PrintResult::Failure::Write;
     };
-    print.finished = [page, result] {
+    // Output paths identify staged Print to file, whose private bytes are discarded.
+    // A native job can have irreversible side effects even after Stop releases its tab.
+    print.settled = [page, result, output](bool stopped) {
+        if (page && stopped && output.isEmpty() && result->submittedPages > 0) {
+            //: Warning after stopping a native printer job. Pages already submitted
+            //: to the printer system may be on paper, even if backend cancellation worked.
+            deliverPrintFailure(page, tr("Pages sent to the printer may already have printed."));
+        }
+    };
+    print.finished = [page, result, output] {
         if (!page || result->failure == PrintResult::Failure::None)
             return;
         QString message;
@@ -2343,6 +2535,11 @@ void MainWindow::showPrintDialog(TabPage *tab, const std::shared_ptr<PrintReques
             //: have accepted earlier pages.
             message = tr("Could not finish the print job.");
             break;
+        }
+        if (output.isEmpty() && result->submittedPages > 0) {
+            //: Warning after a native print failure. Submitted pages cannot be retracted.
+            message += QStringLiteral("\n\n")
+                + tr("Pages sent to the printer may already have printed.");
         }
         deliverPrintFailure(page, message);
     };

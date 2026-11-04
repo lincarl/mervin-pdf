@@ -455,6 +455,7 @@ private slots:
     void selectedPagesReachOutput_data();
     void selectedPagesReachOutput();
     void activeFormTextAndAnnotationEditsReachOutput();
+    void laterBandFailureStartsNoSheet();
     void stopDuringPrinterStart_data();
     void stopDuringPrinterStart();
     void independentBandBoundaryCoverage();
@@ -1122,6 +1123,51 @@ void TstPrintOutput::activeFormTextAndAnnotationEditsReachOutput()
     QCOMPARE(bytes(source), original);
 }
 
+/// A later rendering failure must discard a prepared page before any driver submission.
+void TstPrintOutput::laterBandFailureStartsNoSheet()
+{
+    using Phase = printing::testing::Phase;
+    QTemporaryDir files;
+    const QString output = files.filePath("existing.pdf");
+    QFile previous(output);
+    QVERIFY(previous.open(QIODevice::WriteOnly));
+    QVERIFY(previous.write("keep original") > 0);
+    previous.close();
+    const QByteArray before = bytes(output);
+    std::atomic<int> rendered{0};
+    std::atomic<int> begun{0};
+    std::atomic<int> submitted{0};
+    printing::testing::setHook([&](const printing::testing::Event &event,
+                                  const printing::testing::PrinterCall &call) {
+        if (event.phase == Phase::RenderBand) {
+            ++rendered;
+            if (event.band == 1)
+                return false;
+        }
+        if (event.phase == Phase::Begin)
+            ++begun;
+        if (event.phase == Phase::PageSubmitted)
+            ++submitted;
+        return !call || call();
+    });
+    const auto cleanup = qScopeGuard([] {
+        background::settle(10000);
+        printing::testing::setHook({});
+    });
+    RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    QVERIFY(testing::openAndWait(window, sourcePath_));
+    PrintInteraction dialogs(window, output, {}, [](PrintDialog &dialog) {
+        dialog.findChild<QComboBox *>("printQuality")->setCurrentIndex(2); // 600 dpi
+    });
+    QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
+    QTRY_COMPARE(dialogs.messages, QStringList{"Could not render page 1."});
+    QCOMPARE(rendered.load(), 2);
+    QCOMPARE(begun.load(), 0);
+    QCOMPARE(submitted.load(), 0);
+    QCOMPARE(bytes(output), before);
+}
+
 void TstPrintOutput::stopDuringPrinterStart_data()
 {
     QTest::addColumn<bool>("nextPage");
@@ -1130,7 +1176,7 @@ void TstPrintOutput::stopDuringPrinterStart_data()
 }
 
 // Holds the successful driver start before control returns to the band loop.
-// Stop must draw that prepared first band and render no following band or page.
+// Stop finishes the prepared sheet, submits it once, and renders no further page.
 void TstPrintOutput::stopDuringPrinterStart()
 {
     QFETCH(bool, nextPage);
@@ -1203,28 +1249,43 @@ void TstPrintOutput::stopDuringPrinterStart()
     QVERIFY(state->copied);
     QVERIFY(state->startIndex >= 0);
     int drawn = 0;
+    int submitted = 0;
+    bool aborted = false;
     for (int index = state->startIndex + 1; index < state->events.size(); ++index) {
         const auto &event = state->events[index];
         QVERIFY(event.phase != Phase::RenderBand);
-        if (event.phase == Phase::BandDrawn) {
-            QCOMPARE(event.band, 0);
+        if (event.phase == Phase::BandDrawn)
             ++drawn;
+        if (event.phase == Phase::PageSubmitted) {
+            ++submitted;
+            QCOMPARE(event.submittedPages, nextPage ? 2 : 1);
         }
+        if (event.phase == Phase::CancelJob)
+            aborted = true;
     }
-    QCOMPARE(drawn, 1);
+    QVERIFY(drawn > 1);
+    QCOMPARE(submitted, 1);
+    QVERIFY(aborted);
     QPDF pdf;
     pdf.processFile(partial.toUtf8().constData());
     auto pages = QPDFPageDocumentHelper(pdf).getAllPages();
     QCOMPARE(pages.size(), nextPage ? 2u : 1u);
-    QCOMPARE(pages.back().getImages().size(), 1u);
+    QCOMPARE(pages.back().getImages().size(), size_t(drawn));
     auto printed = engine.openDocument(partial);
     QVERIFY(printed);
     const QImage sheet = printed->renderPage(printed->pageCount() - 1, 1, 0);
     QVERIFY(!sheet.isNull());
     const QRect red = redPageBounds(sheet);
     QVERIFY(!red.isEmpty());
-    QVERIFY(red.height() < sheet.height() * 0.7);
-    QCOMPARE(sheet.pixelColor(sheet.width() / 2, sheet.height() * 3 / 4), QColor(Qt::white));
+    QVERIFY(red.height() > sheet.height() * 0.9);
+    // Optional retained output for independent-reader verification of the staged sheet.
+    const QString evidence = qEnvironmentVariable("MERVIN_PRINT_EVIDENCE");
+    if (!evidence.isEmpty()) {
+        QVERIFY(QDir().mkpath(evidence));
+        QVERIFY(QFile::copy(partial, QDir(evidence).filePath(nextPage
+            ? QStringLiteral("stopped-after-next-page.pdf")
+            : QStringLiteral("stopped-after-first-page.pdf"))));
+    }
 }
 
 // A vertical strip spans every band boundary. Its independently known placement

@@ -898,8 +898,15 @@ alone exceed the reserved range above 41,297,760 rows; those counts remain bound
 but are not guaranteed distinct reachable rows. A page too
 large to rasterize at the normal minimum does not control the raster cap, but
 still participates in the geometry cap.
-`RenderEngine` refuses a raster beyond the limit instead of returning a blank image, so
-such a page shows plain paper, as any page whose render fails does. A move to a screen
+`RenderEngine` refuses a raster beyond the limit instead of returning a blank image.
+The viewer shows a page-specific failure notice with a Zoom Out action after a matching
+failed result arrives. Pending and stale results never show this notice. Failed pages
+are not requested again on every repaint. Changing the view clears their failure state.
+Zoom Out lowers the document-wide scale enough to bring a rejected raster within range,
+with rounding headroom. This explicit recovery may go below 8%, without raising either
+geometry cap. The lower minimum lasts for that loaded document. Other render failures
+offer a lower zoom only while one is available. The notice stays inside the viewport,
+including when only a small part of an enormous page is visible. A move to a screen
 with another device pixel ratio (`QEvent::DevicePixelRatioChange`) re-renders at the
 new ratio and clamps the zoom again, in every zoom mode. When that changes the zoom, it
 keeps the page point in the middle of the view, as any other zoom does.
@@ -1214,7 +1221,8 @@ and unloading skips it. Other tabs and windows stay usable.
 The tab polls what the job reports every 250 ms, as for a load. After 2 s without
 progress (`TabPage::kSlowMs`) a bar (`WaitBar`) at the top of the tab, from the left
 edge to the scroll bar's column, says what the job waits for, with Stop waiting on the
-right, and a veil covers the picture below it. A write names its folder, "Saving to
+right, or below the text on a narrow tab, and a veil covers the picture below it.
+A write names its folder, "Saving to
 /nas/out. The drive is not answering.", as does a read of a file in that folder. A
 read elsewhere names the file, "Reading plan.pdf from /nas/docs. The drive is not
 answering." The text wraps and shortens like the slow load notice
@@ -1250,11 +1258,12 @@ the state Split checked. Split replaces no file that changed, appeared or was re
 since then. It stops there with the earlier parts committed, and the window names that
 file in a warning. A failed check fails the split with the file's name and reason. As
 in Merge, another process can still change a file between the final comparison and the
-rename. A window in the tray reports existing outputs through `notifyInTray` and
-writes nothing.
+rename. A window in the tray retains the question until its source tab is selected
+in the restored window, and writes nothing while consent is pending.
 
 When the tab's password does not open the file, the window asks for one
-and runs the tool again with it, and the tab keeps a password that worked. Everything
+and runs the tool again with it. Rotate retains a working password on the tab;
+Split keeps its retry password only until the retained command ends. Everything
 a finished operation raises, the password prompt, an error or "Open it now?", is
 window-modal in the window that holds the tab by then and waits in that window's tab
 change queue. A window in the tray shows an error as a tray message and asks nothing.
@@ -1561,29 +1570,31 @@ plans no raster wider or taller than 2^20 pixels, and Document::renderPage retur
 image for one. Such a page reports that it could not be rendered instead of printing a
 blank or distorted sheet.
 
-Each band takes a short document hold for rendering, and the first band's hold also
-reads the page size. Each hold ends before colour conversion, painting or any printer
-call. The worker converts a band's colour mode before it draws the band. It begins the
-job or starts a sheet only after the sheet's first band converted, so a failed render
-or conversion reports its page instead of leaving a blank sheet. That band is drawn
-even when Stop arrives while the printer starts the sheet. A blocked printer call
-names its printer in the wait bar. `Document::renderPage` checks the job's atomic
-cancellation state between paint operations through a passthrough device. The
-rendering thread alone writes its local MuPDF cookie, and cancellation discards a
-partial image. A native page load, image decode or draw call must still return
-before the next check, and a blocked printer call cannot be interrupted. The tab
-stays covered while the document hold remains. Then document access ends, no
-further band renders, and completion is suppressed. A print
-completion already submitted may finish. The worker checks painter.end and reports a
-completion failure.
+Each band takes a short document hold for rendering. Holds end before colour
+conversion, temporary-file writes, painting or printer calls. The worker prepares
+every band of a page before starting that sheet. A single-band page stays in memory;
+a multi-band page uses a private temporary raw-image file that is removed after the
+page or on failure. The worker reads one prepared band at a time for submission.
+This keeps the application memory bound while adding local disk I/O and space for
+one sheet. Qt's Windows engine still retains its own page images until that sheet ends.
 
-Qt cannot cancel a print job, because QPrinter::abort does nothing in Qt's PDF, CUPS
-and Windows engines. When Stop or a failure ends a printer job early, the painter
-still ends it, and the printer receives the sheets drawn so far. The band count
-follows the visible raster at the render dpi, so an A4 or Letter page at 600 dpi
-already prints in two or three bands. Stop or a failure between the bands of a page
-leaves that sheet partly drawn, and its drawn top strip can be blank. Print to file
-discards its private PDF.
+A render or conversion failure before submission starts no sheet. Stop during
+preparation discards that page. Once a sheet starts, Stop finishes its prepared bands
+without further document access before attempting cancellation. This reduces partial
+sheets on cancellation, but a spool read or driver failure can still leave part of a
+page. `Document::renderPage` checks atomic cancellation between paint operations.
+A native page load, image decode, draw or blocked printer call must still return
+before the next check. The tab remains covered only while live document access lasts.
+
+The worker counts pages whose first band was sent to the backend separately from
+band progress. It calls `QPrinter::abort()` on its owning thread before fallback
+painter teardown after cancellation or failure. Backend support varies and a successful
+abort cannot retract physical sheets. After Stop, a separate settled callback can
+report irreversible submission even after the tab becomes usable. Native cancellation
+and failure notices warn that submitted pages may already have printed when at least
+one page was sent. Closing the tab suppresses its later notice. Print to file still
+discards staged output and does not show this native-printer warning. Final submission
+checks `painter.end()` and reports failure.
 
 The print preview renders through RenderEngine with the same raster plan, at screen
 resolution for colour and grayscale, and like printing for black and white, at the
@@ -1599,6 +1610,14 @@ output begins. QPrinter writes a private local PDF, then closes before the worke
 replaces the destination through DocumentOutput. Stop before that guarded replacement
 keeps the destination's previous bytes. Closing tabs or windows commits active
 editors and offers Save, Discard, or Cancel for unsaved changes.
+
+Split retains overwrite and password consent with its source tab until that tab
+is selected in a visible, restored window. It never selects a background tab to
+ask. Each retained command keeps a stable identity across retries and tab moves,
+and checks its loaded-document identity, path and captured source version before
+delivery. A new page-tool command supersedes older consent. Tab closure, source
+replacement, Stop, declined consent and completion release retained choices and
+passwords. Split's entered retry password is not copied into the tab's password cache.
 
 Page deletion, extraction, merge, split, and rotation preserve editable measurement
 metadata. Page numbers follow output order (including duplicates); rotation transforms
@@ -1969,9 +1988,13 @@ Their shortcuts stay registered on the window, because a toolbar button passes o
 its shortcut only while it is enabled, and Recent disables the document group. The
 toolbar cannot be hidden, because it holds the main menu. The window's right-click
 menu leaves out its entry, and a toolbar hidden by an earlier version shows again.
-As the last toolbar item, the menu button is the first that `QToolBar` would move
-into its overflow popup. The window's minimum width therefore follows the
-toolbar's width, also when a longer page count widens it.
+The main menu stays outside a horizontally scrollable command row. On compact
+windows, file buttons use their icons and tooltips, and the row scrolls to expose
+all remaining buttons and the page and zoom editors. Keyboard focus scrolls a
+control into view; buttons accept tab focus and retain accessible names. This
+uses `QScrollArea` because the ordinary toolbar menu overflow cannot host these
+existing composite controls. The window's minimum width is 480 logical pixels
+and no longer follows the full toolbar or a changing page count.
 
 The application and packages share the repository's approved icon assets.
 

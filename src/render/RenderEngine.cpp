@@ -958,8 +958,10 @@ void RenderEngine::workerLoop(const std::shared_ptr<Shared> &shared, fz_context 
             // Beyond MuPDF's edge clamp a tile would come back blank or with shapes
             // moved, so fail instead. The viewer and the print preview stay within it.
             if (std::max({std::abs(full.x0), std::abs(full.y0), std::abs(full.x1),
-                          std::abs(full.y1)}) > kMaxDevicePixel)
+                          std::abs(full.y1)}) > kMaxDevicePixel) {
+                res.rasterTooLarge = true;
                 fz_throw(ctx, FZ_ERROR_ARGUMENT, "page raster beyond the rasteriser's range");
+            }
 
             if (req.clip.isEmpty()) {
                 // Whole page (normal zoom).

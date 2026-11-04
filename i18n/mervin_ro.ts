@@ -8,15 +8,6 @@
         <translation>Introduceți parola documentului:</translation>
     </message>
     <message numerus="yes">
-        <source>%n file(s) in %1 already exist. Split wrote nothing.</source>
-        <extracomment>Tray message after Split found that some of the files it would write, such as plan-002.pdf, already exist while its window was hidden in the tray, so it could not ask whether to replace them. %n is the number of those files, %1 the folder Split writes to. Split wrote no file.</extracomment>
-        <translation>
-            <numerusform>%n fișier din %1 există deja. Nu s-a scris nimic.</numerusform>
-            <numerusform>%n fișiere din %1 există deja. Nu s-a scris nimic.</numerusform>
-            <numerusform>%n de fișiere din %1 există deja. Nu s-a scris nimic.</numerusform>
-        </translation>
-    </message>
-    <message numerus="yes">
         <source>%n file(s) in %1 already exist. Replace them?</source>
         <extracomment>Asked after Split found that some of the files it would write, such as plan-002.pdf, already exist. %n is the number of those files, %1 the folder Split writes to. Nothing has been replaced yet. Yes replaces those files and writes the others; No writes no file.</extracomment>
         <translation>
@@ -99,6 +90,13 @@ Deschide-l acum?</translation>
         <source>PDF documents (*.pdf)</source>
         <extracomment>File type filter. Keep the pattern in parentheses.</extracomment>
         <translation>Documente PDF (*.pdf)</translation>
+    </message>
+    <message>
+        <source>Pages sent to the printer may already have printed.</source>
+        <extracomment>Warning after stopping a native printer job. Pages already submitted to the printer system may be on paper, even if backend cancellation worked.
+----------
+Warning after a native print failure. Submitted pages cannot be retracted.</extracomment>
+        <translation>Paginile trimise la imprimantă este posibil să fi fost deja tipărite.</translation>
     </message>
     <message>
         <source>Could not finish the print job.</source>

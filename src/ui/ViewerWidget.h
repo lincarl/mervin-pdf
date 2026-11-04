@@ -36,6 +36,9 @@
 class QTimer;
 class QRubberBand;
 
+class QLabel;
+class QPushButton;
+
 namespace mervin {
 
 class RenderEngine;
@@ -446,6 +449,10 @@ private:
     // visible region). Small pages render whole; pages whose full bitmap exceeds
     // the tiling budget render only the visible band (deep-zoom clipping).
     void ensureRendered(int pageNo, const QRect &neededCanvas);
+    // Shows a completed failure for a visible page, never a pending render.
+    void updateRenderFailureNotice();
+    // Lowers the document zoom enough to retry the rejected raster safely.
+    void recoverFailedPage();
     // Keep previews for content-preserving scale/fit/DPR/layout changes. Drop on rotation,
     // page-theme changes or document replacement.
     enum class PreviewPolicy { Keep, Drop };
@@ -660,6 +667,12 @@ private:
         QRect region;
     };
     QHash<int, PendingRender> pending_;
+    QHash<int, bool> renderFailures_; // page -> raster-limit rejection, for this view epoch
+    QWidget *renderFailureNotice_ = nullptr;
+    QLabel *renderFailureText_ = nullptr;
+    QPushButton *renderRecovery_ = nullptr;
+    int failedPage_ = -1;
+    double recoveryMinimumScale_ = 0.08; // explicit recovery may go below the normal minimum
     PaintStats paintStats_;
     int currentPage_ = 0;
 

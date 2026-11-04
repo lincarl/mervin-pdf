@@ -124,6 +124,9 @@ so punctuation stays with the neighboring word or placeholder.
 A printer wait notice names the printer system, which can continue handling a call
 after Stop waiting. Distinguish a failure to finish submitting a print job from a
 failure to open the document. Earlier pages may already have reached the printer.
+A submission warning describes pages sent to the printer system, not a count of
+physical sheets. Preserve the possibility that those pages have already printed,
+even after cancellation.
 
 Distinguish access-key ampersands from literal conjunctions. The plain menu
 heading "Text & Forms" means "Text and Forms". A translation that spells
@@ -374,7 +377,9 @@ pixel font size in the stylesheet retains that size.
 
 The scenarios include both calibration modes, all Settings pages, long filenames,
 populated lists, document security states, Split's replacement question and kept-file
-warning, print range validation and selected input, file and network errors. The slow
+warning, print range validation and selected input, native print submission warnings,
+failed-page recovery, file and network errors. Toolbar checks scroll every command
+into view at compact widths while keeping the main menu visible. The slow
 load notice and the wait bar are checked at the main window's narrowest width, with a
 long folder and a file name that cannot wrap. The OCR language catalog uses a fake
 network reply so the test exercises the real dialog without external requests.
@@ -391,6 +396,11 @@ affect layout. When fixing a clipping problem, add a focused regression case.
 Editable values may scroll horizontally, and scrollable lists may extend beyond
 their viewport. For other intentional text clipping, record a specific allowance
 and its reason in the test. Do not exempt a whole dialog to hide one failure.
+
+Compact windows need wrapping notices and space for complete action labels. Move
+an action below its notice when the side-by-side layout cannot fit its translation.
+QStatusBar's built-in temporary-message painter cannot wrap; use a wrapped label
+for notices that must remain readable at compact widths.
 
 A dialog's minimum size must follow its layout. Qt stops raising a window's minimum
 once code sets one, and a minimum measured in the constructor misses later growth,

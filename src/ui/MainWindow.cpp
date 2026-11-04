@@ -88,6 +88,8 @@
 #include <QProgressDialog>
 #include <QStyleOptionToolButton>
 #include <QScreen>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QWindow>
 #include <QSet>
 #include <QToolButton>
@@ -134,6 +136,27 @@ using mervin::MeasureScale;
 using mervin::RenderMeasurement;
 
 namespace {
+// Uses a wrapping label because QStatusBar's painted temporary messages cannot wrap.
+void showStatusNotice(QStatusBar *bar, QLabel *normal, const QString &text, int timeout)
+{
+    if (auto *previous = bar->findChild<QLabel *>(QStringLiteral("statusNotice"),
+                                                 Qt::FindDirectChildrenOnly)) {
+        bar->removeWidget(previous);
+        delete previous;
+    }
+    auto *notice = new QLabel(text, bar);
+    notice->setObjectName(QStringLiteral("statusNotice"));
+    notice->setWordWrap(true);
+    notice->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    normal->hide();
+    bar->addWidget(notice, 1);
+    QTimer::singleShot(timeout, notice, [bar, normal, notice] {
+        bar->removeWidget(notice);
+        delete notice;
+        normal->show();
+    });
+}
+
 // Use a cosmetic pen for exactly one device pixel at fractional scaling. applyControlStyle
 // supplies lineColor.
 class ToolSeparator : public QWidget
@@ -1092,6 +1115,35 @@ void MainWindow::createToolBar()
     bar->setToolButtonStyle(Qt::ToolButtonIconOnly);
     bar->setIconSize(QSize(20, 20));
 
+    // Keep the menu outside a scrollable command row. QToolBar's menu overflow
+    // cannot host the existing page/zoom editors or composite document controls.
+    // QScrollArea also scrolls focused children into view during keyboard traversal.
+    commandScroll_ = new QScrollArea(bar);
+    commandScroll_->setObjectName(QStringLiteral("commandScroll"));
+    commandScroll_->setFrameShape(QFrame::NoFrame);
+    commandScroll_->setWidgetResizable(true);
+    // Keep physical scroll coordinates left-to-right. The content keeps the UI's
+    // reading direction, avoiding Qt's mirrored ensureWidgetVisible calculation.
+    commandScroll_->setLayoutDirection(Qt::LeftToRight);
+    commandScroll_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    commandScroll_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    commandScroll_->setMinimumWidth(0);
+    auto *commands = new QWidget(commandScroll_);
+    commands->setLayoutDirection(layoutDirection());
+    auto *commandLayout = new QHBoxLayout(commands);
+    commandLayout->setContentsMargins(0, 0, 0, 0);
+    commandLayout->setSpacing(4);
+    commandLayout->setSizeConstraint(QLayout::SetMinimumSize);
+    commandScroll_->setWidget(commands);
+    bar->addWidget(commandScroll_);
+    commandScroll_->viewport()->installEventFilter(this);
+    // Also covers direct focus changes from accessibility clients. QScrollArea's
+    // own traversal only scrolls when it handles focusNextPrevChild itself.
+    connect(qApp, &QApplication::focusChanged, this, [this](QWidget *, QWidget *focused) {
+        if (focused && commandScroll_->widget()->isAncestorOf(focused))
+            commandScroll_->ensureWidgetVisible(focused);
+    });
+
     // One consistent vertical divider used everywhere on the bar. ToolSeparator
     // paints a cosmetic 1px line so every divider stays crisp and identical even
     // at fractional display scaling (125% etc.); its colour is set in
@@ -1110,7 +1162,7 @@ void MainWindow::createToolBar()
     recentBtn_->setIconSize(QSize(20, 20));
     recentBtn_->setCheckable(true);
     connect(recentBtn_, &QToolButton::clicked, this, &MainWindow::showRecentPanel);
-    bar->addWidget(recentBtn_);
+    commandLayout->addWidget(recentBtn_);
 
     // Open keeps its text label. Clicking the main part opens a file as a new tab in this
     // window (openAction_); the dropdown arrow offers "Open in New Window".
@@ -1123,7 +1175,7 @@ void MainWindow::createToolBar()
     auto *openMenu = new QMenu(openButton_);
     openMenu->addAction(openInNewWindowAction_);
     openButton_->setMenu(openMenu);
-    bar->addWidget(openButton_);
+    commandLayout->addWidget(openButton_);
 
     // Save sits immediately right of Open and mirrors its split-button look, but is
     // dropdown-only: it carries no default action, so a click anywhere (main area or
@@ -1153,7 +1205,7 @@ void MainWindow::createToolBar()
         ViewerWidget *v = currentViewer();
         exportMeasurementsAction_->setVisible(v && v->hasMeasurements());
     });
-    bar->addWidget(saveButton_);
+    commandLayout->addWidget(saveButton_);
 
     // Document sits immediately right of Save and mirrors its dropdown-only
     // split-button look. It opens the Document popover (page operations +
@@ -1170,7 +1222,7 @@ void MainWindow::createToolBar()
     createDocumentMenu(); // populates documentMenu_ and calls setMenu()
     // A bare click on the main section opens the menu too (like Save).
     connect(documentButton_, &QToolButton::clicked, documentButton_, &QToolButton::showMenu);
-    bar->addWidget(documentButton_);
+    commandLayout->addWidget(documentButton_);
 
     // Document-only controls: page nav + zoom + rotate.
     docControls_ = new QWidget(this);
@@ -1279,17 +1331,10 @@ void MainWindow::createToolBar()
     // Fill Forms is intentionally NOT on the command bar - it lives only in the
     // ⋯ menu (and Ctrl+Shift+F). The toolbar stays focused on the common actions.
 
-    bar->addWidget(docControls_);
+    commandLayout->addWidget(docControls_);
 
-    // Main menu (⋯): pinned to the far end of the row, away from Recent, whose
-    // list-clock icon also starts with stacked lines. The spacer takes the spare
-    // width. As the last item, the button is the first QToolBar would move into its
-    // overflow popup, so updateToolBarLayout() keeps the window wide enough for the
-    // whole row. Recent only disables docControls_, so Settings stays reachable.
-    // Populated by createMenus(), next.
-    auto *menuSpacer = new QWidget(bar);
-    menuSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    bar->addWidget(menuSpacer);
+    commandLayout->addStretch();
+    // The menu remains reachable even when commands scroll horizontally.
     moreButton_ = new QToolButton(this);
     moreButton_->setObjectName(QStringLiteral("menuButton")); // scopes the arrow-hiding QSS
     moreButton_->setToolButtonStyle(Qt::ToolButtonIconOnly);
@@ -1298,6 +1343,8 @@ void MainWindow::createToolBar()
     //: Tooltip of the toolbar button that opens the main menu.
     moreButton_->setToolTip(tr("Menu"));
     bar->addWidget(moreButton_);
+    for (QToolButton *button : bar->findChildren<QToolButton *>())
+        button->setFocusPolicy(Qt::StrongFocus);
 }
 
 void MainWindow::createMenus()
@@ -1472,7 +1519,7 @@ void MainWindow::applyControlStyle()
     QTimer::singleShot(0, this, [this] { reassertHoverAttributes(); });
 }
 
-// Keep toolbar controls visible. Long labels use icons and tooltips when the screen is too narrow.
+// Fits the command row without making its full content the window minimum.
 void MainWindow::updateToolBarLayout()
 {
     if (!mainToolBar_ || !recentBtn_ || !openButton_ || !saveButton_ || !documentButton_)
@@ -1497,13 +1544,18 @@ void MainWindow::updateToolBarLayout()
     connect(screen(), &QScreen::availableGeometryChanged,
             this, &MainWindow::updateToolBarLayout, Qt::UniqueConnection);
     const int frameWidth = qMax(0, frameGeometry().width() - width());
-    const int availableWidth = screen()->availableGeometry().width() - frameWidth;
+    const int availableWidth = qMin(width(), screen()->availableGeometry().width() - frameWidth);
     setButtonStyle(Qt::ToolButtonTextBesideIcon);
-    if (mainToolBar_->sizeHint().width() + 24 > availableWidth)
+    if (commandScroll_->widget()->sizeHint().width() + moreButton_->sizeHint().width() + 24 > availableWidth)
         setButtonStyle(Qt::ToolButtonIconOnly);
-    setMinimumWidth(mainToolBar_->sizeHint().width() + 24);
-    if (!isMaximized() && width() > availableWidth)
-        resize(availableWidth, height());
+    commandScroll_->widget()->setLayoutDirection(layoutDirection());
+    commandScroll_->widget()->layout()->activate();
+    const int contentHeight = commandScroll_->widget()->sizeHint().height();
+    const bool scrolls = commandScroll_->widget()->minimumSizeHint().width()
+        > commandScroll_->viewport()->width();
+    commandScroll_->setFixedHeight(contentHeight
+        + (scrolls ? commandScroll_->horizontalScrollBar()->sizeHint().height() : 0));
+    setMinimumWidth(480);
 }
 
 void MainWindow::reassertHoverAttributes()
@@ -1971,7 +2023,7 @@ bool MainWindow::closeRemovedTabs(const QString &canonicalPath, const TabPage *o
         removeTabAt(i);
         //: Status bar notice after automatic cleanup closes an unedited document tab
         //: because its file is confirmed deleted. This action does not delete any file.
-        statusBar()->showMessage(tr("Tab closed. The file was deleted."), 5000);
+        showStatusNotice(statusBar(), statusInfo_, tr("Tab closed. The file was deleted."), 5000);
     }
     return true;
 }
@@ -2007,7 +2059,8 @@ void MainWindow::reopenClosedTab()
     // Show a status message only for an empty history; open failures already report their own error.
     wm_->reopenClosedTab(this, [window = QPointer<MainWindow>(this)](mervin::WindowManager::Reopen r) {
         if (window && r == mervin::WindowManager::Reopen::NothingToReopen)
-            window->statusBar()->showMessage(tr("No recently closed tab to reopen"), 3000);
+            showStatusNotice(window->statusBar(), window->statusInfo_,
+                             tr("No recently closed tab to reopen"), 3000);
     });
 }
 
@@ -2186,9 +2239,7 @@ void MainWindow::setPageCountText(const QString &text)
         return;
     const int width = pageCountLabel_->sizeHint().width();
     pageCountLabel_->setText(text);
-    // A longer count widens the toolbar. In a window at its minimum width, the
-    // last controls, the menu button included, would otherwise move into the
-    // toolbar's overflow popup until the window was resized.
+    // A longer count can require horizontal scrolling in the command row.
     if (pageCountLabel_->sizeHint().width() != width)
         QTimer::singleShot(0, this, &MainWindow::updateToolBarLayout);
 }
@@ -2249,6 +2300,9 @@ void MainWindow::onZoomComboActivated()
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    if (commandScroll_ && watched == commandScroll_->viewport()
+        && event->type() == QEvent::Resize)
+        QTimer::singleShot(0, this, &MainWindow::updateToolBarLayout);
     // Zoom box: only allow editing (and thus a caret) while it actually holds
     // focus. See createDocControls for why this suppresses the stray blink.
     if (zoomCombo_ && watched == zoomCombo_->lineEdit()) {

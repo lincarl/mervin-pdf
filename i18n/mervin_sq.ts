@@ -8,14 +8,6 @@
         <translation>Futni fjalëkalimin e dokumentit:</translation>
     </message>
     <message numerus="yes">
-        <source>%n file(s) in %1 already exist. Split wrote nothing.</source>
-        <extracomment>Tray message after Split found that some of the files it would write, such as plan-002.pdf, already exist while its window was hidden in the tray, so it could not ask whether to replace them. %n is the number of those files, %1 the folder Split writes to. Split wrote no file.</extracomment>
-        <translation>
-            <numerusform>%n skedar në dosjen %1 ekziston tashmë. Nuk u shkrua asgjë.</numerusform>
-            <numerusform>%n skedarë në dosjen %1 ekzistojnë tashmë. Nuk u shkrua asgjë.</numerusform>
-        </translation>
-    </message>
-    <message numerus="yes">
         <source>%n file(s) in %1 already exist. Replace them?</source>
         <extracomment>Asked after Split found that some of the files it would write, such as plan-002.pdf, already exist. %n is the number of those files, %1 the folder Split writes to. Nothing has been replaced yet. Yes replaces those files and writes the others; No writes no file.</extracomment>
         <translation>
@@ -97,6 +89,13 @@ E hap tani?</translation>
         <source>PDF documents (*.pdf)</source>
         <extracomment>File type filter. Keep the pattern in parentheses.</extracomment>
         <translation>Dokumentet PDF (*.pdf)</translation>
+    </message>
+    <message>
+        <source>Pages sent to the printer may already have printed.</source>
+        <extracomment>Warning after stopping a native printer job. Pages already submitted to the printer system may be on paper, even if backend cancellation worked.
+----------
+Warning after a native print failure. Submitted pages cannot be retracted.</extracomment>
+        <translation>Faqet e dërguara te printeri mund të jenë shtypur tashmë.</translation>
     </message>
     <message>
         <source>Could not finish the print job.</source>

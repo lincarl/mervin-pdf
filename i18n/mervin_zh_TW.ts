@@ -12,13 +12,6 @@
         <translation>請輸入文件密碼：</translation>
     </message>
     <message numerus="yes">
-        <source>%n file(s) in %1 already exist. Split wrote nothing.</source>
-        <extracomment>Tray message after Split found that some of the files it would write, such as plan-002.pdf, already exist while its window was hidden in the tray, so it could not ask whether to replace them. %n is the number of those files, %1 the folder Split writes to. Split wrote no file.</extracomment>
-        <translation>
-            <numerusform>資料夾 %1 中已有 %n 個檔案。未寫入任何檔案。</numerusform>
-        </translation>
-    </message>
-    <message numerus="yes">
         <source>%n file(s) in %1 already exist. Replace them?</source>
         <extracomment>Asked after Split found that some of the files it would write, such as plan-002.pdf, already exist. %n is the number of those files, %1 the folder Split writes to. Nothing has been replaced yet. Yes replaces those files and writes the others; No writes no file.</extracomment>
         <translation>
@@ -255,6 +248,13 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
 %1</source>
         <translation>無法準備文件：
 %1</translation>
+    </message>
+    <message>
+        <source>Pages sent to the printer may already have printed.</source>
+        <extracomment>Warning after stopping a native printer job. Pages already submitted to the printer system may be on paper, even if backend cancellation worked.
+----------
+Warning after a native print failure. Submitted pages cannot be retracted.</extracomment>
+        <translation>傳送至印表機的頁面可能已經列印出來。</translation>
     </message>
     <message>
         <source>Could not start the print job.</source>

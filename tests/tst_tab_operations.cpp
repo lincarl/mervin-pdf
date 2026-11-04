@@ -1517,6 +1517,128 @@ private slots:
         }
     }
 
+    /// A background password retry retains its operation identity through overwrite consent.
+    void backgroundSplitPasswordConsent()
+    {
+        QTemporaryDir files;
+        QVERIFY(QDir(files.path()).mkpath("out"));
+        const QString path = files.filePath("locked.pdf");
+        const QString folder = files.filePath("out");
+        const QString existing = files.filePath("out/locked-001.pdf");
+        QCOMPARE(QpdfService().encrypt(QStringLiteral(MERVIN_FIXTURE_PDF), path, {},
+                                       "secret", {}, QpdfService::Algorithm::AES256, {}, nullptr),
+                 QpdfService::Status::Ok);
+        QVERIFY(writeBytes(existing, "original"));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(testing::openAndWait(window, path, false, -1, true, "secret"));
+        auto *source = currentTab(window);
+        source->setPassword({});
+        auto *tabs = window.findChild<QTabWidget *>();
+        QVERIFY(tabs);
+        holdAt(job::Step::Reading, path);
+        split(window, folder);
+        QTRY_COMPARE(job::testing::held(), 1);
+        QVERIFY(testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
+        const QPointer<QObject> identity(source->findChild<QObject *>("retainedPageTool"));
+        QVERIFY(identity);
+        QSignalSpy completed(source, &TabPage::operationFinished);
+        inputs_ << "secret";
+        job::testing::release();
+        QTRY_COMPARE(completed.size(), 1);
+        QTest::qWait(50);
+        QCOMPARE(inputs_, QStringList{"secret"});
+        QVERIFY(told_.isEmpty());
+        bool checkedIdentity = false;
+        observeMessage_ = [&](QMessageBox &box) {
+            if (box.objectName() == "pageToolReplace") {
+                QCOMPARE(source->findChild<QObject *>("retainedPageTool"), identity.data());
+                checkedIdentity = true;
+                // A real state notification inside the modal loop must not queue
+                // the same consent again after this retry clears its result.
+                emit source->stateChanged();
+                QCoreApplication::processEvents();
+            } else if (box.text().startsWith(QStringLiteral("Wrote "))) {
+                QVERIFY(!identity); // clear credentials before the success notice
+            }
+        };
+        answers_ << QMessageBox::Yes << QMessageBox::Ok;
+        tabs->setCurrentWidget(source);
+        QTRY_VERIFY(answers_.isEmpty());
+        QTRY_VERIFY(!identity);
+        QVERIFY(inputs_.isEmpty());
+        QVERIFY(checkedIdentity);
+        QVERIFY(source->password().isEmpty());
+        QVERIFY(bytesOf(existing) != QByteArray("original"));
+        QpdfService::Info info;
+        QCOMPARE(QpdfService().readInfo(existing, "secret", info), QpdfService::Status::Ok);
+    }
+
+    void backgroundSplitConsent_data()
+    {
+        QTest::addColumn<QString>("ending");
+        for (const char *ending : {"accept", "cancel", "replace", "close"})
+            QTest::newRow(ending) << QString::fromLatin1(ending);
+    }
+
+    /// Consent waits for its original tab and dies with a closed/replaced source.
+    void backgroundSplitConsent()
+    {
+        QFETCH(QString, ending);
+        QTemporaryDir files;
+        QVERIFY(QDir(files.path()).mkpath("out"));
+        const QString path = files.filePath("plan.pdf");
+        const QString other = files.filePath("other.pdf");
+        const QString folder = files.filePath("out");
+        const QString existing = files.filePath("out/plan-002.pdf");
+        const QByteArray before("Keep this existing file");
+        QVERIFY(writeIdentityPages(path));
+        QVERIFY(writeIdentityPages(other));
+        QVERIFY(writeBytes(existing, before));
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(testing::openAndWait(window, path));
+        const QPointer<TabPage> source(currentTab(window));
+        auto *tabs = window.findChild<QTabWidget *>();
+        QVERIFY(source && tabs);
+        holdAt(job::Step::Reading, path);
+        split(window, folder);
+        QTRY_COMPARE(job::testing::held(), 1);
+        QVERIFY(testing::openAndWait(window, other));
+        QVERIFY(currentTab(window) != source);
+        QSignalSpy completed(source, &TabPage::operationFinished);
+        job::testing::release();
+        QTRY_COMPARE(completed.size(), 1);
+        QTest::qWait(50);
+        QVERIFY(told_.isEmpty());
+        QCOMPARE(bytesOf(existing), before);
+        const QPointer<QObject> pending(source->findChild<QObject *>("retainedPageTool"));
+        QVERIFY(pending);
+        if (ending == "close") {
+            QVERIFY(QMetaObject::invokeMethod(&window, "closeTab", Q_ARG(int, tabs->indexOf(source))));
+            QTRY_VERIFY(!source);
+        } else if (ending == "replace") {
+            QVERIFY(source->open(other));
+            QTRY_VERIFY(!pending);
+            tabs->setCurrentWidget(source);
+        } else {
+            answers_ << (ending == "accept" ? QMessageBox::Yes : QMessageBox::No);
+            if (ending == "accept")
+                answers_ << QMessageBox::Ok;
+            tabs->setCurrentWidget(source);
+            QTRY_VERIFY(answers_.isEmpty());
+        }
+        QTRY_VERIFY(!pending);
+        if (ending == "accept")
+            QVERIFY(bytesOf(existing) != before);
+        else
+            QCOMPARE(bytesOf(existing), before);
+        if (ending == "replace" || ending == "close")
+            QVERIFY(told_.isEmpty());
+    }
+
     void splitKeepsAFileThatChangesAfterTheQuestion_data()
     {
         QTest::addColumn<QString>("name"); // of the file another program changes meanwhile
@@ -1647,35 +1769,15 @@ private slots:
         QVERIFY(told_.isEmpty());
         QCOMPARE(filesIn(folder), QStringList{QStringLiteral("plan-002.pdf")});
         QCOMPARE(bytesOf(existing), before);
-        if (managed && !qEnvironmentVariableIsEmpty("MERVIN_LAYOUT_DESKTOP")) {
-            // Xcb's real tray balloon exposes labels. Native OS notifications are
-            // verified separately, since their widgets do not belong to this process.
-            const QString expected = QStringLiteral("1 file(s) in %1 already exist. Split wrote nothing.")
-                .arg(isolated(QDir::toNativeSeparators(folder)));
-            const auto notification = [&]() -> QWidget * {
-                for (QWidget *widget : QApplication::topLevelWidgets()) {
-                    if (!widget->isVisible() || widget == &window)
-                        continue;
-                    for (QLabel *label : widget->findChildren<QLabel *>())
-                        if (label->isVisible() && label->text() == expected)
-                            return widget;
-                }
-                return nullptr;
-            };
-            QTRY_VERIFY_WITH_TIMEOUT(notification(), 5000);
-            QWidget *balloon = notification();
-            bool hasTitle = false;
-            for (QLabel *label : balloon->findChildren<QLabel *>())
-                hasTitle = hasTitle || label->text() == QStringLiteral("Split Pages");
-            QVERIFY(hasTitle);
-            QVERIFY(!window.isVisible());
-            inspectDesktopMessage(*balloon, QStringLiteral("split-hidden-tray"), true);
-        }
+        QVERIFY(tab->findChild<QObject *>(QStringLiteral("retainedPageTool")));
+        answers_ << QMessageBox::No;
         if (managed)
             manager.restoreFromTray();
         else
             window.restoreFromTray();
         QTRY_VERIFY(window.isVisible());
+        QTRY_VERIFY(answers_.isEmpty());
+        QCOMPARE(bytesOf(existing), before);
     }
 
     // Split checks every file before it writes the first. One it cannot check, here a
@@ -2054,6 +2156,48 @@ private slots:
         QVERIFY(told_.isEmpty());
     }
 
+    void operationSettlesAfterWorkerReturn_data()
+    {
+        QTest::addColumn<bool>("stop");
+        QTest::newRow("completion") << false;
+        QTest::newRow("stop") << true;
+    }
+
+    /// Irreversible effects are reported after teardown, including after Stop restored use.
+    void operationSettlesAfterWorkerReturn()
+    {
+        QFETCH(bool, stop);
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        showForLayout(window);
+        QVERIFY(testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
+        TabPage *tab = currentTab(window);
+        const QString path = tab->path();
+        holdAt(job::Step::Reading, path);
+        const int tasks = background::running();
+        int delivered = 0;
+        QList<bool> settled;
+        TabPage::Operation operation;
+        operation.work = [path] { job::reading(path); };
+        operation.finished = [&] { ++delivered; };
+        operation.settled = [&](bool stopped) {
+            QVERIFY(tab->isUsable());
+            settled.append(stopped);
+        };
+        const auto release = qScopeGuard([tasks] { job::testing::release(); jobsEnded(tasks); });
+        tab->startOperation(std::move(operation));
+        QTRY_COMPARE(job::testing::held(), 1);
+        if (stop) {
+            tab->stopWaiting();
+            QTRY_VERIFY(tab->isUsable());
+        }
+        QVERIFY(settled.isEmpty());
+        QCOMPARE(delivered, 0);
+        job::testing::release();
+        QTRY_COMPARE(settled, QList<bool>{stop});
+        QCOMPARE(delivered, stop ? 0 : 1);
+    }
+
     void stateChangeMayCloseAnEndingOperation_data()
     {
         QTest::addColumn<bool>("stop");
@@ -2078,9 +2222,12 @@ private slots:
         const QString path = tab->path();
         holdAt(job::Step::Reading, path);
         bool delivered = false;
+        bool settled = false;
+        const int tasks = background::running();
         TabPage::Operation operation;
         operation.work = [path] { job::reading(path); };
         operation.finished = [&delivered] { delivered = true; };
+        operation.settled = [&settled](bool) { settled = true; };
         tab->startOperation(std::move(operation));
         QTRY_COMPARE(job::testing::held(), 1);
         if (stop)
@@ -2090,6 +2237,9 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(tab.isNull(), 10000);
         QCOMPARE(window.tabCount(), 0);
         QVERIFY(!delivered);
+        QVERIFY(jobsEnded(tasks));
+        QCoreApplication::processEvents();
+        QVERIFY(!settled);
     }
 
     // Starting an operation also allows a state observer to close the tab safely.

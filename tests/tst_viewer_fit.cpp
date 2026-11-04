@@ -38,6 +38,7 @@
 #include "ui/ViewerWidget.h"
 
 #include <QFile>
+#include <QPushButton>
 #include <QFileInfo>
 #include <QScrollBar>
 #include <QSignalSpy>
@@ -895,11 +896,43 @@ void TstViewerFit::aGiantPageRespectsTheCanvasLimit()
         }
         return false;
     };
+    auto *notice = viewer.findChild<QWidget *>(QStringLiteral("renderFailureNotice"));
+    auto *recover = viewer.findChild<QPushButton *>(QStringLiteral("renderRecovery"));
+    QVERIFY(notice && recover);
     QTRY_VERIFY_WITH_TIMEOUT(rendered(0, false), 15000);
-    viewer.setScale(1.0);
+    QTRY_VERIFY(notice->isVisible());
+    QVERIFY(recover->isVisible());
+    const int attempts = mervin::RenderEngine::testing::rasterizations(engine);
+    for (int repeat = 0; repeat < 5; ++repeat) {
+        viewer.viewport()->repaint();
+        QCoreApplication::processEvents();
+    }
+    QCOMPARE(mervin::RenderEngine::testing::rasterizations(engine), attempts);
+    mervin::RenderResult stale;
+    for (const auto &args : results) {
+        const auto result = args[0].value<mervin::RenderResult>();
+        if (result.pageNo == 0 && !result.ok)
+            stale = result;
+    }
+    QVERIFY(stale.rasterTooLarge);
+    QTest::mouseClick(recover, Qt::LeftButton);
+    QVERIFY(viewer.scale() < 0.08);
+    QVERIFY(viewer.scale() <= viewer.maximumScale());
+    QVERIFY(!notice->isVisible()); // pending recovery is not a failure
+    emit engine.resultReady(stale);
+    QVERIFY(!notice->isVisible()); // old failures cannot undo a newer request
+    QTRY_VERIFY_WITH_TIMEOUT(rendered(0, true), 15000);
+    const double recovered = viewer.scale();
+    viewer.zoomOut();
+    QCOMPARE(viewer.scale(), recovered); // the ordinary zoom-out action must never zoom in
     viewer.goToPage(1);
+    QCOMPARE(viewer.scale(), recovered); // recovery changes the document's zoom
     QTRY_VERIFY_WITH_TIMEOUT(rendered(1, true), 15000);
-    QVERIFY(!rendered(0, true));
+    QVERIFY(!notice->isVisible());
+    viewer.setDocument(giant.get());
+    viewer.setScale(0.01);
+    QCOMPARE(viewer.scale(), 0.08); // a new document/view resets exceptional recovery
+
 }
 
 void TstViewerFit::extremeDocumentsKeepNavigationReachable_data()
