@@ -2356,6 +2356,41 @@ private slots:
         QVERIFY(!second->findCard()->isOpen());
     }
 
+    /// Moving the last tab destroys its old window while selection extraction survives.
+    void pendingFindSurvivesSourceWindowDestruction()
+    {
+        WindowManager manager;
+        QPointer<MainWindow> source = manager.createWindow();
+        MainWindow *target = manager.createWindow();
+        QVERIFY(testing::openAndWait(*source, QStringLiteral(MERVIN_FIXTURE_PDF)));
+        auto *tab = source->findChild<TabPage *>();
+        QVERIFY(tab);
+        QAction *find = nullptr;
+        for (auto *action : source->findChildren<QAction *>())
+            if (action->shortcut() == QKeySequence(QKeySequence::Find)) find = action;
+        QVERIFY(find);
+        tab->viewer()->selectAll();
+        QSemaphore entered, release;
+        std::atomic<bool> once{true};
+        ViewerQueries::testing::observe([&](bool edit, int key) {
+            if (!edit && key == -5 && once.exchange(false)) { entered.release(); release.acquire(); }
+        });
+        const auto unblock = qScopeGuard([&] { release.release(100); ViewerQueries::testing::observe({}); });
+        find->trigger();
+        QTRY_VERIFY(entered.available() == 1);
+        manager.mergeTab(source, 0, target, 0);
+        QTRY_VERIFY(source.isNull());
+        QCOMPARE(target->findChild<TabPage *>(), tab);
+        QVERIFY(tab->findCard()->query().isEmpty());
+        bool finished = false;
+        tab->viewer()->requestFindPreset([&](QString preset) {
+            finished = preset.contains(QStringLiteral("STANDARD TEST"));
+        });
+        release.release();
+        QTRY_VERIFY(finished);
+        QVERIFY(tab->findCard()->query().isEmpty());
+    }
+
     void findSelectionArrivesWithoutReplacingNewTyping()
     {
         RenderEngine engine;

@@ -12,6 +12,7 @@
 #include <QElapsedTimer>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QPlainTextEdit>
 #include <QFile>
 #include "ui/PdfPropertiesPopup.h"
 #include "ui/AnnotPopup.h"
@@ -27,9 +28,9 @@ using namespace mervin;
 
 namespace {
 // A redistributable two-page drawing with an internal link, KiCad properties and outline.
-QByteArray queryFixture()
+QByteArray queryFixture(const QByteArray &text = "Selected text")
 {
-    const QByteArray content = "BT /F1 16 Tf 20 260 Td (Selected text) Tj ET 20 180 m 160 180 l S";
+    const QByteArray content = "BT /F1 16 Tf 20 260 Td (" + text + ") Tj ET 20 180 m 160 180 l S";
     const QList<QByteArray> objects{
         "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R >>",
         "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
@@ -41,6 +42,32 @@ QByteArray queryFixture()
         "<< /Type /Outlines /First 9 0 R /Last 9 0 R /Count 1 >>",
         "<< /Title (Second page) /Parent 8 0 R /Dest [4 0 R /Fit] >>",
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"};
+    QByteArray pdf = "%PDF-1.7\n";
+    QList<int> offsets;
+    for (int i = 0; i < objects.size(); ++i) {
+        offsets.append(pdf.size());
+        pdf += QByteArray::number(i + 1) + " 0 obj\n" + objects[i] + "\nendobj\n";
+    }
+    const int xref = pdf.size();
+    pdf += "xref\n0 " + QByteArray::number(objects.size() + 1) + "\n0000000000 65535 f \n";
+    for (int offset : offsets) pdf += QByteArray::number(offset).rightJustified(10, '0') + " 00000 n \n";
+    pdf += "trailer\n<< /Size " + QByteArray::number(objects.size() + 1)
+        + " /Root 1 0 R >>\nstartxref\n" + QByteArray::number(xref) + "\n%%EOF\n";
+    return pdf;
+}
+
+/// A large list or multiline field provides an unambiguous interior click target.
+QByteArray deferredEditorFixture(bool multiline)
+{
+    const QByteArray field = multiline
+        ? "/FT /Tx /Ff 4096 /V (First line\\nSecond line)"
+        : "/FT /Ch /Opt [(First) (Second)] /V (First) /I [0]";
+    const QList<QByteArray> objects{
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] /DR << /Font << /Helv 4 0 R >> >> /DA (/Helv 16 Tf 0 g) >> >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [5 0 R] /Resources << >> >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        "<< /Type /Annot /Subtype /Widget /T (field) /P 3 0 R /Rect [20 30 280 270] /F 4 " + field + " >>"};
     QByteArray pdf = "%PDF-1.7\n";
     QList<int> offsets;
     for (int i = 0; i < objects.size(); ++i) {
@@ -433,6 +460,85 @@ private slots:
         viewer.setDocument(nullptr);
     }
 
+    void delayedClicksReachEditorViewports_data()
+    {
+        QTest::addColumn<bool>("multiline");
+        QTest::newRow("list-selection") << false;
+        QTest::newRow("multiline-caret") << true;
+    }
+
+    /// A click made before the editor exists has the same effect as a direct click.
+    void delayedClicksReachEditorViewports()
+    {
+        QFETCH(bool, multiline);
+        QTemporaryDir directory;
+        const QString path = directory.filePath(QStringLiteral("editor.pdf"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(deferredEditorFixture(multiline));
+        file.close();
+        RenderEngine engine;
+        auto doc = engine.openDocument(path);
+        QVERIFY(doc);
+        ViewerWidget viewer(&engine);
+        viewer.resize(600, 600);
+        viewer.setDocument(doc.get());
+        viewer.setZoomMode(ViewerWidget::ZoomMode::FitPage);
+        viewer.show();
+        viewer.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&viewer));
+        QPoint point;
+        int expectedPosition = -1;
+        if (multiline) {
+            QTRY_VERIFY(viewer.findChild<QPlainTextEdit *>());
+            auto *editor = viewer.findChild<QPlainTextEdit *>();
+            QTextCursor cursor = editor->textCursor();
+            QVERIFY(cursor.movePosition(QTextCursor::NextBlock));
+            QVERIFY(cursor.movePosition(QTextCursor::Right, QTextCursor::MoveAnchor, 3));
+            const QPoint local = editor->cursorRect(cursor).center();
+            expectedPosition = editor->cursorForPosition(local).position();
+            QVERIFY(expectedPosition > editor->toPlainText().indexOf(QLatin1Char('\n')));
+            point = editor->viewport()->mapTo(viewer.viewport(), local);
+        } else {
+            QTRY_VERIFY(viewer.findChild<QListWidget *>());
+            auto *editor = viewer.findChild<QListWidget *>();
+            QCOMPARE(editor->currentRow(), 0);
+            point = editor->viewport()->mapTo(viewer.viewport(), editor->visualItemRect(editor->item(1)).center());
+        }
+        viewer.setDocument(nullptr);
+        QSemaphore entered, release;
+        std::atomic<bool> once{true};
+        ViewerQueries::testing::observe([&](bool edit, int page) {
+            if (!edit && page == 0 && once.exchange(false)) { entered.release(); release.acquire(); }
+        });
+        const auto unblock = qScopeGuard([&] { release.release(100); ViewerQueries::testing::observe({}); });
+        viewer.setDocument(doc.get());
+        viewer.setZoomMode(ViewerWidget::ZoomMode::FitPage);
+        QTRY_VERIFY(entered.available() == 1);
+        QVERIFY(!viewer.findChild<QPlainTextEdit *>());
+        QVERIFY(!viewer.findChild<QListWidget *>());
+        QTest::mouseClick(viewer.viewport(), Qt::LeftButton, {}, point);
+        release.release();
+        if (multiline) {
+            QTRY_VERIFY(viewer.findChild<QPlainTextEdit *>());
+            auto *editor = viewer.findChild<QPlainTextEdit *>();
+            QTRY_COMPARE(editor->textCursor().position(), expectedPosition);
+            QTest::keyClicks(editor, QStringLiteral("X"));
+            QCOMPARE(editor->toPlainText(), QStringLiteral("First line\nSecXond line"));
+        } else {
+            QTRY_VERIFY(viewer.findChild<QListWidget *>());
+            QTRY_COMPARE(viewer.findChild<QListWidget *>()->currentRow(), 1);
+            QTRY_COMPARE(doc->lifetime()->pendingEdits.load(), 0);
+            FormModel saved(*doc);
+            QTRY_COMPARE(saved.pageFields(0).size(), size_t(1));
+            QCOMPARE(saved.pageFields(0).front().value, QStringLiteral("Second"));
+        }
+        if (!qEnvironmentVariable("MERVIN_QUERY_EVIDENCE").isEmpty())
+            QVERIFY(viewer.grab().save(qEnvironmentVariable("MERVIN_QUERY_EVIDENCE")
+                + (multiline ? QStringLiteral("/deferred-multiline.png") : QStringLiteral("/deferred-list.png"))));
+        viewer.setDocument(nullptr);
+    }
+
     void geometryWaitReplaysSnappedMeasurement()
     {
         QTemporaryDir directory;
@@ -518,6 +624,75 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(QApplication::clipboard()->text() != QStringLiteral("before"), 15000);
         QCOMPARE(QApplication::clipboard()->text().count(QStringLiteral("STANDARD TEST")), doc->pageCount());
         viewer.setDocument(nullptr);
+    }
+
+    void pendingCopyRespectsLaterActions_data()
+    {
+        QTest::addColumn<int>("action");
+        QTest::newRow("copy-in-another-viewer") << 0;
+        QTest::newRow("unrelated-document-open") << 1;
+        QTest::newRow("source-document-replaced") << 2;
+    }
+
+    /// Only a newer Copy or a change to its own document invalidates a pending Copy.
+    void pendingCopyRespectsLaterActions()
+    {
+        QFETCH(int, action);
+        QTemporaryDir directory;
+        const QString firstPath = directory.filePath(QStringLiteral("first.pdf"));
+        const QString secondPath = directory.filePath(QStringLiteral("second.pdf"));
+        for (const QString &path : {firstPath, secondPath}) {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write(queryFixture(path == firstPath ? "Older selection" : "Newer selection"));
+        }
+        RenderEngine engine;
+        auto firstDoc = engine.openDocument(firstPath);
+        auto secondDoc = engine.openDocument(secondPath);
+        QVERIFY(firstDoc && secondDoc);
+        ViewerWidget first(&engine), second(&engine);
+        first.setDocument(firstDoc.get());
+        second.setDocument(secondDoc.get());
+        QSemaphore entered, release;
+        std::atomic<bool> once{true};
+        ViewerQueries::testing::observe([&](bool edit, int key) {
+            if (!edit && key == -5 && once.exchange(false)) { entered.release(); release.acquire(); }
+        });
+        const auto unblock = qScopeGuard([&] { release.release(100); ViewerQueries::testing::observe({}); });
+        QApplication::clipboard()->setText(QStringLiteral("before"));
+        first.selectAll();
+        first.copySelection();
+        QTRY_VERIFY(entered.available() == 1);
+        QString expected = QStringLiteral("before");
+        if (action == 0) {
+            second.selectAll();
+            second.copySelection();
+            QTRY_VERIFY(QApplication::clipboard()->text().contains(QStringLiteral("Newer selection")));
+            expected = QApplication::clipboard()->text();
+        } else if (action == 1) {
+            second.setDocument(nullptr);
+            second.setDocument(secondDoc.get());
+        } else {
+            first.setDocument(secondDoc.get());
+        }
+        release.release();
+        if (action == 2) {
+            Document::closeInBackground(std::move(firstDoc));
+            QTRY_COMPARE(Document::closing(), 0);
+        } else {
+            // Each delivered page queues its successor before the next barrier.
+            for (int page = 0; page < firstDoc->pageCount(); ++page) {
+                bool delivered = false;
+                first.requestFindPreset([&](QString) { delivered = true; });
+                QTRY_VERIFY(delivered);
+            }
+        }
+        if (action == 1)
+            QVERIFY(QApplication::clipboard()->text().contains(QStringLiteral("Older selection")));
+        else
+            QCOMPARE(QApplication::clipboard()->text(), expected);
+        first.setDocument(nullptr);
+        second.setDocument(nullptr);
     }
 
     void keyboardTraversalStartsAtClickedField()

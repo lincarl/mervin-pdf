@@ -856,8 +856,9 @@ void MainWindow::createActions()
         t->findCard()->open();
         const quint64 revision = t->findCard()->inputRevision();
         const QPointer<TabPage> tab(t);
-        t->viewer()->requestFindPreset([this, tab, revision](QString preset) {
-            if (tab && tab == currentTab() && tab->isUsable() && tab->findCard()->isOpen()
+        const QPointer<MainWindow> window(this);
+        t->viewer()->requestFindPreset([window, tab, revision](QString preset) {
+            if (window && tab && tab == window->currentTab() && tab->isUsable() && tab->findCard()->isOpen()
                 && tab->findCard()->inputRevision() == revision && !preset.isEmpty())
                 tab->findCard()->open(preset);
         });

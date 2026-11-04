@@ -2314,9 +2314,13 @@ void ViewerWidget::requestFindPreset(std::function<void(QString)> completed) con
 void ViewerWidget::copySelection()
 {
     if (!selection_.hasSelection()) return;
+    // Copy requests share ordering across tabs and windows. Document changes
+    // invalidate only this viewer's pending request through copyGeneration_.
+    static quint64 applicationCopyGeneration = 0;
+    const quint64 request = ++applicationCopyGeneration;
     const quint64 generation = ++copyGeneration_;
-    readSelectionText(selection_.start(), selection_.end(), [this, generation](QString text) {
-        if (generation == copyGeneration_ && !text.isEmpty())
+    readSelectionText(selection_.start(), selection_.end(), [this, request, generation](QString text) {
+        if (request == applicationCopyGeneration && generation == copyGeneration_ && !text.isEmpty())
             QGuiApplication::clipboard()->setText(text);
     });
 }

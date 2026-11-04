@@ -274,8 +274,11 @@ void ViewerWidget::replayQueryInput()
         if (input.type == QEvent::MouseButtonPress && toolMode_ == ToolMode::FillForms) {
             for (const FormEditor &editor : formEditors_)
                 if (editor.widget && editor.widget->geometry().contains(position.toPoint())) {
-                    replayFormTarget_ = editor.widget;
+                    // Scroll-area editors deliver selection and caret clicks to their viewport.
+                    const auto *area = qobject_cast<QAbstractScrollArea *>(editor.widget);
+                    replayFormTarget_ = area ? area->viewport() : editor.widget;
                     editor.widget->setFocus(Qt::MouseFocusReason);
+                    if (!self || queryRevision_ != generation) return;
                     break;
                 }
         }
