@@ -659,6 +659,8 @@ std::optional<QString> ExtractDialog::problem() const
 QString ExtractDialog::planProblem() const
 {
     if (readError_) {
+        if (readErrorDetail_ == PageOps::xfaTransformationError())
+            return readErrorDetail_;
         if (plan_.mode() == ExtractPlan::Mode::Delete) {
             //: The viewer shows the document, but qpdf, which writes the new file,
             //: cannot read it.
@@ -724,6 +726,9 @@ void ExtractDialog::accept()
 /// Formats retained worker failures for the dialog or a hidden-owner notice.
 QString ExtractDialog::failureText(const Choices &choices, ExtractPlan::Mode mode)
 {
+    if ((choices.failure == Choices::Failure::Read || choices.failure == Choices::Failure::Write)
+        && choices.error == PageOps::xfaTransformationError())
+        return choices.error;
     switch (choices.failure) {
     case Choices::Failure::None:
         return {};

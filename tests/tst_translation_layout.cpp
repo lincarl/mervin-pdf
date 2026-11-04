@@ -1243,11 +1243,18 @@ void TstTranslationLayout::extract()
     for (auto mode : {mervin::ExtractPlan::Mode::Extract, mervin::ExtractPlan::Mode::Delete}) {
         auto xfaSource = source;
         xfaSource.mode = mode;
-        auto choices = dialog.choices();
-        choices.failure = mervin::ExtractDialog::Choices::Failure::Write;
-        choices.error = mervin::PageOps::xfaTransformationError();
-        mervin::ExtractDialog unsupported(xfaSource, nullptr, choices);
-        inspect(unsupported, QStringLiteral("Page operation with XFA form"));
+        for (auto failure : {mervin::ExtractDialog::Choices::Failure::Read,
+                             mervin::ExtractDialog::Choices::Failure::Write}) {
+            auto choices = dialog.choices();
+            choices.failure = failure;
+            choices.error = mervin::PageOps::xfaTransformationError();
+            mervin::ExtractDialog unsupported(xfaSource, nullptr, choices);
+            auto *reason = unsupported.findChild<QLabel *>(QStringLiteral("extractError"));
+            QVERIFY(reason);
+            QTRY_COMPARE(reason->text(), choices.error);
+            inspect(unsupported, QStringLiteral("Page operation with XFA form %1 %2")
+                .arg(int(mode)).arg(int(failure)));
+        }
     }
     auto *range = dialog.findChild<QLineEdit *>(QStringLiteral("extractRowSpec"));
     auto *error = dialog.findChild<QLabel *>(QStringLiteral("extractError"));
@@ -1505,6 +1512,9 @@ void TstTranslationLayout::merge()
         const QString output = profile_.filePath(QStringLiteral("merge-xfa-output.pdf"));
         const QString reason = mervin::PageOps::xfaTransformationError();
         mervin::MergeDialog failed(dialog.plan(), output, reason, 0);
+        auto *label = failed.findChild<QLabel *>(QStringLiteral("mergeError"));
+        QVERIFY(label);
+        QTRY_VERIFY(label->text().contains(reason));
         inspect(failed, QStringLiteral("Merge unsupported XFA form"));
     }
     for (const auto conflict : {mervin::MergeDialog::Conflict::Changed,
