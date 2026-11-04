@@ -2664,15 +2664,17 @@ void TstQpdf::xfaPageTransformsFailWithoutWriting()
     const QString output = in(QStringLiteral("xfa-output.pdf"));
     makeReferencedPdf(source, Reference::Xfa);
     if (representation != 0) {
-        QPDF q;
-        q.processFile(source.toUtf8().constData());
-        auto form = q.getRoot().getKey("/AcroForm");
-        auto xfa = form.getKey("/XFA");
-        form.replaceKey("/XFA", representation == 1
-            ? QPDFObjectHandle::newArray({QPDFObjectHandle::newString("datasets"), xfa})
-            : QPDFObjectHandle::newString("malformed XFA must not vanish"));
         const QString revised = in(QStringLiteral("xfa-revised.pdf"));
-        QPDFWriter(q, revised.toUtf8().constData()).write();
+        {
+            QPDF q;
+            q.processFile(source.toUtf8().constData());
+            auto form = q.getRoot().getKey("/AcroForm");
+            auto xfa = form.getKey("/XFA");
+            form.replaceKey("/XFA", representation == 1
+                ? QPDFObjectHandle::newArray({QPDFObjectHandle::newString("datasets"), xfa})
+                : QPDFObjectHandle::newString("malformed XFA must not vanish"));
+            QPDFWriter(q, revised.toUtf8().constData()).write();
+        } // Release the input handle before replacing the fixture on Windows.
         QVERIFY(QFile::remove(source));
         QVERIFY(QFile::rename(revised, source));
     }
