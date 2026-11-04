@@ -1064,10 +1064,14 @@ void TstPrintOutput::activeFormTextAndAnnotationEditsReachOutput()
     auto *editor = viewer->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly).front();
     editor->setText(QStringLiteral("IIIIIIII"));
     // setText leaves the live PDF untouched until Print commits the active editor.
+    QCOMPARE(viewer->formModel()->pageFields(0).size(), size_t(1));
     QCOMPARE(viewer->formModel()->pageFields(0).front().value, QString());
-    const int markup = viewer->annotModel()->addTextMarkup(
-        0, AnnotType::Highlight, {{20, 100, 160, 12}}, QColor(Qt::yellow), {});
-    QVERIFY(markup >= 0);
+    int markup = -1;
+    QVERIFY(testing::retryMutation([&] {
+        markup = viewer->annotModel()->addTextMarkup(
+            0, AnnotType::Highlight, {{20, 100, 160, 12}}, QColor(Qt::yellow), {});
+        return markup >= 0;
+    }));
     PrintInteraction dialogs(window, output, {}, [](PrintDialog &dialog) {
         auto *paper = dialog.findChild<QComboBox *>("printPaperSize");
         paper->setCurrentIndex(paper->findData(QVariant::fromValue(QPageSize(QPageSize::A4))));
@@ -1077,6 +1081,8 @@ void TstPrintOutput::activeFormTextAndAnnotationEditsReachOutput()
     QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
     QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable() && QFileInfo::exists(output), 10000);
     QVERIFY(dialogs.messages.isEmpty());
+    QVERIFY(testing::waitForPage(viewer->formModel(), 0));
+    QCOMPARE(viewer->formModel()->pageFields(0).size(), size_t(1));
     QCOMPARE(viewer->formModel()->pageFields(0).front().value, QStringLiteral("IIIIIIII"));
     QCOMPARE(bytes(source), original);
     auto printed = engine.openDocument(output);
@@ -1105,20 +1111,25 @@ void TstPrintOutput::activeFormTextAndAnnotationEditsReachOutput()
     // A sticky-note body belongs to popup metadata. Printing commits it but only
     // the note icon, not its body text, is page content.
     viewer->setFormMode(false);
-    const int note = viewer->annotModel()->addTextNote(
-        0, QPointF(30, 130), Qt::yellow, {}, QStringLiteral("Before Print"));
-    QVERIFY(note >= 0);
+    int note = -1;
+    QVERIFY(testing::retryMutation([&] {
+        note = viewer->annotModel()->addTextNote(
+            0, QPointF(30, 130), Qt::yellow, {}, QStringLiteral("Before Print"));
+        return note >= 0;
+    }));
     viewer->setCommentToolEnabled(true);
     viewer->setAnnotSubMode(AnnotSubMode::Note);
     viewer->revealAnnotation(0, note);
-    auto *comment = viewer->findChild<QPlainTextEdit *>();
-    QVERIFY(comment && comment->isVisible());
+    QPointer<QPlainTextEdit> comment;
+    QTRY_VERIFY((comment = viewer->findChild<QPlainTextEdit *>()) && comment->isVisible());
     comment->setPlainText(QStringLiteral("Comment committed by Print"));
     PrintInteraction commentDialogs(window, files.filePath("comment-print.pdf"));
     QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
     QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable() && QFileInfo::exists(files.filePath("comment-print.pdf")), 10000);
-    QCOMPARE(viewer->annotModel()->annot(0, note)->contents,
-             QStringLiteral("Comment committed by Print"));
+    QVERIFY(testing::waitForPage(viewer->annotModel(), 0));
+    const auto committed = viewer->annotModel()->annot(0, note);
+    QVERIFY(committed.has_value());
+    QCOMPARE(committed->contents, QStringLiteral("Comment committed by Print"));
     QVERIFY(commentDialogs.messages.isEmpty());
     QCOMPARE(bytes(source), original);
 }
@@ -1512,21 +1523,26 @@ void TstPrintOutput::editorCommitCanDeletePrintOwner()
 {
     RenderEngine engine;
     const QPointer<MainWindow> window(new MainWindow(&engine, nullptr));
+    const auto destroyWindow = qScopeGuard([window] { delete window.data(); });
     QVERIFY(mervin::testing::openAndWait(*window, sourcePath_));
     const QPointer<TabPage> tab(window->findChild<TabPage *>());
     QVERIFY(tab);
     auto *viewer = tab->viewer();
-    const int note = viewer->annotModel()->addTextNote(
-        0, QPointF(30, 60), QColor(Qt::yellow), {}, QStringLiteral("Initial comment"));
-    QVERIFY(note >= 0);
+    int note = -1;
+    QVERIFY(testing::retryMutation([&] {
+        note = viewer->annotModel()->addTextNote(
+            0, QPointF(30, 60), QColor(Qt::yellow), {}, QStringLiteral("Initial comment"));
+        return note >= 0;
+    }));
     window->show();
     viewer->setCommentToolEnabled(true);
     viewer->setAnnotSubMode(AnnotSubMode::Note);
     viewer->revealAnnotation(0, note);
-    auto *editor = viewer->findChild<QPlainTextEdit *>();
-    QVERIFY(editor && editor->isVisible());
+    QPointer<QPlainTextEdit> editor;
+    QTRY_VERIFY((editor = viewer->findChild<QPlainTextEdit *>()) && editor->isVisible());
     editor->setPlainText(QStringLiteral("Typed before Print"));
-    connect(viewer, &ViewerWidget::annotationsChanged, this, [window] { delete window.data(); });
+    // Edit acceptance is synchronous even though the annotation snapshot arrives later.
+    connect(viewer, &ViewerWidget::annotEditsChanged, this, [window] { delete window.data(); });
     QVERIFY(QMetaObject::invokeMethod(window.data(), "printDocument"));
     QVERIFY(!window && !tab);
     QVERIFY(!qobject_cast<PrintDialog *>(QApplication::activeModalWidget()));
