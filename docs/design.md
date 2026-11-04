@@ -1392,6 +1392,12 @@ the same reorderable `RowList`. Extract writes through `PageOps::merge`, which f
 on an out-of-range page instead of skipping it, so a stale page count cannot silently
 shorten the output.
 
+The list refits row widgets after Qt updates its viewport width. Row layout changes,
+including status badges, update the dialog minimum. Count and Output columns grow
+to fit their actual displayed values, with matching header widths. Merge refreshes
+filename elision when the labels resize, so shrinking the dialog or adding a
+scrollbar keeps the range and removal controls visible.
+
 Extract and Delete first probe the source in a tab job, then open their dialog with
 the returned page count and password state. Their constructors do no source I/O.
 Acceptance captures parsed page indices, output and password, closes the dialog,

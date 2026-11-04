@@ -12,6 +12,7 @@
 #include "dialogs/MergeDialog.h"
 #include "dialogs/OcrPopup.h"
 #include "dialogs/PrintDialog.h"
+#include "dialogs/RowList.h"
 #include "ui/WindowPlacement.h"
 #include "dialogs/SecurityDialog.h"
 #include "dialogs/SettingsDialog.h"
@@ -1039,6 +1040,20 @@ void TstTranslationLayout::inspect(QWidget &widget, const QString &state, QWidge
             }
         }
     }
+    // These lists only scroll vertically. Text fitting inside a row is not enough
+    // if stale item-widget geometry puts whole columns outside the viewport.
+    for (QListWidget *list : widget.findChildren<QListWidget *>()) {
+        if (!dynamic_cast<mervin::RowList *>(list) || !list->isVisibleTo(&widget))
+            continue;
+        for (int index = 0; index < list->count(); ++index) {
+            const QWidget *row = list->itemWidget(list->item(index));
+            QVERIFY(row);
+            QVERIFY2(row->width() >= row->minimumSizeHint().width(), qPrintable(state));
+            QVERIFY2(row->x() >= 0 && row->geometry().right() < list->viewport()->width(),
+                     qPrintable(state + QStringLiteral(" row %1 extends beyond the list viewport")
+                         .arg(index + 1)));
+        }
+    }
     const QStringList problems = textfit::check(part ? *part : widget);
     for (QRadioButton *radio : widget.findChildren<QRadioButton *>()) {
         const auto *card = dynamic_cast<const mervin::ThemeCard *>(radio);
@@ -1161,8 +1176,10 @@ void TstTranslationLayout::saveRecoveryWarning()
     QVERIFY(mervin::testing::openAndWait(window, path));
     auto *tab = window.findChild<mervin::TabPage *>();
     QVERIFY(tab);
-    QVERIFY(tab->viewer()->annotModel()->addTextNote(
-                0, {40, 40}, Qt::yellow, {}, QStringLiteral("Retained edit")) >= 0);
+    QVERIFY(mervin::testing::retryMutation([&] {
+        return tab->viewer()->annotModel()->addTextNote(
+            0, {40, 40}, Qt::yellow, {}, QStringLiteral("Retained edit")) >= 0;
+    }));
     std::atomic<bool> reopenFailed{false};
     const auto restore = qScopeGuard([] {
         mervin::job::testing::release();
@@ -1484,6 +1501,91 @@ void TstTranslationLayout::merge()
     dialog.addPaths({plain_});
     QTRY_VERIFY(!dialog.reading());
     inspect(dialog, QStringLiteral("Merge populated documents"));
+    {
+        // Adding rows to an open dialog can introduce a scrollbar after its minimum
+        // was measured. Both the initial rows and the last row must remain usable.
+        mervin::MergeDialog growing(dialog.plan(), profile_.filePath("row-layout.pdf"), {}, -1);
+        inspect(growing, QStringLiteral("Merge rows before adding duplicates"));
+        auto *rows = growing.findChild<QListWidget *>(QStringLiteral("mergeList"));
+        QPushButton *duplicate = nullptr;
+        for (QPushButton *button : growing.findChildren<QPushButton *>())
+            if (button->text() == mervin::MergeDialog::tr("Duplicate"))
+                duplicate = button;
+        QVERIFY(rows && duplicate);
+        QCOMPARE(rows->count(), 2);
+        const int rowHeight = rows->visualItemRect(rows->item(0)).height();
+        QVERIFY(rowHeight > 0);
+        // Column growth can reduce surrounding text wrapping and enlarge the list.
+        // Exceed the whole work area so that reflow cannot remove the scrollbar.
+        const int availableHeight = qMax(rows->viewport()->height(),
+                                        growing.screen()->availableGeometry().height());
+        const int overflowingCount = availableHeight / rowHeight + 2;
+        for (int count = 2; count < overflowingCount; ++count) {
+            duplicate->click();
+            QCOMPARE(rows->count(), count + 1);
+        }
+        inspect(growing, QStringLiteral("Merge rows after adding duplicates"));
+        QVERIFY(rows->verticalScrollBar()->maximum() > 0);
+        for (const bool last : {false, true}) {
+            const int index = last ? rows->count() - 1 : 0;
+            rows->scrollToItem(rows->item(index));
+            settle();
+            QWidget *row = rows->itemWidget(rows->item(index));
+            QVERIFY(row);
+            auto *output = row->findChild<QLabel *>(QStringLiteral("rowListOutput"));
+            auto *remove = row->findChild<QToolButton *>(QStringLiteral("rowListX"));
+            QVERIFY(output && remove);
+            QCOMPARE(output->text(), growing.plan().outputText(index));
+            for (QWidget *control : {static_cast<QWidget *>(output), static_cast<QWidget *>(remove)}) {
+                const QRect bounds(control->mapTo(rows->viewport(), QPoint()), control->size());
+                QVERIFY(rows->viewport()->rect().contains(bounds));
+                QVERIFY(control->visibleRegion().contains(control->rect()));
+            }
+            QCOMPARE(rows->viewport()->childAt(remove->mapTo(rows->viewport(), remove->rect().center())),
+                     remove);
+            const int before = rows->count();
+            QTest::mouseClick(remove, Qt::LeftButton);
+            QTRY_COMPARE(rows->count(), before - 1);
+        }
+    }
+    {
+        // Reopened plans already know their page counts. Exercise larger values
+        // without creating a large PDF, then grow both columns through range edits.
+        mervin::MergePlan largePlan;
+        auto entry = dialog.plan().at(0);
+        entry.pageCount = 12345;
+        entry.spec = QStringLiteral("1");
+        largePlan.append(entry);
+        largePlan.append(entry);
+        mervin::MergeDialog large(largePlan, profile_.filePath("large-row-layout.pdf"), {}, -1);
+        inspect(large, QStringLiteral("Merge large page counts before range changes"));
+        auto *rows = large.findChild<QListWidget *>(QStringLiteral("mergeList"));
+        QVERIFY(rows);
+        QCOMPARE(rows->count(), 2);
+        for (int index = 0; index < rows->count(); ++index) {
+            QWidget *row = rows->itemWidget(rows->item(index));
+            QVERIFY(row);
+            auto *spec = row->findChild<QLineEdit *>(QStringLiteral("mergeRowSpec"));
+            QVERIFY(spec);
+            spec->setText(QStringLiteral("1-12344"));
+        }
+        inspect(large, QStringLiteral("Merge large page counts after range changes"));
+        const auto expected = large.plan().rowTexts();
+        for (const QString &column : {QStringLiteral("Count"), QStringLiteral("Output")}) {
+            const QString name = QStringLiteral("rowList") + column;
+            auto *header = large.findChild<QLabel *>(name + QStringLiteral("Header"));
+            QVERIFY(header);
+            for (int index = 0; index < rows->count(); ++index) {
+                QWidget *row = rows->itemWidget(rows->item(index));
+                auto *label = row->findChild<QLabel *>(name);
+                QVERIFY(label);
+                QCOMPARE(label->text(), column == QStringLiteral("Count")
+                                           ? expected.at(index).count : expected.at(index).output);
+                QCOMPARE(label->width(), header->width());
+                QCOMPARE(label->mapTo(&large, QPoint()).x(), header->mapTo(&large, QPoint()).x());
+            }
+        }
+    }
     {
         // An encrypted document merged with another file shows the encryption note.
         mervin::MergeDialog mixed(encrypted_, 12, QStringLiteral("secret"));

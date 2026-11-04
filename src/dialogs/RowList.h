@@ -8,6 +8,7 @@
 #include <functional>
 
 class QHBoxLayout;
+class QLabel;
 
 namespace mervin {
 
@@ -27,7 +28,7 @@ public:
     using Fill = std::function<void(QWidget *parent, QHBoxLayout *columns)>;
 
     // The Count and Output columns get these widths, or more when their
-    // translated captions need it. An `outputWidth` of 0 leaves the Output column
+    // translated captions or displayed values need it. An `outputWidth` of 0 leaves the Output column
     // out. Rows that are not `reorderable` have no grip and take no drops.
     RowList(int countWidth, int outputWidth, QWidget *parent, bool reorderable = true);
 
@@ -48,6 +49,7 @@ public:
     // Append a row. Every focusable widget `fill` adds makes the row current when
     // it takes focus, so the side buttons act on the row being typed in.
     void addRow(const Fill &fill);
+    // Updates values and widens their shared columns when needed, including the header.
     void setRowTexts(int row, const QString &count, const QString &output);
 
     // Called with (row, insertion gap) when a row is dropped: gap 0 is above the
@@ -62,6 +64,8 @@ public:
 protected:
     bool eventFilter(QObject *o, QEvent *e) override;
     void paintEvent(QPaintEvent *e) override;
+    // Fits item widgets after QListView updates its viewport and content width.
+    void updateGeometries() override;
 
 private:
     void syncHeaderInsets();
@@ -75,6 +79,8 @@ private:
     int outputWidth_; // 0 when there is no Output column
     bool reorderable_;
     QHBoxLayout *headerRow_ = nullptr;
+    QLabel *countHeader_ = nullptr;
+    QLabel *outputHeader_ = nullptr;
     int dropAt_ = -1;   // insertion point under the cursor, -1 when not dragging
     int dragRow_ = -1;  // row whose grip is held, -1 when none
     QPoint dragOrigin_; // where that press landed, for the drag threshold

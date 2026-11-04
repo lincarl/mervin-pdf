@@ -68,9 +68,8 @@ std::shared_ptr<background::SerialQueue> probeQueue(const QString &volume)
     return queue;
 }
 
-// Merge's own column widths; RowList owns the rest. Sized so the longest values
-// ("Unreadable", "12 of 999") still fit at 125% Windows text scaling. A longer
-// translation widens its column instead (see RowList::widthFor).
+// Initial column widths. Captions, count labels and displayed values can widen
+// them through RowList so translated text and larger page ranges remain visible.
 constexpr int kColSpec = 124;
 constexpr int kColCount = 92;
 constexpr int kColOutput = 74;
@@ -569,6 +568,7 @@ void MergeDialog::rebuild(int selectRow)
             // width when the list needs its vertical scrollbar.
             name->setMinimumWidth(name->fontMetrics().horizontalAdvance(QStringLiteral("…")));
             nameLabels_.append(name);
+            name->installEventFilter(this);
             nameTexts_.append(plan_.displayName(i));
             name->setToolTip(e.loadError.isEmpty()
                                  ? QDir::toNativeSeparators(e.path)
@@ -658,6 +658,10 @@ void MergeDialog::resizeEvent(QResizeEvent *event)
 
 bool MergeDialog::eventFilter(QObject *watched, QEvent *event)
 {
+    // Item widgets can resize after the dialog, including when their scrollbar appears.
+    if (event->type() == QEvent::Resize
+        && nameLabels_.contains(qobject_cast<QLabel *>(watched)))
+        reelideNames();
     if (watched == error_ && plan_.hasReading()
         && (event->type() == QEvent::Resize || event->type() == QEvent::FontChange))
         showProblem();
