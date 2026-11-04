@@ -111,8 +111,12 @@ patches, builder and verification program. CI caches must also distinguish the
 platform and compiler toolchain.
 
 Linux copies only ICU 73.2 libraries from the official SDK and uses verified
-matching ICU headers. Windows copies only `dxcompiler.dll`, `dxil.dll` and
-`opengl32sw.dll` from the official SDK. All Qt modules used by Mervin are rebuilt
+matching ICU headers. Windows copies `opengl32sw.dll` from the official Qt SDK
+and `dxcompiler.dll` and `dxil.dll` from the native Windows SDK's
+`Redist/D3D/x64` directory, selected by `WindowsSdkDir`. The builder and cache
+identity hash all three files. Qt's deployment tool selects the same Windows
+redistributables, and packaging checks them against the copied SDK files.
+All Qt modules used by Mervin are rebuilt
 together as shared libraries. The C++ Linguist tools and translation catalogs
 are included; QML translation tooling is omitted because Mervin has no QML.
 The normal Qt and embedded-library notices remain applicable. Their source

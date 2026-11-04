@@ -3,7 +3,8 @@
 
 CI and packaging select this SDK through prepare-qt-sdk.py.
 It rebuilds the modules Mervin uses, including Linguist, from verified sources.
-The official SDK supplies only ICU 73.2 on Linux and graphics DLLs on Windows.
+The official Qt SDK supplies ICU 73.2 on Linux and software OpenGL on Windows.
+The native Windows SDK supplies the DirectX compiler redistributables.
 Use Python 3.12 or newer and a matching x64 compiler environment.
 """
 
@@ -76,7 +77,21 @@ def run(command: list[str], log: Path, *, cwd: Path | None = None) -> None:
     """Run a checked build step and retain its complete diagnostic output."""
     print(f"Running {command[0]}, log {log}", flush=True)
     with log.open("w", encoding="utf-8") as output:
-        subprocess.run(command, cwd=cwd, stdout=output, stderr=subprocess.STDOUT, check=True)
+        result = subprocess.run(command, cwd=cwd, stdout=output, stderr=subprocess.STDOUT)
+    if result.returncode:
+        print(log.read_text(encoding="utf-8", errors="replace"), file=sys.stderr)
+        result.check_returncode()
+
+
+def support_files(official: Path) -> list[Path]:
+    """Resolve graphics support from the same SDK sources used by windeployqt."""
+    if sys.platform != "win32":
+        return [official / "lib" / f"libicu{name}.so.73.2" for name in ("data", "i18n", "uc")]
+    kit = os.environ.get("WindowsSdkDir")
+    if not kit or not Path(kit).is_absolute():
+        raise RuntimeError("WindowsSdkDir must identify the native Windows SDK")
+    redist = Path(kit) / "Redist/D3D/x64"
+    return [official / "bin/opengl32sw.dll", *(redist / name for name in ("dxcompiler.dll", "dxil.dll"))]
 
 
 def prepare(destination: Path, official: Path) -> tuple[Path, dict]:
@@ -89,11 +104,7 @@ def prepare(destination: Path, official: Path) -> tuple[Path, dict]:
     if not version_file.is_file() or 'set(PACKAGE_VERSION "6.12.0")' not in version_file.read_text():
         raise RuntimeError("--official-sdk must point to the official Qt 6.12.0 x64 SDK")
     inputs = recipe() | {"platform": sys.platform, "official_sdk": str(official)}
-    support = (
-        [official / "bin" / name for name in ("dxcompiler.dll", "dxil.dll", "opengl32sw.dll")]
-        if sys.platform == "win32"
-        else [official / "lib" / f"libicu{name}.so.73.2" for name in ("data", "i18n", "uc")]
-    )
+    support = support_files(official)
     inputs["support_files"] = {p.name: digest(p) for p in support}
     marker = destination / "prepared.json"
     if destination.exists() and any(destination.iterdir()):
@@ -172,8 +183,8 @@ def build(destination: Path, sdk: Path, jobs: int, inputs: dict) -> None:
                     f"-DICU_DATA_LIBRARY_RELEASE={sdk / 'lib/libicudata.so.73.2'}",
                 ]
         if module == "qttools":
-            # Mervin has no QML sources. Build the C++ Linguist tools and Windows
-            # deploy tool without importing unrebuilt Qt private-API modules.
+            # Mervin has no QML sources. Build the C++ Linguist tools without
+            # importing unrebuilt Qt private-API modules.
             command += [
                 "-DCMAKE_DISABLE_FIND_PACKAGE_Qt6Qml=ON", "-DFEATURE_assistant=OFF",
                 "-DFEATURE_designer=OFF", "-DFEATURE_qdoc=OFF",

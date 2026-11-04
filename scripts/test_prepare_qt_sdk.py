@@ -173,6 +173,31 @@ class SDKCacheTests(unittest.TestCase):
                 self.assertEqual(context["compiler"], SDK.BUILDER.digest(self.file))
                 self.assertEqual(context["WindowsSDKVersion"], "10.0.26100.0")
 
+    def test_windows_identity_tracks_sdk_graphics_files(self):
+        """Cache identity includes DXC from Windows Kits, while Qt supplies OpenGL."""
+        version = self.official / "lib/cmake/Qt6Core/Qt6CoreConfigVersionImpl.cmake"
+        version.parent.mkdir(parents=True)
+        version.write_text('set(PACKAGE_VERSION "6.12.0")\n')
+        opengl = self.official / "bin/opengl32sw.dll"
+        opengl.parent.mkdir()
+        opengl.write_bytes(b"official software OpenGL")
+        kit = self.root / "Windows Kits/10"
+        redist = kit / "Redist/D3D/x64"
+        redist.mkdir(parents=True)
+        for name in ("dxcompiler.dll", "dxil.dll"):
+            (redist / name).write_bytes(name.encode())
+        with patch.object(SDK.sys, "platform", "win32"), patch.object(SDK, "toolchain", return_value={}), \
+                patch.dict(os.environ, {"WindowsSdkDir": str(kit)}):
+            before = SDK.identity(self.official)
+            self.assertEqual(before["support_files"], {
+                path.name: SDK.BUILDER.digest(path)
+                for path in (opengl, redist / "dxcompiler.dll", redist / "dxil.dll")})
+            (redist / "dxil.dll").write_bytes(b"changed SDK redistributable")
+            self.assertNotEqual(before, SDK.identity(self.official))
+            (redist / "dxcompiler.dll").unlink()
+            with self.assertRaises(FileNotFoundError):
+                SDK.identity(self.official)
+
 
 if __name__ == "__main__":
     unittest.main()

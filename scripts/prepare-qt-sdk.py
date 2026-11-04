@@ -77,11 +77,8 @@ def identity(official: Path) -> dict:
     version = official / "lib/cmake/Qt6Core/Qt6CoreConfigVersionImpl.cmake"
     if not version.is_file() or 'set(PACKAGE_VERSION "6.12.0")' not in version.read_text():
         raise RuntimeError("The support SDK must be official Qt 6.12.0")
-    names = ([f"bin/{name}" for name in ("dxcompiler.dll", "dxil.dll", "opengl32sw.dll")]
-             if sys.platform == "win32"
-             else [f"lib/libicu{name}.so.73.2" for name in ("data", "i18n", "uc")])
     return {"schema": 1, "recipe": BUILDER.recipe(), "toolchain": toolchain(),
-            "support_files": {Path(name).name: BUILDER.digest(official / name) for name in names},
+            "support_files": {path.name: BUILDER.digest(path) for path in BUILDER.support_files(official)},
             "selection_helper": BUILDER.digest(Path(__file__)),
             "action": BUILDER.digest(ROOT / ".github/actions/prepare-qt/action.yml"),
             "dependencies": BUILDER.digest(ROOT / "scripts/install-qt-build-deps.sh")}
