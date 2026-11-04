@@ -39,7 +39,9 @@ public:
     // enumeration caches and marks the model dirty. Returns
     // true iff the value actually changed (so the caller knows to re-render).
     bool setTextValue(int page, int fieldIndex, const QString &value);
-    bool setChoiceValue(int page, int fieldIndex, const QString &value);
+    // A nonnegative optionIndex selects that exact /Opt entry. With -1, preserve
+    // label matching and editable-combo custom text for existing callers.
+    bool setChoiceValue(int page, int fieldIndex, const QString &value, int optionIndex = -1);
     bool toggle(int page, int fieldIndex);
 
     // Widget (page, index) pairs affected by the last successful mutation. Use

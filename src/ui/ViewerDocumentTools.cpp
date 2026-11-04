@@ -59,6 +59,32 @@ const QColor &kFormRequiredColor = theme::doc().formFieldRequired; // required-b
 const QColor &kFormFieldBorder = theme::doc().formFieldBorder;     // field outline
 const QColor &kFormFocusBorder = theme::doc().formFieldFocus;      // Tab-focused outline
 
+/// Read option identity independently of display text and appended custom values.
+int choiceEditorIndex(QWidget *editor)
+{
+    if (auto *combo = qobject_cast<QComboBox *>(editor))
+        return combo->currentIndex() < 0 ? -1 : combo->currentData().toInt();
+    if (auto *list = qobject_cast<QListWidget *>(editor))
+        return list->currentRow();
+    return -1;
+}
+
+/// Select the stored option, keeping custom combo text separate from /Opt entries.
+void setComboChoice(QComboBox *combo, const FormField &field)
+{
+    int index = field.choiceIndex;
+    if (index < 0 && !field.value.isEmpty()) {
+        index = combo->findData(-1);
+        if (index < 0) {
+            combo->addItem(field.value, -1);
+            index = combo->count() - 1;
+        } else {
+            combo->setItemText(index, field.value);
+        }
+    }
+    combo->setCurrentIndex(index);
+}
+
 }
 
 void ViewerWidget::rebuildFormModel()
@@ -545,17 +571,12 @@ QWidget *ViewerWidget::createFormEditor(const FormField &f, int page, int fieldI
         break;
     case FormFieldType::ComboBox: {
         auto *cb = new QComboBox(viewport());
-        cb->addItems(f.options);
-        int idx = f.options.indexOf(f.value);
-        if (idx < 0 && !f.value.isEmpty()) {
-            cb->addItem(f.value);
-            idx = cb->count() - 1;
-        }
-        if (idx >= 0)
-            cb->setCurrentIndex(idx);
+        for (int i = 0; i < f.options.size(); ++i)
+            cb->addItem(f.options[i], i);
+        setComboChoice(cb, f);
         connect(cb, &QComboBox::activated, this, [this, page, fieldIndex, cb](int) {
             if (formModel_)
-                editFormChoice(page, fieldIndex, cb->currentText());
+                editFormChoice(page, fieldIndex, cb->currentText(), choiceEditorIndex(cb));
         });
         w = cb;
         break;
@@ -564,15 +585,11 @@ QWidget *ViewerWidget::createFormEditor(const FormField &f, int page, int fieldI
         auto *lw = new QListWidget(viewport());
         lw->setSelectionMode(QAbstractItemView::SingleSelection);
         lw->addItems(f.options);
-        for (int i = 0; i < lw->count(); ++i)
-            if (lw->item(i)->text() == f.value) {
-                lw->setCurrentRow(i);
-                break;
-            }
+        lw->setCurrentRow(f.choiceIndex);
         connect(lw, &QListWidget::itemSelectionChanged, this, [this, page, fieldIndex, lw]() {
             const QString v = lw->currentItem() ? lw->currentItem()->text() : QString();
             if (formModel_)
-                editFormChoice(page, fieldIndex, v);
+                editFormChoice(page, fieldIndex, v, choiceEditorIndex(lw));
         });
         w = lw;
         break;
@@ -599,6 +616,7 @@ QWidget *ViewerWidget::createFormEditor(const FormField &f, int page, int fieldI
                  theme::css(d.formEditorBorder), theme::css(d.formEditorSelection),
                  theme::css(d.formEditorSelectionInk)));
     w->setProperty("mervinFormValue", f.value);
+    w->setProperty("mervinFormChoiceIndex", f.choiceIndex);
     w->installEventFilter(this);
     return w;
 }
@@ -700,11 +718,13 @@ void ViewerWidget::commitFormEditor(int editorIndex)
     else if (auto *text = qobject_cast<QPlainTextEdit *>(e.widget)) current = text->toPlainText();
     else if (auto *combo = qobject_cast<QComboBox *>(e.widget)) current = combo->currentText();
     else if (auto *list = qobject_cast<QListWidget *>(e.widget)) current = list->currentItem() ? list->currentItem()->text() : QString();
-    if (current == e.widget->property("mervinFormValue").toString()) return;
+    const int choiceIndex = choiceEditorIndex(e.widget);
+    if (current == e.widget->property("mervinFormValue").toString()
+        && choiceIndex == e.widget->property("mervinFormChoiceIndex").toInt()) return;
     if (e.type == FormFieldType::Text)
         editFormValue(e.page, e.fieldIndex, current);
     else if (e.type == FormFieldType::ComboBox || e.type == FormFieldType::ListBox)
-        editFormChoice(e.page, e.fieldIndex, current);
+        editFormChoice(e.page, e.fieldIndex, current, choiceIndex);
 }
 
 // Commits pending field values and stops if an edit observer destroys the viewer.
@@ -729,7 +749,8 @@ void ViewerWidget::applyFormFieldChange(int page)
             const auto &fields = formModel_->pageFields(changedPage);
             if (fieldIndex < 0 || fieldIndex >= static_cast<int>(fields.size()))
                 continue;
-            const QString &value = fields[fieldIndex].value;
+            const FormField &field = fields[fieldIndex];
+            const QString &value = field.value;
             for (const FormEditor &editor : formEditors_) {
                 if (editor.page != changedPage || editor.fieldIndex != fieldIndex || !editor.widget)
                     continue;
@@ -740,8 +761,11 @@ void ViewerWidget::applyFormFieldChange(int page)
                 else if (auto *text = qobject_cast<QPlainTextEdit *>(editor.widget)) current = text->toPlainText();
                 else if (auto *combo = qobject_cast<QComboBox *>(editor.widget)) current = combo->currentText();
                 else if (auto *list = qobject_cast<QListWidget *>(editor.widget)) current = list->currentItem() ? list->currentItem()->text() : QString();
-                if (current != editor.widget->property("mervinFormValue").toString()) continue;
+                if (current != editor.widget->property("mervinFormValue").toString()
+                    || choiceEditorIndex(editor.widget)
+                        != editor.widget->property("mervinFormChoiceIndex").toInt()) continue;
                 editor.widget->setProperty("mervinFormValue", value);
+                editor.widget->setProperty("mervinFormChoiceIndex", field.choiceIndex);
                 const QSignalBlocker block(editor.widget);
                 if (auto *line = qobject_cast<QLineEdit *>(editor.widget)) {
                     if (line->text() != value)
@@ -750,20 +774,9 @@ void ViewerWidget::applyFormFieldChange(int page)
                     if (text->toPlainText() != value)
                         text->setPlainText(value);
                 } else if (auto *combo = qobject_cast<QComboBox *>(editor.widget)) {
-                    int index = combo->findText(value);
-                    if (index < 0 && !value.isEmpty()) {
-                        combo->addItem(value);
-                        index = combo->count() - 1;
-                    }
-                    combo->setCurrentIndex(index);
+                    setComboChoice(combo, field);
                 } else if (auto *list = qobject_cast<QListWidget *>(editor.widget)) {
-                    int index = -1;
-                    for (int i = 0; i < list->count(); ++i)
-                        if (list->item(i)->text() == value) {
-                            index = i;
-                            break;
-                        }
-                    list->setCurrentRow(index);
+                    list->setCurrentRow(field.choiceIndex);
                 }
             }
         }

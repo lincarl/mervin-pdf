@@ -8,13 +8,16 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QComboBox>
 #include <QElapsedTimer>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QFile>
 #include "ui/PdfPropertiesPopup.h"
 #include "ui/AnnotPopup.h"
 #include <QScopeGuard>
 #include <QSemaphore>
+#include <QSignalBlocker>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QtTest>
@@ -38,6 +41,35 @@ QByteArray queryFixture()
         "<< /Type /Outlines /First 9 0 R /Last 9 0 R /Count 1 >>",
         "<< /Title (Second page) /Parent 8 0 R /Dest [4 0 R /Fit] >>",
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"};
+    QByteArray pdf = "%PDF-1.7\n";
+    QList<int> offsets;
+    for (int i = 0; i < objects.size(); ++i) {
+        offsets.append(pdf.size());
+        pdf += QByteArray::number(i + 1) + " 0 obj\n" + objects[i] + "\nendobj\n";
+    }
+    const int xref = pdf.size();
+    pdf += "xref\n0 " + QByteArray::number(objects.size() + 1) + "\n0000000000 65535 f \n";
+    for (int offset : offsets) pdf += QByteArray::number(offset).rightJustified(10, '0') + " 00000 n \n";
+    pdf += "trailer\n<< /Size " + QByteArray::number(objects.size() + 1)
+        + " /Root 1 0 R >>\nstartxref\n" + QByteArray::number(xref) + "\n%%EOF\n";
+    return pdf;
+}
+
+/// Two visible widgets share either equal display labels or equal export values.
+QByteArray choiceIdentityFixture(bool list, bool duplicateExports)
+{
+    const QByteArray options = duplicateExports
+        ? "[[(same) (First)] [(same) (Second)]]"
+        : "[[(a) (Same)] [(b) (Same)]]";
+    const QByteArray value = duplicateExports ? "same" : "a";
+    const QList<QByteArray> objects{
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] /DR << /Font << /Helv 4 0 R >> >> /DA (/Helv 12 Tf 0 g) >> >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 350] /Annots [6 0 R 7 0 R] /Resources << >> >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        "<< /FT /Ch /Ff " + QByteArray::number(list ? 0 : 131072) + " /T (shared-choice) /V (" + value + ") /I [0] /Opt " + options + " /Kids [6 0 R 7 0 R] >>",
+        "<< /Type /Annot /Subtype /Widget /Parent 5 0 R /P 3 0 R /Rect [20 230 380 " + QByteArray(list ? "300" : "255") + "] /F 4 >>",
+        "<< /Type /Annot /Subtype /Widget /Parent 5 0 R /P 3 0 R /Rect [20 100 380 " + QByteArray(list ? "170" : "125") + "] /F 4 >>"};
     QByteArray pdf = "%PDF-1.7\n";
     QList<int> offsets;
     for (int i = 0; i < objects.size(); ++i) {
@@ -223,6 +255,106 @@ private slots:
         QVERIFY(first.load());
         QVERIFY(second.load());
         QCOMPARE(lifetime->pendingEdits.load(), 0);
+    }
+
+    void choiceEditorsPreserveOptionIdentity_data()
+    {
+        QTest::addColumn<bool>("list");
+        QTest::addColumn<bool>("duplicateExports");
+        QTest::newRow("combo-duplicate-labels") << false << false;
+        QTest::newRow("list-duplicate-labels") << true << false;
+        QTest::newRow("combo-duplicate-exports") << false << true;
+        QTest::newRow("list-duplicate-exports") << true << true;
+    }
+
+    /// Option identities survive queued edits, sibling refresh, saving and editor recreation.
+    void choiceEditorsPreserveOptionIdentity()
+    {
+        QFETCH(bool, list);
+        QFETCH(bool, duplicateExports);
+        QTemporaryDir files;
+        QVERIFY(files.isValid());
+        const QString source = files.filePath(QStringLiteral("choices.pdf"));
+        QFile file(source);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const QByteArray bytes = choiceIdentityFixture(list, duplicateExports);
+        QCOMPARE(file.write(bytes), bytes.size());
+        file.close();
+        RenderEngine engine;
+        auto doc = engine.openDocument(source);
+        QVERIFY(doc);
+        ViewerWidget viewer(&engine);
+        viewer.resize(850, 700);
+        viewer.setDocument(doc.get());
+        viewer.show();
+        auto editors = [list](ViewerWidget &owner) {
+            QList<QWidget *> result;
+            if (list) for (auto *widget : owner.findChildren<QListWidget *>()) result.append(widget);
+            else for (auto *widget : owner.findChildren<QComboBox *>()) result.append(widget);
+            return result;
+        };
+        auto index = [list](QWidget *widget) {
+            return list ? qobject_cast<QListWidget *>(widget)->currentRow()
+                        : qobject_cast<QComboBox *>(widget)->currentIndex();
+        };
+        QTRY_COMPARE(editors(viewer).size(), 2);
+        const auto widgets = editors(viewer);
+        QCOMPARE(index(widgets[0]), 0);
+        QCOMPARE(index(widgets[1]), 0);
+        QSemaphore entered, release;
+        std::atomic<bool> once{true};
+        ViewerQueries::testing::observe([&](bool edit, int) {
+            if (edit && once.exchange(false)) { entered.release(); release.acquire(); }
+        });
+        const auto unblock = qScopeGuard([&] { release.release(100); ViewerQueries::testing::observe({}); });
+        QSignalSpy changed(&viewer, &ViewerWidget::formEditsChanged);
+        widgets[0]->setFocus();
+        QTest::keyClick(widgets[0], Qt::Key_Down);
+        QVERIFY(viewer.hasFormEdits());
+        QTRY_COMPARE(entered.available(), 1);
+        // Returning to the original equal-label row must enqueue after the first edit.
+        QTest::keyClick(widgets[0], Qt::Key_Up);
+        viewer.commitActiveFormEditor();
+        QCOMPARE(doc->lifetime()->pendingEdits.load(), 2);
+        QCOMPARE(changed.count(), 2);
+        release.release();
+        QTRY_COMPARE(changed.count(), 3);
+        QCOMPARE(index(widgets[0]), 0);
+        QCOMPARE(index(widgets[1]), 0);
+        QCOMPARE(viewer.formModel()->pageFields(0)[0].choiceIndex, 0);
+        // Flushing an uncommitted row change must compare identity as well as text.
+        {
+            const QSignalBlocker block(widgets[0]);
+            if (list) qobject_cast<QListWidget *>(widgets[0])->setCurrentRow(1);
+            else qobject_cast<QComboBox *>(widgets[0])->setCurrentIndex(1);
+        }
+        viewer.commitActiveFormEditor();
+        QTRY_COMPARE(changed.count(), 5);
+        QCOMPARE(index(widgets[0]), 1);
+        QCOMPARE(index(widgets[1]), 1);
+        QCOMPARE(viewer.formModel()->pageFields(0)[0].choiceIndex, 1);
+        QCOMPARE(viewer.formModel()->pageFields(0)[1].choiceIndex, 1);
+        const QString saved = files.filePath(QStringLiteral("saved.pdf"));
+        std::atomic<bool> savedDone{false}, savedOk{false};
+        background::start([life = doc->lifetime(), &savedDone, &savedOk, saved] {
+            Document::Hold hold(life);
+            if (auto *document = hold.document()) savedOk = document->savePdfTo(saved);
+            savedDone = true;
+        });
+        QTRY_VERIFY(savedDone.load());
+        QVERIFY(savedOk.load());
+        auto reopened = engine.openDocument(saved);
+        QVERIFY(reopened);
+        QCOMPARE(FormModel(*reopened).pageFields(0)[0].choiceIndex, 1);
+        viewer.setDocument(nullptr);
+        ViewerWidget reopenedViewer(&engine);
+        reopenedViewer.resize(850, 700);
+        reopenedViewer.setDocument(reopened.get());
+        reopenedViewer.show();
+        QTRY_COMPARE(editors(reopenedViewer).size(), 2);
+        QCOMPARE(index(editors(reopenedViewer)[0]), 1);
+        QCOMPARE(index(editors(reopenedViewer)[1]), 1);
+        reopenedViewer.setDocument(nullptr);
     }
 
     void parsingCancellationLeavesNoPartialCache()

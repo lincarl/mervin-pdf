@@ -2091,10 +2091,12 @@ resources and shaped text. The test inspects saved `/AP` streams before reopenin
 compares actual selected and unselected pixels on shared widgets. The editor still
 offers one choice at a time; existing multiselect values render without being flattened.
 Combo appearances also show display labels instead of export values. `FormModel`
-maps the editor's display label back to its export value and replaces `/I` after a
-choice edit, including a changed index with the same export value. Shared widgets
-regenerate together. Remove the patch when the pinned upstream release provides the
-same behavior.
+retains the selected option index alongside its display label. Editors pass that
+index through queued edits, so equal labels can retain different export values
+and equal export values can retain different indices. Choice edits update `/V`
+and `/I`, and shared widgets regenerate together. Label-only model callers still
+support label matching and custom text in editable combo fields. Remove the patch
+when the pinned upstream release provides the same appearance behavior.
 
 `0007-tesseract-update-runtime-to-5.5.4.patch` updates the bundled Tesseract
 runtime sources, which matched upstream 5.5.2, to upstream 5.5.4. The MuPDF OCR

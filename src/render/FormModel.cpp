@@ -264,6 +264,7 @@ const std::vector<FormField> &FormModel::pageFields(int pageNo) const
                                 if (match < 0 || k == selected)
                                     match = k;
                             }
+                        f.choiceIndex = match;
                         if (match >= 0)
                             f.value = f.options[match];
                     }
@@ -304,7 +305,7 @@ bool FormModel::setTextValue(int page, int fieldIndex, const QString &value)
     return changed;
 }
 
-bool FormModel::setChoiceValue(int page, int fieldIndex, const QString &value)
+bool FormModel::setChoiceValue(int page, int fieldIndex, const QString &value, int optionIndex)
 {
     const bool changed = applyToWidget(doc_, page, fieldIndex, changedFields_, nullptr,
                                       [&](fz_context *ctx, pdf_annot *w) {
@@ -312,14 +313,21 @@ bool FormModel::setChoiceValue(int page, int fieldIndex, const QString &value)
         const int type = pdf_widget_type(ctx, w);
         if (type != PDF_WIDGET_TYPE_LISTBOX && type != PDF_WIDGET_TYPE_COMBOBOX)
             return false;
-        int selected = -1;
+        const int count = pdf_choice_field_option_count(ctx, widget);
+        if (optionIndex < -1 || optionIndex >= count)
+            return false;
+        int selected = optionIndex;
         QByteArray exported = value.toUtf8();
-        for (int i = 0; i < pdf_choice_field_option_count(ctx, widget); ++i)
-            if (value == QString::fromUtf8(pdf_choice_field_option(ctx, widget, 0, i))) {
-                exported = pdf_choice_field_option(ctx, widget, 1, i);
-                selected = i;
-                break;
-            }
+        if (selected >= 0) {
+            exported = pdf_choice_field_option(ctx, widget, 1, selected);
+        } else {
+            for (int i = 0; i < count; ++i)
+                if (value == QString::fromUtf8(pdf_choice_field_option(ctx, widget, 0, i))) {
+                    exported = pdf_choice_field_option(ctx, widget, 1, i);
+                    selected = i;
+                    break;
+                }
+        }
         if (selected < 0 && (type != PDF_WIDGET_TYPE_COMBOBOX
                             || !(pdf_field_flags(ctx, widget) & PDF_CH_FIELD_IS_EDIT)))
             return false;

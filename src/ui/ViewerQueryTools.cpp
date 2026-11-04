@@ -299,17 +299,22 @@ void ViewerWidget::replayQueryInput()
     }
 }
 
-void ViewerWidget::editFormValue(int page, int field, const QString &value, bool choice)
+void ViewerWidget::editFormValue(int page, int field, const QString &value, bool choice,
+                                 int choiceIndex)
 {
     if (!formModel_ || !queries_) return;
     auto fields = formModel_->pageFields(page);
-    if (field < 0 || field >= int(fields.size()) || fields[field].value == value) return;
+    if (field < 0 || field >= int(fields.size())) return;
+    if (fields[field].value == value && (!choice || fields[field].choiceIndex == choiceIndex)) return;
     fields[field].value = value;
+    if (choice) fields[field].choiceIndex = choiceIndex;
     formModel_->storePage(page, std::move(fields));
     for (const FormEditor &editor : formEditors_)
-        if (editor.page == page && editor.fieldIndex == field && editor.widget)
+        if (editor.page == page && editor.fieldIndex == field && editor.widget) {
             editor.widget->setProperty("mervinFormValue", value);
-    submitFormEdit(page, field, value, choice);
+            if (choice) editor.widget->setProperty("mervinFormChoiceIndex", choiceIndex);
+        }
+    submitFormEdit(page, field, value, choice, choiceIndex);
 }
 
 void ViewerWidget::editFormToggle(int page, int field)
@@ -317,7 +322,8 @@ void ViewerWidget::editFormToggle(int page, int field)
     if (formModel_ && queries_) submitFormEdit(page, field, std::nullopt, false);
 }
 
-void ViewerWidget::submitFormEdit(int page, int field, std::optional<QString> value, bool choice)
+void ViewerWidget::submitFormEdit(int page, int field, std::optional<QString> value, bool choice,
+                                  int choiceIndex)
 {
     struct Result {
         std::vector<std::pair<int, int>> affected;
@@ -329,10 +335,10 @@ void ViewerWidget::submitFormEdit(int page, int field, std::optional<QString> va
     cancelQueryReads();
     ++pendingFormEdits_;
     formModel_->markDirty();
-    queries_->edit([result, pages, page, field, value, choice](Document &document) {
+    queries_->edit([result, pages, page, field, value, choice, choiceIndex](Document &document) {
         FormModel model(document);
         if (!value) model.toggle(page, field);
-        else if (choice) model.setChoiceValue(page, field, *value);
+        else if (choice) model.setChoiceValue(page, field, *value, choiceIndex);
         else model.setTextValue(page, field, *value);
         result->affected = model.changedFields();
         for (int p : pages) result->pages.insert(p, model.pageFields(p));

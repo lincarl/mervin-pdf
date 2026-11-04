@@ -460,10 +460,13 @@ private:
     quint64 copyGeneration_ = 0;
     void collectAnnotations(int page) const;
     void collectFormOrder(int page);
-    void editFormValue(int page, int field, const QString &value, bool choice = false);
-    void editFormChoice(int page, int field, const QString &value) { editFormValue(page, field, value, true); }
+    void editFormValue(int page, int field, const QString &value, bool choice = false,
+                       int choiceIndex = -1);
+    void editFormChoice(int page, int field, const QString &value, int choiceIndex)
+    { editFormValue(page, field, value, true, choiceIndex); }
     void editFormToggle(int page, int field);
-    void submitFormEdit(int page, int field, std::optional<QString> value, bool choice);
+    void submitFormEdit(int page, int field, std::optional<QString> value, bool choice,
+                        int choiceIndex = -1);
     void submitAnnotEdit(int page, std::function<int(AnnotModel &)> edit,
                          std::function<void(int)> completed = {});
 

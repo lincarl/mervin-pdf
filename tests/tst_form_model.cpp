@@ -41,6 +41,8 @@ private slots:
     void savedListSelections_data();
     void savedListSelections();
     void choiceEditsUseExportValuesAndRefreshIndices();
+    void choiceIndicesDistinguishDuplicateLabels();
+    void editableComboCustomValuesRemainSupported();
     void encryptedSourceStaysEncrypted();
 };
 
@@ -100,7 +102,7 @@ QByteArray makePlainPdf()
 // Shared text, choice, checkbox and radio widgets cross pages. The second page
 // deliberately omits /P, and every widget starts with a stored appearance.
 QByteArray makeSharedFormPdf(bool listBox, int topIndex = 0, bool inheritChoice = true,
-                             bool exportValues = false)
+                             bool exportValues = false, bool duplicateLabels = false)
 {
     QList<QByteArray> objs{
         "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [6 0 R 9 0 R 12 0 R 15 0 R 18 0 R 19 0 R 20 0 R 21 0 R] /DR << /Font << /Helv 5 0 R >> >> /DA (/Helv 12 Tf 0 g) >> >>",
@@ -135,7 +137,9 @@ QByteArray makeSharedFormPdf(bool listBox, int topIndex = 0, bool inheritChoice 
     if (exportValues) {
         objs[8].replace("/V (Red)", "/V (r) /I [0]");
         objs[8].replace("/Opt [(Red) (Green)]",
-                        "/Opt [[(r) (Red)] [(g) (Green)] [(g) (Other green)]]");
+                        duplicateLabels
+                            ? "/Opt [[(r) (Same)] [(g) (Same)] [(g) (Other green)]]"
+                            : "/Opt [[(r) (Red)] [(g) (Green)] [(g) (Other green)]]");
         if (listBox)
             for (int index : {9, 10})
                 objs[index].replace("[20 210 280 230]", "[20 150 280 230]");
@@ -615,6 +619,7 @@ void TstFormModel::choiceEditsUseExportValuesAndRefreshIndices()
         QVERIFY(doc);
         FormModel form(*doc);
         QCOMPARE(form.pageFields(0)[1].value, QStringLiteral("Red"));
+        QCOMPARE(form.pageFields(0)[1].choiceIndex, 0);
         QVERIFY(!form.setChoiceValue(0, 1, QStringLiteral("missing")));
         QVERIFY(!form.setChoiceValue(0, 0, QStringLiteral("Green")));
         QVERIFY(!form.isDirty());
@@ -624,6 +629,7 @@ void TstFormModel::choiceEditsUseExportValuesAndRefreshIndices()
         // Identical export values still identify different selectable rows.
         QVERIFY(form.setChoiceValue(0, 1, QStringLiteral("Other green")));
         QCOMPARE(form.pageFields(1)[1].value, QStringLiteral("Other green"));
+        QCOMPARE(form.pageFields(1)[1].choiceIndex, 2);
         const QString output = files.filePath(QStringLiteral("pairs-saved-%1.pdf").arg(list));
         QVERIFY(form.saveTo(output));
         QPDF inspected;
@@ -648,9 +654,91 @@ void TstFormModel::choiceEditsUseExportValuesAndRefreshIndices()
         FormModel loaded(*reopened);
         QCOMPARE(loaded.pageFields(0)[1].value, QStringLiteral("Other green"));
         QCOMPARE(loaded.pageFields(1)[1].value, QStringLiteral("Other green"));
+        QCOMPARE(loaded.pageFields(0)[1].choiceIndex, 2);
+        QCOMPARE(loaded.pageFields(1)[1].choiceIndex, 2);
         QVERIFY(!loaded.setChoiceValue(1, 1, QStringLiteral("Other green")));
         QVERIFY(!loaded.isDirty());
     }
+}
+
+/// Equal display labels remain distinct through shared widgets and saved /V and /I.
+void TstFormModel::choiceIndicesDistinguishDuplicateLabels()
+{
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    RenderEngine engine;
+    for (bool list : {false, true}) {
+        const QString source = writeTemp(files, QStringLiteral("duplicate-labels-%1.pdf").arg(list),
+                                         makeSharedFormPdf(list, 0, true, true, true));
+        auto doc = engine.openDocument(source);
+        QVERIFY(doc);
+        FormModel form(*doc);
+        QCOMPARE(form.pageFields(0)[1].value, QStringLiteral("Same"));
+        QCOMPARE(form.pageFields(0)[1].choiceIndex, 0);
+        QVERIFY(!form.setChoiceValue(0, 1, QStringLiteral("Same"), -2));
+        QVERIFY(!form.setChoiceValue(0, 1, QStringLiteral("Same"), 3));
+        QVERIFY(!form.isDirty());
+        QVERIFY(form.setChoiceValue(1, 1, QStringLiteral("Same"), 1));
+        QCOMPARE(form.changedFields().size(), size_t(2));
+        for (int page : {0, 1}) {
+            QCOMPARE(form.pageFields(page)[1].value, QStringLiteral("Same"));
+            QCOMPARE(form.pageFields(page)[1].choiceIndex, 1);
+        }
+        QVERIFY(!form.setChoiceValue(0, 1, QStringLiteral("Same"), 1));
+        const QString output = files.filePath(QStringLiteral("duplicate-labels-saved-%1.pdf").arg(list));
+        QVERIFY(form.saveTo(output));
+        QPDF inspected;
+        inspected.processFile(output.toUtf8().constData());
+        for (auto page : inspected.getAllPages()) {
+            const auto field = page.getKey("/Annots").getArrayItem(1).getKey("/Parent");
+            QCOMPARE(field.getKey("/V").getUTF8Value(), std::string("g"));
+            QCOMPARE(field.getKey("/I").getArrayNItems(), 1);
+            QCOMPARE(field.getKey("/I").getArrayItem(0).getIntValue(), 1);
+        }
+        auto reopened = engine.openDocument(output);
+        QVERIFY(reopened);
+        FormModel loaded(*reopened);
+        for (int page : {0, 1}) {
+            QCOMPARE(loaded.pageFields(page)[1].value, QStringLiteral("Same"));
+            QCOMPARE(loaded.pageFields(page)[1].choiceIndex, 1);
+        }
+        QVERIFY(!loaded.setChoiceValue(1, 1, QStringLiteral("Same"), 1));
+        QVERIFY(!loaded.isDirty());
+        // Existing label-only callers keep their first matching option behavior.
+        QVERIFY(loaded.setChoiceValue(0, 1, QStringLiteral("Same")));
+        QCOMPARE(loaded.pageFields(1)[1].choiceIndex, 0);
+    }
+}
+
+/// Selecting exact options does not remove editable combos' custom-text path.
+void TstFormModel::editableComboCustomValuesRemainSupported()
+{
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    const QList<QByteArray> objects{
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] /DR << /Font << /Helv 5 0 R >> >> /DA (/Helv 12 Tf 0 g) >> >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [4 0 R] /Resources << >> >>",
+        "<< /Type /Annot /Subtype /Widget /FT /Ch /Ff 393216 /T (editable) /Rect [20 250 280 270] /F 4 /V (r) /I [0] /Opt [[(r) (Red)] [(g) (Green)]] /P 3 0 R >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"};
+    const QString source = writeTemp(files, QStringLiteral("editable-choice.pdf"), assemblePdf(objects, {}));
+    RenderEngine engine;
+    auto doc = engine.openDocument(source);
+    QVERIFY(doc);
+    FormModel form(*doc);
+    QVERIFY(form.setChoiceValue(0, 0, QStringLiteral("Custom text")));
+    QCOMPARE(form.pageFields(0)[0].value, QStringLiteral("Custom text"));
+    QCOMPARE(form.pageFields(0)[0].choiceIndex, -1);
+    QVERIFY(!form.setChoiceValue(0, 0, QStringLiteral("Custom text")));
+    const QString output = files.filePath(QStringLiteral("editable-choice-saved.pdf"));
+    QVERIFY(form.saveTo(output));
+    QPDF inspected;
+    inspected.processFile(output.toUtf8().constData());
+    const auto field = inspected.getRoot().getKey("/AcroForm").getKey("/Fields").getArrayItem(0);
+    QCOMPARE(field.getKey("/V").getUTF8Value(), std::string("Custom text"));
+    QVERIFY(field.getKey("/I").isNull());
+    QVERIFY(form.setChoiceValue(0, 0, QStringLiteral("Green"), 1));
+    QCOMPARE(form.pageFields(0)[0].choiceIndex, 1);
 }
 
 void TstFormModel::encryptedSourceStaysEncrypted()
