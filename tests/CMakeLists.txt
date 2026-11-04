@@ -49,6 +49,8 @@ set(_mervin_tests
     tst_ocr_popup
     tst_settings_dialog
     tst_tessdata
+    tst_tesseract_models
+    tst_mujs
     tst_ocr_provisioner
     tst_session_store
     tst_session_end
@@ -82,6 +84,27 @@ foreach(_t IN LISTS _mervin_tests)
         ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
         SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 endforeach()
+
+# Compile against the exact internal model types used by MuPDF's Tesseract.
+# Its Artifex build disables the legacy recognizer and uses double precision.
+target_link_libraries(tst_tesseract_models PRIVATE MuPDF::MuPDF)
+target_include_directories(tst_tesseract_models PRIVATE
+    "${MUPDF_DIR}/source/fitz"
+    "${MUPDF_DIR}/thirdparty/leptonica/src"
+    "${MUPDF_DIR}/thirdparty/tesseract/include"
+    "${MUPDF_DIR}/thirdparty/tesseract/src/arch"
+    "${MUPDF_DIR}/thirdparty/tesseract/src/ccutil"
+    "${MUPDF_DIR}/thirdparty/tesseract/src/ccstruct"
+    "${MUPDF_DIR}/thirdparty/tesseract/src/lstm"
+    "${MUPDF_DIR}/scripts/tesseract")
+target_compile_definitions(tst_tesseract_models PRIVATE
+    GRAPHICS_DISABLED DISABLED_LEGACY_ENGINE TESSERACT_IMAGEDATA_AS_PIX
+    TESSERACT_DISABLE_DEBUG_FONTS
+    MERVIN_TEST_TESSDATA_DIR="${CMAKE_BINARY_DIR}/test-tessdata")
+set_tests_properties(tst_tesseract_models PROPERTIES TIMEOUT 60)
+target_link_libraries(tst_mujs PRIVATE MuPDF::MuPDF)
+target_include_directories(tst_mujs PRIVATE "${MUPDF_DIR}/thirdparty/mujs")
+set_tests_properties(tst_mujs PROPERTIES TIMEOUT 30)
 
 # These tests inspect qpdf objects directly; mervin_core keeps its dependency private.
 foreach(_t tst_atomic_pdf_writer tst_document_output)

@@ -34,17 +34,25 @@ The PCRE2 advisory requires attacker-controlled regular expressions; Mervin's
 current patterns are fixed. These observations do not establish an exploit
 through the application. The project retains official Qt binaries, so replacing
 separate vcpkg libraries does not fix Qt's embedded copies. A later Qt release or
-a custom Qt build is required to replace them.
+a custom Qt build is required to replace them. The opt-in
+[patched source build](#patched-qt-source-build) below replaces both embedded
+copies. Default CI and release jobs still use the official SDK until the custom
+build is qualified and selected on both platforms.
 
-MuPDF 1.28.6 also retains its upstream-selected third-party bundle and Mervin's
-existing patches. Its Tesseract 5.5.2 predates the model-deserialization fixes in
-[5.5.3](https://github.com/tesseract-ocr/tesseract/releases/tag/5.5.3), and its
-MuJS 1.3.10 predates the fixes in
+The MuPDF patches update its Tesseract runtime sources from 5.5.2 to
+[5.5.4](https://github.com/tesseract-ocr/tesseract/releases/tag/5.5.4), including
+the model-deserialization fixes in both 5.5.3 and 5.5.4. They preserve Artifex's
+OCR, allocation, compiler and platform integration. The same patch set updates
+MuJS from 1.3.10 to
 [1.3.11](https://github.com/ArtifexSoftware/mujs/compare/1.3.10...1.3.11).
-Mervin does not enable PDF JavaScript. Its OCR model-container checks do not
-replace Tesseract's internal neural-network validation. Independent updates must
-preserve Artifex's integration changes and pass both platform builds. MuPDF 1.28.6
-updates its Brotli fork to a revision after 1.2.1.
+It also corrects an index typo in that release's array-conversion rollback and
+tests allocation failures with `tst_mujs`.
+Mervin does not enable PDF JavaScript. Its OCR model-container checks remain a
+first check; Tesseract now also validates internal dimensions, layer relationships,
+scale vectors, null-character indices and recoder ranges when loading models.
+`tst_tesseract_models` exercises these checks using malformed data and valid
+controls against MuPDF's actual linked library. MuPDF 1.28.6 retains its Brotli
+fork at a revision after 1.2.1.
 
 Bundled Linux libraries receive updates through new Mervin packages rather than
 the distribution's Qt or qpdf packages. Core operating-system and display-driver
@@ -54,6 +62,68 @@ The latest released vcpkg registry also retains its tested Meson 1.9.0,
 NASM 3.01 and Windows pkgconf 3.0.7 acquisition helpers. These build-only tools
 are older than their individual upstream releases and are not shipped with
 Mervin. Updating them requires vcpkg port changes beyond the registry update.
+
+## Patched Qt source build
+
+`scripts/build-qt-patched.py` provides an isolated Qt 6.12.0 source build for
+Linux x64 and native Windows x64. It downloads the official Qt Base, Svg, Tools
+and Translations archives, verifies their pinned SHA-256 hashes, and applies
+the tracked `scripts/qt-patches`. It updates bundled libpng to 1.6.59 and PCRE2
+to 10.49, preserving Qt's configuration and symbol prefixes. It also applies
+Qt's official [CVE-2026-105924 patch](https://download.qt.io/official_releases/qt/6.12/CVE-2026-105924-qtbase-6.12.diff)
+for converting an empty CBOR URL to JSON. Mervin does not currently parse CBOR.
+
+The builder needs Python 3.12 or newer, Git, CMake, Ninja and the platform's C++
+compiler. Run Windows builds from an x64 MSVC developer shell. Linux builds
+also need development headers for OpenGL/EGL, X11/XCB, xkbcommon, Wayland,
+fontconfig, FreeType, D-Bus, OpenSSL, CUPS and GTK. On Ubuntu, include
+`libxcb-util-dev`, `libxcb-cursor-dev`, `libxcb-icccm4-dev`, `libxcb-image0-dev`,
+`libxcb-keysyms1-dev`, `libxcb-render-util0-dev`, `libxcb-shape0-dev`,
+`libxcb-xfixes0-dev`, `libxcb-xinerama0-dev`, `libxcb-randr0-dev`,
+`libxcb-sync-dev`, `libxcb-xkb-dev`, `libxkbcommon-x11-dev` and `libx11-xcb-dev`.
+
+Use a new destination. The builder never installs over or inside the supplied
+official SDK. A failed build can resume with the same command if preparation
+finished. A changed recipe requires a new destination. For example:
+
+```bash
+python3 ~/projects/mervin-pdf/scripts/build-qt-patched.py \
+  --official-sdk ~/dev-tools/Qt/6.12.0/gcc_64 \
+  --destination ~/dev-tools/mervin-qt-6.12.0-patched --jobs 4
+```
+
+```powershell
+python C:\projects\mervin-pdf\scripts\build-qt-patched.py `
+  --official-sdk C:\dev\Qt\6.12.0\msvc2022_64 `
+  --destination C:\dev-tools\mervin-qt-6.12.0-patched --jobs 4
+```
+
+The command prints the new `sdk` directory on success. Set `QT6_DIR` to that
+absolute path and configure a fresh Mervin build with the existing preset.
+Do not mix the two SDKs in `PATH` or `CMAKE_PREFIX_PATH`. The helper also builds
+and runs `scripts/qt-check`, which exercises PNG decoding with malformed
+compressed metadata, PCRE2 JIT matching and the CBOR regression through Qt's
+actual APIs. `sdk/mervin-qt-build.json` records the recipe, copied support-file
+hashes and complete installed-file inventory. Logs remain in the destination's
+`logs` directory. `--recipe` prints a cache identity covering the source pins,
+patches, builder and verification program. CI caches must also distinguish the
+platform and compiler toolchain.
+
+Linux copies only ICU 73.2 libraries from the official SDK and uses verified
+matching ICU headers. Windows copies only `dxcompiler.dll`, `dxil.dll` and
+`opengl32sw.dll` from the official SDK. All Qt modules used by Mervin are rebuilt
+together as shared libraries. The C++ Linguist tools and translation catalogs
+are included; QML translation tooling is omitted because Mervin has no QML.
+The normal Qt and embedded-library notices remain applicable. Their source
+provenance is documented in [the Qt notices](../licenses/qt/README.md).
+
+This option does not change the default build, CI or release pipeline. Rebuilt
+Windows Qt DLLs do not carry Qt's Authenticode signatures. Adopting them requires
+an explicit packaging choice, a fresh SDK cache, complete Linux and native
+Windows test and installer verification, and the normal runtime inventories.
+Future Qt updates must recheck both the source patches and the selected build
+features. Do not use a passing Linux build to claim native Windows compatibility,
+or retain an old passing CI result after changing SDK inputs.
 
 ## Toolchain (one-time)
 

@@ -3,6 +3,23 @@
 These notices accompany the official Qt 6.12.0 runtime used by Mervin PDF.
 Qt's own license texts are in the parent directory.
 
+The optional source build in `scripts/build-qt-patched.py` uses the same Qt
+release with the modifications in `scripts/qt-patches`. It updates libpng to
+1.6.59 and PCRE2 to 10.49 and applies Qt's CVE-2026-105924 CBOR correction.
+The upstream license texts are unchanged by these updates, so the verbatim
+notices below also apply to this build. Its ICU libraries still come from the
+official Linux SDK at version 73.2. The helper records their hashes and all
+produced files in `sdk/mervin-qt-build.json`.
+
+The modified source consists of the pinned Qt source archives listed in that
+helper plus the tracked patches at the Mervin release's source revision. The
+library updates come from [libpng 1.6.59](https://github.com/pnggroup/libpng/tree/v1.6.59)
+and [PCRE2 10.49](https://github.com/PCRE2Project/pcre2/tree/pcre2-10.49).
+Keep the patches and reproducible builder with the corresponding source offer.
+The existing source links in `qtbase-NOTICES.txt` identify the unchanged license
+texts' original provenance; they do not imply that a patched runtime still uses
+the older library versions.
+
 - `qtbase-NOTICES.txt` retains Qt Base and Qt Svg copyright statements and
   complete upstream license texts. Each entry names its source URL, version
   when available, and applicable documents. Each complete document includes

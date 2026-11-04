@@ -1,0 +1,167 @@
+Update bundled MuJS runtime to 1.3.11.
+
+Modified by Mervin PDF on 2026-11-04.
+Upstream https://github.com/ArtifexSoftware/mujs/compare/1.3.10...1.3.11
+Preserve MuPDF build integration. Mervin does not enable PDF JavaScript.
+Also correct the upstream array rollback loop to delete index k, not i.
+Fault injection confirms 1.3.11 otherwise retains migrated array values
+after allocation failure, even after the application removes those values.
+
+diff --git a/thirdparty/mujs/jscompile.c b/thirdparty/mujs/jscompile.c
+--- a/thirdparty/mujs/jscompile.c
++++ b/thirdparty/mujs/jscompile.c
+@@ -802,9 +802,8 @@
+ 		if (jump->type == STM_CONTINUE)
+ 			labelto(J, F, jump->inst, caddr);
+ 		js_free(J, jump);
+-		jump = next;
+-	}
+-	stm->jumps = NULL;
++		stm->jumps = jump = next;
++	}
+ }
+ 
+ static int isloop(enum js_AstType T)
+diff --git a/thirdparty/mujs/jsi.h b/thirdparty/mujs/jsi.h
+--- a/thirdparty/mujs/jsi.h
++++ b/thirdparty/mujs/jsi.h
+@@ -363,8 +363,8 @@
+ {
+ 	void *prog;
+ 	char *source;
+-	unsigned short flags;
+-	unsigned short last;
++	int flags;
++	int last;
+ };
+ 
+ struct js_Object
+diff --git a/thirdparty/mujs/jsregexp.c b/thirdparty/mujs/jsregexp.c
+--- a/thirdparty/mujs/jsregexp.c
++++ b/thirdparty/mujs/jsregexp.c
+@@ -60,7 +60,7 @@
+ 	haystack = text;
+ 	opts = 0;
+ 	if (re->flags & JS_REGEXP_G) {
+-		if (re->last > strlen(haystack)) {
++		if ((size_t)re->last > strlen(haystack)) {
+ 			re->last = 0;
+ 			js_pushnull(J);
+ 			return;
+@@ -112,7 +112,7 @@
+ 
+ 	opts = 0;
+ 	if (re->flags & JS_REGEXP_G) {
+-		if (re->last > strlen(text)) {
++		if ((size_t)re->last > strlen(text)) {
+ 			re->last = 0;
+ 			js_pushboolean(J, 0);
+ 			return;
+diff --git a/thirdparty/mujs/jsrun.c b/thirdparty/mujs/jsrun.c
+--- a/thirdparty/mujs/jsrun.c
++++ b/thirdparty/mujs/jsrun.c
+@@ -545,10 +545,13 @@
+ void jsR_unflattenarray(js_State *J, js_Object *obj) {
+ 	if (obj->type == JS_CARRAY && obj->u.a.simple) {
+ 		js_Property *ref;
+-		int i;
++		volatile int i;
++		int k;
+ 		char name[32];
+ 		if (js_try(J)) {
+-			obj->properties = NULL;
++			/* delete any array entries that were migrated to the property tree */
++			for (k = 0; k < i; ++k)
++				jsV_delproperty(J, obj, js_itoa(name, k));
+ 			js_throw(J);
+ 		}
+ 		for (i = 0; i < obj->u.a.flat_length; ++i) {
+@@ -1567,8 +1570,10 @@
+ {
+ 	js_Value *v = stackidx(J, idx);
+ 	if (v->t.type == JS_TNUMBER) {
+-		*k = v->u.number;
+-		return *k == v->u.number && *k >= 0;
++		if (v->u.number >= 0 && v->u.number <= INT_MAX) {
++			*k = v->u.number;
++			return *k == v->u.number;
++		}
+ 	}
+ 	return 0;
+ }
+diff --git a/thirdparty/mujs/main.c b/thirdparty/mujs/main.c
+--- a/thirdparty/mujs/main.c
++++ b/thirdparty/mujs/main.c
+@@ -282,8 +282,10 @@
+ static void usage(void)
+ {
+ 	fprintf(stderr, "Usage: mujs [options] [script [scriptArgs*]]\n");
+-	fprintf(stderr, "\t-i: Enter interactive prompt after running code.\n");
+-	fprintf(stderr, "\t-s: Check strictness.\n");
++	fprintf(stderr, "\t-i\tEnter interactive prompt after running code.\n");
++	fprintf(stderr, "\t-s\tCheck strictness.\n");
++	fprintf(stderr, "\t-R -\tSet run limit (number of instructions).\n");
++	fprintf(stderr, "\t-M -\tSet memory limit (number of bytes).\n");
+ 	exit(1);
+ }
+ 
+diff --git a/thirdparty/mujs/regexp.c b/thirdparty/mujs/regexp.c
+--- a/thirdparty/mujs/regexp.c
++++ b/thirdparty/mujs/regexp.c
+@@ -50,6 +50,7 @@
+ };
+ 
+ struct cstate {
++	jmp_buf kaboom;
+ 	Reprog *prog;
+ 	Renode *pstart, *pend;
+ 
+@@ -64,7 +65,6 @@
+ 	int yymin, yymax;
+ 
+ 	const char *error;
+-	jmp_buf kaboom;
+ 
+ 	Reclass cclass[REG_MAXCLASS];
+ };
+@@ -659,9 +659,9 @@
+ 	Reinst *y;
+ };
+ 
+-static int count(struct cstate *g, Renode *node, int depth)
+-{
+-	int min, max, n;
++static size_t count(struct cstate *g, Renode *node, int depth)
++{
++	size_t min, max, n;
+ 	if (!node) return 0;
+ 	if (++depth > REG_MAXREC) die(g, "stack overflow");
+ 	switch (node->type) {
+@@ -674,7 +674,7 @@
+ 		if (min == max) n = count(g, node->x, depth) * min;
+ 		else if (max < REPINF) n = count(g, node->x, depth) * max + (max - min);
+ 		else n = count(g, node->x, depth) * (min + 1) + 2;
+-		if (n < 0 || n > REG_MAXPROG) die(g, "program too large");
++		if (n > REG_MAXPROG) die(g, "program too large");
+ 		return n;
+ 	case P_PAR: return count(g, node->x, depth) + 2;
+ 	case P_PLA: return count(g, node->x, depth) + 2;
+@@ -900,7 +900,8 @@
+ 	struct cstate g;
+ 	Renode *node;
+ 	Reinst *split, *jump;
+-	int i, n;
++	int i;
++	size_t n;
+ 
+ 	g.pstart = NULL;
+ 	g.prog = NULL;
+@@ -952,7 +953,7 @@
+ #endif
+ 
+ 	n = 6 + count(&g, node, 0);
+-	if (n < 0 || n > REG_MAXPROG)
++	if (n > REG_MAXPROG)
+ 		die(&g, "program too large");
+ 
+ 	g.prog->nsub = g.nsub;

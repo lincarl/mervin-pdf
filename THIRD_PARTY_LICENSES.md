@@ -43,7 +43,8 @@ is Artifex AGPL and is covered by the same arrangement as MuPDF.
 
 | Component | Licence | Used for |
 |---|---|---|
-| Tesseract 5.5.2 | Apache 2.0 | OCR engine |
+| Tesseract 5.5.4 | Apache 2.0 | OCR engine, updated runtime sources with Artifex integration preserved |
+| MuJS 1.3.11 | ISC | MuPDF's bundled JavaScript library; Mervin does not enable PDF JavaScript |
 | Leptonica 1.87.0 | BSD 2-Clause | Image processing for OCR |
 | freetype | FTL or GPL v2 | Font rasterization |
 | harfbuzz | MIT-style | Text shaping |
@@ -59,6 +60,16 @@ The verified MuPDF source archive also carries licence texts for its bundled
 auxiliary components (cmark-gfm, curl, extract, freeglut, MuJS, Zint, and
 ZXing-C++). Their verbatim notices are included under `licenses/` and shipped
 with every installer.
+
+The Tesseract update in `scripts/mupdf-patches/0007-tesseract-update-runtime-to-5.5.4.patch`
+contains the upstream runtime source changes from 5.5.2 through 5.5.4, commit
+`7e548e6eff172f38f97664afe7f7ce40db36c8d6`, plus adjustments to MuPDF's source
+lists and generated version header. Artifex's OCR adapter, allocation hooks,
+disabled legacy engine and double-precision build configuration remain in use.
+The MuJS update comes from the upstream 1.3.11 tag, commit
+`01a75ff4324ae8a54cae91a26edd38029424edaa`. Both components retain their existing
+license texts. Mervin also corrects the MuJS 1.3.11 array rollback loop's index,
+as the patch records. The patch files are part of the corresponding modified source.
 
 ## AGPL implications
 

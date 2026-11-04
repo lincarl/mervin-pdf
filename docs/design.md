@@ -2077,6 +2077,27 @@ choice edit, including a changed index with the same export value. Shared widget
 regenerate together. Remove the patch when the pinned upstream release provides the
 same behavior.
 
+`0007-tesseract-update-runtime-to-5.5.4.patch` updates the bundled Tesseract
+runtime sources, which matched upstream 5.5.2, to upstream 5.5.4. The MuPDF OCR
+adapter, allocation hooks, disabled legacy engine and double-precision settings
+remain unchanged. Both platform source lists drop the obsolete files removed
+upstream. The Linux builder recreates its archives when the patch set changes,
+because `ar cr` alone retains members whose source files have been removed.
+`tst_tesseract_models` checks malformed dimensions, weights, layer relationships,
+empty network stacks, null-character indices and recoder ranges. Valid controls
+and `tst_ocr` also exercise real model loading and recognition.
+
+`0008-mujs-update-to-1.3.11.patch` applies the complete MuJS release delta,
+including regex positions beyond 64 KiB, numeric array keys and exception
+cleanup. It also corrects the new upstream array-conversion rollback loop to
+delete index `k` instead of repeatedly deleting index `i`. Otherwise allocation
+failures retain migrated values after the application removes them from the array.
+`tst_mujs` injects failures at successive allocations and checks collection of
+removed values, preservation of other properties, and a successful retry. It
+exercises the linked engine without enabling PDF JavaScript
+in Mervin. Remove or refresh these dependency patches when MuPDF carries the
+same fixed upstream sources. Keep both platform builds and the regression tests.
+
 - `0001-fitz-read-found-store-values-under-the-lock.patch` is MuPDF commit
   `5ba5c97` and changes `source/fitz/store.c`. `fz_find_item` and the duplicate
   branch of `fz_store_item` read the found entry's value after they release the

@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.25)
+project(MervinQtDependencyCheck LANGUAGES CXX)
+find_package(Qt6 6.12.0 EXACT REQUIRED COMPONENTS Core Gui)
+add_executable(verify-qt-dependencies main.cpp)
+target_compile_features(verify-qt-dependencies PRIVATE cxx_std_20)
+target_link_libraries(verify-qt-dependencies PRIVATE Qt6::Core Qt6::Gui)
+set_target_properties(verify-qt-dependencies PROPERTIES WIN32_EXECUTABLE OFF)
