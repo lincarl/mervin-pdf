@@ -690,7 +690,7 @@ void TstFormModel::choiceIndicesDistinguishDuplicateLabels()
         QPDF inspected;
         inspected.processFile(output.toUtf8().constData());
         for (auto page : inspected.getAllPages()) {
-            const auto field = page.getKey("/Annots").getArrayItem(1).getKey("/Parent");
+            auto field = page.getKey("/Annots").getArrayItem(1).getKey("/Parent");
             QCOMPARE(field.getKey("/V").getUTF8Value(), std::string("g"));
             QCOMPARE(field.getKey("/I").getArrayNItems(), 1);
             QCOMPARE(field.getKey("/I").getArrayItem(0).getIntValue(), 1);
@@ -734,7 +734,7 @@ void TstFormModel::editableComboCustomValuesRemainSupported()
     QVERIFY(form.saveTo(output));
     QPDF inspected;
     inspected.processFile(output.toUtf8().constData());
-    const auto field = inspected.getRoot().getKey("/AcroForm").getKey("/Fields").getArrayItem(0);
+    auto field = inspected.getRoot().getKey("/AcroForm").getKey("/Fields").getArrayItem(0);
     QCOMPARE(field.getKey("/V").getUTF8Value(), std::string("Custom text"));
     QVERIFY(field.getKey("/I").isNull());
     QVERIFY(form.setChoiceValue(0, 0, QStringLiteral("Green"), 1));
