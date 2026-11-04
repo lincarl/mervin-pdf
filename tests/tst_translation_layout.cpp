@@ -25,6 +25,7 @@
 #include "render/RenderEngine.h"
 #include "recent/PathKey.h"
 #include "security/QpdfService.h"
+#include "security/QpdfWorker.h"
 #include "ui/AnnotPanel.h"
 #include "ui/AnnotPopup.h"
 #include "ui/LanguageCombo.h"
@@ -1241,6 +1242,13 @@ void TstTranslationLayout::extract()
             QTRY_COMPARE(reason->text(), choices.error);
             inspect(unsupported, QStringLiteral("Page operation with XFA form %1 %2")
                 .arg(int(mode)).arg(int(failure)));
+            choices.error = mervin::qpdfWorker::failureText();
+            mervin::ExtractDialog bounded(xfaSource, nullptr, choices);
+            auto *limitReason = bounded.findChild<QLabel *>(QStringLiteral("extractError"));
+            QVERIFY(limitReason);
+            QTRY_COMPARE(limitReason->text(), choices.error);
+            inspect(bounded, QStringLiteral("Page operation resource limit %1 %2")
+                .arg(int(mode)).arg(int(failure)));
         }
     }
     auto *range = dialog.findChild<QLineEdit *>(QStringLiteral("extractRowSpec"));
@@ -1504,6 +1512,15 @@ void TstTranslationLayout::merge()
         QTRY_VERIFY(label->text().contains(reason));
         inspect(failed, QStringLiteral("Merge unsupported XFA form"));
     }
+    for (int failedIndex : {-1, 0}) {
+        const QString output = profile_.filePath(QStringLiteral("merge-limit-output.pdf"));
+        const QString reason = mervin::qpdfWorker::failureText();
+        mervin::MergeDialog failed(dialog.plan(), output, reason, failedIndex);
+        auto *label = failed.findChild<QLabel *>(QStringLiteral("mergeError"));
+        QVERIFY(label);
+        QTRY_VERIFY(label->text().contains(reason));
+        inspect(failed, QStringLiteral("Merge resource limit %1").arg(failedIndex));
+    }
     for (const auto conflict : {mervin::MergeDialog::Conflict::Changed,
                                 mervin::MergeDialog::Conflict::CheckFailed}) {
         const QString output = profile_.filePath(QStringLiteral("merge-consent-output.pdf"));
@@ -1766,6 +1783,10 @@ void TstTranslationLayout::splitMessages()
                     mervin::PageOps::xfaTransformationError(), QMessageBox::Ok);
     xfa.setTextFormat(Qt::PlainText);
     inspect(xfa, QStringLiteral("Split unsupported XFA form"));
+    QMessageBox resourceLimit(QMessageBox::Warning, MainWindow::tr("Split Pages"),
+                             mervin::qpdfWorker::failureText(), QMessageBox::Ok);
+    resourceLimit.setTextFormat(Qt::PlainText);
+    inspect(resourceLimit, QStringLiteral("Split resource limit"));
     // MainWindow fits the folder and the name to half the screen like this.
     const QString folder = QStringLiteral("/srv/nas/projects/")
         + QStringLiteral("Construction").repeated(12) + QStringLiteral("/drawings/issued/split");

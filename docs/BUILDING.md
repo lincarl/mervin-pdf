@@ -447,8 +447,14 @@ build configuration, and workload for comparisons.
 
 For memory and undefined-behavior checks, configure a separate Debug build with
 `-DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"` and
-`-DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"`. CI disables leak detection
-for the separately built Qt/dependency binaries; address and undefined-behavior checks remain enabled.
+`-DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"`. First build the ordinary
+application from the same revision, then give the sanitizer build its absolute
+path with `-DMERVIN_TEST_QPDF_EXECUTABLE=/absolute/path/to/release/MervinPDF`.
+The resource-limited qpdf helper cannot accommodate ASan's virtual shadow memory.
+This test-only setting keeps the helper's production bounds and instruments its
+parent's IPC and publication. See [Bounded qpdf workers](QPDF-WORKERS.md).
+CI disables leak detection for the separately built Qt/dependency binaries;
+address and undefined-behavior checks remain enabled.
 
 MuPDF's archives bundle libjpeg, FreeType, zlib and Brotli. Shared qpdf,
 Qt and Qt's plugins must resolve their own dependencies separately.

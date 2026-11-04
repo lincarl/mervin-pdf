@@ -2991,6 +2991,14 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     </message>
 </context>
 <context>
+    <name>mervin::QpdfWorker</name>
+    <message>
+        <source>PDF processing stopped or exceeded a safety limit. Try a smaller document.</source>
+        <extracomment>Visible failure reason for PDF security, page or measurement operations. The isolated PDF worker could not start safely, stopped unexpectedly, or exceeded its memory, time, request or output limit. This is not a diagnosis that the PDF is damaged. Suggest processing a smaller document.</extracomment>
+        <translation>PDF 처리가 중단되었거나 안전 한도를 초과했습니다. 더 작은 문서로 시도하세요.</translation>
+    </message>
+</context>
+<context>
     <name>mervin::RecentFilesPanel</name>
     <message>
         <source>Stop</source>

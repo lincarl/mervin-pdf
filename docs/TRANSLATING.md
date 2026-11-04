@@ -139,6 +139,10 @@ open password. A read failure means the app could not obtain all the file bytes.
 Damage is a format error the reader could not repair. Do not turn an unclassified
 reader message into a diagnosis. Follow each source's note for those distinctions.
 
+A processing safety limit is a resource restriction, not a PDF password or a
+finding that a document is unsafe. Preserve uncertainty when a worker may have
+stopped or exceeded a limit, and keep the suggested smaller-document recovery.
+
 When a status notice explains an automatic action, keep its cause separate from
 its effect. Closing a tab after its source file was deleted does not delete the
 file. Preserve that order of events instead of attributing the deletion to the app.

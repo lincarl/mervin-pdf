@@ -10,7 +10,8 @@
 namespace mervin {
 
 // Wraps qpdf for the document-security operations (Document -> Security). All
-// qpdf usage is confined to the .cpp so this header stays dependency-free and
+// qpdf document parsing runs in the bounded QpdfWorker process. All qpdf
+// types stay in the .cpp files so this header stays dependency-free and
 // the class is unit-testable. Every method operates on file paths and never
 // modifies the source in place - operations write a new file. Error texts of its
 // own are translated; qpdf's messages pass through unchanged.

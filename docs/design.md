@@ -1695,8 +1695,11 @@ one contained object. Mervin requires qpdf 11.10 or later and sets
 limits cumulative decoded output per Flate decoder. It also refuses legitimate
 Flate streams larger than the limit. It is not a total process memory limit and
 does not bound other codecs, predictor allocations, object counts or aggregate
-retained data. Kernel-limited worker processes would be needed for that stronger
-contract.
+retained data. All qpdf document operations therefore run in a memory- and
+CPU-limited helper, with at most two live helpers per application process and bounded IPC
+and output. The GUI process retains output ownership and publication. See
+[Bounded qpdf workers](QPDF-WORKERS.md) for exact limits, platform differences,
+compatibility tradeoffs and the boundaries of this protection.
 
 qpdf can turn a decoder exception into a warning, skip the affected object and
 still produce output. `checkQpdfWarnings` therefore rejects its specific Flate-limit
@@ -1707,10 +1710,10 @@ before committing, and page operations retain the input filename for a deferred
 read failure. Real padded required-object and optional-annotation fixtures verify
 rejection without replacing the destination on qpdf 11.10 and current qpdf 12.
 
-`AtomicPdfWriter` streams all qpdf output through `QSaveFile`, including page,
+`AtomicPdfWriter` streams all qpdf output through the parent's `QSaveFile`, including page,
 security and measurement operations. A failed write discards its temporary file;
 only a complete write replaces the destination. A split commits each output file
-individually. `AtomicPdfWriter` and `DocumentOutput::replace` hold the destination's
+individually. The worker's parent and `DocumentOutput::replace` hold the destination's
 `job::DestinationLock` from opening the temporary file to the end of the commit, and
 a stop before commit admission discards the temporary file. An admitted commit can
 still finish after Stop (see Disk access off the UI thread). A split stopped part

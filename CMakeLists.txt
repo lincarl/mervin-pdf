@@ -210,6 +210,8 @@ add_library(mervin_core STATIC
     src/security/PageOps.h
     src/security/QpdfSource.cpp
     src/security/QpdfSource.h
+    src/security/QpdfWorker.cpp
+    src/security/QpdfWorker.h
     src/security/MeasureExport.cpp
     src/security/MeasureExport.h
     src/platform/PlatformIntegration.h
@@ -379,6 +381,22 @@ add_library(mervin_app STATIC
     src/update/Updater.h
 )
 qt_add_executable(MervinPDF src/main.cpp)
+target_compile_definitions(mervin_core PRIVATE MERVIN_QPDF_EXECUTABLE="$<TARGET_FILE_NAME:MervinPDF>")
+# ASan reserves terabytes of virtual shadow memory before main. Its executable
+# cannot run under the production 1 GiB address-space limit. Tests must launch an
+# ordinary build of the same application revision; the instrumented parent keeps
+# all IPC, destination checks and publication under ASan. Release builds have no
+# executable override and always use their own installed application.
+set(MERVIN_TEST_QPDF_EXECUTABLE "" CACHE FILEPATH "Same-revision unsanitized application for ASan tests")
+if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+    if(NOT MERVIN_BUILD_TESTS OR NOT IS_ABSOLUTE "${MERVIN_TEST_QPDF_EXECUTABLE}"
+       OR NOT EXISTS "${MERVIN_TEST_QPDF_EXECUTABLE}")
+        message(FATAL_ERROR "ASan tests require MERVIN_TEST_QPDF_EXECUTABLE pointing to an unsanitized build of this revision. Worker resource limits are not relaxed for ASan.")
+    endif()
+    target_compile_definitions(mervin_core PRIVATE MERVIN_TEST_QPDF_EXECUTABLE="${MERVIN_TEST_QPDF_EXECUTABLE}")
+elseif(MERVIN_TEST_QPDF_EXECUTABLE)
+    message(FATAL_ERROR "MERVIN_TEST_QPDF_EXECUTABLE is allowed only in ASan test builds.")
+endif()
 target_link_libraries(MervinPDF PRIVATE mervin_app)
 target_link_libraries(mervin_app PUBLIC mervin_viewer mervin_core mervin_icons Qt6::Widgets Qt6::Network
     Qt6::PrintSupport)

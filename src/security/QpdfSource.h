@@ -20,6 +20,7 @@ struct QpdfReadState
 {
     QString path;
     QString error;
+    int sourceIndex = -1; // original merge input, retained through lazy reads
 
     /// Rejects publication after a failed source read, including a swallowed exception.
     void throwIfFailed() const;
@@ -45,7 +46,8 @@ QString qpdfFailurePath(const std::exception &error);
 /// With state, the failure remains recorded even if a caller catches the exception.
 void checkQpdfWarnings(QPDF &pdf, QpdfReadState *state = nullptr);
 
-// Opens `path` in a new QPDF once job::reading(path) approves, and sets `pdf` on Ok.
+// Opens `path` in a new QPDF only inside the bounded helper, after the parent's
+// job::reading(path) approves, and sets `pdf` on Ok. Other callers fail closed.
 // qpdf reads objects and stream data only when they are used, so most of a source is
 // read while an AtomicPdfWriter writes. Each read reports job::Step::Reading for `path`
 // again when the thread reported another step since (job::switchTo), so a job waiting
@@ -62,6 +64,7 @@ void checkQpdfWarnings(QPDF &pdf, QpdfReadState *state = nullptr);
 // reason.
 QpdfService::Status openQpdf(const QString &path, const QString &password,
                              std::unique_ptr<QPDF> &pdf, QString *error,
-                             std::shared_ptr<QpdfReadState> *readState = nullptr);
+                             std::shared_ptr<QpdfReadState> *readState = nullptr,
+                             int sourceIndex = -1);
 
 } // namespace mervin

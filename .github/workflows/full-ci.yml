@@ -257,8 +257,14 @@ jobs:
           python3 scripts/fetch-test-tessdata.py build/test-tessdata
           flags=()
           if [ "${{ matrix.build }}" = sanitize ]; then
+            # ASan's virtual shadow cannot fit the helper's hard address-space
+            # limit. Build the real release helper from this exact checkout.
+            cmake -S . -B build/qpdf-worker -G Ninja -DCMAKE_BUILD_TYPE=Release -DMERVIN_BUILD_TESTS=OFF \
+              -Dqpdf_DIR="$PWD/dev-temp/qpdf/lib/cmake/qpdf"
+            cmake --build build/qpdf-worker --parallel 2 --target MervinPDF
             flags+=("-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer")
             flags+=("-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined")
+            flags+=("-DMERVIN_TEST_QPDF_EXECUTABLE=$PWD/build/qpdf-worker/MervinPDF")
           fi
           cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMERVIN_BUILD_TESTS=ON \
             -Dqpdf_DIR="$PWD/dev-temp/qpdf/lib/cmake/qpdf" "${flags[@]}"

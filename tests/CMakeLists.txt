@@ -45,6 +45,7 @@ set(_mervin_tests
     tst_extract_plan
     tst_text_index
     tst_qpdf
+    tst_qpdf_worker
     tst_ocr
     tst_ocr_popup
     tst_settings_dialog
@@ -105,6 +106,9 @@ set_tests_properties(tst_tesseract_models PROPERTIES TIMEOUT 60)
 target_link_libraries(tst_mujs PRIVATE MuPDF::MuPDF)
 target_include_directories(tst_mujs PRIVATE "${MUPDF_DIR}/thirdparty/mujs")
 set_tests_properties(tst_mujs PROPERTIES TIMEOUT 30)
+
+# Public qpdf APIs always run the real application in its bounded internal mode.
+target_link_libraries(tst_qpdf_worker PRIVATE Qt6::Widgets)
 
 # These tests inspect qpdf objects directly; mervin_core keeps its dependency private.
 foreach(_t tst_atomic_pdf_writer tst_document_output)
@@ -749,3 +753,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             "XDG_CONFIG_HOME=set:${CMAKE_CURRENT_BINARY_DIR}/test-config/${_t}")
     endforeach()
 endif()
+
+# A test built on its own must have the same helper executable as a full build.
+get_property(_mervin_test_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(_t IN LISTS _mervin_test_targets)
+    get_target_property(_mervin_target_type ${_t} TYPE)
+    if(_mervin_target_type STREQUAL "EXECUTABLE")
+        add_dependencies(${_t} MervinPDF)
+    endif()
+endforeach()

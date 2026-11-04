@@ -1,4 +1,5 @@
 #include "dialogs/MergeDialog.h"
+#include "security/QpdfWorker.h"
 #include "ui/TextLayout.h"
 
 #include "dialogs/LayoutMinimum.h"
@@ -324,10 +325,11 @@ QString MergeDialog::failureSummary(const MergePlan &plan, const QString &output
     } else if (failedIndex >= 0 && failedIndex < plan.count()) {
         //: %1 is the name of the file being merged when it failed.
         const QString summary = tr("The merge failed on \"%1\".").arg(plan.displayName(failedIndex));
-        return error == PageOps::xfaTransformationError() ? summary + QLatin1Char('\n') + error
-                                                          : summary;
+        return error == PageOps::xfaTransformationError() || error == qpdfWorker::failureText()
+            ? summary + QLatin1Char('\n') + error : summary;
     } else if (!error.isEmpty() && (error == PageOps::measurementsTooLargeError()
-                                   || error == PageOps::xfaTransformationError())) {
+                                   || error == PageOps::xfaTransformationError()
+                                   || error == qpdfWorker::failureText())) {
         return error;
     } else {
         //: %1 is the merged file's name.

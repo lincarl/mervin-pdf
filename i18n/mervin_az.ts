@@ -3006,6 +3006,14 @@ Sisteminizin Parametrlər → Defolt Proqramları açın (və ya PDF-i sağ klik
     </message>
 </context>
 <context>
+    <name>mervin::QpdfWorker</name>
+    <message>
+        <source>PDF processing stopped or exceeded a safety limit. Try a smaller document.</source>
+        <extracomment>Visible failure reason for PDF security, page or measurement operations. The isolated PDF worker could not start safely, stopped unexpectedly, or exceeded its memory, time, request or output limit. This is not a diagnosis that the PDF is damaged. Suggest processing a smaller document.</extracomment>
+        <translation>PDF emalı dayandı və ya təhlükəsizlik həddini aşdı. Daha kiçik sənədlə sınayın.</translation>
+    </message>
+</context>
+<context>
     <name>mervin::RecentFilesPanel</name>
     <message>
         <source>Stop</source>

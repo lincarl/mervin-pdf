@@ -2,6 +2,7 @@
 #include "io/JobContext.h"
 #include "recent/PathKey.h"
 #include "security/AtomicPdfWriter.h"
+#include "security/QpdfWorker.h"
 #include "security/MeasurementPages.h"
 #include "security/QpdfSource.h"
 #include <algorithm>
@@ -2148,6 +2149,24 @@ PageOps::testing::SplitProjection PageOps::testing::lastSplitProjection()
 PageOps::Status PageOps::probe(const QString &path, int *count, const QString &password,
                                QString *error, bool *encrypted, QString *sourceKey)
 {
+    if (!qpdfWorker::inWorker()) {
+        qpdfWorker::Request request;
+        request.operation = qpdfWorker::Operation::Probe;
+        request.path = path;
+        request.password = password;
+        const auto result = qpdfWorker::run(request);
+        if (error)
+            *error = result.error;
+        if (result.status == Status::Ok) {
+            if (count)
+                *count = result.count;
+            if (encrypted)
+                *encrypted = result.encrypted;
+            if (sourceKey)
+                *sourceKey = result.sourceKey;
+        }
+        return result.status;
+    }
     std::unique_ptr<QPDF> source;
     std::shared_ptr<QpdfReadState> reads;
     const Status st = openQpdf(path, password, source, error, &reads);
@@ -2193,6 +2212,20 @@ PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPa
                                      const QList<int> &pages, const QString &password,
                                      QString *error, int *failedIndex)
 {
+    if (!qpdfWorker::inWorker()) {
+        qpdfWorker::Request request;
+        request.operation = qpdfWorker::Operation::Delete;
+        request.path = inPath;
+        request.output = outPath;
+        request.pages = pages;
+        request.password = password;
+        const auto result = qpdfWorker::run(request);
+        if (error)
+            *error = result.error;
+        if (failedIndex)
+            *failedIndex = result.failedIndex;
+        return result.status;
+    }
     if (failedIndex)
         *failedIndex = -1;
     std::unique_ptr<QPDF> source;
@@ -2254,6 +2287,20 @@ PageOps::Status PageOps::rotatePages(const QString &inPath, const QString &outPa
                                      const QList<int> &pages, int angle, bool relative,
                                      const QString &password, QString *error)
 {
+    if (!qpdfWorker::inWorker()) {
+        qpdfWorker::Request request;
+        request.operation = qpdfWorker::Operation::Rotate;
+        request.path = inPath;
+        request.output = outPath;
+        request.pages = pages;
+        request.angle = angle;
+        request.relative = relative;
+        request.password = password;
+        const auto result = qpdfWorker::run(request);
+        if (error)
+            *error = result.error;
+        return result.status;
+    }
     std::unique_ptr<QPDF> source;
     std::shared_ptr<QpdfReadState> reads;
     const Status st = openQpdf(inPath, password, source, error, &reads);
@@ -2341,6 +2388,21 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
                                QString *error, int *failedIndex,
                                const std::function<bool()> &mayCommit)
 {
+    if (!qpdfWorker::inWorker()) {
+        qpdfWorker::Request request;
+        request.operation = qpdfWorker::Operation::Merge;
+        request.inputs = inputs;
+        request.output = outPath;
+        request.failRetarget = failRetarget.exchange(false);
+        const auto result = qpdfWorker::run(request, {{}, [&](const QString &) {
+            return !mayCommit || mayCommit();
+        }});
+        if (error)
+            *error = result.error;
+        if (failedIndex)
+            *failedIndex = result.failedIndex;
+        return result.status;
+    }
     if (failedIndex)
         *failedIndex = -1;
     int reading = -1; // the input being read, which an exception names in failedIndex
@@ -2371,7 +2433,7 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
             if (it == opened.end()) {
                 std::unique_ptr<QPDF> src;
                 std::shared_ptr<QpdfReadState> state;
-                const Status st = openQpdf(in.path, in.password, src, error, &state);
+                const Status st = openQpdf(in.path, in.password, src, error, &state, i);
                 if (st != Status::Ok) {
                     if (failedIndex)
                         *failedIndex = i;
@@ -2385,7 +2447,7 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
                 // Reusing a handle must not silently accept a conflicting password.
                 // Both a valid owner password and a valid user password are allowed.
                 std::unique_ptr<QPDF> checked;
-                const Status st = openQpdf(in.path, in.password, checked, error);
+                const Status st = openQpdf(in.path, in.password, checked, error, nullptr, i);
                 if (st != Status::Ok) {
                     if (failedIndex)
                         *failedIndex = i;
@@ -2475,6 +2537,23 @@ PageOps::Status PageOps::split(const QString &inPath, const QString &outDir, con
                                const std::function<bool(const QStringList &)> &mayWrite,
                                const std::function<bool(const QString &)> &mayCommit)
 {
+    if (!qpdfWorker::inWorker()) {
+        splitProjection = {};
+        qpdfWorker::Request request;
+        request.operation = qpdfWorker::Operation::Split;
+        request.path = inPath;
+        request.output = outDir;
+        request.baseName = baseName;
+        request.password = password;
+        request.failRetarget = failRetarget.exchange(false);
+        const auto result = qpdfWorker::run(request, {mayWrite, mayCommit});
+        splitProjection = result.projection;
+        if (outFiles)
+            outFiles->append(result.outputs);
+        if (error)
+            *error = result.error;
+        return result.status;
+    }
     splitProjection = {};
     std::unique_ptr<QPDF> source;
     std::shared_ptr<QpdfReadState> reads;

@@ -2,6 +2,7 @@
 #include "security/AtomicPdfWriter.h"
 #include "security/MeasurementPages.h"
 #include "security/QpdfSource.h"
+#include "security/QpdfWorker.h"
 
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFObjectHandle.hh>
@@ -56,6 +57,19 @@ MeasureExport::Status MeasureExport::flatten(const QString &inPath, const QStrin
                                              const QString &password, QString *error,
                                              bool keepStoredBlob)
 {
+    if (!qpdfWorker::inWorker()) {
+        qpdfWorker::Request request;
+        request.operation = qpdfWorker::Operation::Flatten;
+        request.path = inPath;
+        request.output = outPath;
+        request.password = password;
+        request.marks = marks;
+        request.keepStoredBlob = keepStoredBlob;
+        const auto result = qpdfWorker::run(request);
+        if (error)
+            *error = result.error;
+        return result.status;
+    }
     std::unique_ptr<QPDF> source;
     std::shared_ptr<QpdfReadState> readState;
     const Status st = openQpdf(inPath, password, source, error, &readState);
@@ -121,6 +135,18 @@ MeasureExport::Status MeasureExport::embedMervin(const QString &inPath, const QS
                                                  const MeasureDoc &doc, const QString &password,
                                                  QString *error)
 {
+    if (!qpdfWorker::inWorker()) {
+        qpdfWorker::Request request;
+        request.operation = qpdfWorker::Operation::Embed;
+        request.path = inPath;
+        request.output = outPath;
+        request.password = password;
+        request.measurements = doc;
+        const auto result = qpdfWorker::run(request);
+        if (error)
+            *error = result.error;
+        return result.status;
+    }
     std::unique_ptr<QPDF> source;
     std::shared_ptr<QpdfReadState> readState;
     const Status st = openQpdf(inPath, password, source, error, &readState);
@@ -146,6 +172,17 @@ MeasureExport::Status MeasureExport::embedMervin(const QString &inPath, const QS
 MeasureExport::Status MeasureExport::keepMervin(const QString &inPath, const QString &outPath,
                                                 const QString &password, QString *error)
 {
+    if (!qpdfWorker::inWorker()) {
+        qpdfWorker::Request request;
+        request.operation = qpdfWorker::Operation::Keep;
+        request.path = inPath;
+        request.output = outPath;
+        request.password = password;
+        const auto result = qpdfWorker::run(request);
+        if (error)
+            *error = result.error;
+        return result.status;
+    }
     std::unique_ptr<QPDF> source;
     std::shared_ptr<QpdfReadState> readState;
     const Status st = openQpdf(inPath, password, source, error, &readState);
@@ -170,6 +207,13 @@ MeasureExport::Status MeasureExport::keepMervin(const QString &inPath, const QSt
 std::optional<QByteArray> MeasureExport::readMervinBlob(const QString &inPath,
                                                         const QString &password)
 {
+    if (!qpdfWorker::inWorker()) {
+        qpdfWorker::Request request;
+        request.operation = qpdfWorker::Operation::Blob;
+        request.path = inPath;
+        request.password = password;
+        return qpdfWorker::run(request).blob;
+    }
     std::unique_ptr<QPDF> source;
     std::shared_ptr<QpdfReadState> readState;
     if (openQpdf(inPath, password, source, nullptr, &readState) != Status::Ok)

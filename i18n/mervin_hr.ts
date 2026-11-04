@@ -3021,6 +3021,14 @@ Otvorite Postavke vašeg sustava → Zadane aplikacije (ili desnom tipkom miša 
     </message>
 </context>
 <context>
+    <name>mervin::QpdfWorker</name>
+    <message>
+        <source>PDF processing stopped or exceeded a safety limit. Try a smaller document.</source>
+        <extracomment>Visible failure reason for PDF security, page or measurement operations. The isolated PDF worker could not start safely, stopped unexpectedly, or exceeded its memory, time, request or output limit. This is not a diagnosis that the PDF is damaged. Suggest processing a smaller document.</extracomment>
+        <translation>Obrada PDF-a zaustavljena je ili je prekoračila sigurnosno ograničenje. Pokušajte s manjim dokumentom.</translation>
+    </message>
+</context>
+<context>
     <name>mervin::RecentFilesPanel</name>
     <message>
         <source>Stop</source>
