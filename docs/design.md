@@ -268,11 +268,22 @@ These still touch the disk on the UI thread and are planned work:
   non-PDF formats retain their path-based lookup of relative resources.
 - Reads at startup before the first window, and the system file dialogs, which
   run on the UI thread by design.
-- Opening a folder or a link with the system's handler (`QDesktopServices::openUrl`),
-  which on Windows waits for `ShellExecute`.
-- Two small updater steps: telling how this copy was installed when the updater
-  starts (a registry read on Windows, a check that `$APPIMAGE` is a file on Linux),
-  and starting the Windows installer, whose working folder is the download's folder.
+
+The updater identifies this copy's installation on its disk worker, including
+Windows registry reads and the Linux `$APPIMAGE` file check. Requests made while
+that check is pending wait without blocking the UI and use the identified
+provider. An open Settings dialog refreshes its update controls when detection
+finishes, keeping unrelated edits.
+Windows installer launches also run on that worker. Confirmed document windows
+remain allocated but hidden until the launch returns, so a nested Settings dialog
+can unwind safely. A separate installation notice continues to paint during the
+launch, and the verified staging directory survives until the helper takes over
+cleanup or the failed handoff restores the pending update.
+
+Windows browser and Microsoft Store links dispatch their native shell calls to
+workers. The UI thread still routes Qt URL handlers, so application handlers
+remain on their owning thread. Windows folder launches already use the same
+background shell-call pattern. Other platforms retain Qt's desktop integration.
 
 ### Opening a new tab
 

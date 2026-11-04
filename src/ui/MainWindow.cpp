@@ -2314,6 +2314,7 @@ void MainWindow::openSettings(SettingsDialog::Page page)
     mervin::Updater *updater = mervin::Updater::instance();
     if (updater) {
         updates.checkAvailable = true;
+        updates.ready = updater->ready();
         updates.canSelfUpdate = updater->canSelfUpdate();
         updates.storeManaged = updater->storeManaged();
         updates.lastCheck = mervin::Updater::lastCheck();
@@ -2327,6 +2328,15 @@ void MainWindow::openSettings(SettingsDialog::Page page)
         // Also when the date is read at start, which a dialog opened right away misses.
         connect(updater, &mervin::Updater::lastCheckChanged, &dlg,
                 &SettingsDialog::setLastUpdateCheck);
+        connect(updater, &mervin::Updater::initialized, &dlg, [&dlg, updater] {
+            SettingsDialog::UpdateInfo info;
+            info.checkAvailable = true;
+            info.ready = updater->ready();
+            info.canSelfUpdate = updater->canSelfUpdate();
+            info.storeManaged = updater->storeManaged();
+            info.lastCheck = mervin::Updater::lastCheck();
+            dlg.setUpdateInfo(info);
+        });
     }
     // Another window can change automatic updates while this dialog is open.
     // Keep the checkbox current so OK does not write the old value back.

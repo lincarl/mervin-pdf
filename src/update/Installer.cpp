@@ -134,9 +134,6 @@ bool startWindowsInstaller(const QString &file)
         return false;
     if (!cmd.startDetached())
         return false; // startIfDue then starts a copy for the launches this one carries
-    // The copy the installer starts afterwards opens the launches this one carries,
-    // from the carry file this process writes before it exits.
-    relaunch::nextCopyStarted();
     return true;
 #else
     Q_UNUSED(file);

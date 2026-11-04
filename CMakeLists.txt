@@ -213,6 +213,8 @@ add_library(mervin_core STATIC
     src/platform/PlatformIntegration.h
     src/platform/FileClipboard.cpp
     src/platform/FileClipboard.h
+    src/platform/ExternalOpen.cpp
+    src/platform/ExternalOpen.h
     src/i18n/UiLanguage.cpp
     src/i18n/UiLanguage.h
     # The colour vocabulary. Values only (QColor/QPalette, no widgets), so it
@@ -236,7 +238,7 @@ target_link_libraries(mervin_core
 if(WIN32)
     target_sources(mervin_core PRIVATE src/platform/win/WindowsIntegration.cpp)
     # advapi32 reads the single-instance pipe server's token (ipc/Handoff.cpp).
-    target_link_libraries(mervin_core PRIVATE shlwapi advapi32)
+    target_link_libraries(mervin_core PRIVATE shlwapi advapi32 shell32 ole32)
 else()
     target_sources(mervin_core PRIVATE src/platform/linux/DesktopIntegration.cpp)
 endif()

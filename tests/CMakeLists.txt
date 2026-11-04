@@ -67,6 +67,7 @@ set(_mervin_tests
     tst_form_model
     tst_annot_model
     tst_file_clipboard
+    tst_external_open
     tst_perf_render
     tst_perf_startup)
 

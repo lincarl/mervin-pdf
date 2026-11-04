@@ -396,8 +396,11 @@ A dialog's minimum size must follow its layout. Qt stops raising a window's mini
 once code sets one, and a minimum measured in the constructor misses later growth,
 such as a list gaining its scroll bar or a longer translated choice. Give the
 dialog's smallest comfortable size to `followLayoutMinimum()` in
-`src/dialogs/LayoutMinimum.h` instead of calling `setMinimumSize()`. Settings keeps a
-fixed minimum because its pages scroll.
+`src/dialogs/LayoutMinimum.h` instead of calling `setMinimumSize()`. Settings sizes
+its minimum width from General's controls and the available screen width. Its
+pages scroll when the work area cannot hold their contents. Include scrollbar
+width when sizing a navigation list or a page that can gain a scrollbar, so a
+shorter window does not hide a label or a dropdown arrow.
 
 New windows also pass through `keepWindowsOnScreen()` in
 `src/ui/WindowPlacement.h`. It fits their native frames to the current screen's

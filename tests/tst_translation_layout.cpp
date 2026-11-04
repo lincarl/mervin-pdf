@@ -1816,6 +1816,13 @@ void TstTranslationLayout::settings()
     SettingsDialog portable(values, portableUpdates, SettingsDialog::Page::Updates);
     QTRY_VERIFY(!mervin::TessdataManager::busy());
     inspect(portable, QStringLiteral("Settings updates without automatic installation"));
+    auto detectingUpdates = updates;
+    detectingUpdates.ready = false;
+    SettingsDialog detecting(values, detectingUpdates, SettingsDialog::Page::Updates);
+    QTRY_VERIFY(!mervin::TessdataManager::busy());
+    inspect(detecting, QStringLiteral("Settings waiting for update provider"));
+    detecting.setUpdateInfo(updates);
+    inspect(detecting, QStringLiteral("Settings update provider arrived"));
     dialog.showPage(SettingsDialog::Page::General);
     auto *duration = dialog.findChild<QSpinBox *>(QStringLiteral("unloadInactiveMinutes"));
     auto *never = dialog.findChild<QCheckBox *>(QStringLiteral("neverUnloadDocuments"));

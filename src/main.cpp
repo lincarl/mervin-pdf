@@ -8,6 +8,7 @@
 
 #include "app/Relaunch.h"
 #include "app/WindowManager.h"
+#include "platform/ExternalOpen.h"
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
 #include "dialogs/FirstRunDialog.h"
@@ -231,6 +232,7 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
           std::unique_ptr<SingleInstanceServer> server, bool ownsState)
 {
     app.setQuitOnLastWindowClosed(false); // WindowManager drives process exit
+    mervin::externalopen::install(&app);
     mervin::Settings::setPersistenceEnabled(ownsState);
     QStringList paths = cliPaths;
     const FirstRunChoices firstRun = startUiLanguage(cli, server.get(), ownsState, paths);

@@ -20,7 +20,8 @@ PackageKind installedPackageKind();
 // installation progress and relaunch on any outcome, preserving --profile. The copy it
 // starts opens the launches this one carries (relaunch::carry). Return false if launch
 // fails. `file` must be the sole package in an updater-owned private staging
-// directory. The helper removes that file and directory after MSI exits.
+// directory. The helper removes that file and directory after MSI exits. Run on a
+// worker; after success the UI caller records relaunch::nextCopyStarted().
 bool startWindowsInstaller(const QString &file);
 
 #ifdef Q_OS_WIN

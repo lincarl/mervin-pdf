@@ -1516,8 +1516,8 @@ private slots:
     }
 
     // Checks that Check for Updates, which runs from the modal Settings dialog,
-    // closes the windows under it. The update quits in the same call, as the
-    // updater does, so Settings returns before its window is deleted.
+    // hides the windows under it and retains them while a worker starts the
+    // installer. Settings must return before its window is deleted.
     void updaterClosesWindowsUnderSettings()
     {
         QTemporaryDir files;
@@ -1536,7 +1536,7 @@ private slots:
                 Settings::load(), {}, SettingsDialog::Page::Updates, window);
             QTimer::singleShot(0, settings, [&] {
                 result = manager.tryCloseAllForUpdate();
-                QCoreApplication::quit(); // as Updater::handOffToInstaller does next
+                QTimer::singleShot(50, qApp, [] { QCoreApplication::quit(); });
             });
             settingsOpen = true;
             settings->exec();
@@ -1549,7 +1549,9 @@ private slots:
         timeout.start(10000);
         QCOMPARE(QApplication::exec(), 0);
         QCOMPARE(result, std::optional(Updater::CloseResult::Closed));
-        QTRY_VERIFY(!window);
+        QVERIFY(window && !window->isVisible());
+        delete window;
+        QVERIFY(!window);
         QVERIFY(!deletedUnderSettings);
         QVERIFY(questions_.isEmpty());
     }
