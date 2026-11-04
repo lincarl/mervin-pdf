@@ -506,6 +506,9 @@ private slots:
             point = editor->viewport()->mapTo(viewer.viewport(), editor->visualItemRect(editor->item(1)).center());
         }
         viewer.setDocument(nullptr);
+        // Finish deferred deletion before checking the next load's missing editors.
+        QTRY_VERIFY(!viewer.findChild<QPlainTextEdit *>());
+        QTRY_VERIFY(!viewer.findChild<QListWidget *>());
         QSemaphore entered, release;
         std::atomic<bool> once{true};
         ViewerQueries::testing::observe([&](bool edit, int page) {

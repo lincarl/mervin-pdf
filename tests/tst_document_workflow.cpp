@@ -1083,6 +1083,8 @@ private slots:
         QTRY_VERIFY(firstTab->isUsable() && secondTab->isUsable());
         QVERIFY(firstTab->hasUnsavedEdits());
         QVERIFY(secondTab->hasUnsavedEdits());
+        QVERIFY(mervin::testing::waitForPage(firstTab->viewer()->annotModel(), 0));
+        QVERIFY(mervin::testing::waitForPage(secondTab->viewer()->annotModel(), 0));
         const auto firstNotes = firstTab->viewer()->annotModel()->pageAnnots(0);
         const auto secondNotes = secondTab->viewer()->annotModel()->pageAnnots(0);
         QCOMPARE(firstNotes.size(), 1u);
