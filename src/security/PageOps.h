@@ -94,6 +94,9 @@ public:
     // kMaxMeasurementBlobBytes, which the readers refuse. Nothing was written.
     static QString measurementsTooLargeError();
 
+    /// Explains why copying or deleting pages of an XFA form is refused.
+    static QString xfaTransformationError();
+
     // Concatenate all pages of `inPaths` (in order) into one document.
     static Status merge(const QStringList &inPaths, const QString &outPath, QString *error = nullptr);
 

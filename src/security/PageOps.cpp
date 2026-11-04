@@ -43,6 +43,14 @@ thread_local PageOps::testing::SplitProjection splitProjection;
 // recurse, such as a climb through /Parent, reach each object once and need no limit.
 constexpr int kMaxDepth = 100;
 
+/// XFA describes the whole form. Page copies and pruning cannot safely rewrite it.
+void requireNonXfa(QPDF &pdf)
+{
+    QPDFObjectHandle form = pdf.getRoot().getKey("/AcroForm");
+    if (form.isDictionary() && !form.getKey("/XFA").isNull())
+        throw std::runtime_error(PageOps::xfaTransformationError().toStdString());
+}
+
 /// Adds the indirect annotations that `page` lists in /Annots to `into`.
 void addAnnotations(QPDFObjectHandle page, ObjectSet &into)
 {
@@ -656,8 +664,7 @@ void pruneStructure(QPDF &q, const Removal &removal)
 /// files that Extract wrote before it copied forms. A field above such a widget is not
 /// returned, even when the walk through /Kids did not reach the widget, as in a damaged
 /// file, because the widget inherits its type, flags and name from it. Its other kids that
-/// only deleted pages show go all the same. Removing a field also drops /XFA, whose data
-/// holds every field's value and would no longer match the form.
+/// only deleted pages show go all the same. The caller refuses XFA before deleting pages.
 ObjectSet pruneDeletedFields(QPDF &q, const Removal &removal)
 {
     FieldPruner pruner(removal.keptAnnotations, &removal.annotations);
@@ -672,8 +679,6 @@ ObjectSet pruneDeletedFields(QPDF &q, const Removal &removal)
         for (QPDFObjectHandle field : pruneFieldsOf(widget, pruner))
             if (field.isIndirect())
                 used.insert(field.getObjGen());
-    if (form.isDictionary() && !pruner.removed().empty())
-        form.removeKey("/XFA");
     ObjectSet gone;
     for (const QPDFObjGen &id : pruner.removed())
         if (!used.count(id))
@@ -849,6 +854,20 @@ fieldNames(const std::vector<QPDFObjectHandle> &fields)
     return names;
 }
 
+/// Maps calculation entries only to existing field copies, never importing omitted trees.
+std::vector<QPDFObjectHandle> mappedCalculationOrder(
+    QPDFObjectHandle form, const std::map<QPDFObjGen, QPDFObjectHandle> &copied)
+{
+    std::vector<QPDFObjectHandle> order;
+    QPDFObjectHandle source = form.isDictionary() ? form.getKey("/CO") : form;
+    if (source.isArray())
+        for (QPDFObjectHandle field : source.aitems())
+            if (field.isIndirect())
+                if (const auto it = copied.find(field.getObjGen()); it != copied.end())
+                    order.push_back(it->second);
+    return order;
+}
+
 /// Form helpers and action names for sources, each collected once.
 class SourceForms
 {
@@ -969,7 +988,7 @@ public:
         // Validate dependencies before copying anything. Importing an action or an
         // appearance that refers back into the original form would copy that tree again
         // and give its references different identities from the selected branches.
-        if (!safeProperties(form_, {"/Fields"})
+        if (!safeProperties(form_, {"/Fields", "/CO"})
             || !safeProperties(original, {"/Parent", "/Annots"}))
             return {};
         for (const char *key : {"/Resources", "/MediaBox", "/CropBox", "/Rotate"})
@@ -1031,8 +1050,11 @@ public:
             copiedAnnots.appendItem(object);
         }
         copiedPage.replaceKey("/Annots", copiedAnnots);
-        auto form = copyProperties(*part, form_, {"/Fields"});
+        auto form = copyProperties(*part, form_, {"/Fields", "/CO"});
         form.replaceKey("/Fields", childArray(QPDFObjGen()));
+        const auto order = mappedCalculationOrder(form_, copied);
+        if (!order.empty())
+            form.replaceKey("/CO", QPDFObjectHandle::newArray(order));
         part->getRoot().replaceKey("/AcroForm", part->makeIndirectObject(form));
         ++splitProjection.pages;
         splitProjection.fields += selected.size();
@@ -1233,6 +1255,7 @@ public:
                 out_.replaceObject(id, QPDFObjectHandle::newNull());
         removeLeftOutAnnotations(widgets, used);
         scopeFormActions();
+        retainCalculationOrder();
     }
 
 private:
@@ -1246,6 +1269,62 @@ private:
         Copies copies;
         std::map<std::string, std::string> names; // fully qualified names that a rename changed
     };
+
+    /// Keeps calculation references reachable from the final, pruned field tree.
+    void retainCalculationOrder()
+    {
+        QPDFObjectHandle form = out_.getRoot().getKey("/AcroForm");
+        if (!form.isDictionary())
+            return;
+        QPDFObjectHandle fields = form.getKey("/Fields");
+        ObjectSet reachable;
+        std::vector<QPDFObjectHandle> queue = fields.isArray()
+            ? fields.getArrayAsVector() : std::vector<QPDFObjectHandle>();
+        while (!queue.empty()) {
+            QPDFObjectHandle field = queue.back();
+            queue.pop_back();
+            if (!field.isIndirect() || !field.isDictionary()
+                || !reachable.insert(field.getObjGen()).second)
+                continue;
+            QPDFObjectHandle kids = field.getKey("/Kids");
+            if (kids.isArray())
+                for (QPDFObjectHandle kid : kids.aitems())
+                    queue.push_back(kid);
+        }
+        std::vector<QPDFObjectHandle> order;
+        for (QPDFObjectHandle field : calculationOrder_)
+            if (reachable.count(field.getObjGen()))
+                order.push_back(field);
+        if (!order.empty())
+            form.replaceKey("/CO", QPDFObjectHandle::newArray(order));
+    }
+
+    /// Pairs only retained widgets and their ancestors, separately for each source pass.
+    void recordCalculationOrder(QPDF &source, QPDFObjectHandle annots,
+                                const std::vector<QPDFObjectHandle> &made)
+    {
+        if (!annots.isArray() || annots.getArrayNItems() != static_cast<int>(made.size()))
+            return;
+        Copies copied;
+        for (int i = 0; i < annots.getArrayNItems(); ++i) {
+            QPDFObjectHandle from = annots.getArrayItem(i);
+            QPDFObjectHandle to = made[static_cast<size_t>(i)];
+            if (!from.isDictionary() || !to.isDictionary()
+                || !from.getKey("/Subtype").isNameAndEquals("/Widget")
+                || !to.getKey("/Subtype").isNameAndEquals("/Widget"))
+                continue;
+            while (from.isIndirect() && to.isIndirect() && from.isDictionary()
+                   && to.isDictionary() && copied.emplace(from.getObjGen(), to).second) {
+                from = from.getKey("/Parent");
+                to = to.getKey("/Parent");
+                if ((from.isDictionary() && from.hasKey("/Type"))
+                    || (to.isDictionary() && to.hasKey("/Type")))
+                    break;
+            }
+        }
+        const auto order = mappedCalculationOrder(source.getRoot().getKey("/AcroForm"), copied);
+        calculationOrder_.insert(calculationOrder_.end(), order.begin(), order.end());
+    }
 
     // Prunes the field tree of `widget`, if it is a widget (see pruneFieldsOf), and adds the
     // fields above the widget to `used`.
@@ -1978,6 +2057,7 @@ private:
                 // an output page, so the links to them go.
                 dropFirstCopyLinks(annots, made);
             }
+            recordCalculationOrder(from.getQPDF(), annots, made);
             return true;
         } catch (const std::exception &) {
             for (size_t i = 0; i < batch.size(); ++i)
@@ -1998,6 +2078,10 @@ private:
             return;
         }
         pointAt(copy.to);
+        QPDFObjectHandle made = copy.to.getKey("/Annots");
+        if (made.isArray())
+            recordCalculationOrder(from.getQPDF(), copy.from.getKey("/Annots"),
+                                   made.getArrayAsVector());
     }
 
     // Points the annotations of `page` at it. transformAnnotations leaves /P on the page
@@ -2027,6 +2111,7 @@ private:
     SourceForms &actionSources_;
     std::map<std::pair<QPDF *, QPDFObjGen>, int> passes_; // copies so far of each source page
     std::vector<Copy> copies_;
+    std::vector<QPDFObjectHandle> calculationOrder_;
 };
 
 } // namespace
@@ -2040,6 +2125,14 @@ int PageOps::pageCount(const QString &path, const QString &password)
 QString PageOps::measurementsTooLargeError()
 {
     return measurementPages::tooLargeError();
+}
+
+QString PageOps::xfaTransformationError()
+{
+    //: Error for Extract, Split, Merge or Delete Pages. XFA is the PDF form format,
+    //: not a filename. The operation writes nothing because changing the pages could
+    //: lose form data or retain data from removed pages. Keep the format name XFA.
+    return tr("This operation is not supported for PDF forms with XFA data.");
 }
 
 void PageOps::testing::failNextRetarget()
@@ -2126,12 +2219,15 @@ PageOps::Status PageOps::deletePages(const QString &inPath, const QString &outPa
                 throw std::runtime_error(tr("Page does not exist.").toStdString());
         if (drop.size() == all.size())
             throw std::runtime_error(tr("Cannot delete every page.").toStdString());
+        if (!drop.empty())
+            requireNonXfa(q);
         for (int i = 0; i < static_cast<int>(all.size()); ++i)
             if (drop.count(i))
                 dh.removePage(all[static_cast<size_t>(i)]);
             else
                 kept.append(i);
-        removeDeletedContent(q, all, drop, shared);
+        if (!drop.empty())
+            removeDeletedContent(q, all, drop, shared);
         MeasureDoc mapped;
         measurementPages::append(mapped, measurements, kept, 0);
         measurementPages::write(q, mapped);
@@ -2298,6 +2394,7 @@ PageOps::Status PageOps::merge(const QList<MergeInput> &inputs, const QString &o
                 passwords[key].insert(in.password);
             }
 
+            requireNonXfa(*it->second);
             auto all = QPDFPageDocumentHelper(*it->second).getAllPages();
             const int n = static_cast<int>(all.size());
             QList<int> selected = in.pages;
@@ -2386,6 +2483,7 @@ PageOps::Status PageOps::split(const QString &inPath, const QString &outDir, con
         return st;
     QPDF &q = *source;
     try {
+        requireNonXfa(q);
         QPDFPageDocumentHelper dh(q);
         auto all = dh.getAllPages();
         checkQpdfWarnings(q, reads.get());

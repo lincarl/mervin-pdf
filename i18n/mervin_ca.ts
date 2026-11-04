@@ -2931,6 +2931,11 @@ Obriu la configuració del vostre sistema → Aplicacions predeterminades (o feu
         <translation>No es poden suprimir totes les pàgines.</translation>
     </message>
     <message>
+        <source>This operation is not supported for PDF forms with XFA data.</source>
+        <extracomment>Error for Extract, Split, Merge or Delete Pages. XFA is the PDF form format, not a filename. The operation writes nothing because changing the pages could lose form data or retain data from removed pages. Keep the format name XFA.</extracomment>
+        <translation>Aquesta operació no s’admet en formularis PDF amb dades XFA.</translation>
+    </message>
+    <message>
         <source>Rotation must be a multiple of 90 degrees.</source>
         <translation>La rotació ha de ser múltiple de 90 graus.</translation>
     </message>

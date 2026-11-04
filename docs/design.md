@@ -1076,7 +1076,21 @@ climbs `/Parent` from every widget in the output, listed on a page or not, prune
 field tree it reaches and replaces the fields that go with null, except those above a
 widget that a page lists. That also covers a source without `/AcroForm`, whose widgets
 reach their field tree only through `/Parent`, and a reference that could not be
-rewritten. The output has no `/CO` or `/XFA`, as `transformAnnotations` copies neither.
+rewritten. Calculation order is mapped separately. Each source pass pairs the copied
+widgets and their ancestors with the corresponding source objects. Only these existing
+copies can enter `/CO`, in source calculation order. After pruning, every entry must
+remain reachable from `/AcroForm /Fields`. Split's independent page projection uses
+the same rule and excludes `/CO` from generic property copying. This prevents a
+calculation reference from importing an omitted field or page. Different sources and
+repeated passes retain separate references after field renaming. JavaScript remains
+unchanged and may still refer to old field names.
+
+Extract, Split and Merge reject any non-null `/XFA` before writing output. Even a
+complete page copy uses a new catalog and renamed form trees, so raw XFA copying is
+not a safe preservation rule. Delete also rejects XFA before removing any page.
+Split checks before its overwrite callback or first output. An unchanged Delete copy
+skips pruning and preserves the original XFA. Stream, packet-array and malformed
+non-null XFA entries all receive the same translated unsupported-operation error.
 
 `addPage` also copies the annotations that a copied annotation names, so a reply's `/IRT`
 brings along the note it answers, with its contents and popup, from a page left out.
@@ -1131,8 +1145,8 @@ from `/Dests` and the `/Names /Dests` tree, after the outline, which looks some
 bookmarks up through them. It removes the structure elements whose content is only on
 deleted pages, with their `/ParentTree` and `/IDTree` entries, and the deleted pages'
 content items from the elements that stay. It removes the form fields whose widgets are
-all on deleted pages from `/Fields`, `/CO` and their parents' `/Kids`, and drops `/XFA`
-when it removes one. It also prunes the trees that the widgets of kept pages reach
+all on deleted pages from `/Fields`, `/CO` and their parents' `/Kids`. XFA forms are
+refused before deletion. It also prunes the trees that the widgets of kept pages reach
 through `/Parent` when `/AcroForm` does not list them, as in files that Extract wrote
 before it copied forms. Finally it replaces the deleted pages, their annotations that no
 kept page lists and the removed fields with null (`QPDF::replaceObject`), so links and
@@ -2002,8 +2016,8 @@ and record the patch set's SHA-256 in `mervin-patch-set.sha256` beside the
 libraries. `cmake/FindMuPDF.cmake` refuses libraries built without the current set,
 and the CI cache keys use the same identity, so no build links an unpatched or
 outdated MuPDF. `tst_mupdf_store` covers the store fixes and `tst_form_model`
-covers inherited list-field appearance properties. MuPDF 1.28.6 changes its
-Brotli dependency but leaves all five patch targets unchanged. The patches
+covers saved list-field selections and raster differences. MuPDF 1.28.6 changes its
+Brotli dependency but leaves the first five patch targets unchanged. Those patches
 retain their original 1.28.5 provenance and apply unchanged to 1.28.6.
 
 The first three patches are Artifex's fixes for MuPDF bug 709849. Artifex committed them to
@@ -2018,8 +2032,7 @@ longer applies, and keep a test for each one.
 MuPDF's list-field appearance writer. It reads inherited `/Opt` and `/TI`, as the
 field enumerator already does, so a shared field's parent options do not become
 blank appearances after editing. The patch preserves list type, parent hierarchy
-and saved `/V`. MuPDF still does not highlight selected list items in generated
-appearances; saved selection values and visible option text are separate contracts.
+and saved `/V`. Patch 0006 adds selected-row highlighting.
 Remove this patch when the pinned upstream release includes the same inheritance fix.
 
 `0005-fitz-account-for-explicit-store-removal.patch` subtracts an explicitly removed
@@ -2027,6 +2040,19 @@ entry's size while the store lock is held. Without it, `fz_remove_item` leaves t
 byte count inflated and later inserts can evict live cache entries prematurely.
 The regression covers hashed and scanned keys. Remove the patch when the pinned
 release includes the same accounting fix.
+
+`0006-pdf-highlight-selected-list-options.patch` paints selected options with white
+text on blue in saved list appearances. It inherits `/V`, `/I`, `/Opt` and `/TI`,
+matches export values and paints display labels. `/I` distinguishes duplicate export
+values. It draws visible options as separate clipped rows, preserving Unicode font
+resources and shaped text. The test inspects saved `/AP` streams before reopening and
+compares actual selected and unselected pixels on shared widgets. The editor still
+offers one choice at a time; existing multiselect values render without being flattened.
+Combo appearances also show display labels instead of export values. `FormModel`
+maps the editor's display label back to its export value and replaces `/I` after a
+choice edit, including a changed index with the same export value. Shared widgets
+regenerate together. Remove the patch when the pinned upstream release provides the
+same behavior.
 
 - `0001-fitz-read-found-store-values-under-the-lock.patch` is MuPDF commit
   `5ba5c97` and changes `source/fitz/store.c`. `fz_find_item` and the duplicate

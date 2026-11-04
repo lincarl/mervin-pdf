@@ -293,6 +293,8 @@ set_target_properties(dump_icons PROPERTIES WIN32_EXECUTABLE OFF)
 
 # tst_qpdf builds fixture PDFs directly with qpdf, so it links it explicitly.
 target_link_libraries(tst_qpdf PRIVATE qpdf::libqpdf)
+# Regenerate form appearances with MuPDF and inspect saved objects independently with qpdf.
+target_link_libraries(tst_form_model PRIVATE MuPDF::MuPDF qpdf::libqpdf)
 
 # Widget-level guard rails for the merge dialog. MergeDialog and the UI sources
 # it uses (its shared row list and minimum size helper, theme) belong to the application target, so they

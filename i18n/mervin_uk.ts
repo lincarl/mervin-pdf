@@ -2946,6 +2946,11 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>Не можна видалити всі сторінки.</translation>
     </message>
     <message>
+        <source>This operation is not supported for PDF forms with XFA data.</source>
+        <extracomment>Error for Extract, Split, Merge or Delete Pages. XFA is the PDF form format, not a filename. The operation writes nothing because changing the pages could lose form data or retain data from removed pages. Keep the format name XFA.</extracomment>
+        <translation>Ця операція не підтримується для PDF-форм із даними XFA.</translation>
+    </message>
+    <message>
         <source>Rotation must be a multiple of 90 degrees.</source>
         <translation>Обертання має бути кратним 90 градусам.</translation>
     </message>

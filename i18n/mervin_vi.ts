@@ -2916,6 +2916,11 @@ Mở Cài đặt của hệ thống → Ứng dụng mặc định (hoặc nhấ
         <translation>Không thể xóa tất cả các trang.</translation>
     </message>
     <message>
+        <source>This operation is not supported for PDF forms with XFA data.</source>
+        <extracomment>Error for Extract, Split, Merge or Delete Pages. XFA is the PDF form format, not a filename. The operation writes nothing because changing the pages could lose form data or retain data from removed pages. Keep the format name XFA.</extracomment>
+        <translation>Thao tác này không được hỗ trợ cho biểu mẫu PDF có dữ liệu XFA.</translation>
+    </message>
+    <message>
         <source>Rotation must be a multiple of 90 degrees.</source>
         <translation>Góc quay phải là bội số của 90 độ.</translation>
     </message>

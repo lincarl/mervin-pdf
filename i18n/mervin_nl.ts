@@ -2931,6 +2931,11 @@ Open de instellingen van uw systeem → Standaardtoepassingen (of klik met de re
         <translation>Kan niet alle pagina&apos;s verwijderen.</translation>
     </message>
     <message>
+        <source>This operation is not supported for PDF forms with XFA data.</source>
+        <extracomment>Error for Extract, Split, Merge or Delete Pages. XFA is the PDF form format, not a filename. The operation writes nothing because changing the pages could lose form data or retain data from removed pages. Keep the format name XFA.</extracomment>
+        <translation>Deze bewerking wordt niet ondersteund voor PDF-formulieren met XFA-gegevens.</translation>
+    </message>
+    <message>
         <source>Rotation must be a multiple of 90 degrees.</source>
         <translation>Rotatie moet een veelvoud van 90 graden zijn.</translation>
     </message>

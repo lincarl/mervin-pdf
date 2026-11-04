@@ -2916,6 +2916,11 @@ Buka Pengaturan sistem Anda → Aplikasi Default (atau klik kanan PDF → Buka D
         <translation>Tidak dapat menghapus semua halaman.</translation>
     </message>
     <message>
+        <source>This operation is not supported for PDF forms with XFA data.</source>
+        <extracomment>Error for Extract, Split, Merge or Delete Pages. XFA is the PDF form format, not a filename. The operation writes nothing because changing the pages could lose form data or retain data from removed pages. Keep the format name XFA.</extracomment>
+        <translation>Operasi ini tidak didukung untuk formulir PDF dengan data XFA.</translation>
+    </message>
+    <message>
         <source>Rotation must be a multiple of 90 degrees.</source>
         <translation>Rotasi harus kelipatan 90 derajat.</translation>
     </message>

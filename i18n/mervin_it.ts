@@ -2931,6 +2931,11 @@ Apri le Impostazioni del sistema → Applicazioni predefinite (o fai clic con il
         <translation>Impossibile eliminare tutte le pagine.</translation>
     </message>
     <message>
+        <source>This operation is not supported for PDF forms with XFA data.</source>
+        <extracomment>Error for Extract, Split, Merge or Delete Pages. XFA is the PDF form format, not a filename. The operation writes nothing because changing the pages could lose form data or retain data from removed pages. Keep the format name XFA.</extracomment>
+        <translation>Questa operazione non è supportata per i moduli PDF con dati XFA.</translation>
+    </message>
+    <message>
         <source>Rotation must be a multiple of 90 degrees.</source>
         <translation>La rotazione deve essere un multiplo di 90 gradi.</translation>
     </message>

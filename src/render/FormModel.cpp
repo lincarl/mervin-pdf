@@ -78,8 +78,10 @@ bool applyToWidget(const Document &doc, int page, int idx,
     const bool ran = doc.withPdfDocument([&](fz_context *ctx, pdf_document *pdf) {
         fz_page *fzpage = nullptr;
         std::vector<fz_page *> siblings;
+        std::vector<pdf_annot *> widgets;
         fz_var(fzpage);
         fz_var(siblings);
+        fz_var(widgets);
         fz_try(ctx) {
             fzpage = fz_load_page(ctx, doc.handle(), page);
             pdf_page *ppage = pdf_page_from_fz_page(ctx, fzpage);
@@ -112,12 +114,19 @@ bool applyToWidget(const Document &doc, int page, int idx,
                     int field = 0;
                     for (pdf_annot *s = pdf_first_widget(ctx, pdf_page_from_fz_page(ctx, loaded));
                          s; s = pdf_next_widget(ctx, s), ++field)
-                        if (sharesFieldGroup(ctx, pdf_annot_obj(ctx, s), group))
+                        if (sharesFieldGroup(ctx, pdf_annot_obj(ctx, s), group)) {
                             affected.emplace_back(p, field);
+                            widgets.push_back(s);
+                        }
                 }
                 changed = op(ctx, w);
-                if (changed)
+                if (changed) {
+                    // Index-only choice changes can leave /V unchanged. Refresh every
+                    // shared widget even when MuPDF's value setter considered it a no-op.
+                    for (pdf_annot *widget : widgets)
+                        pdf_annot_request_resynthesis(ctx, widget);
                     pdf_update_page(ctx, ppage);
+                }
                 break;
             }
         }
@@ -242,6 +251,18 @@ const std::vector<FormField> &FormModel::pageFields(int pageNo) const
                         pdf_choice_widget_options(ctx, w, 0, opts.data());
                         for (int k = 0; k < n; ++k)
                             f.options << QString::fromUtf8(opts[k] ? opts[k] : "");
+                        // Editors show display labels, while PDF /V stores export values.
+                        auto *field = pdf_annot_obj(ctx, w);
+                        const int selected = pdf_array_get_int(ctx,
+                            pdf_dict_get_inheritable(ctx, field, PDF_NAME(I)), 0);
+                        int match = -1;
+                        for (int k = 0; k < n; ++k)
+                            if (f.value == QString::fromUtf8(pdf_choice_field_option(ctx, field, 1, k))) {
+                                if (match < 0 || k == selected)
+                                    match = k;
+                            }
+                        if (match >= 0)
+                            f.value = f.options[match];
                     }
                 }
                 fields.push_back(std::move(f));
@@ -282,10 +303,53 @@ bool FormModel::setTextValue(int page, int fieldIndex, const QString &value)
 
 bool FormModel::setChoiceValue(int page, int fieldIndex, const QString &value)
 {
-    const bool changed = applyToWidget(doc_, page, fieldIndex, changedFields_, &value,
+    const bool changed = applyToWidget(doc_, page, fieldIndex, changedFields_, nullptr,
                                       [&](fz_context *ctx, pdf_annot *w) {
-        const QByteArray v = value.toUtf8();
-        return pdf_set_choice_field_value(ctx, w, v.constData()) != 0;
+        pdf_obj *widget = pdf_annot_obj(ctx, w);
+        const int type = pdf_widget_type(ctx, w);
+        if (type != PDF_WIDGET_TYPE_LISTBOX && type != PDF_WIDGET_TYPE_COMBOBOX)
+            return false;
+        int selected = -1;
+        QByteArray exported = value.toUtf8();
+        for (int i = 0; i < pdf_choice_field_option_count(ctx, widget); ++i)
+            if (value == QString::fromUtf8(pdf_choice_field_option(ctx, widget, 0, i))) {
+                exported = pdf_choice_field_option(ctx, widget, 1, i);
+                selected = i;
+                break;
+            }
+        if (selected < 0 && (type != PDF_WIDGET_TYPE_COMBOBOX
+                            || !(pdf_field_flags(ctx, widget) & PDF_CH_FIELD_IS_EDIT)))
+            return false;
+        pdf_obj *old = pdf_dict_get_inheritable(ctx, widget, PDF_NAME(V));
+        pdf_obj *indices = pdf_dict_get_inheritable(ctx, widget, PDF_NAME(I));
+        if (pdf_is_string(ctx, old) && exported == pdf_to_text_string(ctx, old)) {
+            int previous = -1;
+            if (pdf_array_len(ctx, indices) == 1
+                && pdf_is_int(ctx, pdf_array_get(ctx, indices, 0))) {
+                previous = pdf_array_get_int(ctx, indices, 0);
+            } else if (!indices) {
+                for (int i = 0; i < pdf_choice_field_option_count(ctx, widget); ++i)
+                    if (exported == pdf_choice_field_option(ctx, widget, 1, i)) {
+                        previous = i;
+                        break;
+                    }
+            }
+            if (previous == selected)
+                return false;
+        }
+        if (!pdf_set_choice_field_value(ctx, w, exported.constData()))
+            return false;
+        // MuPDF's text-based choice setter leaves /I unchanged. Replace the index
+        // at the same named field that owns /V so saved selection and appearance agree.
+        pdf_obj *group = fieldGroup(ctx, widget);
+        if (selected >= 0) {
+            pdf_obj *index = pdf_new_array(ctx, pdf_get_bound_document(ctx, group), 1);
+            pdf_dict_put_drop(ctx, group, PDF_NAME(I), index);
+            pdf_array_push_int(ctx, index, selected);
+        } else {
+            pdf_dict_del(ctx, group, PDF_NAME(I));
+        }
+        return true;
     });
     if (changed) {
         for (const auto &[p, field] : changedFields_)

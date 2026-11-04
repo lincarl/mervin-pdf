@@ -256,8 +256,18 @@ same name, and is left out when none remains. In a damaged file, a chain of acti
 after 100 actions or where it comes back to an earlier one, and fields more than 100
 levels below their top field are left out of the form. Form scripts, which Mervin does
 not run, can still read every field of the merged file in viewers that run them. The new
-file does not keep the form's calculation order or XFA data, so calculated fields no
-longer update in viewers that use them.
+file keeps each source's calculation order for retained fields, with repeated copies
+using their own field references. Source groups run in their first copied order.
+Scripts remain unchanged, so scripts that refer to renamed or omitted fields may need
+adjustment in a form editor.
+
+Extract, Split and Merge refuse PDF forms with XFA data before writing any output,
+including requests to copy every page. Delete Pages also refuses when removing pages
+from an XFA form. These operations cannot safely update XFA's document-wide layout and
+data. They report the unsupported format rather than discard the data or retain values
+from removed pages. Refusal leaves the original file and existing outputs intact.
+Operations that keep the original catalog and page tree, such as
+an unchanged copy, can retain XFA. Mervin does not render or edit XFA itself.
 
 Merge opens at once and reads each input's page count in the background. Pending
 rows show Reading and keep Merge disabled. The footer names the first row and file

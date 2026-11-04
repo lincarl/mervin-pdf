@@ -1402,6 +1402,9 @@ private slots:
     void deleteLeavesOutDeletedContent();
     void deleteKeepsEncryptionWithoutDeletedContent();
     void copiesKeepFormFields();
+    void copiesKeepRetainedCalculationOrder();
+    void xfaPageTransformsFailWithoutWriting_data();
+    void xfaPageTransformsFailWithoutWriting();
     void splitProjectsSelectedFieldBranches();
     void splitFallsBackForFieldDependencies_data();
     void splitFallsBackForFieldDependencies();
@@ -2125,7 +2128,6 @@ void TstQpdf::deleteLeavesOutDeletedContent_data()
     QTest::newRow("calculated parent field") << int(Reference::CalculatedField);
     QTest::newRow("child field") << int(Reference::ChildField);
     QTest::newRow("shared field") << int(Reference::SharedField);
-    QTest::newRow("xfa") << int(Reference::Xfa);
     QTest::newRow("structure element") << int(Reference::Structure);
     QTest::newRow("nested structure") << int(Reference::NestedStructure);
     QTest::newRow("tagged widget") << int(Reference::TaggedWidget);
@@ -2341,10 +2343,6 @@ void TstQpdf::deleteLeavesOutDeletedContent()
         QVERIFY(pdfContains(out, "shared value"));
         break;
     }
-    case Reference::Xfa:
-        QCOMPARE(fields.getArrayNItems(), 1);
-        QVERIFY(!form.hasKey("/XFA"));
-        break;
     case Reference::Structure:
         QCOMPARE(documentKids(), 2);
         QCOMPARE(parentKeys(), QList<long long>({0, 2}));
@@ -2564,6 +2562,167 @@ void TstQpdf::copiesLeaveOutFieldsOfOtherPages()
 
 /// Split copies selected branches, while actions still distinguish omitted source names
 /// from names that never existed. Shared values, inherited resources and script policy stay.
+/// Checks ordered references, repeated passes and source isolation after pruning nested trees.
+void TstQpdf::copiesKeepRetainedCalculationOrder()
+{
+    const QString source = in(QStringLiteral("calculation.pdf"));
+    {
+        QPDF q;
+        q.emptyPDF();
+        auto root = q.makeIndirectObject(parse("<< /T (group) >>"));
+        std::vector<QPDFObjectHandle> fields;
+        for (int i = 0; i < 3; ++i) {
+            auto page = textPage(q, "calculation page " + std::to_string(i), 300 + i);
+            auto field = q.makeIndirectObject(parse("<< /T (field" + std::to_string(i)
+                + ") /FT /Tx /V (value" + std::to_string(i)
+                + ") /AA << /C << /S /JavaScript /JS (event.value = 42;) >> >> >>"));
+            auto child = widget(q, page);
+            adopt(field, {child});
+            fields.push_back(field);
+            QPDFPageDocumentHelper(q).addPage(QPDFPageObjectHelper(page), false);
+        }
+        adopt(root, fields);
+        auto omitted = q.makeIndirectObject(parse("<< /T (unattached) /FT /Tx /V (calculation-secret) >>"));
+        auto form = installForm(q, {root, omitted});
+        // Deliberately differs from both field-tree and page order. The last entries
+        // must never import an unattached field, a page or a direct dictionary.
+        form.replaceKey("/CO", QPDFObjectHandle::newArray({fields[2], fields[0], fields[1],
+            omitted, q.getAllPages()[2], parse("<< /T (invalid-direct) /V (direct-secret) >>")}));
+        QPDFWriter(q, source.toUtf8().constData()).write();
+    }
+    const QString other = in(QStringLiteral("calculation-other.pdf"));
+    QVERIFY(QFile::copy(source, other));
+    const auto verify = [&](const QString &path, const QStringList &expected) {
+        QPDF q;
+        q.processFile(path.toUtf8().constData());
+        auto form = q.getRoot().getKey("/AcroForm");
+        auto order = form.getKey("/CO");
+        QCOMPARE(order.getArrayNItems(), expected.size());
+        std::set<QPDFObjGen> reachable, ordered;
+        std::vector<QPDFObjectHandle> queue = form.getKey("/Fields").getArrayAsVector();
+        while (!queue.empty()) {
+            auto field = queue.back();
+            queue.pop_back();
+            if (!reachable.insert(field.getObjGen()).second)
+                continue;
+            auto kids = field.getKey("/Kids");
+            if (kids.isArray())
+                for (auto kid : kids.aitems())
+                    queue.push_back(kid);
+        }
+        for (int i = 0; i < expected.size(); ++i) {
+            auto field = order.getArrayItem(i);
+            QVERIFY(field.isIndirect());
+            QVERIFY(reachable.count(field.getObjGen()));
+            QVERIFY(ordered.insert(field.getObjGen()).second);
+            QCOMPARE(QString::fromStdString(QPDFFormFieldObjectHelper(field).getFullyQualifiedName()),
+                     expected.at(i));
+            QCOMPARE(field.getKey("/AA").getKey("/C").getKey("/JS").getUTF8Value(),
+                     std::string("event.value = 42;"));
+        }
+        QVERIFY(!pdfContains(path, "calculation-secret"));
+        QVERIFY(!pdfContains(path, "direct-secret"));
+    };
+    const auto copy = [&](const QList<PageOps::MergeInput> &inputs, const QStringList &expected,
+                          const QString &name) {
+        const QString output = in(name);
+        QString error;
+        QVERIFY2(PageOps::merge(inputs, output, &error) == PageOps::Status::Ok, qPrintable(error));
+        verify(output, expected);
+    };
+    copy({{source, {1, 0}, {}}}, {"group.field0", "group.field1"}, "calculation-part.pdf");
+    QVERIFY(!pdfContains(in("calculation-part.pdf"), "value2"));
+    copy({{source, {1, 0, 2}, {}}}, {"group.field2", "group.field0", "group.field1"},
+         "calculation-reordered.pdf");
+    copy({{source, {1, 0}, {}}, {source, {0, 2, 1}, {}}},
+         {"group.field2", "group.field0", "group.field1", "group+1.field0", "group+1.field1"},
+         "calculation-repeated.pdf");
+    copy({{source, {1, 0}, {}}, {other, {2, 0}, {}}},
+         {"group.field0", "group.field1", "group+1.field2", "group+1.field0"},
+         "calculation-merged.pdf");
+    QStringList parts;
+    QCOMPARE(PageOps::split(source, dir_.path(), "calculation-split", {}, &parts), PageOps::Status::Ok);
+    QCOMPARE(parts.size(), 3);
+    QCOMPARE(PageOps::testing::lastSplitProjection().pages, quint64(3));
+    for (int i = 0; i < parts.size(); ++i)
+        verify(parts[i], {QStringLiteral("group.field%1").arg(i)});
+}
+
+void TstQpdf::xfaPageTransformsFailWithoutWriting_data()
+{
+    QTest::addColumn<int>("representation");
+    QTest::newRow("stream") << 0;
+    QTest::newRow("packets") << 1;
+    QTest::newRow("malformed") << 2;
+}
+
+/// Unsupported XFA operations refuse before output or overwrite callbacks, including full copies.
+void TstQpdf::xfaPageTransformsFailWithoutWriting()
+{
+    QFETCH(int, representation);
+    const QString source = in(QStringLiteral("xfa-source.pdf"));
+    const QString output = in(QStringLiteral("xfa-output.pdf"));
+    makeReferencedPdf(source, Reference::Xfa);
+    if (representation != 0) {
+        QPDF q;
+        q.processFile(source.toUtf8().constData());
+        auto form = q.getRoot().getKey("/AcroForm");
+        auto xfa = form.getKey("/XFA");
+        form.replaceKey("/XFA", representation == 1
+            ? QPDFObjectHandle::newArray({QPDFObjectHandle::newString("datasets"), xfa})
+            : QPDFObjectHandle::newString("malformed XFA must not vanish"));
+        const QString revised = in(QStringLiteral("xfa-revised.pdf"));
+        QPDFWriter(q, revised.toUtf8().constData()).write();
+        QVERIFY(QFile::remove(source));
+        QVERIFY(QFile::rename(revised, source));
+    }
+    QFile input(source);
+    QVERIFY(input.open(QIODevice::ReadOnly));
+    const QByteArray before = input.readAll();
+    input.close();
+    QFile existing(output);
+    QVERIFY(existing.open(QIODevice::WriteOnly));
+    QCOMPARE(existing.write("keep existing output"), qint64(20));
+    existing.close();
+    QString error;
+    bool admitted = false;
+    int failed = -1;
+    const auto consent = [&] { admitted = true; return true; };
+    for (const QList<int> &pages : {QList<int>{}, {0}, {2, 1, 0}, {0, 0}}) {
+        QCOMPARE(PageOps::merge({{source, pages, {}}}, output, &error, &failed, consent),
+                 PageOps::Status::Failed);
+        QCOMPARE(error, PageOps::xfaTransformationError());
+        QCOMPARE(failed, 0);
+        QVERIFY(!admitted);
+    }
+    const QString plain = in(QStringLiteral("xfa-plain.pdf"));
+    makeReferencedPdf(plain, Reference::CalculatedField);
+    QCOMPARE(PageOps::merge({{plain, {0}, {}}, {source, {0}, {}}}, output, &error, &failed),
+             PageOps::Status::Failed);
+    QCOMPARE(failed, 1);
+    QCOMPARE(error, PageOps::xfaTransformationError());
+    QCOMPARE(PageOps::deletePages(source, output, {1}, {}, &error), PageOps::Status::Failed);
+    QCOMPARE(error, PageOps::xfaTransformationError());
+    QStringList parts;
+    QCOMPARE(PageOps::split(source, dir_.path(), "xfa-split", {}, &parts, &error,
+                           [&](const QStringList &) { admitted = true; return true; }),
+             PageOps::Status::Failed);
+    QCOMPARE(error, PageOps::xfaTransformationError());
+    QVERIFY(!admitted);
+    QVERIFY(parts.isEmpty());
+    QVERIFY(QDir(dir_.path()).entryList({"xfa-split-*.pdf"}).isEmpty());
+    QVERIFY(existing.open(QIODevice::ReadOnly));
+    QCOMPARE(existing.readAll(), QByteArray("keep existing output"));
+    QVERIFY(input.open(QIODevice::ReadOnly));
+    QCOMPARE(input.readAll(), before);
+    // An unchanged page tree may keep its XFA. No-op Delete uses the original catalog.
+    const QString unchanged = in(QStringLiteral("xfa-unchanged.pdf"));
+    QCOMPARE(PageOps::deletePages(source, unchanged, {}, {}, &error), PageOps::Status::Ok);
+    QPDF q;
+    q.processFile(unchanged.toUtf8().constData());
+    QVERIFY(!q.getRoot().getKey("/AcroForm").getKey("/XFA").isNull());
+}
+
 void TstQpdf::splitProjectsSelectedFieldBranches()
 {
     constexpr int pageCount = 8;
@@ -2602,7 +2761,7 @@ void TstQpdf::splitProjectsSelectedFieldBranches()
         adopt(root, branches);
         adopt(shared, sharedWidgets);
         auto form = installForm(q, {root});
-        form.replaceKey("/XFA", q.newStream("xfa-marker-left-out"));
+        form.replaceKey("/CO", QPDFObjectHandle::newArray({shared, branches.front()}));
         auto pageTree = q.getRoot().getKey("/Pages");
         auto firstPage = q.getAllPages().front();
         pageTree.replaceKey("/Resources", firstPage.getKey("/Resources"));
@@ -2645,6 +2804,11 @@ void TstQpdf::splitProjectsSelectedFieldBranches()
                  std::string("opaque-script-marker"));
         QCOMPARE(root.getKey("/Kids").getArrayNItems(), 2);
         auto branch = root.getKey("/Kids").getArrayItem(0);
+        auto order = form.getKey("/CO");
+        QCOMPARE(order.getArrayNItems(), i == 0 ? 2 : 1);
+        QCOMPARE(order.getArrayItem(0).getObjGen(), root.getKey("/Kids").getArrayItem(1).getObjGen());
+        if (i == 0)
+            QCOMPARE(order.getArrayItem(1).getObjGen(), branch.getObjGen());
         const std::string name = "page" + std::to_string(i);
         QCOMPARE(branch.getKey("/T").getUTF8Value(), name);
         QCOMPARE(branch.getKey("/Parent").getObjGen(), root.getObjGen());

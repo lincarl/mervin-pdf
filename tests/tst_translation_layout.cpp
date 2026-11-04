@@ -1240,6 +1240,15 @@ void TstTranslationLayout::extract()
     source.probe = mervin::ExtractDialog::probeSource(source.path, source.password);
     mervin::ExtractDialog dialog(source);
     inspect(dialog, QStringLiteral("Extract with unsaved changes"));
+    for (auto mode : {mervin::ExtractPlan::Mode::Extract, mervin::ExtractPlan::Mode::Delete}) {
+        auto xfaSource = source;
+        xfaSource.mode = mode;
+        auto choices = dialog.choices();
+        choices.failure = mervin::ExtractDialog::Choices::Failure::Write;
+        choices.error = mervin::PageOps::xfaTransformationError();
+        mervin::ExtractDialog unsupported(xfaSource, nullptr, choices);
+        inspect(unsupported, QStringLiteral("Page operation with XFA form"));
+    }
     auto *range = dialog.findChild<QLineEdit *>(QStringLiteral("extractRowSpec"));
     auto *error = dialog.findChild<QLabel *>(QStringLiteral("extractError"));
     auto *output = dialog.findChild<QLineEdit *>(QStringLiteral("extractOutput"));
@@ -1492,6 +1501,12 @@ void TstTranslationLayout::merge()
         QTRY_COMPARE(reason->text(), tooLarge);
         inspect(failed, QStringLiteral("Merge measurements too large to save"));
     }
+    {
+        const QString output = profile_.filePath(QStringLiteral("merge-xfa-output.pdf"));
+        const QString reason = mervin::PageOps::xfaTransformationError();
+        mervin::MergeDialog failed(dialog.plan(), output, reason, 0);
+        inspect(failed, QStringLiteral("Merge unsupported XFA form"));
+    }
     for (const auto conflict : {mervin::MergeDialog::Conflict::Changed,
                                 mervin::MergeDialog::Conflict::CheckFailed}) {
         const QString output = profile_.filePath(QStringLiteral("merge-consent-output.pdf"));
@@ -1710,6 +1725,10 @@ void TstTranslationLayout::security()
 /// Checks Split's replacement question and kept-file warning with a long folder and name.
 void TstTranslationLayout::splitMessages()
 {
+    QMessageBox xfa(QMessageBox::Warning, MainWindow::tr("Split Pages"),
+                    mervin::PageOps::xfaTransformationError(), QMessageBox::Ok);
+    xfa.setTextFormat(Qt::PlainText);
+    inspect(xfa, QStringLiteral("Split unsupported XFA form"));
     // MainWindow fits the folder and the name to half the screen like this.
     const QString folder = QStringLiteral("/srv/nas/projects/")
         + QStringLiteral("Construction").repeated(12) + QStringLiteral("/drawings/issued/split");

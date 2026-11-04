@@ -2931,6 +2931,11 @@ Avaa järjestelmäsi Asetukset → Oletussovellukset (tai napsauta PDF-tiedostoa
         <translation>Kaikkia sivuja ei voi poistaa.</translation>
     </message>
     <message>
+        <source>This operation is not supported for PDF forms with XFA data.</source>
+        <extracomment>Error for Extract, Split, Merge or Delete Pages. XFA is the PDF form format, not a filename. The operation writes nothing because changing the pages could lose form data or retain data from removed pages. Keep the format name XFA.</extracomment>
+        <translation>Tätä toimintoa ei tueta XFA-tietoja sisältäville PDF-lomakkeille.</translation>
+    </message>
+    <message>
         <source>Rotation must be a multiple of 90 degrees.</source>
         <translation>Kierron on oltava 90 asteen kerrannainen.</translation>
     </message>
