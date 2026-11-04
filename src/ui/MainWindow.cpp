@@ -853,14 +853,14 @@ void MainWindow::createActions()
         TabPage *t = currentTab();
         if (!t || !t->isUsable())
             return;
-        QString preset;
-        const QString sel = t->viewer()->selectedText();
-        if (!sel.isEmpty()) {
-            preset = sel.section(QLatin1Char('\n'), 0, 0).trimmed();
-            if (preset.size() > 100)
-                preset.clear();
-        }
-        t->findCard()->open(preset);
+        t->findCard()->open();
+        const quint64 revision = t->findCard()->inputRevision();
+        const QPointer<TabPage> tab(t);
+        t->viewer()->requestFindPreset([this, tab, revision](QString preset) {
+            if (tab && tab == currentTab() && tab->isUsable() && tab->findCard()->isOpen()
+                && tab->findCard()->inputRevision() == revision && !preset.isEmpty())
+                tab->findCard()->open(preset);
+        });
     });
 
     // F3 and Shift+F3 step through the matches. With the card closed they open it
@@ -2699,6 +2699,10 @@ void MainWindow::wireCurrentViewer(ViewerWidget *v)
     });
     viewerConns_ << connect(v, &ViewerWidget::annotEditsChanged, this,
                             [this] { updateForCurrentTab(); });
+    viewerConns_ << connect(v, &ViewerWidget::queryDataChanged, this, [this] { updateSidebars(); });
+    viewerConns_ << connect(v, &ViewerWidget::outlineChanged, this, [this, v] {
+        if (outlineSidebar_) outlineSidebar_->setOutline(v->outline());
+    });
     viewerConns_ << connect(v, &ViewerWidget::annotationsChanged, this,
                             [this] { refreshCommentsSidebar(); });
     // Persist the last-used markup style when the user picks it in the Comment
@@ -2853,6 +2857,8 @@ void MainWindow::createSidebars()
     connect(commentsDock_, &QDockWidget::visibilityChanged, this, [this](bool visible) {
         if (visible)
             refreshCommentsSidebar();
+        else if (auto *viewer = currentViewer())
+            viewer->stopAnnotationListing();
     });
 }
 
@@ -2871,11 +2877,11 @@ void MainWindow::updateSidebars()
 {
     ViewerWidget *v = currentViewer();
     mervin::Document *doc = v ? v->document() : nullptr;
+    const auto outline = v ? &v->outline() : nullptr;
     if (doc != sidebarDoc_) { // only rebuild when the document actually changes
         sidebarDoc_ = doc;
         if (outlineSidebar_)
-            outlineSidebar_->setOutline(doc ? doc->outline()
-                                            : std::vector<mervin::OutlineItem>{});
+            outlineSidebar_->setOutline(outline ? *outline : std::vector<mervin::OutlineItem>{});
         if (thumbnailSidebar_)
             thumbnailSidebar_->setDocument(doc);
     }

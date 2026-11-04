@@ -213,7 +213,7 @@ private slots:
         QPointer<TabPage> original = current(*sourceWindow);
         original->viewer()->setRotation(90);
         if (edited)
-            QVERIFY(original->viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {}, note) >= 0);
+            QVERIFY(mervin::testing::retryMutation([&] { return (original->viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {}, note) >= 0); }));
         QCOMPARE(original->hasUnsavedEdits(), edited);
         if (suspended) {
             QVERIFY(testing::suspendAndWait(*original));
@@ -284,9 +284,11 @@ private slots:
         QCOMPARE(original->capturedViewState().rotation, 90);
         QCOMPARE(original->hasUnsavedEdits(), edited);
         QCOMPARE(original->viewer()->document()->pageCount(), 1);
-        QCOMPARE(original->viewer()->annotModel()->pageAnnots(0).size(), edited ? size_t(1) : size_t(0));
-        if (edited)
+        QTRY_COMPARE(original->viewer()->annotModel()->pageAnnots(0).size(), edited ? size_t(1) : size_t(0));
+        if (edited) {
+            QVERIFY(mervin::testing::waitForPage(original->viewer()->annotModel(), 0));
             QCOMPARE(original->viewer()->annotModel()->pageAnnots(0).front().contents, note);
+        }
         TextIndex retained(manager.engine()->baseContext(), original->viewer()->document());
         QVERIFY(retained.pageText(0).contains(originalText));
     }
@@ -309,7 +311,7 @@ private slots:
         MainWindow *window = manager.createWindow();
         QVERIFY(testing::openAndWait(*window, path));
         QPointer<TabPage> original = current(*window);
-        QVERIFY(original->viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {}, note) >= 0);
+        QVERIFY(mervin::testing::retryMutation([&] { return (original->viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {}, note) >= 0); }));
         QpdfService service;
         QCOMPARE(service.encrypt(replacement, encrypted, {}, password, QStringLiteral("owner"),
                                  QpdfService::Algorithm::AES256, {}), QpdfService::Status::Ok);
@@ -342,7 +344,8 @@ private slots:
         QVERIFY(replacementText.pageText(1).contains(QStringLiteral("Protected second page")));
         QVERIFY(original && original->hasUnsavedEdits());
         QCOMPARE(original->viewer()->document()->pageCount(), 1);
-        QCOMPARE(original->viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
+        QTRY_COMPARE(original->viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
+        QVERIFY(mervin::testing::waitForPage(original->viewer()->annotModel(), 0));
         QCOMPARE(original->viewer()->annotModel()->pageAnnots(0).front().contents, note);
     }
 
@@ -696,8 +699,8 @@ private slots:
         for (const QString &alias : {firstAlias, secondAlias}) {
             TabPage edited(&engine);
             QVERIFY(edited.open(alias));
-            QVERIFY(edited.viewer()->annotModel()->addTextNote(
-                0, {40, 40}, Qt::yellow, {}, QFileInfo(alias).fileName()) >= 0);
+            QVERIFY(mervin::testing::retryMutation([&] { return (edited.viewer()->annotModel()->addTextNote(
+                0, {40, 40}, Qt::yellow, {}, QFileInfo(alias).fileName()) >= 0); }));
             QVERIFY(mervin::testing::suspendAndWait(edited));
             recoveries.append({edited.recoveryPath(), bytes(edited.recoveryPath()),
                                bytes(edited.recoveryPath() + QStringLiteral(".json"))});
@@ -719,9 +722,11 @@ private slots:
         for (auto *page : {first.data(), second}) {
             QCOMPARE(page->canonicalPath(), source);
             QVERIFY(page->hasUnsavedEdits());
-            QCOMPARE(page->viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
+            QTRY_COMPARE(page->viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
         }
+        QVERIFY(mervin::testing::waitForPage(first->viewer()->annotModel(), 0));
         QCOMPARE(first->viewer()->annotModel()->pageAnnots(0).front().contents, QStringLiteral("first.pdf"));
+        QVERIFY(mervin::testing::waitForPage(second->viewer()->annotModel(), 0));
         QCOMPARE(second->viewer()->annotModel()->pageAnnots(0).front().contents, QStringLiteral("second.pdf"));
     }
 
@@ -861,8 +866,8 @@ private slots:
             QVERIFY(edited.open(original));
             edited.viewer()->setScale(1.7);
             edited.viewer()->setRotation(90);
-            QVERIFY(edited.viewer()->annotModel()->addTextNote(
-                0, {40, 40}, Qt::yellow, {}, QStringLiteral("Recovered edit")) >= 0);
+            QVERIFY(mervin::testing::retryMutation([&] { return (edited.viewer()->annotModel()->addTextNote(
+                0, {40, 40}, Qt::yellow, {}, QStringLiteral("Recovered edit")) >= 0); }));
             QVERIFY(mervin::testing::suspendAndWait(edited));
             snapshot = edited.recoveryPath();
             savedBytes = bytes(snapshot);
@@ -908,7 +913,8 @@ private slots:
         QVERIFY(page->hasUnsavedEdits());
         QCOMPARE(page->capturedViewState().scale, 1.7);
         QCOMPARE(page->capturedViewState().rotation, 90);
-        QCOMPARE(page->viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
+        QTRY_COMPARE(page->viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
+        QVERIFY(mervin::testing::waitForPage(page->viewer()->annotModel(), 0));
         QCOMPARE(page->viewer()->annotModel()->pageAnnots(0).front().contents, QStringLiteral("Recovered edit"));
     }
 

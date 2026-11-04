@@ -103,6 +103,8 @@ add_library(mervin_core STATIC
     src/render/PageCache.h
     src/render/PreviewLayer.cpp
     src/render/PreviewLayer.h
+    src/render/ViewerQueries.cpp
+    src/render/ViewerQueries.h
     src/render/DocumentSearch.cpp
     src/render/DocumentSearch.h
     src/render/TextIndex.cpp
@@ -272,6 +274,7 @@ qt_add_resources(mervin_icons "app_icon"
 add_library(mervin_viewer STATIC
     src/ui/ViewerWidget.cpp
     src/ui/ViewerWidget.h
+    src/ui/ViewerQueryTools.cpp
     src/ui/ViewerDocumentTools.cpp
     src/ui/ViewerMeasurements.cpp
     src/ui/AnnotPopup.cpp

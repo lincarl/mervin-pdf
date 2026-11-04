@@ -12,6 +12,10 @@
 #include "render/RenderTypes.h"
 #include "render/SelectionModel.h"
 #include "render/TextIndex.h"
+#include "render/ViewerQueries.h"
+#include <QSet>
+#include <QEvent>
+#include <deque>
 #include "render/ViewLayout.h"
 #include "render/ZoomAnimation.h"
 #include "ui/MeasureTypes.h"
@@ -185,7 +189,8 @@ public:
 
     // Text selection / copy.
     bool hasSelection() const { return selection_.hasSelection(); }
-    QString selectedText() const;
+    // Read only the first selected line for Find, without parsing on the UI thread.
+    void requestFindPreset(std::function<void(QString)> completed) const;
 
     // Measuring tool. measureMode() means the *measure cursor* is active (the
     // crosshair places points); the tool can be enabled with the standard pointer
@@ -279,6 +284,9 @@ public:
     AnnotModel *annotModel() const { return annotModel_.get(); } // non-owning
     // Every annotation in the document (for the comments sidebar).
     std::vector<Annotation> allAnnotations() const;
+    const std::vector<OutlineItem> &outline() const;
+    // Stop a hidden comments sidebar at its next page boundary.
+    void stopAnnotationListing();
     void clearAnnotDirty();
     // Commit any pending comment edit in the open inline editor (called before
     // save / print so the model carries the latest typed text).
@@ -372,6 +380,8 @@ public slots:
     void notifyMeasurePanelPopupClosed();
 
 signals:
+    void queryDataChanged();
+    void outlineChanged();
     void pageChanged(int current, int total); // 1-based current
     void scaleChanged(double scale);
     void zoomModeChanged(ViewerWidget::ZoomMode mode);
@@ -441,6 +451,58 @@ private slots:
     void onZoomEaseTick();
 
 private:
+    // Request missing page values without entering MuPDF from event or paint handlers.
+    void requestPageData(int page) const;
+    bool deferMouseQuery(QMouseEvent *event);
+    void replayQueryInput();
+    void cancelQueryReads();
+    void readSelectionText(TextPos start, TextPos end, std::function<void(QString)> completed) const;
+    quint64 copyGeneration_ = 0;
+    void collectAnnotations(int page) const;
+    void collectFormOrder(int page);
+    void editFormValue(int page, int field, const QString &value, bool choice = false);
+    void editFormChoice(int page, int field, const QString &value) { editFormValue(page, field, value, true); }
+    void editFormToggle(int page, int field);
+    void submitFormEdit(int page, int field, std::optional<QString> value, bool choice);
+    void submitAnnotEdit(int page, std::function<int(AnnotModel &)> edit,
+                         std::function<void(int)> completed = {});
+
+    std::unique_ptr<ViewerQueries> queries_;
+    mutable QHash<int, std::shared_ptr<ViewerPage>> queryPages_;
+    mutable QSet<int> requestedPages_;
+    mutable std::deque<int> queryPageOrder_;
+    mutable std::vector<OutlineItem> outline_;
+    mutable bool outlineRequested_ = false;
+    mutable bool outlineReady_ = false;
+    mutable std::vector<Annotation> allAnnotations_;
+    mutable bool annotationsRequested_ = false;
+    mutable bool annotationsComplete_ = false;
+    mutable size_t annotationsPublished_ = 0;
+    mutable quint64 annotationsRevision_ = 0;
+    bool queryPaused_ = false;
+    int pendingFormEdits_ = 0;
+    QSet<int> editedFormPages_;
+    quint64 queryRevision_ = 0;
+    struct DeferredMouse {
+        QEvent::Type type;
+        ToolMode mode;
+        int page;
+        QPointF point;
+        Qt::MouseButton button;
+        Qt::MouseButtons buttons;
+        Qt::KeyboardModifiers modifiers;
+    };
+    std::deque<DeferredMouse> deferredMouse_;
+    bool replayingMouse_ = false;
+    QPointer<QWidget> replayFormTarget_;
+    int pendingMatchScroll_ = -1;
+    std::optional<std::pair<int, int>> pendingReveal_;
+    bool formOrderRequested_ = false;
+    quint64 formOrderRevision_ = 0;
+    int pendingFormFocus_ = 0;
+    std::pair<int, int> formFocusField_{-1, -1};
+    int pendingFormFocusIndex_ = -1;
+
     void relayout();
     void applyFitScale();
     // Apply the pending scroll-fraction restore (if any) at the current scale.

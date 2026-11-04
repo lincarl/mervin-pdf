@@ -155,7 +155,9 @@ bool ViewerWidget::pageHasEmbeddedScale(int page) const
         return false;
     // Resolve with an empty override so an override on this page doesn't mask the
     // underlying embedded scale; it's embedded only if the PDF itself supplies one.
-    const PageMeasurement pm = doc_->pageMeasurement(page);
+    requestPageData(page);
+    const auto data = queryPages_.value(page);
+    const PageMeasurement pm = data ? data->measurement : PageMeasurement{};
     const QSizeF sz = doc_->pageSize(page);
     const MeasureScale s =
         measure::resolveScale(pm, QPointF(sz.width() / 2, sz.height() / 2), MeasureScale{});
@@ -172,6 +174,10 @@ bool ViewerWidget::canResetScale(int page) const
 
 void ViewerWidget::maybeAutoCalibrate()
 {
+    if (doc_ && !queryPages_.contains(currentPage_)) {
+        requestPageData(currentPage_);
+        return;
+    }
     if (!measureToolEnabled_ || !doc_)
         return;
     if (toolMode_ != ToolMode::Measure)
@@ -516,7 +522,9 @@ MeasureScale ViewerWidget::resolvedScale(int page, QPointF pp) const
 {
     if (!doc_)
         return {};
-    const PageMeasurement pm = doc_->pageMeasurement(page);
+    requestPageData(page);
+    const auto data = queryPages_.value(page);
+    const PageMeasurement pm = data ? data->measurement : PageMeasurement{};
     return measure::resolveScale(pm, pp, measureOverrides_.override(page));
 }
 
@@ -626,8 +634,14 @@ void ViewerWidget::ensureMeasureGeometry(int page)
 {
     if (!doc_ || page < 0 || measureGeoPage_ == page)
         return;
-    measureGeo_ = doc_->pageGeometry(page); // cached in Document; one copy per page change
-    measureGeoPage_ = page;
+    if (!queries_ || queryPaused_) return;
+    queries_->requestGeometry(page, [this, page](PageGeometry geometry) {
+        measureGeo_ = std::move(geometry);
+        measureGeoPage_ = page;
+        const QPointer<ViewerWidget> self(this);
+        replayQueryInput();
+        if (self) viewport()->update();
+    });
 }
 
 QPointF ViewerWidget::snapPagePoint(int page, QPointF pp)
@@ -637,7 +651,7 @@ QPointF ViewerWidget::snapPagePoint(int page, QPointF pp)
         return pp;
     }
     ensureMeasureGeometry(page);
-    if (measureGeo_.empty()) {
+    if (measureGeoPage_ != page || measureGeo_.empty()) {
         clearSnapState();
         return pp;
     }

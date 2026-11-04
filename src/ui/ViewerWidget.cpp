@@ -195,6 +195,8 @@ ViewerWidget::ViewerWidget(RenderEngine *engine, QWidget *parent)
 
 ViewerWidget::~ViewerWidget()
 {
+    closeAnnotPopup();
+    queries_.reset();
     documentSearch_.reset();
     engine_->cancelRequests(viewerId_);
 }
@@ -425,12 +427,38 @@ void ViewerWidget::restoreFind(const QString &query, bool caseSensitive, bool wh
 
 void ViewerWidget::setDocument(Document *doc)
 {
+    closeAnnotPopup();
     engine_->cancelRequests(viewerId_);
     documentSearch_->clear();
     // First, while doc_ and layout_ still agree: no gliding the new document's
     // pages in from where the old one's happened to be.
     endZoomEase();
+    queries_.reset();
+    queryPages_.clear();
+    ++copyGeneration_;
+    requestedPages_.clear();
+    queryPageOrder_.clear();
+    outline_.clear();
+    outlineRequested_ = outlineReady_ = false;
+    allAnnotations_.clear();
+    annotationsRequested_ = annotationsComplete_ = false;
+    ++annotationsRevision_;
+    ++queryRevision_;
+    pendingFormEdits_ = 0;
+    editedFormPages_.clear();
+    deferredMouse_.clear();
+    replayingMouse_ = false;
+    formOrderRequested_ = false;
+    pendingFormFocus_ = 0;
+    formFocusField_ = {-1, -1};
+    pendingFormFocusIndex_ = -1;
+    pendingMatchScroll_ = -1;
+    replayFormTarget_.clear();
+    pendingReveal_.reset();
+    queryPaused_ = false;
     doc_ = doc;
+    if (doc_)
+        queries_ = std::make_unique<ViewerQueries>(doc_, engine_->baseContext());
     recoveryMinimumScale_ = kMinScale;
     rotation_ = 0;
     currentPage_ = 0;
@@ -443,6 +471,8 @@ void ViewerWidget::setDocument(Document *doc)
 
     // Per-document text model (lazy extraction) backing find and selection.
     textIndex_ = doc_ ? std::make_unique<TextIndex>(engine_->baseContext(), doc_) : nullptr;
+    if (textIndex_)
+        textIndex_->setPageLoader([this](int page) { requestPageData(page); });
     selection_.clear();
     selecting_ = false;
     stopAutoScroll();
@@ -612,6 +642,9 @@ void ViewerWidget::invalidateRenders(PreviewPolicy preview)
 
 void ViewerWidget::pauseForOperation()
 {
+    queryPaused_ = true;
+    cancelQueryReads();
+    deferredMouse_.clear();
     endZoomEase();
     // As invalidateRenders(), but the cache stays for when the viewer shows again.
     engine_->cancelRequests(viewerId_);
@@ -630,6 +663,8 @@ void ViewerWidget::pauseForOperation()
 
 void ViewerWidget::resumeAfterOperation()
 {
+    queryPaused_ = false;
+    emit queryDataChanged();
     // A search that delivered its matches keeps them. One the pause stopped has none.
     if (findCard_ && !findCard_->isHidden() && !findQuery_.isEmpty() && matches_.empty())
         restoreFind(findQuery_, findCaseSensitive_, findWholeWord_, currentMatch_);
@@ -839,6 +874,7 @@ void ViewerWidget::setZoomEaseProgressForTest(double t)
 
 void ViewerWidget::ensureRendered(int pageNo, const QRect &neededCanvas)
 {
+    requestPageData(pageNo);
     const QRect pr = layout_.pageRect(pageNo);
     if (!pr.isValid() || renderFailures_.contains(pageNo))
         return;
@@ -1124,6 +1160,9 @@ void ViewerWidget::paintEvent(QPaintEvent *event)
 
 void ViewerWidget::hideEvent(QHideEvent *event)
 {
+    cancelQueryReads();
+    deferredMouse_.clear();
+    replayFormTarget_.clear();
     QAbstractScrollArea::hideEvent(event);
     endZoomEase(); // before the clear below: the ease draws those tiles
     // A tab switched away from should not sit on frozen images; showEvent
@@ -1178,6 +1217,8 @@ void ViewerWidget::resizeEvent(QResizeEvent *event)
 void ViewerWidget::showEvent(QShowEvent *event)
 {
     QAbstractScrollArea::showEvent(event);
+    emit queryDataChanged();
+    emit annotationsChanged();
     endZoomEase(); // hideEvent dropped the tiles; the re-fit below starts clean
     if (!doc_)
         return;
@@ -1279,6 +1320,7 @@ bool ViewerWidget::viewportEvent(QEvent *event)
 
 void ViewerWidget::scrollContentsBy(int, int)
 {
+    pendingMatchScroll_ = -1;
     // A scroll the zoom ease did not cause is the user (or goToPage / find / a
     // resume) taking over: land the picture on the real geometry at once rather
     // than gliding toward a target that has moved. rescaleKeeping's own scroll
@@ -1334,10 +1376,7 @@ void ViewerWidget::keyPressEvent(QKeyEvent *event)
                 const auto [pg, fi] = formFieldOrder_[formFocusIndex_];
                 const std::vector<FormField> &fields = formModel_->pageFields(pg);
                 if (fi >= 0 && fi < static_cast<int>(fields.size()) && fields[fi].isToggle()) {
-                    if (formModel_->toggle(pg, fi)) {
-                        applyFormFieldChange(pg);
-                        emit formEditsChanged();
-                    }
+                    editFormToggle(pg, fi);
                     return;
                 }
             }
@@ -2017,7 +2056,12 @@ std::optional<PdfLinkTarget> ViewerWidget::pdfLinkAt(QPoint viewportPos) const
     if (pg < 0 || !layout_.pageRect(pg).contains(canvas))
         return std::nullopt;
 
-    return doc_->linkTargetAt(pg, canvasToPagePoint(pg, canvas));
+    requestPageData(pg);
+    const auto page = queryPages_.value(pg);
+    if (page)
+        for (const auto &[rect, target] : page->links)
+            if (rect.contains(canvasToPagePoint(pg, canvas))) return target;
+    return std::nullopt;
 }
 
 std::optional<PdfItemProperties> ViewerWidget::itemPropertiesAt(QPoint viewportPos) const
@@ -2030,7 +2074,12 @@ std::optional<PdfItemProperties> ViewerWidget::itemPropertiesAt(QPoint viewportP
     if (pg < 0 || !layout_.pageRect(pg).contains(canvas))
         return std::nullopt;
 
-    return doc_->itemPropertiesAt(pg, canvasToPagePoint(pg, canvas));
+    requestPageData(pg);
+    const auto page = queryPages_.value(pg);
+    if (page)
+        for (const auto &item : page->properties)
+            if (item.rect.contains(canvasToPagePoint(pg, canvas))) return item;
+    return std::nullopt;
 }
 
 bool ViewerWidget::activatePdfLink(const PdfLinkTarget &target)
@@ -2154,6 +2203,7 @@ void ViewerWidget::findPrev()
 
 void ViewerWidget::clearFind()
 {
+    pendingMatchScroll_ = -1;
     documentSearch_->cancel();
     findQuery_.clear();
     matches_.clear();
@@ -2178,6 +2228,7 @@ void ViewerWidget::scrollToMatch(int matchIndex)
         const QRect box = layout_.pageRect(m.page);
         if (box.isValid())
             verticalScrollBar()->setValue(std::clamp(box.top() - 20, 0, verticalScrollBar()->maximum()));
+        if (!textIndex_->pageReady(m.page)) pendingMatchScroll_ = matchIndex;
         return;
     }
     QRectF canvasRect;
@@ -2243,29 +2294,31 @@ void ViewerWidget::ensureCanvasRectVisible(const QRectF &c)
 
 // ---- Selection / copy ------------------------------------------------------
 
-QString ViewerWidget::selectedText() const
+void ViewerWidget::requestFindPreset(std::function<void(QString)> completed) const
 {
-    if (!textIndex_ || !selection_.hasSelection())
-        return {};
+    if (!queries_ || !selection_.hasSelection()) {
+        completed({});
+        return;
+    }
     const TextPos s = selection_.start();
     const TextPos e = selection_.end();
-    QString out;
-    for (int pg = s.page; pg <= e.page; ++pg) {
-        const int from = (pg == s.page) ? s.offset : 0;
-        const int to = (pg == e.page) ? e.offset : textIndex_->pageTextLength(pg);
-        if (to > from)
-            out += textIndex_->textRange(pg, from, to - from);
-        if (pg != e.page)
-            out += QLatin1Char('\n');
-    }
-    return out;
+    queries_->requestText(s.page, [s, e, completed = std::move(completed)](TextIndex::PageText page) {
+        const int end = s.page == e.page ? std::min(e.offset, int(page.text.size())) : int(page.text.size());
+        QString preset = page.text.mid(s.offset, std::max(0, end - s.offset))
+            .section(QLatin1Char('\n'), 0, 0).trimmed();
+        if (preset.size() > 100) preset.clear();
+        completed(std::move(preset));
+    });
 }
 
 void ViewerWidget::copySelection()
 {
-    const QString text = selectedText();
-    if (!text.isEmpty())
-        QGuiApplication::clipboard()->setText(text);
+    if (!selection_.hasSelection()) return;
+    const quint64 generation = ++copyGeneration_;
+    readSelectionText(selection_.start(), selection_.end(), [this, generation](QString text) {
+        if (generation == copyGeneration_ && !text.isEmpty())
+            QGuiApplication::clipboard()->setText(text);
+    });
 }
 
 void ViewerWidget::selectAll()
@@ -2273,7 +2326,7 @@ void ViewerWidget::selectAll()
     if (!textIndex_ || pageCount() == 0)
         return;
     const int last = pageCount() - 1;
-    selection_.set(TextPos{0, 0}, TextPos{last, textIndex_->pageTextLength(last)});
+    selection_.set(TextPos{0, 0}, TextPos{last, std::numeric_limits<int>::max()});
     viewport()->update();
 }
 
@@ -2321,7 +2374,8 @@ bool ViewerWidget::eventFilter(QObject *watched, QEvent *event)
         switch (event->type()) {
         case QEvent::FocusIn: {
             // Keep Tab continuity when a field is reached by a direct click.
-            const std::vector<std::pair<int, int>> &order = formFieldOrder();
+            formFocusField_ = {formEditors_[idx].page, formEditors_[idx].fieldIndex};
+            const auto &order = formFieldOrder_;
             for (int k = 0; k < static_cast<int>(order.size()); ++k)
                 if (order[k].first == formEditors_[idx].page
                     && order[k].second == formEditors_[idx].fieldIndex) {
@@ -2396,6 +2450,8 @@ bool ViewerWidget::focusNextPrevChild(bool next)
 
 void ViewerWidget::mousePressEvent(QMouseEvent *event)
 {
+    if (deferMouseQuery(event))
+        return;
     // Hit-testing (text position, links, form fields, measurement handles) reads
     // the final layout, so a press mid-flight would land on geometry that is not on
     // screen yet. Land the picture first.
@@ -2476,16 +2532,14 @@ void ViewerWidget::mousePressEvent(QMouseEvent *event)
         if (formFieldAt(event->pos(), pg, fi)) {
             const std::vector<FormField> &fields = formModel_->pageFields(pg);
             if (fi >= 0 && fi < static_cast<int>(fields.size()) && fields[fi].isToggle()) {
-                const std::vector<std::pair<int, int>> &order = formFieldOrder();
+                formFocusField_ = {pg, fi};
+                const auto &order = formFieldOrder_;
                 for (int k = 0; k < static_cast<int>(order.size()); ++k)
                     if (order[k].first == pg && order[k].second == fi) {
                         formFocusIndex_ = k; // Tab continuity from the clicked toggle
                         break;
                     }
-                if (formModel_->toggle(pg, fi)) {
-                    applyFormFieldChange(pg);
-                    emit formEditsChanged();
-                }
+                editFormToggle(pg, fi);
                 setFocus();
                 viewport()->update();
                 event->accept();
@@ -2625,6 +2679,8 @@ void ViewerWidget::mousePressEvent(QMouseEvent *event)
 
 void ViewerWidget::mouseMoveEvent(QMouseEvent *event)
 {
+    if (deferMouseQuery(event))
+        return;
     // Middle-button pan: translate the scroll offset by the drag delta.
     if (panning_ && (event->buttons() & Qt::MiddleButton)) {
         clearLinkToolTip();
@@ -2750,6 +2806,8 @@ void ViewerWidget::mouseMoveEvent(QMouseEvent *event)
 
 void ViewerWidget::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (deferMouseQuery(event))
+        return;
     // End a middle-button pan; restore the tool's idle cursor.
     if (event->button() == Qt::MiddleButton && panning_) {
         panning_ = false;
@@ -2895,6 +2953,8 @@ void ViewerWidget::mouseReleaseEvent(QMouseEvent *event)
 
 void ViewerWidget::mouseDoubleClickEvent(QMouseEvent *event)
 {
+    if (deferMouseQuery(event))
+        return;
     if (toolMode_ == ToolMode::Measure && event->button() == Qt::LeftButton) {
         finishPolyOrArea();
         return;

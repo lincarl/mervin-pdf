@@ -622,8 +622,8 @@ private slots:
         QTRY_COMPARE(summaries.size(), 1);
         QVERIFY(!summaries.last().contains(note));
 
-        QVERIFY(tab->viewer()->annotModel()->addTextNote(
-                    0, {40, 40}, Qt::yellow, {}, QStringLiteral("Kept edit")) >= 0);
+        QVERIFY(mervin::testing::retryMutation([&] { return (tab->viewer()->annotModel()->addTextNote(
+                    0, {40, 40}, Qt::yellow, {}, QStringLiteral("Kept edit")) >= 0); }));
         QVERIFY(mervin::testing::suspendAndWait(*tab));
         QString error;
         QVERIFY2(tab->resume(&error), qPrintable(error));
@@ -662,8 +662,8 @@ private slots:
         QVERIFY(mervin::testing::openAndWait(window, original));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
-        QVERIFY(tab->viewer()->annotModel()->addTextNote(
-                    0, {40, 40}, Qt::yellow, {}, QStringLiteral("Rescued edit")) >= 0);
+        QVERIFY(mervin::testing::retryMutation([&] { return (tab->viewer()->annotModel()->addTextNote(
+                    0, {40, 40}, Qt::yellow, {}, QStringLiteral("Rescued edit")) >= 0); }));
         QVERIFY(mervin::testing::suspendAndWait(*tab));
         QVERIFY(QFile::remove(original));
         QString error;
@@ -836,7 +836,7 @@ private slots:
         QVERIFY(mervin::testing::openAndWait(window, edited));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
-        QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {50, 50}, Qt::yellow, {}, "pending") >= 0);
+        QVERIFY(mervin::testing::retryMutation([&] { return (tab->viewer()->annotModel()->addTextNote(0, {50, 50}, Qt::yellow, {}, "pending") >= 0); }));
 
         // Answer the question here, after a tab arrives in front of the edited one.
         dialogs_.stop();
@@ -875,7 +875,7 @@ private slots:
         QVERIFY(mervin::testing::openAndWait(window, edited));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
-        QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {50, 50}, Qt::yellow, {}, "pending") >= 0);
+        QVERIFY(mervin::testing::retryMutation([&] { return (tab->viewer()->annotModel()->addTextNote(0, {50, 50}, Qt::yellow, {}, "pending") >= 0); }));
         QVERIFY(mervin::testing::openAndWait(window, second));
         QVERIFY(mervin::testing::openAndWait(window, third));
 
@@ -918,7 +918,7 @@ private slots:
         QVERIFY(mervin::testing::openAndWait(window, edited));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
-        QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {50, 50}, Qt::yellow, {}, "pending") >= 0);
+        QVERIFY(mervin::testing::retryMutation([&] { return (tab->viewer()->annotModel()->addTextNote(0, {50, 50}, Qt::yellow, {}, "pending") >= 0); }));
         QVERIFY(mervin::testing::openAndWait(window, other));
 
         dialogs_.stop();
@@ -1066,10 +1066,10 @@ private slots:
         auto *secondTab = second->findChild<TabPage *>();
         QVERIFY(firstTab);
         QVERIFY(secondTab);
-        QVERIFY(firstTab->viewer()->annotModel()->addTextNote(
-                    0, {40, 40}, Qt::yellow, {}, QStringLiteral("First pending edit")) >= 0);
-        QVERIFY(secondTab->viewer()->annotModel()->addTextNote(
-                    0, {40, 40}, Qt::yellow, {}, QStringLiteral("Second pending edit")) >= 0);
+        QVERIFY(mervin::testing::retryMutation([&] { return (firstTab->viewer()->annotModel()->addTextNote(
+                    0, {40, 40}, Qt::yellow, {}, QStringLiteral("First pending edit")) >= 0); }));
+        QVERIFY(mervin::testing::retryMutation([&] { return (secondTab->viewer()->annotModel()->addTextNote(
+                    0, {40, 40}, Qt::yellow, {}, QStringLiteral("Second pending edit")) >= 0); }));
         first->hide();
         second->hide();
         QVERIFY(mervin::testing::suspendAndWait(*firstTab));
@@ -1705,8 +1705,8 @@ private slots:
         QVERIFY(mervin::testing::openAndWait(*window, edited));
         auto *editedTab = window->findChild<TabPage *>();
         QVERIFY(editedTab);
-        QVERIFY(editedTab->viewer()->annotModel()->addTextNote(
-                    0, {40, 40}, Qt::yellow, {}, QStringLiteral("Kept edit")) >= 0);
+        QVERIFY(mervin::testing::retryMutation([&] { return (editedTab->viewer()->annotModel()->addTextNote(
+                    0, {40, 40}, Qt::yellow, {}, QStringLiteral("Kept edit")) >= 0); }));
         QVERIFY(mervin::testing::openAndWait(*window, clean));
         QVERIFY(mervin::testing::openAndWait(*window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         if (unload)
@@ -1724,6 +1724,7 @@ private slots:
         QVERIFY(tabs);
         tabs->setCurrentIndex(0);
         QTRY_VERIFY_WITH_TIMEOUT(editedTab->isLoaded(), 10000);
+        QVERIFY(mervin::testing::waitForPage(editedTab->viewer()->annotModel(), 0));
         QCOMPARE(editedTab->viewer()->annotModel()->pageAnnots(0).front().contents,
                  QStringLiteral("Kept edit"));
         // Closing it still asks about the edits.
@@ -1756,6 +1757,7 @@ private slots:
         const QString text = QStringLiteral("Pending text survives deletion");
         int note = -1;
         if (annotation) {
+            QVERIFY(mervin::testing::waitForPage(viewer->annotModel(), 0));
             const auto notes = viewer->annotModel()->pageAnnots(0);
             const auto found = std::find_if(notes.begin(), notes.end(), [](const auto &entry) {
                 return entry.type == AnnotType::Text;
@@ -1765,6 +1767,7 @@ private slots:
             viewer->setCommentToolEnabled(true);
             viewer->setAnnotSubMode(AnnotSubMode::Note);
             viewer->revealAnnotation(0, note);
+            QTRY_VERIFY(viewer->viewport()->findChild<QPlainTextEdit *>());
             auto *editor = viewer->viewport()->findChild<QPlainTextEdit *>();
             QVERIFY(editor && editor->isVisible() && !editor->isReadOnly());
             editor->setPlainText(text);
@@ -1784,8 +1787,10 @@ private slots:
         QVERIFY(tab->hasUnsavedEdits());
         QCOMPARE(window->tabCount(), 1);
         if (annotation) {
-            QCOMPARE(viewer->annotModel()->annot(0, note)->contents, text);
+            QTRY_VERIFY(viewer->annotModel()->annot(0, note)
+                && viewer->annotModel()->annot(0, note)->contents == text);
         } else {
+            QVERIFY(mervin::testing::waitForPage(viewer->formModel(), 0));
             const auto fields = viewer->formModel()->pageFields(0);
             QVERIFY(std::any_of(fields.begin(), fields.end(), [&text](const auto &field) {
                 return field.value == text;
@@ -1972,7 +1977,7 @@ private slots:
         QVERIFY(mervin::testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
-        QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {50, 50}, Qt::yellow, {}, "pending") >= 0);
+        QVERIFY(mervin::testing::retryMutation([&] { return (tab->viewer()->annotModel()->addTextNote(0, {50, 50}, Qt::yellow, {}, "pending") >= 0); }));
 
         // Ask during the unsaved-changes question, which runs inside the close's
         // document operation, then keep the tab.
@@ -2071,8 +2076,8 @@ private slots:
         QVERIFY(mervin::testing::openAndWait(window, path));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
-        QVERIFY(tab->viewer()->annotModel()->addTextNote(
-                    0, {40, 40}, Qt::yellow, {}, QStringLiteral("Preserved edit")) >= 0);
+        QVERIFY(mervin::testing::retryMutation([&] { return (tab->viewer()->annotModel()->addTextNote(
+                    0, {40, 40}, Qt::yellow, {}, QStringLiteral("Preserved edit")) >= 0); }));
         QVERIFY(mervin::testing::suspendAndWait(*tab));
         QFile changed(path);
         QVERIFY(changed.open(QIODevice::Append));
@@ -2140,7 +2145,7 @@ private slots:
         QVERIFY(mervin::testing::openAndWait(window, path));
         auto *tab = window.findChild<TabPage *>();
         QVERIFY(tab);
-        QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {}, "retained") >= 0);
+        QVERIFY(mervin::testing::retryMutation([&] { return (tab->viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {}, "retained") >= 0); }));
         const auto permissions = QFile::permissions(path);
         QVERIFY(QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::ReadUser
                                             | QFileDevice::ReadGroup | QFileDevice::ReadOther));
@@ -2152,7 +2157,7 @@ private slots:
         QTRY_VERIFY(tab->hasRecoverySnapshot() && tab->isUsable());
         QCOMPARE(tab->path(), path);
         QVERIFY(tab->viewer()->document());
-        QCOMPARE(tab->viewer()->annotModel()->pageAnnots(0).size(), 1u);
+        QTRY_COMPARE(tab->viewer()->annotModel()->pageAnnots(0).size(), 1u);
         QVERIFY(QFile::setPermissions(path, permissions));
         if (tab->sourceChangedOnDisk())
             answers_.append(QMessageBox::Yes);
@@ -2349,6 +2354,43 @@ private slots:
         QCOMPARE(first->viewer()->matchCount(), 4);
         QCOMPARE(second->findCard()->query(), QStringLiteral("absent"));
         QVERIFY(!second->findCard()->isOpen());
+    }
+
+    void findSelectionArrivesWithoutReplacingNewTyping()
+    {
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        QVERIFY(testing::openAndWait(window, QStringLiteral(MERVIN_FIXTURE_PDF)));
+        auto *tab = window.findChild<TabPage *>();
+        QVERIFY(tab);
+        QAction *find = nullptr;
+        for (auto *action : window.findChildren<QAction *>())
+            if (action->shortcut() == QKeySequence(QKeySequence::Find)) find = action;
+        QVERIFY(find);
+        tab->viewer()->selectAll();
+        QSemaphore entered, release;
+        ViewerQueries::testing::observe([&](bool edit, int key) {
+            if (!edit && key == -5) { entered.release(); release.acquire(); }
+        });
+        const auto unblock = qScopeGuard([&] { release.release(100); ViewerQueries::testing::observe({}); });
+        find->trigger();
+        QVERIFY(tab->findCard()->isOpen());
+        QTRY_VERIFY(entered.available() == 1);
+        entered.acquire();
+        release.release();
+        QTRY_VERIFY(tab->findCard()->query().contains(QStringLiteral("STANDARD TEST")));
+
+        find->trigger();
+        QTRY_VERIFY(entered.available() == 1);
+        auto *field = tab->findCard()->findChild<QLineEdit *>(QStringLiteral("findField"));
+        QVERIFY(field);
+        QTest::keyClicks(field, QStringLiteral("typed while loading"));
+        ViewerQueries::testing::observe({});
+        release.release();
+        bool finished = false;
+        tab->viewer()->requestFindPreset([&](QString) { finished = true; });
+        QTRY_VERIFY(finished);
+        QCOMPARE(field->text(), QStringLiteral("typed while loading"));
     }
 
 private:

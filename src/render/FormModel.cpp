@@ -149,16 +149,19 @@ bool applyToWidget(const Document &doc, int page, int idx,
 
 FormModel::FormModel(const Document &doc) : doc_(doc)
 {
-    cache_.resize(static_cast<size_t>(doc_.pageCount()));
 }
 
 const std::vector<FormField> &FormModel::pageFields(int pageNo) const
 {
     static const std::vector<FormField> kEmpty;
-    if (pageNo < 0 || pageNo >= static_cast<int>(cache_.size()))
+    if (pageNo < 0 || pageNo >= doc_.pageCount())
         return kEmpty;
-    if (cache_[pageNo])
-        return *cache_[pageNo];
+    if (auto found = cache_.find(pageNo); found != cache_.end() && found->second)
+        return *found->second;
+    if (loader_) {
+        loader_(pageNo);
+        return kEmpty;
+    }
 
     std::vector<FormField> fields;
     bool refused = false;
@@ -390,15 +393,15 @@ bool FormModel::saveTo(const QString &tmpPath, QString *error) const
 
 void FormModel::reset()
 {
+    ++revision_;
     changedFields_.clear();
-    for (auto &c : cache_)
-        c.reset();
+    cache_.clear();
 }
 
 void FormModel::invalidatePage(int page)
 {
-    if (page >= 0 && page < static_cast<int>(cache_.size()))
-        cache_[page].reset();
+    ++revision_;
+    cache_.erase(page);
 }
 
 } // namespace mervin

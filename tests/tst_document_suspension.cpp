@@ -294,15 +294,16 @@ private slots:
             QVERIFY(formEditor);
             formEditor->setText(QStringLiteral("Uncommitted field value"));
 
-            const int note = viewer->annotModel()->addTextNote(
-                0, {80, 100}, Qt::yellow, QStringLiteral("Tester"), QStringLiteral("Before edit"));
-            QVERIFY(note >= 0);
+            int note = -1;
+            QVERIFY(mervin::testing::retryMutation([&] { return ((note = viewer->annotModel()->addTextNote(
+                0, {80, 100}, Qt::yellow, QStringLiteral("Tester"), QStringLiteral("Before edit"))) >= 0); }));
             viewer->loadMeasurements({{0, MeasureKind::Distance, {{30, 200}, {160, 200}}}},
                                      {}, MeasureUnit::Millimeter, 2, 2.0);
             viewer->setPageScaleOverride(0, MeasureModel::fromRatio(25));
             viewer->setCommentToolEnabled(true);
             viewer->setAnnotSubMode(AnnotSubMode::Note);
             viewer->revealAnnotation(0, note);
+            QTRY_VERIFY(viewer->viewport()->findChild<QPlainTextEdit *>());
             auto *comment = viewer->viewport()->findChild<QPlainTextEdit *>();
             QVERIFY(comment);
             comment->setPlainText(QStringLiteral("Uncommitted comment value"));
@@ -325,8 +326,10 @@ private slots:
             QCOMPARE(tab.path(), path);
             QCOMPARE(tab.password(), password);
             QVERIFY(tab.hasUnsavedEdits());
+            QVERIFY(mervin::testing::waitForPage(viewer->formModel(), 0));
             QCOMPARE(viewer->formModel()->pageFields(0).at(0).value,
                      QStringLiteral("Uncommitted field value"));
+            QVERIFY(mervin::testing::waitForPage(viewer->annotModel(), 0));
             const auto notes = viewer->annotModel()->pageAnnots(0);
             QCOMPARE(notes.size(), 1u);
             QCOMPARE(notes.front().contents, QStringLiteral("Uncommitted comment value"));
@@ -340,6 +343,7 @@ private slots:
             QVERIFY(tab.hasUnsavedEdits());
             QVERIFY2(tab.resume(&error), qPrintable(error));
             QVERIFY(tab.hasUnsavedEdits());
+            QVERIFY(mervin::testing::waitForPage(viewer->formModel(), 0));
             QCOMPARE(viewer->formModel()->pageFields(0).at(0).value,
                      QStringLiteral("Uncommitted field value"));
             checkpoint = tab.recoveryPath();
@@ -891,11 +895,13 @@ private slots:
         auto *editor = tab.viewer()->viewport()->findChild<QLineEdit *>(Qt::FindDirectChildrenOnly);
         QVERIFY(editor);
         editor->setText(QStringLiteral("Text still being typed"));
+        QVERIFY(mervin::testing::waitForPage(tab.viewer()->formModel(), 0));
         QVERIFY(tab.viewer()->formModel()->pageFields(0).front().value.isEmpty());
         QVERIFY(mervin::testing::suspendAndWait(tab));
         QVERIFY(tab.hasRecoverySnapshot());
         QVERIFY(tab.hasUnsavedEdits());
         QVERIFY(tab.resume());
+        QVERIFY(mervin::testing::waitForPage(tab.viewer()->formModel(), 0));
         QCOMPARE(tab.viewer()->formModel()->pageFields(0).front().value,
                  QStringLiteral("Text still being typed"));
     }
@@ -1181,8 +1187,8 @@ private slots:
         RenderEngine engine;
         TabPage tab(&engine);
         QVERIFY(tab.open(QStringLiteral(MERVIN_FIXTURE_PDF)));
-        QVERIFY(tab.viewer()->annotModel()->addTextNote(
-                    0, {60, 60}, Qt::yellow, {}, QStringLiteral("Must remain editable")) >= 0);
+        QVERIFY(mervin::testing::retryMutation([&] { return (tab.viewer()->annotModel()->addTextNote(
+                    0, {60, 60}, Qt::yellow, {}, QStringLiteral("Must remain editable")) >= 0); }));
         const QString blocker = profile_->filePath(QStringLiteral("regular-file"));
         QVERIFY(writeFile(blocker, QByteArrayLiteral("Not a directory")));
         ConfigPaths::setOverrideDir(blocker);
@@ -1191,6 +1197,7 @@ private slots:
         QVERIFY(!error.isEmpty());
         QVERIFY(tab.isLoaded());
         QVERIFY(tab.hasUnsavedEdits());
+        QVERIFY(mervin::testing::waitForPage(tab.viewer()->annotModel(), 0));
         QCOMPARE(tab.viewer()->annotModel()->pageAnnots(0).front().contents,
                  QStringLiteral("Must remain editable"));
         ConfigPaths::setOverrideDir(profile_->path());
@@ -1214,8 +1221,8 @@ private slots:
         QVERIFY(rows);
         QCOMPARE(rows->count(), tab->viewer()->pageCount());
         const int pageCount = rows->count();
-        QVERIFY(tab->viewer()->annotModel()->addTextNote(
-                    0, {60, 60}, Qt::yellow, {}, QStringLiteral("Keep the document loaded")) >= 0);
+        QVERIFY(mervin::testing::retryMutation([&] { return (tab->viewer()->annotModel()->addTextNote(
+                    0, {60, 60}, Qt::yellow, {}, QStringLiteral("Keep the document loaded")) >= 0); }));
         const QString blocker = profile_->filePath(QStringLiteral("regular-file"));
         QVERIFY(writeFile(blocker, QByteArrayLiteral("Not a directory")));
         ConfigPaths::setOverrideDir(blocker);
@@ -1245,8 +1252,8 @@ private slots:
         TabPage tab(&engine);
         QVERIFY(tab.open(source));
         QVERIFY(!tab.sourceChangedOnDisk());
-        QVERIFY(tab.viewer()->annotModel()->addTextNote(
-                    0, {40, 40}, Qt::yellow, {}, QStringLiteral("Keep my edit")) >= 0);
+        QVERIFY(mervin::testing::retryMutation([&] { return (tab.viewer()->annotModel()->addTextNote(
+                    0, {40, 40}, Qt::yellow, {}, QStringLiteral("Keep my edit")) >= 0); }));
         QVERIFY(mervin::testing::suspendAndWait(tab));
         QVERIFY(tab.resume());
         QVERIFY(!tab.sourceChangedOnDisk());
@@ -1265,6 +1272,7 @@ private slots:
         QVERIFY(tab.sourceChangedOnDisk());
         QVERIFY(tab.resume());
         QVERIFY(tab.sourceChangedOnDisk());
+        QVERIFY(mervin::testing::waitForPage(tab.viewer()->annotModel(), 0));
         QCOMPARE(tab.viewer()->annotModel()->pageAnnots(0).front().contents,
                  QStringLiteral("Keep my edit"));
         QCOMPARE(readFile(source), changed);
@@ -1303,8 +1311,8 @@ private slots:
             tab.viewer()->setScale(1.75);
             tab.viewer()->rotateRight();
             tab.viewer()->setLayoutMode({ViewLayout::Scroll::Single, true});
-            QVERIFY(tab.viewer()->annotModel()->addTextNote(
-                        0, {70, 70}, Qt::yellow, {}, QStringLiteral("Recovered edit")) >= 0);
+            QVERIFY(mervin::testing::retryMutation([&] { return (tab.viewer()->annotModel()->addTextNote(
+                        0, {70, 70}, Qt::yellow, {}, QStringLiteral("Recovered edit")) >= 0); }));
             QVERIFY(mervin::testing::suspendAndWait(tab));
             checkpoint = tab.recoveryPath();
             checkpointBytes = readFile(checkpoint);
@@ -1352,6 +1360,7 @@ private slots:
             QCOMPARE(restored.viewer()->layoutMode(), (ViewLayout::Mode{ViewLayout::Scroll::Single, true}));
             QCOMPARE(restored.viewer()->rotation(), 90);
             QCOMPARE(restored.viewer()->scale(), 1.75);
+            QVERIFY(mervin::testing::waitForPage(restored.viewer()->annotModel(), 0));
             QCOMPARE(restored.viewer()->annotModel()->pageAnnots(0).front().contents,
                      QStringLiteral("Recovered edit"));
             QVERIFY(restored.sourceChangedOnDisk());
@@ -1372,8 +1381,8 @@ private slots:
         QVERIFY(tab.open(source));
         tab.viewer()->setFormMode(false);
         tab.viewer()->setScale(1.5);
-        QVERIFY(tab.viewer()->annotModel()->addTextNote(
-                    0, {80, 80}, Qt::yellow, {}, QStringLiteral("Save failed, keep this")) >= 0);
+        QVERIFY(mervin::testing::retryMutation([&] { return (tab.viewer()->annotModel()->addTextNote(
+                    0, {80, 80}, Qt::yellow, {}, QStringLiteral("Save failed, keep this")) >= 0); }));
         job::testing::failWhen([source](job::Step step, const QString &path) {
             return step == job::Step::Commit && path == source;
         });
@@ -1417,9 +1426,10 @@ private slots:
         const int count = secondField ? 2 : 1;
         QTRY_COMPARE(tab.viewer()->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly).size(), count);
         const auto editors = tab.viewer()->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly);
-        QCOMPARE(tab.viewer()->formModel()->pageFields(0).size(), size_t(count));
+        QTRY_COMPARE(tab.viewer()->formModel()->pageFields(0).size(), size_t(count));
         for (int i = 0; i < count; ++i) {
             editors[i]->setText(QStringLiteral("Text still being typed %1").arg(i + 1));
+            QVERIFY(mervin::testing::waitForPage(tab.viewer()->formModel(), 0));
             QVERIFY(tab.viewer()->formModel()->pageFields(0)[i].value.isEmpty());
         }
         std::optional<TabPage::SaveCompletion> completion;
@@ -1437,6 +1447,7 @@ private slots:
         QCOMPARE(savedForm.pageFields(0).size(), size_t(count));
         for (int i = 0; i < count; ++i) {
             const QString text = QStringLiteral("Text still being typed %1").arg(i + 1);
+            QVERIFY(mervin::testing::waitForPage(tab.viewer()->formModel(), 0));
             QCOMPARE(tab.viewer()->formModel()->pageFields(0)[i].value, text);
             QCOMPARE(savedForm.pageFields(0)[i].value, text);
         }
@@ -1465,9 +1476,10 @@ private slots:
         const int count = secondField ? 2 : 1;
         QTRY_COMPARE(viewer->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly).size(), count);
         const auto editors = viewer->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly);
-        QCOMPARE(viewer->formModel()->pageFields(0).size(), size_t(count));
+        QTRY_COMPARE(viewer->formModel()->pageFields(0).size(), size_t(count));
         for (int i = 0; i < count; ++i) {
             editors[i]->setText(QStringLiteral("Text still being typed %1").arg(i + 1));
+            QVERIFY(mervin::testing::waitForPage(viewer->formModel(), 0));
             QVERIFY(viewer->formModel()->pageFields(0)[i].value.isEmpty());
         }
         connect(tab->viewer(), &ViewerWidget::formEditsChanged, &engine, [page] {
@@ -1511,6 +1523,7 @@ private slots:
         QTest::mouseClick(editor, Qt::LeftButton);
         QTest::keyClicks(editor, "Edited while another tab waits");
         QTest::keyClick(editor, Qt::Key_Return);
+        QVERIFY(mervin::testing::waitForPage(editable->viewer()->formModel(), 0));
         QCOMPARE(editable->viewer()->formModel()->pageFields(0).front().value,
                  QStringLiteral("Edited while another tab waits"));
         QCOMPARE(job::testing::held(), 1);

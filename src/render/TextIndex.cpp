@@ -1,10 +1,13 @@
 #include "render/TextIndex.h"
 
 #include "render/Document.h"
+#include "render/PageCancellation.h"
+#include "io/JobContext.h"
 
 #include <mupdf/fitz.h>
 
 #include <QRegularExpression>
+#include <QThread>
 
 #include <algorithm>
 #include <cstring>
@@ -44,7 +47,7 @@ TextIndex::TextIndex(std::shared_ptr<fz_context> baseCtx, Document *doc)
     // the shared store is protected by the base context's lock callbacks).
     if (base_)
         ctx_ = fz_clone_context(base_.get());
-    pages_.resize(doc_ ? doc_->pageCount() : 0);
+    pageCount_ = doc_ ? doc_->pageCount() : 0;
 }
 
 TextIndex::~TextIndex()
@@ -56,12 +59,16 @@ TextIndex::~TextIndex()
 const TextIndex::PageText &TextIndex::ensure(int pageNo)
 {
     static PageText empty;
-    if (pageNo < 0 || pageNo >= static_cast<int>(pages_.size()))
+    if (pageNo < 0 || pageNo >= pageCount_)
         return empty;
 
+    if (auto found = pages_.find(pageNo); found != pages_.end() && found->second.ready)
+        return found->second;
+    if (loader_) {
+        loader_(pageNo);
+        return empty;
+    }
     PageText &pt = pages_[pageNo];
-    if (pt.ready)
-        return pt;
     if (!ctx_ || !lifetime_) {
         pt.ready = true;
         return pt;
@@ -71,13 +78,25 @@ const TextIndex::PageText &TextIndex::ensure(int pageNo)
     const Document::ScreenQuery query(*lifetime_, "TextIndex::ensure");
     if (query.refused())
         return empty;
+    std::unique_ptr<Document::Hold> hold;
+    std::unique_lock<std::timed_mutex> screenGate;
+    if (QThread::isMainThread())
+        screenGate = std::unique_lock(lifetime_->mutex);
+    else
+        hold = std::make_unique<Document::Hold>(lifetime_, [] { return job::stopped(); }, false);
+    if ((!QThread::isMainThread() && !hold->document())
+        || !lifetime_->document || job::stopped())
+        return empty;
     pt.ready = true;
-    std::lock_guard gate(lifetime_->mutex);
-    if (!lifetime_->document)
-        return pt;
 
     fz_page *page = nullptr;
     fz_stext_page *stext = nullptr;
+    fz_device *device = nullptr;
+    fz_device *cancelDevice = nullptr;
+    fz_cookie cookie{};
+    fz_var(device);
+    fz_var(cancelDevice);
+    fz_var(cookie);
     fz_var(page);
     fz_var(stext);
     // Text extraction loads the page and parses its content stream, both of
@@ -99,7 +118,11 @@ const TextIndex::PageText &TextIndex::ensure(int pageNo)
 
         fz_stext_options opts;
         std::memset(&opts, 0, sizeof(opts)); // default flags: ligatures expanded, whitespace normalised
-        stext = fz_new_stext_page_from_page(ctx_, page, &opts);
+        stext = fz_new_stext_page(ctx_, bound);
+        device = fz_new_stext_device(ctx_, stext, &opts);
+        cancelDevice = cancellablePageDevice(ctx_, device, &cookie);
+        fz_run_page(ctx_, page, cancelDevice, fz_identity, &cookie);
+        fz_close_device(ctx_, cancelDevice);
 
         for (fz_stext_block *block = stext->first_block; block; block = block->next) {
             if (block->type != FZ_STEXT_BLOCK_TEXT)
@@ -139,6 +162,8 @@ const TextIndex::PageText &TextIndex::ensure(int pageNo)
         }
     }
     fz_always(ctx_) {
+        fz_drop_device(ctx_, cancelDevice);
+        fz_drop_device(ctx_, device);
         if (stext)
             fz_drop_stext_page(ctx_, stext);
         if (page)
@@ -147,7 +172,18 @@ const TextIndex::PageText &TextIndex::ensure(int pageNo)
     fz_catch(ctx_) {
         // Keep whatever was extracted; pt stays marked ready so we don't retry.
     }
+    if (job::stopped()) pt = {};
     return pt;
+}
+
+TextIndex::PageText TextIndex::snapshot(int pageNo)
+{
+    PageText page = ensure(pageNo);
+    if (page.ready && !page.linksReady) {
+        page.links = detectLinksInText(page.text, pageNo);
+        page.linksReady = true;
+    }
+    return page;
 }
 
 const QString &TextIndex::pageText(int pageNo)
@@ -309,13 +345,12 @@ std::vector<TextLink> TextIndex::detectLinksInText(const QString &text, int page
 
 std::optional<TextLink> TextIndex::linkAt(int pageNo, QPointF pagePoint)
 {
-    if (pageNo < 0 || pageNo >= static_cast<int>(pages_.size()))
+    if (pageNo < 0 || pageNo >= pageCount_)
         return std::nullopt;
 
-    ensure(pageNo);
-    PageText &pt = pages_[pageNo];
-    if (!pt.ready)
-        return std::nullopt; // refused (see ensure()); find the links once it is read
+    if (!ensure(pageNo).ready)
+        return std::nullopt;
+    PageText &pt = pages_.at(pageNo); // refused (see ensure()); find the links once it is read
     if (!pt.linksReady) {
         pt.links = detectLinksInText(pt.text, pageNo);
         pt.linksReady = true;
@@ -371,7 +406,7 @@ std::vector<TextMatch> TextIndex::search(const QString &query, bool caseSensitiv
     std::vector<TextMatch> out;
     if (query.isEmpty())
         return out;
-    for (int p = 0; p < static_cast<int>(pages_.size()); ++p) {
+    for (int p = 0; p < pageCount_; ++p) {
         if (canceled && canceled())
             break;
         const PageText &pt = ensure(p);

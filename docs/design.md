@@ -261,11 +261,6 @@ Only successful completion queues the local PDF through the background loader.
 
 These still touch the disk on the UI thread and are planned work:
 
-- Viewer queries still parse and inspect document data on the UI thread and can
-  wait for another thread's document access lock. Loaded PDFs now use an owning
-  memory buffer, so these calls do not read the original file. Moving every
-  viewer query to background threads remains separate work. Directory-dependent
-  non-PDF formats retain their path-based lookup of relative resources.
 - Reads at startup before the first window, and the system file dialogs, which
   run on the UI thread by design.
 
@@ -848,20 +843,41 @@ recursive, so the holding thread releases the hold before it reads the document
 through a `TextIndex` or OCR, destroys it or waits for it to close. Render workers
 wait for the gate in the same steps and drop a request canceled meanwhile, so a
 held document does not keep the two to four workers from other tabs once its tab
-has canceled its requests. The find search and OCR keep plain waits, as each runs
-on a queue of its own.
+has canceled its requests. Text extraction uses the same stop-aware gate acquisition.
+OCR retains its own queue and lifetime handling.
 
-Queries on the screen thread never wait for a job. While a hold holds a document or
-waits for it, the document's queries, `TextIndex` page reads and
-`RenderEngine::renderPageImage` return their empty value on the screen thread, log a
-warning naming the call and count a refusal (`Document::testing::refusals()`). Other
-threads are answered as before. `TextIndex` and `FormModel` do not cache a refused
-page, so its text, links and form fields are read on a later call. A screen-thread
-query counts itself before it checks for a hold, and a hold counts itself before it
-checks for queries, so a query that found no hold ends before the hold takes the
-gate. A query made inside another query of the same document, such as
-`withPdfDocument` inside `savePdfTo`, is let through, since the outer one keeps the
-hold waiting. Nothing changes while no job holds a document.
+Viewer queries use one serial `ViewerQueries` queue per viewer. Only requested
+pages are parsed. Page snapshots contain plain text geometry, form fields,
+annotations, resolved links, KiCad properties and measurement metadata. The UI
+owns the transferred values and retains 24 page snapshots, or the visible set
+plus a newly requested interaction page when that set is larger. Geometry has
+one cached page, and form, annotation and text caches allocate entries only for
+requested pages. Outline loading, comments listing and keyboard form traversal
+also run on the worker. The latter two process one page at a time and retain only
+the list output. Form focus alone does not start a whole-document traversal.
+
+A missing snapshot defers the complete mouse gesture in page coordinates. Once
+ready, the viewer replays the gesture against the current layout. Tool changes,
+rebinding and hiding reject obsolete gestures. Missing search destinations and
+sidebar selections retain their navigation intent. Copy and markup explicitly
+read the selected range page by page, so cache eviction cannot truncate them.
+Read cancellation and model revisions reject stale results. Text and geometry
+parsing check cancellation on the parsing thread between device operations.
+Individual native calls can still take time to return, without blocking the UI.
+
+Viewer form and annotation mutations use the same serial queue as reads. A
+pending-edit fence is acquired before queueing. Save and print `Document::Hold`
+users, and background destruction, wait for this fence before accessing or
+closing the document. An edit owns this lifetime protection while its methods
+take their access locks, so text extraction never nests a nonrecursive lifetime
+gate. Pausing cancels reads but retains accepted edits. Dirty state includes
+accepted edits immediately. Worker results refresh sibling fields and rasters,
+while an editor's last synchronized value protects newer uncommitted typing.
+
+Legacy synchronous model callers retain `Document::ScreenQuery` refusal while
+another job holds or waits for the document. The viewer uses cache-only model
+reads and queued mutations, so this guard cannot silently discard its edits.
+`isPdf` and form presence are immutable facts resolved during document opening.
 
 Each render request carries the requesting viewer's identifier, view epoch, and
 token. A viewer discards results that belong to an older zoom, rotation, or view.

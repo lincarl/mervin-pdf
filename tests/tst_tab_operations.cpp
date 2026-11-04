@@ -1149,6 +1149,7 @@ private slots:
             QTest::mouseMove(pages, onPage(x, 52));
         QTest::mouseRelease(pages, Qt::LeftButton, {}, onPage(300, 52));
         QTRY_COMPARE(viewer->annotModel()->pageAnnots(0).size(), size_t(1));
+        QVERIFY(mervin::testing::waitForPage(viewer->annotModel(), 0));
         QCOMPARE(viewer->annotModel()->pageAnnots(0).front().type, AnnotType::Highlight);
 
         // Another window opens and shows a document.
@@ -1994,8 +1995,8 @@ private slots:
         MainWindow *editor = manager.createWindow();
         showForLayout(*editor);
         QVERIFY(testing::openAndWait(*editor, output));
-        QVERIFY(currentTab(*editor)->viewer()->annotModel()->addTextNote(
-                    0, {50, 50}, Qt::yellow, {}, QStringLiteral("Saved during Split")) >= 0);
+        QVERIFY(mervin::testing::retryMutation([&] { return (currentTab(*editor)->viewer()->annotModel()->addTextNote(
+                    0, {50, 50}, Qt::yellow, {}, QStringLiteral("Saved during Split")) >= 0); }));
         QVERIFY(QMetaObject::invokeMethod(editor, "saveMeasurements"));
         QTRY_VERIFY_WITH_TIMEOUT(!currentTab(*editor)->hasUnsavedEdits(), 10000);
         answers_ << QMessageBox::Ok;
@@ -2332,8 +2333,8 @@ private slots:
         const QPointer<TabPage> tab(currentTab(*host));
         QVERIFY(tab);
         if (intent != QStringLiteral("quit"))
-            QVERIFY(tab->viewer()->annotModel()->addTextNote(
-                        0, {50, 50}, Qt::yellow, {}, QStringLiteral("Kept")) >= 0);
+            QVERIFY(mervin::testing::retryMutation([&] { return (tab->viewer()->annotModel()->addTextNote(
+                        0, {50, 50}, Qt::yellow, {}, QStringLiteral("Kept")) >= 0); }));
         holdAt(job::Step::Reading, path);
         rotate(*host, out);
         QTRY_COMPARE(job::testing::held(), 1);
@@ -2345,8 +2346,8 @@ private slots:
             MainWindow *later = manager.createWindow();
             showForLayout(*later);
             QVERIFY(mervin::testing::openAndWait(*later, laterPath));
-            QVERIFY(currentTab(*later)->viewer()->annotModel()->addTextNote(
-                        0, {50, 50}, Qt::yellow, {}, QStringLiteral("Kept")) >= 0);
+            QVERIFY(mervin::testing::retryMutation([&] { return (currentTab(*later)->viewer()->annotModel()->addTextNote(
+                        0, {50, 50}, Qt::yellow, {}, QStringLiteral("Kept")) >= 0); }));
         }
         answers_ << QMessageBox::No << QMessageBox::Cancel;
         if (intent == QStringLiteral("tab"))
@@ -2384,9 +2385,9 @@ private slots:
         QVERIFY(mervin::testing::openAndWait(*host, path));
         TabPage *tab = currentTab(*host);
         QVERIFY(tab);
-        QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {50, 50}, Qt::yellow, {},
+        QVERIFY(mervin::testing::retryMutation([&] { return (tab->viewer()->annotModel()->addTextNote(0, {50, 50}, Qt::yellow, {},
                                                          QStringLiteral("Kept"))
-                >= 0);
+                >= 0); }));
         // Held before the tool opens the file, which an in-place save on Windows could
         // not replace while it is open.
         job::testing::holdWhen([path, first = true](job::Step step, const QString &file) mutable {
@@ -2444,8 +2445,8 @@ private:
     {
         tab.viewer()->loadMeasurements({{0, MeasureKind::Distance, {{50, 100}, {150, 100}}}},
                                        {}, MeasureUnit::Millimeter, 2, 2.0);
-        QVERIFY(tab.viewer()->annotModel()->addTextNote(
-                    0, {50, 50}, Qt::yellow, {}, QStringLiteral("Kept edit")) >= 0);
+        QVERIFY(mervin::testing::retryMutation([&] { return (tab.viewer()->annotModel()->addTextNote(
+                    0, {50, 50}, Qt::yellow, {}, QStringLiteral("Kept edit")) >= 0); }));
     }
 
     // Accepts the actual copy or export dialog with the requested output path.

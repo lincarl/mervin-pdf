@@ -727,6 +727,19 @@ add_test(NAME i18n_content
 add_test(NAME tst_translation_content
     COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/scripts/test_translation_content.py")
 
+# Viewer queries exercise Qt input while native parsing and access locks are held.
+qt_add_executable(tst_viewer_queries tst_viewer_queries.cpp)
+target_link_libraries(tst_viewer_queries PRIVATE mervin_viewer Qt6::Test)
+target_compile_definitions(tst_viewer_queries PRIVATE
+    MERVIN_FORM_PDF="${MERVIN_FIXTURES_DIR}/form_comment.pdf"
+    MERVIN_LONG_PDF="${MERVIN_FIXTURES_DIR}/example1.pdf")
+set_target_properties(tst_viewer_queries PROPERTIES WIN32_EXECUTABLE OFF)
+add_test(NAME tst_viewer_queries COMMAND tst_viewer_queries)
+set_tests_properties(tst_viewer_queries PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    TIMEOUT 60)
+
 # File dialogs persist Qt history independently of Mervin's isolated profile.
 # Give every Linux test its own configuration folder, including parallel runs.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

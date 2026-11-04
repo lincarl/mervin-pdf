@@ -1,4 +1,5 @@
 #include "render/Document.h"
+#include "render/PageCancellation.h"
 
 #include "io/Background.h"
 #include "io/JobContext.h"
@@ -89,6 +90,11 @@ fz_device *cancellableDrawDevice(fz_context *ctx, fz_device *target, fz_cookie *
 
 } // namespace
 
+fz_device *cancellablePageDevice(fz_context *ctx, fz_device *target, fz_cookie *cookie)
+{
+    return cancellableDrawDevice(ctx, target, cookie);
+}
+
 void Document::testing::setRasterObserver(std::function<void()> observer)
 {
     rasterObserver = std::move(observer);
@@ -114,6 +120,7 @@ Document::Document(fz_context *ctx, fz_document *doc, bool ownsContext,
     fz_catch(ctx_)
         pdoc = nullptr;
 
+    isPdf_ = pdoc != nullptr;
     pageSizes_.reserve(n);
     for (int i = 0; i < n; ++i) {
         // 0 means "not resolved yet": MuPDF clamps a real page box to at least
@@ -167,13 +174,15 @@ Document::Document(fz_context *ctx, fz_document *doc, bool ownsContext,
     if (fz_lookup_metadata(ctx_, doc_, FZ_META_INFO_TITLE, buf, sizeof(buf)) > 0)
         title_ = QString::fromUtf8(buf);
 
-    measureCache_.resize(pageSizes_.size());
-    geomCache_.resize(pageSizes_.size());
+    // Opening already runs off the UI thread. These immutable facts never need a lock again.
+    (void)hasForm();
     ++constructedDocuments;
 }
 
 Document::~Document()
 {
+    while (lifetime_->pendingEdits.load() != 0)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     std::lock_guard guard(lifetime_->mutex);
     lifetime_->document = nullptr;
     if (doc_)
@@ -346,7 +355,7 @@ thread_local std::vector<const DocumentLifetime *> screenQueriesInside;
 // waits for the job behind the hold, however the two threads interleave. The hold
 // waits before it takes the gate, not after, because TextIndex queries take the gate
 // on the screen thread.
-Document::Hold::Hold(std::shared_ptr<DocumentLifetime> lifetime, const std::function<bool()> &stop)
+Document::Hold::Hold(std::shared_ptr<DocumentLifetime> lifetime, const std::function<bool()> &stop, bool waitForEdits)
     : lifetime_(std::move(lifetime))
 {
     // The screen thread never waits for a job, and inside one of its own queries a hold
@@ -357,7 +366,8 @@ Document::Hold::Hold(std::shared_ptr<DocumentLifetime> lifetime, const std::func
     lifetime_->holds.fetch_add(1);
     std::unique_lock gate(lifetime_->mutex, std::defer_lock);
     while (!(stop && stop())) {
-        if (lifetime_->screenQueries.load() > 0)
+        if (lifetime_->screenQueries.load() > 0
+            || (waitForEdits && lifetime_->pendingEdits.load() > 0))
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         else if (gate.try_lock_for(DocumentLifetime::kStep))
             break;
@@ -593,11 +603,6 @@ QStringList parseKiCadPropertyScript(const QString &script)
     return values;
 }
 
-bool rectContains(const fz_rect &r, float x, float y)
-{
-    return x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1;
-}
-
 } // namespace
 
 std::vector<OutlineItem> Document::outline() const
@@ -630,10 +635,10 @@ PageMeasurement Document::pageMeasurement(int pageNo) const
     if (query.refused())
         return {};
     std::lock_guard<std::mutex> lk(access_);
-    if (pageNo < 0 || pageNo >= static_cast<int>(measureCache_.size()))
+    if (pageNo < 0 || pageNo >= pageCount())
         return {};
-    if (measureCache_[pageNo])
-        return *measureCache_[pageNo];
+    if (auto found = measureCache_.find(pageNo); found != measureCache_.end())
+        return found->second;
 
     PageMeasurement pm;
     fz_page *fzpage = nullptr;
@@ -747,16 +752,16 @@ std::array<double, 6> Document::pagePointToPdfMatrix(int pageNo) const
     return out;
 }
 
-std::optional<PdfLinkTarget> Document::linkTargetAt(int pageNo, QPointF pagePoint) const
+std::vector<std::pair<QRectF, PdfLinkTarget>> Document::pageLinks(int pageNo) const
 {
     const ScreenQuery query(*lifetime_, "Document::linkTargetAt");
     if (query.refused())
-        return std::nullopt;
+        return {};
     std::lock_guard<std::mutex> lk(access_);
     if (pageNo < 0 || pageNo >= static_cast<int>(pageSizes_.size()))
-        return std::nullopt;
+        return {};
 
-    std::optional<PdfLinkTarget> target;
+    std::vector<std::pair<QRectF, PdfLinkTarget>> target;
     fz_page *page = nullptr;
     fz_link *links = nullptr;
     fz_var(page);
@@ -766,12 +771,8 @@ std::optional<PdfLinkTarget> Document::linkTargetAt(int pageNo, QPointF pagePoin
         const fz_rect bound = fz_bound_page(ctx_, page);
         links = fz_load_links(ctx_, page);
 
-        const float px = static_cast<float>(pagePoint.x() + bound.x0);
-        const float py = static_cast<float>(pagePoint.y() + bound.y0);
         for (fz_link *link = links; link; link = link->next) {
             if (!link->uri)
-                continue;
-            if (!rectContains(link->rect, px, py))
                 continue;
 
             PdfLinkTarget hit;
@@ -783,8 +784,8 @@ std::optional<PdfLinkTarget> Document::linkTargetAt(int pageNo, QPointF pagePoin
                     hit.page = p;
             }
             if (hit.valid()) {
-                target = hit;
-                break;
+                target.emplace_back(QRectF(link->rect.x0 - bound.x0, link->rect.y0 - bound.y0,
+                    link->rect.x1 - link->rect.x0, link->rect.y1 - link->rect.y0), hit);
             }
         }
     }
@@ -795,9 +796,17 @@ std::optional<PdfLinkTarget> Document::linkTargetAt(int pageNo, QPointF pagePoin
             fz_drop_page(ctx_, page);
     }
     fz_catch(ctx_) {
-        target.reset();
+        target.clear();
     }
     return target;
+}
+
+std::optional<PdfLinkTarget> Document::linkTargetAt(int pageNo, QPointF point) const
+{
+    for (const auto &[rect, target] : pageLinks(pageNo))
+        if (rect.contains(point))
+            return target;
+    return std::nullopt;
 }
 
 QString Document::linkAt(int pageNo, QPointF pagePoint) const
@@ -809,16 +818,16 @@ QString Document::linkAt(int pageNo, QPointF pagePoint) const
     return target ? target->uri : QString();
 }
 
-std::optional<PdfItemProperties> Document::itemPropertiesAt(int pageNo, QPointF pagePoint) const
+std::vector<PdfItemProperties> Document::pageItemProperties(int pageNo) const
 {
     const ScreenQuery query(*lifetime_, "Document::itemPropertiesAt");
     if (query.refused())
-        return std::nullopt;
+        return {};
     std::lock_guard<std::mutex> lk(access_);
     if (pageNo < 0 || pageNo >= static_cast<int>(pageSizes_.size()))
-        return std::nullopt;
+        return {};
 
-    std::optional<PdfItemProperties> found;
+    std::vector<PdfItemProperties> found;
     fz_page *fzpage = nullptr;
     fz_var(fzpage);
     fz_try(ctx_) {
@@ -834,8 +843,6 @@ std::optional<PdfItemProperties> Document::itemPropertiesAt(int pageNo, QPointF 
 
             pdf_obj *pageObj = pdf_lookup_page_obj(ctx_, pdoc, pageNo);
             pdf_obj *annots = pdf_resolve_indirect(ctx_, pdf_dict_get(ctx_, pageObj, PDF_NAME(Annots)));
-            const float px = static_cast<float>(pagePoint.x() + bound.x0);
-            const float py = static_cast<float>(pagePoint.y() + bound.y0);
 
             for (int i = pdf_array_len(ctx_, annots) - 1; i >= 0; --i) {
                 pdf_obj *annot = pdf_resolve_indirect(ctx_, pdf_array_get(ctx_, annots, i));
@@ -846,8 +853,6 @@ std::optional<PdfItemProperties> Document::itemPropertiesAt(int pageNo, QPointF 
 
                 const fz_rect rect = fz_transform_rect(
                     pdf_to_rect(ctx_, pdf_dict_get(ctx_, annot, PDF_NAME(Rect))), pageCtm);
-                if (!rectContains(rect, px, py))
-                    continue;
 
                 pdf_obj *action = pdf_resolve_indirect(ctx_, pdf_dict_get(ctx_, annot, PDF_NAME(A)));
                 if (!pdf_name_eq(ctx_, pdf_dict_get(ctx_, action, PDF_NAME(S)), PDF_NAME(JavaScript)))
@@ -867,8 +872,7 @@ std::optional<PdfItemProperties> Document::itemPropertiesAt(int pageNo, QPointF 
                                    rect.y1 - rect.y0)
                                 .normalized();
                 item.values = values;
-                found = item;
-                break;
+                found.push_back(std::move(item));
             }
         }
     }
@@ -877,9 +881,17 @@ std::optional<PdfItemProperties> Document::itemPropertiesAt(int pageNo, QPointF 
             fz_drop_page(ctx_, fzpage);
     }
     fz_catch(ctx_) {
-        found.reset();
+        found.clear();
     }
     return found;
+}
+
+std::optional<PdfItemProperties> Document::itemPropertiesAt(int pageNo, QPointF point) const
+{
+    for (const auto &item : pageItemProperties(pageNo))
+        if (item.rect.contains(point))
+            return item;
+    return std::nullopt;
 }
 
 namespace {
@@ -1000,6 +1012,7 @@ const fz_path_walker kGeomWalker = {
 
 void geomCollect(fz_context *ctx, GeomDevice *d, const fz_path *path, fz_matrix ctm)
 {
+    if (job::stopped()) fz_throw(ctx, FZ_ERROR_ABORT, "page query canceled");
     if (*d->truncated)
         return;
     d->ctm = ctm;
@@ -1039,10 +1052,10 @@ PageGeometry Document::pageGeometry(int pageNo) const
     if (query.refused())
         return {};
     std::lock_guard<std::mutex> lk(access_);
-    if (pageNo < 0 || pageNo >= static_cast<int>(geomCache_.size()))
+    if (pageNo < 0 || pageNo >= pageCount())
         return {};
-    if (geomCache_[pageNo])
-        return *geomCache_[pageNo];
+    if (geomCache_ && geomCachePage_ == pageNo)
+        return *geomCache_;
 
     PageGeometry pg;
     std::unordered_map<long long, int> index;
@@ -1051,8 +1064,12 @@ PageGeometry Document::pageGeometry(int pageNo) const
     fz_context *ctx = ctx_;
     fz_page *page = nullptr;
     fz_device *dev = nullptr;
+    fz_device *cancelDevice = nullptr;
+    fz_cookie cookie{};
     fz_var(page);
     fz_var(dev);
+    fz_var(cancelDevice);
+    fz_var(cookie);
     fz_try(ctx) {
         page = fz_load_page(ctx, doc_, pageNo);
         const fz_rect bound = fz_bound_page(ctx, page);
@@ -1072,10 +1089,12 @@ PageGeometry Document::pageGeometry(int pageNo) const
         // Shift so output lands in the app's (0,0)-based page-point space (matches
         // TextIndex's ox/oy and ViewerWidget::canvasToPagePoint).
         const fz_matrix run = fz_translate(-bound.x0, -bound.y0);
-        fz_run_page(ctx, page, dev, run, nullptr);
-        fz_close_device(ctx, dev); // may throw -> must be inside fz_try
+        cancelDevice = cancellablePageDevice(ctx, dev, &cookie);
+        fz_run_page(ctx, page, cancelDevice, run, &cookie);
+        fz_close_device(ctx, cancelDevice); // may throw -> must be inside fz_try
     }
     fz_always(ctx) {
+        fz_drop_device(ctx, cancelDevice);
         if (dev)
             fz_drop_device(ctx, dev); // never throws -> always run
         if (page)
@@ -1085,12 +1104,16 @@ PageGeometry Document::pageGeometry(int pageNo) const
         pg = PageGeometry{}; // best-effort: empty on failure
     }
 
-    geomCache_[pageNo] = pg;
+    if (job::stopped()) return {};
+    geomCache_ = pg;
+    geomCachePage_ = pageNo;
     return pg;
 }
 
 bool Document::hasForm() const
 {
+    if (formCache_)
+        return *formCache_;
     const ScreenQuery query(*lifetime_, "Document::hasForm");
     if (query.refused())
         return false;
@@ -1230,20 +1253,6 @@ std::optional<QByteArray> Document::mervinMeasurements() const
     QByteArray out(reinterpret_cast<const char *>(bytes), qsizetype(length));
     fz_drop_buffer(ctx_, data);
     return out;
-}
-
-bool Document::isPdf() const
-{
-    const ScreenQuery query(*lifetime_, "Document::isPdf");
-    if (query.refused())
-        return false;
-    std::lock_guard<std::mutex> lk(access_);
-    bool pdf = false;
-    fz_try(ctx_)
-        pdf = pdf_specifics(ctx_, doc_) != nullptr;
-    fz_catch(ctx_)
-        pdf = false;
-    return pdf;
 }
 
 bool Document::withPdfDocument(const std::function<void(fz_context *, pdf_document *)> &fn,
