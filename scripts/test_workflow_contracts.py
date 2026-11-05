@@ -218,6 +218,45 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(bundled["cacheVariables"]["VCPKG_TARGET_TRIPLET"], "x64-linux-dynamic")
         self.assertEqual(bundled["cacheVariables"]["MERVIN_BUNDLE_LINUX_RUNTIME"], "ON")
 
+    def test_linux_scratch_cleanup_preserves_installed_sdks_and_evidence(self):
+        """Exercise cold-build and cache-hit cleanup against real directory trees."""
+        job = workflow("full-ci.yml")["jobs"]["linux-tests"]
+        steps = job["steps"]
+        preparation = next(i for i, step in enumerate(steps)
+                           if step.get("uses") == "./.github/actions/prepare-qt")
+        cleanup = next(i for i, step in enumerate(steps)
+                       if step.get("name") == "Reclaim dependency build space")
+        configure = next(i for i, step in enumerate(steps) if step.get("name") == "Configure")
+        self.assertLess(preparation, cleanup)
+        self.assertLess(cleanup, configure)
+        self.require_effective_step(job, steps[cleanup])
+        qt_scratch = [f"dev-temp/qt-patched/{name}" for name in
+                      ("build", "source", "downloads", "icu-include")]
+        qpdf_scratch = ["dev-temp/qpdf-source", "dev-temp/qpdf-build"]
+        retained = ["dev-temp/qt-patched/sdk/lib/Qt6Core.so",
+                    "dev-temp/qt-patched/sdk/mervin-qt-build.json",
+                    "dev-temp/qt-patched/sdk/mervin-qt-cache.json",
+                    "dev-temp/qt-patched/logs/configure.log",
+                    "dev-temp/qt-patched/validation/runtime.log",
+                    "dev-temp/qt-official/Qt/lib/Qt6Core.so",
+                    "dev-temp/qpdf/lib/libqpdf.so", "unrelated.txt"]
+        (ROOT / "dev-temp").mkdir(exist_ok=True)
+        for restored in (False, True):
+            with self.subTest(restored=restored), tempfile.TemporaryDirectory(
+                    prefix="ci cleanup ", dir=ROOT / "dev-temp") as temporary:
+                directory = Path(temporary)
+                for relative in [*retained, *(f"{path}/object" for path in
+                                  [*qpdf_scratch, *([] if restored else qt_scratch)])]:
+                    path = directory / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(relative)
+                script = steps[cleanup]["run"].replace("${{ github.workspace }}", str(directory))
+                subprocess.run(["bash", "-e", "-c", script], check=True, capture_output=True, text=True)
+                for relative in [*qt_scratch, *qpdf_scratch]:
+                    self.assertFalse((directory / relative).exists(), relative)
+                for relative in retained:
+                    self.assertEqual((directory / relative).read_text(), relative)
+
     def test_every_build_lane_selects_the_verified_sdk_before_configuring(self):
         """Keep all existing platforms and package consumers on the same SDK path."""
         full = workflow("full-ci.yml")["jobs"]

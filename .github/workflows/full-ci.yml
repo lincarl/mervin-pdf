@@ -238,6 +238,20 @@ jobs:
       - name: Prepare patched Qt SDK
         uses: ./.github/actions/prepare-qt
 
+      - name: Reclaim dependency build space
+        run: |
+          df -h "${{ github.workspace }}"
+          du -sh "${{ github.workspace }}/dev-temp/qt-patched" "${{ github.workspace }}/dev-temp/qpdf-source" "${{ github.workspace }}/dev-temp/qpdf-build"
+          # The installed SDKs are self-contained. Keep their manifests, logs
+          # and caches, and remove only scratch trees after validation finishes.
+          rm -rf -- "${{ github.workspace }}/dev-temp/qt-patched/build" \
+            "${{ github.workspace }}/dev-temp/qt-patched/source" \
+            "${{ github.workspace }}/dev-temp/qt-patched/downloads" \
+            "${{ github.workspace }}/dev-temp/qt-patched/icu-include" \
+            "${{ github.workspace }}/dev-temp/qpdf-source" \
+            "${{ github.workspace }}/dev-temp/qpdf-build"
+          df -h "${{ github.workspace }}"
+
       - name: Hash MuPDF patches
         id: mupdf-patches
         run: echo "id=$(bash scripts/build-mupdf-linux.sh --patch-set)" >> "$GITHUB_OUTPUT"
@@ -256,6 +270,9 @@ jobs:
           python3 scripts/fetch-test-font.py build/test-fonts
           python3 scripts/fetch-test-tessdata.py build/test-tessdata
           flags=()
+          # Preserve all DWARF data without repeating uncompressed debug sections
+          # in each statically linked test executable.
+          linker_flags="-Wl,--compress-debug-sections=zlib"
           if [ "${{ matrix.build }}" = sanitize ]; then
             # ASan's virtual shadow cannot fit the helper's hard address-space
             # limit. Build the real release helper from this exact checkout.
@@ -263,13 +280,15 @@ jobs:
               -Dqpdf_DIR="$PWD/dev-temp/qpdf/lib/cmake/qpdf"
             cmake --build build/qpdf-worker --parallel 2 --target MervinPDF
             flags+=("-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer")
-            flags+=("-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined")
+            linker_flags+=" -fsanitize=address,undefined"
             flags+=("-DMERVIN_TEST_QPDF_EXECUTABLE=$PWD/build/qpdf-worker/MervinPDF")
           fi
           cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMERVIN_BUILD_TESTS=ON \
-            -Dqpdf_DIR="$PWD/dev-temp/qpdf/lib/cmake/qpdf" "${flags[@]}"
+            -Dqpdf_DIR="$PWD/dev-temp/qpdf/lib/cmake/qpdf" "-DCMAKE_EXE_LINKER_FLAGS=$linker_flags" "${flags[@]}"
       - name: Build
-        run: cmake --build build/ci --parallel 2
+        run: |
+          cmake --build build/ci --parallel 2
+          df -h "${{ github.workspace }}"
       - name: Test
         run: |
           ctest --test-dir build/ci --show-only=json-v1 -LE optional-corpus > build/ci/expected-tests.json

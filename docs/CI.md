@@ -42,6 +42,13 @@ The reusable full CI workflow runs the following jobs.
 - Windows tests, MSI installation, upgrade, repair, uninstall, and wizard checks.
 - Windows MSIX installation, activation, upgrade, and uninstall checks.
 
+The Ubuntu 24.04 test jobs remove the Qt and qpdf source/build scratch trees
+after their installed SDKs are ready. They preserve SDKs, provenance, logs,
+validation results, the official Qt support tree and MuPDF's cached tree.
+Both variants compress executable debug sections with zlib while retaining
+all DWARF information and sanitizer instrumentation. Disk usage is reported
+before and after cleanup and after the complete build.
+
 Windows CI and release jobs bootstrap PowerShell 7.6.8 from its official archive
 with a pinned SHA-256. WiX installation, MSI packaging, and MSI lifecycle checks
 use an isolated .NET SDK 10.0.402 with runtime 10.0.13, verified against the
