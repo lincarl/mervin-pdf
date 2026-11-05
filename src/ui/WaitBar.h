@@ -29,7 +29,8 @@ QString fitFileSentence(const FileSentence &compose, const QString &name, const 
 // The bar at the top of a busy tab that says what its operation waits for, with Stop
 // waiting on the right. It sits over the tab's still picture, from the left edge to the
 // vertical scroll bar's column, which stays free. Its text wraps and is fitted again
-// whenever its width changes, and the bar is as tall as the text needs.
+// whenever its width changes, and the bar is as tall as the text needs. At compact
+// widths the action moves below the notice so its translation remains visible.
 class WaitBar : public QWidget
 {
     Q_OBJECT

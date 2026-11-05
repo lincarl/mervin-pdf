@@ -52,10 +52,12 @@ QByteArray bytes(const QString &path)
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
 
-// Adds an editable note used to check snapshot retention and successful Save.
+// Adds a fixture note once asynchronous viewer readers release the document.
 bool edit(TabPage &tab, const QString &text = QStringLiteral("preserved"))
 {
-    return tab.viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {}, text) >= 0;
+    return testing::retryMutation([&] {
+        return tab.viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {}, text) >= 0;
+    });
 }
 
 // Collects Save questions and completion while supplying a chosen replacement answer.
@@ -289,17 +291,21 @@ private slots:
         tab.show();
         QVERIFY(tab.open(path));
         auto *viewer = tab.viewer();
+        QVERIFY(testing::waitForPage(viewer->annotModel(), 0));
         const auto annots = viewer->annotModel()->pageAnnots(0);
         QCOMPARE(annots.size(), size_t(1));
         viewer->setCommentToolEnabled(true);
         viewer->setAnnotSubMode(AnnotSubMode::Note);
         viewer->revealAnnotation(0, annots[0].id);
-        auto *editor = viewer->viewport()->findChild<QPlainTextEdit *>();
-        QVERIFY(editor && editor->isVisible() && !editor->isReadOnly());
+        QPointer<QPlainTextEdit> editor;
+        QTRY_VERIFY((editor = viewer->viewport()->findChild<QPlainTextEdit *>())
+                    && editor->isVisible() && !editor->isReadOnly());
         editor->setPlainText(QStringLiteral("Only the open editor has this text"));
         QVERIFY(!tab.hasUnsavedEdits());
         QVERIFY(!viewer->annotModel()->isDirty());
-        QCOMPARE(viewer->annotModel()->annot(0, annots[0].id)->contents, QStringLiteral("Before"));
+        const auto uncommitted = viewer->annotModel()->annot(0, annots[0].id);
+        QVERIFY(uncommitted.has_value());
+        QCOMPARE(uncommitted->contents, QStringLiteral("Before"));
         Outcome outcome;
         tab.startSave(outcome.callbacks());
         QTRY_VERIFY_WITH_TIMEOUT(outcome.completion.has_value(), 10000);
@@ -417,21 +423,29 @@ private slots:
         const QImage before = viewer->viewport()->grab().toImage();
         QVERIFY(!before.isNull());
         viewer->setFormMode(true);
+        QTRY_COMPARE(lineEditors().size(), 3);
         auto editors = lineEditors();
-        QCOMPARE(editors.size(), 3);
         editors[1]->setText(QStringLiteral("Independent pending edit"));
         editors[0]->setText(QStringLiteral("Changed shared text"));
         QFocusEvent commit(QEvent::FocusOut);
         QCoreApplication::sendEvent(editors[0], &commit);
-        QCOMPARE(editors[2]->text(), QStringLiteral("Changed shared text"));
-        QCOMPARE(editors[1]->text(), QStringLiteral("Independent pending edit"));
+        QTRY_VERIFY(lineEditors().size() == 3
+                    && lineEditors()[2]->text() == QStringLiteral("Changed shared text"));
+        QCOMPARE(lineEditors()[1]->text(), QStringLiteral("Independent pending edit"));
+        QVERIFY(testing::waitForPage(viewer->formModel(), 0));
+        QCOMPARE(viewer->formModel()->pageFields(0).size(), size_t(3));
         QCOMPARE(viewer->formModel()->pageFields(0)[2].value, QStringLiteral("Untouched"));
-        auto choices = viewer->viewport()->findChildren<QComboBox *>(Qt::FindDirectChildrenOnly);
-        QCOMPARE(choices.size(), 2);
+        const auto choiceEditors = [&] {
+            return viewer->viewport()->findChildren<QComboBox *>(Qt::FindDirectChildrenOnly);
+        };
+        QTRY_COMPARE(choiceEditors().size(), 2);
+        auto choices = choiceEditors();
         choices[0]->setCurrentIndex(1);
         QVERIFY(QMetaObject::invokeMethod(choices[0], "activated", Qt::DirectConnection, Q_ARG(int, 1)));
-        QCOMPARE(choices[1]->currentText(), QStringLiteral("Green"));
-        QCOMPARE(editors[1]->text(), QStringLiteral("Independent pending edit"));
+        QTRY_VERIFY(choiceEditors().size() == 2
+                    && choiceEditors()[1]->currentText() == QStringLiteral("Green"));
+        QCOMPARE(lineEditors().size(), 3);
+        QCOMPARE(lineEditors()[1]->text(), QStringLiteral("Independent pending edit"));
         viewer->setFormMode(false);
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         QTRY_VERIFY_WITH_TIMEOUT(settled(), 10000);
@@ -572,6 +586,7 @@ private slots:
         QCOMPARE(restored.measureKind, expected.measureKind);
         QCOMPARE(restored.tool, expected.tool);
         QCOMPARE(restored.view.scale, expected.view.scale);
+        QVERIFY(testing::waitForPage(tab.viewer()->annotModel(), 0));
         QCOMPARE(tab.viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
         auto saved = engine.openDocument(path);
         QVERIFY(saved);
@@ -1151,6 +1166,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(resumed.size(), 1, 10000);
         QVERIFY(resumed.front().front().toBool());
         QVERIFY(tab.isUsable());
+        QVERIFY(testing::waitForPage(tab.viewer()->annotModel(), 0));
         const auto notes = tab.viewer()->annotModel()->pageAnnots(0);
         QCOMPARE(notes.size(), size_t(1));
         QCOMPARE(notes.front().contents, QStringLiteral("preserved"));
@@ -1203,7 +1219,9 @@ private slots:
         QCOMPARE(outcome.completion->originalSaved, failure == 2);
         QTRY_VERIFY_WITH_TIMEOUT(tab.isUsable(), 10000);
         QVERIFY(tab.hasUnsavedEdits());
+        QVERIFY(testing::waitForPage(tab.viewer()->annotModel(), 0));
         QCOMPARE(tab.viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
+        QCOMPARE(tab.viewer()->annotModel()->pageAnnots(0).front().contents, QStringLiteral("preserved"));
         QCOMPARE(tab.hasRecoverySnapshot(), failure != 0);
         if (failure != 2)
             QCOMPARE(bytes(path), original);
@@ -1268,7 +1286,9 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(tab.isUsable(), 10000);
         QVERIFY(tab.hasRecoverySnapshot());
         QVERIFY(tab.hasUnsavedEdits());
+        QVERIFY(testing::waitForPage(tab.viewer()->annotModel(), 0));
         QCOMPARE(tab.viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
+        QCOMPARE(tab.viewer()->annotModel()->pageAnnots(0).front().contents, QStringLiteral("preserved"));
         QCOMPARE(bytes(path), original);
         QVERIFY(TabPage::recoverablePaths().contains(path));
         QVERIFY(QFileInfo::exists(tab.recoveryPath()));

@@ -28,6 +28,8 @@ DocumentSearch::~DocumentSearch()
 
 void DocumentSearch::cancel()
 {
+    extraction_->stop();
+    extraction_ = std::make_shared<job::State>();
     ++*generation_;
     searches_.clear();
 }
@@ -56,7 +58,8 @@ void DocumentSearch::start(Document *document, const QString &query, bool matchC
         observer = searchObserver;
     }
     searches_.add([owner = QPointer<QObject>(this), generations = generation_, index = index_,
-                   query, matchCase, wholeWord, generation, observer, completed = std::move(completed)] {
+                   query, matchCase, wholeWord, generation, observer, state = extraction_, completed = std::move(completed)] {
+        const job::Scope scope(*state);
         if (observer)
             observer(testing::Phase::Started, query);
         const auto canceled = [&generations, generation] { return generations->load() != generation; };

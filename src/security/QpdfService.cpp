@@ -1,6 +1,7 @@
 #include "security/QpdfService.h"
 #include "security/AtomicPdfWriter.h"
 #include "security/QpdfSource.h"
+#include "security/QpdfWorker.h"
 
 #include <qpdf/Constants.h>
 #include <qpdf/QPDF.hh>
@@ -52,6 +53,18 @@ QString methodName(QPDF::encryption_method_e m)
 QpdfService::Status QpdfService::readInfo(const QString &path, const QString &password, Info &out,
                                           QString *error)
 {
+    if (!qpdfWorker::inWorker()) {
+        qpdfWorker::Request request;
+        request.operation = qpdfWorker::Operation::Info;
+        request.path = path;
+        request.password = password;
+        const auto result = qpdfWorker::run(request);
+        if (error)
+            *error = result.error;
+        if (result.status == Status::Ok)
+            out = result.info;
+        return result.status;
+    }
     std::unique_ptr<QPDF> source;
     std::shared_ptr<QpdfReadState> readState;
     const Status st = openQpdf(path, password, source, error, &readState);
@@ -123,6 +136,19 @@ QpdfService::Status QpdfService::decrypt(const QString &inPath, const QString &o
                                          const QString &password, QString *error,
                                          const std::function<bool()> &mayCommit)
 {
+    if (!qpdfWorker::inWorker()) {
+        qpdfWorker::Request request;
+        request.operation = qpdfWorker::Operation::Decrypt;
+        request.path = inPath;
+        request.output = outPath;
+        request.password = password;
+        const auto result = qpdfWorker::run(request, {{}, [&](const QString &) {
+            return !mayCommit || mayCommit();
+        }});
+        if (error)
+            *error = result.error;
+        return result.status;
+    }
     std::unique_ptr<QPDF> source;
     std::shared_ptr<QpdfReadState> readState;
     const Status st = openQpdf(inPath, password, source, error, &readState);
@@ -163,6 +189,23 @@ QpdfService::Status QpdfService::encrypt(const QString &inPath, const QString &o
                                          const Permissions &perms, QString *error,
                                          const std::function<bool()> &mayCommit)
 {
+    if (!qpdfWorker::inWorker()) {
+        qpdfWorker::Request request;
+        request.operation = qpdfWorker::Operation::Encrypt;
+        request.path = inPath;
+        request.output = outPath;
+        request.password = currentPassword;
+        request.userPassword = userPassword;
+        request.ownerPassword = ownerPassword;
+        request.algorithm = algo;
+        request.permissions = perms;
+        const auto result = qpdfWorker::run(request, {{}, [&](const QString &) {
+            return !mayCommit || mayCommit();
+        }});
+        if (error)
+            *error = result.error;
+        return result.status;
+    }
     // Owner rights ignore the permission flags. Restrictions without an owner password
     // get one that nobody knows, so the open password cannot lift them. With everything
     // allowed the open password stays the owner password, so other programs still let

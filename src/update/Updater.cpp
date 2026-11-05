@@ -1,5 +1,6 @@
 #include "update/Updater.h"
 
+#include "app/Relaunch.h"
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
 #include "io/Background.h"
@@ -384,10 +385,25 @@ void warnInstallerNotStarted(const QString &file)
 // Declined when one stayed open (the user cancelled a save prompt).
 Updater::CloseResult closeAllWindows()
 {
+    QList<QPointer<QWidget>> retained;
+    for (QWidget *window : QApplication::topLevelWidgets()) {
+        if (qobject_cast<QMainWindow *>(window) && window->testAttribute(Qt::WA_DeleteOnClose)) {
+            retained.append(window);
+            window->setAttribute(Qt::WA_DeleteOnClose, false);
+        }
+    }
     QApplication::closeAllWindows();
     for (QWidget *w : QApplication::topLevelWidgets())
-        if (w->isWindow() && w->isVisible())
+        if (w->isWindow() && w->isVisible()) {
+            for (const QPointer<QWidget> &window : retained) {
+                if (!window)
+                    continue;
+                window->setAttribute(Qt::WA_DeleteOnClose);
+                if (!window->isVisible())
+                    window->deleteLater();
+            }
             return Updater::CloseResult::Declined;
+        }
     return Updater::CloseResult::Closed;
 }
 
@@ -395,19 +411,26 @@ Updater::CloseResult closeAllWindows()
 
 Updater::Updater(QObject *parent)
     : QObject(parent)
-    , kind_(update::installedPackageKind())
     , exePath_(QCoreApplication::applicationFilePath())
     , nam_(new QNetworkAccessManager(this))
 {
     g_instance = this;
     onDisk(
-        [kind = kind_] { return readLastCheck(kind); },
-        [this](const QDateTime &utc) {
-            if (lastCheckKnown_)
-                return; // a check has set it meanwhile
-            lastCheck_ = utc;
-            lastCheckKnown_ = true;
-            emit lastCheckChanged(utc);
+        [] {
+            const auto kind = update::installedPackageKind();
+            return std::pair{kind, readLastCheck(kind)};
+        },
+        [this](const auto &initial) {
+            kind_ = initial.first;
+            lastCheck_ = initial.second;
+            ready_ = true;
+            emit initialized();
+            emit lastCheckChanged(lastCheck_);
+            const bool startup = std::exchange(startupPending_, false);
+            if (std::exchange(manualPending_, false))
+                checkNow();
+            else if (startup)
+                onStartup();
         },
         /*forOperation=*/false);
 }
@@ -481,7 +504,6 @@ void Updater::markChecked()
 {
     const QDateTime now = QDateTime::currentDateTimeUtc();
     lastCheck_ = now;
-    lastCheckKnown_ = true;
     onDiskThread([kind = kind_, now] {
         QSettings st;
         st.setValue(stateKey(kind, kLastCheck), now);
@@ -494,6 +516,10 @@ void Updater::markChecked()
 
 void Updater::onStartup()
 {
+    if (!ready_) {
+        startupPending_ = true;
+        return;
+    }
     // The update state belongs to installed copies. A dev build run against the
     // real settings must neither offer nor delete an installed copy's download.
     if (!canSelfUpdate() || busy_)
@@ -509,22 +535,16 @@ void Updater::onStartup()
     struct Start
     {
         bool resume; // a pending update of this kind is kept
-        QDateTime lastCheck;
         bool checkDue; // see kCheckDue
     };
     onDisk(
         [kind = kind_] {
             const bool resume = tidyDownloads(kind);
             const bool checkDue = QSettings().value(stateKey(kind, kCheckDue)).toBool();
-            return Start{resume, readLastCheck(kind), checkDue};
+            return Start{resume, checkDue};
         },
         [this](const Start &start) {
             busy_ = false;
-            if (!lastCheckKnown_) {
-                lastCheck_ = start.lastCheck;
-                lastCheckKnown_ = true;
-                emit lastCheckChanged(lastCheck_);
-            }
             // Check for Updates pressed meanwhile made this operation manual.
             if (start.resume) {
                 installWhenIdle();
@@ -538,6 +558,10 @@ void Updater::onStartup()
 
 void Updater::checkNow()
 {
+    if (!ready_) {
+        manualPending_ = true;
+        return;
+    }
     if (kind_ == update::PackageKind::Msix) {
         QDesktopServices::openUrl(QUrl(QStringLiteral("ms-windows-store://downloadsandupdates")));
         return;
@@ -557,6 +581,10 @@ void Updater::checkNow()
 
 void Updater::onAutoUpdateChanged(bool on)
 {
+    // Startup reads the current setting after detection completes. Do not touch
+    // another provider's pending state while this installation is still unknown.
+    if (!ready_)
+        return;
     if (kind_ == update::PackageKind::Msix)
         return;
     if (on || manual_ || installing_)
@@ -1049,11 +1077,9 @@ void Updater::installStaged(const QString &file, const QString &version, const Q
     }
 }
 
-// The installer replaces files this process holds open, so the windows close
-// first (each may still save, or cancel the update), then the installer starts
-// detached and this process quits, all in this one call. A dialog's event loop
-// that ran in between would delete the closed windows under the dialog. The
-// pending update was consumed before; it is put back if the handoff fails.
+// Close confirmed windows first, retaining them while the native launch waits on
+// the disk worker. The close handler must keep their modal callers alive until
+// process exit. Restore the consumed pending update if the handoff fails.
 void Updater::handOffToInstaller(const QString &file, const QString &version,
                                  const QString &sha256)
 {
@@ -1063,19 +1089,37 @@ void Updater::handOffToInstaller(const QString &file, const QString &version,
         endOperation();
         return;
     }
-    if (!update::startWindowsInstaller(stagedFile_)) {
-        putBackPending(kind_, version, file, sha256);
-        warnInstallerNotStarted(file);
-        endOperation();
-        QApplication::quit();
-        return;
-    }
-    // The helper removes its private directory after msiexec exits. The app may
-    // now quit without deleting bytes the detached installer has yet to open.
-    staging_->setAutoRemove(false);
-    clearStaging();
-    markChecked(); // also defers retries of downloads kept over 30 days
-    QApplication::quit();
+    // This note has no window parent because the document windows are hidden.
+    //: %1 is the version number being installed.
+    busyNote_ = new BusyNote(tr("Installing Mervin PDF %1…").arg(version), nullptr);
+    busyNote_->show();
+    onDisk(
+        [staged = stagedFile_, staging = staging_] {
+            const bool started = update::startWindowsInstaller(staged);
+            // Transfer cleanup on the worker before posting the outcome. Even
+            // if the updater is destroyed meanwhile, the helper owns these bytes.
+            if (started)
+                staging->setAutoRemove(false);
+            return started;
+        },
+        [this, file, version, sha256](bool started) {
+            if (busyNote_) {
+                busyNote_->hide();
+                busyNote_->deleteLater();
+                busyNote_.clear();
+            }
+            if (!started) {
+                putBackPending(kind_, version, file, sha256);
+                warnInstallerNotStarted(file);
+                endOperation();
+            } else {
+                relaunch::nextCopyStarted();
+                clearStaging();
+                markChecked();
+            }
+            QApplication::quit();
+        },
+        /*forOperation=*/false);
 }
 
 void Updater::installWithPackageManager(const QString &file, const QString &version)

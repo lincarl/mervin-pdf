@@ -49,10 +49,12 @@ QByteArray bytes(const QString &path)
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
 
-/// Adds a retained annotation through the real viewer model.
+/// Adds a fixture annotation once asynchronous viewer readers release the document.
 bool edit(TabPage &tab, const QString &text = QStringLiteral("Retained edit"))
 {
-    return tab.viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {}, text) >= 0;
+    return testing::retryMutation([&] {
+        return tab.viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {}, text) >= 0;
+    });
 }
 
 /// Lists checkpoint files to detect abandoned recovery work.
@@ -259,6 +261,8 @@ private slots:
         QVERIFY(first->hasRecoverySnapshot());
         tabs->setCurrentWidget(first);
         QTRY_VERIFY_WITH_TIMEOUT(first->isUsable(), 10000);
+        QVERIFY(testing::waitForPage(first->viewer()->annotModel(), 0));
+        QVERIFY(testing::waitForPage(second->viewer()->annotModel(), 0));
         QCOMPARE(first->viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
         QCOMPARE(second->viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
         QCOMPARE(first->viewer()->annotModel()->pageAnnots(0).front().contents,
@@ -558,7 +562,12 @@ private slots:
         }
         QCOMPARE(bytes(path), original);
         QVERIFY(tab.resume());
+        QVERIFY(testing::waitForPage(tab.viewer()->annotModel(), 0));
         QCOMPARE(tab.viewer()->annotModel()->pageAnnots(0).size(), size_t(2));
+        QCOMPARE(tab.viewer()->annotModel()->pageAnnots(0).front().contents,
+                 QStringLiteral("First retained edit"));
+        QCOMPARE(tab.viewer()->annotModel()->pageAnnots(0).back().contents,
+                 QStringLiteral("Second retained edit"));
     }
 
     /// Preserves adopted edits when viewer signals synchronously request Stop.
@@ -579,6 +588,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(stopped && tab.isUsable(), 10000);
         QVERIFY(tab.hasRecoverySnapshot());
         QVERIFY(tab.hasUnsavedEdits());
+        QVERIFY(testing::waitForPage(tab.viewer()->annotModel(), 0));
         QCOMPARE(tab.viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
         QCOMPARE(tab.viewer()->annotModel()->pageAnnots(0).front().contents,
                  QStringLiteral("Retained edit"));
@@ -716,6 +726,7 @@ private slots:
         QVERIFY(page->hasUnsavedEdits());
         QTRY_VERIFY(second->statusBar()->currentMessage().startsWith(
             QStringLiteral("edited.pdf remains loaded.")));
+        QVERIFY(testing::waitForPage(page->viewer()->annotModel(), 0));
         QCOMPARE(page->viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
         QCOMPARE(page->viewer()->annotModel()->pageAnnots(0).front().contents,
                  QStringLiteral("Retained edit"));

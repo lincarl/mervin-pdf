@@ -1,0 +1,367 @@
+Update Qt 6.12.0 bundled libpng from 1.6.58 to 1.6.59.
+
+Modified by Mervin PDF on 2026-11-04.
+Preserve Qt build rules, feature configuration and symbol prefixing.
+Source https://github.com/pnggroup/libpng/compare/v1.6.58...v1.6.59
+Includes CVE-2026-46675 and the allocation-failure double-free fix.
+
+diff --git a/src/3rdparty/libpng/ANNOUNCE b/src/3rdparty/libpng/ANNOUNCE
+--- a/src/3rdparty/libpng/ANNOUNCE
++++ b/src/3rdparty/libpng/ANNOUNCE
+@@ -1,5 +1,5 @@
+-libpng 1.6.58 - April 15, 2026
+-==============================
++libpng 1.6.59 - September 28, 2026
++==================================
+ 
+ This is a public release of libpng, intended for use in production code.
+ 
+@@ -9,10 +9,10 @@
+ 
+ Source files:
+ 
+- * libpng-1.6.58.tar.xz (LZMA-compressed, recommended)
+- * libpng-1.6.58.tar.gz (deflate-compressed)
+- * lpng1658.7z (LZMA-compressed)
+- * lpng1658.zip (deflate-compressed)
++ * libpng-1.6.59.tar.xz (LZMA-compressed, recommended)
++ * libpng-1.6.59.tar.gz (deflate-compressed)
++ * lpng1659.7z (LZMA-compressed)
++ * lpng1659.zip (deflate-compressed)
+ 
+ Other information:
+ 
+@@ -22,13 +22,21 @@
+  * TRADEMARK.md
+ 
+ 
+-Changes from version 1.6.57 to version 1.6.58
++Changes from version 1.6.58 to version 1.6.59
+ ---------------------------------------------
+ 
+- * Fixed a regression introduced in version 1.6.56 that caused `png_get_PLTE`
+-   to return stale palette data after applying gamma and background transforms
+-   in-place.
+-   (Reported by ralfjunker <ralfjunker@users.noreply.github.com>.)
++ * Fixed CVE-2026-46675 (medium severity):
++   Use-after-free of zlib input in `png_read_end` after incomplete zTXt, iTXt
++   or iCCP decompression.
++   (Reported independently by Ze Sheng and
++   <JasonHonKL@users.noreply.github.com>.)
++ * Fixed a regression introduced in version 1.6.47 that caused libpng to reject
++   hIST chunks in their correct position, after PLTE.
++   (Contributed by Yuki Sekiguchi.)
++ * Prevented a double free of `png_struct` members after an allocation failure.
++   (Contributed by Anthony Hurtado.)
++ * Applied fixes and updates to the CMake build.
++ * Adopted the REUSE Specification for licensing the CI files.
+ 
+ 
+ Send comments/corrections/commendations to png-mng-implement at lists.sf.net.
+diff --git a/src/3rdparty/libpng/CHANGES b/src/3rdparty/libpng/CHANGES
+--- a/src/3rdparty/libpng/CHANGES
++++ b/src/3rdparty/libpng/CHANGES
+@@ -6385,6 +6385,19 @@
+     in-place.
+     (Reported by ralfjunker <ralfjunker@users.noreply.github.com>.)
+ 
++Version 1.6.59 [September 28, 2026]
++  Fixed CVE-2026-46675 (medium severity):
++    Use-after-free of zlib input in `png_read_end` after incomplete zTXt, iTXt
++    or iCCP decompression.
++    (Reported independently by Ze Sheng and
++    <JasonHonKL@users.noreply.github.com>.)
++  Fixed a regression introduced in version 1.6.47 that caused libpng to reject
++    hIST chunks in their correct position, after PLTE.
++    (Contributed by Yuki Sekiguchi.)
++  Prevented a double free of `png_struct` members after an allocation failure.
++    (Contributed by Anthony Hurtado.)
++  Applied fixes and updates to the CMake build.
++  Adopted the REUSE Specification for licensing the CI files.
+ 
+ Send comments/corrections/commendations to png-mng-implement at lists.sf.net.
+ Subscription is required; visit
+diff --git a/src/3rdparty/libpng/README b/src/3rdparty/libpng/README
+--- a/src/3rdparty/libpng/README
++++ b/src/3rdparty/libpng/README
+@@ -1,4 +1,4 @@
+-README for libpng version 1.6.58
++README for libpng version 1.6.59
+ ================================
+ 
+ See the note about version numbers near the top of `png.h`.
+diff --git a/src/3rdparty/libpng/libpng-manual.txt b/src/3rdparty/libpng/libpng-manual.txt
+--- a/src/3rdparty/libpng/libpng-manual.txt
++++ b/src/3rdparty/libpng/libpng-manual.txt
+@@ -9,7 +9,7 @@
+ 
+  Based on:
+ 
+- libpng version 1.6.36, December 2018, through 1.6.58 - April 2026
++ libpng version 1.6.36, December 2018, through 1.6.59 - September 2026
+  Updated and distributed by Cosmin Truta
+  Copyright (c) 2018-2026 Cosmin Truta
+ 
+diff --git a/src/3rdparty/libpng/png.c b/src/3rdparty/libpng/png.c
+--- a/src/3rdparty/libpng/png.c
++++ b/src/3rdparty/libpng/png.c
+@@ -13,7 +13,7 @@
+ #include "pngpriv.h"
+ 
+ /* Generate a compiler error if there is an old png.h in the search path. */
+-typedef png_libpng_version_1_6_58 Your_png_h_is_not_version_1_6_58;
++typedef png_libpng_version_1_6_59 Your_png_h_is_not_version_1_6_59;
+ 
+ /* Sanity check the chunks definitions - PNG_KNOWN_CHUNKS from pngpriv.h and the
+  * corresponding macro definitions.  This causes a compile time failure if
+@@ -820,7 +820,7 @@
+    return PNG_STRING_COPYRIGHT
+ #else
+    return PNG_STRING_NEWLINE \
+-      "libpng version 1.6.58" PNG_STRING_NEWLINE \
++      "libpng version 1.6.59" PNG_STRING_NEWLINE \
+       "Copyright (c) 2018-2026 Cosmin Truta" PNG_STRING_NEWLINE \
+       "Copyright (c) 1998-2002,2004,2006-2018 Glenn Randers-Pehrson" \
+       PNG_STRING_NEWLINE \
+diff --git a/src/3rdparty/libpng/png.h b/src/3rdparty/libpng/png.h
+--- a/src/3rdparty/libpng/png.h
++++ b/src/3rdparty/libpng/png.h
+@@ -1,6 +1,6 @@
+ /* png.h - header file for PNG reference library
+  *
+- * libpng version 1.6.58
++ * libpng version 1.6.59
+  *
+  * Copyright (c) 2018-2026 Cosmin Truta
+  * Copyright (c) 1998-2002,2004,2006-2018 Glenn Randers-Pehrson
+@@ -14,7 +14,7 @@
+  *   libpng versions 0.89, June 1996, through 0.96, May 1997: Andreas Dilger
+  *   libpng versions 0.97, January 1998, through 1.6.35, July 2018:
+  *     Glenn Randers-Pehrson
+- *   libpng versions 1.6.36, December 2018, through 1.6.58, April 2026:
++ *   libpng versions 1.6.36, December 2018, through 1.6.59, September 2026:
+  *     Cosmin Truta
+  *   See also "Contributing Authors", below.
+  */
+@@ -238,7 +238,7 @@
+  *    ...
+  *    1.5.30                  15    10530  15.so.15.30[.0]
+  *    ...
+- *    1.6.58                  16    10658  16.so.16.58[.0]
++ *    1.6.59                  16    10659  16.so.16.59[.0]
+  *
+  *    Henceforth the source version will match the shared-library major and
+  *    minor numbers; the shared-library major version number will be used for
+@@ -274,7 +274,7 @@
+  */
+ 
+ /* Version information for png.h - this should match the version in png.c */
+-#define PNG_LIBPNG_VER_STRING "1.6.58"
++#define PNG_LIBPNG_VER_STRING "1.6.59"
+ #define PNG_HEADER_VERSION_STRING " libpng version " PNG_LIBPNG_VER_STRING "\n"
+ 
+ /* The versions of shared library builds should stay in sync, going forward */
+@@ -285,7 +285,7 @@
+ /* These should match the first 3 components of PNG_LIBPNG_VER_STRING: */
+ #define PNG_LIBPNG_VER_MAJOR   1
+ #define PNG_LIBPNG_VER_MINOR   6
+-#define PNG_LIBPNG_VER_RELEASE 58
++#define PNG_LIBPNG_VER_RELEASE 59
+ 
+ /* This should be zero for a public release, or non-zero for a
+  * development version.
+@@ -316,7 +316,7 @@
+  * From version 1.0.1 it is:
+  * XXYYZZ, where XX=major, YY=minor, ZZ=release
+  */
+-#define PNG_LIBPNG_VER 10658 /* 1.6.58 */
++#define PNG_LIBPNG_VER 10659 /* 1.6.59 */
+ 
+ /* Library configuration: these options cannot be changed after
+  * the library has been built.
+@@ -426,7 +426,7 @@
+ /* This triggers a compiler error in png.c, if png.c and png.h
+  * do not agree upon the version number.
+  */
+-typedef char *png_libpng_version_1_6_58;
++typedef char *png_libpng_version_1_6_59;
+ 
+ /* Basic control structions.  Read libpng-manual.txt or libpng.3 for more info.
+  *
+diff --git a/src/3rdparty/libpng/pngconf.h b/src/3rdparty/libpng/pngconf.h
+--- a/src/3rdparty/libpng/pngconf.h
++++ b/src/3rdparty/libpng/pngconf.h
+@@ -1,6 +1,6 @@
+ /* pngconf.h - machine-configurable file for libpng
+  *
+- * libpng version 1.6.58
++ * libpng version 1.6.59
+  *
+  * Copyright (c) 2018-2026 Cosmin Truta
+  * Copyright (c) 1998-2002,2004,2006-2016,2018 Glenn Randers-Pehrson
+diff --git a/src/3rdparty/libpng/pngread.c b/src/3rdparty/libpng/pngread.c
+--- a/src/3rdparty/libpng/pngread.c
++++ b/src/3rdparty/libpng/pngread.c
+@@ -682,8 +682,10 @@
+    if (png_ptr == NULL)
+       return;
+ 
+-   /* If png_read_end is called in the middle of reading the rows there may
+-    * still be pending IDAT data and an owned zstream.  Deal with this here.
++   /* If png_read_end is called in the middle of reading the rows,
++    * there may still be pending IDAT data and an owned zstream.
++    * If it is called before row reading starts, there is pending
++    * IDAT data but no owned zstream.
+     */
+ #ifdef PNG_HANDLE_AS_UNKNOWN_SUPPORTED
+    if (png_chunk_unknown_handling(png_ptr, png_IDAT) == 0)
+diff --git a/src/3rdparty/libpng/pngrtran.c b/src/3rdparty/libpng/pngrtran.c
+--- a/src/3rdparty/libpng/pngrtran.c
++++ b/src/3rdparty/libpng/pngrtran.c
+@@ -514,6 +514,7 @@
+        * this function more than once per png_struct.
+        */
+       png_free(png_ptr, png_ptr->quantize_index);
++      png_ptr->quantize_index = NULL;
+       png_ptr->quantize_index = (png_bytep)png_malloc(png_ptr,
+           PNG_MAX_PALETTE_LENGTH);
+       for (i = 0; i < PNG_MAX_PALETTE_LENGTH; i++)
+diff --git a/src/3rdparty/libpng/pngrutil.c b/src/3rdparty/libpng/pngrutil.c
+--- a/src/3rdparty/libpng/pngrutil.c
++++ b/src/3rdparty/libpng/pngrutil.c
+@@ -405,6 +405,18 @@
+ }
+ #endif /* READ_iCCP|iTXt|pCAL|sCAL|sPLT|tEXt|zTXt|eXIf|SEQUENTIAL_READ */
+ 
++/* Detach the zstream from the input and output buffers left by
++ * the current or a previous owner, and possibly deallocated since.
++ */
++static void
++png_inflate_detach_buffers(png_structrp png_ptr)
++{
++   png_ptr->zstream.next_in = NULL;
++   png_ptr->zstream.avail_in = 0;
++   png_ptr->zstream.next_out = NULL;
++   png_ptr->zstream.avail_out = 0;
++}
++
+ /* png_inflate_claim: claim the zstream for some nefarious purpose that involves
+  * decompression.  Returns Z_OK on success, else a zlib error code.  It checks
+  * the owner but, in final release builds, just issues a warning if some other
+@@ -465,13 +477,7 @@
+ 
+ #endif /* ZLIB_VERNUM >= 0x1240 */
+ 
+-      /* Set this for safety, just in case the previous owner left pointers to
+-       * memory allocations.
+-       */
+-      png_ptr->zstream.next_in = NULL;
+-      png_ptr->zstream.avail_in = 0;
+-      png_ptr->zstream.next_out = NULL;
+-      png_ptr->zstream.avail_out = 0;
++      png_inflate_detach_buffers(png_ptr);
+ 
+       if ((png_ptr->flags & PNG_FLAG_ZSTREAM_INITIALIZED) != 0)
+       {
+@@ -808,7 +814,8 @@
+          else if (ret == Z_OK)
+             ret = PNG_UNEXPECTED_ZLIB_RETURN;
+ 
+-         /* Release the claimed stream */
++         /* Release the claimed stream. */
++         png_inflate_detach_buffers(png_ptr);
+          png_ptr->zowner = 0;
+       }
+ 
+@@ -1491,6 +1498,7 @@
+ 
+                                     if (errmsg == NULL)
+                                     {
++                                       png_inflate_detach_buffers(png_ptr);
+                                        png_ptr->zowner = 0;
+                                        return handled_ok;
+                                     }
+@@ -1517,7 +1525,8 @@
+                else /* profile truncated */
+                   errmsg = png_ptr->zstream.msg;
+ 
+-               /* Release the stream */
++               /* Release the claimed stream. */
++               png_inflate_detach_buffers(png_ptr);
+                png_ptr->zowner = 0;
+             }
+ 
+@@ -3062,7 +3071,7 @@
+ #  define CDiTXt  NoCheck,    6U,      0, hIHDR,        1
+       /* Allocates 'length+1'; checked in the handler */
+ #  define CDbKGD       6U,    1U,  hIDAT, hIHDR,        0
+-#  define CDhIST    1024U,    0U,  hPLTE, hIHDR,        0
++#  define CDhIST    1024U,    0U,  hIDAT, hPLTE,        0
+ #  define CDpHYs       9U,    9U,  hIDAT, hIHDR,        0
+ #  define CDsPLT  NoCheck,    3U,  hIDAT, hIHDR,        1
+       /* Allocates 'length+1'; checked in the handler */
+@@ -4337,11 +4346,7 @@
+     */
+    if (png_ptr->zowner == png_IDAT)
+    {
+-      /* Always do this; the pointers otherwise point into the read buffer. */
+-      png_ptr->zstream.next_in = NULL;
+-      png_ptr->zstream.avail_in = 0;
+-
+-      /* Now we no longer own the zstream. */
++      png_inflate_detach_buffers(png_ptr);
+       png_ptr->zowner = 0;
+ 
+       /* The slightly weird semantics of the sequential IDAT reading is that we
+@@ -4604,6 +4609,7 @@
+    {
+       png_free(png_ptr, png_ptr->big_row_buf);
+       png_free(png_ptr, png_ptr->big_prev_row);
++      png_ptr->big_row_buf = png_ptr->big_prev_row = NULL;
+ 
+       if (png_ptr->interlaced != 0)
+          png_ptr->big_row_buf = (png_bytep)png_calloc(png_ptr,
+diff --git a/src/3rdparty/libpng/pngset.c b/src/3rdparty/libpng/pngset.c
+--- a/src/3rdparty/libpng/pngset.c
++++ b/src/3rdparty/libpng/pngset.c
+@@ -811,6 +811,7 @@
+     * regardless of num_palette.
+     */
+    png_free(png_ptr, png_ptr->palette);
++   png_ptr->palette = NULL;
+    png_ptr->palette = png_voidcast(png_colorp, png_calloc(png_ptr,
+        PNG_MAX_PALETTE_LENGTH * (sizeof (png_color))));
+    info_ptr->palette = png_voidcast(png_colorp, png_calloc(png_ptr,
+@@ -1223,6 +1224,7 @@
+            * functions (e.g. png_do_expand_palette).
+            */
+           png_free(png_ptr, png_ptr->trans_alpha);
++          png_ptr->trans_alpha = NULL;
+           png_ptr->trans_alpha = png_voidcast(png_bytep,
+               png_malloc(png_ptr, PNG_MAX_PALETTE_LENGTH));
+           memset(png_ptr->trans_alpha, 0xff, PNG_MAX_PALETTE_LENGTH);
+diff --git a/src/3rdparty/libpng/qt_attribution.json b/src/3rdparty/libpng/qt_attribution.json
+--- a/src/3rdparty/libpng/qt_attribution.json
++++ b/src/3rdparty/libpng/qt_attribution.json
+@@ -7,8 +7,8 @@
+ 
+     "Description": "libpng is the official PNG reference library.",
+     "Homepage": "http://www.libpng.org/pub/png/libpng.html",
+-    "Version": "1.6.58",
+-    "DownloadLocation": "https://download.sourceforge.net/libpng/libpng-1.6.58.tar.xz",
++    "Version": "1.6.59",
++    "DownloadLocation": "https://download.sourceforge.net/libpng/libpng-1.6.59.tar.xz",
+     "PURL": "pkg:github/pnggroup/libpng@v$<VERSION>",
+     "CPE": "cpe:2.3:a:libpng:libpng:$<VERSION>:*:*:*:*:*:*:*",
+ 
+diff --git a/src/3rdparty/libpng/pnglibconf.h b/src/3rdparty/libpng/pnglibconf.h
+--- a/src/3rdparty/libpng/pnglibconf.h
++++ b/src/3rdparty/libpng/pnglibconf.h
+@@ -1,6 +1,6 @@
+ /* pnglibconf.h - library build configuration */
+ 
+-/* libpng version 1.6.58 */
++/* libpng version 1.6.59 */
+ 
+ /* Copyright (c) 2018-2026 Cosmin Truta */
+ /* Copyright (c) 1998-2002,2004,2006-2018 Glenn Randers-Pehrson */

@@ -12,6 +12,7 @@
 #include "dialogs/MergeDialog.h"
 #include "dialogs/OcrPopup.h"
 #include "dialogs/PrintDialog.h"
+#include "dialogs/RowList.h"
 #include "ui/WindowPlacement.h"
 #include "dialogs/SecurityDialog.h"
 #include "dialogs/SettingsDialog.h"
@@ -25,6 +26,7 @@
 #include "render/RenderEngine.h"
 #include "recent/PathKey.h"
 #include "security/QpdfService.h"
+#include "security/QpdfWorker.h"
 #include "ui/AnnotPanel.h"
 #include "ui/AnnotPopup.h"
 #include "ui/LanguageCombo.h"
@@ -266,6 +268,8 @@ private slots:
     void merge();
     void ocr_data() { addLanguageMatrix(); }
     void ocr();
+    void renderFailure_data() { addLanguageMatrix(); }
+    void renderFailure();
     void print_data() { addLanguageMatrix(); }
     void print();
     void security_data() { addLanguageMatrix(); }
@@ -569,15 +573,23 @@ void TstTranslationLayout::recentTabRow()
     auto *menu = toolbar->findChild<QToolButton *>(QStringLiteral("menuButton"));
     QVERIFY(menu);
     QCOMPARE(toolbar->widgetForAction(toolbar->actions().constLast()), menu);
-    // Every visible control sits inside the toolbar, and the menu button sits at its
-    // far end in either reading direction. QToolBar hides the controls it moves into
-    // its overflow popup, and the menu button would be the first to go.
+    auto *scroll = toolbar->findChild<QScrollArea *>(QStringLiteral("commandScroll"));
+    QVERIFY(scroll);
+    // Every command can scroll into view. The main menu remains pinned.
     const auto checkToolbar = [&](const QString &state) {
         for (QAbstractButton *button : toolbar->findChildren<QAbstractButton *>()) {
             if (!button->isVisibleTo(&window))
                 continue;
-            QVERIFY2(toolbar->rect().contains(QRect(button->mapTo(toolbar, QPoint()), button->size())),
-                     qPrintable(state));
+            if (scroll->widget()->isAncestorOf(button)) {
+                scroll->ensureWidgetVisible(button);
+                settle();
+                QVERIFY2(scroll->viewport()->rect().contains(
+                    QRect(button->mapTo(scroll->viewport(), QPoint()), button->size())),
+                    qPrintable(state));
+            } else {
+                QVERIFY2(toolbar->rect().contains(
+                    QRect(button->mapTo(toolbar, QPoint()), button->size())), qPrintable(state));
+            }
         }
         QVERIFY2(menu->isVisibleTo(&window), qPrintable(state));
         const QRect bounds(menu->mapTo(toolbar, QPoint()), menu->size());
@@ -588,17 +600,9 @@ void TstTranslationLayout::recentTabRow()
     QCOMPARE(recent->iconSize(), open->iconSize());
     QCOMPARE(recent->toolButtonStyle(), open->toolButtonStyle());
     QCOMPARE(recent->height(), open->height());
-    int recentIndex = -1;
-    int openIndex = -1;
-    for (int i = 0; i < toolbar->actions().size(); ++i) {
-        QWidget *button = toolbar->widgetForAction(toolbar->actions().at(i));
-        if (button == recent)
-            recentIndex = i;
-        if (button == open)
-            openIndex = i;
-    }
+    const int recentIndex = scroll->widget()->layout()->indexOf(recent);
     QVERIFY(recentIndex >= 0);
-    QCOMPARE(openIndex, recentIndex + 1);
+    QCOMPARE(scroll->widget()->layout()->indexOf(open), recentIndex + 1);
     QVERIFY(!recent->icon().isNull());
     QVERIFY(!recent->toolTip().isEmpty());
     if (recent->toolButtonStyle() == Qt::ToolButtonIconOnly) {
@@ -621,8 +625,7 @@ void TstTranslationLayout::recentTabRow()
     inspect(window, QStringLiteral("Document toolbar"), toolbar);
     QVERIFY(!recent->isChecked());
     checkToolbar(QStringLiteral("Document toolbar"));
-    // The minimum width was set for a shorter page count. In the minimum-size rows,
-    // the window has to widen for " / 10000 ".
+    // A longer page count must remain reachable without growing the window.
     QVERIFY(mervin::testing::openAndWait(window, long_));
     settle();
     checkToolbar(QStringLiteral("Long document toolbar"));
@@ -780,8 +783,7 @@ void TstTranslationLayout::loadPlaceholder()
     inspect(window, QStringLiteral("Opening an output that is being written"), reserved);
 }
 
-// Checks the actual automatic-close status notice, including its painted text
-// area, which ordinary QLabel layout checks cannot inspect.
+// Checks the automatic-close status notice, including wrapping at compact widths.
 void TstTranslationLayout::removedFileNotice()
 {
     mervin::RenderEngine engine;
@@ -795,27 +797,14 @@ void TstTranslationLayout::removedFileNotice()
     QVERIFY(window.closeRemovedTabs(missing));
     QCOMPARE(window.tabCount(), 0);
     auto *bar = window.statusBar();
-    QCOMPARE(bar->currentMessage(), MainWindow::tr("Tab closed. The file was deleted."));
+    auto *notice = bar->findChild<QLabel *>(QStringLiteral("statusNotice"));
+    QVERIFY(notice);
+    QCOMPARE(notice->text(), MainWindow::tr("Tab closed. The file was deleted."));
     inspect(window, QStringLiteral("Automatic close of a deleted file"), bar);
     QVERIFY(bar->isVisibleTo(&window));
+    QVERIFY(notice->isVisibleTo(bar));
+    QVERIFY(bar->rect().contains(QRect(notice->mapTo(bar, QPoint()), notice->size())));
 
-    // QStatusBarPrivate::messageRect uses the full height, horizontal margins,
-    // and the size grip's edge. Normal status widgets hide during the message.
-    int left = 6;
-    int right = bar->width() - 12;
-    for (const QSizeGrip *grip : bar->findChildren<QSizeGrip *>()) {
-        if (!grip->isVisibleTo(bar))
-            continue;
-        const QRect bounds(grip->mapTo(bar, QPoint()), grip->size());
-        if (bar->isRightToLeft())
-            left = bounds.x() + bounds.width();
-        else
-            right = bounds.x();
-    }
-    const QRect area(left, 0, right - left, bar->height());
-    const QSize text = bar->fontMetrics().size(Qt::TextSingleLine, bar->currentMessage());
-    QVERIFY2(text.width() <= area.width(), qPrintable(bar->currentMessage()));
-    QVERIFY2(text.height() <= area.height(), qPrintable(bar->currentMessage()));
 }
 
 /// Checks the warning a manual update check shows when the server's answer is not a release.
@@ -1051,6 +1040,20 @@ void TstTranslationLayout::inspect(QWidget &widget, const QString &state, QWidge
             }
         }
     }
+    // These lists only scroll vertically. Text fitting inside a row is not enough
+    // if stale item-widget geometry puts whole columns outside the viewport.
+    for (QListWidget *list : widget.findChildren<QListWidget *>()) {
+        if (!dynamic_cast<mervin::RowList *>(list) || !list->isVisibleTo(&widget))
+            continue;
+        for (int index = 0; index < list->count(); ++index) {
+            const QWidget *row = list->itemWidget(list->item(index));
+            QVERIFY(row);
+            QVERIFY2(row->width() >= row->minimumSizeHint().width(), qPrintable(state));
+            QVERIFY2(row->x() >= 0 && row->geometry().right() < list->viewport()->width(),
+                     qPrintable(state + QStringLiteral(" row %1 extends beyond the list viewport")
+                         .arg(index + 1)));
+        }
+    }
     const QStringList problems = textfit::check(part ? *part : widget);
     for (QRadioButton *radio : widget.findChildren<QRadioButton *>()) {
         const auto *card = dynamic_cast<const mervin::ThemeCard *>(radio);
@@ -1173,8 +1176,10 @@ void TstTranslationLayout::saveRecoveryWarning()
     QVERIFY(mervin::testing::openAndWait(window, path));
     auto *tab = window.findChild<mervin::TabPage *>();
     QVERIFY(tab);
-    QVERIFY(tab->viewer()->annotModel()->addTextNote(
-                0, {40, 40}, Qt::yellow, {}, QStringLiteral("Retained edit")) >= 0);
+    QVERIFY(mervin::testing::retryMutation([&] {
+        return tab->viewer()->annotModel()->addTextNote(
+            0, {40, 40}, Qt::yellow, {}, QStringLiteral("Retained edit")) >= 0;
+    }));
     std::atomic<bool> reopenFailed{false};
     const auto restore = qScopeGuard([] {
         mervin::job::testing::release();
@@ -1240,6 +1245,29 @@ void TstTranslationLayout::extract()
     source.probe = mervin::ExtractDialog::probeSource(source.path, source.password);
     mervin::ExtractDialog dialog(source);
     inspect(dialog, QStringLiteral("Extract with unsaved changes"));
+    for (auto mode : {mervin::ExtractPlan::Mode::Extract, mervin::ExtractPlan::Mode::Delete}) {
+        auto xfaSource = source;
+        xfaSource.mode = mode;
+        for (auto failure : {mervin::ExtractDialog::Choices::Failure::Read,
+                             mervin::ExtractDialog::Choices::Failure::Write}) {
+            auto choices = dialog.choices();
+            choices.failure = failure;
+            choices.error = mervin::PageOps::xfaTransformationError();
+            mervin::ExtractDialog unsupported(xfaSource, nullptr, choices);
+            auto *reason = unsupported.findChild<QLabel *>(QStringLiteral("extractError"));
+            QVERIFY(reason);
+            QTRY_COMPARE(reason->text(), choices.error);
+            inspect(unsupported, QStringLiteral("Page operation with XFA form %1 %2")
+                .arg(int(mode)).arg(int(failure)));
+            choices.error = mervin::qpdfWorker::failureText();
+            mervin::ExtractDialog bounded(xfaSource, nullptr, choices);
+            auto *limitReason = bounded.findChild<QLabel *>(QStringLiteral("extractError"));
+            QVERIFY(limitReason);
+            QTRY_COMPARE(limitReason->text(), choices.error);
+            inspect(bounded, QStringLiteral("Page operation resource limit %1 %2")
+                .arg(int(mode)).arg(int(failure)));
+        }
+    }
     auto *range = dialog.findChild<QLineEdit *>(QStringLiteral("extractRowSpec"));
     auto *error = dialog.findChild<QLabel *>(QStringLiteral("extractError"));
     auto *output = dialog.findChild<QLineEdit *>(QStringLiteral("extractOutput"));
@@ -1474,6 +1502,91 @@ void TstTranslationLayout::merge()
     QTRY_VERIFY(!dialog.reading());
     inspect(dialog, QStringLiteral("Merge populated documents"));
     {
+        // Adding rows to an open dialog can introduce a scrollbar after its minimum
+        // was measured. Both the initial rows and the last row must remain usable.
+        mervin::MergeDialog growing(dialog.plan(), profile_.filePath("row-layout.pdf"), {}, -1);
+        inspect(growing, QStringLiteral("Merge rows before adding duplicates"));
+        auto *rows = growing.findChild<QListWidget *>(QStringLiteral("mergeList"));
+        QPushButton *duplicate = nullptr;
+        for (QPushButton *button : growing.findChildren<QPushButton *>())
+            if (button->text() == mervin::MergeDialog::tr("Duplicate"))
+                duplicate = button;
+        QVERIFY(rows && duplicate);
+        QCOMPARE(rows->count(), 2);
+        const int rowHeight = rows->visualItemRect(rows->item(0)).height();
+        QVERIFY(rowHeight > 0);
+        // Column growth can reduce surrounding text wrapping and enlarge the list.
+        // Exceed the whole work area so that reflow cannot remove the scrollbar.
+        const int availableHeight = qMax(rows->viewport()->height(),
+                                        growing.screen()->availableGeometry().height());
+        const int overflowingCount = availableHeight / rowHeight + 2;
+        for (int count = 2; count < overflowingCount; ++count) {
+            duplicate->click();
+            QCOMPARE(rows->count(), count + 1);
+        }
+        inspect(growing, QStringLiteral("Merge rows after adding duplicates"));
+        QVERIFY(rows->verticalScrollBar()->maximum() > 0);
+        for (const bool last : {false, true}) {
+            const int index = last ? rows->count() - 1 : 0;
+            rows->scrollToItem(rows->item(index));
+            settle();
+            QWidget *row = rows->itemWidget(rows->item(index));
+            QVERIFY(row);
+            auto *output = row->findChild<QLabel *>(QStringLiteral("rowListOutput"));
+            auto *remove = row->findChild<QToolButton *>(QStringLiteral("rowListX"));
+            QVERIFY(output && remove);
+            QCOMPARE(output->text(), growing.plan().outputText(index));
+            for (QWidget *control : {static_cast<QWidget *>(output), static_cast<QWidget *>(remove)}) {
+                const QRect bounds(control->mapTo(rows->viewport(), QPoint()), control->size());
+                QVERIFY(rows->viewport()->rect().contains(bounds));
+                QVERIFY(control->visibleRegion().contains(control->rect()));
+            }
+            QCOMPARE(rows->viewport()->childAt(remove->mapTo(rows->viewport(), remove->rect().center())),
+                     remove);
+            const int before = rows->count();
+            QTest::mouseClick(remove, Qt::LeftButton);
+            QTRY_COMPARE(rows->count(), before - 1);
+        }
+    }
+    {
+        // Reopened plans already know their page counts. Exercise larger values
+        // without creating a large PDF, then grow both columns through range edits.
+        mervin::MergePlan largePlan;
+        auto entry = dialog.plan().at(0);
+        entry.pageCount = 12345;
+        entry.spec = QStringLiteral("1");
+        largePlan.append(entry);
+        largePlan.append(entry);
+        mervin::MergeDialog large(largePlan, profile_.filePath("large-row-layout.pdf"), {}, -1);
+        inspect(large, QStringLiteral("Merge large page counts before range changes"));
+        auto *rows = large.findChild<QListWidget *>(QStringLiteral("mergeList"));
+        QVERIFY(rows);
+        QCOMPARE(rows->count(), 2);
+        for (int index = 0; index < rows->count(); ++index) {
+            QWidget *row = rows->itemWidget(rows->item(index));
+            QVERIFY(row);
+            auto *spec = row->findChild<QLineEdit *>(QStringLiteral("mergeRowSpec"));
+            QVERIFY(spec);
+            spec->setText(QStringLiteral("1-12344"));
+        }
+        inspect(large, QStringLiteral("Merge large page counts after range changes"));
+        const auto expected = large.plan().rowTexts();
+        for (const QString &column : {QStringLiteral("Count"), QStringLiteral("Output")}) {
+            const QString name = QStringLiteral("rowList") + column;
+            auto *header = large.findChild<QLabel *>(name + QStringLiteral("Header"));
+            QVERIFY(header);
+            for (int index = 0; index < rows->count(); ++index) {
+                QWidget *row = rows->itemWidget(rows->item(index));
+                auto *label = row->findChild<QLabel *>(name);
+                QVERIFY(label);
+                QCOMPARE(label->text(), column == QStringLiteral("Count")
+                                           ? expected.at(index).count : expected.at(index).output);
+                QCOMPARE(label->width(), header->width());
+                QCOMPARE(label->mapTo(&large, QPoint()).x(), header->mapTo(&large, QPoint()).x());
+            }
+        }
+    }
+    {
         // An encrypted document merged with another file shows the encryption note.
         mervin::MergeDialog mixed(encrypted_, 12, QStringLiteral("secret"));
         mixed.addPaths({plain_});
@@ -1491,6 +1604,24 @@ void TstTranslationLayout::merge()
         QVERIFY(reason);
         QTRY_COMPARE(reason->text(), tooLarge);
         inspect(failed, QStringLiteral("Merge measurements too large to save"));
+    }
+    {
+        const QString output = profile_.filePath(QStringLiteral("merge-xfa-output.pdf"));
+        const QString reason = mervin::PageOps::xfaTransformationError();
+        mervin::MergeDialog failed(dialog.plan(), output, reason, 0);
+        auto *label = failed.findChild<QLabel *>(QStringLiteral("mergeError"));
+        QVERIFY(label);
+        QTRY_VERIFY(label->text().contains(reason));
+        inspect(failed, QStringLiteral("Merge unsupported XFA form"));
+    }
+    for (int failedIndex : {-1, 0}) {
+        const QString output = profile_.filePath(QStringLiteral("merge-limit-output.pdf"));
+        const QString reason = mervin::qpdfWorker::failureText();
+        mervin::MergeDialog failed(dialog.plan(), output, reason, failedIndex);
+        auto *label = failed.findChild<QLabel *>(QStringLiteral("mergeError"));
+        QVERIFY(label);
+        QTRY_VERIFY(label->text().contains(reason));
+        inspect(failed, QStringLiteral("Merge resource limit %1").arg(failedIndex));
     }
     for (const auto conflict : {mervin::MergeDialog::Conflict::Changed,
                                 mervin::MergeDialog::Conflict::CheckFailed}) {
@@ -1547,6 +1678,41 @@ void TstTranslationLayout::ocr()
     inspect(empty, QStringLiteral("OCR no installed languages"));
 }
 
+/// Checks the actual failed-page notice and recovery control at compact widths.
+void TstTranslationLayout::renderFailure()
+{
+    const QString path = profile_.filePath(QStringLiteral("oversized-page.pdf"));
+    const QList<QByteArray> objects{
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 20000000 842] >>"};
+    QByteArray pdf = "%PDF-1.7\n";
+    QByteArray xref = "0000000000 65535 f \n";
+    for (qsizetype i = 0; i < objects.size(); ++i) {
+        xref += QByteArray::number(pdf.size()).rightJustified(10, '0') + " 00000 n \n";
+        pdf += QByteArray::number(i + 1) + " 0 obj\n" + objects[i] + "\nendobj\n";
+    }
+    const auto start = QByteArray::number(pdf.size());
+    pdf += "xref\n0 4\n" + xref + "trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n"
+        + start + "\n%%EOF\n";
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(pdf), pdf.size());
+    file.close();
+    mervin::RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    window.show();
+    window.resize(640, 700);
+    QVERIFY(mervin::testing::openAndWait(window, path));
+    auto *viewer = window.findChild<mervin::ViewerWidget *>();
+    QVERIFY(viewer);
+    auto *notice = viewer->findChild<QWidget *>(QStringLiteral("renderFailureNotice"));
+    QVERIFY(notice);
+    QTRY_VERIFY(notice->isVisible());
+    inspect(window, QStringLiteral("Page render failure"), notice);
+    QVERIFY(viewer->viewport()->rect().contains(notice->geometry()));
+}
+
 void TstTranslationLayout::print()
 {
     mervin::RenderEngine engine;
@@ -1581,6 +1747,11 @@ void TstTranslationLayout::print()
     QTRY_VERIFY(!confirm->isEnabled());
     QVERIFY(!preview->isReady());
     inspect(dialog, QStringLiteral("Print invalid page selection"));
+    QMessageBox warning(QMessageBox::Warning, MainWindow::tr("Print"),
+        MainWindow::tr("Could not finish the print job.") + QStringLiteral("\n\n")
+            + MainWindow::tr("Pages sent to the printer may already have printed."),
+        QMessageBox::Ok);
+    inspect(warning, QStringLiteral("Native print submission warning"));
 }
 
 /// Checks Security information, retained choices and destination-consent messages in every language.
@@ -1710,6 +1881,14 @@ void TstTranslationLayout::security()
 /// Checks Split's replacement question and kept-file warning with a long folder and name.
 void TstTranslationLayout::splitMessages()
 {
+    QMessageBox xfa(QMessageBox::Warning, MainWindow::tr("Split Pages"),
+                    mervin::PageOps::xfaTransformationError(), QMessageBox::Ok);
+    xfa.setTextFormat(Qt::PlainText);
+    inspect(xfa, QStringLiteral("Split unsupported XFA form"));
+    QMessageBox resourceLimit(QMessageBox::Warning, MainWindow::tr("Split Pages"),
+                             mervin::qpdfWorker::failureText(), QMessageBox::Ok);
+    resourceLimit.setTextFormat(Qt::PlainText);
+    inspect(resourceLimit, QStringLiteral("Split resource limit"));
     // MainWindow fits the folder and the name to half the screen like this.
     const QString folder = QStringLiteral("/srv/nas/projects/")
         + QStringLiteral("Construction").repeated(12) + QStringLiteral("/drawings/issued/split");
@@ -1816,6 +1995,13 @@ void TstTranslationLayout::settings()
     SettingsDialog portable(values, portableUpdates, SettingsDialog::Page::Updates);
     QTRY_VERIFY(!mervin::TessdataManager::busy());
     inspect(portable, QStringLiteral("Settings updates without automatic installation"));
+    auto detectingUpdates = updates;
+    detectingUpdates.ready = false;
+    SettingsDialog detecting(values, detectingUpdates, SettingsDialog::Page::Updates);
+    QTRY_VERIFY(!mervin::TessdataManager::busy());
+    inspect(detecting, QStringLiteral("Settings waiting for update provider"));
+    detecting.setUpdateInfo(updates);
+    inspect(detecting, QStringLiteral("Settings update provider arrived"));
     dialog.showPage(SettingsDialog::Page::General);
     auto *duration = dialog.findChild<QSpinBox *>(QStringLiteral("unloadInactiveMinutes"));
     auto *never = dialog.findChild<QCheckBox *>(QStringLiteral("neverUnloadDocuments"));

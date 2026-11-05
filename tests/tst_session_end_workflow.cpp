@@ -269,8 +269,10 @@ void verifyMergeChoices(const MergeDialog &dialog, const QString &output)
 bool prepare(TabPage &tab, const QString &path)
 {
     return QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path) && tab.open(path)
-        && tab.viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {},
-                                                  QStringLiteral("preserved")) >= 0;
+        && testing::retryMutation([&] {
+            return tab.viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {},
+                                                         QStringLiteral("preserved")) >= 0;
+        });
 }
 // Holds a recovery manifest before commit admission for controlled grace checks.
 void holdManifest()
@@ -708,8 +710,10 @@ private slots:
         QVERIFY(testing::openAndWait(*window, path));
         const QPointer<TabPage> tab = window->findChild<TabPage *>();
         QVERIFY(tab && tab->isUsable());
-        QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {},
-                                                       QStringLiteral("preserved")) >= 0);
+        QVERIFY(testing::retryMutation([&] {
+            return tab->viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {},
+                                                          QStringLiteral("preserved")) >= 0;
+        }));
         if (!save) {
             const QString active = files.filePath(QStringLiteral("active.pdf"));
             QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), active));
@@ -860,8 +864,10 @@ private slots:
         QVERIFY(QFileInfo::exists(priorCopy));
         QVERIFY(QFileInfo::exists(priorManifest));
         QVERIFY(tab.resume());
-        QVERIFY(tab.viewer()->annotModel()->addTextNote(0, {60, 60}, Qt::yellow, {},
-                                                       QStringLiteral("second edit")) >= 0);
+        QVERIFY(testing::retryMutation([&] {
+            return tab.viewer()->annotModel()->addTextNote(0, {60, 60}, Qt::yellow, {},
+                                                         QStringLiteral("second edit")) >= 0;
+        }));
         std::optional<sessionend::Result> request;
         connect(tab.viewer(), &ViewerWidget::formModeChanged, &tab, [&](bool) {
             if (!request && tab.isBusy() && tab.hasRecoverySnapshot()
@@ -979,8 +985,10 @@ private slots:
         QVERIFY(window->openFile(path));
         auto *tab = window->findChild<TabPage *>();
         QTRY_VERIFY_WITH_TIMEOUT(tab && tab->isUsable(), 10000);
-        QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {},
-                                                       QStringLiteral("preserved")) >= 0);
+        QVERIFY(testing::retryMutation([&] {
+            return tab->viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {},
+                                                          QStringLiteral("preserved")) >= 0;
+        }));
         QFile changed(path);
         QVERIFY(changed.open(QIODevice::Append));
         QVERIFY(changed.write("\n% External change\n") > 0);
@@ -1914,8 +1922,10 @@ private slots:
             QVERIFY(testing::openAndWait(*window, path));
             const QPointer<TabPage> tab = window->findChild<TabPage *>();
             QVERIFY(tab && tab->isUsable());
-            QVERIFY(tab->viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {},
-                                                           QStringLiteral("preserved")) >= 0);
+            QVERIFY(testing::retryMutation([&] {
+                return tab->viewer()->annotModel()->addTextNote(0, {40, 40}, Qt::yellow, {},
+                                                              QStringLiteral("preserved")) >= 0;
+            }));
             QVERIFY(testing::suspendAndWait(*tab));
             tab->resumeAsync();
             QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable(), 10000);

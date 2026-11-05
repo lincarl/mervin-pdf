@@ -88,6 +88,7 @@ private slots:
     void handEditedMeasureValuesLandOnOfferedChoices();
     void autoUpdateFollowsAnOutsideChange();
     void updateControlsFollowTheUpdater();
+    void updateDetectionRefreshesAnOpenDialog();
     void enterOnTheMenuDoesNotPressOk();
     void ocrPageShowsAnInstalledDefaultButKeepsTheSavedOne();
     void removingAnOcrLanguageAsksFirst();
@@ -1166,6 +1167,42 @@ void TstSettingsDialog::updateControlsFollowTheUpdater()
         button->click();
         QCOMPARE(requested.count(), 1);
         QVERIFY(dialog.settings().autoUpdate);
+    }
+}
+
+void TstSettingsDialog::updateDetectionRefreshesAnOpenDialog()
+{
+    for (const bool store : {false, true}) {
+        SettingsDialog::UpdateInfo info;
+        info.checkAvailable = true;
+        info.ready = false;
+        SettingsDialog dialog(mervin::Settings{}, info, Page::Updates);
+        dialog.show();
+        auto *button = dialog.findChild<QPushButton *>(QStringLiteral("checkForUpdatesButton"));
+        auto *automatic = checkBox(&dialog, QStringLiteral("Update automatically at start (every 30 days)"));
+        auto *author = dialog.findChild<QLineEdit *>(QStringLiteral("annotationAuthor"));
+        QVERIFY(button && automatic && author);
+        QVERIFY(!button->isEnabled());
+        QVERIFY(automatic->isHidden());
+        QVERIFY(!labelStartingWith(&dialog, QStringLiteral("This copy can't update itself")));
+        QVERIFY(!labelStartingWith(&dialog, QStringLiteral("Never checked")));
+        author->setText(QStringLiteral("Unsaved author"));
+        QSignalSpy requested(&dialog, &SettingsDialog::checkForUpdatesRequested);
+        button->click();
+        QCOMPARE(requested.count(), 0);
+
+        info.ready = true;
+        info.storeManaged = store;
+        info.canSelfUpdate = !store;
+        dialog.setUpdateInfo(info);
+        QVERIFY(button->isEnabled());
+        QCOMPARE(automatic->isHidden(), store);
+        QCOMPARE(button->text(), store ? QStringLiteral("Open Microsoft Store")
+                                       : QStringLiteral("Check for Updates"));
+        QCOMPARE(author->text(), QStringLiteral("Unsaved author"));
+        QVERIFY(dialog.hasPendingChanges());
+        button->click();
+        QCOMPARE(requested.count(), 1);
     }
 }
 

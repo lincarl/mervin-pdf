@@ -125,6 +125,9 @@ public:
         // Runs on the screen thread once the job has returned and the tab is usable
         // again. Not after the user stopped waiting, nor once the tab is gone.
         std::function<void()> finished;
+        // Runs after worker teardown even after Stop, while the tab still exists.
+        // Only for reporting irreversible side effects, never adopting stale results.
+        std::function<void(bool stopped)> settled;
     };
     // Runs `operation` while the tab waits for it. Only for a usable tab, on the
     // screen thread. The tab commits its editors, takes a still picture of its pages,

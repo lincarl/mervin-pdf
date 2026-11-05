@@ -283,10 +283,14 @@ private slots:
         QVERIFY(tabs);
         auto *second = qobject_cast<TabPage *>(tabs->currentWidget());
         QVERIFY(second && second != page && second->isUsable());
-        const int note = second->viewer()->annotModel()->addTextNote(
-            0, {40, 40}, Qt::yellow, {}, QStringLiteral("Edited while Security waits"));
-        QVERIFY(note >= 0);
+        int note = -1;
+        QVERIFY(testing::retryMutation([&] {
+            note = second->viewer()->annotModel()->addTextNote(
+                0, {40, 40}, Qt::yellow, {}, QStringLiteral("Edited while Security waits"));
+            return note >= 0;
+        }));
         QVERIFY(second->hasUnsavedEdits());
+        QVERIFY(testing::waitForPage(second->viewer()->annotModel(), 0));
         const auto created = second->viewer()->annotModel()->annot(0, note);
         QVERIFY(created.has_value());
         QCOMPARE(created->contents, QStringLiteral("Edited while Security waits"));

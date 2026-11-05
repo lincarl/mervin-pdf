@@ -162,7 +162,7 @@ jobs:
             end
           end
 
-          Dir.glob(".github/workflows/*.{yml,yaml}").sort.each do |path|
+          Dir.glob(".github/{workflows,actions/**}/*.{yml,yaml}").sort.each do |path|
             walk.call(YAML.safe_load(File.read(path), aliases: false), path)
           end
           RUBY
@@ -184,6 +184,8 @@ jobs:
           python3 -B scripts/test_prune_releases.py
           python3 -B scripts/test_check_test_results.py
           python3 -B scripts/test_build_mupdf_linux.py
+          python3 -B scripts/test_build_qt_patched.py
+          python3 -B scripts/test_prepare_qt_sdk.py
           python3 -B scripts/test_workflow_contracts.py
           python3 -B scripts/test_fetch_test_dependencies.py
           python3 -B scripts/test_windows_payload.py
@@ -233,18 +235,23 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="$PWD/dev-temp/qpdf" -DCMAKE_INSTALL_LIBDIR=lib
           cmake --build dev-temp/qpdf-build --parallel 2
           cmake --install dev-temp/qpdf-build
-      - name: Install Qt
-        uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125
-        with:
-          setup-python: false
-          aqtsource: "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
-          # Override the action's 1.1.0 default with the security release.
-          py7zrversion: "==1.1.4"
-          version: "6.12.0"
-          host: linux
-          target: desktop
-          arch: linux_gcc_64
-          cache: true
+      - name: Prepare patched Qt SDK
+        uses: ./.github/actions/prepare-qt
+
+      - name: Reclaim dependency build space
+        run: |
+          df -h "${{ github.workspace }}"
+          du -sh "${{ github.workspace }}/dev-temp/qt-patched" "${{ github.workspace }}/dev-temp/qpdf-source" "${{ github.workspace }}/dev-temp/qpdf-build"
+          # The installed SDKs are self-contained. Keep their manifests, logs
+          # and caches, and remove only scratch trees after validation finishes.
+          rm -rf -- "${{ github.workspace }}/dev-temp/qt-patched/build" \
+            "${{ github.workspace }}/dev-temp/qt-patched/source" \
+            "${{ github.workspace }}/dev-temp/qt-patched/downloads" \
+            "${{ github.workspace }}/dev-temp/qt-patched/icu-include" \
+            "${{ github.workspace }}/dev-temp/qpdf-source" \
+            "${{ github.workspace }}/dev-temp/qpdf-build"
+          df -h "${{ github.workspace }}"
+
       - name: Hash MuPDF patches
         id: mupdf-patches
         run: echo "id=$(bash scripts/build-mupdf-linux.sh --patch-set)" >> "$GITHUB_OUTPUT"
@@ -263,14 +270,25 @@ jobs:
           python3 scripts/fetch-test-font.py build/test-fonts
           python3 scripts/fetch-test-tessdata.py build/test-tessdata
           flags=()
+          # Preserve all DWARF data without repeating uncompressed debug sections
+          # in each statically linked test executable.
+          linker_flags="-Wl,--compress-debug-sections=zlib"
           if [ "${{ matrix.build }}" = sanitize ]; then
+            # ASan's virtual shadow cannot fit the helper's hard address-space
+            # limit. Build the real release helper from this exact checkout.
+            cmake -S . -B build/qpdf-worker -G Ninja -DCMAKE_BUILD_TYPE=Release -DMERVIN_BUILD_TESTS=OFF \
+              -Dqpdf_DIR="$PWD/dev-temp/qpdf/lib/cmake/qpdf"
+            cmake --build build/qpdf-worker --parallel 2 --target MervinPDF
             flags+=("-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer")
-            flags+=("-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined")
+            linker_flags+=" -fsanitize=address,undefined"
+            flags+=("-DMERVIN_TEST_QPDF_EXECUTABLE=$PWD/build/qpdf-worker/MervinPDF")
           fi
           cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMERVIN_BUILD_TESTS=ON \
-            -Dqpdf_DIR="$PWD/dev-temp/qpdf/lib/cmake/qpdf" "${flags[@]}"
+            -Dqpdf_DIR="$PWD/dev-temp/qpdf/lib/cmake/qpdf" "-DCMAKE_EXE_LINKER_FLAGS=$linker_flags" "${flags[@]}"
       - name: Build
-        run: cmake --build build/ci --parallel 2
+        run: |
+          cmake --build build/ci --parallel 2
+          df -h "${{ github.workspace }}"
       - name: Test
         run: |
           ctest --test-dir build/ci --show-only=json-v1 -LE optional-corpus > build/ci/expected-tests.json
@@ -308,24 +326,13 @@ jobs:
       - name: Install pinned CMake and Ninja
         run: python scripts/install-build-tools.py
 
-      - name: Install Qt 6.12.0
-        uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
-        with:
-          setup-python: false
-          aqtsource: "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
-          py7zrversion: "==1.1.4"
-          version: "6.12.0"
-          host: linux
-          target: desktop
-          arch: linux_gcc_64
-          # Keep the complete base archive set, including Qt's translations.
-          cache: true
+      - name: Prepare patched Qt SDK
+        uses: ./.github/actions/prepare-qt
 
       - name: Prepare pinned upstream dependencies
         run: |
           vcpkg_root=$(bash scripts/bootstrap-vcpkg-linux.sh dev-temp/vcpkg)
           echo "VCPKG_ROOT=$vcpkg_root" >> "$GITHUB_ENV"
-          echo "QT6_DIR=$QT_ROOT_DIR" >> "$GITHUB_ENV"
 
       - name: Hash MuPDF patches
         id: mupdf-patches
@@ -407,20 +414,8 @@ jobs:
           python scripts/fetch-test-font.py build/test-fonts
           python scripts/fetch-test-tessdata.py build/test-tessdata
 
-      - name: Install Qt 6.12.0
-        uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
-        with:
-          # aqtinstall 3.3.0 cannot read Qt 6.11+ Windows repository paths.
-          # Pin the merged fix until it ships in a release: miurahr/aqtinstall#1000.
-          setup-python: false
-          aqtsource: "git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b"
-          # Override the action's 1.1.0 default with the security release.
-          py7zrversion: "==1.1.4"
-          version: "6.12.0"
-          host: windows
-          target: desktop
-          arch: win64_msvc2022_64
-          cache: true
+      - name: Prepare patched Qt SDK
+        uses: ./.github/actions/prepare-qt
 
       - name: Hash MuPDF patches
         id: mupdf-patches
@@ -463,10 +458,9 @@ jobs:
         shell: pwsh
         run: |
           # Read these in-shell ($env:) rather than via GitHub Actions expression
-          # interpolation: QT_ROOT_DIR (exported by install-qt-action) and the
+          # interpolation: QT6_DIR (exported by prepare-qt) and the
           # VCPKG_INSTALLATION_ROOT. The windows-base preset reads $env:QT6_DIR ->
           # CMAKE_PREFIX_PATH and $env:VCPKG_ROOT -> the vcpkg toolchainFile.
-          $env:QT6_DIR = $env:QT_ROOT_DIR
           $vcpkg = $env:VCPKG_INSTALLATION_ROOT
           if (-not $vcpkg) { $vcpkg = 'C:\vcpkg' }
           $env:VCPKG_ROOT = $vcpkg
@@ -530,7 +524,6 @@ jobs:
           DOTNET_ROLL_FORWARD: Major
           DOTNET_ROLL_FORWARD_TO_PRERELEASE: "0"
         run: |
-          $env:QT6_DIR = $env:QT_ROOT_DIR
           scripts\deploy.ps1 -Installer
 
       - name: Verify MSI install, upgrade, repair, and uninstall

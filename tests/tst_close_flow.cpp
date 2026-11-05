@@ -218,14 +218,16 @@ private slots:
             busySeen = busySeen || tab->isBusy();
             if (busySeen && tab->isUsable() && !tab->hasUnsavedEdits() && !edited) {
                 edited = true;
-                addNote(tab, "Edit after Save");
+                // This mutation must stay inside the completion signal, with no event loop retry.
+                QVERIFY(tab->viewer()->annotModel()->addTextNote(
+                    0, {40, 40}, Qt::yellow, {}, QStringLiteral("Edit after Save")) >= 0);
             }
         });
         answers_ << QMessageBox::Save << QMessageBox::Cancel;
         closeTab(window);
         QTRY_VERIFY(edited && questions_.size() == 2 && answers_.isEmpty());
         QVERIFY(tab && !tab->isClosing() && tab->hasUnsavedEdits());
-        QCOMPARE(tab->viewer()->annotModel()->pageAnnots(0).size(), size_t(2));
+        QTRY_COMPARE(tab->viewer()->annotModel()->pageAnnots(0).size(), size_t(2));
         auto saved = manager.engine()->openDocument(path);
         QVERIFY(saved);
         const auto notes = AnnotModel(*saved).pageAnnots(0);
@@ -520,6 +522,7 @@ private slots:
         if (stop) {
             tab->retryLoad();
             QTRY_VERIFY_WITH_TIMEOUT(tab->isLoaded(), 10000);
+            QTRY_COMPARE(tab->viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
             QCOMPARE(tab->viewer()->annotModel()->pageAnnots(0).front().contents,
                      QStringLiteral("Recovered edit"));
         } else {
@@ -538,6 +541,7 @@ private slots:
         const QString path = copy(files, "recovered.pdf");
         RenderEngine engine;
         const QPointer<MainWindow> window = new MainWindow(&engine, nullptr);
+        const auto destroyWindow = qScopeGuard([window] { delete window.data(); });
         window->show();
         QVERIFY(testing::openAndWait(*window, path));
         const QPointer<TabPage> tab = currentTab(window);
@@ -676,6 +680,7 @@ private slots:
         snapshot.close();
         tab->retryLoad();
         QTRY_VERIFY_WITH_TIMEOUT(tab->isLoaded(), 10000);
+        QTRY_COMPARE(tab->viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
         QCOMPARE(tab->viewer()->annotModel()->pageAnnots(0).front().contents,
                  QStringLiteral("Pipe recovery"));
     }
@@ -771,6 +776,7 @@ private slots:
             QCOMPARE(currentTab(windows[i]), tab.data());
             QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable(), 5000);
             QVERIFY(tab->hasUnsavedEdits());
+            QTRY_COMPARE(tab->viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
             QCOMPARE(tab->viewer()->annotModel()->pageAnnots(0).front().contents,
                      i ? QStringLiteral("Second retained edit") : QStringLiteral("First retained edit"));
             QCOMPARE(windows[i]->tabCount(), 2);
@@ -813,9 +819,9 @@ private slots:
         firstTab->viewer()->setCommentToolEnabled(true);
         firstTab->viewer()->setAnnotSubMode(AnnotSubMode::Note);
         firstTab->viewer()->revealAnnotation(0, note);
-        auto *editor = firstTab->viewer()->findChild<QPlainTextEdit *>();
-        QVERIFY(editor);
-        QVERIFY(editor->isVisible() && !editor->isReadOnly());
+        QPointer<QPlainTextEdit> editor;
+        QTRY_VERIFY((editor = firstTab->viewer()->findChild<QPlainTextEdit *>())
+                    && editor->isVisible() && !editor->isReadOnly());
         editor->setPlainText(QStringLiteral("Typed after decision"));
         if (inlineEditor) {
             QCOMPARE(firstTab->editGeneration(), generation);
@@ -1181,6 +1187,7 @@ private slots:
             QTRY_VERIFY_WITH_TIMEOUT(!window, 10000);
             QCOMPARE(manager.installerClose(Command::Poll, 17), Reply::Closing);
         }
+        QTRY_VERIFY(answers_.isEmpty());
         QVERIFY(!relaunch::requested());
         QCOMPARE(questions_.front(), QStringLiteral("Save changes to plan.pdf?"));
         QCOMPARE(questions_.size(), failSave ? 2 : 1);
@@ -1516,8 +1523,8 @@ private slots:
     }
 
     // Checks that Check for Updates, which runs from the modal Settings dialog,
-    // closes the windows under it. The update quits in the same call, as the
-    // updater does, so Settings returns before its window is deleted.
+    // hides the windows under it and retains them while a worker starts the
+    // installer. Settings must return before its window is deleted.
     void updaterClosesWindowsUnderSettings()
     {
         QTemporaryDir files;
@@ -1536,7 +1543,7 @@ private slots:
                 Settings::load(), {}, SettingsDialog::Page::Updates, window);
             QTimer::singleShot(0, settings, [&] {
                 result = manager.tryCloseAllForUpdate();
-                QCoreApplication::quit(); // as Updater::handOffToInstaller does next
+                QTimer::singleShot(50, qApp, [] { QCoreApplication::quit(); });
             });
             settingsOpen = true;
             settings->exec();
@@ -1549,7 +1556,9 @@ private slots:
         timeout.start(10000);
         QCOMPARE(QApplication::exec(), 0);
         QCOMPARE(result, std::optional(Updater::CloseResult::Closed));
-        QTRY_VERIFY(!window);
+        QVERIFY(window && !window->isVisible());
+        delete window;
+        QVERIFY(!window);
         QVERIFY(!deletedUnderSettings);
         QVERIFY(questions_.isEmpty());
     }
@@ -1612,11 +1621,19 @@ private:
         return path;
     }
 
-    // Adds an annotation so the tab has a concrete unsaved edit.
+    // Adds a fixture annotation once background page readers release the document.
     int addNote(TabPage *tab, const char *text)
     {
-        return tab->viewer()->annotModel()->addTextNote(
-            0, {40, 40}, Qt::yellow, {}, QString::fromUtf8(text));
+        int note = -1;
+        const QPointer<TabPage> page(tab);
+        (void)testing::retryMutation([&] {
+            if (!page || !page->viewer()->annotModel())
+                return false;
+            note = page->viewer()->annotModel()->addTextNote(
+                0, {40, 40}, Qt::yellow, {}, QString::fromUtf8(text));
+            return note >= 0;
+        });
+        return note;
     }
 
     std::unique_ptr<QTemporaryDir> profile_;

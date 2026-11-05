@@ -8,15 +8,6 @@
         <translation>Cuir isteach pasfhocal an doiciméid:</translation>
     </message>
     <message numerus="yes">
-        <source>%n file(s) in %1 already exist. Split wrote nothing.</source>
-        <extracomment>Tray message after Split found that some of the files it would write, such as plan-002.pdf, already exist while its window was hidden in the tray, so it could not ask whether to replace them. %n is the number of those files, %1 the folder Split writes to. Split wrote no file.</extracomment>
-        <translation>
-            <numerusform>Líon na gcomhad atá ann cheana san fhillteán %1: %n. Níor scríobhadh aon rud.</numerusform>
-            <numerusform>Líon na gcomhad atá ann cheana san fhillteán %1: %n. Níor scríobhadh aon rud.</numerusform>
-            <numerusform>Líon na gcomhad atá ann cheana san fhillteán %1: %n. Níor scríobhadh aon rud.</numerusform>
-        </translation>
-    </message>
-    <message numerus="yes">
         <source>%n file(s) in %1 already exist. Replace them?</source>
         <extracomment>Asked after Split found that some of the files it would write, such as plan-002.pdf, already exist. %n is the number of those files, %1 the folder Split writes to. Nothing has been replaced yet. Yes replaces those files and writes the others; No writes no file.</extracomment>
         <translation>
@@ -99,6 +90,13 @@ Oscail anois é?</translation>
         <source>PDF documents (*.pdf)</source>
         <extracomment>File type filter. Keep the pattern in parentheses.</extracomment>
         <translation>Doiciméid PDF (*.pdf)</translation>
+    </message>
+    <message>
+        <source>Pages sent to the printer may already have printed.</source>
+        <extracomment>Warning after stopping a native printer job. Pages already submitted to the printer system may be on paper, even if backend cancellation worked.
+----------
+Warning after a native print failure. Submitted pages cannot be retracted.</extracomment>
+        <translation>Seans go bhfuil na leathanaigh a seoladh chuig an printéir priontáilte cheana féin.</translation>
     </message>
     <message>
         <source>Could not finish the print job.</source>
@@ -2946,6 +2944,11 @@ Oscail Socruithe do chórais → Feidhmchláir Réamhshocraithe (nó deaschlice�
         <translation>Ní féidir gach leathanach a scriosadh.</translation>
     </message>
     <message>
+        <source>This operation is not supported for PDF forms with XFA data.</source>
+        <extracomment>Error for Extract, Split, Merge or Delete Pages. XFA is the PDF form format, not a filename. The operation writes nothing because changing the pages could lose form data or retain data from removed pages. Keep the format name XFA.</extracomment>
+        <translation>Ní thacaítear leis an oibríocht seo d’fhoirmeacha PDF ina bhfuil sonraí XFA.</translation>
+    </message>
+    <message>
         <source>Rotation must be a multiple of 90 degrees.</source>
         <translation>Caithfidh an rothlú a bheith ina iolraí de 90 céim.</translation>
     </message>
@@ -3015,6 +3018,14 @@ Oscail Socruithe do chórais → Feidhmchláir Réamhshocraithe (nó deaschlice�
         <source>A password contains characters that AES-128 and RC4-128 cannot use. Choose AES-256.</source>
         <extracomment>Shown in the security dialog or after an encryption failure. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
         <translation>Tá carachtair i bpasfhocal nach féidir le AES-128 agus RC4-128 a úsáid. Roghnaigh AES-256.</translation>
+    </message>
+</context>
+<context>
+    <name>mervin::QpdfWorker</name>
+    <message>
+        <source>PDF processing stopped or exceeded a safety limit. Try a smaller document.</source>
+        <extracomment>Visible failure reason for PDF security, page or measurement operations. The isolated PDF worker could not start safely, stopped unexpectedly, or exceeded its memory, time, request or output limit. This is not a diagnosis that the PDF is damaged. Suggest processing a smaller document.</extracomment>
+        <translation>Stop próiseáil an PDF nó sáraíodh teorainn sábháilteachta. Bain triail as doiciméad níos lú.</translation>
     </message>
 </context>
 <context>

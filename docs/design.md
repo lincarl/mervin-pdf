@@ -261,18 +261,24 @@ Only successful completion queues the local PDF through the background loader.
 
 These still touch the disk on the UI thread and are planned work:
 
-- Viewer queries still parse and inspect document data on the UI thread and can
-  wait for another thread's document access lock. Loaded PDFs now use an owning
-  memory buffer, so these calls do not read the original file. Moving every
-  viewer query to background threads remains separate work. Directory-dependent
-  non-PDF formats retain their path-based lookup of relative resources.
 - Reads at startup before the first window, and the system file dialogs, which
   run on the UI thread by design.
-- Opening a folder or a link with the system's handler (`QDesktopServices::openUrl`),
-  which on Windows waits for `ShellExecute`.
-- Two small updater steps: telling how this copy was installed when the updater
-  starts (a registry read on Windows, a check that `$APPIMAGE` is a file on Linux),
-  and starting the Windows installer, whose working folder is the download's folder.
+
+The updater identifies this copy's installation on its disk worker, including
+Windows registry reads and the Linux `$APPIMAGE` file check. Requests made while
+that check is pending wait without blocking the UI and use the identified
+provider. An open Settings dialog refreshes its update controls when detection
+finishes, keeping unrelated edits.
+Windows installer launches also run on that worker. Confirmed document windows
+remain allocated but hidden until the launch returns, so a nested Settings dialog
+can unwind safely. A separate installation notice continues to paint during the
+launch, and the verified staging directory survives until the helper takes over
+cleanup or the failed handoff restores the pending update.
+
+Windows browser and Microsoft Store links dispatch their native shell calls to
+workers. The UI thread still routes Qt URL handlers, so application handlers
+remain on their owning thread. Windows folder launches already use the same
+background shell-call pattern. Other platforms retain Qt's desktop integration.
 
 ### Opening a new tab
 
@@ -837,20 +843,41 @@ recursive, so the holding thread releases the hold before it reads the document
 through a `TextIndex` or OCR, destroys it or waits for it to close. Render workers
 wait for the gate in the same steps and drop a request canceled meanwhile, so a
 held document does not keep the two to four workers from other tabs once its tab
-has canceled its requests. The find search and OCR keep plain waits, as each runs
-on a queue of its own.
+has canceled its requests. Text extraction uses the same stop-aware gate acquisition.
+OCR retains its own queue and lifetime handling.
 
-Queries on the screen thread never wait for a job. While a hold holds a document or
-waits for it, the document's queries, `TextIndex` page reads and
-`RenderEngine::renderPageImage` return their empty value on the screen thread, log a
-warning naming the call and count a refusal (`Document::testing::refusals()`). Other
-threads are answered as before. `TextIndex` and `FormModel` do not cache a refused
-page, so its text, links and form fields are read on a later call. A screen-thread
-query counts itself before it checks for a hold, and a hold counts itself before it
-checks for queries, so a query that found no hold ends before the hold takes the
-gate. A query made inside another query of the same document, such as
-`withPdfDocument` inside `savePdfTo`, is let through, since the outer one keeps the
-hold waiting. Nothing changes while no job holds a document.
+Viewer queries use one serial `ViewerQueries` queue per viewer. Only requested
+pages are parsed. Page snapshots contain plain text geometry, form fields,
+annotations, resolved links, KiCad properties and measurement metadata. The UI
+owns the transferred values and retains 24 page snapshots, or the visible set
+plus a newly requested interaction page when that set is larger. Geometry has
+one cached page, and form, annotation and text caches allocate entries only for
+requested pages. Outline loading, comments listing and keyboard form traversal
+also run on the worker. The latter two process one page at a time and retain only
+the list output. Form focus alone does not start a whole-document traversal.
+
+A missing snapshot defers the complete mouse gesture in page coordinates. Once
+ready, the viewer replays the gesture against the current layout. Tool changes,
+rebinding and hiding reject obsolete gestures. Missing search destinations and
+sidebar selections retain their navigation intent. Copy and markup explicitly
+read the selected range page by page, so cache eviction cannot truncate them.
+Read cancellation and model revisions reject stale results. Text and geometry
+parsing check cancellation on the parsing thread between device operations.
+Individual native calls can still take time to return, without blocking the UI.
+
+Viewer form and annotation mutations use the same serial queue as reads. A
+pending-edit fence is acquired before queueing. Save and print `Document::Hold`
+users, and background destruction, wait for this fence before accessing or
+closing the document. An edit owns this lifetime protection while its methods
+take their access locks, so text extraction never nests a nonrecursive lifetime
+gate. Pausing cancels reads but retains accepted edits. Dirty state includes
+accepted edits immediately. Worker results refresh sibling fields and rasters,
+while an editor's last synchronized value protects newer uncommitted typing.
+
+Legacy synchronous model callers retain `Document::ScreenQuery` refusal while
+another job holds or waits for the document. The viewer uses cache-only model
+reads and queued mutations, so this guard cannot silently discard its edits.
+`isPdf` and form presence are immutable facts resolved during document opening.
 
 Each render request carries the requesting viewer's identifier, view epoch, and
 token. A viewer discards results that belong to an older zoom, rotation, or view.
@@ -887,8 +914,15 @@ alone exceed the reserved range above 41,297,760 rows; those counts remain bound
 but are not guaranteed distinct reachable rows. A page too
 large to rasterize at the normal minimum does not control the raster cap, but
 still participates in the geometry cap.
-`RenderEngine` refuses a raster beyond the limit instead of returning a blank image, so
-such a page shows plain paper, as any page whose render fails does. A move to a screen
+`RenderEngine` refuses a raster beyond the limit instead of returning a blank image.
+The viewer shows a page-specific failure notice with a Zoom Out action after a matching
+failed result arrives. Pending and stale results never show this notice. Failed pages
+are not requested again on every repaint. Changing the view clears their failure state.
+Zoom Out lowers the document-wide scale enough to bring a rejected raster within range,
+with rounding headroom. This explicit recovery may go below 8%, without raising either
+geometry cap. The lower minimum lasts for that loaded document. Other render failures
+offer a lower zoom only while one is available. The notice stays inside the viewport,
+including when only a small part of an enormous page is visible. A move to a screen
 with another device pixel ratio (`QEvent::DevicePixelRatioChange`) re-renders at the
 new ratio and clamps the zoom again, in every zoom mode. When that changes the zoom, it
 keeps the page point in the middle of the view, as any other zoom does.
@@ -1065,7 +1099,21 @@ climbs `/Parent` from every widget in the output, listed on a page or not, prune
 field tree it reaches and replaces the fields that go with null, except those above a
 widget that a page lists. That also covers a source without `/AcroForm`, whose widgets
 reach their field tree only through `/Parent`, and a reference that could not be
-rewritten. The output has no `/CO` or `/XFA`, as `transformAnnotations` copies neither.
+rewritten. Calculation order is mapped separately. Each source pass pairs the copied
+widgets and their ancestors with the corresponding source objects. Only these existing
+copies can enter `/CO`, in source calculation order. After pruning, every entry must
+remain reachable from `/AcroForm /Fields`. Split's independent page projection uses
+the same rule and excludes `/CO` from generic property copying. This prevents a
+calculation reference from importing an omitted field or page. Different sources and
+repeated passes retain separate references after field renaming. JavaScript remains
+unchanged and may still refer to old field names.
+
+Extract, Split and Merge reject any non-null `/XFA` before writing output. Even a
+complete page copy uses a new catalog and renamed form trees, so raw XFA copying is
+not a safe preservation rule. Delete also rejects XFA before removing any page.
+Split checks before its overwrite callback or first output. An unchanged Delete copy
+skips pruning and preserves the original XFA. Stream, packet-array and malformed
+non-null XFA entries all receive the same translated unsupported-operation error.
 
 `addPage` also copies the annotations that a copied annotation names, so a reply's `/IRT`
 brings along the note it answers, with its contents and popup, from a page left out.
@@ -1120,8 +1168,8 @@ from `/Dests` and the `/Names /Dests` tree, after the outline, which looks some
 bookmarks up through them. It removes the structure elements whose content is only on
 deleted pages, with their `/ParentTree` and `/IDTree` entries, and the deleted pages'
 content items from the elements that stay. It removes the form fields whose widgets are
-all on deleted pages from `/Fields`, `/CO` and their parents' `/Kids`, and drops `/XFA`
-when it removes one. It also prunes the trees that the widgets of kept pages reach
+all on deleted pages from `/Fields`, `/CO` and their parents' `/Kids`. XFA forms are
+refused before deletion. It also prunes the trees that the widgets of kept pages reach
 through `/Parent` when `/AcroForm` does not list them, as in files that Extract wrote
 before it copied forms. Finally it replaces the deleted pages, their annotations that no
 kept page lists and the removed fields with null (`QPDF::replaceObject`), so links and
@@ -1189,7 +1237,8 @@ and unloading skips it. Other tabs and windows stay usable.
 The tab polls what the job reports every 250 ms, as for a load. After 2 s without
 progress (`TabPage::kSlowMs`) a bar (`WaitBar`) at the top of the tab, from the left
 edge to the scroll bar's column, says what the job waits for, with Stop waiting on the
-right, and a veil covers the picture below it. A write names its folder, "Saving to
+right, or below the text on a narrow tab, and a veil covers the picture below it.
+A write names its folder, "Saving to
 /nas/out. The drive is not answering.", as does a read of a file in that folder. A
 read elsewhere names the file, "Reading plan.pdf from /nas/docs. The drive is not
 answering." The text wraps and shortens like the slow load notice
@@ -1225,11 +1274,12 @@ the state Split checked. Split replaces no file that changed, appeared or was re
 since then. It stops there with the earlier parts committed, and the window names that
 file in a warning. A failed check fails the split with the file's name and reason. As
 in Merge, another process can still change a file between the final comparison and the
-rename. A window in the tray reports existing outputs through `notifyInTray` and
-writes nothing.
+rename. A window in the tray retains the question until its source tab is selected
+in the restored window, and writes nothing while consent is pending.
 
 When the tab's password does not open the file, the window asks for one
-and runs the tool again with it, and the tab keeps a password that worked. Everything
+and runs the tool again with it. Rotate retains a working password on the tab;
+Split keeps its retry password only until the retained command ends. Everything
 a finished operation raises, the password prompt, an error or "Open it now?", is
 window-modal in the window that holds the tab by then and waits in that window's tab
 change queue. A window in the tray shows an error as a tray message and asks nothing.
@@ -1341,6 +1391,12 @@ only renders its plan and writes edits back to it. Both dialogs show their rows 
 the same reorderable `RowList`. Extract writes through `PageOps::merge`, which fails
 on an out-of-range page instead of skipping it, so a stale page count cannot silently
 shorten the output.
+
+The list refits row widgets after Qt updates its viewport width. Row layout changes,
+including status badges, update the dialog minimum. Count and Output columns grow
+to fit their actual displayed values, with matching header widths. Merge refreshes
+filename elision when the labels resize, so shrinking the dialog or adding a
+scrollbar keeps the range and removal controls visible.
 
 Extract and Delete first probe the source in a tab job, then open their dialog with
 the returned page count and password state. Their constructors do no source I/O.
@@ -1536,29 +1592,31 @@ plans no raster wider or taller than 2^20 pixels, and Document::renderPage retur
 image for one. Such a page reports that it could not be rendered instead of printing a
 blank or distorted sheet.
 
-Each band takes a short document hold for rendering, and the first band's hold also
-reads the page size. Each hold ends before colour conversion, painting or any printer
-call. The worker converts a band's colour mode before it draws the band. It begins the
-job or starts a sheet only after the sheet's first band converted, so a failed render
-or conversion reports its page instead of leaving a blank sheet. That band is drawn
-even when Stop arrives while the printer starts the sheet. A blocked printer call
-names its printer in the wait bar. `Document::renderPage` checks the job's atomic
-cancellation state between paint operations through a passthrough device. The
-rendering thread alone writes its local MuPDF cookie, and cancellation discards a
-partial image. A native page load, image decode or draw call must still return
-before the next check, and a blocked printer call cannot be interrupted. The tab
-stays covered while the document hold remains. Then document access ends, no
-further band renders, and completion is suppressed. A print
-completion already submitted may finish. The worker checks painter.end and reports a
-completion failure.
+Each band takes a short document hold for rendering. Holds end before colour
+conversion, temporary-file writes, painting or printer calls. The worker prepares
+every band of a page before starting that sheet. A single-band page stays in memory;
+a multi-band page uses a private temporary raw-image file that is removed after the
+page or on failure. The worker reads one prepared band at a time for submission.
+This keeps the application memory bound while adding local disk I/O and space for
+one sheet. Qt's Windows engine still retains its own page images until that sheet ends.
 
-Qt cannot cancel a print job, because QPrinter::abort does nothing in Qt's PDF, CUPS
-and Windows engines. When Stop or a failure ends a printer job early, the painter
-still ends it, and the printer receives the sheets drawn so far. The band count
-follows the visible raster at the render dpi, so an A4 or Letter page at 600 dpi
-already prints in two or three bands. Stop or a failure between the bands of a page
-leaves that sheet partly drawn, and its drawn top strip can be blank. Print to file
-discards its private PDF.
+A render or conversion failure before submission starts no sheet. Stop during
+preparation discards that page. Once a sheet starts, Stop finishes its prepared bands
+without further document access before attempting cancellation. This reduces partial
+sheets on cancellation, but a spool read or driver failure can still leave part of a
+page. `Document::renderPage` checks atomic cancellation between paint operations.
+A native page load, image decode, draw or blocked printer call must still return
+before the next check. The tab remains covered only while live document access lasts.
+
+The worker counts pages whose first band was sent to the backend separately from
+band progress. It calls `QPrinter::abort()` on its owning thread before fallback
+painter teardown after cancellation or failure. Backend support varies and a successful
+abort cannot retract physical sheets. After Stop, a separate settled callback can
+report irreversible submission even after the tab becomes usable. Native cancellation
+and failure notices warn that submitted pages may already have printed when at least
+one page was sent. Closing the tab suppresses its later notice. Print to file still
+discards staged output and does not show this native-printer warning. Final submission
+checks `painter.end()` and reports failure.
 
 The print preview renders through RenderEngine with the same raster plan, at screen
 resolution for colour and grayscale, and like printing for black and white, at the
@@ -1574,6 +1632,14 @@ output begins. QPrinter writes a private local PDF, then closes before the worke
 replaces the destination through DocumentOutput. Stop before that guarded replacement
 keeps the destination's previous bytes. Closing tabs or windows commits active
 editors and offers Save, Discard, or Cancel for unsaved changes.
+
+Split retains overwrite and password consent with its source tab until that tab
+is selected in a visible, restored window. It never selects a background tab to
+ask. Each retained command keeps a stable identity across retries and tab moves,
+and checks its loaded-document identity, path and captured source version before
+delivery. A new page-tool command supersedes older consent. Tab closure, source
+replacement, Stop, declined consent and completion release retained choices and
+passwords. Split's entered retry password is not copied into the tab's password cache.
 
 Page deletion, extraction, merge, split, and rotation preserve editable measurement
 metadata. Page numbers follow output order (including duplicates); rotation transforms
@@ -1635,8 +1701,11 @@ one contained object. Mervin requires qpdf 11.10 or later and sets
 limits cumulative decoded output per Flate decoder. It also refuses legitimate
 Flate streams larger than the limit. It is not a total process memory limit and
 does not bound other codecs, predictor allocations, object counts or aggregate
-retained data. Kernel-limited worker processes would be needed for that stronger
-contract.
+retained data. All qpdf document operations therefore run in a memory- and
+CPU-limited helper, with at most two live helpers per application process and bounded IPC
+and output. The GUI process retains output ownership and publication. See
+[Bounded qpdf workers](QPDF-WORKERS.md) for exact limits, platform differences,
+compatibility tradeoffs and the boundaries of this protection.
 
 qpdf can turn a decoder exception into a warning, skip the affected object and
 still produce output. `checkQpdfWarnings` therefore rejects its specific Flate-limit
@@ -1647,10 +1716,10 @@ before committing, and page operations retain the input filename for a deferred
 read failure. Real padded required-object and optional-annotation fixtures verify
 rejection without replacing the destination on qpdf 11.10 and current qpdf 12.
 
-`AtomicPdfWriter` streams all qpdf output through `QSaveFile`, including page,
+`AtomicPdfWriter` streams all qpdf output through the parent's `QSaveFile`, including page,
 security and measurement operations. A failed write discards its temporary file;
 only a complete write replaces the destination. A split commits each output file
-individually. `AtomicPdfWriter` and `DocumentOutput::replace` hold the destination's
+individually. The worker's parent and `DocumentOutput::replace` hold the destination's
 `job::DestinationLock` from opening the temporary file to the end of the commit, and
 a stop before commit admission discards the temporary file. An admitted commit can
 still finish after Stop (see Disk access off the UI thread). A split stopped part
@@ -1944,9 +2013,13 @@ Their shortcuts stay registered on the window, because a toolbar button passes o
 its shortcut only while it is enabled, and Recent disables the document group. The
 toolbar cannot be hidden, because it holds the main menu. The window's right-click
 menu leaves out its entry, and a toolbar hidden by an earlier version shows again.
-As the last toolbar item, the menu button is the first that `QToolBar` would move
-into its overflow popup. The window's minimum width therefore follows the
-toolbar's width, also when a longer page count widens it.
+The main menu stays outside a horizontally scrollable command row. On compact
+windows, file buttons use their icons and tooltips, and the row scrolls to expose
+all remaining buttons and the page and zoom editors. Keyboard focus scrolls a
+control into view; buttons accept tab focus and retain accessible names. This
+uses `QScrollArea` because the ordinary toolbar menu overflow cannot host these
+existing composite controls. The window's minimum width is 480 logical pixels
+and no longer follows the full toolbar or a changing page count.
 
 The application and packages share the repository's approved icon assets.
 
@@ -1991,8 +2064,8 @@ and record the patch set's SHA-256 in `mervin-patch-set.sha256` beside the
 libraries. `cmake/FindMuPDF.cmake` refuses libraries built without the current set,
 and the CI cache keys use the same identity, so no build links an unpatched or
 outdated MuPDF. `tst_mupdf_store` covers the store fixes and `tst_form_model`
-covers inherited list-field appearance properties. MuPDF 1.28.6 changes its
-Brotli dependency but leaves all five patch targets unchanged. The patches
+covers saved list-field selections and raster differences. MuPDF 1.28.6 changes its
+Brotli dependency but leaves the first five patch targets unchanged. Those patches
 retain their original 1.28.5 provenance and apply unchanged to 1.28.6.
 
 The first three patches are Artifex's fixes for MuPDF bug 709849. Artifex committed them to
@@ -2007,8 +2080,7 @@ longer applies, and keep a test for each one.
 MuPDF's list-field appearance writer. It reads inherited `/Opt` and `/TI`, as the
 field enumerator already does, so a shared field's parent options do not become
 blank appearances after editing. The patch preserves list type, parent hierarchy
-and saved `/V`. MuPDF still does not highlight selected list items in generated
-appearances; saved selection values and visible option text are separate contracts.
+and saved `/V`. Patch 0006 adds selected-row highlighting.
 Remove this patch when the pinned upstream release includes the same inheritance fix.
 
 `0005-fitz-account-for-explicit-store-removal.patch` subtracts an explicitly removed
@@ -2016,6 +2088,42 @@ entry's size while the store lock is held. Without it, `fz_remove_item` leaves t
 byte count inflated and later inserts can evict live cache entries prematurely.
 The regression covers hashed and scanned keys. Remove the patch when the pinned
 release includes the same accounting fix.
+
+`0006-pdf-highlight-selected-list-options.patch` paints selected options with white
+text on blue in saved list appearances. It inherits `/V`, `/I`, `/Opt` and `/TI`,
+matches export values and paints display labels. `/I` distinguishes duplicate export
+values. It draws visible options as separate clipped rows, preserving Unicode font
+resources and shaped text. The test inspects saved `/AP` streams before reopening and
+compares actual selected and unselected pixels on shared widgets. The editor still
+offers one choice at a time; existing multiselect values render without being flattened.
+Combo appearances also show display labels instead of export values. `FormModel`
+retains the selected option index alongside its display label. Editors pass that
+index through queued edits, so equal labels can retain different export values
+and equal export values can retain different indices. Choice edits update `/V`
+and `/I`, and shared widgets regenerate together. Label-only model callers still
+support label matching and custom text in editable combo fields. Remove the patch
+when the pinned upstream release provides the same appearance behavior.
+
+`0007-tesseract-update-runtime-to-5.5.4.patch` updates the bundled Tesseract
+runtime sources, which matched upstream 5.5.2, to upstream 5.5.4. The MuPDF OCR
+adapter, allocation hooks, disabled legacy engine and double-precision settings
+remain unchanged. Both platform source lists drop the obsolete files removed
+upstream. The Linux builder recreates its archives when the patch set changes,
+because `ar cr` alone retains members whose source files have been removed.
+`tst_tesseract_models` checks malformed dimensions, weights, layer relationships,
+empty network stacks, null-character indices and recoder ranges. Valid controls
+and `tst_ocr` also exercise real model loading and recognition.
+
+`0008-mujs-update-to-1.3.11.patch` applies the complete MuJS release delta,
+including regex positions beyond 64 KiB, numeric array keys and exception
+cleanup. It also corrects the new upstream array-conversion rollback loop to
+delete index `k` instead of repeatedly deleting index `i`. Otherwise allocation
+failures retain migrated values after the application removes them from the array.
+`tst_mujs` injects failures at successive allocations and checks collection of
+removed values, preservation of other properties, and a successful retry. It
+exercises the linked engine without enabling PDF JavaScript
+in Mervin. Remove or refresh these dependency patches when MuPDF carries the
+same fixed upstream sources. Keep both platform builds and the regression tests.
 
 - `0001-fitz-read-found-store-values-under-the-lock.patch` is MuPDF commit
   `5ba5c97` and changes `source/fitz/store.c`. `fz_find_item` and the duplicate

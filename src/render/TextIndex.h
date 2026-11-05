@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <vector>
+#include <unordered_map>
 
 // Forward declaration of the MuPDF context (defined in <mupdf/fitz.h>). Keeps
 // the heavy MuPDF headers confined to render/ translation units.
@@ -52,7 +53,7 @@ public:
     TextIndex(const TextIndex &) = delete;
     TextIndex &operator=(const TextIndex &) = delete;
 
-    int pageCount() const { return static_cast<int>(pages_.size()); }
+    int pageCount() const { return pageCount_; }
 
     // Full plain text of a page, lines joined by '\n'. Extracted lazily, cached.
     const QString &pageText(int pageNo);
@@ -79,7 +80,6 @@ public:
     std::vector<TextMatch> search(const QString &query, bool caseSensitive, bool wholeWord,
                                   const std::function<bool()> &canceled = {});
 
-private:
     struct LineSpan
     {
         int start = 0; // [start, end) into PageText::text, excludes the '\n'
@@ -97,6 +97,14 @@ private:
         std::vector<TextLink> links;
     };
 
+    // Transfer a fully extracted page to a UI-owned index. No worker shares its cache.
+    PageText snapshot(int pageNo);
+    void storePage(int pageNo, PageText page) { pages_[pageNo] = std::move(page); }
+    void discardPage(int pageNo) { pages_.erase(pageNo); }
+    bool pageReady(int pageNo) const { return pages_.contains(pageNo) && pages_.at(pageNo).ready; }
+    void setPageLoader(std::function<void(int)> loader) { loader_ = std::move(loader); }
+
+private:
     const PageText &ensure(int pageNo);
     static std::vector<TextLink> detectLinksInText(const QString &text, int page);
     static std::vector<TextMatch> matchInText(const QString &text, int page,
@@ -107,7 +115,9 @@ private:
     fz_context *ctx_ = nullptr; // cloned from the base context; owned
     std::shared_ptr<DocumentLifetime> lifetime_;
     Document *doc_ = nullptr;   // not owned
-    std::vector<PageText> pages_;
+    int pageCount_ = 0;
+    std::unordered_map<int, PageText> pages_;
+    std::function<void(int)> loader_;
 };
 
 } // namespace mervin

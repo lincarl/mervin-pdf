@@ -50,6 +50,7 @@ public:
         bool canSelfUpdate = false;  // this copy downloads and installs updates itself
         bool storeManaged = false;  // Microsoft Store handles updates; lastCheck does not apply
         QDateTime lastCheck;         // last check with a definite answer (UTC); invalid = never
+        bool ready = true;           // installation detection has finished
     };
 
     explicit SettingsDialog(const mervin::Settings &current, QWidget *parent = nullptr);
@@ -74,6 +75,8 @@ public slots:
     // Keeps OK from writing the old value back.
     void setAutoUpdate(bool on);
     void setLastUpdateCheck(const QDateTime &utc);
+    /// Refresh the provider without discarding changes elsewhere in the dialog.
+    void setUpdateInfo(const UpdateInfo &updates);
     // The applyRequested receiver couldn't save the settings. OK and Apply then
     // show `error` and keep the dialog open, so no restart happens either.
     void reportSaveFailure(const QString &error);
@@ -112,6 +115,7 @@ private:
     void refreshAnnotSwatches(); // re-check the default-highlight swatch row
     void refreshNavIcons();      // tint the menu icons for the current palette
     void refreshLastCheck();     // "Last checked ..." under Check for Updates
+    void refreshUpdateInfo();    // provider controls, including pending detection
     std::optional<int> unloadMinutes() const; // validates the numeric duration unless Never is checked
     void refreshUnloadHint();
     // Re-read the installed OCR models, off the UI thread; focusRow moves focus to
@@ -158,6 +162,8 @@ private:
     QCheckBox *keepMissingCheck_ = nullptr;
     QCheckBox *updatesCheck_ = nullptr;
     QLabel *lastCheckLabel_ = nullptr;
+    QLabel *updateProviderHint_ = nullptr;
+    QPushButton *checkUpdatesButton_ = nullptr;
     QPushButton *accentBtn_ = nullptr;
     QCheckBox *systemAccentCheck_ = nullptr;
     QList<QToolButton *> annotSwatches_; // default-highlight colour chips

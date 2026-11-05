@@ -1,4 +1,6 @@
 #pragma once
+#include "render/FormModel.h"
+#include "render/AnnotModel.h"
 
 #include "recent/PathKey.h"
 #include "ui/MainWindow.h"
@@ -14,8 +16,27 @@
 #include <QSet>
 #include <QSignalSpy>
 #include <QThread>
+#include <QTest>
 
 namespace mervin::testing {
+// Retry refused fixture setup without repeating a mutation after it succeeds.
+template<class Mutation>
+bool retryMutation(Mutation mutation)
+{
+    bool succeeded = false;
+    return QTest::qWaitFor([&] { return succeeded || (succeeded = mutation()); }, 5000);
+}
+
+// Viewer caches fill asynchronously. Wait for values before lifecycle assertions.
+inline bool waitForPage(FormModel *model, int page)
+{
+    return QTest::qWaitFor([=] { model->pageFields(page); return model->pageReady(page); }, 5000);
+}
+inline bool waitForPage(AnnotModel *model, int page)
+{
+    return QTest::qWaitFor([=] { model->pageAnnots(page); return model->pageReady(page); }, 5000);
+}
+
 
 // Opens or focuses one tab and waits for that tab's load, leaving other held loads
 // alone. Lazy opens keep their existing scheduling and return without waiting.

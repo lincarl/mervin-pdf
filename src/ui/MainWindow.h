@@ -44,6 +44,7 @@ class QStackedWidget;
 class QTabBar;
 class QTabWidget;
 class QToolBar;
+class QScrollArea;
 class QToolButton;
 class QUrl;
 
@@ -244,6 +245,7 @@ private:
     // runPageTool). Defined in DocumentActions.cpp.
     struct PageTool;
     struct PageToolResult;
+    struct RetainedPageTool;
     struct SecurityRequest;
     struct SecurityResult;
     struct RetainedSecurityDialog;
@@ -267,19 +269,11 @@ private:
     // user typed the password for this run.
     static void runPageTool(mervin::TabPage *tab, const std::shared_ptr<const PageTool> &tool,
                             const QString &password, bool asked);
-    // Queues the result in the tab's current owner, including after its previous
-    // owner is destroyed while the result waits in that window's queue.
-    static void deliverPageTool(mervin::TabPage *tab, const std::shared_ptr<const PageTool> &tool,
-                                const QString &password, bool asked,
-                                const std::shared_ptr<PageToolResult> &result);
-    // A file that needs a password asks for one, window-modal, and runs the tool
-    // again with it, remembered on the tab if it works. Outputs that already exist ask
-    // once whether to replace them, with No as the default, and Yes runs a copy of the
-    // tool that approves the states the job found. A failure says why, and success runs
-    // the tool's own question. A window in the tray shows failures and existing outputs
-    // as a tray message and asks nothing.
+    // Retains password/replacement consent until the source tab is selected.
+    // A retry keeps the same operation identity and drops its password at completion.
     void finishPageTool(mervin::TabPage *tab, const std::shared_ptr<const PageTool> &tool,
-                        const QString &password, bool asked, const PageToolResult &result);
+                        const QString &password, bool asked, const PageToolResult &result,
+                        RetainedPageTool *retained);
     struct CopyResult;
     // Copy and export borrow the live document only under a stop-aware Hold.
     void startCopy(mervin::TabPage *tab, const QString &destination, bool flatten);
@@ -515,7 +509,8 @@ private:
     QToolButton *recentBtn_ = nullptr;
     QToolButton *openButton_ = nullptr;
     QWidget *docControls_ = nullptr;
-    QToolBar *mainToolBar_ = nullptr;   // the top button row; sets the window's min width
+    QToolBar *mainToolBar_ = nullptr;
+    QScrollArea *commandScroll_ = nullptr; // scrolls commands, leaving the menu visible
     QToolButton *moreButton_ = nullptr; // ⋯ popup holding the former menu-bar entries
     QToolButton *saveButton_ = nullptr; // dropdown-only Save, right of Open
     QMenu *saveMenu_ = nullptr;         // its dropdown (Save edits / as copy / export)

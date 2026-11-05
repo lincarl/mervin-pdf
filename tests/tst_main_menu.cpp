@@ -15,6 +15,10 @@
 #include <QPointer>
 #include <QScopeGuard>
 #include <QScreen>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QComboBox>
+#include <QLineEdit>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -92,6 +96,62 @@ private slots:
             QVERIFY2(found != commands.cend(), qPrintable(key.toString()));
             QVERIFY2(window.actions().contains(*found), qPrintable(key.toString()));
         }
+    }
+
+    void compactControlsRemainReachable_data()
+    {
+        QTest::addColumn<int>("points");
+        QTest::addColumn<bool>("rtl");
+        QTest::newRow("normal") << 10 << false;
+        QTest::newRow("large") << 15 << false;
+        QTest::newRow("large RTL") << 15 << true;
+    }
+
+    /// Narrow windows keep the menu visible and scroll focused editors/buttons into view.
+    void compactControlsRemainReachable()
+    {
+        QFETCH(int, points);
+        QFETCH(bool, rtl);
+        RenderEngine engine;
+        MainWindow window(&engine, nullptr);
+        QFont font = window.font();
+        font.setPointSize(points);
+        window.setFont(font);
+        window.setLayoutDirection(rtl ? Qt::RightToLeft : Qt::LeftToRight);
+        window.show();
+        window.resize(640, 700);
+        window.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&window));
+        QTRY_COMPARE(window.width(), 640);
+        auto *scroll = window.findChild<QScrollArea *>("commandScroll");
+        auto *menu = window.findChild<QToolButton *>("menuButton");
+        QVERIFY(scroll && menu);
+        QTRY_VERIFY(scroll->horizontalScrollBar()->maximum() > 0);
+        QVERIFY(menu->isVisible());
+        QVERIFY(window.rect().contains(QRect(menu->mapTo(&window, QPoint()), menu->size())));
+        // Recent disables the document group. Enable it here to exercise keyboard
+        // traversal independently of PDF loading, which has its own tests.
+        for (QWidget *child : scroll->widget()->findChildren<QWidget *>())
+            child->setEnabled(true);
+        for (QWidget *control : scroll->widget()->findChildren<QWidget *>()) {
+            if (!qobject_cast<QToolButton *>(control) && !qobject_cast<QLineEdit *>(control)
+                && !qobject_cast<QComboBox *>(control))
+                continue;
+            if (!control->isVisible() || !control->isEnabled())
+                continue;
+            if (qobject_cast<QToolButton *>(control))
+                QVERIFY(control->focusPolicy() & Qt::TabFocus);
+            control->setFocus(Qt::TabFocusReason);
+            QCoreApplication::processEvents();
+            // QScrollArea observes focus changes, including tab-key traversal.
+            QTRY_VERIFY2(scroll->viewport()->rect().contains(
+                QRect(control->mapTo(scroll->viewport(), QPoint()), control->size())),
+                qPrintable(QStringLiteral("%1 %2 focus %3").arg(control->metaObject()->className(),
+                    control->objectName()).arg(control->hasFocus())));
+        }
+        window.resize(1400, 700);
+        QCoreApplication::processEvents();
+        QVERIFY(menu->isVisible());
     }
 
     // The toolbar holds the main menu. The window's right-click menu offers no way to

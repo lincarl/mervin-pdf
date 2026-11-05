@@ -30,15 +30,17 @@ constexpr unsigned Multiline = 1u << 12;   // PDF_TX_FIELD_IS_MULTILINE
 constexpr unsigned Comb = 1u << 24;        // PDF_TX_FIELD_IS_COMB
 } // namespace form_flags
 
-// Widget value in zero-origin, y-down page points at 72 dpi. value is /V; options holds choice
-// display strings; flags is the raw PDF field-flags word.
+// Widget value in zero-origin, y-down page points at 72 dpi. Choice values and options
+// use display labels, with choiceIndex preserving the selected option's identity;
+// other values use /V. flags is the raw PDF field-flags word.
 struct FormField {
     int page = -1;
     FormFieldType type = FormFieldType::Text;
     QRectF rect;         // app page-point space
     QString name;        // fully-qualified field name
-    QString value;       // current /V
+    QString value;       // current value, with a choice export value mapped to its display label
     QStringList options; // choice options (combo/list); empty otherwise
+    int choiceIndex = -1; // selected /Opt entry, or -1 for no option or custom combo text
     unsigned flags = 0;  // raw PDF field flags (form_flags::*)
 
     // Resolved font size in page points. Preserve explicit /DA sizes (or the 12pt missing-/DA

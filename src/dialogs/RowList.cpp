@@ -150,13 +150,13 @@ QWidget *RowList::makeHeader(const Fill &fill)
     QHBoxLayout *columns = columnsLayout();
     fill(header, columns);
     headerRow_->addLayout(columns, 1);
-    auto *count = fixedLabel(header, countWidth_, Qt::AlignRight);
-    count->setText(countCaption());
-    headerRow_->addWidget(count);
+    countHeader_ = fixedLabel(header, countWidth_, Qt::AlignRight, "rowListCountHeader");
+    countHeader_->setText(countCaption());
+    headerRow_->addWidget(countHeader_);
     if (outputWidth_ > 0) {
-        auto *output = fixedLabel(header, outputWidth_, Qt::AlignRight);
-        output->setText(outputCaption());
-        headerRow_->addWidget(output);
+        outputHeader_ = fixedLabel(header, outputWidth_, Qt::AlignRight, "rowListOutputHeader");
+        outputHeader_->setText(outputCaption());
+        headerRow_->addWidget(outputHeader_);
     }
     headerRow_->addSpacing(kColX + kSpacing);
     return header;
@@ -185,6 +185,7 @@ void RowList::addRow(const Fill &fill)
     const int i = count();
     auto *row = new QWidget(this);
     row->setProperty(kRowProperty, i);
+    row->installEventFilter(this);
     auto *h = new QHBoxLayout(row);
     h->setContentsMargins(6, 1, 6, 1);
     h->setSpacing(kSpacing);
@@ -254,10 +255,29 @@ void RowList::setRowTexts(int row, const QString &count, const QString &output)
     QWidget *w = it ? itemWidget(it) : nullptr;
     if (!w)
         return;
-    if (auto *c = w->findChild<QLabel *>(QStringLiteral("rowListCount")))
-        c->setText(count);
-    if (auto *o = w->findChild<QLabel *>(QStringLiteral("rowListOutput")))
-        o->setText(output);
+    const auto setColumn = [this, w](const QString &name, const QString &text,
+                                     int &width, QLabel *header) {
+        auto *label = w->findChild<QLabel *>(name);
+        if (!label)
+            return;
+        label->setText(text);
+        const int required = widthFor(width, label->font(), {text}, 4);
+        if (required == width)
+            return;
+        // Actual counts and output ranges can exceed both the translated caption
+        // and any sizing sample. Grow all rows together without shrinking on edits.
+        width = required;
+        if (header)
+            header->setFixedWidth(width);
+        for (int index = 0; index < this->count(); ++index) {
+            QWidget *rowWidget = itemWidget(item(index));
+            if (auto *cell = rowWidget ? rowWidget->findChild<QLabel *>(name) : nullptr)
+                cell->setFixedWidth(width);
+        }
+        updateGeometry();
+    };
+    setColumn(QStringLiteral("rowListCount"), count, countWidth_, countHeader_);
+    setColumn(QStringLiteral("rowListOutput"), output, outputWidth_, outputHeader_);
 }
 
 void RowList::syncHeaderInsets()
@@ -271,6 +291,14 @@ void RowList::syncHeaderInsets()
     const int left = viewport()->x();
     const int right = width() - (viewport()->x() + viewport()->width());
     headerRow_->setContentsMargins(6 + left, 0, 6 + qMax(0, right), 0);
+}
+
+void RowList::updateGeometries()
+{
+    QListWidget::updateGeometries();
+    // QListView fits editors before updating its content width when horizontal
+    // scrolling is off. Fit them again using the resulting item rectangles.
+    updateEditorGeometries();
 }
 
 bool RowList::eventFilter(QObject *o, QEvent *e)
@@ -306,6 +334,10 @@ bool RowList::eventFilter(QObject *o, QEvent *e)
     }
 
     auto *w = qobject_cast<QWidget *>(o);
+    // Item widgets live inside the viewport, so their layout changes do not
+    // invalidate the outer layout's cached minimum for this list automatically.
+    if (w && w->property(kRowProperty).isValid() && e->type() == QEvent::LayoutRequest)
+        updateGeometry();
     const QVariant row = w && w->parentWidget() ? w->parentWidget()->property(kRowProperty)
                                                 : QVariant();
     if (!row.isValid())

@@ -44,6 +44,9 @@ public:
     // True while the card is open in its tab, even when the tab itself is hidden.
     bool isOpen() const { return !isHidden(); }
 
+    // A delayed selection preset must not replace typing or a later open request.
+    quint64 inputRevision() const { return inputRevision_; }
+
     QString query() const;
     bool caseSensitive() const;
     bool wholeWord() const;
@@ -90,6 +93,7 @@ private:
     QToolButton *closeBtn_ = nullptr;
     QTimer *debounce_ = nullptr;
     bool dirty_ = false; // the field changed since the last search
+    quint64 inputRevision_ = 0;
     PanelStack *stack_ = nullptr;
     bool dragging_ = false;
     QPoint dragLastGlobal_;

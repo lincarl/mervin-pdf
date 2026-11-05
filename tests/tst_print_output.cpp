@@ -455,6 +455,7 @@ private slots:
     void selectedPagesReachOutput_data();
     void selectedPagesReachOutput();
     void activeFormTextAndAnnotationEditsReachOutput();
+    void laterBandFailureStartsNoSheet();
     void stopDuringPrinterStart_data();
     void stopDuringPrinterStart();
     void independentBandBoundaryCoverage();
@@ -1063,10 +1064,14 @@ void TstPrintOutput::activeFormTextAndAnnotationEditsReachOutput()
     auto *editor = viewer->viewport()->findChildren<QLineEdit *>(Qt::FindDirectChildrenOnly).front();
     editor->setText(QStringLiteral("IIIIIIII"));
     // setText leaves the live PDF untouched until Print commits the active editor.
+    QCOMPARE(viewer->formModel()->pageFields(0).size(), size_t(1));
     QCOMPARE(viewer->formModel()->pageFields(0).front().value, QString());
-    const int markup = viewer->annotModel()->addTextMarkup(
-        0, AnnotType::Highlight, {{20, 100, 160, 12}}, QColor(Qt::yellow), {});
-    QVERIFY(markup >= 0);
+    int markup = -1;
+    QVERIFY(testing::retryMutation([&] {
+        markup = viewer->annotModel()->addTextMarkup(
+            0, AnnotType::Highlight, {{20, 100, 160, 12}}, QColor(Qt::yellow), {});
+        return markup >= 0;
+    }));
     PrintInteraction dialogs(window, output, {}, [](PrintDialog &dialog) {
         auto *paper = dialog.findChild<QComboBox *>("printPaperSize");
         paper->setCurrentIndex(paper->findData(QVariant::fromValue(QPageSize(QPageSize::A4))));
@@ -1076,6 +1081,8 @@ void TstPrintOutput::activeFormTextAndAnnotationEditsReachOutput()
     QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
     QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable() && QFileInfo::exists(output), 10000);
     QVERIFY(dialogs.messages.isEmpty());
+    QVERIFY(testing::waitForPage(viewer->formModel(), 0));
+    QCOMPARE(viewer->formModel()->pageFields(0).size(), size_t(1));
     QCOMPARE(viewer->formModel()->pageFields(0).front().value, QStringLiteral("IIIIIIII"));
     QCOMPARE(bytes(source), original);
     auto printed = engine.openDocument(output);
@@ -1104,22 +1111,72 @@ void TstPrintOutput::activeFormTextAndAnnotationEditsReachOutput()
     // A sticky-note body belongs to popup metadata. Printing commits it but only
     // the note icon, not its body text, is page content.
     viewer->setFormMode(false);
-    const int note = viewer->annotModel()->addTextNote(
-        0, QPointF(30, 130), Qt::yellow, {}, QStringLiteral("Before Print"));
-    QVERIFY(note >= 0);
+    int note = -1;
+    QVERIFY(testing::retryMutation([&] {
+        note = viewer->annotModel()->addTextNote(
+            0, QPointF(30, 130), Qt::yellow, {}, QStringLiteral("Before Print"));
+        return note >= 0;
+    }));
     viewer->setCommentToolEnabled(true);
     viewer->setAnnotSubMode(AnnotSubMode::Note);
     viewer->revealAnnotation(0, note);
-    auto *comment = viewer->findChild<QPlainTextEdit *>();
-    QVERIFY(comment && comment->isVisible());
+    QPointer<QPlainTextEdit> comment;
+    QTRY_VERIFY((comment = viewer->findChild<QPlainTextEdit *>()) && comment->isVisible());
     comment->setPlainText(QStringLiteral("Comment committed by Print"));
     PrintInteraction commentDialogs(window, files.filePath("comment-print.pdf"));
     QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
     QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable() && QFileInfo::exists(files.filePath("comment-print.pdf")), 10000);
-    QCOMPARE(viewer->annotModel()->annot(0, note)->contents,
-             QStringLiteral("Comment committed by Print"));
+    QVERIFY(testing::waitForPage(viewer->annotModel(), 0));
+    const auto committed = viewer->annotModel()->annot(0, note);
+    QVERIFY(committed.has_value());
+    QCOMPARE(committed->contents, QStringLiteral("Comment committed by Print"));
     QVERIFY(commentDialogs.messages.isEmpty());
     QCOMPARE(bytes(source), original);
+}
+
+/// A later rendering failure must discard a prepared page before any driver submission.
+void TstPrintOutput::laterBandFailureStartsNoSheet()
+{
+    using Phase = printing::testing::Phase;
+    QTemporaryDir files;
+    const QString output = files.filePath("existing.pdf");
+    QFile previous(output);
+    QVERIFY(previous.open(QIODevice::WriteOnly));
+    QVERIFY(previous.write("keep original") > 0);
+    previous.close();
+    const QByteArray before = bytes(output);
+    std::atomic<int> rendered{0};
+    std::atomic<int> begun{0};
+    std::atomic<int> submitted{0};
+    printing::testing::setHook([&](const printing::testing::Event &event,
+                                  const printing::testing::PrinterCall &call) {
+        if (event.phase == Phase::RenderBand) {
+            ++rendered;
+            if (event.band == 1)
+                return false;
+        }
+        if (event.phase == Phase::Begin)
+            ++begun;
+        if (event.phase == Phase::PageSubmitted)
+            ++submitted;
+        return !call || call();
+    });
+    const auto cleanup = qScopeGuard([] {
+        background::settle(10000);
+        printing::testing::setHook({});
+    });
+    RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    QVERIFY(testing::openAndWait(window, sourcePath_));
+    PrintInteraction dialogs(window, output, {}, [](PrintDialog &dialog) {
+        dialog.findChild<QComboBox *>("printQuality")->setCurrentIndex(2); // 600 dpi
+    });
+    QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
+    QTRY_COMPARE(dialogs.messages, QStringList{"Could not render page 1."});
+    QCOMPARE(rendered.load(), 2);
+    QCOMPARE(begun.load(), 0);
+    QCOMPARE(submitted.load(), 0);
+    QCOMPARE(bytes(output), before);
 }
 
 void TstPrintOutput::stopDuringPrinterStart_data()
@@ -1130,7 +1187,7 @@ void TstPrintOutput::stopDuringPrinterStart_data()
 }
 
 // Holds the successful driver start before control returns to the band loop.
-// Stop must draw that prepared first band and render no following band or page.
+// Stop finishes the prepared sheet, submits it once, and renders no further page.
 void TstPrintOutput::stopDuringPrinterStart()
 {
     QFETCH(bool, nextPage);
@@ -1203,28 +1260,43 @@ void TstPrintOutput::stopDuringPrinterStart()
     QVERIFY(state->copied);
     QVERIFY(state->startIndex >= 0);
     int drawn = 0;
+    int submitted = 0;
+    bool aborted = false;
     for (int index = state->startIndex + 1; index < state->events.size(); ++index) {
         const auto &event = state->events[index];
         QVERIFY(event.phase != Phase::RenderBand);
-        if (event.phase == Phase::BandDrawn) {
-            QCOMPARE(event.band, 0);
+        if (event.phase == Phase::BandDrawn)
             ++drawn;
+        if (event.phase == Phase::PageSubmitted) {
+            ++submitted;
+            QCOMPARE(event.submittedPages, nextPage ? 2 : 1);
         }
+        if (event.phase == Phase::CancelJob)
+            aborted = true;
     }
-    QCOMPARE(drawn, 1);
+    QVERIFY(drawn > 1);
+    QCOMPARE(submitted, 1);
+    QVERIFY(aborted);
     QPDF pdf;
     pdf.processFile(partial.toUtf8().constData());
     auto pages = QPDFPageDocumentHelper(pdf).getAllPages();
     QCOMPARE(pages.size(), nextPage ? 2u : 1u);
-    QCOMPARE(pages.back().getImages().size(), 1u);
+    QCOMPARE(pages.back().getImages().size(), size_t(drawn));
     auto printed = engine.openDocument(partial);
     QVERIFY(printed);
     const QImage sheet = printed->renderPage(printed->pageCount() - 1, 1, 0);
     QVERIFY(!sheet.isNull());
     const QRect red = redPageBounds(sheet);
     QVERIFY(!red.isEmpty());
-    QVERIFY(red.height() < sheet.height() * 0.7);
-    QCOMPARE(sheet.pixelColor(sheet.width() / 2, sheet.height() * 3 / 4), QColor(Qt::white));
+    QVERIFY(red.height() > sheet.height() * 0.9);
+    // Optional retained output for independent-reader verification of the staged sheet.
+    const QString evidence = qEnvironmentVariable("MERVIN_PRINT_EVIDENCE");
+    if (!evidence.isEmpty()) {
+        QVERIFY(QDir().mkpath(evidence));
+        QVERIFY(QFile::copy(partial, QDir(evidence).filePath(nextPage
+            ? QStringLiteral("stopped-after-next-page.pdf")
+            : QStringLiteral("stopped-after-first-page.pdf"))));
+    }
 }
 
 // A vertical strip spans every band boundary. Its independently known placement
@@ -1451,21 +1523,26 @@ void TstPrintOutput::editorCommitCanDeletePrintOwner()
 {
     RenderEngine engine;
     const QPointer<MainWindow> window(new MainWindow(&engine, nullptr));
+    const auto destroyWindow = qScopeGuard([window] { delete window.data(); });
     QVERIFY(mervin::testing::openAndWait(*window, sourcePath_));
     const QPointer<TabPage> tab(window->findChild<TabPage *>());
     QVERIFY(tab);
     auto *viewer = tab->viewer();
-    const int note = viewer->annotModel()->addTextNote(
-        0, QPointF(30, 60), QColor(Qt::yellow), {}, QStringLiteral("Initial comment"));
-    QVERIFY(note >= 0);
+    int note = -1;
+    QVERIFY(testing::retryMutation([&] {
+        note = viewer->annotModel()->addTextNote(
+            0, QPointF(30, 60), QColor(Qt::yellow), {}, QStringLiteral("Initial comment"));
+        return note >= 0;
+    }));
     window->show();
     viewer->setCommentToolEnabled(true);
     viewer->setAnnotSubMode(AnnotSubMode::Note);
     viewer->revealAnnotation(0, note);
-    auto *editor = viewer->findChild<QPlainTextEdit *>();
-    QVERIFY(editor && editor->isVisible());
+    QPointer<QPlainTextEdit> editor;
+    QTRY_VERIFY((editor = viewer->findChild<QPlainTextEdit *>()) && editor->isVisible());
     editor->setPlainText(QStringLiteral("Typed before Print"));
-    connect(viewer, &ViewerWidget::annotationsChanged, this, [window] { delete window.data(); });
+    // Edit acceptance is synchronous even though the annotation snapshot arrives later.
+    connect(viewer, &ViewerWidget::annotEditsChanged, this, [window] { delete window.data(); });
     QVERIFY(QMetaObject::invokeMethod(window.data(), "printDocument"));
     QVERIFY(!window && !tab);
     QVERIFY(!qobject_cast<PrintDialog *>(QApplication::activeModalWidget()));

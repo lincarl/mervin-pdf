@@ -191,6 +191,10 @@ if [ "${recorded}" != "${PATCH_SET}" ]; then
     record "${PATCH_SET}" "${PATCHES[@]}"
 fi
 
+# Recreate the archives after a patch change. ar cr replaces named members but
+# retains removed source files, such as Tesseract 5.5.2 objects deleted in 5.5.4.
+rm -f build/release/libmupdf.a build/release/libmupdf-third.a
+
 # `libs` target builds only libmupdf.a + libmupdf-third.a (no command-line tools).
 # Send make's chatter to stderr so stdout carries only the printed DEST path
 # (callers do MUPDF_DIR="$(build-mupdf-linux.sh)").

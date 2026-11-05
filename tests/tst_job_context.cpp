@@ -769,14 +769,15 @@ void TstJobContext::stopWhileTheWriteReadsItsSource()
     QCOMPARE(during.step, job::Step::Reading);
     QCOMPARE(during.path, source);
 
-    // Stopped there, the writer reports its folder again at its next write and gives
-    // up before it writes anything more.
+    // The isolated worker waits for the parent's acknowledgement of this read.
+    // Stop ends the worker before acknowledging it, so no later write is reported.
     QCOMPARE(state.stop(), job::State::Stop::Stopped);
     job::testing::release();
+    QVERIFY(job.endsWithin(kWaitMs));
     QVERIFY(!job.result());
     const job::State::Snapshot after = state.snapshot();
-    QCOMPARE(after.step, job::Step::Writing);
-    QCOMPARE(after.path, folder);
+    QCOMPARE(after.step, job::Step::Reading);
+    QCOMPARE(after.path, source);
     QCOMPARE(after.ticks, during.ticks);
     QVERIFY(entries(dir).isEmpty());
 }

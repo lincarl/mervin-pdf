@@ -1,0 +1,190 @@
+Highlight selected list options in saved appearances (MuPDF 1.28.6)
+
+This file modifies MuPDF. The Mervin PDF project added this local fix on
+2026-11-04. It is not an upstream backport. Remove it when the pinned release
+renders selected list rows with the same coverage.
+
+Read inherited /Opt, /TI, /V and /I. Match /V against export values, paint
+display labels, and use /I when present to distinguish equal export values.
+Combo boxes also paint display labels rather than export values.
+Draw only visible rows, with white text on blue for each selected option.
+Retain the widget background, border and rotation. Each row has its own
+clipped Form XObject so long labels cannot wrap into another option and
+Unicode fonts or shaped text do not replace other rows' resources.
+
+This follows patch 0004. tests/tst_form_model.cpp checks saved appearances,
+shared widgets, single and multiple selection, export/display pairs, top
+indices, duplicate values, negative cases and raster differences.
+
+diff --git a/source/pdf/pdf-appearance.c b/source/pdf/pdf-appearance.c
+--- a/source/pdf/pdf-appearance.c
++++ b/source/pdf/pdf-appearance.c
+@@ -2879,6 +2879,82 @@
+ 	return out;
+ }
+ 
++/* Match export values, using /I to distinguish options with identical values. */
++static int
++choice_option_selected(fz_context *ctx, pdf_obj *field, pdf_obj *option, int index)
++{
++	pdf_obj *indices = pdf_dict_get_inheritable(ctx, field, PDF_NAME(I));
++	pdf_obj *value = pdf_dict_get_inheritable(ctx, field, PDF_NAME(V));
++	int i;
++	if (pdf_is_array(ctx, indices))
++	{
++		for (i = 0; i < pdf_array_len(ctx, indices); ++i)
++			if (pdf_is_int(ctx, pdf_array_get(ctx, indices, i)) && pdf_array_get_int(ctx, indices, i) == index)
++				return 1;
++		return 0;
++	}
++	if (pdf_is_array(ctx, option))
++		option = pdf_array_get(ctx, option, 0);
++	if (!pdf_is_string(ctx, option))
++		return 0;
++	if (pdf_is_array(ctx, value))
++	{
++		for (i = 0; i < pdf_array_len(ctx, value); ++i)
++			if (pdf_is_string(ctx, pdf_array_get(ctx, value, i)) &&
++				!strcmp(pdf_to_text_string(ctx, option), pdf_array_get_text_string(ctx, value, i)))
++				return 1;
++		return 0;
++	}
++	return pdf_is_string(ctx, value) && !strcmp(pdf_to_text_string(ctx, option), pdf_to_text_string(ctx, value));
++}
++
++/* Each option is one clipped row. Its own resources retain fonts from other rows. */
++static void
++write_choice_row(fz_context *ctx, pdf_annot *annot, fz_buffer *buf, pdf_obj *xobjects,
++	const char *text, const char *font, float size, int n, float *color,
++	int q, float w, float h, float x, float y, int index)
++{
++	fz_buffer *row = fz_new_buffer(ctx, 256);
++	pdf_obj *res = NULL;
++	pdf_obj *appearance = NULL;
++	char name[40];
++	char *rc = NULL;
++	fz_var(res);
++	fz_var(appearance);
++	fz_var(rc);
++	fz_try(ctx)
++	{
++#if FZ_ENABLE_HTML_ENGINE
++		if (text_needs_rich_layout(ctx, text))
++		{
++			char css[400];
++			rc = escape_text(ctx, text);
++			fz_snprintf(css, sizeof css,
++				"font-family:%s;font-size:%gpt;color:#%06x;text-align:%s;white-space:pre",
++				full_font_name(&font), size, hex_from_color(ctx, n, color),
++				q == 0 ? "left" : q == 1 ? "center" : "right");
++			write_rich_content(ctx, annot, row, &res, rc, css, size, w, h, 0, 0);
++		}
++		else
++#endif
++			write_variable_text(ctx, annot, row, &res, pdf_annot_language(ctx, annot),
++				text, font, size, n, color, q, w, h, 0, 0.8f, 1.2f, 0, 0, 0);
++		appearance = pdf_new_xobject(ctx, annot->page->doc, fz_make_rect(0, 0, w, h), fz_identity, res, row);
++		fz_snprintf(name, sizeof name, "Opt%d", index);
++		pdf_dict_puts(ctx, xobjects, name, appearance);
++		fz_append_printf(ctx, buf, "q 1 0 0 1 %g %g cm /%s Do Q\n", x, y, name);
++	}
++	fz_always(ctx)
++	{
++		fz_free(ctx, rc);
++		pdf_drop_obj(ctx, appearance);
++		pdf_drop_obj(ctx, res);
++		fz_drop_buffer(ctx, row);
++	}
++	fz_catch(ctx)
++		fz_rethrow(ctx);
++}
++
+ static void
+ pdf_write_ch_widget_appearance(fz_context *ctx, pdf_annot *annot, fz_buffer *buf,
+ 	const fz_rect *rect, fz_rect *bbox, fz_matrix *matrix, pdf_obj **res)
+@@ -2886,38 +2962,57 @@
+ 	int ff = pdf_field_flags(ctx, annot->obj);
+ 	if (ff & PDF_CH_FIELD_IS_COMBO)
+ 	{
++		pdf_obj *opt = pdf_dict_get_inheritable(ctx, annot->obj, PDF_NAME(Opt));
++		const char *text = pdf_field_value(ctx, annot->obj);
++		int i;
++		for (i = 0; i < pdf_array_len(ctx, opt); ++i)
++			if (choice_option_selected(ctx, annot->obj, pdf_array_get(ctx, opt, i), i))
++			{
++				text = pdf_choice_field_option(ctx, annot->obj, 0, i);
++				break;
++			}
+ 		/* TODO: Pop-down arrow */
+-		pdf_write_tx_widget_appearance(ctx, annot, buf, rect, bbox, matrix, res,
+-			pdf_field_value(ctx, annot->obj), 0);
++		pdf_write_tx_widget_appearance(ctx, annot, buf, rect, bbox, matrix, res, text, 0);
+ 	}
+ 	else
+ 	{
+-		fz_buffer *text = fz_new_buffer(ctx, 1024);
+-		fz_try(ctx)
+-		{
+-			pdf_obj *opt = pdf_dict_get_inheritable(ctx, annot->obj, PDF_NAME(Opt));
+-			int i = pdf_dict_get_inheritable_int(ctx, annot->obj, PDF_NAME(TI));
+-			int n = pdf_array_len(ctx, opt);
+-			/* TODO: Scrollbar */
+-			/* TODO: Highlight selected items */
+-			if (i < 0)
+-				i = 0;
+-			for (; i < n; ++i)
+-			{
+-				pdf_obj *val = pdf_array_get(ctx, opt, i);
+-				if (pdf_is_array(ctx, val))
+-					fz_append_string(ctx, text, pdf_array_get_text_string(ctx, val, 1));
+-				else
+-					fz_append_string(ctx, text, pdf_to_text_string(ctx, val));
+-				fz_append_byte(ctx, text, '\n');
+-			}
+-			pdf_write_tx_widget_appearance(ctx, annot, buf, rect, bbox, matrix, res,
+-				fz_string_from_buffer(ctx, text), PDF_TX_FIELD_IS_MULTILINE);
+-		}
+-		fz_always(ctx)
+-			fz_drop_buffer(ctx, text);
+-		fz_catch(ctx)
+-			fz_rethrow(ctx);
++		pdf_obj *opt = pdf_dict_get_inheritable(ctx, annot->obj, PDF_NAME(Opt));
++		pdf_obj *xobjects;
++		const char *font;
++		float size, color[4], white = 1;
++		float w, h, b, row_height, y;
++		int n, q, i = pdf_dict_get_inheritable_int(ctx, annot->obj, PDF_NAME(TI));
++		/* Reuse the text widget's background, border, rotation and clipping. */
++		pdf_write_tx_widget_appearance(ctx, annot, buf, rect, bbox, matrix, res, "", 0);
++		pdf_annot_default_appearance(ctx, annot, &font, &size, &n, color);
++		q = pdf_annot_quadding(ctx, annot);
++		b = pdf_annot_border_width(ctx, annot);
++		w = bbox->x1 - bbox->x0;
++		h = bbox->y1 - bbox->y0;
++		if (size <= 0)
++			size = 12;
++		row_height = size * 1.2f;
++		y = h - b * 2;
++		if (w <= b * 4 || h <= b * 4 || !isfinite(row_height))
++			return;
++		if (!*res)
++			*res = pdf_new_dict(ctx, annot->page->doc, 1);
++		xobjects = pdf_dict_put_dict(ctx, *res, PDF_NAME(XObject), 1);
++		fz_append_printf(ctx, buf, "/Tx BMC\nq\n%g %g %g %g re W n\n", b, b, w-b*2, h-b*2);
++		/* TODO: Scrollbar */
++		for (i = fz_maxi(i, 0); i < pdf_array_len(ctx, opt) && y > b; ++i)
++		{
++			pdf_obj *option = pdf_array_get(ctx, opt, i);
++			const char *text = pdf_is_array(ctx, option)
++				? pdf_array_get_text_string(ctx, option, 1) : pdf_to_text_string(ctx, option);
++			int selected = choice_option_selected(ctx, annot->obj, option, i);
++			y -= row_height;
++			if (selected)
++				fz_append_printf(ctx, buf, "0.153 0.392 0.769 rg %g %g %g %g re f\n", b, y, w-b*2, row_height);
++			write_choice_row(ctx, annot, buf, xobjects, text, font, size,
++				selected ? 1 : n, selected ? &white : color, q, w-b*4, row_height, b*2, y, i);
++		}
++		fz_append_string(ctx, buf, "Q\nEMC\n");
+ 	}
+ }
+ 

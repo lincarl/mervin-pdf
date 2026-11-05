@@ -7,6 +7,7 @@
 #include <qpdf/QPDFWriter.hh>
 
 #include <functional>
+#include <memory>
 
 namespace mervin {
 
@@ -30,7 +31,7 @@ private:
     class Sink final : public Pipeline
     {
     public:
-        Sink(QSaveFile &file, const QString &folder)
+        Sink(QSaveFile *file, const QString &folder)
             : Pipeline("atomic PDF output", nullptr), file_(file), folder_(folder)
         {
         }
@@ -39,12 +40,12 @@ private:
         void write(const unsigned char *data, size_t length) override;
         void finish() override {}
     private:
-        QSaveFile &file_;
+        QSaveFile *file_;
         const QString folder_;
     };
 
-    job::DestinationLock destination_; // first, so it outlives the temporary file
-    QSaveFile file_;
+    std::unique_ptr<job::DestinationLock> destination_; // outlives the temporary file
+    std::unique_ptr<QSaveFile> file_; // null in the helper, where the parent owns output
     Sink sink_;
     QPDFWriter writer_;
 };

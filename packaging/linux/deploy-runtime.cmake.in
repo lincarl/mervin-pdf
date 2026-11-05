@@ -29,7 +29,7 @@ endif()
 qt_deploy_qt_conf("${QT_DEPLOY_PREFIX}/${QT_DEPLOY_BIN_DIR}/qt.conf" PREFIX "..")
 if(NOT EXISTS "${QT_DEPLOY_PREFIX}/${QT_DEPLOY_LIB_DIR}/libQt6Core.so.6")
     message(FATAL_ERROR
-        "Qt was not bundled. Select the official Qt prefix with CMAKE_PREFIX_PATH.")
+        "Qt was not bundled. Select the patched Qt prefix with CMAKE_PREFIX_PATH.")
 endif()
 
 # Check the installed tree, including dlopen-loaded plugins. Qt's deployment

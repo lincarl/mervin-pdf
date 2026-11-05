@@ -5,6 +5,7 @@
 #include "dialogs/RowList.h"
 #include "io/SaveCheck.h"
 #include "security/PageOps.h"
+#include "security/QpdfWorker.h"
 #include "ui/Icons.h"
 #include "ui/TextLayout.h"
 #include "ui/Theme.h"
@@ -34,8 +35,8 @@ constexpr int kWidth = 820;
 constexpr int kHeight = 560;
 constexpr int kMinWidth = 660;
 constexpr int kMinHeight = 480;
-constexpr int kColCount = 56;  // "999" and the caption, at 125% text scaling
-constexpr int kColOutput = 74; // "999-999", as in Merge
+constexpr int kColCount = 56;  // Initial width; RowList also measures captions and values.
+constexpr int kColOutput = 74; // Initial width, as in Merge.
 constexpr int kPasswordWidth = 260;
 // A field's frame and padding around its text (Theme: 1px border, 8px padding,
 // plus the line edit's own 2px margin, on each side).
@@ -659,6 +660,9 @@ std::optional<QString> ExtractDialog::problem() const
 QString ExtractDialog::planProblem() const
 {
     if (readError_) {
+        if (readErrorDetail_ == PageOps::xfaTransformationError()
+            || readErrorDetail_ == qpdfWorker::failureText())
+            return readErrorDetail_;
         if (plan_.mode() == ExtractPlan::Mode::Delete) {
             //: The viewer shows the document, but qpdf, which writes the new file,
             //: cannot read it.
@@ -724,6 +728,10 @@ void ExtractDialog::accept()
 /// Formats retained worker failures for the dialog or a hidden-owner notice.
 QString ExtractDialog::failureText(const Choices &choices, ExtractPlan::Mode mode)
 {
+    if ((choices.failure == Choices::Failure::Read || choices.failure == Choices::Failure::Write)
+        && (choices.error == PageOps::xfaTransformationError()
+            || choices.error == qpdfWorker::failureText()))
+        return choices.error;
     switch (choices.failure) {
     case Choices::Failure::None:
         return {};

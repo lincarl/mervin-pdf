@@ -54,6 +54,9 @@ public:
     // the previous date.
     static QDateTime lastCheck();
 
+    /// Whether the worker has identified this installation's update provider.
+    bool ready() const { return ready_; }
+
     // Whether this copy can download and install updates itself. Portable and dev
     // copies cannot. MSIX delegates updates to Microsoft Store.
     bool canSelfUpdate() const
@@ -91,6 +94,8 @@ public:
     Q_ENUM(CloseResult)
 
     // The application supplies its explicit quit path, which bypasses close-to-tray.
+    // Closed windows must remain allocated until this updater requests process
+    // exit, so a worker launch cannot destroy a running modal Settings caller.
     void setCloseWindowsHandler(std::function<CloseResult()> handler)
     {
         closeWindows_ = std::move(handler);
@@ -109,6 +114,8 @@ public:
     static bool waitForDisk(int ms);
 
 signals:
+    /// The update provider is known; refresh controls opened during startup.
+    void initialized();
     // The automatic check interval was reset at `utc`; lastCheck() now returns it.
     void checked(const QDateTime &utc);
     // lastCheck() changed: read from the profile at start, or reset by a check.
@@ -155,7 +162,10 @@ private:
     void markChecked();
     void startDownload(); // the network part of download(), once the .part file is open
 
-    const update::PackageKind kind_;
+    update::PackageKind kind_ = update::PackageKind::None;
+    bool ready_ = false;
+    bool startupPending_ = false;
+    bool manualPending_ = false;
     const QString exePath_; // captured at start: a package upgrade replaces the file behind it
     QNetworkAccessManager *nam_;
     bool busy_ = false;        // a check, download or installation is running or queued
@@ -177,12 +187,11 @@ private:
     QString stagedFile_;
     QPointer<QProgressDialog> progress_;
     QPointer<QMessageBox> restartPrompt_;
-    // "Installing..." while the package manager runs. The process is a child of
-    // this updater and stops with it, so the destructor deletes the note too.
+    // "Installing..." while a native launch or package manager runs. The
+    // destructor removes the notice even if its background task is still pending.
     QPointer<QDialog> busyNote_;
     std::function<CloseResult()> closeWindows_;
     QDateTime lastCheck_;
-    bool lastCheckKnown_ = false; // read at start, or set by a check
     quint64 operation_ = 0;       // bumped by endOperation(), see onDisk()
 };
 

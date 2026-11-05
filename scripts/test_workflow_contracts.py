@@ -211,20 +211,102 @@ class WorkflowContractTests(unittest.TestCase):
                 self.require_effective_step(job, verification)
                 for distro_library in ("qt6-base-dev", "qt6-qtbase-devel", "libqpdf-dev", "qpdf-devel", "libtomlplusplus-dev"):
                     self.assertNotIn(distro_library, scripts)
-                qt = next(step for step in steps if step.get("uses", "").startswith("jurplel/install-qt-action@"))
-                self.assertEqual(qt["with"]["version"], "6.12.0")
-                self.assertEqual(qt["with"]["py7zrversion"], "==1.1.4")
-                self.assertNotIn("archives", qt["with"])
-                if job.get("container") == "fedora:44":
-                    self.assertIs(qt["with"].get("install-deps"), False)
-                    self.assertEqual(qt["env"]["CC"], "gcc")
-                    self.assertEqual(qt["env"]["CXX"], "g++")
-                    self.assertEqual(qt["env"]["LDSHARED"], "gcc -shared")
+                qt = next(step for step in steps if step.get("uses") == "./.github/actions/prepare-qt")
                 self.require_effective_step(job, qt)
         presets = json.loads((ROOT / "CMakePresets.json").read_text())
         bundled = next(preset for preset in presets["configurePresets"] if preset["name"] == "linux-bundled")
         self.assertEqual(bundled["cacheVariables"]["VCPKG_TARGET_TRIPLET"], "x64-linux-dynamic")
         self.assertEqual(bundled["cacheVariables"]["MERVIN_BUNDLE_LINUX_RUNTIME"], "ON")
+
+    def test_linux_scratch_cleanup_preserves_installed_sdks_and_evidence(self):
+        """Exercise cold-build and cache-hit cleanup against real directory trees."""
+        job = workflow("full-ci.yml")["jobs"]["linux-tests"]
+        steps = job["steps"]
+        preparation = next(i for i, step in enumerate(steps)
+                           if step.get("uses") == "./.github/actions/prepare-qt")
+        cleanup = next(i for i, step in enumerate(steps)
+                       if step.get("name") == "Reclaim dependency build space")
+        configure = next(i for i, step in enumerate(steps) if step.get("name") == "Configure")
+        self.assertLess(preparation, cleanup)
+        self.assertLess(cleanup, configure)
+        self.require_effective_step(job, steps[cleanup])
+        qt_scratch = [f"dev-temp/qt-patched/{name}" for name in
+                      ("build", "source", "downloads", "icu-include")]
+        qpdf_scratch = ["dev-temp/qpdf-source", "dev-temp/qpdf-build"]
+        retained = ["dev-temp/qt-patched/sdk/lib/Qt6Core.so",
+                    "dev-temp/qt-patched/sdk/mervin-qt-build.json",
+                    "dev-temp/qt-patched/sdk/mervin-qt-cache.json",
+                    "dev-temp/qt-patched/logs/configure.log",
+                    "dev-temp/qt-patched/validation/runtime.log",
+                    "dev-temp/qt-official/Qt/lib/Qt6Core.so",
+                    "dev-temp/qpdf/lib/libqpdf.so", "unrelated.txt"]
+        (ROOT / "dev-temp").mkdir(exist_ok=True)
+        for restored in (False, True):
+            with self.subTest(restored=restored), tempfile.TemporaryDirectory(
+                    prefix="ci cleanup ", dir=ROOT / "dev-temp") as temporary:
+                directory = Path(temporary)
+                for relative in [*retained, *(f"{path}/object" for path in
+                                  [*qpdf_scratch, *([] if restored else qt_scratch)])]:
+                    path = directory / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(relative)
+                script = steps[cleanup]["run"].replace("${{ github.workspace }}", str(directory))
+                subprocess.run(["bash", "-e", "-c", script], check=True, capture_output=True, text=True)
+                for relative in [*qt_scratch, *qpdf_scratch]:
+                    self.assertFalse((directory / relative).exists(), relative)
+                for relative in retained:
+                    self.assertEqual((directory / relative).read_text(), relative)
+
+    def test_every_build_lane_selects_the_verified_sdk_before_configuring(self):
+        """Keep all existing platforms and package consumers on the same SDK path."""
+        full = workflow("full-ci.yml")["jobs"]
+        release = workflow("release.yml")["jobs"]
+        for name, job in [(name, full[name]) for name in ("linux-tests", "linux-system-qt-tests", "windows-tests")] + [
+                (name, release[name]) for name in ("windows", "appimage", "deb", "rpm")]:
+            with self.subTest(job=name):
+                steps = job["steps"]
+                preparation = [i for i, step in enumerate(steps) if step.get("uses") == "./.github/actions/prepare-qt"]
+                self.assertEqual(len(preparation), 1)
+                self.require_effective_step(job, steps[preparation[0]])
+                configure = next(i for i, step in enumerate(steps) if step.get("name", "").startswith("Configure"))
+                tools = next(i for i, step in enumerate(steps) if "scripts/install-build-tools.py" in step.get("run", ""))
+                self.assertLess(tools, preparation[0])
+                self.assertLess(preparation[0], configure)
+                self.assertFalse(any(step.get("uses", "").startswith("jurplel/install-qt-action@") for step in steps))
+                scripts = "\n".join(step.get("run", "") for step in steps)
+                self.assertNotIn("QT_ROOT_DIR", scripts)
+                if "windows" in job["runs-on"]:
+                    msvc = next(i for i, step in enumerate(steps) if step.get("name") == "Set up MSVC (x64)")
+                    self.assertLess(msvc, preparation[0])
+                    self.assertEqual(steps[msvc]["with"]["arch"], "x64")
+        scripts = "\n".join(step.get("run", "") for step in full["repository-checks"]["steps"])
+        self.assertIn("python3 -B scripts/test_build_qt_patched.py", scripts)
+        self.assertIn("python3 -B scripts/test_prepare_qt_sdk.py", scripts)
+
+    def test_sdk_action_fails_closed_and_saves_only_verified_non_pr_caches(self):
+        """An exact restore must pass the same verification as a fresh build."""
+        action = workflow("../actions/prepare-qt/action.yml")
+        steps = action["runs"]["steps"]
+        official = next(step for step in steps if step.get("uses", "").startswith("jurplel/install-qt-action@"))
+        self.assertIs(official["with"]["set-env"], False)
+        self.assertIs(official["with"]["add-tools-to-path"], False)
+        self.assertIs(official["with"]["install-deps"], False)
+        self.assertEqual(official["with"]["version"], "6.12.0")
+        self.assertEqual(official["with"]["py7zrversion"], "==1.1.4")
+        restore = next(step for step in steps if step.get("id") == "cache")
+        self.assertTrue(restore["uses"].startswith("actions/cache/restore@"))
+        self.assertEqual(restore["with"], {"path": "dev-temp/qt-patched/sdk", "key": "${{ steps.identity.outputs.key }}"})
+        validation = next(step for step in steps if "prepare-qt-sdk.py prepare" in step.get("run", ""))
+        self.require_effective_step({}, validation)
+        self.assertIn("--export", validation["run"])
+        self.assertLess(steps.index(restore), steps.index(validation))
+        save = steps[-1]
+        self.assertTrue(save["uses"].startswith("actions/cache/save@"))
+        self.assertEqual(save["if"], "github.event_name != 'pull_request' && steps.cache.outputs.cache-hit != 'true'")
+        self.assertEqual(save["with"], restore["with"])
+        self.assertLess(steps.index(validation), steps.index(save))
+        for step in steps:
+            self.assertNotIn("continue-on-error", step)
 
 
 if __name__ == "__main__":

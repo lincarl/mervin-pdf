@@ -245,6 +245,17 @@ class DestinationTests(unittest.TestCase):
         self.assertTrue((self.destination / MARKER).is_file())
         self.assert_clean()
 
+    def test_rebuild_discards_previous_archives(self):
+        """Removed source members cannot survive in ar's existing output archive."""
+        self.assert_built(self.run_script())
+        (self.destination / MARKER).write_text("older build\n")
+        makefile = self.destination / "Makefile"
+        makefile.write_text(MAKEFILE.replace(
+            "libs:\n", "libs:\n\t@test ! -e build/release/libmupdf.a\n"
+            "\t@test ! -e build/release/libmupdf-third.a\n"))
+        self.assert_built(self.run_script())
+        self.assertEqual((self.destination / "build-count").read_text(), "build\nbuild\n")
+
     def test_versioned_siblings_are_untouched(self):
         """Extract beside an unrelated version-named file, directory or symlink."""
         for kind in ("file", "directory", "symlink"):

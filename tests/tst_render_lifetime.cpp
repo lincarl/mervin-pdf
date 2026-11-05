@@ -730,6 +730,7 @@ private slots:
         RenderEngine engine;
         auto doc = engine.openDocument(QStringLiteral(MERVIN_FIXTURE_PDF));
         QVERIFY(doc);
+        const bool hasForm = doc->hasForm();
         const int before = Document::testing::refusals();
         {
             SavingJob job{doc->lifetime()};
@@ -771,10 +772,8 @@ private slots:
                             [&] { return doc->linkAt(0, QPointF(40, 40)).isEmpty(); }));
             QVERIFY(refused("Document::itemPropertiesAt",
                             [&] { return !doc->itemPropertiesAt(0, QPointF(40, 40)); }));
-            QVERIFY(refused("Document::hasForm", [&] { return !doc->hasForm(); }));
             QVERIFY(refused("Document::mervinMeasurements",
                             [&] { return !doc->mervinMeasurements(); }));
-            QVERIFY(refused("Document::isPdf", [&] { return !doc->isPdf(); }));
             QVERIFY(refused("Document::withPdfDocument", [&] {
                 bool called = false;
                 return !doc->withPdfDocument([&](fz_context *, pdf_document *) { called = true; })
@@ -787,11 +786,17 @@ private slots:
                             [&] { return !doc->savePdfTo(copy) && !QFile::exists(copy); }));
             QVERIFY(refused("RenderEngine::renderPageImage",
                             [&] { return engine.renderPageImage(doc.get(), 0, 1.0, 0).isNull(); }));
-            QCOMPARE(Document::testing::refusals() - before, 13);
+            QCOMPARE(Document::testing::refusals() - before, 11);
+            // Opening cached these facts, so a worker hold cannot refuse or delay them.
+            timer.restart();
+            QCOMPARE(doc->hasForm(), hasForm);
+            QVERIFY(doc->isPdf());
+            QVERIFY2(timer.elapsed() < 50, qPrintable(took("opening facts", timer)));
+            QCOMPARE(Document::testing::refusals() - before, 11);
         }
         // Once the job lets go, the same thread is answered again.
-        QVERIFY(doc->isPdf());
-        QCOMPARE(Document::testing::refusals() - before, 13);
+        QVERIFY(doc->withPdfDocument([](fz_context *, pdf_document *) {}));
+        QCOMPARE(Document::testing::refusals() - before, 11);
     }
 
     // A refused page is not cached as empty. The text index reads it once the job
@@ -866,6 +871,8 @@ private slots:
             SavingJob job{doc->lifetime()};
             Stall stall(job);
             QVERIFY(job.answered);
+            QVERIFY(doc->hasForm());
+            QCOMPARE(Document::testing::refusals() - before, 0);
             expectRefusal("Document::withPdfDocument");
             QVERIFY(form.pageFields(0).empty());
             QCOMPARE(Document::testing::refusals() - before, 1);
@@ -896,6 +903,7 @@ private slots:
         {
             SavingJob job{doc->lifetime()};
             Stall stall(job);
+            QVERIFY(!doc->isPdf());
             QVERIFY(form.pageFields(0).empty());
         }
         QCOMPARE(Document::testing::refusals() - before, 0);
@@ -934,8 +942,11 @@ private slots:
 
             // A query is refused while the hold still waits for the gate, so it cannot
             // end up waiting for the job once the hold takes the gate.
-            expectRefusal("Document::isPdf");
-            QVERIFY(!doc->isPdf());
+            bool queried = false;
+            const auto query = [&](fz_context *, pdf_document *) { queried = true; };
+            expectRefusal("Document::withPdfDocument");
+            QVERIFY(!doc->withPdfDocument(query));
+            QVERIFY(!queried);
             QCOMPARE(Document::testing::refusals() - before, 1);
 
             const auto stopped = std::chrono::steady_clock::now();
@@ -947,7 +958,8 @@ private slots:
             QVERIFY2(gaveUpMs < 100,
                      qPrintable(QStringLiteral("giving up took %1 ms").arg(gaveUpMs)));
             QVERIFY(!got.load());
-            QVERIFY(doc->isPdf()); // not refused, though the gate is still taken
+            QVERIFY(doc->withPdfDocument(query)); // not refused, though the gate is still taken
+            QVERIFY(queried);
             QCOMPARE(Document::testing::refusals() - before, 1);
         }
 

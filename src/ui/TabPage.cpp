@@ -1628,20 +1628,19 @@ void TabPage::startOperation(Operation operation)
     barTrapped_ = false;
     const auto job = std::make_shared<Job>(QString());
     job_ = job;
-    background::start([tab = QPointer<QObject>(this), job, work = std::move(operation.work)] {
+    background::start([tab = QPointer<QObject>(this), job, work = std::move(operation.work),
+                       settled = std::move(operation.settled)] {
         {
             const job::Scope scope(job->state);
             work();
         }
         std::unique_lock<std::mutex> lock(job->mutex);
-        if (job->abandoned) {
-            job->setPhase(Job::Phase::Ended);
-            return;
-        }
-        job->setPhase(Job::Phase::Stored);
+        job->setPhase(job->abandoned ? Job::Phase::Ended : Job::Phase::Stored);
         lock.unlock();
-        background::post(tab, [tab, job] {
+        background::post(tab, [tab, job, settled] {
             static_cast<TabPage *>(tab.data())->finishOperation(job);
+            if (tab && settled)
+                settled(job->state.stopped());
         });
     });
     startSlowClock();

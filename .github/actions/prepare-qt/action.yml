@@ -1,0 +1,57 @@
+name: Prepare patched Qt
+description: Build or restore and verify the source SDK used by tests and packages
+runs:
+  using: composite
+  steps:
+    - name: Install Qt source build dependencies
+      if: runner.os == 'Linux'
+      shell: bash
+      run: bash scripts/install-qt-build-deps.sh
+
+    - name: Install official support files
+      uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
+      env:
+        # Fedora's portable Python records Clang; its native compiler is GCC.
+        CC: ${{ runner.os == 'Linux' && 'gcc' || 'cl' }}
+        CXX: ${{ runner.os == 'Linux' && 'g++' || 'cl' }}
+        LDSHARED: ${{ runner.os == 'Linux' && 'gcc -shared' || '' }}
+      with:
+        dir: ${{ github.workspace }}/dev-temp/qt-official
+        install-deps: false
+        setup-python: false
+        set-env: false
+        add-tools-to-path: false
+        aqtsource: git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b
+        py7zrversion: '==1.1.4'
+        version: '6.12.0'
+        host: ${{ runner.os == 'Windows' && 'windows' || 'linux' }}
+        target: desktop
+        arch: ${{ runner.os == 'Windows' && 'win64_msvc2022_64' || 'linux_gcc_64' }}
+        cache: true
+
+    - name: Identify exact SDK cache
+      id: identity
+      shell: bash
+      env:
+        QT_SUPPORT_ARCH: ${{ runner.os == 'Windows' && 'msvc2022_64' || 'gcc_64' }}
+      run: python scripts/prepare-qt-sdk.py key --official-sdk "dev-temp/qt-official/Qt/6.12.0/$QT_SUPPORT_ARCH" --destination dev-temp/qt-patched --export
+
+    - name: Restore exact SDK
+      id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: dev-temp/qt-patched/sdk
+        key: ${{ steps.identity.outputs.key }}
+
+    - name: Build or validate SDK and select it
+      shell: bash
+      env:
+        QT_SUPPORT_ARCH: ${{ runner.os == 'Windows' && 'msvc2022_64' || 'gcc_64' }}
+      run: python scripts/prepare-qt-sdk.py prepare --official-sdk "dev-temp/qt-official/Qt/6.12.0/$QT_SUPPORT_ARCH" --destination dev-temp/qt-patched --export
+
+    - name: Save verified SDK
+      if: github.event_name != 'pull_request' && steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: dev-temp/qt-patched/sdk
+        key: ${{ steps.identity.outputs.key }}

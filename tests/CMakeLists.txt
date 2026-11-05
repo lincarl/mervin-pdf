@@ -45,10 +45,13 @@ set(_mervin_tests
     tst_extract_plan
     tst_text_index
     tst_qpdf
+    tst_qpdf_worker
     tst_ocr
     tst_ocr_popup
     tst_settings_dialog
     tst_tessdata
+    tst_tesseract_models
+    tst_mujs
     tst_ocr_provisioner
     tst_session_store
     tst_session_end
@@ -67,6 +70,7 @@ set(_mervin_tests
     tst_form_model
     tst_annot_model
     tst_file_clipboard
+    tst_external_open
     tst_perf_render
     tst_perf_startup)
 
@@ -81,6 +85,30 @@ foreach(_t IN LISTS _mervin_tests)
         ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
         SKIP_REGULAR_EXPRESSION "${_mervin_skip_regex}")
 endforeach()
+
+# Compile against the exact internal model types used by MuPDF's Tesseract.
+# Its Artifex build disables the legacy recognizer and uses double precision.
+target_link_libraries(tst_tesseract_models PRIVATE MuPDF::MuPDF)
+target_include_directories(tst_tesseract_models PRIVATE
+    "${MUPDF_DIR}/source/fitz"
+    "${MUPDF_DIR}/thirdparty/leptonica/src"
+    "${MUPDF_DIR}/thirdparty/tesseract/include"
+    "${MUPDF_DIR}/thirdparty/tesseract/src/arch"
+    "${MUPDF_DIR}/thirdparty/tesseract/src/ccutil"
+    "${MUPDF_DIR}/thirdparty/tesseract/src/ccstruct"
+    "${MUPDF_DIR}/thirdparty/tesseract/src/lstm"
+    "${MUPDF_DIR}/scripts/tesseract")
+target_compile_definitions(tst_tesseract_models PRIVATE
+    GRAPHICS_DISABLED DISABLED_LEGACY_ENGINE TESSERACT_IMAGEDATA_AS_PIX
+    TESSERACT_DISABLE_DEBUG_FONTS
+    MERVIN_TEST_TESSDATA_DIR="${CMAKE_BINARY_DIR}/test-tessdata")
+set_tests_properties(tst_tesseract_models PROPERTIES TIMEOUT 60)
+target_link_libraries(tst_mujs PRIVATE MuPDF::MuPDF)
+target_include_directories(tst_mujs PRIVATE "${MUPDF_DIR}/thirdparty/mujs")
+set_tests_properties(tst_mujs PROPERTIES TIMEOUT 30)
+
+# Public qpdf APIs always run the real application in its bounded internal mode.
+target_link_libraries(tst_qpdf_worker PRIVATE Qt6::Widgets)
 
 # These tests inspect qpdf objects directly; mervin_core keeps its dependency private.
 foreach(_t tst_atomic_pdf_writer tst_document_output)
@@ -292,6 +320,8 @@ set_target_properties(dump_icons PROPERTIES WIN32_EXECUTABLE OFF)
 
 # tst_qpdf builds fixture PDFs directly with qpdf, so it links it explicitly.
 target_link_libraries(tst_qpdf PRIVATE qpdf::libqpdf)
+# Regenerate form appearances with MuPDF and inspect saved objects independently with qpdf.
+target_link_libraries(tst_form_model PRIVATE MuPDF::MuPDF qpdf::libqpdf)
 
 # Widget-level guard rails for the merge dialog. MergeDialog and the UI sources
 # it uses (its shared row list and minimum size helper, theme) belong to the application target, so they
@@ -701,6 +731,19 @@ add_test(NAME i18n_content
 add_test(NAME tst_translation_content
     COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_SOURCE_DIR}/scripts/test_translation_content.py")
 
+# Viewer queries exercise Qt input while native parsing and access locks are held.
+qt_add_executable(tst_viewer_queries tst_viewer_queries.cpp)
+target_link_libraries(tst_viewer_queries PRIVATE mervin_viewer Qt6::Test)
+target_compile_definitions(tst_viewer_queries PRIVATE
+    MERVIN_FORM_PDF="${MERVIN_FIXTURES_DIR}/form_comment.pdf"
+    MERVIN_LONG_PDF="${MERVIN_FIXTURES_DIR}/example1.pdf")
+set_target_properties(tst_viewer_queries PROPERTIES WIN32_EXECUTABLE OFF)
+add_test(NAME tst_viewer_queries COMMAND tst_viewer_queries)
+set_tests_properties(tst_viewer_queries PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    ENVIRONMENT_MODIFICATION "${_mervin_test_env}"
+    TIMEOUT 60)
+
 # File dialogs persist Qt history independently of Mervin's isolated profile.
 # Give every Linux test its own configuration folder, including parallel runs.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -710,3 +753,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             "XDG_CONFIG_HOME=set:${CMAKE_CURRENT_BINARY_DIR}/test-config/${_t}")
     endforeach()
 endif()
+
+# A test built on its own must have the same helper executable as a full build.
+get_property(_mervin_test_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(_t IN LISTS _mervin_test_targets)
+    get_target_property(_mervin_target_type ${_t} TYPE)
+    if(_mervin_target_type STREQUAL "EXECUTABLE")
+        add_dependencies(${_t} MervinPDF)
+    endif()
+endforeach()

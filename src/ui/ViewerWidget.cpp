@@ -25,6 +25,9 @@
 #include <QHideEvent>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QLabel>
+#include <QPushButton>
+#include <QVBoxLayout>
 #include <QLineF>
 #include <QListWidget>
 #include <QMenu>
@@ -160,6 +163,21 @@ ViewerWidget::ViewerWidget(RenderEngine *engine, QWidget *parent)
     horizontalScrollBar()->setSingleStep(40);
     verticalScrollBar()->setSingleStep(40);
 
+    renderFailureNotice_ = new QWidget(viewport());
+    renderFailureNotice_->setObjectName(QStringLiteral("renderFailureNotice"));
+    renderFailureNotice_->setAutoFillBackground(true);
+    auto *failureLayout = new QVBoxLayout(renderFailureNotice_);
+    renderFailureText_ = new QLabel(renderFailureNotice_);
+    renderFailureText_->setWordWrap(true);
+    renderFailureText_->setAlignment(Qt::AlignCenter);
+    failureLayout->addWidget(renderFailureText_);
+    renderRecovery_ = new QPushButton(
+        QCoreApplication::translate("MainWindow", "Zoom Out"), renderFailureNotice_);
+    renderRecovery_->setObjectName(QStringLiteral("renderRecovery"));
+    failureLayout->addWidget(renderRecovery_);
+    connect(renderRecovery_, &QPushButton::clicked, this, &ViewerWidget::recoverFailedPage);
+    renderFailureNotice_->hide();
+
     autoScrollTimer_ = new QTimer(this);
     autoScrollTimer_->setInterval(30);
     connect(autoScrollTimer_, &QTimer::timeout, this, &ViewerWidget::onAutoScroll);
@@ -177,6 +195,8 @@ ViewerWidget::ViewerWidget(RenderEngine *engine, QWidget *parent)
 
 ViewerWidget::~ViewerWidget()
 {
+    closeAnnotPopup();
+    queries_.reset();
     documentSearch_.reset();
     engine_->cancelRequests(viewerId_);
 }
@@ -192,7 +212,7 @@ double ViewerWidget::maximumScale() const
     // largest page at this scale and device pixel ratio must stay within it. One
     // pixel of headroom covers rounding the page bounds out to whole pixels. A page
     // that passes the limit even at kMinScale, such as a malformed giant MediaBox,
-    // cannot render at any zoom, so it must not pin the other pages to it.
+    // cannot render at any normal zoom, so it must not pin the other pages to it.
     const double geometryLimit = std::min(kMaxScale, layout_.maximumScale());
     if (dpr_ <= 0)
         return geometryLimit;
@@ -207,7 +227,7 @@ double ViewerWidget::maximumScale() const
 double ViewerWidget::clampScale(double s) const
 {
     const double upper = maximumScale();
-    return std::clamp(s, std::min(kMinScale, upper), upper);
+    return std::clamp(s, std::min(recoveryMinimumScale_, upper), upper);
 }
 
 double ViewerWidget::deviceRatio() const
@@ -270,7 +290,7 @@ double ViewerWidget::nextZoomLevel(double current, int dir) const
         if (*it < ceilScale)
             return *it;
     }
-    return kMinScale;
+    return recoveryMinimumScale_;
 }
 
 QPoint ViewerWidget::scrollOffset() const
@@ -407,21 +427,52 @@ void ViewerWidget::restoreFind(const QString &query, bool caseSensitive, bool wh
 
 void ViewerWidget::setDocument(Document *doc)
 {
+    closeAnnotPopup();
     engine_->cancelRequests(viewerId_);
     documentSearch_->clear();
     // First, while doc_ and layout_ still agree: no gliding the new document's
     // pages in from where the old one's happened to be.
     endZoomEase();
+    queries_.reset();
+    queryPages_.clear();
+    ++copyGeneration_;
+    requestedPages_.clear();
+    queryPageOrder_.clear();
+    outline_.clear();
+    outlineRequested_ = outlineReady_ = false;
+    allAnnotations_.clear();
+    annotationsRequested_ = annotationsComplete_ = false;
+    ++annotationsRevision_;
+    ++queryRevision_;
+    pendingFormEdits_ = 0;
+    editedFormPages_.clear();
+    deferredMouse_.clear();
+    replayingMouse_ = false;
+    formOrderRequested_ = false;
+    pendingFormFocus_ = 0;
+    formFocusField_ = {-1, -1};
+    pendingFormFocusIndex_ = -1;
+    pendingMatchScroll_ = -1;
+    replayFormTarget_.clear();
+    pendingReveal_.reset();
+    queryPaused_ = false;
     doc_ = doc;
+    if (doc_)
+        queries_ = std::make_unique<ViewerQueries>(doc_, engine_->baseContext());
+    recoveryMinimumScale_ = kMinScale;
     rotation_ = 0;
     currentPage_ = 0;
     zoomMode_ = ZoomMode::FitWidth;
     cache_.clear();
     preview_.clear(); // the frozen images belong to the outgoing document
     pending_.clear();
+    renderFailures_.clear();
+    renderFailureNotice_->hide();
 
     // Per-document text model (lazy extraction) backing find and selection.
     textIndex_ = doc_ ? std::make_unique<TextIndex>(engine_->baseContext(), doc_) : nullptr;
+    if (textIndex_)
+        textIndex_->setPageLoader([this](int page) { requestPageData(page); });
     selection_.clear();
     selecting_ = false;
     stopAutoScroll();
@@ -585,15 +636,22 @@ void ViewerWidget::invalidateRenders(PreviewPolicy preview)
     ++viewEpoch_; // per-viewer epoch; results from older epochs are discarded
     cache_.clear();
     pending_.clear();
+    renderFailures_.clear();
+    renderFailureNotice_->hide();
 }
 
 void ViewerWidget::pauseForOperation()
 {
+    queryPaused_ = true;
+    cancelQueryReads();
+    deferredMouse_.clear();
     endZoomEase();
     // As invalidateRenders(), but the cache stays for when the viewer shows again.
     engine_->cancelRequests(viewerId_);
     ++viewEpoch_;
     pending_.clear();
+    renderFailures_.clear();
+    renderFailureNotice_->hide();
     documentSearch_->cancel();
     stopAutoScroll();
     selecting_ = false;
@@ -605,6 +663,8 @@ void ViewerWidget::pauseForOperation()
 
 void ViewerWidget::resumeAfterOperation()
 {
+    queryPaused_ = false;
+    emit queryDataChanged();
     // A search that delivered its matches keeps them. One the pause stopped has none.
     if (findCard_ && !findCard_->isHidden() && !findQuery_.isEmpty() && matches_.empty())
         restoreFind(findQuery_, findCaseSensitive_, findWholeWord_, currentMatch_);
@@ -814,8 +874,9 @@ void ViewerWidget::setZoomEaseProgressForTest(double t)
 
 void ViewerWidget::ensureRendered(int pageNo, const QRect &neededCanvas)
 {
+    requestPageData(pageNo);
     const QRect pr = layout_.pageRect(pageNo);
-    if (!pr.isValid())
+    if (!pr.isValid() || renderFailures_.contains(pageNo))
         return;
 
     // Whole page vs. clipped tile, decided by the page's full device-pixel area.
@@ -877,8 +938,12 @@ void ViewerWidget::onResultReady(const mervin::RenderResult &result)
 
     if (result.epoch != viewEpoch_)
         return; // scale/rotation changed since this was requested
-    if (!result.ok || result.image.isNull())
+    if (!result.ok || result.image.isNull()) {
+        renderFailures_.insert(result.pageNo, result.rasterTooLarge);
+        preview_.erase(result.pageNo);
+        viewport()->update();
         return;
+    }
 
     QImage img = result.image;
     if (pageTheme_ == PageTheme::Inverted)
@@ -899,8 +964,67 @@ void ViewerWidget::onResultReady(const mervin::RenderResult &result)
     }
 }
 
+// Keeps the recovery controls inside the viewport, even on an enormous sheet.
+void ViewerWidget::updateRenderFailureNotice()
+{
+    failedPage_ = -1;
+    if (!renderFailures_.isEmpty()) {
+        const QRect visible(contentOffset(), viewport()->size());
+        for (int page : layout_.pagesInViewport(visible)) {
+            if (renderFailures_.contains(page)) {
+                failedPage_ = page;
+                break;
+            }
+        }
+    }
+    if (failedPage_ < 0) {
+        renderFailureNotice_->hide();
+        setMinimumHeight(0);
+        return;
+    }
+    renderFailureText_->setText(QCoreApplication::translate("MainWindow", "Could not render page %1.")
+                                   .arg(failedPage_ + 1));
+    renderRecovery_->setVisible(renderFailures_.value(failedPage_)
+        || scale_ > std::min(recoveryMinimumScale_, maximumScale()));
+    const int width = qMin(qMax(1, viewport()->width() - 24),
+                           qMax(360, renderRecovery_->sizeHint().width() + 24));
+    renderFailureNotice_->ensurePolished();
+    renderFailureNotice_->setFixedWidth(width);
+    const auto margins = renderFailureNotice_->layout()->contentsMargins();
+    const int textWidth = qMax(1, width - margins.left() - margins.right());
+    renderFailureText_->setMinimumHeight(renderFailureText_->fontMetrics().boundingRect(
+        QRect(0, 0, textWidth, 100000), Qt::TextWordWrap, renderFailureText_->text()).height());
+    renderRecovery_->setMinimumHeight(renderRecovery_->fontMetrics().size(
+        Qt::TextShowMnemonic, renderRecovery_->text()).height() + 16);
+    renderFailureNotice_->adjustSize();
+    // The minimum follows this visible state's translated text, including fallback
+    // fonts. A compact window must not squeeze the recovery action below its canvas.
+    setMinimumHeight(renderFailureNotice_->height() + 24
+                     + horizontalScrollBar()->sizeHint().height());
+    renderFailureNotice_->move((viewport()->width() - width) / 2, 12);
+    renderFailureNotice_->show();
+    renderFailureNotice_->raise();
+}
+
+// The explicit recovery lowers the common zoom, including for otherwise normal pages.
+void ViewerWidget::recoverFailedPage()
+{
+    if (failedPage_ < 0 || !renderFailures_.contains(failedPage_))
+        return;
+    double target = scale_ / 2;
+    if (renderFailures_.value(failedPage_)) {
+        const QRect page = layout_.pageRect(failedPage_);
+        const double extent = qMax(page.width(), page.height()) * dpr_;
+        if (extent > 0)
+            target = qMin(target, scale_ * (kMaxDevicePixel - 1024) / extent);
+        recoveryMinimumScale_ = qMin(recoveryMinimumScale_, target);
+    }
+    setScale(target);
+}
+
 void ViewerWidget::paintEvent(QPaintEvent *event)
 {
+    updateRenderFailureNotice();
     QPainter p(viewport());
     // Canvas backdrop behind the pages: a dark slate in both themes, a step
     // lighter under the dark chrome (theme::Chrome::canvas).
@@ -1036,6 +1160,9 @@ void ViewerWidget::paintEvent(QPaintEvent *event)
 
 void ViewerWidget::hideEvent(QHideEvent *event)
 {
+    cancelQueryReads();
+    deferredMouse_.clear();
+    replayFormTarget_.clear();
     QAbstractScrollArea::hideEvent(event);
     endZoomEase(); // before the clear below: the ease draws those tiles
     // A tab switched away from should not sit on frozen images; showEvent
@@ -1090,6 +1217,8 @@ void ViewerWidget::resizeEvent(QResizeEvent *event)
 void ViewerWidget::showEvent(QShowEvent *event)
 {
     QAbstractScrollArea::showEvent(event);
+    emit queryDataChanged();
+    emit annotationsChanged();
     endZoomEase(); // hideEvent dropped the tiles; the re-fit below starts clean
     if (!doc_)
         return;
@@ -1191,6 +1320,7 @@ bool ViewerWidget::viewportEvent(QEvent *event)
 
 void ViewerWidget::scrollContentsBy(int, int)
 {
+    pendingMatchScroll_ = -1;
     // A scroll the zoom ease did not cause is the user (or goToPage / find / a
     // resume) taking over: land the picture on the real geometry at once rather
     // than gliding toward a target that has moved. rescaleKeeping's own scroll
@@ -1246,10 +1376,7 @@ void ViewerWidget::keyPressEvent(QKeyEvent *event)
                 const auto [pg, fi] = formFieldOrder_[formFocusIndex_];
                 const std::vector<FormField> &fields = formModel_->pageFields(pg);
                 if (fi >= 0 && fi < static_cast<int>(fields.size()) && fields[fi].isToggle()) {
-                    if (formModel_->toggle(pg, fi)) {
-                        applyFormFieldChange(pg);
-                        emit formEditsChanged();
-                    }
+                    editFormToggle(pg, fi);
                     return;
                 }
             }
@@ -1929,7 +2056,12 @@ std::optional<PdfLinkTarget> ViewerWidget::pdfLinkAt(QPoint viewportPos) const
     if (pg < 0 || !layout_.pageRect(pg).contains(canvas))
         return std::nullopt;
 
-    return doc_->linkTargetAt(pg, canvasToPagePoint(pg, canvas));
+    requestPageData(pg);
+    const auto page = queryPages_.value(pg);
+    if (page)
+        for (const auto &[rect, target] : page->links)
+            if (rect.contains(canvasToPagePoint(pg, canvas))) return target;
+    return std::nullopt;
 }
 
 std::optional<PdfItemProperties> ViewerWidget::itemPropertiesAt(QPoint viewportPos) const
@@ -1942,7 +2074,12 @@ std::optional<PdfItemProperties> ViewerWidget::itemPropertiesAt(QPoint viewportP
     if (pg < 0 || !layout_.pageRect(pg).contains(canvas))
         return std::nullopt;
 
-    return doc_->itemPropertiesAt(pg, canvasToPagePoint(pg, canvas));
+    requestPageData(pg);
+    const auto page = queryPages_.value(pg);
+    if (page)
+        for (const auto &item : page->properties)
+            if (item.rect.contains(canvasToPagePoint(pg, canvas))) return item;
+    return std::nullopt;
 }
 
 bool ViewerWidget::activatePdfLink(const PdfLinkTarget &target)
@@ -2066,6 +2203,7 @@ void ViewerWidget::findPrev()
 
 void ViewerWidget::clearFind()
 {
+    pendingMatchScroll_ = -1;
     documentSearch_->cancel();
     findQuery_.clear();
     matches_.clear();
@@ -2090,6 +2228,7 @@ void ViewerWidget::scrollToMatch(int matchIndex)
         const QRect box = layout_.pageRect(m.page);
         if (box.isValid())
             verticalScrollBar()->setValue(std::clamp(box.top() - 20, 0, verticalScrollBar()->maximum()));
+        if (!textIndex_->pageReady(m.page)) pendingMatchScroll_ = matchIndex;
         return;
     }
     QRectF canvasRect;
@@ -2155,29 +2294,35 @@ void ViewerWidget::ensureCanvasRectVisible(const QRectF &c)
 
 // ---- Selection / copy ------------------------------------------------------
 
-QString ViewerWidget::selectedText() const
+void ViewerWidget::requestFindPreset(std::function<void(QString)> completed) const
 {
-    if (!textIndex_ || !selection_.hasSelection())
-        return {};
+    if (!queries_ || !selection_.hasSelection()) {
+        completed({});
+        return;
+    }
     const TextPos s = selection_.start();
     const TextPos e = selection_.end();
-    QString out;
-    for (int pg = s.page; pg <= e.page; ++pg) {
-        const int from = (pg == s.page) ? s.offset : 0;
-        const int to = (pg == e.page) ? e.offset : textIndex_->pageTextLength(pg);
-        if (to > from)
-            out += textIndex_->textRange(pg, from, to - from);
-        if (pg != e.page)
-            out += QLatin1Char('\n');
-    }
-    return out;
+    queries_->requestText(s.page, [s, e, completed = std::move(completed)](TextIndex::PageText page) {
+        const int end = s.page == e.page ? std::min(e.offset, int(page.text.size())) : int(page.text.size());
+        QString preset = page.text.mid(s.offset, std::max(0, end - s.offset))
+            .section(QLatin1Char('\n'), 0, 0).trimmed();
+        if (preset.size() > 100) preset.clear();
+        completed(std::move(preset));
+    });
 }
 
 void ViewerWidget::copySelection()
 {
-    const QString text = selectedText();
-    if (!text.isEmpty())
-        QGuiApplication::clipboard()->setText(text);
+    if (!selection_.hasSelection()) return;
+    // Copy requests share ordering across tabs and windows. Document changes
+    // invalidate only this viewer's pending request through copyGeneration_.
+    static quint64 applicationCopyGeneration = 0;
+    const quint64 request = ++applicationCopyGeneration;
+    const quint64 generation = ++copyGeneration_;
+    readSelectionText(selection_.start(), selection_.end(), [this, request, generation](QString text) {
+        if (request == applicationCopyGeneration && generation == copyGeneration_ && !text.isEmpty())
+            QGuiApplication::clipboard()->setText(text);
+    });
 }
 
 void ViewerWidget::selectAll()
@@ -2185,7 +2330,7 @@ void ViewerWidget::selectAll()
     if (!textIndex_ || pageCount() == 0)
         return;
     const int last = pageCount() - 1;
-    selection_.set(TextPos{0, 0}, TextPos{last, textIndex_->pageTextLength(last)});
+    selection_.set(TextPos{0, 0}, TextPos{last, std::numeric_limits<int>::max()});
     viewport()->update();
 }
 
@@ -2233,7 +2378,8 @@ bool ViewerWidget::eventFilter(QObject *watched, QEvent *event)
         switch (event->type()) {
         case QEvent::FocusIn: {
             // Keep Tab continuity when a field is reached by a direct click.
-            const std::vector<std::pair<int, int>> &order = formFieldOrder();
+            formFocusField_ = {formEditors_[idx].page, formEditors_[idx].fieldIndex};
+            const auto &order = formFieldOrder_;
             for (int k = 0; k < static_cast<int>(order.size()); ++k)
                 if (order[k].first == formEditors_[idx].page
                     && order[k].second == formEditors_[idx].fieldIndex) {
@@ -2299,7 +2445,7 @@ bool ViewerWidget::focusNextPrevChild(bool next)
     // than Qt's default child-focus chain - except inside the find card, whose
     // controls keep their own Tab order.
     const bool inFindCard = findCard_ && findCard_->isAncestorOf(QApplication::focusWidget());
-    if (toolMode_ == ToolMode::FillForms && !inFindCard) {
+    if (toolMode_ == ToolMode::FillForms && !inFindCard && !renderRecovery_->isVisible()) {
         advanceFormFocus(next ? +1 : -1);
         return true;
     }
@@ -2308,6 +2454,8 @@ bool ViewerWidget::focusNextPrevChild(bool next)
 
 void ViewerWidget::mousePressEvent(QMouseEvent *event)
 {
+    if (deferMouseQuery(event))
+        return;
     // Hit-testing (text position, links, form fields, measurement handles) reads
     // the final layout, so a press mid-flight would land on geometry that is not on
     // screen yet. Land the picture first.
@@ -2388,16 +2536,14 @@ void ViewerWidget::mousePressEvent(QMouseEvent *event)
         if (formFieldAt(event->pos(), pg, fi)) {
             const std::vector<FormField> &fields = formModel_->pageFields(pg);
             if (fi >= 0 && fi < static_cast<int>(fields.size()) && fields[fi].isToggle()) {
-                const std::vector<std::pair<int, int>> &order = formFieldOrder();
+                formFocusField_ = {pg, fi};
+                const auto &order = formFieldOrder_;
                 for (int k = 0; k < static_cast<int>(order.size()); ++k)
                     if (order[k].first == pg && order[k].second == fi) {
                         formFocusIndex_ = k; // Tab continuity from the clicked toggle
                         break;
                     }
-                if (formModel_->toggle(pg, fi)) {
-                    applyFormFieldChange(pg);
-                    emit formEditsChanged();
-                }
+                editFormToggle(pg, fi);
                 setFocus();
                 viewport()->update();
                 event->accept();
@@ -2537,6 +2683,8 @@ void ViewerWidget::mousePressEvent(QMouseEvent *event)
 
 void ViewerWidget::mouseMoveEvent(QMouseEvent *event)
 {
+    if (deferMouseQuery(event))
+        return;
     // Middle-button pan: translate the scroll offset by the drag delta.
     if (panning_ && (event->buttons() & Qt::MiddleButton)) {
         clearLinkToolTip();
@@ -2662,6 +2810,8 @@ void ViewerWidget::mouseMoveEvent(QMouseEvent *event)
 
 void ViewerWidget::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (deferMouseQuery(event))
+        return;
     // End a middle-button pan; restore the tool's idle cursor.
     if (event->button() == Qt::MiddleButton && panning_) {
         panning_ = false;
@@ -2807,6 +2957,8 @@ void ViewerWidget::mouseReleaseEvent(QMouseEvent *event)
 
 void ViewerWidget::mouseDoubleClickEvent(QMouseEvent *event)
 {
+    if (deferMouseQuery(event))
+        return;
     if (toolMode_ == ToolMode::Measure && event->button() == Qt::LeftButton) {
         finishPolyOrArea();
         return;

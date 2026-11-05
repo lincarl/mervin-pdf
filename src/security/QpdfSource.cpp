@@ -1,4 +1,5 @@
 #include "security/QpdfSource.h"
+#include "security/QpdfWorker.h"
 
 #include "io/JobContext.h"
 
@@ -7,9 +8,11 @@
 #include <qpdf/Pl_Flate.hh>
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFExc.hh>
+#include <qpdf/QPDFSystemError.hh>
 #include <qpdf/QUtil.hh>
 
 #include <exception>
+#include <cerrno>
 #include <algorithm>
 #include <memory>
 #include <mutex>
@@ -35,7 +38,7 @@ public:
     // Every read goes through here, findAndSkipNextEOL() included.
     size_t read(char *data, size_t length) override
     {
-        job::switchTo(job::Step::Reading, state_->path);
+        qpdfWorker::reading(state_->path, true, state_->sourceIndex);
         try {
             const qpdf_offset_t offset = FileInputSource::tell();
             const size_t got = FileInputSource::read(data, length);
@@ -146,7 +149,7 @@ void checkQpdfWarnings(QPDF &pdf, QpdfReadState *state)
 
 QpdfService::Status openQpdf(const QString &path, const QString &password,
                              std::unique_ptr<QPDF> &pdf, QString *error,
-                             std::shared_ptr<QpdfReadState> *readState)
+                             std::shared_ptr<QpdfReadState> *readState, int sourceIndex)
 {
     using Status = QpdfService::Status;
     const auto failed = [error](const QString &reason) {
@@ -154,7 +157,10 @@ QpdfService::Status openQpdf(const QString &path, const QString &password,
             *error = reason;
         return Status::Failed;
     };
-    if (!job::reading(path))
+    // New callers must not accidentally introduce an unbounded production parse.
+    if (!qpdfWorker::inWorker())
+        return failed(qpdfWorker::failureText());
+    if (!qpdfWorker::reading(path, false, sourceIndex))
         return failed(job::notRunError());
     // qpdf stores this setting globally. Set it once before any application decoder
     // starts, and never change it while other workers may be decoding streams.
@@ -162,6 +168,7 @@ QpdfService::Status openQpdf(const QString &path, const QString &password,
     std::call_once(configured, [] { Pl_Flate::memory_limit(kMaxQpdfFlateBytes); });
     const auto state = std::make_shared<QpdfReadState>();
     state->path = path;
+    state->sourceIndex = sourceIndex;
     if (readState)
         *readState = state;
     const std::string utf8 = password.toStdString();
@@ -175,12 +182,16 @@ QpdfService::Status openQpdf(const QString &path, const QString &password,
             return Status::Ok;
         if (twoForms) {
             // The second attempt reads the file again.
-            if (!job::reading(path))
+            if (!qpdfWorker::reading(path, false, sourceIndex))
                 return failed(job::notRunError());
             if (open(pdf, state, pdfDoc))
                 return Status::Ok;
         }
     } catch (const std::exception &e) {
+        if (const auto *system = dynamic_cast<const QPDFSystemError *>(&e);
+            system && (system->getErrno() == EMFILE || system->getErrno() == ENFILE
+                       || system->getErrno() == ENOMEM))
+            return failed(qpdfWorker::failureText());
         return failed(QString::fromUtf8(e.what()));
     }
     if (error)

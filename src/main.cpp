@@ -8,6 +8,7 @@
 
 #include "app/Relaunch.h"
 #include "app/WindowManager.h"
+#include "platform/ExternalOpen.h"
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
 #include "dialogs/FirstRunDialog.h"
@@ -30,12 +31,14 @@
 #include "ui/Theme.h"
 #include "ui/WindowPlacement.h"
 #include "update/Updater.h"
+#include "security/QpdfWorker.h"
 
 #ifdef Q_OS_WIN
 #  include "platform/PlatformIntegration.h"
 #endif
 
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <functional>
 #include <memory>
@@ -231,6 +234,7 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
           std::unique_ptr<SingleInstanceServer> server, bool ownsState)
 {
     app.setQuitOnLastWindowClosed(false); // WindowManager drives process exit
+    mervin::externalopen::install(&app);
     mervin::Settings::setPersistenceEnabled(ownsState);
     QStringList paths = cliPaths;
     const FirstRunChoices firstRun = startUiLanguage(cli, server.get(), ownsState, paths);
@@ -386,6 +390,10 @@ int runUi(QApplication &app, const CliOptions &cli, const QStringList &cliPaths,
 // Initializes the selected profile and routes startup to the UI or the existing instance.
 int main(int argc, char *argv[])
 {
+    // Anonymous-pipe protocol only. Never initialize the GUI, profile, updater,
+    // single-instance server or console attachment in a resource-limited helper.
+    if (argc > 1 && std::strcmp(argv[1], "--internal-qpdf-worker") == 0)
+        return argc == 2 ? mervin::qpdfWorker::main(argc, argv) : 2;
 #ifdef Q_OS_WIN
     attachParentConsole(); // keep qDebug visible when run from a terminal (see above)
 #endif

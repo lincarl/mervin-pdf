@@ -56,6 +56,7 @@ struct RenderResult
     quint64 token = 0;
     QImage image;
     bool ok = false;
+    bool rasterTooLarge = false; // deterministic geometry rejection, not a pending render
     QString error;
 };
 

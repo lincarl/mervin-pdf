@@ -103,6 +103,8 @@ add_library(mervin_core STATIC
     src/render/PageCache.h
     src/render/PreviewLayer.cpp
     src/render/PreviewLayer.h
+    src/render/ViewerQueries.cpp
+    src/render/ViewerQueries.h
     src/render/DocumentSearch.cpp
     src/render/DocumentSearch.h
     src/render/TextIndex.cpp
@@ -208,11 +210,15 @@ add_library(mervin_core STATIC
     src/security/PageOps.h
     src/security/QpdfSource.cpp
     src/security/QpdfSource.h
+    src/security/QpdfWorker.cpp
+    src/security/QpdfWorker.h
     src/security/MeasureExport.cpp
     src/security/MeasureExport.h
     src/platform/PlatformIntegration.h
     src/platform/FileClipboard.cpp
     src/platform/FileClipboard.h
+    src/platform/ExternalOpen.cpp
+    src/platform/ExternalOpen.h
     src/i18n/UiLanguage.cpp
     src/i18n/UiLanguage.h
     # The colour vocabulary. Values only (QColor/QPalette, no widgets), so it
@@ -236,7 +242,7 @@ target_link_libraries(mervin_core
 if(WIN32)
     target_sources(mervin_core PRIVATE src/platform/win/WindowsIntegration.cpp)
     # advapi32 reads the single-instance pipe server's token (ipc/Handoff.cpp).
-    target_link_libraries(mervin_core PRIVATE shlwapi advapi32)
+    target_link_libraries(mervin_core PRIVATE shlwapi advapi32 shell32 ole32)
 else()
     target_sources(mervin_core PRIVATE src/platform/linux/DesktopIntegration.cpp)
 endif()
@@ -270,6 +276,7 @@ qt_add_resources(mervin_icons "app_icon"
 add_library(mervin_viewer STATIC
     src/ui/ViewerWidget.cpp
     src/ui/ViewerWidget.h
+    src/ui/ViewerQueryTools.cpp
     src/ui/ViewerDocumentTools.cpp
     src/ui/ViewerMeasurements.cpp
     src/ui/AnnotPopup.cpp
@@ -374,6 +381,22 @@ add_library(mervin_app STATIC
     src/update/Updater.h
 )
 qt_add_executable(MervinPDF src/main.cpp)
+target_compile_definitions(mervin_core PRIVATE MERVIN_QPDF_EXECUTABLE="$<TARGET_FILE_NAME:MervinPDF>")
+# ASan reserves terabytes of virtual shadow memory before main. Its executable
+# cannot run under the production 1 GiB address-space limit. Tests must launch an
+# ordinary build of the same application revision; the instrumented parent keeps
+# all IPC, destination checks and publication under ASan. Release builds have no
+# executable override and always use their own installed application.
+set(MERVIN_TEST_QPDF_EXECUTABLE "" CACHE FILEPATH "Same-revision unsanitized application for ASan tests")
+if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+    if(NOT MERVIN_BUILD_TESTS OR NOT IS_ABSOLUTE "${MERVIN_TEST_QPDF_EXECUTABLE}"
+       OR NOT EXISTS "${MERVIN_TEST_QPDF_EXECUTABLE}")
+        message(FATAL_ERROR "ASan tests require MERVIN_TEST_QPDF_EXECUTABLE pointing to an unsanitized build of this revision. Worker resource limits are not relaxed for ASan.")
+    endif()
+    target_compile_definitions(mervin_core PRIVATE MERVIN_TEST_QPDF_EXECUTABLE="${MERVIN_TEST_QPDF_EXECUTABLE}")
+elseif(MERVIN_TEST_QPDF_EXECUTABLE)
+    message(FATAL_ERROR "MERVIN_TEST_QPDF_EXECUTABLE is allowed only in ASan test builds.")
+endif()
 target_link_libraries(MervinPDF PRIVATE mervin_app)
 target_link_libraries(mervin_app PUBLIC mervin_viewer mervin_core mervin_icons Qt6::Widgets Qt6::Network
     Qt6::PrintSupport)

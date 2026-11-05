@@ -7,7 +7,9 @@
 #include <QRectF>
 #include <QString>
 
+#include <functional>
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 namespace mervin {
@@ -65,12 +67,22 @@ public:
     // changed underneath us). Does not clear the dirty flag.
     void reset();
 
+    // In viewer mode cache misses request background work and never parse on the UI thread.
+    void setPageLoader(std::function<void(int)> loader) { loader_ = std::move(loader); }
+    bool pageReady(int page) const { return cache_.contains(page) && cache_.at(page).has_value(); }
+    void storePage(int page, std::vector<Annotation> values) { cache_[page] = std::move(values); }
+    void discardPage(int page) { cache_.erase(page); }
+    void markDirty() { dirty_ = true; }
+    quint64 revision() const { return revision_; }
+
 private:
     void invalidatePage(int page);
 
     const Document &doc_;
-    mutable std::vector<std::optional<std::vector<Annotation>>> cache_; // lazy, per page
+    mutable std::unordered_map<int, std::optional<std::vector<Annotation>>> cache_; // lazy, per page
     bool dirty_ = false;
+    quint64 revision_ = 0;
+    std::function<void(int)> loader_;
 };
 
 } // namespace mervin

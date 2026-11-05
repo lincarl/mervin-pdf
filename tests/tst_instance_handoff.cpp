@@ -20,6 +20,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QEvent>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -105,6 +106,25 @@ bool lockHeld()
     SingleInstanceServer other;
     return other.start(kGroup) == Start::Running;
 }
+
+/// Capture endpoint state when the first retained update window becomes hidden.
+class EndpointAtFirstHide final : public QObject
+{
+public:
+    explicit EndpointAtFirstHide(SingleInstanceServer *server) : server_(server) {}
+    std::optional<bool> listening;
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() == QEvent::Hide && !listening)
+            listening = server_->isListening();
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    SingleInstanceServer *server_;
+};
 
 #ifdef Q_OS_WIN
 // Fix ownership explicitly because elevated runners can default to Administrators.
@@ -421,39 +441,53 @@ void TstInstanceHandoff::finalQuitStopsHandoffs()
     std::unique_ptr<SingleInstanceServer> owned = startedServer();
     QVERIFY(owned);
     SingleInstanceServer *server = owned.get();
-    WindowManager manager;
-    manager.adoptInstanceServer(std::move(owned));
+    std::optional<bool> listeningAtFirstClose;
+    auto manager = std::make_unique<WindowManager>();
+    manager->adoptInstanceServer(std::move(owned));
 
     // With two windows the one that goes first is not the last one, so it shows whether
     // the quit itself stopped the server, before the last-window path does.
-    const QPointer<MainWindow> first = manager.createWindow();
-    const QPointer<MainWindow> second = path == 2 ? nullptr : manager.createWindow();
-    std::optional<bool> listeningAtFirstClose;
+    const QPointer<MainWindow> first = manager->createWindow();
+    const QPointer<MainWindow> second = path == 2 ? nullptr : manager->createWindow();
+    EndpointAtFirstHide hidden(server);
     for (MainWindow *window : {first.data(), second.data()})
-        if (window)
+        if (window) {
+            window->installEventFilter(&hidden);
             connect(window, &QObject::destroyed, this, [&] {
                 if (!listeningAtFirstClose)
                     listeningAtFirstClose = server->isListening();
             });
+        }
     QVERIFY(server->isListening());
 
     switch (path) {
     case 0:
-        manager.quitAll();
+        manager->quitAll();
         break;
     case 1:
-        QCOMPARE(manager.tryCloseAllForUpdate(), Updater::CloseResult::Closed);
+        QCOMPARE(manager->tryCloseAllForUpdate(), Updater::CloseResult::Closed);
         break;
     case 2:
         first->close();
         break;
     }
-    QTRY_VERIFY_WITH_TIMEOUT(!first && !second, 10000);
-    QCOMPARE(listeningAtFirstClose, std::optional(false));
+    if (path == 1) {
+        // The installer handoff retains modal callers until manager destruction.
+        QVERIFY(first && second);
+        QVERIFY(!first->isVisible() && !second->isVisible());
+        QCOMPARE(listeningAtFirstClose, std::optional<bool>{});
+        QCOMPARE(hidden.listening, std::optional(false));
+    } else {
+        QTRY_VERIFY_WITH_TIMEOUT(!first && !second, 10000);
+        QCOMPARE(listeningAtFirstClose, std::optional(false));
+    }
     QVERIFY(!server->isListening());
     QVERIFY(!endpointAnswers());
     QVERIFY(lockHeld());
     QCOMPARE(offer(pdf_), Handoff::NoPrimary);
+    manager.reset();
+    QVERIFY(!first && !second);
+    QCOMPARE(listeningAtFirstClose, std::optional(false));
 }
 
 // During the exit wait for the last writes the endpoint is closed and the lock is still
@@ -733,11 +767,20 @@ void TstInstanceHandoff::launchBeforeFinalQuitGoesToNextCopy()
         break;
     }
     if (manager) {
-        QTRY_VERIFY_WITH_TIMEOUT(!window, 10000);
+        if (path == 1) {
+            QVERIFY(window && !window->isVisible());
+            QVERIFY(!endpointAnswers());
+            QVERIFY(lockHeld());
+        } else {
+            QTRY_VERIFY_WITH_TIMEOUT(!window, 10000);
+        }
         QTest::qWait(200);
+        if (path == 1)
+            QVERIFY(window && !window->isVisible());
         QVERIFY(!shows(*manager, pdf_));
         manager.reset();
     }
+    QVERIFY(!window);
     // Written next to the lock before this copy let go of it.
     const QString carried = ipc::instancePaths(kGroup).carriedFile;
     QVERIFY(QFile::exists(carried));

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "io/Background.h"
+#include "io/JobContext.h"
 #include "render/TextIndex.h"
 #include <QObject>
 #include <atomic>
@@ -34,6 +35,7 @@ public:
 private:
     RenderEngine *engine_;
     background::SerialQueue searches_;
+    std::shared_ptr<job::State> extraction_ = std::make_shared<job::State>();
     // Shared with the searches, which may outlive this.
     std::shared_ptr<std::atomic<quint64>> generation_ = std::make_shared<std::atomic<quint64>>(0);
     std::shared_ptr<DocumentLifetime> document_;

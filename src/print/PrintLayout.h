@@ -85,15 +85,18 @@ void drawImage(QPainter &painter, const QImage &prepared, const QRectF &target,
                const QRectF &printableRect, ColourMode mode, bool smoothPreview = false);
 
 // Semantic worker checkpoints for deterministic output, driver-wait and fault tests.
-// Begin, NewPage and FinishJob wrap the real driver calls. Other phases observe work.
+// Begin, NewPage, CancelJob and FinishJob wrap driver calls. RenderBand can reject a
+// render for fault tests. Other phases observe work.
 namespace testing {
-enum class Phase { RenderBand, Begin, NewPage, BandDrawn, FinishJob, PublishFile, PrinterClosed };
+enum class Phase { RenderBand, Begin, NewPage, BandDrawn, PageSubmitted, CancelJob,
+                   FinishJob, PublishFile, PrinterClosed };
 struct Event
 {
     Phase phase;
     int page = 0; // 1-based source page
     int band = 0; // 0-based band within that page
     QString path;
+    int submittedPages = 0; // pages whose first band reached the backend, not physical sheets
 };
 using PrinterCall = std::function<bool()>;
 // Installs or clears a worker callback. For a driver phase the callback invokes call

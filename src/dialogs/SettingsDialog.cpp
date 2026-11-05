@@ -342,7 +342,8 @@ SettingsDialog::SettingsDialog(const mervin::Settings &current, const UpdateInfo
     nav_->ensurePolished();
     const QMargins navFrame = nav_->contentsMargins();
     nav_->setFixedWidth(std::max(kMinNavWidth, nav_->sizeHintForColumn(0) + navFrame.left()
-                                                   + navFrame.right()));
+                                                   + navFrame.right()
+                                                   + style()->pixelMetric(QStyle::PM_ScrollBarExtent)));
 
     connect(nav_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *item) {
         if (item)
@@ -378,6 +379,12 @@ SettingsDialog::SettingsDialog(const mervin::Settings &current, const UpdateInfo
     // Size after all controls are polished, so General fits at the current font
     // and language when the screen allows it. Smaller screens keep page scrolling.
     ensurePolished();
+    // General's widest control must fit even after the page gains a vertical
+    // scrollbar. A fixed 680-pixel minimum could hide the language dropdown's
+    // arrow at larger fonts despite ample space on the desktop.
+    setMinimumWidth(std::min(screenLimit.width(),
+        std::max(minimumWidth(), nav_->width() + generalPage->minimumSizeHint().width()
+                                 + style()->pixelMetric(QStyle::PM_ScrollBarExtent))));
     outer->activate();
     // Hidden scroll areas have not delivered their resize events yet. Measure
     // at the width the outer layout assigned, not the content's stale geometry.
@@ -608,44 +615,25 @@ QWidget *SettingsDialog::buildUpdatesPage()
     updatesCheck_ = new QCheckBox(tr("Update automatically at start (every 30 days)"), updateBox);
     updatesCheck_->setChecked(base_.autoUpdate);
     updateLayout->addWidget(updatesCheck_);
-    if (!selfUpdating()) {
-        // Store, portable and dev copies never check on their own (Updater::onStartup),
-        // so there is no switch to show. The saved value is kept for an
-        // installed copy that shares this profile.
-        updatesCheck_->hide();
-        if (updates_.storeManaged) {
-            //: Settings > Updates for a Microsoft Store installation. Microsoft Store
-            //: handles update checks and installation; updates are not disabled.
-            updateLayout->addWidget(hintLabel(tr("Microsoft Store manages updates for this app."),
-                                              updateBox));
-        } else {
-            //: Check for Updates is the button below.
-            updateLayout->addWidget(hintLabel(tr("This copy can't update itself. Check for Updates "
-                                                 "shows where to download a new version."),
-                                              updateBox));
-        }
-    }
+    updateProviderHint_ = hintLabel(QString(), updateBox);
+    updateLayout->addWidget(updateProviderHint_);
     if (updates_.checkAvailable) {
         auto *checkRow = new QHBoxLayout;
         checkRow->setSpacing(10);
-        //: Button in Settings > Updates for a Microsoft Store installation. Opens
-        //: the Microsoft Store app's updates page; does not itself check for updates.
-        const QString checkText = updates_.storeManaged ? tr("Open Microsoft Store") : tr("Check for Updates");
-        auto *checkButton = new QPushButton(checkText, updateBox);
-        checkButton->setObjectName(QStringLiteral("checkForUpdatesButton"));
-        checkButton->setAutoDefault(false);
-        connect(checkButton, &QPushButton::clicked, this, &SettingsDialog::checkForUpdatesRequested);
-        checkRow->addWidget(checkButton);
-        if (!updates_.storeManaged) {
-            lastCheckLabel_ = hintLabel(QString(), updateBox);
-            lastCheckLabel_->setWordWrap(false);
-            checkRow->addWidget(lastCheckLabel_);
-        }
+        checkUpdatesButton_ = new QPushButton(updateBox);
+        checkUpdatesButton_->setObjectName(QStringLiteral("checkForUpdatesButton"));
+        checkUpdatesButton_->setAutoDefault(false);
+        connect(checkUpdatesButton_, &QPushButton::clicked, this,
+                &SettingsDialog::checkForUpdatesRequested);
+        checkRow->addWidget(checkUpdatesButton_);
+        lastCheckLabel_ = hintLabel(QString(), updateBox);
+        lastCheckLabel_->setWordWrap(false);
+        checkRow->addWidget(lastCheckLabel_);
         checkRow->addStretch(1);
         updateLayout->addSpacing(4);
         updateLayout->addLayout(checkRow);
-        refreshLastCheck();
     }
+    refreshUpdateInfo();
     layout->addWidget(updateBox);
 
     layout->addStretch(1);
@@ -1222,6 +1210,10 @@ void SettingsDialog::refreshLastCheck()
 {
     if (!lastCheckLabel_)
         return;
+    if (!updates_.ready || updates_.storeManaged) {
+        lastCheckLabel_->clear();
+        return;
+    }
     if (!updates_.lastCheck.isValid()) {
         lastCheckLabel_->setText(tr("Never checked"));
         return;
@@ -1229,6 +1221,44 @@ void SettingsDialog::refreshLastCheck()
     const QDate day = updates_.lastCheck.toLocalTime().date();
     //: %1 is the date of the last update check, such as "2 October 2026".
     lastCheckLabel_->setText(tr("Last checked %1").arg(longDateWithoutWeekday(day)));
+}
+
+void SettingsDialog::setUpdateInfo(const UpdateInfo &updates)
+{
+    updates_ = updates;
+    refreshUpdateInfo();
+    refreshButtons();
+}
+
+void SettingsDialog::refreshUpdateInfo()
+{
+    // Keep the saved checkbox value when a provider does not use it, including
+    // while the worker is still identifying the installation.
+    updatesCheck_->setVisible(updates_.ready && selfUpdating());
+    updateProviderHint_->setVisible(updates_.ready && !selfUpdating());
+    if (updates_.ready && !selfUpdating()) {
+        if (updates_.storeManaged) {
+            //: Settings > Updates for a Microsoft Store installation. Microsoft Store
+            //: handles update checks and installation; updates are not disabled.
+            updateProviderHint_->setText(tr("Microsoft Store manages updates for this app."));
+        } else {
+            //: Check for Updates is the button below.
+            updateProviderHint_->setText(tr("This copy can't update itself. Check for Updates "
+                                            "shows where to download a new version."));
+        }
+    } else
+        updateProviderHint_->clear();
+    if (checkUpdatesButton_) {
+        //: Button in Settings > Updates for a Microsoft Store installation. Opens
+        //: the Microsoft Store app's updates page; does not itself check for updates.
+        checkUpdatesButton_->setText(updates_.storeManaged ? tr("Open Microsoft Store")
+                                                         : tr("Check for Updates"));
+        checkUpdatesButton_->setEnabled(updates_.ready);
+    }
+    if (lastCheckLabel_) {
+        lastCheckLabel_->setVisible(updates_.ready && !updates_.storeManaged);
+        refreshLastCheck();
+    }
 }
 
 bool SettingsDialog::selfUpdating() const

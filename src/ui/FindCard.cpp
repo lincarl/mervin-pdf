@@ -115,6 +115,7 @@ FindCard::FindCard(QWidget *viewport)
 
     // textChanged (not textEdited) so a preset or a cleared field also searches.
     connect(edit_, &QLineEdit::textChanged, this, [this] {
+        ++inputRevision_;
         dirty_ = true;
         debounce_->start();
     });
@@ -130,6 +131,7 @@ FindCard::FindCard(QWidget *viewport)
 
 void FindCard::open(const QString &preset)
 {
+    ++inputRevision_;
     const bool wasOpen = isOpen();
     if (!preset.isEmpty()) {
         QSignalBlocker blocker(edit_);
@@ -152,6 +154,7 @@ void FindCard::open(const QString &preset)
 
 void FindCard::dismiss()
 {
+    ++inputRevision_;
     if (!isOpen())
         return;
     debounce_->stop();

@@ -769,10 +769,13 @@ Updater::CloseResult CloseFlow::tryCloseForUpdate(WindowManager *manager)
     manager->sessionFinal_ = true;
     manager->endHandoffs();
     for (const QPointer<MainWindow> &window : targets)
-        if (window)
+        if (window) {
+            // The updater may wait for a native installer launch on a worker.
+            // Keep hidden windows and their modal Settings callers alive until
+            // it requests process exit. WindowManager owns their final deletion.
+            window->setAttribute(Qt::WA_DeleteOnClose, false);
             window->closeForQuit();
-    if (targets.isEmpty())
-        QCoreApplication::quit();
+        }
     return Result::Closed;
 }
 

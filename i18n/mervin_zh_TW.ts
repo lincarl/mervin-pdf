@@ -12,13 +12,6 @@
         <translation>請輸入文件密碼：</translation>
     </message>
     <message numerus="yes">
-        <source>%n file(s) in %1 already exist. Split wrote nothing.</source>
-        <extracomment>Tray message after Split found that some of the files it would write, such as plan-002.pdf, already exist while its window was hidden in the tray, so it could not ask whether to replace them. %n is the number of those files, %1 the folder Split writes to. Split wrote no file.</extracomment>
-        <translation>
-            <numerusform>資料夾 %1 中已有 %n 個檔案。未寫入任何檔案。</numerusform>
-        </translation>
-    </message>
-    <message numerus="yes">
         <source>%n file(s) in %1 already exist. Replace them?</source>
         <extracomment>Asked after Split found that some of the files it would write, such as plan-002.pdf, already exist. %n is the number of those files, %1 the folder Split writes to. Nothing has been replaced yet. Yes replaces those files and writes the others; No writes no file.</extracomment>
         <translation>
@@ -255,6 +248,13 @@ Tooltip of the toolbar&apos;s print button (verb).</extracomment>
 %1</source>
         <translation>無法準備文件：
 %1</translation>
+    </message>
+    <message>
+        <source>Pages sent to the printer may already have printed.</source>
+        <extracomment>Warning after stopping a native printer job. Pages already submitted to the printer system may be on paper, even if backend cancellation worked.
+----------
+Warning after a native print failure. Submitted pages cannot be retracted.</extracomment>
+        <translation>傳送至印表機的頁面可能已經列印出來。</translation>
     </message>
     <message>
         <source>Could not start the print job.</source>
@@ -2916,6 +2916,11 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <translation>無法刪除所有頁面。</translation>
     </message>
     <message>
+        <source>This operation is not supported for PDF forms with XFA data.</source>
+        <extracomment>Error for Extract, Split, Merge or Delete Pages. XFA is the PDF form format, not a filename. The operation writes nothing because changing the pages could lose form data or retain data from removed pages. Keep the format name XFA.</extracomment>
+        <translation>含有 XFA 資料的 PDF 表單不支援此操作。</translation>
+    </message>
+    <message>
         <source>Rotation must be a multiple of 90 degrees.</source>
         <translation>旋轉角度必須是 90 度的倍數。</translation>
     </message>
@@ -2983,6 +2988,14 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
         <source>A password contains characters that AES-128 and RC4-128 cannot use. Choose AES-256.</source>
         <extracomment>Shown in the security dialog or after an encryption failure. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
         <translation>密碼包含 AES-128 和 RC4-128 無法使用的字元。請選擇 AES-256。</translation>
+    </message>
+</context>
+<context>
+    <name>mervin::QpdfWorker</name>
+    <message>
+        <source>PDF processing stopped or exceeded a safety limit. Try a smaller document.</source>
+        <extracomment>Visible failure reason for PDF security, page or measurement operations. The isolated PDF worker could not start safely, stopped unexpectedly, or exceeded its memory, time, request or output limit. This is not a diagnosis that the PDF is damaged. Suggest processing a smaller document.</extracomment>
+        <translation>PDF 處理已停止或超出安全限制。請嘗試較小的文件。</translation>
     </message>
 </context>
 <context>

@@ -8,14 +8,6 @@
         <translation>Saisissez le mot de passe du document&#xa0;:</translation>
     </message>
     <message numerus="yes">
-        <source>%n file(s) in %1 already exist. Split wrote nothing.</source>
-        <extracomment>Tray message after Split found that some of the files it would write, such as plan-002.pdf, already exist while its window was hidden in the tray, so it could not ask whether to replace them. %n is the number of those files, %1 the folder Split writes to. Split wrote no file.</extracomment>
-        <translation>
-            <numerusform>%n fichier dans %1 existe déjà. Rien n&apos;a été écrit.</numerusform>
-            <numerusform>%n fichiers dans %1 existent déjà. Rien n&apos;a été écrit.</numerusform>
-        </translation>
-    </message>
-    <message numerus="yes">
         <source>%n file(s) in %1 already exist. Replace them?</source>
         <extracomment>Asked after Split found that some of the files it would write, such as plan-002.pdf, already exist. %n is the number of those files, %1 the folder Split writes to. Nothing has been replaced yet. Yes replaces those files and writes the others; No writes no file.</extracomment>
         <translation>
@@ -97,6 +89,13 @@ L&apos;ouvrir maintenant&#xa0;?</translation>
         <source>PDF documents (*.pdf)</source>
         <extracomment>File type filter. Keep the pattern in parentheses.</extracomment>
         <translation>Documents PDF (*.pdf)</translation>
+    </message>
+    <message>
+        <source>Pages sent to the printer may already have printed.</source>
+        <extracomment>Warning after stopping a native printer job. Pages already submitted to the printer system may be on paper, even if backend cancellation worked.
+----------
+Warning after a native print failure. Submitted pages cannot be retracted.</extracomment>
+        <translation>Les pages envoyées à l’imprimante ont peut-être déjà été imprimées.</translation>
     </message>
     <message>
         <source>Could not finish the print job.</source>
@@ -2931,6 +2930,11 @@ Ouvrez les paramètres de votre système → Applications par défaut (ou clique
         <translation>Impossible de supprimer toutes les pages.</translation>
     </message>
     <message>
+        <source>This operation is not supported for PDF forms with XFA data.</source>
+        <extracomment>Error for Extract, Split, Merge or Delete Pages. XFA is the PDF form format, not a filename. The operation writes nothing because changing the pages could lose form data or retain data from removed pages. Keep the format name XFA.</extracomment>
+        <translation>Cette opération n’est pas prise en charge pour les formulaires PDF contenant des données XFA.</translation>
+    </message>
+    <message>
         <source>Rotation must be a multiple of 90 degrees.</source>
         <translation>La rotation doit être un multiple de 90 degrés.</translation>
     </message>
@@ -2999,6 +3003,14 @@ Ouvrez les paramètres de votre système → Applications par défaut (ou clique
         <source>A password contains characters that AES-128 and RC4-128 cannot use. Choose AES-256.</source>
         <extracomment>Shown in the security dialog or after an encryption failure. AES-128 and RC4-128 PDFs store passwords in PDFDocEncoding. It has ASCII, Western European letters such as é and ü, and common symbols, but not, for example, Polish ą or Greek, Cyrillic or Chinese characters. AES-256 accepts every character. Keep the algorithm names as they are.</extracomment>
         <translation>Un mot de passe contient des caractères qu&apos;AES-128 et RC4-128 ne peuvent pas utiliser. Choisissez AES-256.</translation>
+    </message>
+</context>
+<context>
+    <name>mervin::QpdfWorker</name>
+    <message>
+        <source>PDF processing stopped or exceeded a safety limit. Try a smaller document.</source>
+        <extracomment>Visible failure reason for PDF security, page or measurement operations. The isolated PDF worker could not start safely, stopped unexpectedly, or exceeded its memory, time, request or output limit. This is not a diagnosis that the PDF is damaged. Suggest processing a smaller document.</extracomment>
+        <translation>Le traitement du PDF s’est arrêté ou a dépassé une limite de sécurité. Essayez un document plus petit.</translation>
     </message>
 </context>
 <context>

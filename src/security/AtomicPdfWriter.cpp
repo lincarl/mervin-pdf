@@ -1,4 +1,5 @@
 #include "security/AtomicPdfWriter.h"
+#include "security/QpdfWorker.h"
 
 #include <QFileInfo>
 
@@ -10,14 +11,22 @@ namespace mervin {
 
 /// Acquires the destination before opening a sibling temporary PDF.
 AtomicPdfWriter::AtomicPdfWriter(QPDF &pdf, const QString &path)
-    : destination_(path), file_(path), sink_(file_, QFileInfo(path).absolutePath()), writer_(pdf)
+    : destination_(qpdfWorker::inWorker() ? nullptr : std::make_unique<job::DestinationLock>(path)),
+      file_(qpdfWorker::inWorker() ? nullptr : std::make_unique<QSaveFile>(path)),
+      sink_(file_.get(), QFileInfo(path).absolutePath()), writer_(pdf)
 {
+    if (qpdfWorker::inWorker()) {
+        qpdfWorker::openOutput(path);
+        writer_.setOutputPipeline(&sink_);
+        writer_.setStaticID(false);
+        return;
+    }
     // A test can hold the write step here, while this writer owns its destination.
-    if (!destination_.owns() || !job::writing(QFileInfo(path).absolutePath()))
+    if (!destination_->owns() || !job::writing(QFileInfo(path).absolutePath()))
         throw std::runtime_error(job::notRunError().toStdString());
-    file_.setDirectWriteFallback(false);
-    if (!file_.open(QIODevice::WriteOnly))
-        throw std::runtime_error(file_.errorString().toStdString());
+    file_->setDirectWriteFallback(false);
+    if (!file_->open(QIODevice::WriteOnly))
+        throw std::runtime_error(file_->errorString().toStdString());
     writer_.setOutputPipeline(&sink_);
     writer_.setStaticID(false);
 }
@@ -25,6 +34,10 @@ AtomicPdfWriter::AtomicPdfWriter(QPDF &pdf, const QString &path)
 /// Streams qpdf output with Stop checks and progress reports.
 void AtomicPdfWriter::Sink::write(const unsigned char *data, size_t length)
 {
+    if (qpdfWorker::inWorker()) {
+        qpdfWorker::writeOutput(data, length);
+        return;
+    }
     // qpdf reads its source between the pieces it writes.
     job::switchTo(job::Step::Writing, folder_);
     if (job::stopped())
@@ -32,9 +45,9 @@ void AtomicPdfWriter::Sink::write(const unsigned char *data, size_t length)
     while (length) {
         const auto chunk = static_cast<qint64>(std::min<size_t>(length,
             std::numeric_limits<qint64>::max()));
-        const qint64 written = file_.write(reinterpret_cast<const char *>(data), chunk);
+        const qint64 written = file_->write(reinterpret_cast<const char *>(data), chunk);
         if (written <= 0)
-            throw std::runtime_error(file_.errorString().toStdString());
+            throw std::runtime_error(file_->errorString().toStdString());
         data += written;
         length -= static_cast<size_t>(written);
     }
@@ -45,18 +58,26 @@ void AtomicPdfWriter::Sink::write(const unsigned char *data, size_t length)
 void AtomicPdfWriter::write(const std::function<bool()> &mayCommit)
 {
     writer_.write();
+    if (qpdfWorker::inWorker()) {
+        // qpdf's deferred reads and warning checks must finish before the parent
+        // may publish. Consent and commit admission run only in that parent.
+        if (mayCommit && !mayCommit())
+            throw std::runtime_error(job::notRunError().toStdString());
+        qpdfWorker::finishOutput();
+        return;
+    }
     // Writes out Qt's buffer while a stop can still keep the destination as it was.
     // The commit then syncs the temporary file to disk and renames it.
-    if (!file_.flush())
-        throw std::runtime_error(file_.errorString().toStdString());
-    if ((mayCommit && !mayCommit()) || !job::beginCommit(file_.fileName())) {
-        file_.cancelWriting(); // the destructor discards the temporary file
+    if (!file_->flush())
+        throw std::runtime_error(file_->errorString().toStdString());
+    if ((mayCommit && !mayCommit()) || !job::beginCommit(file_->fileName())) {
+        file_->cancelWriting(); // the destructor discards the temporary file
         throw std::runtime_error(job::notRunError().toStdString());
     }
-    const bool committed = file_.commit();
+    const bool committed = file_->commit();
     job::endCommit();
     if (!committed)
-        throw std::runtime_error(file_.errorString().toStdString());
+        throw std::runtime_error(file_->errorString().toStdString());
 }
 
 } // namespace mervin

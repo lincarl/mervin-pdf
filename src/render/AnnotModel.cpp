@@ -112,16 +112,19 @@ bool applyToAnnot(const Document &doc, int page, int id,
 
 AnnotModel::AnnotModel(const Document &doc) : doc_(doc)
 {
-    cache_.resize(static_cast<size_t>(doc_.pageCount()));
 }
 
 const std::vector<Annotation> &AnnotModel::pageAnnots(int pageNo) const
 {
     static const std::vector<Annotation> kEmpty;
-    if (pageNo < 0 || pageNo >= static_cast<int>(cache_.size()))
+    if (pageNo < 0 || pageNo >= doc_.pageCount())
         return kEmpty;
-    if (cache_[pageNo])
-        return *cache_[pageNo];
+    if (auto found = cache_.find(pageNo); found != cache_.end() && found->second)
+        return *found->second;
+    if (loader_) {
+        loader_(pageNo);
+        return kEmpty;
+    }
 
     std::vector<Annotation> annots;
     const bool ran = doc_.withPdfDocument([&](fz_context *ctx, pdf_document *) {
@@ -163,7 +166,7 @@ const std::vector<Annotation> &AnnotModel::pageAnnots(int pageNo) const
 std::vector<Annotation> AnnotModel::allAnnots() const
 {
     std::vector<Annotation> out;
-    for (int p = 0; p < static_cast<int>(cache_.size()); ++p) {
+    for (int p = 0; p < doc_.pageCount(); ++p) {
         const std::vector<Annotation> &pa = pageAnnots(p);
         out.insert(out.end(), pa.begin(), pa.end());
     }
@@ -386,14 +389,14 @@ bool AnnotModel::remove(int page, int id)
 
 void AnnotModel::reset()
 {
-    for (auto &c : cache_)
-        c.reset();
+    ++revision_;
+    cache_.clear();
 }
 
 void AnnotModel::invalidatePage(int page)
 {
-    if (page >= 0 && page < static_cast<int>(cache_.size()))
-        cache_[page].reset();
+    ++revision_;
+    cache_.erase(page);
 }
 
 } // namespace mervin

@@ -1,6 +1,7 @@
 #include "config/ConfigPaths.h"
 #include "config/Settings.h"
 #include "io/AppFiles.h"
+#include "io/Background.h"
 #include "i18n/UiLanguage.h"
 #include "mervin_version.h"
 #include "ui/Theme.h"
@@ -91,7 +92,11 @@ QStringList packageCommand; // fixture program, never a real installer
 std::atomic<bool> packageCommandReady{false};
 std::function<void()> beforePackageCommand;
 std::function<void()> beforeInstallerReturns;
+std::function<void()> beforePackageDetection;
 bool installerLaunchSucceeds = true;
+std::atomic<bool> installerLaunchHeld{false};
+std::atomic<bool> installerLaunchStarted{false};
+std::atomic<bool> installerOnUiThread{false};
 PackageKind installedKind = PackageKind::Msi;
 bool appImageReplaced = false;
 std::atomic<bool> appImageCopyStarted{false};
@@ -289,16 +294,28 @@ private:
 // and verify that the handoff requests exit.
 namespace mervin::update {
 
-PackageKind installedPackageKind() { return installedKind; }
+PackageKind installedPackageKind()
+{
+    if (beforePackageDetection)
+        beforePackageDetection();
+    return installedKind;
+}
 bool startWindowsInstaller(const QString &file)
 {
-    installerFiles.append(file);
+    installerOnUiThread = QThread::currentThread() == qApp->thread();
     QFile bytes(file);
-    if (bytes.open(QIODevice::ReadOnly))
-        installedBytes.append(bytes.readAll());
-    if (beforeInstallerReturns)
-        beforeInstallerReturns();
-    return installerLaunchSucceeds;
+    const QByteArray payload = bytes.open(QIODevice::ReadOnly) ? bytes.readAll() : QByteArray();
+    const bool succeeds = installerLaunchSucceeds;
+    mervin::background::post(qApp, [file, payload] {
+        installerFiles.append(file);
+        installedBytes.append(payload);
+        if (beforeInstallerReturns)
+            beforeInstallerReturns();
+    });
+    installerLaunchStarted = true;
+    while (installerLaunchHeld.load())
+        QThread::msleep(5);
+    return succeeds;
 }
 bool replaceAppImage(const QString &file, const QString &, QString *)
 {
@@ -326,6 +343,10 @@ bool relaunchAfterExit(const QString &, const QStringList &) { return false; }
 
 } // namespace mervin::update
 
+namespace mervin::relaunch {
+void nextCopyStarted() {}
+}
+
 namespace mervin {
 
 class TestUpdater : public QObject
@@ -337,6 +358,9 @@ private slots:
     void init();
     void cleanup();
     void cleanupTestCase();
+    void delayedDetection_data();
+    void delayedDetection();
+    void slowInstallerLaunchKeepsUiResponsive();
     void completedCheckUpdatesSchedule_data();
     void completedCheckUpdatesSchedule();
     void manualCompletionInstallsOverSettings_data();
@@ -479,7 +503,11 @@ void TestUpdater::init()
     beforePackageCommand = {};
     quitRequests_ = 0;
     beforeInstallerReturns = {};
+    beforePackageDetection = {};
     installerLaunchSucceeds = true;
+    installerLaunchHeld = false;
+    installerLaunchStarted = false;
+    installerOnUiThread = false;
     appImageReplaced = false;
     appImageCopyHeld = false;
     appImageCopyStarted = false;
@@ -498,6 +526,7 @@ void TestUpdater::init()
 void TestUpdater::cleanup()
 {
     appImageCopyHeld = false; // a failed test can leave the copy waiting
+    installerLaunchHeld = false;
     QVERIFY(settled());
     QDesktopServices::unsetUrlHandler(QStringLiteral("ms-windows-store"));
     QDesktopServices::unsetUrlHandler(QStringLiteral("file"));
@@ -511,6 +540,63 @@ void TestUpdater::cleanupTestCase()
 {
     QVERIFY(mervin::appfiles::flush(10000));
     ConfigPaths::setOverrideDir(previousProfile_);
+}
+
+void TestUpdater::delayedDetection_data()
+{
+    QTest::addColumn<bool>("store");
+    QTest::addColumn<bool>("manual");
+    QTest::newRow("msi-startup") << false << false;
+    QTest::newRow("msi-manual") << false << true;
+    QTest::newRow("store-startup") << true << false;
+    QTest::newRow("store-manual") << true << true;
+}
+
+void TestUpdater::delayedDetection()
+{
+    QFETCH(bool, store);
+    QFETCH(bool, manual);
+    installedKind = store ? PackageKind::Msix : PackageKind::Msi;
+    std::atomic<bool> entered{false};
+    std::atomic<bool> held{true};
+    std::atomic<bool> onUiThread{false};
+    beforePackageDetection = [&] {
+        onUiThread = QThread::currentThread() == qApp->thread();
+        entered = true;
+        while (held.load())
+            QThread::msleep(5);
+    };
+    const auto release = qScopeGuard([&] {
+        held = false;
+        settled();
+        beforePackageDetection = {};
+    });
+    Updater updater;
+    auto *network = useLocalNetwork(updater);
+    QSignalSpy initialized(&updater, &Updater::initialized);
+    QDesktopServices::setUrlHandler(QStringLiteral("ms-windows-store"), this, "recordStoreUrl");
+    PromptObserver observer;
+    updater.onStartup();
+    if (manual) {
+        updater.checkNow();
+        updater.checkNow(); // coalesce requests while the installation is unknown
+    }
+    QTRY_VERIFY(entered.load());
+    QVERIFY(!onUiThread.load());
+    QVERIFY(!updater.ready());
+    QCOMPARE(network->requests, 0);
+    QVERIFY(storeUrls_.isEmpty());
+    // A setting changed during detection must still govern a deferred startup.
+    QVERIFY(setAutoUpdate(false));
+    updater.onAutoUpdateChanged(false);
+    held = false;
+    QTRY_VERIFY(updater.ready());
+    QVERIFY(settled());
+    QCOMPARE(initialized.count(), 1);
+    QCOMPARE(updater.storeManaged(), store);
+    QCOMPARE(network->requests, manual && !store ? 1 : 0);
+    QCOMPARE(storeUrls_.size(), manual && store ? 1 : 0);
+    QVERIFY(installerFiles.isEmpty());
 }
 
 void TestUpdater::completedCheckUpdatesSchedule_data()
@@ -547,6 +633,7 @@ void TestUpdater::completedCheckUpdatesSchedule()
     QSettings().setValue(key, previous);
     QSettings().setValue(QStringLiteral("update/startsSinceCheck"), 19);
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     delete updater.nam_;
     auto *network = new ReleaseNetworkAccessManager(&updater);
     updater.nam_ = network;
@@ -629,6 +716,7 @@ void TestUpdater::manualCompletionInstallsOverSettings()
 {
     QFETCH(bool, startedManually);
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     QDialog settingsDialog;
     settingsDialog.setAttribute(Qt::WA_DontShowOnScreen);
     settingsDialog.setModal(true);
@@ -676,9 +764,8 @@ void TestUpdater::manualCompletionInstallsOverSettings()
     QVERIFY(updater.installing_);
 }
 
-// In the app, the windows closed for the handoff are deleted once an event loop
-// runs, and a Settings dialog, their child, runs its own. The handoff quits in
-// the same call, so the dialog's loop ends before its window goes.
+// The close handler retains hidden windows until the asynchronous handoff quits,
+// so Settings can unwind before its window is destroyed.
 void TestUpdater::handoffQuitsBeforeSettingsLosesItsWindow()
 {
     QVERIFY(setAutoUpdate(false));
@@ -695,9 +782,12 @@ void TestUpdater::handoffQuitsBeforeSettingsLosesItsWindow()
         QCoreApplication::quit(); // as WindowManager does when the last window goes
     });
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     updater.setCloseWindowsHandler([alive] {
-        if (alive)
+        if (alive) {
+            alive->setAttribute(Qt::WA_DeleteOnClose, false);
             alive->close();
+        }
         return Updater::CloseResult::Closed;
     });
     auto *network = useLocalNetwork(updater);
@@ -722,9 +812,37 @@ void TestUpdater::handoffQuitsBeforeSettingsLosesItsWindow()
     QCOMPARE(installerFiles.size(), 1);
     QVERIFY(!QSettings().contains(stateKey(u"pendingFile")));
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(alive && !alive->isVisible());
+    delete alive;
     QVERIFY(!alive);
     QVERIFY(!deletedUnderSettings);
     QVERIFY(observer.messages.isEmpty());
+}
+
+void TestUpdater::slowInstallerLaunchKeepsUiResponsive()
+{
+    Updater updater;
+    QTRY_VERIFY(updater.ready());
+    DownloadReply *reply = prepareDownload(updater, false);
+    QVERIFY(reply);
+    installerLaunchHeld = true;
+    const auto release = qScopeGuard([] { installerLaunchHeld = false; });
+    PromptObserver observer;
+    observer.installNow = true;
+    reply->finish();
+    QTRY_VERIFY(installerLaunchStarted.load());
+    QVERIFY(!installerOnUiThread.load());
+    QTRY_COMPARE(installerFiles.size(), 1);
+    QVERIFY(updater.busyNote_ && updater.busyNote_->isVisible());
+    QVERIFY(updater.busy_ && updater.installing_);
+    QVERIFY(QFile::exists(installerFiles.first()));
+    QCOMPARE(quitRequests_, 0);
+    bool eventDelivered = false;
+    QTimer::singleShot(0, &updater, [&] { eventDelivered = true; });
+    QTRY_VERIFY(eventDelivered);
+    installerLaunchHeld = false;
+    QVERIFY(settled());
+    QVERIFY(!updater.busyNote_);
 }
 
 // The pending update is consumed before the Windows handoff. A dialog opened
@@ -733,6 +851,7 @@ void TestUpdater::automaticHandoffWaitsForADialogOpenedMeanwhile()
 {
     QVERIFY(savePending());
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     updater.setCloseWindowsHandler([] { return Updater::CloseResult::Closed; });
     QVERIFY(settled());
     updater.busy_ = true;
@@ -774,6 +893,7 @@ void TestUpdater::unwrittenConsumeStopsTheHandoff()
     QVERIFY(QFile::setPermissions(ini, QFileDevice::ReadOwner));
     QVERIFY(QFile::setPermissions(folder, QFileDevice::ReadOwner | QFileDevice::ExeOwner));
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     int closes = 0;
     updater.setCloseWindowsHandler([&] {
         ++closes;
@@ -800,6 +920,7 @@ void TestUpdater::unwrittenPendingDoesNotOfferRestart()
     if (::geteuid() == 0)
         QSKIP("Read-only files do not stop root");
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     DownloadReply *reply = prepareDownload(updater, false);
     QVERIFY(reply);
     QSettings state;
@@ -837,6 +958,7 @@ void TestUpdater::automaticRestartWaitsForADialogOpenedDuringTheCopy()
     appImageReplaced = true;
     appImageCopyHeld = true;
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     useLocalNetwork(updater);
     int closes = 0;
     bool dialogOpenAtClose = false;
@@ -873,6 +995,7 @@ void TestUpdater::quittingWaitsForTheDiskWithinItsTime()
     appImageReplaced = true;
     appImageCopyHeld = true;
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     updater.setCloseWindowsHandler([] { return Updater::CloseResult::Declined; });
     updater.busy_ = true;
     updater.installing_ = true;
@@ -890,6 +1013,7 @@ void TestUpdater::quittingWaitsForTheDiskWithinItsTime()
 void TestUpdater::automaticCompletionWaitsForSettings()
 {
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     QDialog settingsDialog;
     settingsDialog.setAttribute(Qt::WA_DontShowOnScreen);
     settingsDialog.setModal(true);
@@ -920,6 +1044,7 @@ void TestUpdater::automaticCompletionWaitsForSettings()
 void TestUpdater::queuedAutomaticInstallCanBecomeManual()
 {
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     auto *network = useLocalNetwork(updater);
     updater.setCloseWindowsHandler([] { return Updater::CloseResult::Closed; });
     QDialog settingsDialog;
@@ -1025,11 +1150,11 @@ void TestUpdater::msixDelegatesToStore()
     const QString previousPending =
         QSettings().value(stateKey(u"pendingFile", PackageKind::Msi)).toString();
     Updater updater; // reads the last check, on its disk thread
+    QTRY_VERIFY(updater.ready());
     auto *network = useLocalNetwork(updater);
     network->hasUpdate = true;
     QDesktopServices::setUrlHandler(QStringLiteral("ms-windows-store"), this, "recordStoreUrl");
     QSignalSpy checked(&updater, &Updater::checked);
-
     QVERIFY(!updater.canSelfUpdate());
     QVERIFY(updater.storeManaged());
     updater.onStartup();
@@ -1080,6 +1205,7 @@ void TestUpdater::startupRespectsSetting()
     if (!pendingVersion.isEmpty())
         QVERIFY(savePending(installedKind, pendingVersion));
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     updater.setCloseWindowsHandler([] { return Updater::CloseResult::Closed; });
     auto *network = useLocalNetwork(updater);
     PromptObserver observer;
@@ -1140,6 +1266,7 @@ void TestUpdater::pendingUpdateOfThisKindOnly()
     const QString fileKey = legacy ? kLegacyPendingFile : stateKey(u"pendingFile", recordKind);
 
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     updater.setCloseWindowsHandler([] { return Updater::CloseResult::Declined; }); // the restart ends the operation
     auto *network = useLocalNetwork(updater);
     network->hasUpdate = true;
@@ -1207,6 +1334,7 @@ void TestUpdater::replacementDuringCloseUsesStagedBytes()
     bool changed = false;
     bool privatePermissions = true;
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     updater.setCloseWindowsHandler([&] {
         staged = updater.stagedFile_;
         directory = QFileInfo(staged).absolutePath();
@@ -1269,6 +1397,7 @@ void TestUpdater::hashlessPendingRequiresRelease()
     QSettings().remove(stateKey(u"pendingSha256"));
     QSettings().setValue(stateKey(u"lastCheckUtc"), QDateTime::currentDateTimeUtc());
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     auto *network = useLocalNetwork(updater);
     network->hasUpdate = true;
     network->offeredDigest = digest;
@@ -1330,6 +1459,7 @@ void TestUpdater::stagedPackageManagerLifetime()
             && original.write("changed after staging") > 0;
     };
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     updater.setCloseWindowsHandler([] { return Updater::CloseResult::Declined; });
     PromptObserver observer;
     // A failed check returns early. The fixture is still released and the
@@ -1394,6 +1524,7 @@ void TestUpdater::downloadProgressGoesWithTheUpdater()
     const auto removeProgress = qScopeGuard([&] { delete progress.data(); });
     {
         Updater updater;
+        QTRY_VERIFY(updater.ready());
         updater.downloadVersion_ = kVersion;
         auto *reply = new DownloadReply(&updater);
         updater.reply_ = reply;
@@ -1431,6 +1562,7 @@ void TestUpdater::busyNoteGoesWithTheUpdater()
     const auto removeNote = qScopeGuard([&] { delete note.data(); });
     {
         Updater updater;
+        QTRY_VERIFY(updater.ready());
         updater.setCloseWindowsHandler([] { return Updater::CloseResult::Declined; });
         PromptObserver observer; // a fixture that cannot start reports it in a message box
         updater.onStartup();
@@ -1462,6 +1594,7 @@ void TestUpdater::pendingValidationStaysOnDiskThread()
 {
     QVERIFY(savePending());
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     auto *network = useLocalNetwork(updater);
     updater.setCloseWindowsHandler([] { return Updater::CloseResult::Declined; });
     QVERIFY(settled());
@@ -1489,6 +1622,7 @@ void TestUpdater::missingPackageManagerKeepsRetry()
     installedKind = kind;
     QVERIFY(savePending());
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     auto *network = useLocalNetwork(updater);
     network->hasUpdate = true;
     network->offeredAsset = assetName(installedKind);
@@ -1567,6 +1701,7 @@ void TestUpdater::alteredDownloadIsNotInstalled()
     }
     {
         Updater updater;
+        QTRY_VERIFY(updater.ready());
         updater.setCloseWindowsHandler([] { return Updater::CloseResult::Closed; });
         auto *network = useLocalNetwork(updater);
         network->hasUpdate = true;
@@ -1597,6 +1732,7 @@ void TestUpdater::alteredDownloadIsNotInstalled()
     QVERIFY(!update::automaticCheckDue(checked, QDateTime::currentDateTimeUtc()));
     QVERIFY(setAutoUpdate(true));
     Updater next;
+    QTRY_VERIFY(next.ready());
     auto *network = useLocalNetwork(next);
     QSignalSpy checks(&next, &Updater::checked);
     QVERIFY(settled());
@@ -1630,6 +1766,7 @@ void TestUpdater::checkDatesArePerKind()
     {
         installedKind = PackageKind::Deb;
         Updater deb;
+        QTRY_VERIFY(deb.ready());
         auto *network = useLocalNetwork(deb);
         PromptObserver observer;
         deb.checkNow();
@@ -1644,6 +1781,7 @@ void TestUpdater::checkDatesArePerKind()
 
     installedKind = PackageKind::AppImage;
     Updater appImage;
+    QTRY_VERIFY(appImage.ready());
     auto *network = useLocalNetwork(appImage);
     QVERIFY(settled());
     QCoreApplication::processEvents();
@@ -1688,6 +1826,7 @@ void TestUpdater::legacyDownloadsOfThisKindGo()
     }
 
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     auto *network = useLocalNetwork(updater);
     PromptObserver observer;
     updater.onStartup();
@@ -1722,6 +1861,7 @@ void TestUpdater::installRefusesAnotherKindsPackage()
     appImageReplaced = true;
     QVERIFY(savePending(fileKind));
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     updater.setCloseWindowsHandler([] { return Updater::CloseResult::Declined; });
     QDesktopServices::setUrlHandler(QStringLiteral("file"), this, "recordOpenedFile");
     PromptObserver observer;
@@ -1762,6 +1902,7 @@ void TestUpdater::releaseInstallationChoices()
     }
     {
         Updater updater;
+        QTRY_VERIFY(updater.ready());
         updater.setCloseWindowsHandler([] { return Updater::CloseResult::Closed; });
         auto *network = useLocalNetwork(updater);
         network->hasUpdate = true;
@@ -1794,6 +1935,7 @@ void TestUpdater::releaseInstallationChoices()
     // A failed/cancelled MSI can relaunch the old binary. It must not run the
     // same installer again immediately, including a download resumed at startup.
     Updater resumed;
+    QTRY_VERIFY(resumed.ready());
     auto *network = useLocalNetwork(resumed);
     resumed.onStartup();
     QVERIFY(settled());
@@ -1827,6 +1969,7 @@ void TestUpdater::laterKeepsDownloadUntilStartup()
     installedKind = kind;
     {
         Updater updater;
+        QTRY_VERIFY(updater.ready());
         auto *network = useLocalNetwork(updater);
         // Begin at the transfer so every package kind can be exercised on each
         // host OS, independent of distribution-specific release asset selection.
@@ -1885,6 +2028,7 @@ void TestUpdater::laterKeepsDownloadUntilStartup()
         QVERIFY(metadata.readAll().contains(kDownloadSha256.toUtf8()));
     }
     Updater next;
+    QTRY_VERIFY(next.ready());
     auto *network = useLocalNetwork(next);
     next.setCloseWindowsHandler([] { return Updater::CloseResult::Closed; });
     PromptObserver observer;
@@ -1908,6 +2052,7 @@ void TestUpdater::laterKeepsDownloadUntilStartup()
 void TestUpdater::disablingDismissesRestartPrompt()
 {
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     DownloadReply *reply = prepareDownload(updater, false);
     QVERIFY(reply);
     reply->finish();
@@ -1930,6 +2075,7 @@ void TestUpdater::restartPromptGoesWithTheUpdater()
     QPointer<QMessageBox> prompt;
     {
         Updater updater;
+        QTRY_VERIFY(updater.ready());
         DownloadReply *reply = prepareDownload(updater, false);
         QVERIFY(reply);
         reply->finish();
@@ -1946,6 +2092,7 @@ void TestUpdater::restartPromptGoesWithTheUpdater()
 void TestUpdater::disablingCancelsQueuedInstall()
 {
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     auto *network = useLocalNetwork(updater);
     QDialog settingsDialog;
     settingsDialog.setAttribute(Qt::WA_DontShowOnScreen);
@@ -1983,6 +2130,7 @@ void TestUpdater::disablingDuringStaging()
     QFETCH(bool, manual);
     QVERIFY(savePending());
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     int closes = 0;
     updater.setCloseWindowsHandler([&] {
         ++closes;
@@ -2015,6 +2163,7 @@ void TestUpdater::disablingDuringDownload()
 {
     QFETCH(bool, manual);
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     DownloadReply *reply = prepareDownload(updater, manual);
     QVERIFY(reply);
     PromptObserver observer;
@@ -2048,6 +2197,7 @@ void TestUpdater::invalidDownloadDoesNotInstall()
     QFETCH(QString, digest);
     QFETCH(bool, networkFailure);
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     DownloadReply *reply = prepareDownload(updater, false,
         networkFailure ? QNetworkReply::ConnectionRefusedError : QNetworkReply::NoError);
     QVERIFY(reply);
@@ -2068,6 +2218,7 @@ void TestUpdater::invalidDownloadDoesNotInstall()
 void TestUpdater::closeVetoRetainsPendingUpdate()
 {
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     DownloadReply *reply = prepareDownload(updater, false);
     QVERIFY(reply);
     int closeAttempts = 0;
@@ -2124,6 +2275,7 @@ void TestUpdater::busyCloseExplainsManualInstall()
     installedKind = kind;
     appImageReplaced = true;
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     DownloadReply *reply = prepareDownload(updater, manual);
     QVERIFY(reply);
     int closeAttempts = 0;
@@ -2151,6 +2303,7 @@ void TestUpdater::busyCloseExplainsManualInstall()
 void TestUpdater::failedInstallerLaunchRetainsPendingUpdate()
 {
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     DownloadReply *reply = prepareDownload(updater, false);
     QVERIFY(reply);
     installerLaunchSucceeds = false;
@@ -2171,6 +2324,7 @@ void TestUpdater::failedInstallerLaunchRetainsPendingUpdate()
 void TestUpdater::installingIgnoresDuplicateCheckAndDisable()
 {
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     auto *network = useLocalNetwork(updater);
     DownloadReply *reply = prepareDownload(updater, false);
     QVERIFY(reply);
@@ -2206,6 +2360,7 @@ void TestUpdater::cancelStillAborts()
 {
     QFETCH(int, action);
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     QDialog settingsDialog;
     settingsDialog.setAttribute(Qt::WA_DontShowOnScreen);
     settingsDialog.setModal(true);
@@ -2260,6 +2415,7 @@ void TestUpdater::progressFitsVersion()
     qApp->setStyleSheet(Theme::buildStyleSheet(palette, QStringLiteral("#4f8cff")));
 
     Updater updater;
+    QTRY_VERIFY(updater.ready());
     QDialog settingsDialog;
     settingsDialog.setAttribute(Qt::WA_DontShowOnScreen);
     settingsDialog.setModal(true);

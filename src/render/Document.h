@@ -20,6 +20,7 @@
 #include <memory>
 #include <optional>
 #include <vector>
+#include <unordered_map>
 
 // Forward declarations of MuPDF C types (defined in <mupdf/fitz.h> / <mupdf/pdf.h>).
 // Re-typedef of an identical type is legal in C++; this keeps the heavy MuPDF
@@ -80,6 +81,8 @@ struct DocumentLifetime
     // Document::Hold objects that hold the gate or wait for it. While there is one,
     // the document's queries refuse on the screen thread (see Document::ScreenQuery).
     std::atomic<int> holds{0};
+    // Accepted viewer edits must finish before save, print or close takes the gate.
+    std::atomic<int> pendingEdits{0};
     // Document::ScreenQuery objects on the screen thread that were not refused. A
     // Hold waits for them before it takes the gate.
     std::atomic<int> screenQueries{0};
@@ -107,7 +110,7 @@ public:
         // Waits for the gate in DocumentLifetime::kStep steps. Gives up, leaving
         // document() null, once `stop` returns true or the document has closed.
         explicit Hold(std::shared_ptr<DocumentLifetime> lifetime,
-                      const std::function<bool()> &stop = {});
+                      const std::function<bool()> &stop = {}, bool waitForEdits = true);
         ~Hold();
         Hold(const Hold &) = delete;
         Hold &operator=(const Hold &) = delete;
@@ -196,13 +199,13 @@ public:
     // The page's embedded measurement metadata (/VP viewports with rectilinear
     // /Measure dictionaries), used to auto-detect a drawing's scale the way
     // Adobe's measure tool does. Empty when the PDF carries none. Read on demand
-    // under the access lock and cached; safe to call from the UI thread.
+    // under the access lock and cached. Viewers request it on a worker.
     PageMeasurement pageMeasurement(int pageNo) const;
 
     // The page's flattened vector geometry (line segments + deduped endpoints in
     // page-point space), harvested by running the page through a path-collecting
     // device. Backs the measuring tool's vertex/edge snapping. Extracted on
-    // demand under the access lock and cached; safe to call from the UI thread.
+    // demand under the access lock and cached. Viewers request it on a worker.
     // Empty for pages with no vector content (or on failure).
     PageGeometry pageGeometry(int pageNo) const;
 
@@ -220,6 +223,10 @@ public:
 
     // PDF link annotation at `pagePoint` in page-point space, if any. Text-only
     // URLs are handled by TextIndex. Internal links carry a resolved page.
+    // Plain page snapshots for background viewer queries. No MuPDF pointers escape.
+    std::vector<std::pair<QRectF, PdfLinkTarget>> pageLinks(int pageNo) const;
+    std::vector<PdfItemProperties> pageItemProperties(int pageNo) const;
+
     std::optional<PdfLinkTarget> linkTargetAt(int pageNo, QPointF pagePoint) const;
 
     // Link URI at `pagePoint` in page-point space, or empty when no PDF link
@@ -233,7 +240,7 @@ public:
 
     // True when this document carries a fillable AcroForm (an /AcroForm catalog
     // entry with at least one field). Cached; false for non-PDF documents. Drives
-    // the Fill-Forms action's enabled state. Read on demand under the access lock.
+    // the Fill-Forms action's enabled state. Resolved during open, immutable thereafter.
     bool hasForm() const;
 
     // The /Mervin_Measurements blob read from this open document under the access lock,
@@ -254,8 +261,8 @@ public:
 
     // True when this is a PDF (pdf_specifics succeeds) - i.e. annotations and form
     // fields can be created and written. False for the other formats MuPDF can
-    // open (XPS, CBZ, image documents). Read under the access lock.
-    bool isPdf() const;
+    // open (XPS, CBZ, image documents). Immutable, resolved during open.
+    bool isPdf() const { return isPdf_; }
 
     // Mutate the live PDF only through fn under accessMutex(). Neither the supplied context nor
     // document may escape. Return false for non-PDFs or MuPDF exceptions, true otherwise. Const
@@ -295,9 +302,11 @@ private:
     fz_document *doc_ = nullptr; // owned
     std::vector<QSizeF> pageSizes_;
     QString title_;
+    bool isPdf_ = false;
     mutable std::mutex access_;
-    mutable std::vector<std::optional<PageMeasurement>> measureCache_; // lazy, per page
-    mutable std::vector<std::optional<PageGeometry>> geomCache_;       // lazy, per page
+    mutable std::unordered_map<int, PageMeasurement> measureCache_; // requested pages only
+    mutable std::optional<PageGeometry> geomCache_; // only the latest CAD page
+    mutable int geomCachePage_ = -1;
     mutable std::optional<bool> formCache_;                            // lazy: has /AcroForm
     mutable std::atomic<bool> measurementsUnreadable_{false};
 };

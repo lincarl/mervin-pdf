@@ -113,6 +113,15 @@ void WaitBar::setNotice(FileSentence compose, const QString &name, const QString
 
 void WaitBar::place(int left, int width)
 {
+    // Keep the translated stop action whole. Narrow bars put it below the notice
+    // instead of squeezing it beside the label's longest word.
+    stop_->ensurePolished();
+    stop_->setMinimumSize(stop_->sizeHint());
+    auto *box = static_cast<QBoxLayout *>(layout());
+    const bool stacked = width < stop_->sizeHint().width()
+        + 2 * kSidePadding + kTextToButton + 240;
+    box->setDirection(stacked ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
+    box->setAlignment(stop_, stacked ? Qt::AlignTrailing : Qt::AlignVCenter);
     // The layout's height for a width follows the text as fitted now. The label's
     // resize fits the text to the new width, which places the bar again if it then
     // needs another height.
