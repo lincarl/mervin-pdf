@@ -270,7 +270,8 @@ private slots:
             QCOMPARE(original->capturedViewState().rotation, 90);
             TextIndex text(manager.engine()->baseContext(), candidate->viewer()->document());
             for (int page = 0; page < 2; ++page) {
-                QVERIFY(text.pageText(page).contains(replacementText.at(page)));
+                QTRY_VERIFY(text.pageText(page).contains(replacementText.at(page)));
+                QVERIFY(testing::waitForPage(candidate->viewer()->annotModel(), page));
                 QVERIFY(candidate->viewer()->annotModel()->pageAnnots(page).empty());
             }
             if (suspended) {
@@ -284,13 +285,13 @@ private slots:
         QCOMPARE(original->capturedViewState().rotation, 90);
         QCOMPARE(original->hasUnsavedEdits(), edited);
         QCOMPARE(original->viewer()->document()->pageCount(), 1);
+        QVERIFY(testing::waitForPage(original->viewer()->annotModel(), 0));
         QTRY_COMPARE(original->viewer()->annotModel()->pageAnnots(0).size(), edited ? size_t(1) : size_t(0));
         if (edited) {
-            QVERIFY(mervin::testing::waitForPage(original->viewer()->annotModel(), 0));
             QCOMPARE(original->viewer()->annotModel()->pageAnnots(0).front().contents, note);
         }
         TextIndex retained(manager.engine()->baseContext(), original->viewer()->document());
-        QVERIFY(retained.pageText(0).contains(originalText));
+        QTRY_VERIFY(retained.pageText(0).contains(originalText));
     }
 
     // A replacement that needs its own password must reach authentication instead
@@ -341,7 +342,7 @@ private slots:
         QVERIFY(!replacementTab->hasUnsavedEdits());
         QCOMPARE(replacementTab->viewer()->document()->pageCount(), 2);
         TextIndex replacementText(manager.engine()->baseContext(), replacementTab->viewer()->document());
-        QVERIFY(replacementText.pageText(1).contains(QStringLiteral("Protected second page")));
+        QTRY_VERIFY(replacementText.pageText(1).contains(QStringLiteral("Protected second page")));
         QVERIFY(original && original->hasUnsavedEdits());
         QCOMPARE(original->viewer()->document()->pageCount(), 1);
         QTRY_COMPARE(original->viewer()->annotModel()->pageAnnots(0).size(), size_t(1));
