@@ -738,6 +738,8 @@ void TstTranslationLayout::loadPlaceholder()
     auto *stop = tab->findChild<QPushButton *>(QStringLiteral("stopDocumentLoad"));
     QVERIFY(stop);
     QTRY_VERIFY(stop->isVisible());
+    auto *close = tab->findChild<QPushButton *>(QStringLiteral("closeDocumentTab"));
+    QVERIFY(close && close->isHidden());
     inspect(window, QStringLiteral("Slow document load"), tab);
 
     QVERIFY(window.openFile(unbroken, false, -1, true, {}, true));
@@ -752,8 +754,11 @@ void TstTranslationLayout::loadPlaceholder()
     QTRY_VERIFY(stop->isVisible());
     inspect(window, QStringLiteral("Slow document load with an unbroken file name"), tab);
 
-    // Keep the real failed-load label and Retry layout while checking reader reasons.
+    // Keep the real failed-load label and Retry/Close layout while checking reader reasons.
     tab->stopWaiting();
+    close = tab->findChild<QPushButton *>(QStringLiteral("closeDocumentTab"));
+    QVERIFY(close && close->isVisible());
+    QVERIFY(tab->findChild<QPushButton *>(QStringLiteral("retryDocumentLoad"))->isVisible());
     auto *status = tab->findChild<QLabel *>(QStringLiteral("documentLoadStatus"));
     QVERIFY(status && status->isVisible());
     const struct {

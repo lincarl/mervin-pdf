@@ -938,11 +938,43 @@ private slots:
         tab->resumeAsync(); // automatic selection and adoption use this route
         QVERIFY(!tab->isLoading());
         QCOMPARE(tab->loadGeneration(), failedGeneration);
+        auto *close = tab->findChild<QPushButton *>(QStringLiteral("closeDocumentTab"));
+        QVERIFY(close && close->isVisible());
         QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), path));
         QTest::mouseClick(tab->findChild<QPushButton *>(QStringLiteral("retryDocumentLoad")), Qt::LeftButton);
         QTRY_VERIFY(tab->isLoaded());
         QCOMPARE(current(*window), tab);
         QVERIFY(!tab->freshOpen());
+        QVERIFY(!close->isVisible());
+    }
+
+    /// Checks that Close follows a moved placeholder and leaves other tabs open.
+    void missingFileCloseFollowsItsTab()
+    {
+        QTemporaryDir files;
+        const QString missing = files.filePath(QStringLiteral("missing.pdf"));
+        const QString other = files.filePath(QStringLiteral("other.pdf"));
+        QVERIFY(QFile::copy(QStringLiteral(MERVIN_FIXTURE_PDF), other));
+        WindowManager manager;
+        MainWindow *first = manager.createWindow();
+        MainWindow *second = manager.createWindow();
+        QVERIFY(testing::openAndWait(*first, QStringLiteral(MERVIN_FIXTURE_PDF)));
+        QVERIFY(first->openFile(missing));
+        QPointer<TabPage> page = current(*first);
+        QTRY_VERIFY(!page->isLoading());
+        auto *close = page->findChild<QPushButton *>(QStringLiteral("closeDocumentTab"));
+        QVERIFY(close && close->isVisible());
+        second->adoptTab(first->releaseTab(1));
+        QCOMPARE(page->window(), second);
+        QVERIFY(testing::openAndWait(*second, other));
+        auto *kept = current(*second);
+        // A request from a background page must use that page's identity.
+        close->click();
+        QTRY_VERIFY(!page);
+        QCOMPARE(first->tabCount(), 1);
+        QCOMPARE(second->tabCount(), 1);
+        QCOMPARE(current(*second), kept);
+        QVERIFY(kept->isLoaded());
     }
 
     void damagedFreshFileOffersRetry()

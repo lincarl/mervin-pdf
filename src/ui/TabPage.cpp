@@ -455,6 +455,10 @@ TabPage::TabPage(RenderEngine *engine, QWidget *parent)
     auto *retry = new QPushButton(tr("Retry"), placeholder_);
     retry->setObjectName(QStringLiteral("retryDocumentLoad"));
     retryButton_ = retry;
+    //: Button beside Retry that closes this document tab through the normal close flow.
+    auto *close = new QPushButton(tr("Close"), placeholder_);
+    close->setObjectName(QStringLiteral("closeDocumentTab"));
+    closeButton_ = close;
     //: Button beside a notice that the drive is not answering. Under the notice of a
     //: document that loads, it gives up the load and leaves the document unloaded. In
     //: the bar over a document that a tool works on, it gives up the tool's work.
@@ -467,11 +471,13 @@ TabPage::TabPage(RenderEngine *engine, QWidget *parent)
     buttons->setSpacing(6);
     buttons->addStretch();
     buttons->addWidget(retry);
+    buttons->addWidget(close);
     buttons->addWidget(stop);
     buttons->addStretch();
     placeholderLayout->addLayout(buttons);
     placeholderLayout->addStretch();
     connect(retry, &QPushButton::clicked, this, &TabPage::retryLoad);
+    connect(close, &QPushButton::clicked, this, &TabPage::closeRequested);
     connect(stop, &QPushButton::clicked, this, &TabPage::stopWaiting);
     layout->addWidget(placeholder_, 1);
     placeholder_->hide();
@@ -971,6 +977,7 @@ void TabPage::showPlaceholder(const QString &message, PlaceholderButton button)
     viewer_->hide();
     placeholderLabel_->setText(message);
     retryButton_->setVisible(button == PlaceholderButton::Retry);
+    closeButton_->setVisible(button == PlaceholderButton::Retry);
     stopButton_->setVisible(button == PlaceholderButton::StopWaiting);
     placeholder_->show();
 }

@@ -240,6 +240,8 @@ public:
     void setPassword(const QString &password) { password_ = password; }
 
 signals:
+    /// Requests the owning window's normal close flow for this tab.
+    void closeRequested();
     void stateChanged();
     void resumeFinished(bool success, const QString &error, bool needsPassword);
     /// Reports whether recovery adoption released the document or left it resident.
@@ -338,6 +340,7 @@ private:
     QWidget *placeholder_ = nullptr;
     ::QLabel *placeholderLabel_ = nullptr;
     QWidget *retryButton_ = nullptr;
+    QWidget *closeButton_ = nullptr;
     QWidget *stopButton_ = nullptr;
     StillPicture *still_ = nullptr; // in the viewer's place while an operation runs
     WaitBar *waitBar_ = nullptr;    // over the still picture once the operation is slow
