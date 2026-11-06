@@ -64,6 +64,9 @@ void MainWindow::wireTabLifecycle(TabPage *tab)
     if (tabConnections_.contains(tab))
         return;
     auto &connections = tabConnections_[tab];
+    connections.append(connect(tab, &TabPage::closeRequested, this, [this, tab] {
+        closeTab(tabs_->indexOf(tab));
+    }));
     connections.append(connect(tab, &TabPage::stateChanged, this, [this, tab] {
         if (currentTab() == tab && !suspending_)
             updateForCurrentTab();

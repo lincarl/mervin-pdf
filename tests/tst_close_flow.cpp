@@ -133,6 +133,41 @@ private slots:
         QVERIFY(answers_.isEmpty());
     }
 
+    /// Checks that the placeholder Close action preserves normal recovery decisions.
+    void failedLoadClosePreservesUnsavedChanges()
+    {
+        QTemporaryDir files;
+        const QString path = copy(files, "plan.pdf");
+        WindowManager manager;
+        MainWindow *window = manager.createWindow();
+        QVERIFY(testing::openAndWait(*window, path));
+        const QPointer<TabPage> tab = currentTab(window);
+        QVERIFY(addNote(tab, "Keep this edit") >= 0);
+        QVERIFY(testing::suspendAndWait(*tab));
+        const QString recovery = tab->recoveryPath();
+        job::testing::failWhen([recovery](job::Step step, const QString &file) {
+            return step == job::Step::Reading && file == recovery;
+        });
+        const auto clearFailure = qScopeGuard([] { job::testing::failWhen({}); });
+        tab->resumeAsync();
+        QTRY_VERIFY(!tab->isLoading());
+        auto *close = tab->findChild<QPushButton *>(QStringLiteral("closeDocumentTab"));
+        QVERIFY(close && close->isVisible());
+        answers_ << QMessageBox::Cancel;
+        QTest::mouseClick(close, Qt::LeftButton);
+        QTRY_VERIFY(answers_.isEmpty() && tab && !tab->isClosing());
+        QCOMPARE(window->tabCount(), 1);
+        QVERIFY(tab->hasUnsavedEdits());
+        QCOMPARE(tab->recoveryPath(), recovery);
+        QVERIFY(QFileInfo::exists(recovery));
+        QTRY_VERIFY(!tab->isLoading() && close->isVisible());
+        answers_ << QMessageBox::Discard;
+        QTest::mouseClick(close, Qt::LeftButton);
+        QTRY_VERIFY(!tab);
+        QCOMPARE(window->tabCount(), 0);
+        QCOMPARE(questions_.size(), 2);
+    }
+
     // Selects successful, failed and stopped Save results while Quit waits.
     void quitTakesTheExplicitResultOfAnExistingSave_data()
     {

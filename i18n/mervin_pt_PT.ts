@@ -3499,6 +3499,11 @@ Continuar?</translation>
         <translation>Tentar novamente</translation>
     </message>
     <message>
+        <source>Close</source>
+        <extracomment>Button beside Retry that closes this document tab through the normal close flow.</extracomment>
+        <translation>Fechar</translation>
+    </message>
+    <message>
         <source>Stop waiting</source>
         <extracomment>Button beside a notice that the drive is not answering. Under the notice of a document that loads, it gives up the load and leaves the document unloaded. In the bar over a document that a tool works on, it gives up the tool&apos;s work. A stopped job that still uses the document keeps it unavailable until it releases it.</extracomment>
         <translation>Deixar de esperar</translation>
