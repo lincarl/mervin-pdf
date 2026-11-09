@@ -79,6 +79,7 @@ private:
     int pageCount_ = 1;
     int currentPage_ = 1;
     int previewIndex_ = 0; // index into pages_, including repeated custom pages
+    int customScalePercent_ = 100;
     QString suggestedFileName_;
     QMarginsF preferredMargins_;
     QList<int> pages_;

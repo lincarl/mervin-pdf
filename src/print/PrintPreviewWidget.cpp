@@ -93,6 +93,15 @@ void PrintPreviewWidget::clear(const QString &message)
     update();
 }
 
+double PrintPreviewWidget::scale() const
+{
+    if (page_ < 0 || pagePoints_.isEmpty())
+        return 0;
+    const QRectF destination = printing::destinationRect(
+        pagePoints_, layout_.paintRect(QPageLayout::Point), settings_);
+    return destination.isEmpty() ? 0 : destination.width() / pagePoints_.width();
+}
+
 QRectF PrintPreviewWidget::sheetRect() const
 {
     const QSizeF paper = layout_.fullRect(QPageLayout::Point).size();

@@ -84,6 +84,8 @@
 #include <QStatusBar>
 #include <QStyleHints>
 #include <QTabWidget>
+#include <QPainter>
+#include <QPdfWriter>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextDocument>
@@ -1752,6 +1754,31 @@ void TstTranslationLayout::print()
     QTRY_VERIFY(!confirm->isEnabled());
     QVERIFY(!preview->isReady());
     inspect(dialog, QStringLiteral("Print invalid page selection"));
+
+    // Small source pages produce automatic percentages wider than the custom range.
+    const QString tinyPath = profile_.filePath(QStringLiteral("tiny-print-page.pdf"));
+    {
+        QPdfWriter writer(tinyPath);
+        writer.setResolution(72);
+        writer.setPageSize(QPageSize(QSizeF(10, 16), QPageSize::Point));
+        writer.setPageMargins(QMarginsF());
+        QPainter painter(&writer);
+        QVERIFY(painter.isActive());
+        painter.fillRect(QRectF(0, 0, 10, 16), Qt::red);
+        QVERIFY(painter.end());
+    }
+    auto tinyDocument = engine.openDocument(tinyPath);
+    QVERIFY(tinyDocument);
+    QPrinter tinyPrinter;
+    tinyPrinter.setOutputFormat(QPrinter::PdfFormat);
+    tinyPrinter.setPageSize(QPageSize(QPageSize::A4));
+    PrintDialog tiny(&tinyPrinter, &engine, tinyDocument.get(), 0, QPageLayout::Portrait,
+                     1, QStringLiteral("tiny-print-page"));
+    auto *percent = tiny.findChild<QSpinBox *>(QStringLiteral("printScalePercent"));
+    QVERIFY(percent);
+    QVERIFY(percent->value() > 1000);
+    inspect(tiny, QStringLiteral("Print large automatic percentage"));
+
     QMessageBox warning(QMessageBox::Warning, MainWindow::tr("Print"),
         MainWindow::tr("Could not finish the print job.") + QStringLiteral("\n\n")
             + MainWindow::tr("Pages sent to the printer may already have printed."),

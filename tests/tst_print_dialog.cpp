@@ -134,6 +134,7 @@ class TstPrintDialog : public QObject
 private slots:
     void initTestCase();
     void defaultsAndLiveSettings();
+    void automaticScaleFollowsPreviewGeometry();
     void printerChangesSelectDefaultPaper();
     void printerPaperAliasesReuseEntries();
     void nativePaperCapabilities_data();
@@ -233,6 +234,9 @@ void TstPrintDialog::defaultsAndLiveSettings()
     const QRect paper = matchingBounds(preview->grab().toImage(), true);
     QVERIFY(!paper.isEmpty());
     const double fit = std::min(printable.width() / 100, printable.height() / 160);
+    QVERIFY(fit * 100 > 400);
+    QVERIFY(!percent->isEnabled());
+    QCOMPARE(percent->value(), qRound(fit * 100));
     const auto centred = [&printable](double scale) {
         return printable.center() - QPointF(50, 80) * scale;
     };
@@ -240,6 +244,8 @@ void TstPrintDialog::defaultsAndLiveSettings()
     QTRY_VERIFY2(redPlacedAt(preview, expectedRed(paper, layout, centred(fit), fit), &found),
                  qPrintable(found));
     scale->setCurrentIndex(1);
+    QVERIFY(!percent->isEnabled());
+    QTRY_COMPARE(percent->value(), 100);
     QTRY_VERIFY2(redPlacedAt(preview, expectedRed(paper, layout, centred(1), 1), &found),
                  qPrintable(found));
     // Top left moves both edges and keeps the size.
@@ -247,10 +253,117 @@ void TstPrintDialog::defaultsAndLiveSettings()
     QTRY_VERIFY2(redPlacedAt(preview, expectedRed(paper, layout, printable.topLeft(), 1), &found),
                  qPrintable(found));
     scale->setCurrentIndex(2);
+    QVERIFY(percent->isEnabled());
+    QCOMPARE(percent->minimum(), 10);
+    QCOMPARE(percent->maximum(), 400);
+    QCOMPARE(percent->value(), 100);
     percent->setValue(50);
     QTRY_VERIFY2(
         redPlacedAt(preview, expectedRed(paper, layout, printable.topLeft(), 0.5), &found),
         qPrintable(found));
+    QCOMPARE(dialog.printSettings().scalePercent, 50);
+
+    scale->setCurrentIndex(0);
+    QVERIFY(!percent->isEnabled());
+    QTRY_COMPARE(percent->value(), qRound(fit * 100));
+    QCOMPARE(dialog.printSettings().scalePercent, 50);
+    scale->setCurrentIndex(1);
+    QTRY_COMPARE(percent->value(), 100);
+    scale->setCurrentIndex(2);
+    QVERIFY(percent->isEnabled());
+    QCOMPARE(percent->minimum(), 10);
+    QCOMPARE(percent->maximum(), 400);
+    QCOMPARE(percent->value(), 50);
+    QTRY_VERIFY2(
+        redPlacedAt(preview, expectedRed(paper, layout, printable.topLeft(), 0.5), &found),
+        qPrintable(found));
+}
+
+// Automatic percentages describe the selected page on paper, independent of widget size.
+void TstPrintDialog::automaticScaleFollowsPreviewGeometry()
+{
+    const QList<QSizeF> pageSizes{QSizeF(200, 400), QSizeF(12000, 6000)};
+    const QString path = files_.filePath(QStringLiteral("mixed-page-sizes.pdf"));
+    {
+        QPdfWriter writer(path);
+        writer.setResolution(72);
+        writer.setPageSize(QPageSize(pageSizes.first(), QPageSize::Point));
+        writer.setPageMargins(QMarginsF());
+        QPainter painter(&writer);
+        QVERIFY(painter.isActive());
+        painter.fillRect(QRectF(QPointF(), pageSizes.first()), Qt::red);
+        writer.setPageSize(QPageSize(pageSizes.last(), QPageSize::Point));
+        QVERIFY(writer.newPage());
+        painter.fillRect(QRectF(QPointF(), pageSizes.last()), Qt::blue);
+        QVERIFY(painter.end());
+    }
+    RenderEngine engine;
+    auto document = engine.openDocument(path);
+    QVERIFY(document);
+    QCOMPARE(document->pageCount(), 2);
+    QCOMPARE(document->pageSize(0), pageSizes.first());
+    QCOMPARE(document->pageSize(1), pageSizes.last());
+    QPrinter printer;
+    configurePrinter(printer);
+    PrintDialog dialog(&printer, &engine, document.get(), 0, QPageLayout::Portrait, 1, "mixed");
+    dialog.show();
+    auto *percent = dialog.findChild<QSpinBox *>("printScalePercent");
+    auto *next = dialog.findChild<QPushButton *>("printNextPage");
+    auto *previous = dialog.findChild<QPushButton *>("printPreviousPage");
+    auto *landscape = dialog.findChild<QRadioButton *>("printLandscape");
+    auto *paper = dialog.findChild<QComboBox *>("printPaperSize");
+    auto *customPages = dialog.findChild<QRadioButton *>("printCustomPages");
+    auto *pages = dialog.findChild<QLineEdit *>("printPages");
+    auto *confirm = dialog.findChild<QPushButton *>("printConfirm");
+    QVERIFY(percent && next && previous && landscape && paper && customPages && pages && confirm);
+    const auto fitPercent = [](const QPageLayout &layout, const QSizeF &page) {
+        const QRectF printable = layout.paintRect(QPageLayout::Point);
+        return qRound(100 * std::min(printable.width() / page.width(),
+                                    printable.height() / page.height()));
+    };
+    QVERIFY(!percent->isEnabled());
+    QTRY_COMPARE(percent->value(), fitPercent(printer.pageLayout(), pageSizes.first()));
+    next->click();
+    QTRY_COMPARE(percent->value(), fitPercent(printer.pageLayout(), pageSizes.last()));
+    QVERIFY(percent->value() > 0 && percent->value() < 10);
+    previous->click();
+    QTRY_COMPARE(percent->value(), fitPercent(printer.pageLayout(), pageSizes.first()));
+
+    landscape->setChecked(true);
+    QTRY_COMPARE(printer.pageLayout().orientation(), QPageLayout::Landscape);
+    QTRY_COMPARE(percent->value(), fitPercent(printer.pageLayout(), pageSizes.first()));
+    int a3 = -1;
+    for (int i = 0; i < paper->count(); ++i) {
+        if (paper->itemData(i).value<QPageSize>().id() == QPageSize::A3)
+            a3 = i;
+    }
+    QVERIFY(a3 >= 0);
+    paper->setCurrentIndex(a3);
+    QTRY_COMPARE(printer.pageLayout().pageSize().id(), QPageSize::A3);
+    QTRY_COMPARE(percent->value(), fitPercent(printer.pageLayout(), pageSizes.first()));
+    const int beforeResize = percent->value();
+    dialog.resize(dialog.width() + 120, dialog.height() + 80);
+    QCoreApplication::processEvents();
+    QCOMPARE(percent->value(), beforeResize);
+
+    customPages->setChecked(true);
+    pages->setText(QStringLiteral("2,1"));
+    QTRY_VERIFY(confirm->isEnabled());
+    QCOMPARE(percent->value(), fitPercent(printer.pageLayout(), pageSizes.last()));
+    next->click();
+    QTRY_COMPARE(percent->value(), fitPercent(printer.pageLayout(), pageSizes.first()));
+
+    QPrinter rotatedPrinter;
+    configurePrinter(rotatedPrinter);
+    PrintDialog rotated(&rotatedPrinter, &engine, document.get(), 90,
+                        QPageLayout::Portrait, 1, "rotated");
+    rotated.show();
+    auto *rotatedPercent = rotated.findChild<QSpinBox *>("printScalePercent");
+    QVERIFY(rotatedPercent);
+    QTRY_COMPARE(rotatedPercent->value(),
+                 fitPercent(rotatedPrinter.pageLayout(), pageSizes.first().transposed()));
+    QVERIFY(rotatedPercent->value()
+            != fitPercent(rotatedPrinter.pageLayout(), pageSizes.first()));
 }
 
 void TstPrintDialog::printerChangesSelectDefaultPaper()
@@ -746,12 +859,29 @@ void TstPrintDialog::previewReportsAnUnrenderablePage()
     dialog.show();
     auto *preview = dialog.findChild<PrintPreviewWidget *>();
     auto *scale = dialog.findChild<QComboBox *>("printScale");
-    QVERIFY(preview && scale);
+    auto *percent = dialog.findChild<QSpinBox *>("printScalePercent");
+    QVERIFY(preview && scale && percent);
     QTRY_VERIFY(preview->isReady());
     QVERIFY(centreColour(preview).red() > 180);
+    const QRectF printable = printer.pageLayout().paintRect(QPageLayout::Point);
+    const double fitPercent = 100 * std::min(printable.width(), printable.height()) / 14400000;
+    QVERIFY(fitPercent > 0 && fitPercent < 0.5);
+    QVERIFY(!percent->isEnabled());
+    QCOMPARE(percent->value(), 0);
+    QVERIFY(!percent->specialValueText().isEmpty());
+    QString number = percent->text();
+    QVERIFY(number.endsWith(percent->suffix()));
+    number.chop(percent->suffix().size());
+    bool parsed = false;
+    const double displayed = percent->locale().toDouble(number, &parsed);
+    QVERIFY(parsed);
+    QVERIFY(displayed > 0);
+    QVERIFY(std::abs(displayed - fitPercent) / fitPercent < 0.01);
 
     QSignalSpy answered(preview, &PrintPreviewWidget::previewReady);
     scale->setCurrentIndex(1); // Actual size
+    QCOMPARE(percent->value(), 100);
+    QVERIFY(percent->specialValueText().isEmpty());
     QTRY_VERIFY(!answered.isEmpty());
     QVERIFY(!preview->isReady());
     // The message replaces the sheet, so no paper is drawn.

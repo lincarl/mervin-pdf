@@ -283,6 +283,12 @@ QString Theme::buildStyleSheet(const QPalette &pal, const QString &accentHex, co
                        " selection-background-color:%1; selection-color:%2; }")
             .arg(css(t.accent), css(t.onAccent)));
 
+    // The embedded editor also needs disabled ink because the shared field rule
+    // gives every QLineEdit an explicit text colour.
+    add(QStringLiteral("QSpinBox:disabled, QDoubleSpinBox:disabled,"
+                       " QSpinBox:disabled QLineEdit, QDoubleSpinBox:disabled QLineEdit { color:%1; }")
+            .arg(css(t.inkDisabled)));
+
     // Combo boxes: a closed combo has to advertise that it opens. Qt's native
     // arrow is suppressed the moment a stylesheet styles ::drop-down, so the app
     // showed bare wells with no affordance at all; draw the house chevron (the

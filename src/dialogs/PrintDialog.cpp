@@ -33,6 +33,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <limits>
+
 using mervin::printing::Alignment;
 using mervin::printing::ColourMode;
 using mervin::printing::ScaleMode;
@@ -284,8 +286,22 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     scaleRow->addWidget(scalePercentSpin_);
     optionsForm->addRow(tr("Scale:"), scaleRow);
     connect(scaleCombo_, &QComboBox::currentIndexChanged, this, [this] {
-        scalePercentSpin_->setEnabled(scaleCombo_->currentData().toInt()
-                                      == static_cast<int>(ScaleMode::Custom));
+        const QSignalBlocker blocker(scalePercentSpin_);
+        const auto mode = static_cast<ScaleMode>(scaleCombo_->currentData().toInt());
+        scalePercentSpin_->setEnabled(mode == ScaleMode::Custom);
+        scalePercentSpin_->setSpecialValueText(QString());
+        if (mode == ScaleMode::Custom) {
+            scalePercentSpin_->setRange(10, 400);
+            scalePercentSpin_->setValue(customScalePercent_);
+        } else if (mode == ScaleMode::ActualSize) {
+            scalePercentSpin_->setValue(100);
+        } else {
+            scalePercentSpin_->clear();
+        }
+    });
+    connect(scalePercentSpin_, &QSpinBox::valueChanged, this, [this](int value) {
+        if (scaleCombo_->currentData().toInt() == static_cast<int>(ScaleMode::Custom))
+            customScalePercent_ = value;
     });
 
     alignmentCombo_ = new QComboBox(optionsBox);
@@ -464,7 +480,7 @@ mervin::printing::Settings PrintDialog::printSettings() const
 {
     mervin::printing::Settings settings;
     settings.scaleMode = static_cast<ScaleMode>(scaleCombo_->currentData().toInt());
-    settings.scalePercent = scalePercentSpin_->value();
+    settings.scalePercent = customScalePercent_;
     settings.alignment = static_cast<Alignment>(alignmentCombo_->currentData().toInt());
     settings.colourMode = static_cast<ColourMode>(colorCombo_->currentData().toInt());
     settings.qualityDpi = qualityCombo_->currentData().toInt();
@@ -504,6 +520,8 @@ void PrintDialog::schedulePreview()
     if (pages_.isEmpty()) {
         previewTimer_->stop();
         preview_->clear(error);
+        if (printSettings().scaleMode == ScaleMode::FitToPage)
+            scalePercentSpin_->clear();
         return;
     }
     previewTimer_->start();
@@ -655,6 +673,8 @@ bool PrintDialog::refreshPreview()
     updateNavigation();
     if (pages_.isEmpty() || !applyPrinterSettings(&error)) {
         preview_->clear(error);
+        if (printSettings().scaleMode == ScaleMode::FitToPage)
+            scalePercentSpin_->clear();
         printButton_->setEnabled(false);
         return false;
     }
@@ -679,6 +699,21 @@ bool PrintDialog::refreshPreview()
     if (printer_->resolution() > 0)
         previewSettings.qualityDpi = qMin(previewSettings.qualityDpi, printer_->resolution());
     preview_->setPage(pages_.at(previewIndex_) - 1, pageLayout, previewSettings);
+    if (previewSettings.scaleMode != ScaleMode::Custom) {
+        const QSignalBlocker blocker(scalePercentSpin_);
+        const double percent = preview_->scale() * 100;
+        if (percent > 0) {
+            // Automatic placement is not limited by the custom input's 10–400% range.
+            const int rounded = qRound(qMin(percent, double(std::numeric_limits<int>::max())));
+            scalePercentSpin_->setRange(0, qMax(400, rounded));
+            // A nonzero fit must not appear as 0%, even for unusually large pages.
+            scalePercentSpin_->setSpecialValueText(
+                rounded == 0 ? locale.toString(percent, 'g', 3) + QStringLiteral(" %") : QString());
+            scalePercentSpin_->setValue(rounded);
+        } else {
+            scalePercentSpin_->clear();
+        }
+    }
     printButton_->setEnabled(true);
     return true;
 }

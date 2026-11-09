@@ -190,6 +190,8 @@ private slots:
     void noStrayLiteralsInSheet();
     void typedSpinBoxRuleIsEmitted();
     void spinBoxEditorsShowTheirValues();
+    void disabledSpinBoxesUseDisabledInk_data();
+    void disabledSpinBoxesUseDisabledInk();
     void spinBoxEditorsRecoverFromQt612Geometry();
     void comboArrowIsDeclared();
     void settingsMenuSelectionDiffersFromHover();
@@ -784,6 +786,60 @@ void TstTheme::spinBoxEditorsShowTheirValues()
     count->setFocus();
     QTest::keyClick(count, Qt::Key_Up);
     QCOMPARE(count->value(), 501);
+}
+
+void TstTheme::disabledSpinBoxesUseDisabledInk_data()
+{
+    QTest::addColumn<QPalette>("palette");
+    QTest::newRow("light") << theme::lightPalette(QColor());
+    QTest::newRow("dark") << theme::darkPalette(QColor());
+}
+
+// Check styled widgets because the embedded editor can override its disabled parent.
+void TstTheme::disabledSpinBoxesUseDisabledInk()
+{
+    QFETCH(QPalette, palette);
+    const QPalette savedPalette = qApp->palette();
+    const QString savedSheet = qApp->styleSheet();
+    const auto restore = qScopeGuard([&] {
+        qApp->setStyleSheet(savedSheet);
+        qApp->setPalette(savedPalette);
+    });
+    qApp->setPalette(palette);
+    qApp->setStyleSheet(Theme::buildStyleSheet(palette, QStringLiteral("system")));
+    const theme::Chrome colours = theme::chrome(palette);
+    QVERIFY(colours.inkPrimary != colours.inkDisabled);
+
+    QWidget host;
+    auto *form = new QFormLayout(&host);
+    auto *integer = new QSpinBox(&host);
+    integer->setRange(0, 1000);
+    integer->setValue(125);
+    Theme::useSteppedSpinBox(integer);
+    auto *decimal = new QDoubleSpinBox(&host);
+    decimal->setValue(12.5);
+    Theme::useTypedSpinBox(decimal);
+    form->addRow(QStringLiteral("Integer"), integer);
+    form->addRow(QStringLiteral("Decimal"), decimal);
+    host.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&host));
+
+    for (QAbstractSpinBox *box : {static_cast<QAbstractSpinBox *>(integer),
+                                  static_cast<QAbstractSpinBox *>(decimal)}) {
+        QLineEdit *editor = editorOf(box);
+        QVERIFY(editor);
+        QCOMPARE(box->palette().color(QPalette::Active, QPalette::Text), colours.inkPrimary);
+        QCOMPARE(editor->palette().color(QPalette::Active, QPalette::Text), colours.inkPrimary);
+        const QString value = editor->text();
+        box->setEnabled(false);
+        QVERIFY(!editor->isEnabled());
+        QTRY_COMPARE(box->palette().color(QPalette::Disabled, QPalette::Text), colours.inkDisabled);
+        QTRY_COMPARE(editor->palette().color(QPalette::Disabled, QPalette::Text), colours.inkDisabled);
+        QCOMPARE(editor->text(), value);
+        box->setEnabled(true);
+        QTRY_COMPARE(box->palette().color(QPalette::Active, QPalette::Text), colours.inkPrimary);
+        QTRY_COMPARE(editor->palette().color(QPalette::Active, QPalette::Text), colours.inkPrimary);
+    }
 }
 
 // The same check on any Qt version: force the geometry Qt 6.12.0 computes (a 1px
