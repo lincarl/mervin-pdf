@@ -14,6 +14,11 @@ class TstPrintLayout : public QObject
 private slots:
     void pagePlacement_data();
     void pagePlacement();
+    void sheetCellsTilePrintableArea_data();
+    void sheetCellsTilePrintableArea();
+    void repeatedCellsUseIndependentPagePlacement();
+    void repeatedPageOrientation_data();
+    void repeatedPageOrientation();
     void oversizedPageKeepsPhysicalSize();
     void rasterFollowsPrintedSize_data();
     void rasterFollowsPrintedSize();
@@ -82,6 +87,111 @@ void TstPrintLayout::pagePlacement()
 
     // A paper origin with asymmetric printable margins must be counted once.
     QCOMPARE(destinationRect(pageSize, QRectF(20, 30, 240, 180), settings), expected);
+}
+
+void TstPrintLayout::sheetCellsTilePrintableArea_data()
+{
+    QTest::addColumn<int>("rows");
+    QTest::addColumn<int>("columns");
+    QTest::newRow("one cell") << 1 << 1;
+    QTest::newRow("initial repeat grid") << 2 << 4;
+    QTest::newRow("independent counts") << 3 << 2;
+    QTest::newRow("maximum repeat grid") << 8 << 8;
+}
+
+// Checks fractional cells cover asymmetric printable margins without added spacing.
+void TstPrintLayout::sheetCellsTilePrintableArea()
+{
+    QFETCH(int, rows);
+    QFETCH(int, columns);
+    const QRectF printable(19.5, 31.25, 557.75, 777.125);
+    Settings settings;
+    QCOMPARE(sheetCells(printable, settings), QList<QRectF>{printable});
+    settings.layoutMode = PageLayoutMode::Repeat;
+    settings.rows = rows;
+    settings.columns = columns;
+    const auto cells = sheetCells(printable, settings);
+    QCOMPARE(cells.size(), rows * columns);
+    QRectF coverage;
+    for (int row = 0; row < rows; ++row) {
+        for (int column = 0; column < columns; ++column) {
+            const QRectF cell = cells.at(row * columns + column);
+            QCOMPARE(cell.width(), printable.width() / columns);
+            QCOMPARE(cell.height(), printable.height() / rows);
+            QVERIFY(qAbs(cell.left() - (column ? cells.at(row * columns + column - 1).right()
+                                               : printable.left())) < 1e-9);
+            QVERIFY(qAbs(cell.top() - (row ? cells.at((row - 1) * columns + column).bottom()
+                                          : printable.top())) < 1e-9);
+            coverage |= cell;
+        }
+    }
+    QVERIFY(qAbs(coverage.left() - printable.left()) < 1e-9);
+    QVERIFY(qAbs(coverage.top() - printable.top()) < 1e-9);
+    QVERIFY(qAbs(coverage.right() - printable.right()) < 1e-9);
+    QVERIFY(qAbs(coverage.bottom() - printable.bottom()) < 1e-9);
+}
+
+// Fit uses the cell's dimensions. Physical sizing keeps only that cell's page crop.
+void TstPrintLayout::repeatedCellsUseIndependentPagePlacement()
+{
+    Settings settings;
+    settings.layoutMode = PageLayoutMode::Repeat;
+    const auto cells = sheetCells(QRectF(20, 30, 240, 180), settings);
+    QCOMPARE(cells.size(), 8);
+    const QSizeF page(100, 160);
+    QCOMPARE(destinationRect(page, cells.first(), settings), QRectF(21.875, 30, 56.25, 90));
+    QCOMPARE(destinationRect(page, cells.last(), settings), QRectF(201.875, 120, 56.25, 90));
+    settings.scaleMode = ScaleMode::Custom;
+    settings.scalePercent = 200;
+    const RasterPlan first = rasterPlan(page, cells.first(), settings, 72);
+    QCOMPARE(first.source, QRect(70, 115, 60, 90));
+    QCOMPARE(first.scale, 2.0);
+    for (const QRectF &cell : cells) {
+        const RasterPlan plan = rasterPlan(page, cell, settings, 72);
+        QCOMPARE(plan.source, first.source);
+        QCOMPARE(plan.scale, first.scale);
+        QCOMPARE(plan.destination.size(), QSizeF(200, 320));
+        QCOMPARE(rasterTarget(plan.destination, page, plan.scale, plan.source), cell);
+    }
+}
+
+void TstPrintLayout::repeatedPageOrientation_data()
+{
+    QTest::addColumn<PageLayoutMode>("layout");
+    QTest::addColumn<PageOrientation>("orientation");
+    QTest::addColumn<QSizeF>("page");
+    QTest::addColumn<int>("viewerRotation");
+    QTest::addColumn<int>("expected");
+    QTest::newRow("single ignores repeat orientation") << PageLayoutMode::Single
+        << PageOrientation::Landscape << QSizeF(100, 160) << 0 << 0;
+    QTest::newRow("as shown keeps rotation") << PageLayoutMode::Repeat
+        << PageOrientation::AsShown << QSizeF(100, 160) << 270 << 270;
+    QTest::newRow("landscape turns portrait") << PageLayoutMode::Repeat
+        << PageOrientation::Landscape << QSizeF(100, 160) << 0 << 90;
+    QTest::newRow("landscape already shown") << PageLayoutMode::Repeat
+        << PageOrientation::Landscape << QSizeF(100, 160) << 270 << 270;
+    QTest::newRow("portrait turns viewer rotation") << PageLayoutMode::Repeat
+        << PageOrientation::Portrait << QSizeF(100, 160) << 90 << 180;
+    QTest::newRow("portrait wraps rotation") << PageLayoutMode::Repeat
+        << PageOrientation::Portrait << QSizeF(100, 160) << 270 << 0;
+    QTest::newRow("portrait turns landscape source") << PageLayoutMode::Repeat
+        << PageOrientation::Portrait << QSizeF(160, 100) << 0 << 90;
+    QTest::newRow("square stays unchanged") << PageLayoutMode::Repeat
+        << PageOrientation::Landscape << QSizeF(100, 100) << 90 << 90;
+}
+
+// Forced orientation depends on the source page and viewer turn, never the paper.
+void TstPrintLayout::repeatedPageOrientation()
+{
+    QFETCH(PageLayoutMode, layout);
+    QFETCH(PageOrientation, orientation);
+    QFETCH(QSizeF, page);
+    QFETCH(int, viewerRotation);
+    QFETCH(int, expected);
+    Settings settings;
+    settings.layoutMode = layout;
+    settings.pageOrientation = orientation;
+    QCOMPARE(pageRotation(page, viewerRotation, settings), expected);
 }
 
 void TstPrintLayout::oversizedPageKeepsPhysicalSize()
@@ -249,6 +359,18 @@ void TstPrintLayout::invalidDimensionsAreEmpty()
     QVERIFY(destinationRect(QSizeF(100, 100), printable, settings).isEmpty());
     settings.scalePercent = -50;
     QVERIFY(destinationRect(QSizeF(100, 100), printable, settings).isEmpty());
+    QVERIFY(sheetCells({}, settings).isEmpty());
+    QVERIFY(sheetCells(QRectF(0, 0, std::numeric_limits<qreal>::infinity(), 100),
+                       settings).isEmpty());
+    settings.layoutMode = PageLayoutMode::Repeat;
+    for (int invalid : {-1, 0, 9, std::numeric_limits<int>::max()}) {
+        settings.rows = invalid;
+        settings.columns = 4;
+        QVERIFY(sheetCells(printable, settings).isEmpty());
+        settings.rows = 2;
+        settings.columns = invalid;
+        QVERIFY(sheetCells(printable, settings).isEmpty());
+    }
 }
 
 void TstPrintLayout::colourAndGrayscaleRemainDistinct()

@@ -201,6 +201,12 @@ public:
     void saveViewState(const QString &canonicalPath, const ViewState &state);
     void saveViewStates(const QList<QPair<QString, ViewState>> &states);
 
+    // Returns the file's choices last accepted with Print, if it has a saved record.
+    std::optional<printing::Preferences> printPreferences(const QString &canonicalPath) const;
+    // Persists accepted choices without changing recent order or recreating removed entries.
+    void savePrintPreferences(const QString &canonicalPath,
+                              const printing::Preferences &preferences);
+
     // Remove a file from the recent history (panel "Remove from history").
     void removeRecent(const QString &canonicalPath);
 

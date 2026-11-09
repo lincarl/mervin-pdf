@@ -16,6 +16,8 @@ namespace mervin::printing {
 enum class ScaleMode { FitToPage, ActualSize, Custom };
 enum class Alignment { Centered, CenteredVertically, CenteredHorizontally, TopLeft };
 enum class ColourMode { Colour, Grayscale, BlackAndWhite };
+enum class PageLayoutMode { Single, Repeat };
+enum class PageOrientation { AsShown, Portrait, Landscape };
 
 struct Settings
 {
@@ -24,7 +26,21 @@ struct Settings
     Alignment alignment = Alignment::Centered;
     ColourMode colourMode = ColourMode::Colour;
     int qualityDpi = 300;
+    PageLayoutMode layoutMode = PageLayoutMode::Single;
+    int rows = 2;
+    int columns = 4;
+    PageOrientation pageOrientation = PageOrientation::AsShown;
+
+    bool operator==(const Settings &) const = default;
 };
+
+// Equal row-major cells covering the printable area. Single uses the whole area.
+// Repeat accepts 1 through 8 rows and columns. Invalid geometry or counts are empty.
+QList<QRectF> sheetCells(const QRectF &printableRect, const Settings &settings);
+
+// Keeps the viewer rotation unless Repeat requests a different page orientation.
+// A mismatch adds one clockwise quarter turn. Square pages keep their rotation.
+int pageRotation(const QSizeF &unrotatedPagePoints, int viewerRotation, const Settings &settings);
 
 // pagePoints includes the PDF's existing margins. Page dimensions, printableRect,
 // and painter coordinates must use the same units, normally physical points.

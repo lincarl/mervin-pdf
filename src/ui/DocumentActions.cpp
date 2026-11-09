@@ -147,6 +147,7 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
     const int resolution = printer.resolution();
     const int renderDpi = qMin(resolution, qMax(72, settings.qualityDpi));
     const QRectF printable = printer.pageLayout().paintRect(QPageLayout::Point);
+    const auto cells = printing::sheetCells(printable, settings);
     // Black and white thresholds colours. Antialiasing would turn strokes thinner
     // than a raster pixel into light grays that the threshold drops.
     const bool antialias = settings.colourMode != printing::ColourMode::BlackAndWhite;
@@ -177,13 +178,15 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
         if (mervin::job::stopped())
             return;
         QSizeF pagePoints;
+        int effectiveRotation = rotation;
         printing::RasterPlan plan;
         QList<QRect> bands;
         withDocument([&](const Document &document) {
             pagePoints = document.pageSize(page - 1);
-            if (rotation == 90 || rotation == 270)
+            effectiveRotation = printing::pageRotation(pagePoints, rotation, settings);
+            if (effectiveRotation == 90 || effectiveRotation == 270)
                 pagePoints.transpose();
-            plan = printing::rasterPlan(pagePoints, printable, settings, renderDpi);
+            plan = printing::rasterPlan(pagePoints, cells.value(0), settings, renderDpi);
             bands = printing::rasterBands(plan.source, kPrintBandPixels);
         });
         if (bands.isEmpty()) {
@@ -224,7 +227,8 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
                 if (!printing::testing::checkpoint(
                         {printing::testing::Phase::RenderBand, page, int(index)}))
                     return;
-                band = document.renderPage(page - 1, plan.scale, rotation, clip(index), antialias);
+                band = document.renderPage(page - 1, plan.scale, effectiveRotation,
+                                           clip(index), antialias);
             });
             if (mervin::job::stopped())
                 return;
@@ -292,7 +296,13 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
             painter.scale(resolution / 72.0, resolution / 72.0);
             if (!printer.fullPage())
                 painter.translate(-printable.topLeft());
-            printing::drawImage(painter, prepared, target, printable, settings.colourMode);
+            // Render and prepare each band once, then reuse it in every equal cell.
+            // Per-cell clips keep actual size and custom scale inside their slots.
+            for (const QRectF &cell : cells) {
+                printing::drawImage(painter, prepared,
+                                    target.translated(cell.topLeft() - cells.first().topLeft()),
+                                    cell, settings.colourMode);
+            }
             painter.restore();
             if (index == 0) {
                 ++result.submittedPages;
@@ -2401,20 +2411,26 @@ void MainWindow::showPrintDialog(TabPage *tab, const std::shared_ptr<PrintReques
     const QPointer<PrintDialog> dialog(new PrintDialog(
         printer.get(), engine_, document, request->rotation, request->orientation,
         request->currentPage + 1, request->baseName, this));
+    if (wm_) {
+        if (const auto saved = wm_->printPreferences(request->sourceKey))
+            dialog->restorePreferences(*saved);
+    }
     const bool accepted = dialog->exec() == QDialog::Accepted;
     QList<int> pages;
     mervin::printing::Settings settings;
+    mervin::printing::Preferences preferences;
     const bool system = dialog && dialog->useSystemDialog();
     if (dialog) {
         pages = dialog->selectedPages();
         settings = dialog->printSettings();
+        preferences = dialog->preferences();
     }
     delete dialog.data();
     if (!accepted || !owner || !page || !page->isUsable())
         return;
     if (system) {
-        printer->setFromTo(1, request->pageCount);
         const QPointer<QPrintDialog> native(new QPrintDialog(printer.get(), this));
+        native->setMinMax(1, request->pageCount);
         native->setWindowTitle(tr("Print"));
         native->setOption(QAbstractPrintDialog::PrintPageRange, true);
         native->setOption(QAbstractPrintDialog::PrintCurrentPage, true);
@@ -2422,7 +2438,14 @@ void MainWindow::showPrintDialog(TabPage *tab, const std::shared_ptr<PrintReques
         delete native.data();
         if (!accepted || !owner || !page || !page->isUsable())
             return;
+        const auto pageLayoutSettings = settings;
         settings = {};
+        // The system dialog selects the printer and paper. Repetition and page
+        // orientation remain application-rendered choices that it cannot replace.
+        settings.layoutMode = pageLayoutSettings.layoutMode;
+        settings.rows = pageLayoutSettings.rows;
+        settings.columns = pageLayoutSettings.columns;
+        settings.pageOrientation = pageLayoutSettings.pageOrientation;
         settings.colourMode = printer->colorMode() == QPrinter::GrayScale
             ? mervin::printing::ColourMode::Grayscale : mervin::printing::ColourMode::Colour;
         pages.clear();
@@ -2442,9 +2465,34 @@ void MainWindow::showPrintDialog(TabPage *tab, const std::shared_ptr<PrintReques
                 pages.append(p);
             break;
         }
+        // The native dialog can change the destination, paper and page selection.
+        // Remember only accepted Print choices, including the settings it used.
+        preferences.printerName = printer->printerName();
+        preferences.printToFile = printer->outputFormat() == QPrinter::PdfFormat
+            || !printer->outputFileName().isEmpty();
+        preferences.paperKey = printer->pageLayout().pageSize().key();
+        preferences.paperPoints = printer->pageLayout().pageSize().size(QPageSize::Point);
+        preferences.orientation = printer->pageLayout().orientation();
+        preferences.copies = printer->copyCount();
+        using mervin::printing::DuplexMode;
+        switch (printer->duplex()) {
+        case QPrinter::DuplexNone: preferences.duplex = DuplexMode::None; break;
+        case QPrinter::DuplexAuto: preferences.duplex = DuplexMode::Auto; break;
+        case QPrinter::DuplexLongSide: preferences.duplex = DuplexMode::LongSide; break;
+        case QPrinter::DuplexShortSide: preferences.duplex = DuplexMode::ShortSide; break;
+        }
+        preferences.settings = settings;
+        preferences.pageSelection = printer->printRange() == QPrinter::PageRange
+            ? mervin::printing::PageSelection::Range
+            : printer->printRange() == QPrinter::CurrentPage
+                ? mervin::printing::PageSelection::Current : mervin::printing::PageSelection::All;
+        preferences.fromPage = printer->fromPage();
+        preferences.toPage = printer->toPage();
     }
     if (pages.isEmpty())
         return;
+    if (wm_)
+        wm_->savePrintPreferences(request->sourceKey, preferences);
     // Transfers the configured printer to the worker that owns output and teardown.
     struct Work {
         std::unique_ptr<QPrinter> printer;

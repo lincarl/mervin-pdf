@@ -14,6 +14,7 @@
 #include <QFormLayout>
 #include <QFrame>
 #include <QGroupBox>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
@@ -33,8 +34,13 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <limits>
+#include <vector>
+
 using mervin::printing::Alignment;
 using mervin::printing::ColourMode;
+using mervin::printing::PageLayoutMode;
+using mervin::printing::PageOrientation;
 using mervin::printing::ScaleMode;
 
 namespace {
@@ -45,6 +51,19 @@ constexpr QPageSize::PageSizeId kCommonSizes[] = {
     QPageSize::A3, QPageSize::A4, QPageSize::A5, QPageSize::B4, QPageSize::B5,
     QPageSize::Letter, QPageSize::Legal, QPageSize::Tabloid, QPageSize::Executive,
 };
+
+// Converts saved semantic duplex choices without losing the native binding edge.
+QPrinter::DuplexMode nativeDuplex(mervin::printing::DuplexMode mode)
+{
+    using mervin::printing::DuplexMode;
+    switch (mode) {
+    case DuplexMode::None: return QPrinter::DuplexNone;
+    case DuplexMode::Auto: return QPrinter::DuplexAuto;
+    case DuplexMode::LongSide: return QPrinter::DuplexLongSide;
+    case DuplexMode::ShortSide: return QPrinter::DuplexShortSide;
+    }
+    return QPrinter::DuplexNone;
+}
 } // namespace
 
 QPageSize PrintDialog::PaperCapabilities::acceptedPaper(const QPageSize &paper) const
@@ -87,17 +106,20 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     //: Dialog title.
     setWindowTitle(tr("Print"));
     setObjectName(QStringLiteral("printDialog"));
-    const QPageLayout initialLayout = printer_->pageLayout();
-    const int initialCopies = printer_->copyCount();
-    const QPrinter::ColorMode initialColour = printer_->colorMode();
-    const QPrinter::DuplexMode initialDuplex = printer_->duplex();
+    nativeSettings_ = {printer_->pageLayout(), printer_->copyCount(), printer_->colorMode(),
+                       printer_->duplex(), QPrinter::AllPages, 1, qMax(1, pageCount_)};
+    nativeSettings_.layout.setOrientation(initialOrientation);
+    if (printer_->duplex() == QPrinter::DuplexAuto)
+        duplexMode_ = mervin::printing::DuplexMode::Auto;
+    else if (printer_->duplex() == QPrinter::DuplexShortSide)
+        duplexMode_ = mervin::printing::DuplexMode::ShortSide;
 
     auto *layout = new QVBoxLayout(this);
     auto *body = new QHBoxLayout;
     layout->addLayout(body, 1);
 
     // Keep settings reachable on short screens while the preview fits its available area.
-    auto *settingsScroll = new QScrollArea(this);
+    auto *settingsScroll = settingsScroll_ = new QScrollArea(this);
     settingsScroll->setObjectName(QStringLiteral("printSettingsScroll"));
     settingsScroll->setWidgetResizable(true);
     settingsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -239,12 +261,73 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     });
     settingsLayout->addWidget(pagesBox);
 
+    //: Group for arranging a source PDF page on the physical printed sheet.
+    auto *pageLayoutBox = new QGroupBox(tr("Page layout"), settings);
+    auto *pageLayout = new QVBoxLayout(pageLayoutBox);
+    pageLayoutCombo_ = new QComboBox(pageLayoutBox);
+    pageLayoutCombo_->setObjectName(QStringLiteral("printPageLayout"));
+    pageLayoutCombo_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    //: Print layout option. Each selected PDF page appears once on its own sheet.
+    pageLayoutCombo_->addItem(tr("One per sheet"), static_cast<int>(PageLayoutMode::Single));
+    //: Print layout option. Repeat each selected PDF page in a grid on its own sheet,
+    //: rather than arranging different source pages together.
+    pageLayoutCombo_->addItem(tr("Repeat page"), static_cast<int>(PageLayoutMode::Repeat));
+    pageLayout->addWidget(pageLayoutCombo_);
+    repeatOptions_ = new QWidget(pageLayoutBox);
+    auto *repeatLayout = new QVBoxLayout(repeatOptions_);
+    repeatLayout->setContentsMargins(0, 0, 0, 0);
+    auto *dimensions = new QWidget(repeatOptions_);
+    auto *dimensionLayout = new QGridLayout(dimensions);
+    dimensionLayout->setContentsMargins(0, 0, 0, 0);
+    dimensionLayout->setSizeConstraint(QLayout::SetMinimumSize);
+    rowsSpin_ = new QSpinBox(dimensions);
+    rowsSpin_->setObjectName(QStringLiteral("printRows"));
+    rowsSpin_->setRange(1, 8);
+    rowsSpin_->setValue(2);
+    mervin::Theme::useSteppedSpinBox(rowsSpin_);
+    auto *rowsLabel = new QLabel(tr("Rows"), dimensions);
+    rowsLabel->setBuddy(rowsSpin_);
+    dimensionLayout->addWidget(rowsLabel, 0, 0);
+    dimensionLayout->addWidget(rowsSpin_, 1, 0);
+    dimensionLayout->addWidget(new QLabel(QStringLiteral("×"), dimensions), 1, 1, Qt::AlignCenter);
+    columnsSpin_ = new QSpinBox(dimensions);
+    columnsSpin_->setObjectName(QStringLiteral("printColumns"));
+    columnsSpin_->setRange(1, 8);
+    columnsSpin_->setValue(4);
+    mervin::Theme::useSteppedSpinBox(columnsSpin_);
+    auto *columnsLabel = new QLabel(tr("Columns"), dimensions);
+    columnsLabel->setBuddy(columnsSpin_);
+    dimensionLayout->addWidget(columnsLabel, 0, 2);
+    dimensionLayout->addWidget(columnsSpin_, 1, 2);
+    dimensionLayout->setColumnStretch(0, 1);
+    dimensionLayout->setColumnStretch(2, 1);
+    repeatLayout->addWidget(dimensions);
+    auto *pageOrientationForm = new QFormLayout;
+    pageOrientationCombo_ = new QComboBox(repeatOptions_);
+    pageOrientationCombo_->setObjectName(QStringLiteral("printPageOrientation"));
+    pageOrientationCombo_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    //: Repeated-page orientation option. Keep the page's current viewer rotation.
+    pageOrientationCombo_->addItem(tr("As shown"), static_cast<int>(PageOrientation::AsShown));
+    pageOrientationCombo_->addItem(tr("Portrait"), static_cast<int>(PageOrientation::Portrait));
+    pageOrientationCombo_->addItem(tr("Landscape"), static_cast<int>(PageOrientation::Landscape));
+    //: Orientation of each repeated source page, independent of the physical paper orientation.
+    pageOrientationForm->addRow(tr("Page orientation:"), pageOrientationCombo_);
+    repeatLayout->addLayout(pageOrientationForm);
+    repeatCountLabel_ = new QLabel(repeatOptions_);
+    repeatCountLabel_->setObjectName(QStringLiteral("printRepeatCount"));
+    repeatCountLabel_->setWordWrap(true);
+    repeatLayout->addWidget(repeatCountLabel_);
+    pageLayout->addWidget(repeatOptions_);
+    settingsLayout->addWidget(pageLayoutBox);
+
     auto *optionsBox = new QGroupBox(tr("Options"), settings);
     auto *optionsForm = new QFormLayout(optionsBox);
     copiesSpin_ = new QSpinBox(optionsBox);
     copiesSpin_->setObjectName(QStringLiteral("printCopies"));
     copiesSpin_->setRange(1, 999);
     copiesSpin_->setValue(qMax(1, printer_->copyCount()));
+    //: Tooltip for the Copies control, distinct from repetitions within one sheet.
+    copiesSpin_->setToolTip(tr("Copies of the complete print job."));
     mervin::Theme::useSteppedSpinBox(copiesSpin_);
     optionsForm->addRow(tr("Copies:"), copiesSpin_);
 
@@ -269,6 +352,7 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     auto *scaleRow = new QHBoxLayout;
     scaleCombo_ = new QComboBox(optionsBox);
     scaleCombo_->setObjectName(QStringLiteral("printScale"));
+    scaleCombo_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     scaleCombo_->addItem(tr("Fit to page"), static_cast<int>(ScaleMode::FitToPage));
     scaleCombo_->addItem(tr("Actual size"), static_cast<int>(ScaleMode::ActualSize));
     //: Scale option: print at the percentage set next to it.
@@ -284,8 +368,22 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     scaleRow->addWidget(scalePercentSpin_);
     optionsForm->addRow(tr("Scale:"), scaleRow);
     connect(scaleCombo_, &QComboBox::currentIndexChanged, this, [this] {
-        scalePercentSpin_->setEnabled(scaleCombo_->currentData().toInt()
-                                      == static_cast<int>(ScaleMode::Custom));
+        const QSignalBlocker blocker(scalePercentSpin_);
+        const auto mode = static_cast<ScaleMode>(scaleCombo_->currentData().toInt());
+        scalePercentSpin_->setEnabled(mode == ScaleMode::Custom);
+        scalePercentSpin_->setSpecialValueText(QString());
+        if (mode == ScaleMode::Custom) {
+            scalePercentSpin_->setRange(10, 400);
+            scalePercentSpin_->setValue(customScalePercent_);
+        } else if (mode == ScaleMode::ActualSize) {
+            scalePercentSpin_->setValue(100);
+        } else {
+            scalePercentSpin_->clear();
+        }
+    });
+    connect(scalePercentSpin_, &QSpinBox::valueChanged, this, [this](int value) {
+        if (scaleCombo_->currentData().toInt() == static_cast<int>(ScaleMode::Custom))
+            customScalePercent_ = value;
     });
 
     alignmentCombo_ = new QComboBox(optionsBox);
@@ -360,10 +458,10 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     paperLabel_->setObjectName(QStringLiteral("printPaperLabel"));
     paperLabel_->setWordWrap(true);
     previewFooter->addWidget(paperLabel_);
-    auto *marginNote = new QLabel(tr("Dashed line shows the printable area"), this);
-    marginNote->setWordWrap(true);
-    marginNote->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    previewFooter->addWidget(marginNote);
+    marginNote_ = new QLabel(this);
+    marginNote_->setWordWrap(true);
+    marginNote_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    previewFooter->addWidget(marginNote_);
     previewColumn->addLayout(previewFooter);
 
     auto *buttons = new QHBoxLayout;
@@ -384,22 +482,24 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     systemButton->setEnabled(!printers.isEmpty());
     systemButton->setAutoDefault(false);
     systemButton->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P));
-    connect(systemButton, &QPushButton::clicked, this,
-            [this, initialLayout, initialOrientation, initialCopies, initialColour, initialDuplex] {
-        // Live preview changes the supplied printer. Restore defaults before native handoff.
+    connect(systemButton, &QPushButton::clicked, this, [this] {
+        // Live preview changes the supplied printer. Restore the saved baseline
+        // before native handoff, or the constructor defaults for an unsaved file.
         printer_->setOutputFileName(QString());
         printer_->setOutputFormat(QPrinter::NativeFormat);
         printer_->setPrinterName(printerCombo_->currentData().toString());
-        printer_->setPageLayout(initialLayout);
+        printer_->setPageLayout(nativeSettings_.layout);
         if (printerSelectionChanged_) {
             const QPageSize defaultSize = selectedPrinterDefaultPageSize();
             if (defaultSize.isValid())
                 printer_->setPageSize(defaultSize);
         }
-        printer_->setPageOrientation(initialOrientation);
-        printer_->setCopyCount(initialCopies);
-        printer_->setColorMode(initialColour);
-        printer_->setDuplex(initialDuplex);
+        printer_->setPageOrientation(nativeSettings_.layout.orientation());
+        printer_->setCopyCount(nativeSettings_.copies);
+        printer_->setColorMode(nativeSettings_.colour);
+        printer_->setDuplex(nativeSettings_.duplex);
+        printer_->setFromTo(nativeSettings_.from, nativeSettings_.to);
+        printer_->setPrintRange(nativeSettings_.range);
         useSystemDialog_ = true;
         QDialog::accept();
     });
@@ -422,10 +522,20 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
         schedulePreview();
     });
     for (QComboBox *combo : {paperSizeCombo_, colorCombo_, qualityCombo_,
-                            scaleCombo_, alignmentCombo_})
+                            scaleCombo_, alignmentCombo_, pageOrientationCombo_})
         connect(combo, &QComboBox::currentIndexChanged, this, &PrintDialog::schedulePreview);
     for (QSpinBox *spin : {copiesSpin_, fromSpin_, toSpin_, scalePercentSpin_})
         connect(spin, &QSpinBox::valueChanged, this, &PrintDialog::schedulePreview);
+    connect(pageLayoutCombo_, &QComboBox::currentIndexChanged, this, [this] {
+        updatePageLayoutControls();
+        schedulePreview();
+    });
+    for (QSpinBox *spin : {rowsSpin_, columnsSpin_}) {
+        connect(spin, &QSpinBox::valueChanged, this, [this] {
+            updatePageLayoutControls();
+            schedulePreview();
+        });
+    }
     for (QRadioButton *radio : {portraitRadio_, landscapeRadio_, allPagesRadio_,
                                currentPageRadio_, rangeRadio_, customRadio_}) {
         connect(radio, &QRadioButton::toggled, this, [this](bool checked) {
@@ -454,6 +564,7 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
 
     const QRect screenArea = screen() ? screen()->availableGeometry() : QRect(0, 0, 1280, 900);
     resize(qMin(1180, screenArea.width() - 60), qMin(800, screenArea.height() - 80));
+    updatePageLayoutControls();
     refreshPaperSizes(currentSize);
     refreshPreview();
     // Wrapped selection captions must not push navigation over the preview.
@@ -464,11 +575,168 @@ mervin::printing::Settings PrintDialog::printSettings() const
 {
     mervin::printing::Settings settings;
     settings.scaleMode = static_cast<ScaleMode>(scaleCombo_->currentData().toInt());
-    settings.scalePercent = scalePercentSpin_->value();
+    settings.scalePercent = customScalePercent_;
     settings.alignment = static_cast<Alignment>(alignmentCombo_->currentData().toInt());
     settings.colourMode = static_cast<ColourMode>(colorCombo_->currentData().toInt());
     settings.qualityDpi = qualityCombo_->currentData().toInt();
+    settings.layoutMode = static_cast<PageLayoutMode>(pageLayoutCombo_->currentData().toInt());
+    settings.rows = rowsSpin_->value();
+    settings.columns = columnsSpin_->value();
+    settings.pageOrientation = static_cast<PageOrientation>(pageOrientationCombo_->currentData().toInt());
     return settings;
+}
+
+mervin::printing::Preferences PrintDialog::preferences() const
+{
+    using mervin::printing::PageSelection;
+    mervin::printing::Preferences saved;
+    saved.printerName = printerCombo_->currentData().toString();
+    saved.printToFile = printToFile_->isChecked();
+    const QPageSize paper = paperSizeCombo_->currentData().value<QPageSize>();
+    saved.paperKey = paper.key();
+    saved.paperPoints = paper.size(QPageSize::Point);
+    saved.orientation = landscapeRadio_->isChecked() ? QPageLayout::Landscape
+                                                     : QPageLayout::Portrait;
+    saved.pageSelection = customRadio_->isChecked() ? PageSelection::Custom
+        : rangeRadio_->isChecked() ? PageSelection::Range
+        : currentPageRadio_->isChecked() ? PageSelection::Current : PageSelection::All;
+    saved.fromPage = fromSpin_->value();
+    saved.toPage = toSpin_->value();
+    saved.customPages = customEdit_->text();
+    saved.copies = copiesSpin_->value();
+    saved.settings = printSettings();
+    saved.duplex = twoSidedCheck_->isChecked() ? duplexMode_
+                                               : mervin::printing::DuplexMode::None;
+    return saved;
+}
+
+void PrintDialog::restorePreferences(const mervin::printing::Preferences &saved)
+{
+    using mervin::printing::PageSelection;
+    // Apply a complete snapshot before refreshing. Intermediate selections must not
+    // reset printer paper, change range endpoints or overwrite the custom scale.
+    const QList<QObject *> controls{
+        printerCombo_, printToFile_, paperSizeCombo_, portraitRadio_, landscapeRadio_,
+        allPagesRadio_, currentPageRadio_, rangeRadio_, customRadio_, fromSpin_, toSpin_,
+        customEdit_, copiesSpin_, colorCombo_, qualityCombo_, scaleCombo_, scalePercentSpin_,
+        alignmentCombo_, twoSidedCheck_, pageLayoutCombo_, rowsSpin_, columnsSpin_,
+        pageOrientationCombo_};
+    std::vector<QSignalBlocker> blockers;
+    blockers.reserve(controls.size());
+    for (QObject *control : controls)
+        blockers.emplace_back(control);
+
+    const int printerIndex = printerCombo_->findData(saved.printerName);
+    if (printerIndex >= 0 && printerIndex != printerCombo_->currentIndex()) {
+        printerSelectionChanged_ = true;
+        printerCombo_->setCurrentIndex(printerIndex);
+    }
+    const bool hasPrinter = !printerCombo_->currentData().toString().isEmpty();
+    printToFile_->setChecked(saved.printToFile || !hasPrinter);
+    printerCombo_->setEnabled(!printToFile_->isChecked());
+    twoSidedCheck_->setEnabled(!printToFile_->isChecked());
+
+    QPageSize paper(saved.paperPoints, QPageSize::Point, QString(), QPageSize::ExactMatch);
+    if (!printToFile_->isChecked()) {
+        const PaperCapabilities &capabilities = selectedPaperCapabilities();
+        for (const QPageSize &reported : capabilities.supported) {
+            if (reported.key() == saved.paperKey && reported.isEquivalentTo(paper)) {
+                paper = reported;
+                break;
+            }
+        }
+        paper = capabilities.acceptedPaper(paper);
+        // A saved printer or stock may no longer exist. Start with an available
+        // sheet rather than leaving a stale choice that makes printing impossible.
+        if (!paper.isValid())
+            paper = capabilities.acceptedPaper(selectedPrinterDefaultPageSize());
+        if (!paper.isValid() && !capabilities.supported.isEmpty())
+            paper = capabilities.supported.first();
+    }
+    if (!paper.isValid())
+        paper = printer_->pageLayout().pageSize();
+    refreshPaperSizes(paper);
+    (saved.orientation == QPageLayout::Landscape ? landscapeRadio_ : portraitRadio_)
+        ->setChecked(true);
+    copiesSpin_->setValue(saved.copies);
+    duplexMode_ = saved.duplex == mervin::printing::DuplexMode::None
+        ? mervin::printing::DuplexMode::LongSide : saved.duplex;
+    twoSidedCheck_->setChecked(saved.duplex != mervin::printing::DuplexMode::None);
+
+    const auto select = [](QComboBox *combo, int value) {
+        const int index = combo->findData(value);
+        if (index >= 0)
+            combo->setCurrentIndex(index);
+    };
+    select(colorCombo_, static_cast<int>(saved.settings.colourMode));
+    select(qualityCombo_, saved.settings.qualityDpi);
+    select(alignmentCombo_, static_cast<int>(saved.settings.alignment));
+    select(scaleCombo_, static_cast<int>(saved.settings.scaleMode));
+    select(pageLayoutCombo_, static_cast<int>(saved.settings.layoutMode));
+    rowsSpin_->setValue(saved.settings.rows);
+    columnsSpin_->setValue(saved.settings.columns);
+    select(pageOrientationCombo_, static_cast<int>(saved.settings.pageOrientation));
+    updatePageLayoutControls();
+    customScalePercent_ = qBound(10, saved.settings.scalePercent, 400);
+    scalePercentSpin_->setSpecialValueText(QString());
+    scalePercentSpin_->setRange(10, 400);
+    scalePercentSpin_->setValue(printSettings().scaleMode == ScaleMode::ActualSize
+                                   ? 100 : customScalePercent_);
+    scalePercentSpin_->setEnabled(printSettings().scaleMode == ScaleMode::Custom);
+
+    fromSpin_->setValue(saved.fromPage);
+    toSpin_->setValue(qMax(fromSpin_->value(), saved.toPage));
+    customEdit_->setText(saved.customPages);
+    QRadioButton *selection = allPagesRadio_;
+    switch (saved.pageSelection) {
+    case PageSelection::All: break;
+    case PageSelection::Current: selection = currentPageRadio_; break;
+    case PageSelection::Range: selection = rangeRadio_; break;
+    case PageSelection::Custom: selection = customRadio_; break;
+    }
+    selection->setChecked(true);
+    fromSpin_->setEnabled(rangeRadio_->isChecked());
+    toSpin_->setEnabled(rangeRadio_->isChecked());
+    // Keep custom page order intact. A document that lost a selected page shows
+    // the existing validation error instead of silently printing different pages.
+    refreshPreview();
+    nativeSettings_.layout = printer_->pageLayout();
+    nativeSettings_.layout.setPageSize(paper);
+    nativeSettings_.layout.setOrientation(saved.orientation);
+    nativeSettings_.copies = copiesSpin_->value();
+    nativeSettings_.colour = printSettings().colourMode == ColourMode::Colour
+        ? QPrinter::Color : QPrinter::GrayScale;
+    nativeSettings_.duplex = nativeDuplex(saved.duplex);
+    nativeSettings_.range = saved.pageSelection == PageSelection::Range ? QPrinter::PageRange
+        : saved.pageSelection == PageSelection::Current ? QPrinter::CurrentPage : QPrinter::AllPages;
+    nativeSettings_.from = rangeRadio_->isChecked() ? fromSpin_->value() : 1;
+    nativeSettings_.to = rangeRadio_->isChecked() ? toSpin_->value() : qMax(1, pageCount_);
+    printerSelectionChanged_ = false;
+}
+
+// Keeps repeat-only controls and scale wording consistent without changing saved values.
+void PrintDialog::updatePageLayoutControls()
+{
+    const bool repeat = pageLayoutCombo_->currentData().toInt() == static_cast<int>(PageLayoutMode::Repeat);
+    repeatOptions_->setVisible(repeat);
+    //: %1 is rows times columns, for example 8. Each source page is repeated this many
+    //: times on its own sheet. The Copies control separately repeats the whole job.
+    repeatCountLabel_->setText(tr("Copies per sheet: %1")
+                                  .arg(QLocale().toString(rowsSpin_->value() * columnsSpin_->value())));
+    //: Scale option. Fit each source page inside one cell of the repeat grid.
+    const QString fitCell = tr("Fit to cell");
+    scaleCombo_->setItemText(scaleCombo_->findData(static_cast<int>(ScaleMode::FitToPage)),
+                             repeat ? fitCell : tr("Fit to page"));
+    // The settings column has a fixed width. Reserve the updated caption before
+    // measuring it, including when a longer translation replaces Fit to page.
+    scaleCombo_->setMinimumWidth(scaleCombo_->sizeHint().width());
+    //: Preview-only dashed boundaries show grid cells and the printable area.
+    const QString guides = tr("Dashed guides are not printed");
+    marginNote_->setText(repeat ? guides : tr("Dashed line shows the printable area"));
+    settingsScroll_->widget()->layout()->activate();
+    const int minimum = settingsScroll_->widget()->minimumSizeHint().width()
+        + settingsScroll_->verticalScrollBar()->sizeHint().width();
+    settingsScroll_->setFixedWidth(qMax(settingsScroll_->width(), minimum));
 }
 
 QList<int> PrintDialog::resolvePages(QString *error) const
@@ -504,6 +772,8 @@ void PrintDialog::schedulePreview()
     if (pages_.isEmpty()) {
         previewTimer_->stop();
         preview_->clear(error);
+        if (printSettings().scaleMode == ScaleMode::FitToPage)
+            scalePercentSpin_->clear();
         return;
     }
     previewTimer_->start();
@@ -638,7 +908,7 @@ bool PrintDialog::applyPrinterSettings(QString *error)
     printer_->setCopyCount(copiesSpin_->value());
     printer_->setColorMode(printSettings().colourMode == ColourMode::Colour ? QPrinter::Color
                                                                           : QPrinter::GrayScale);
-    printer_->setDuplex(!toFile && twoSidedCheck_->isChecked() ? QPrinter::DuplexLongSide
+    printer_->setDuplex(!toFile && twoSidedCheck_->isChecked() ? nativeDuplex(duplexMode_)
                                                              : QPrinter::DuplexNone);
     return true;
 }
@@ -655,6 +925,8 @@ bool PrintDialog::refreshPreview()
     updateNavigation();
     if (pages_.isEmpty() || !applyPrinterSettings(&error)) {
         preview_->clear(error);
+        if (printSettings().scaleMode == ScaleMode::FitToPage)
+            scalePercentSpin_->clear();
         printButton_->setEnabled(false);
         return false;
     }
@@ -679,6 +951,21 @@ bool PrintDialog::refreshPreview()
     if (printer_->resolution() > 0)
         previewSettings.qualityDpi = qMin(previewSettings.qualityDpi, printer_->resolution());
     preview_->setPage(pages_.at(previewIndex_) - 1, pageLayout, previewSettings);
+    if (previewSettings.scaleMode != ScaleMode::Custom) {
+        const QSignalBlocker blocker(scalePercentSpin_);
+        const double percent = preview_->scale() * 100;
+        if (percent > 0) {
+            // Automatic placement is not limited by the custom input's 10–400% range.
+            const int rounded = qRound(qMin(percent, double(std::numeric_limits<int>::max())));
+            scalePercentSpin_->setRange(0, qMax(400, rounded));
+            // A nonzero fit must not appear as 0%, even for unusually large pages.
+            scalePercentSpin_->setSpecialValueText(
+                rounded == 0 ? locale.toString(percent, 'g', 3) + QStringLiteral(" %") : QString());
+            scalePercentSpin_->setValue(rounded);
+        } else {
+            scalePercentSpin_->clear();
+        }
+    }
     printButton_->setEnabled(true);
     return true;
 }

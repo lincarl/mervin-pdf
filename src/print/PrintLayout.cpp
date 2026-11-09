@@ -44,6 +44,46 @@ constexpr double kRoundingSlack = 0.001;
 
 } // namespace
 
+QList<QRectF> sheetCells(const QRectF &printableRect, const Settings &settings)
+{
+    if (!std::isfinite(printableRect.x()) || !std::isfinite(printableRect.y())
+        || !std::isfinite(printableRect.width()) || !std::isfinite(printableRect.height())
+        || printableRect.isEmpty()) {
+        return {};
+    }
+    if (settings.layoutMode == PageLayoutMode::Single)
+        return {printableRect};
+    if (settings.rows < 1 || settings.rows > 8 || settings.columns < 1 || settings.columns > 8)
+        return {};
+
+    const QSizeF size(printableRect.width() / settings.columns,
+                      printableRect.height() / settings.rows);
+    QList<QRectF> cells;
+    cells.reserve(settings.rows * settings.columns);
+    for (int row = 0; row < settings.rows; ++row)
+        for (int column = 0; column < settings.columns; ++column)
+            cells.append(QRectF(printableRect.topLeft()
+                                    + QPointF(column * size.width(), row * size.height()), size));
+    return cells;
+}
+
+int pageRotation(const QSizeF &unrotatedPagePoints, int viewerRotation, const Settings &settings)
+{
+    if (settings.layoutMode != PageLayoutMode::Repeat
+        || settings.pageOrientation == PageOrientation::AsShown) {
+        return viewerRotation;
+    }
+    QSizeF shown = unrotatedPagePoints;
+    const int rotation = (viewerRotation % 360 + 360) % 360;
+    if (rotation == 90 || rotation == 270)
+        shown.transpose();
+    const bool needsTurn = (settings.pageOrientation == PageOrientation::Portrait
+                            && shown.width() > shown.height())
+        || (settings.pageOrientation == PageOrientation::Landscape
+            && shown.height() > shown.width());
+    return needsTurn ? (rotation + 90) % 360 : viewerRotation;
+}
+
 QRectF destinationRect(const QSizeF &pagePoints, const QRectF &printableRect,
                       const Settings &settings)
 {

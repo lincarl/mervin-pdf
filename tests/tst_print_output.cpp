@@ -28,6 +28,8 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QLineEdit>
 #include <QLabel>
 #include <QMessageBox>
@@ -146,6 +148,39 @@ private:
     bool saveQueued_ = false;
 };
 
+// Inspects the real restored controls, optionally edits them, then chooses Cancel.
+bool inspectPrintAndCancel(MainWindow &window,
+                           const std::function<void(PrintDialog &)> &inspect)
+{
+    bool finished = false;
+    bool cancelled = false;
+    QElapsedTimer elapsed;
+    elapsed.start();
+    QTimer driver;
+    QObject::connect(&driver, &QTimer::timeout, &window, [&] {
+        QWidget *modal = QApplication::activeModalWidget();
+        if (auto *dialog = qobject_cast<PrintDialog *>(modal)) {
+            driver.stop();
+            auto dismiss = qScopeGuard([dialog] { dialog->reject(); });
+            inspect(*dialog);
+            if (auto *cancel = dialog->findChild<QPushButton *>("printCancel")) {
+                cancel->click();
+                dismiss.dismiss();
+                cancelled = true;
+            }
+            finished = true;
+        } else if (qobject_cast<QMessageBox *>(modal) || elapsed.elapsed() > 20000) {
+            if (auto *dialog = qobject_cast<QDialog *>(modal))
+                dialog->reject();
+            finished = true;
+            driver.stop();
+        }
+    });
+    driver.start(10);
+    return QMetaObject::invokeMethod(&window, "printDocument")
+        && QTest::qWaitFor([&] { return finished; }, 21000) && cancelled;
+}
+
 // Writes explicit PDF objects with a complete cross-reference table.
 bool writePdfObjects(const QString &path, const QList<QByteArray> &objects)
 {
@@ -203,6 +238,23 @@ QRectF applicationPrintable(QPageLayout::Orientation orientation = QPageLayout::
             QPageLayout::Point))
         return {};
     return reference.pageLayout().paintRect(QPageLayout::Point);
+}
+
+// Selects the app's independent repeat controls through the actual print dialog.
+bool selectRepeatLayout(PrintDialog &dialog, int rows, int columns,
+                        printing::PageOrientation orientation = printing::PageOrientation::AsShown)
+{
+    auto *layout = dialog.findChild<QComboBox *>("printPageLayout");
+    auto *rowCount = dialog.findChild<QSpinBox *>("printRows");
+    auto *columnCount = dialog.findChild<QSpinBox *>("printColumns");
+    auto *pageOrientation = dialog.findChild<QComboBox *>("printPageOrientation");
+    if (!layout || !rowCount || !columnCount || !pageOrientation)
+        return false;
+    layout->setCurrentIndex(layout->findData(static_cast<int>(printing::PageLayoutMode::Repeat)));
+    rowCount->setValue(rows);
+    columnCount->setValue(columns);
+    pageOrientation->setCurrentIndex(pageOrientation->findData(static_cast<int>(orientation)));
+    return true;
 }
 
 // Print dialog choices for placement checks. The indexes follow the dialog's
@@ -446,6 +498,8 @@ private slots:
     void cleanup();
     void applicationPrintPlacement_data();
     void applicationPrintPlacement();
+    void repeatedSheetGeometry_data();
+    void repeatedSheetGeometry();
     void previewMatchesPrintedSheet_data();
     void previewMatchesPrintedSheet();
     void printedRasterGeometry_data();
@@ -454,6 +508,7 @@ private slots:
     void printDoesNotWaitForPageAccess();
     void selectedPagesReachOutput_data();
     void selectedPagesReachOutput();
+    void printPreferencesPersistOnlyAfterPrint();
     void activeFormTextAndAnnotationEditsReachOutput();
     void laterBandFailureStartsNoSheet();
     void stopDuringPrinterStart_data();
@@ -530,6 +585,175 @@ void TstPrintOutput::cleanup()
     QCoreApplication::processEvents();
     QVERIFY(Document::waitForCloses(10000));
     QVERIFY(appfiles::flush(10000));
+}
+
+// Accepted choices survive restart per document, while Cancel preserves the last Print.
+void TstPrintOutput::printPreferencesPersistOnlyAfterPrint()
+{
+    const QString previousProfile = ConfigPaths::overrideDir();
+    ConfigPaths::setOverrideDir(files_.filePath("print-preferences-profile"));
+    const auto restoreProfile = qScopeGuard([&] {
+        appfiles::flush(10000);
+        ConfigPaths::setOverrideDir(previousProfile);
+    });
+    Settings settings;
+    settings.autoUpdate = false;
+    settings.closeToTray = false;
+    QVERIFY(settings.save());
+    const QString recentPath = QDir(ConfigPaths::configDir()).filePath("recent.json");
+    const QString secondPath = files_.filePath("second-print-source.pdf");
+    QVERIFY(QFile::copy(sourcePath_, secondPath));
+
+    // Read the actual profile file rather than relying only on the manager's cache.
+    const auto storedChoices = [&](const QString &path) {
+        const QJsonArray entries = QJsonDocument::fromJson(bytes(recentPath)).array();
+        for (const QJsonValue &entry : entries) {
+            const QJsonObject object = entry.toObject();
+            if (normalizePathKey(object.value("p").toString()) == normalizePathKey(path))
+                return object.value("print").toObject();
+        }
+        return QJsonObject();
+    };
+    printing::Preferences firstAccepted;
+    printing::Preferences secondAccepted;
+    {
+        WindowManager manager;
+        MainWindow *first = manager.createWindow();
+        QVERIFY(testing::openAndWait(*first, sourcePath_));
+        QVERIFY(!manager.printPreferences(sourcePath_));
+        printing::Preferences defaults;
+        QVERIFY(inspectPrintAndCancel(*first, [&](PrintDialog &dialog) {
+            defaults = dialog.preferences();
+            auto *scale = dialog.findChild<QComboBox *>("printScale");
+            auto *percent = dialog.findChild<QSpinBox *>("printScalePercent");
+            QVERIFY(scale && percent);
+            scale->setCurrentIndex(scale->findData(static_cast<int>(printing::ScaleMode::Custom)));
+            percent->setValue(77);
+            QVERIFY(selectRepeatLayout(dialog, 5, 3, printing::PageOrientation::Landscape));
+        }));
+        QVERIFY(!manager.printPreferences(sourcePath_));
+        QVERIFY(appfiles::flush(10000));
+        QVERIFY(storedChoices(sourcePath_).isEmpty());
+        QVERIFY(inspectPrintAndCancel(*first, [&](PrintDialog &dialog) {
+            QCOMPARE(dialog.preferences().toJson(), defaults.toJson());
+        }));
+
+        const QString firstOutput = files_.filePath("first-preferences-output.pdf");
+        {
+            PrintInteraction dialogs(*first, firstOutput,
+                [&](PrintDialog &dialog) { firstAccepted = dialog.preferences(); },
+                [&](PrintDialog &dialog) {
+                    auto *paper = dialog.findChild<QComboBox *>("printPaperSize");
+                    auto *landscape = dialog.findChild<QRadioButton *>("printLandscape");
+                    auto *customPages = dialog.findChild<QRadioButton *>("printCustomPages");
+                    auto *pages = dialog.findChild<QLineEdit *>("printPages");
+                    auto *copies = dialog.findChild<QSpinBox *>("printCopies");
+                    auto *scale = dialog.findChild<QComboBox *>("printScale");
+                    auto *percent = dialog.findChild<QSpinBox *>("printScalePercent");
+                    auto *align = dialog.findChild<QComboBox *>("printAlignment");
+                    auto *colour = dialog.findChild<QComboBox *>("printColour");
+                    auto *quality = dialog.findChild<QComboBox *>("printQuality");
+                    QVERIFY(paper && landscape && customPages && pages && copies && scale
+                            && percent && align && colour && quality);
+                    const int a5 = paper->findData(QVariant::fromValue(QPageSize(QPageSize::A5)));
+                    QVERIFY(a5 >= 0);
+                    paper->setCurrentIndex(a5);
+                    landscape->setChecked(true);
+                    pages->setText(QStringLiteral("1"));
+                    customPages->setChecked(true);
+                    copies->setValue(2);
+                    scale->setCurrentIndex(scale->findData(static_cast<int>(printing::ScaleMode::Custom)));
+                    percent->setValue(75);
+                    align->setCurrentIndex(align->findData(static_cast<int>(printing::Alignment::TopLeft)));
+                    colour->setCurrentIndex(colour->findData(static_cast<int>(printing::ColourMode::Grayscale)));
+                    quality->setCurrentIndex(quality->findData(150));
+                    QVERIFY(selectRepeatLayout(dialog, 2, 4, printing::PageOrientation::Portrait));
+                });
+            QVERIFY(QMetaObject::invokeMethod(first, "printDocument"));
+            auto *tab = first->findChild<TabPage *>();
+            QVERIFY(tab);
+            QTRY_VERIFY_WITH_TIMEOUT(!tab->isBusy(), 10000);
+            QVERIFY2(dialogs.messages.isEmpty(), qPrintable(dialogs.messages.join('\n')));
+            QVERIFY(dialogs.saved);
+        }
+        QVERIFY(QFileInfo::exists(firstOutput));
+        auto printed = manager.engine()->openDocument(firstOutput);
+        QVERIFY(printed && printed->pageCount() > 0);
+        QVERIFY(firstAccepted.printToFile);
+        QCOMPARE(firstAccepted.settings.scalePercent, 75);
+        QCOMPARE(firstAccepted.settings.scaleMode, printing::ScaleMode::Custom);
+        QCOMPARE(firstAccepted.settings.layoutMode, printing::PageLayoutMode::Repeat);
+        QCOMPARE(firstAccepted.settings.rows, 2);
+        QCOMPARE(firstAccepted.settings.columns, 4);
+        QCOMPARE(firstAccepted.settings.pageOrientation, printing::PageOrientation::Portrait);
+        QCOMPARE(firstAccepted.pageSelection, printing::PageSelection::Custom);
+        QCOMPARE(firstAccepted.copies, 2);
+        QVERIFY(manager.printPreferences(sourcePath_) == firstAccepted);
+        QVERIFY(appfiles::flush(10000));
+        QCOMPARE(storedChoices(sourcePath_), firstAccepted.toJson());
+        QVERIFY(!bytes(recentPath).contains(firstOutput.toUtf8()));
+
+        QVERIFY(inspectPrintAndCancel(*first, [&](PrintDialog &dialog) {
+            QCOMPARE(dialog.preferences().toJson(), firstAccepted.toJson());
+            auto *percent = dialog.findChild<QSpinBox *>("printScalePercent");
+            QVERIFY(percent);
+            percent->setValue(125);
+            QVERIFY(selectRepeatLayout(dialog, 6, 3, printing::PageOrientation::Landscape));
+            auto *layout = dialog.findChild<QComboBox *>("printPageLayout");
+            layout->setCurrentIndex(layout->findData(static_cast<int>(printing::PageLayoutMode::Single)));
+        }));
+        QVERIFY(manager.printPreferences(sourcePath_) == firstAccepted);
+        QVERIFY(appfiles::flush(10000));
+        QCOMPARE(storedChoices(sourcePath_), firstAccepted.toJson());
+
+        MainWindow *second = manager.createWindow();
+        QVERIFY(testing::openAndWait(*second, secondPath));
+        QVERIFY(!manager.printPreferences(secondPath));
+        QVERIFY(inspectPrintAndCancel(*second, [&](PrintDialog &dialog) {
+            QCOMPARE(dialog.preferences().toJson(), defaults.toJson());
+        }));
+        const QString secondOutput = files_.filePath("second-preferences-output.pdf");
+        {
+            PrintInteraction dialogs(*second, secondOutput,
+                [&](PrintDialog &dialog) { secondAccepted = dialog.preferences(); },
+                [&](PrintDialog &dialog) {
+                    auto *scale = dialog.findChild<QComboBox *>("printScale");
+                    auto *quality = dialog.findChild<QComboBox *>("printQuality");
+                    auto *currentPage = dialog.findChild<QRadioButton *>("printCurrentPage");
+                    QVERIFY(scale && quality && currentPage);
+                    scale->setCurrentIndex(scale->findData(static_cast<int>(printing::ScaleMode::ActualSize)));
+                    quality->setCurrentIndex(quality->findData(150));
+                    currentPage->setChecked(true);
+                });
+            QVERIFY(QMetaObject::invokeMethod(second, "printDocument"));
+            auto *tab = second->findChild<TabPage *>();
+            QVERIFY(tab);
+            QTRY_VERIFY_WITH_TIMEOUT(!tab->isBusy(), 10000);
+            QVERIFY2(dialogs.messages.isEmpty(), qPrintable(dialogs.messages.join('\n')));
+            QVERIFY(dialogs.saved);
+        }
+        QVERIFY(QFileInfo::exists(secondOutput));
+        QVERIFY(secondAccepted != firstAccepted);
+        QVERIFY(appfiles::flush(10000));
+        QCOMPARE(storedChoices(sourcePath_), firstAccepted.toJson());
+        QCOMPARE(storedChoices(secondPath), secondAccepted.toJson());
+    }
+    QVERIFY(background::settle(10000));
+    QVERIFY(Document::waitForCloses(10000));
+    QVERIFY(appfiles::flush(10000));
+    {
+        WindowManager reloaded;
+        QVERIFY(reloaded.printPreferences(sourcePath_) == firstAccepted);
+        QVERIFY(reloaded.printPreferences(secondPath) == secondAccepted);
+        for (const QString &path : {sourcePath_, secondPath}) {
+            MainWindow *window = reloaded.createWindow();
+            QVERIFY(testing::openAndWait(*window, path));
+            QVERIFY(inspectPrintAndCancel(*window, [&](PrintDialog &dialog) {
+                const auto &expected = path == sourcePath_ ? firstAccepted : secondAccepted;
+                QCOMPARE(dialog.preferences().toJson(), expected.toJson());
+            }));
+        }
+    }
 }
 
 void TstPrintOutput::applicationPrintPlacement_data()
@@ -673,6 +897,170 @@ void TstPrintOutput::applicationPrintPlacement()
             hairline |= line;
         }
         QVERIFY(hairline);
+    }
+}
+
+void TstPrintOutput::repeatedSheetGeometry_data()
+{
+    QTest::addColumn<int>("rows");
+    QTest::addColumn<int>("columns");
+    QTest::addColumn<int>("scaleMode");
+    QTest::addColumn<int>("percent");
+    QTest::addColumn<printing::PageOrientation>("pageOrientation");
+    QTest::addColumn<bool>("landscapePaper");
+    QTest::addColumn<int>("viewerRotation");
+    QTest::addColumn<int>("expectedRotation");
+    QTest::newRow("initial 2 by 4") << 2 << 4 << 0 << 100
+        << printing::PageOrientation::AsShown << false << 0 << 0;
+    QTest::newRow("landscape pages on portrait paper") << 2 << 4 << 0 << 100
+        << printing::PageOrientation::Landscape << false << 0 << 90;
+    QTest::newRow("portrait pages on landscape paper") << 3 << 2 << 0 << 100
+        << printing::PageOrientation::Portrait << true << 90 << 180;
+    QTest::newRow("custom scale clips each cell") << 2 << 3 << 2 << 300
+        << printing::PageOrientation::Landscape << true << 0 << 90;
+    QTest::newRow("actual size clips maximum grid") << 8 << 8 << 1 << 100
+        << printing::PageOrientation::AsShown << false << 0 << 0;
+}
+
+// Reopens real PDF output and checks every cell's independently known quadrant
+// colours, placement, clipping and orientation, plus the same locations in preview.
+void TstPrintOutput::repeatedSheetGeometry()
+{
+    QFETCH(int, rows);
+    QFETCH(int, columns);
+    QFETCH(int, scaleMode);
+    QFETCH(int, percent);
+    QFETCH(printing::PageOrientation, pageOrientation);
+    QFETCH(bool, landscapePaper);
+    QFETCH(int, viewerRotation);
+    QFETCH(int, expectedRotation);
+    QTemporaryDir files;
+    const QString source = files.filePath("quadrants.pdf");
+    const QString output = files.filePath("repeated.pdf");
+    const QList<QColor> colours{QColor(220, 20, 20), QColor(20, 170, 20),
+                                QColor(20, 20, 220), QColor(220, 170, 20)};
+    {
+        QPdfWriter writer(source);
+        writer.setResolution(72);
+        writer.setPageSize(QPageSize(QSizeF(100, 160), QPageSize::Point));
+        writer.setPageMargins({});
+        QPainter painter(&writer);
+        QVERIFY(painter.isActive());
+        for (int quadrant = 0; quadrant < 4; ++quadrant)
+            painter.fillRect(QRect((quadrant % 2) * 50, (quadrant / 2) * 80, 50, 80),
+                             colours.at(quadrant));
+        QVERIFY(painter.end());
+    }
+    std::atomic<int> renderBands{0};
+    printing::testing::setHook([&](const printing::testing::Event &event,
+                                  const printing::testing::PrinterCall &call) {
+        if (event.phase == printing::testing::Phase::RenderBand)
+            ++renderBands;
+        return !call || call();
+    });
+    const auto clearHook = qScopeGuard([] { printing::testing::setHook({}); });
+    RenderEngine engine;
+    MainWindow window(&engine, nullptr);
+    QVERIFY(testing::openAndWait(window, source));
+    auto *tab = window.findChild<TabPage *>();
+    QVERIFY(tab);
+    tab->viewer()->setRotation(viewerRotation);
+    QImage previewImage;
+    double previewScale = 0;
+    PrintInteraction dialogs(window, output, [&](PrintDialog &dialog) {
+        auto *preview = dialog.findChild<PrintPreviewWidget *>();
+        previewImage = preview->grab().toImage();
+        previewScale = preview->scale();
+    }, [&](PrintDialog &dialog) {
+        dialog.findChild<PrintPreviewWidget *>()->clear({});
+        auto *paper = dialog.findChild<QComboBox *>("printPaperSize");
+        paper->setCurrentIndex(paper->findData(QVariant::fromValue(QPageSize(QPageSize::A4))));
+        dialog.findChild<QRadioButton *>(landscapePaper ? "printLandscape" : "printPortrait")
+            ->setChecked(true);
+        dialog.findChild<QComboBox *>("printScale")->setCurrentIndex(scaleMode);
+        dialog.findChild<QSpinBox *>("printScalePercent")->setValue(percent);
+        QVERIFY(selectRepeatLayout(dialog, rows, columns, pageOrientation));
+    });
+    QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
+    QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable() && QFileInfo::exists(output), 10000);
+    QVERIFY2(dialogs.messages.isEmpty(), qPrintable(dialogs.messages.join('\n')));
+    QCOMPARE(renderBands.load(), 1);
+    QVERIFY(!previewImage.isNull());
+    auto printed = engine.openDocument(output);
+    QVERIFY(printed);
+    QCOMPARE(printed->pageCount(), 1);
+    const QImage sheet = printed->renderPage(0, 1, 0);
+    QVERIFY(!sheet.isNull());
+    const QSizeF paper = printed->pageSize(0);
+    QCOMPARE(paper.width() > paper.height(), landscapePaper);
+    const QRectF printable = applicationPrintable(landscapePaper ? QPageLayout::Landscape
+                                                                : QPageLayout::Portrait);
+    const QSizeF cellSize(printable.width() / columns, printable.height() / rows);
+    const QSizeF pageSize = expectedRotation % 180 ? QSizeF(160, 100) : QSizeF(100, 160);
+    const double factor = scaleMode == 0
+        ? std::min(cellSize.width() / pageSize.width(), cellSize.height() / pageSize.height())
+        : scaleMode == 2 ? percent / 100.0 : 1.0;
+    QVERIFY(qAbs(previewScale - factor) < 1e-9);
+    const double previewPadding = 20 * previewImage.devicePixelRatio();
+    const double screenScale = std::min((previewImage.width() - 2 * previewPadding) / paper.width(),
+                                        (previewImage.height() - 2 * previewPadding) / paper.height());
+    const QPointF screenOrigin((previewImage.width() - paper.width() * screenScale) / 2,
+                                (previewImage.height() - paper.height() * screenScale) / 2);
+    QPDF pdf;
+    pdf.processFile(output.toUtf8().constData());
+    auto pdfPage = QPDFPageDocumentHelper(pdf).getAllPages().front();
+    ImagePlacements placements(paper.height());
+    pdfPage.parseContents(&placements);
+    QCOMPARE(placements.rects.size(), rows * columns);
+    QCOMPARE(pdfPage.getImages().size(), size_t(1));
+    const auto matches = [](const QColor &actual, const QColor &expected) {
+        return qAbs(actual.red() - expected.red()) < 15
+            && qAbs(actual.green() - expected.green()) < 15
+            && qAbs(actual.blue() - expected.blue()) < 15;
+    };
+    for (int row = 0; row < rows; ++row) {
+        for (int column = 0; column < columns; ++column) {
+            const QRectF cell(printable.topLeft()
+                                  + QPointF(column * cellSize.width(), row * cellSize.height()),
+                              cellSize);
+            const QSizeF size = pageSize * factor;
+            const QRectF destination(cell.center() - QPointF(size.width(), size.height()) / 2, size);
+            const QRectF visible = destination & cell;
+            const QRectF placed = placements.rects.at(row * columns + column);
+            QVERIFY(qAbs(placed.left() - visible.left()) < 1.1);
+            QVERIFY(qAbs(placed.top() - visible.top()) < 1.1);
+            QVERIFY(qAbs(placed.right() - visible.right()) < 1.1);
+            QVERIFY(qAbs(placed.bottom() - visible.bottom()) < 1.1);
+            for (double y : {0.23, 0.77}) {
+                for (double x : {0.23, 0.77}) {
+                    const QPointF point = visible.topLeft()
+                        + QPointF(x * visible.width(), y * visible.height());
+                    double u = (point.x() - destination.left()) / destination.width();
+                    double v = (point.y() - destination.top()) / destination.height();
+                    if (expectedRotation == 90) {
+                        const double originalU = v;
+                        v = 1 - u;
+                        u = originalU;
+                    } else if (expectedRotation == 180) {
+                        u = 1 - u;
+                        v = 1 - v;
+                    }
+                    const QColor expected = colours.at((v >= 0.5 ? 2 : 0) + (u >= 0.5 ? 1 : 0));
+                    QVERIFY2(matches(sheet.pixelColor(point.toPoint()), expected),
+                             qPrintable(QStringLiteral("Printed cell %1,%2 at %3,%4")
+                                            .arg(row).arg(column).arg(x).arg(y)));
+                    const QPoint screen = (screenOrigin + point * screenScale).toPoint();
+                    QVERIFY2(matches(previewImage.pixelColor(screen), expected),
+                             qPrintable(QStringLiteral("Preview cell %1,%2 at %3,%4")
+                                            .arg(row).arg(column).arg(x).arg(y)));
+                }
+            }
+            // Centered fitting leaves white gaps. Cell guides must remain preview-only.
+            if (visible.height() < cell.height() - 6) {
+                const QPoint gap(qRound(cell.center().x()), qRound(cell.top() + 2));
+                QCOMPARE(sheet.pixelColor(gap), QColor(Qt::white));
+            }
+        }
     }
 }
 
@@ -974,14 +1362,17 @@ void TstPrintOutput::printDoesNotWaitForPageAccess()
 void TstPrintOutput::selectedPagesReachOutput_data()
 {
     QTest::addColumn<bool>("current");
-    QTest::newRow("current page 2") << true;
-    QTest::newRow("custom 3,1,3") << false;
+    QTest::addColumn<bool>("repeat");
+    QTest::newRow("current page 2") << true << false;
+    QTest::newRow("custom 3,1,3") << false << false;
+    QTest::newRow("repeat mixed pages 3,2,1,3") << false << true;
 }
 
 // Reopens every printed sheet and checks distinct source-page colour in exact order.
 void TstPrintOutput::selectedPagesReachOutput()
 {
     QFETCH(bool, current);
+    QFETCH(bool, repeat);
     QTemporaryDir files;
     const QString source = files.filePath("pages.pdf");
     const QString output = files.filePath("printed.pdf");
@@ -994,9 +1385,12 @@ void TstPrintOutput::selectedPagesReachOutput()
         QPainter painter(&writer);
         QVERIFY(painter.isActive());
         for (int page = 0; page < 3; ++page) {
-            if (page)
+            const QSizeF size = repeat && page == 1 ? QSizeF(160, 100) : QSizeF(100, 160);
+            if (page) {
+                writer.setPageSize(QPageSize(size, QPageSize::Point));
                 QVERIFY(writer.newPage());
-            painter.fillRect(QRect(0, 0, 100, 160), colours[page]);
+            }
+            painter.fillRect(QRectF(QPointF(), size), colours[page]);
         }
         QVERIFY(painter.end());
     }
@@ -1009,27 +1403,57 @@ void TstPrintOutput::selectedPagesReachOutput()
     QVERIFY(tab);
     tab->viewer()->goToPage(1);
     QCOMPARE(tab->viewer()->currentPage(), 1);
-    PrintInteraction dialogs(window, output, {}, [current](PrintDialog &dialog) {
+    PrintInteraction dialogs(window, output, {}, [current, repeat](PrintDialog &dialog) {
         dialog.findChild<QRadioButton *>(current ? "printCurrentPage" : "printCustomPages")
             ->setChecked(true);
         if (!current)
-            dialog.findChild<QLineEdit *>("printPages")->setText("3,1,3");
+            dialog.findChild<QLineEdit *>("printPages")->setText(repeat ? "3,2,1,3" : "3,1,3");
+        if (repeat) {
+            auto *paper = dialog.findChild<QComboBox *>("printPaperSize");
+            paper->setCurrentIndex(paper->findData(QVariant::fromValue(QPageSize(QPageSize::A4))));
+            dialog.findChild<QRadioButton *>("printPortrait")->setChecked(true);
+            QVERIFY(selectRepeatLayout(dialog, 2, 4, printing::PageOrientation::Landscape));
+        }
     });
     QVERIFY(QMetaObject::invokeMethod(&window, "printDocument"));
     QTRY_VERIFY_WITH_TIMEOUT(tab->isUsable() && QFileInfo::exists(output), 10000);
     QVERIFY(dialogs.messages.isEmpty());
     auto printed = engine.openDocument(output);
     QVERIFY(printed);
-    const QList<int> expected = current ? QList<int>{1} : QList<int>{2, 0, 2};
+    const QList<int> expected = current ? QList<int>{1}
+        : repeat ? QList<int>{2, 1, 0, 2} : QList<int>{2, 0, 2};
     QCOMPARE(printed->pageCount(), expected.size());
     for (int page = 0; page < expected.size(); ++page) {
         const QImage image = printed->renderPage(page, 1, 0);
         QVERIFY(!image.isNull());
-        const QColor sample = image.pixelColor(image.width() / 2, image.height() / 2);
         const QColor want = colours[expected[page]];
-        QVERIFY(qAbs(sample.red() - want.red()) < 10);
-        QVERIFY(qAbs(sample.green() - want.green()) < 10);
-        QVERIFY(qAbs(sample.blue() - want.blue()) < 10);
+        QList<QPoint> samples{QPoint(image.width() / 2, image.height() / 2)};
+        if (repeat) {
+            samples.clear();
+            const QRectF printable = applicationPrintable();
+            for (int row = 0; row < 2; ++row)
+                for (int column = 0; column < 4; ++column)
+                    samples.append((printable.topLeft()
+                        + QPointF((column + 0.5) * printable.width() / 4,
+                                  (row + 0.5) * printable.height() / 2)).toPoint());
+        }
+        for (const QPoint &point : samples) {
+            const QColor sample = image.pixelColor(point);
+            QVERIFY(qAbs(sample.red() - want.red()) < 10);
+            QVERIFY(qAbs(sample.green() - want.green()) < 10);
+            QVERIFY(qAbs(sample.blue() - want.blue()) < 10);
+        }
+    }
+    if (repeat) {
+        QPDF pdf;
+        pdf.processFile(output.toUtf8().constData());
+        for (auto &page : QPDFPageDocumentHelper(pdf).getAllPages()) {
+            ImagePlacements placed(page.getMediaBox().getArrayItem(3).getNumericValue());
+            page.parseContents(&placed);
+            QCOMPARE(placed.rects.size(), 8);
+            for (const QRectF &rect : placed.rects)
+                QVERIFY(qAbs(rect.width() / rect.height() - 1.6) < 0.02);
+        }
     }
 }
 

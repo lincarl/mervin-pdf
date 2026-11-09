@@ -108,6 +108,13 @@ means pairs of pages shown together. In font dialogs, preserve the distinction
 between writing systems, such as Malayalam and Malay. Review reused Qt text
 against these meanings as well.
 
+For print layouts, distinguish a document page from a physical paper sheet. A
+repeated-page layout puts repetitions of the same source page in grid cells on
+one sheet. Copies of the print job repeat the complete selected output. Keep the
+two counts distinct, and translate a grid cell as a rectangular layout area.
+Rows and columns need each language's own table terminology. Traditional Chinese
+uses 列 for rows and 欄 for columns, while Simplified Chinese uses 行 and 列.
+
 Distinguish stopping a wait from finishing a file operation. A drive call can
 continue after Stop waiting. A document that remains locked during that call is
 temporarily unavailable for use, rather than password-protected. Preserve the

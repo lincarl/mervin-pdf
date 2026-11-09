@@ -56,6 +56,16 @@ paper size, keeping the current size if the driver reports no default.
 Alignment defaults to centering on both axes, with vertical-only,
 horizontal-only, and top-left placement available within the printable area.
 Grayscale keeps shades of gray; Black and white converts them to pure black or white.
+Fit to page and Actual size show the applied percentage in a disabled field. Custom
+keeps the last percentage you entered. Choosing Print saves the dialog's settings
+for that document in its recent-file record. Cancel leaves the saved settings unchanged.
+Repeat page prints each selected PDF page several times on its own sheet. Choose
+1–8 rows and columns, for example 2 rows × 4 columns for eight repetitions.
+The grid divides the printable area into equal cells. Fit to cell scales each
+repetition to its cell, while Actual size and Custom clip at cell boundaries.
+Page orientation rotates the repeated content to Portrait or Landscape independently
+of the paper orientation. As shown keeps the viewer's orientation. The Copies
+control retains its usual whole-job meaning, and preview guides do not print.
 
 ## Platforms
 

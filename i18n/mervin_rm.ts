@@ -756,8 +756,46 @@ Button: starts printing.</extracomment>
         <translation>p.ex. 1-3, 5, 8-10</translation>
     </message>
     <message>
+        <source>Page layout</source>
+        <extracomment>Group for arranging a source PDF page on the physical printed sheet.</extracomment>
+        <translation>Disposiziun da la pagina</translation>
+    </message>
+    <message>
+        <source>One per sheet</source>
+        <extracomment>Print layout option. Each selected PDF page appears once on its own sheet.</extracomment>
+        <translation>Ina per fegl</translation>
+    </message>
+    <message>
+        <source>Repeat page</source>
+        <extracomment>Print layout option. Repeat each selected PDF page in a grid on its own sheet, rather than arranging different source pages together.</extracomment>
+        <translation>Repeter la pagina</translation>
+    </message>
+    <message>
+        <source>Rows</source>
+        <translation>Lingias</translation>
+    </message>
+    <message>
+        <source>Columns</source>
+        <translation>Colonnas</translation>
+    </message>
+    <message>
+        <source>As shown</source>
+        <extracomment>Repeated-page orientation option. Keep the page&apos;s current viewer rotation.</extracomment>
+        <translation>Sco mussà</translation>
+    </message>
+    <message>
+        <source>Page orientation:</source>
+        <extracomment>Orientation of each repeated source page, independent of the physical paper orientation.</extracomment>
+        <translation>Orientaziun da la pagina:</translation>
+    </message>
+    <message>
         <source>Options</source>
         <translation>Opziuns</translation>
+    </message>
+    <message>
+        <source>Copies of the complete print job.</source>
+        <extracomment>Tooltip for the Copies control, distinct from repetitions within one sheet.</extracomment>
+        <translation>Copias da l&apos;entira incumbensa da stampar.</translation>
     </message>
     <message>
         <source>Copies:</source>
@@ -861,6 +899,21 @@ Button: starts printing.</extracomment>
     <message>
         <source>Next preview page</source>
         <translation>Proxima pagina da la prevista</translation>
+    </message>
+    <message>
+        <source>Copies per sheet: %1</source>
+        <extracomment>%1 is rows times columns, for example 8. Each source page is repeated this many times on its own sheet. The Copies control separately repeats the whole job.</extracomment>
+        <translation>Copias per fegl: %1</translation>
+    </message>
+    <message>
+        <source>Fit to cell</source>
+        <extracomment>Scale option. Fit each source page inside one cell of the repeat grid.</extracomment>
+        <translation>Adattar a la cella</translation>
+    </message>
+    <message>
+        <source>Dashed guides are not printed</source>
+        <extracomment>Preview-only dashed boundaries show grid cells and the printable area.</extracomment>
+        <translation>Las lingias d&apos;agid interruttas na vegnan betg stampadas</translation>
     </message>
     <message>
         <source>Dashed line shows the printable area</source>

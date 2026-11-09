@@ -27,6 +27,8 @@ public:
     void setPage(int zeroBasedPage, const QPageLayout &layout,
                  const printing::Settings &settings);
     void clear(const QString &message);
+    // The selected page's scale on paper, or zero when there is no valid placement.
+    double scale() const;
     bool isReady() const { return !image_.isNull() && message_.isEmpty(); }
     // How many times painting converted a render's colour mode, and how many times it
     // reduced a conversion to the device size, for tests.
@@ -48,6 +50,7 @@ private:
     RenderEngine *engine_;
     Document *document_;
     int rotation_;
+    int pageRotation_ = 0;
     quint64 requester_;
     quint64 generation_ = 0;
     int page_ = -1;
