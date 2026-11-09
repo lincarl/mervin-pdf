@@ -753,8 +753,46 @@ Button: starts printing.</extracomment>
         <translation>例えば1-3、5、8-10</translation>
     </message>
     <message>
+        <source>Page layout</source>
+        <extracomment>Group for arranging a source PDF page on the physical printed sheet.</extracomment>
+        <translation>ページレイアウト</translation>
+    </message>
+    <message>
+        <source>One per sheet</source>
+        <extracomment>Print layout option. Each selected PDF page appears once on its own sheet.</extracomment>
+        <translation>1枚に1ページ</translation>
+    </message>
+    <message>
+        <source>Repeat page</source>
+        <extracomment>Print layout option. Repeat each selected PDF page in a grid on its own sheet, rather than arranging different source pages together.</extracomment>
+        <translation>ページを繰り返す</translation>
+    </message>
+    <message>
+        <source>Rows</source>
+        <translation>行数</translation>
+    </message>
+    <message>
+        <source>Columns</source>
+        <translation>列数</translation>
+    </message>
+    <message>
+        <source>As shown</source>
+        <extracomment>Repeated-page orientation option. Keep the page&apos;s current viewer rotation.</extracomment>
+        <translation>表示どおり</translation>
+    </message>
+    <message>
+        <source>Page orientation:</source>
+        <extracomment>Orientation of each repeated source page, independent of the physical paper orientation.</extracomment>
+        <translation>ページの向き:</translation>
+    </message>
+    <message>
         <source>Options</source>
         <translation>オプション</translation>
+    </message>
+    <message>
+        <source>Copies of the complete print job.</source>
+        <extracomment>Tooltip for the Copies control, distinct from repetitions within one sheet.</extracomment>
+        <translation>印刷ジョブ全体の部数です。</translation>
     </message>
     <message>
         <source>Copies:</source>
@@ -858,6 +896,21 @@ Button: starts printing.</extracomment>
     <message>
         <source>Next preview page</source>
         <translation>次のプレビューページ</translation>
+    </message>
+    <message>
+        <source>Copies per sheet: %1</source>
+        <extracomment>%1 is rows times columns, for example 8. Each source page is repeated this many times on its own sheet. The Copies control separately repeats the whole job.</extracomment>
+        <translation>用紙1枚あたりのコピー数: %1</translation>
+    </message>
+    <message>
+        <source>Fit to cell</source>
+        <extracomment>Scale option. Fit each source page inside one cell of the repeat grid.</extracomment>
+        <translation>セルに合わせる</translation>
+    </message>
+    <message>
+        <source>Dashed guides are not printed</source>
+        <extracomment>Preview-only dashed boundaries show grid cells and the printable area.</extracomment>
+        <translation>破線のガイドは印刷されません</translation>
     </message>
     <message>
         <source>Dashed line shows the printable area</source>

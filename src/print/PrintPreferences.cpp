@@ -68,6 +68,11 @@ constexpr std::initializer_list<std::pair<QPageLayout::Orientation, const char *
 constexpr std::initializer_list<std::pair<DuplexMode, const char *>> duplexNames{
     {DuplexMode::None, "none"}, {DuplexMode::Auto, "auto"},
     {DuplexMode::LongSide, "long-side"}, {DuplexMode::ShortSide, "short-side"}};
+constexpr std::initializer_list<std::pair<PageLayoutMode, const char *>> layoutNames{
+    {PageLayoutMode::Single, "single"}, {PageLayoutMode::Repeat, "repeat"}};
+constexpr std::initializer_list<std::pair<PageOrientation, const char *>> pageOrientationNames{
+    {PageOrientation::AsShown, "as-shown"}, {PageOrientation::Portrait, "portrait"},
+    {PageOrientation::Landscape, "landscape"}};
 
 } // namespace
 
@@ -88,6 +93,10 @@ QJsonObject Preferences::toJson() const
         {QStringLiteral("colourMode"), enumName(settings.colourMode, colourNames)},
         {QStringLiteral("qualityDpi"), settings.qualityDpi},
         {QStringLiteral("duplex"), enumName(duplex, duplexNames)},
+        {QStringLiteral("layoutMode"), enumName(settings.layoutMode, layoutNames)},
+        {QStringLiteral("rows"), settings.rows},
+        {QStringLiteral("columns"), settings.columns},
+        {QStringLiteral("pageOrientation"), enumName(settings.pageOrientation, pageOrientationNames)},
     };
     if (!paperPoints.isEmpty()) {
         object.insert(QStringLiteral("paper"), QJsonObject{
@@ -131,6 +140,13 @@ Preferences Preferences::fromJson(const QJsonObject &object)
         ? DuplexMode::LongSide : DuplexMode::None;
     preferences.duplex = readEnum(object.value(QStringLiteral("duplex")), fallbackDuplex,
                                   duplexNames);
+    preferences.settings.layoutMode = readEnum(object.value(QStringLiteral("layoutMode")),
+                                               preferences.settings.layoutMode, layoutNames);
+    preferences.settings.rows = readInteger(object.value(QStringLiteral("rows")), 2, 1, 8);
+    preferences.settings.columns = readInteger(object.value(QStringLiteral("columns")), 4, 1, 8);
+    preferences.settings.pageOrientation = readEnum(object.value(QStringLiteral("pageOrientation")),
+                                                    preferences.settings.pageOrientation,
+                                                    pageOrientationNames);
 
     const QJsonObject paper = object.value(QStringLiteral("paper")).toObject();
     const double width = paper.value(QStringLiteral("widthPoints")).toDouble();

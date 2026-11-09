@@ -171,6 +171,7 @@ private slots:
     void initTestCase();
     void defaultsAndLiveSettings();
     void automaticScaleFollowsPreviewGeometry();
+    void repeatPageControlsAndIndependentOrientation();
     void preferencesRestoreAllChoices();
     void preferencesFallBackForUnavailablePrinterAndPaper();
     void preferencesHandleChangedPageCounts();
@@ -408,6 +409,65 @@ void TstPrintDialog::automaticScaleFollowsPreviewGeometry()
             != fitPercent(rotatedPrinter.pageLayout(), pageSizes.first()));
 }
 
+// Repeat controls use cell geometry and rotate content independently of the paper.
+void TstPrintDialog::repeatPageControlsAndIndependentOrientation()
+{
+    using namespace mervin::printing;
+    RenderEngine engine;
+    auto document = engine.openDocument(sourcePath_);
+    QVERIFY(document);
+    QPrinter printer;
+    configurePrinter(printer);
+    PrintDialog dialog(&printer, &engine, document.get(), 0, QPageLayout::Portrait, 1, "repeat");
+    auto *layout = dialog.findChild<QComboBox *>("printPageLayout");
+    auto *rows = dialog.findChild<QSpinBox *>("printRows");
+    auto *columns = dialog.findChild<QSpinBox *>("printColumns");
+    auto *orientation = dialog.findChild<QComboBox *>("printPageOrientation");
+    auto *scale = dialog.findChild<QComboBox *>("printScale");
+    auto *percent = dialog.findChild<QSpinBox *>("printScalePercent");
+    auto *summary = dialog.findChild<QLabel *>("printRepeatCount");
+    auto *confirm = dialog.findChild<QPushButton *>("printConfirm");
+    QVERIFY(layout && rows && columns && orientation && scale && percent && summary && confirm);
+    dialog.show();
+    QCOMPARE(dialog.printSettings().layoutMode, PageLayoutMode::Single);
+    QVERIFY(!rows->isVisible());
+    layout->setCurrentIndex(layout->findData(int(PageLayoutMode::Repeat)));
+    QVERIFY(rows->isVisible() && columns->isVisible() && orientation->isVisible());
+    QCOMPARE(rows->value(), 2);
+    QCOMPARE(columns->value(), 4);
+    QCOMPARE(summary->text(), QStringLiteral("Copies per sheet: 8"));
+    QCOMPARE(scale->currentText(), QStringLiteral("Fit to cell"));
+    QVERIFY(!percent->isEnabled());
+    orientation->setCurrentIndex(orientation->findData(int(PageOrientation::Landscape)));
+    QTRY_VERIFY(confirm->isEnabled());
+    QCOMPARE(printer.pageLayout().orientation(), QPageLayout::Portrait);
+    const auto expected = [&](int rowCount, int columnCount, QSizeF page) {
+        const QRectF printable = printer.pageLayout().paintRect(QPageLayout::Point);
+        return qRound(100 * qMin(printable.width() / columnCount / page.width(),
+                                 printable.height() / rowCount / page.height()));
+    };
+    const QSizeF source = document->pageSize(0);
+    QVERIFY(source.width() < source.height());
+    QTRY_COMPARE(percent->value(), expected(2, 4, source.transposed()));
+    rows->setValue(3);
+    columns->setValue(2);
+    QTRY_COMPARE(percent->value(), expected(3, 2, source.transposed()));
+    QCOMPARE(summary->text(), QStringLiteral("Copies per sheet: 6"));
+    dialog.findChild<QRadioButton *>("printLandscape")->setChecked(true);
+    orientation->setCurrentIndex(orientation->findData(int(PageOrientation::Portrait)));
+    QTRY_VERIFY(confirm->isEnabled());
+    QCOMPARE(printer.pageLayout().orientation(), QPageLayout::Landscape);
+    QTRY_COMPARE(percent->value(), expected(3, 2, source));
+    layout->setCurrentIndex(layout->findData(int(PageLayoutMode::Single)));
+    QVERIFY(!rows->isVisible());
+    QCOMPARE(scale->currentText(), QStringLiteral("Fit to page"));
+    QTRY_COMPARE(percent->value(), expected(1, 1, source));
+    layout->setCurrentIndex(layout->findData(int(PageLayoutMode::Repeat)));
+    QCOMPARE(rows->value(), 3);
+    QCOMPARE(columns->value(), 2);
+    QCOMPARE(dialog.printSettings().pageOrientation, PageOrientation::Portrait);
+}
+
 // Restores the controls and printer settings, including the custom value hidden by Fit.
 void TstPrintDialog::preferencesRestoreAllChoices()
 {
@@ -444,6 +504,10 @@ void TstPrintDialog::preferencesRestoreAllChoices()
     combo("printColour", static_cast<int>(ColourMode::BlackAndWhite));
     combo("printQuality", 150);
     combo("printAlignment", static_cast<int>(Alignment::TopLeft));
+    combo("printPageLayout", static_cast<int>(PageLayoutMode::Repeat));
+    source.findChild<QSpinBox *>("printRows")->setValue(3);
+    source.findChild<QSpinBox *>("printColumns")->setValue(2);
+    combo("printPageOrientation", static_cast<int>(PageOrientation::Landscape));
     scale->setCurrentIndex(scale->findData(static_cast<int>(ScaleMode::Custom)));
     percent->setValue(67);
     scale->setCurrentIndex(scale->findData(static_cast<int>(ScaleMode::FitToPage)));
@@ -464,6 +528,10 @@ void TstPrintDialog::preferencesRestoreAllChoices()
     QCOMPARE(saved.settings.colourMode, ColourMode::BlackAndWhite);
     QCOMPARE(saved.settings.qualityDpi, 150);
     QCOMPARE(saved.settings.alignment, Alignment::TopLeft);
+    QCOMPARE(saved.settings.layoutMode, PageLayoutMode::Repeat);
+    QCOMPARE(saved.settings.rows, 3);
+    QCOMPARE(saved.settings.columns, 2);
+    QCOMPARE(saved.settings.pageOrientation, PageOrientation::Landscape);
     QVERIFY(saved.printToFile);
     QCOMPARE(saved.duplex, DuplexMode::LongSide);
 

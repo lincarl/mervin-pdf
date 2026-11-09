@@ -21,6 +21,7 @@ class QLineEdit;
 class QPageSize;
 class QPushButton;
 class QRadioButton;
+class QScrollArea;
 class QSpinBox;
 class QTimer;
 
@@ -76,6 +77,7 @@ private:
     const PaperCapabilities &selectedPaperCapabilities();
     void refreshPaperSizes(const QPageSize &preferred);
     void selectPaperSize(const QPageSize &size);
+    void updatePageLayoutControls();
     void schedulePreview();
     bool refreshPreview();
     bool applyPrinterSettings(QString *error);
@@ -109,6 +111,14 @@ private:
 
     QComboBox *printerCombo_ = nullptr;
     QComboBox *paperSizeCombo_ = nullptr;
+    QScrollArea *settingsScroll_ = nullptr;
+    QComboBox *pageLayoutCombo_ = nullptr;
+    QWidget *repeatOptions_ = nullptr;
+    QSpinBox *rowsSpin_ = nullptr;
+    QSpinBox *columnsSpin_ = nullptr;
+    QComboBox *pageOrientationCombo_ = nullptr;
+    QLabel *repeatCountLabel_ = nullptr;
+    QLabel *marginNote_ = nullptr;
     QRadioButton *portraitRadio_ = nullptr;
     QRadioButton *landscapeRadio_ = nullptr;
     QSpinBox *copiesSpin_ = nullptr;

@@ -14,6 +14,7 @@
 #include <QFormLayout>
 #include <QFrame>
 #include <QGroupBox>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
@@ -38,6 +39,8 @@
 
 using mervin::printing::Alignment;
 using mervin::printing::ColourMode;
+using mervin::printing::PageLayoutMode;
+using mervin::printing::PageOrientation;
 using mervin::printing::ScaleMode;
 
 namespace {
@@ -116,7 +119,7 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     layout->addLayout(body, 1);
 
     // Keep settings reachable on short screens while the preview fits its available area.
-    auto *settingsScroll = new QScrollArea(this);
+    auto *settingsScroll = settingsScroll_ = new QScrollArea(this);
     settingsScroll->setObjectName(QStringLiteral("printSettingsScroll"));
     settingsScroll->setWidgetResizable(true);
     settingsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -258,12 +261,73 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     });
     settingsLayout->addWidget(pagesBox);
 
+    //: Group for arranging a source PDF page on the physical printed sheet.
+    auto *pageLayoutBox = new QGroupBox(tr("Page layout"), settings);
+    auto *pageLayout = new QVBoxLayout(pageLayoutBox);
+    pageLayoutCombo_ = new QComboBox(pageLayoutBox);
+    pageLayoutCombo_->setObjectName(QStringLiteral("printPageLayout"));
+    pageLayoutCombo_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    //: Print layout option. Each selected PDF page appears once on its own sheet.
+    pageLayoutCombo_->addItem(tr("One per sheet"), static_cast<int>(PageLayoutMode::Single));
+    //: Print layout option. Repeat each selected PDF page in a grid on its own sheet,
+    //: rather than arranging different source pages together.
+    pageLayoutCombo_->addItem(tr("Repeat page"), static_cast<int>(PageLayoutMode::Repeat));
+    pageLayout->addWidget(pageLayoutCombo_);
+    repeatOptions_ = new QWidget(pageLayoutBox);
+    auto *repeatLayout = new QVBoxLayout(repeatOptions_);
+    repeatLayout->setContentsMargins(0, 0, 0, 0);
+    auto *dimensions = new QWidget(repeatOptions_);
+    auto *dimensionLayout = new QGridLayout(dimensions);
+    dimensionLayout->setContentsMargins(0, 0, 0, 0);
+    dimensionLayout->setSizeConstraint(QLayout::SetMinimumSize);
+    rowsSpin_ = new QSpinBox(dimensions);
+    rowsSpin_->setObjectName(QStringLiteral("printRows"));
+    rowsSpin_->setRange(1, 8);
+    rowsSpin_->setValue(2);
+    mervin::Theme::useSteppedSpinBox(rowsSpin_);
+    auto *rowsLabel = new QLabel(tr("Rows"), dimensions);
+    rowsLabel->setBuddy(rowsSpin_);
+    dimensionLayout->addWidget(rowsLabel, 0, 0);
+    dimensionLayout->addWidget(rowsSpin_, 1, 0);
+    dimensionLayout->addWidget(new QLabel(QStringLiteral("×"), dimensions), 1, 1, Qt::AlignCenter);
+    columnsSpin_ = new QSpinBox(dimensions);
+    columnsSpin_->setObjectName(QStringLiteral("printColumns"));
+    columnsSpin_->setRange(1, 8);
+    columnsSpin_->setValue(4);
+    mervin::Theme::useSteppedSpinBox(columnsSpin_);
+    auto *columnsLabel = new QLabel(tr("Columns"), dimensions);
+    columnsLabel->setBuddy(columnsSpin_);
+    dimensionLayout->addWidget(columnsLabel, 0, 2);
+    dimensionLayout->addWidget(columnsSpin_, 1, 2);
+    dimensionLayout->setColumnStretch(0, 1);
+    dimensionLayout->setColumnStretch(2, 1);
+    repeatLayout->addWidget(dimensions);
+    auto *pageOrientationForm = new QFormLayout;
+    pageOrientationCombo_ = new QComboBox(repeatOptions_);
+    pageOrientationCombo_->setObjectName(QStringLiteral("printPageOrientation"));
+    pageOrientationCombo_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    //: Repeated-page orientation option. Keep the page's current viewer rotation.
+    pageOrientationCombo_->addItem(tr("As shown"), static_cast<int>(PageOrientation::AsShown));
+    pageOrientationCombo_->addItem(tr("Portrait"), static_cast<int>(PageOrientation::Portrait));
+    pageOrientationCombo_->addItem(tr("Landscape"), static_cast<int>(PageOrientation::Landscape));
+    //: Orientation of each repeated source page, independent of the physical paper orientation.
+    pageOrientationForm->addRow(tr("Page orientation:"), pageOrientationCombo_);
+    repeatLayout->addLayout(pageOrientationForm);
+    repeatCountLabel_ = new QLabel(repeatOptions_);
+    repeatCountLabel_->setObjectName(QStringLiteral("printRepeatCount"));
+    repeatCountLabel_->setWordWrap(true);
+    repeatLayout->addWidget(repeatCountLabel_);
+    pageLayout->addWidget(repeatOptions_);
+    settingsLayout->addWidget(pageLayoutBox);
+
     auto *optionsBox = new QGroupBox(tr("Options"), settings);
     auto *optionsForm = new QFormLayout(optionsBox);
     copiesSpin_ = new QSpinBox(optionsBox);
     copiesSpin_->setObjectName(QStringLiteral("printCopies"));
     copiesSpin_->setRange(1, 999);
     copiesSpin_->setValue(qMax(1, printer_->copyCount()));
+    //: Tooltip for the Copies control, distinct from repetitions within one sheet.
+    copiesSpin_->setToolTip(tr("Copies of the complete print job."));
     mervin::Theme::useSteppedSpinBox(copiesSpin_);
     optionsForm->addRow(tr("Copies:"), copiesSpin_);
 
@@ -288,6 +352,7 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     auto *scaleRow = new QHBoxLayout;
     scaleCombo_ = new QComboBox(optionsBox);
     scaleCombo_->setObjectName(QStringLiteral("printScale"));
+    scaleCombo_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     scaleCombo_->addItem(tr("Fit to page"), static_cast<int>(ScaleMode::FitToPage));
     scaleCombo_->addItem(tr("Actual size"), static_cast<int>(ScaleMode::ActualSize));
     //: Scale option: print at the percentage set next to it.
@@ -393,10 +458,10 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     paperLabel_->setObjectName(QStringLiteral("printPaperLabel"));
     paperLabel_->setWordWrap(true);
     previewFooter->addWidget(paperLabel_);
-    auto *marginNote = new QLabel(tr("Dashed line shows the printable area"), this);
-    marginNote->setWordWrap(true);
-    marginNote->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    previewFooter->addWidget(marginNote);
+    marginNote_ = new QLabel(this);
+    marginNote_->setWordWrap(true);
+    marginNote_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    previewFooter->addWidget(marginNote_);
     previewColumn->addLayout(previewFooter);
 
     auto *buttons = new QHBoxLayout;
@@ -457,10 +522,20 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
         schedulePreview();
     });
     for (QComboBox *combo : {paperSizeCombo_, colorCombo_, qualityCombo_,
-                            scaleCombo_, alignmentCombo_})
+                            scaleCombo_, alignmentCombo_, pageOrientationCombo_})
         connect(combo, &QComboBox::currentIndexChanged, this, &PrintDialog::schedulePreview);
     for (QSpinBox *spin : {copiesSpin_, fromSpin_, toSpin_, scalePercentSpin_})
         connect(spin, &QSpinBox::valueChanged, this, &PrintDialog::schedulePreview);
+    connect(pageLayoutCombo_, &QComboBox::currentIndexChanged, this, [this] {
+        updatePageLayoutControls();
+        schedulePreview();
+    });
+    for (QSpinBox *spin : {rowsSpin_, columnsSpin_}) {
+        connect(spin, &QSpinBox::valueChanged, this, [this] {
+            updatePageLayoutControls();
+            schedulePreview();
+        });
+    }
     for (QRadioButton *radio : {portraitRadio_, landscapeRadio_, allPagesRadio_,
                                currentPageRadio_, rangeRadio_, customRadio_}) {
         connect(radio, &QRadioButton::toggled, this, [this](bool checked) {
@@ -489,6 +564,7 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
 
     const QRect screenArea = screen() ? screen()->availableGeometry() : QRect(0, 0, 1280, 900);
     resize(qMin(1180, screenArea.width() - 60), qMin(800, screenArea.height() - 80));
+    updatePageLayoutControls();
     refreshPaperSizes(currentSize);
     refreshPreview();
     // Wrapped selection captions must not push navigation over the preview.
@@ -503,6 +579,10 @@ mervin::printing::Settings PrintDialog::printSettings() const
     settings.alignment = static_cast<Alignment>(alignmentCombo_->currentData().toInt());
     settings.colourMode = static_cast<ColourMode>(colorCombo_->currentData().toInt());
     settings.qualityDpi = qualityCombo_->currentData().toInt();
+    settings.layoutMode = static_cast<PageLayoutMode>(pageLayoutCombo_->currentData().toInt());
+    settings.rows = rowsSpin_->value();
+    settings.columns = columnsSpin_->value();
+    settings.pageOrientation = static_cast<PageOrientation>(pageOrientationCombo_->currentData().toInt());
     return settings;
 }
 
@@ -539,7 +619,8 @@ void PrintDialog::restorePreferences(const mervin::printing::Preferences &saved)
         printerCombo_, printToFile_, paperSizeCombo_, portraitRadio_, landscapeRadio_,
         allPagesRadio_, currentPageRadio_, rangeRadio_, customRadio_, fromSpin_, toSpin_,
         customEdit_, copiesSpin_, colorCombo_, qualityCombo_, scaleCombo_, scalePercentSpin_,
-        alignmentCombo_, twoSidedCheck_};
+        alignmentCombo_, twoSidedCheck_, pageLayoutCombo_, rowsSpin_, columnsSpin_,
+        pageOrientationCombo_};
     std::vector<QSignalBlocker> blockers;
     blockers.reserve(controls.size());
     for (QObject *control : controls)
@@ -591,6 +672,11 @@ void PrintDialog::restorePreferences(const mervin::printing::Preferences &saved)
     select(qualityCombo_, saved.settings.qualityDpi);
     select(alignmentCombo_, static_cast<int>(saved.settings.alignment));
     select(scaleCombo_, static_cast<int>(saved.settings.scaleMode));
+    select(pageLayoutCombo_, static_cast<int>(saved.settings.layoutMode));
+    rowsSpin_->setValue(saved.settings.rows);
+    columnsSpin_->setValue(saved.settings.columns);
+    select(pageOrientationCombo_, static_cast<int>(saved.settings.pageOrientation));
+    updatePageLayoutControls();
     customScalePercent_ = qBound(10, saved.settings.scalePercent, 400);
     scalePercentSpin_->setSpecialValueText(QString());
     scalePercentSpin_->setRange(10, 400);
@@ -626,6 +712,31 @@ void PrintDialog::restorePreferences(const mervin::printing::Preferences &saved)
     nativeSettings_.from = rangeRadio_->isChecked() ? fromSpin_->value() : 1;
     nativeSettings_.to = rangeRadio_->isChecked() ? toSpin_->value() : qMax(1, pageCount_);
     printerSelectionChanged_ = false;
+}
+
+// Keeps repeat-only controls and scale wording consistent without changing saved values.
+void PrintDialog::updatePageLayoutControls()
+{
+    const bool repeat = pageLayoutCombo_->currentData().toInt() == static_cast<int>(PageLayoutMode::Repeat);
+    repeatOptions_->setVisible(repeat);
+    //: %1 is rows times columns, for example 8. Each source page is repeated this many
+    //: times on its own sheet. The Copies control separately repeats the whole job.
+    repeatCountLabel_->setText(tr("Copies per sheet: %1")
+                                  .arg(QLocale().toString(rowsSpin_->value() * columnsSpin_->value())));
+    //: Scale option. Fit each source page inside one cell of the repeat grid.
+    const QString fitCell = tr("Fit to cell");
+    scaleCombo_->setItemText(scaleCombo_->findData(static_cast<int>(ScaleMode::FitToPage)),
+                             repeat ? fitCell : tr("Fit to page"));
+    // The settings column has a fixed width. Reserve the updated caption before
+    // measuring it, including when a longer translation replaces Fit to page.
+    scaleCombo_->setMinimumWidth(scaleCombo_->sizeHint().width());
+    //: Preview-only dashed boundaries show grid cells and the printable area.
+    const QString guides = tr("Dashed guides are not printed");
+    marginNote_->setText(repeat ? guides : tr("Dashed line shows the printable area"));
+    settingsScroll_->widget()->layout()->activate();
+    const int minimum = settingsScroll_->widget()->minimumSizeHint().width()
+        + settingsScroll_->verticalScrollBar()->sizeHint().width();
+    settingsScroll_->setFixedWidth(qMax(settingsScroll_->width(), minimum));
 }
 
 QList<int> PrintDialog::resolvePages(QString *error) const

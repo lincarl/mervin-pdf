@@ -1779,6 +1779,24 @@ page-order expression still belongs to the custom dialog and opens as All in the
 native dialog. Two-sided printing retains the native automatic, long-edge or
 short-edge choice even though the custom dialog shows it as a checkbox.
 
+The saved print settings also include One per sheet or Repeat page, rows and
+columns, and repeated-page orientation. One per sheet remains the default.
+Repeat starts at 2 rows and 4 columns, with each dimension limited to 1–8.
+Every selected source page gets its own sheet containing that page in each
+equal cell of the printable area. The Copies count still belongs to the whole
+job. The layout adds no extra margins or gaps. Actual size and Custom scale
+clip within each cell, while Fit to cell calculates its percentage from cell
+dimensions. Dashed cell guides appear only in the preview.
+
+Repeated-page orientation is separate from sheet orientation. As shown retains
+the viewer rotation. Portrait or Landscape adds a clockwise quarter turn when
+the displayed source page has the opposite shape. Square pages keep their
+rotation. The choice is applied per source page, including mixed-size documents,
+and is inactive for One per sheet. Native printer selection retains the repeated
+layout and content orientation while continuing to use its existing Fit and
+centered placement defaults. Repeated rasters are prepared once per band and
+drawn into each cell, preserving the existing bounded-memory print pipeline.
+
 The directory can be on a network share, as with a roaming or redirected Windows
 profile or a home folder on NFS. After startup, settings, store and recovery file
 work runs in the background. Open from URL still creates and writes its download

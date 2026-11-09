@@ -392,6 +392,10 @@ void TstRecentStore::printPreferencesRoundTripAndFileIsolation()
     first.settings.alignment = Alignment::CenteredHorizontally;
     first.settings.colourMode = ColourMode::BlackAndWhite;
     first.settings.qualityDpi = 600;
+    first.settings.layoutMode = PageLayoutMode::Repeat;
+    first.settings.rows = 2;
+    first.settings.columns = 4;
+    first.settings.pageOrientation = PageOrientation::Landscape;
     first.duplex = DuplexMode::ShortSide;
     Preferences second;
     second.settings.scaleMode = ScaleMode::Custom;
@@ -416,6 +420,8 @@ void TstRecentStore::printPreferencesRoundTripAndFileIsolation()
     QCOMPARE(saved.value(QStringLiteral("pageSelection")).toString(), QStringLiteral("custom"));
     QCOMPARE(saved.value(QStringLiteral("colourMode")).toString(), QStringLiteral("black-and-white"));
     QCOMPARE(saved.value(QStringLiteral("duplex")).toString(), QStringLiteral("short-side"));
+    QCOMPARE(saved.value(QStringLiteral("layoutMode")).toString(), QStringLiteral("repeat"));
+    QCOMPARE(saved.value(QStringLiteral("pageOrientation")).toString(), QStringLiteral("landscape"));
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString path = dir.filePath(QStringLiteral("recent.json"));
@@ -500,6 +506,10 @@ void TstRecentStore::printPreferencesRejectMalformedFields()
         {QStringLiteral("fromPage"), 9},
         {QStringLiteral("toPage"), 3},
         {QStringLiteral("scaleMode"), QStringLiteral("future-mode")},
+        {QStringLiteral("layoutMode"), QStringLiteral("future-layout")},
+        {QStringLiteral("rows"), 0},
+        {QStringLiteral("columns"), 1000000},
+        {QStringLiteral("pageOrientation"), QStringLiteral("diagonal")},
     });
     QVERIFY(bounded.printerName.isEmpty());
     QVERIFY(bounded.customPages.isEmpty());
@@ -507,6 +517,10 @@ void TstRecentStore::printPreferencesRejectMalformedFields()
     QCOMPARE(bounded.fromPage, 9);
     QCOMPARE(bounded.toPage, 9);
     QCOMPARE(bounded.settings.scaleMode, ScaleMode::FitToPage);
+    QCOMPARE(bounded.settings.layoutMode, PageLayoutMode::Single);
+    QCOMPARE(bounded.settings.rows, 2);
+    QCOMPARE(bounded.settings.columns, 4);
+    QCOMPARE(bounded.settings.pageOrientation, PageOrientation::AsShown);
 
     for (const DuplexMode mode : {DuplexMode::None, DuplexMode::Auto,
                                   DuplexMode::LongSide, DuplexMode::ShortSide}) {

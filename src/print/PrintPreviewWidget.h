@@ -50,6 +50,7 @@ private:
     RenderEngine *engine_;
     Document *document_;
     int rotation_;
+    int pageRotation_ = 0;
     quint64 requester_;
     quint64 generation_ = 0;
     int page_ = -1;

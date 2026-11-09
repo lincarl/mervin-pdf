@@ -61,7 +61,9 @@ void PrintPreviewWidget::setPage(int zeroBasedPage, const QPageLayout &layout,
         clear(tr("No page to preview."));
         return;
     }
-    const bool newPage = page_ != zeroBasedPage;
+    const QSizeF unrotatedPagePoints = document_->pageSize(zeroBasedPage);
+    const int rotation = printing::pageRotation(unrotatedPagePoints, rotation_, settings);
+    const bool newPage = page_ != zeroBasedPage || pageRotation_ != rotation;
     if (newPage) {
         engine_->cancelRequests(requester_);
         ++generation_;
@@ -70,8 +72,9 @@ void PrintPreviewWidget::setPage(int zeroBasedPage, const QPageLayout &layout,
         message_ = tr("Loading preview…");
     }
     page_ = zeroBasedPage;
-    pagePoints_ = document_->pageSize(page_);
-    if (rotation_ == 90 || rotation_ == 270)
+    pageRotation_ = rotation;
+    pagePoints_ = unrotatedPagePoints;
+    if (pageRotation_ == 90 || pageRotation_ == 270)
         pagePoints_.transpose();
     layout_ = layout;
     settings_ = settings;
@@ -97,8 +100,9 @@ double PrintPreviewWidget::scale() const
 {
     if (page_ < 0 || pagePoints_.isEmpty())
         return 0;
+    const auto cells = printing::sheetCells(layout_.paintRect(QPageLayout::Point), settings_);
     const QRectF destination = printing::destinationRect(
-        pagePoints_, layout_.paintRect(QPageLayout::Point), settings_);
+        pagePoints_, cells.value(0), settings_);
     return destination.isEmpty() ? 0 : destination.width() / pagePoints_.width();
 }
 
@@ -129,7 +133,8 @@ void PrintPreviewWidget::requestImage()
     const double qualityDpi = std::max(1, settings_.qualityDpi);
     const double screenDpi = 72.0 * sheet.width() / paper.width() * devicePixelRatioF();
     const double dpi = monochrome ? qualityDpi : std::min(screenDpi, qualityDpi);
-    const QRectF printable = layout_.paintRect(QPageLayout::Point);
+    const auto cells = printing::sheetCells(layout_.paintRect(QPageLayout::Point), settings_);
+    const QRectF printable = cells.value(0);
     // Bound either raster so huge sheets cannot exhaust memory in preview. The bound
     // applies to the visible part, which the plan then rounds out to whole pixels.
     const QSizeF visible =
@@ -165,7 +170,7 @@ void PrintPreviewWidget::requestImage()
     request.document = document_;
     request.requester = requester_;
     request.pageNo = page_;
-    request.rotation = rotation_;
+    request.rotation = pageRotation_;
     request.scale = plan.scale;
     request.clip = plan.source;
     // Black and white thresholds colours without antialiasing, as printing does.
@@ -213,18 +218,37 @@ void PrintPreviewWidget::paintEvent(QPaintEvent *)
     const double scale = sheet.width() / layout_.fullRect(QPageLayout::Point).width();
     painter.scale(scale, scale);
     const QRectF printable = layout_.paintRect(QPageLayout::Point);
+    const auto cells = printing::sheetCells(printable, settings_);
+    if (cells.isEmpty()) {
+        painter.restore();
+        return;
+    }
     // An image from earlier settings keeps its page area until its replacement arrives.
     const QRectF target = printing::rasterTarget(
-        printing::destinationRect(pagePoints_, printable, settings_), pagePoints_, imageScale_,
+        printing::destinationRect(pagePoints_, cells.first(), settings_), pagePoints_, imageScale_,
         QRect(imageOrigin_, image_.size()));
     const QSize deviceSize = painter.deviceTransform().mapRect(target).size().toSize();
-    printing::drawImage(painter, preparedImage(deviceSize), target, printable,
-                        settings_.colourMode, true);
+    const QImage &prepared = preparedImage(deviceSize);
+    for (const QRectF &cell : cells) {
+        printing::drawImage(painter, prepared,
+                            target.translated(cell.topLeft() - cells.first().topLeft()), cell,
+                            settings_.colourMode, true);
+    }
     QPen marginPen(QColor(160, 164, 170), 1, Qt::DashLine);
     marginPen.setCosmetic(true);
     painter.setPen(marginPen);
     painter.setBrush(Qt::NoBrush);
     painter.drawRect(printable);
+    if (settings_.layoutMode == printing::PageLayoutMode::Repeat) {
+        for (int row = 1; row < settings_.rows; ++row) {
+            const double y = printable.top() + row * cells.first().height();
+            painter.drawLine(QLineF(printable.left(), y, printable.right(), y));
+        }
+        for (int column = 1; column < settings_.columns; ++column) {
+            const double x = printable.left() + column * cells.first().width();
+            painter.drawLine(QLineF(x, printable.top(), x, printable.bottom()));
+        }
+    }
     painter.restore();
 }
 

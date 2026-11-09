@@ -147,6 +147,7 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
     const int resolution = printer.resolution();
     const int renderDpi = qMin(resolution, qMax(72, settings.qualityDpi));
     const QRectF printable = printer.pageLayout().paintRect(QPageLayout::Point);
+    const auto cells = printing::sheetCells(printable, settings);
     // Black and white thresholds colours. Antialiasing would turn strokes thinner
     // than a raster pixel into light grays that the threshold drops.
     const bool antialias = settings.colourMode != printing::ColourMode::BlackAndWhite;
@@ -177,13 +178,15 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
         if (mervin::job::stopped())
             return;
         QSizeF pagePoints;
+        int effectiveRotation = rotation;
         printing::RasterPlan plan;
         QList<QRect> bands;
         withDocument([&](const Document &document) {
             pagePoints = document.pageSize(page - 1);
-            if (rotation == 90 || rotation == 270)
+            effectiveRotation = printing::pageRotation(pagePoints, rotation, settings);
+            if (effectiveRotation == 90 || effectiveRotation == 270)
                 pagePoints.transpose();
-            plan = printing::rasterPlan(pagePoints, printable, settings, renderDpi);
+            plan = printing::rasterPlan(pagePoints, cells.value(0), settings, renderDpi);
             bands = printing::rasterBands(plan.source, kPrintBandPixels);
         });
         if (bands.isEmpty()) {
@@ -224,7 +227,8 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
                 if (!printing::testing::checkpoint(
                         {printing::testing::Phase::RenderBand, page, int(index)}))
                     return;
-                band = document.renderPage(page - 1, plan.scale, rotation, clip(index), antialias);
+                band = document.renderPage(page - 1, plan.scale, effectiveRotation,
+                                           clip(index), antialias);
             });
             if (mervin::job::stopped())
                 return;
@@ -292,7 +296,13 @@ void printPages(QPrinter &printer, const std::shared_ptr<mervin::DocumentLifetim
             painter.scale(resolution / 72.0, resolution / 72.0);
             if (!printer.fullPage())
                 painter.translate(-printable.topLeft());
-            printing::drawImage(painter, prepared, target, printable, settings.colourMode);
+            // Render and prepare each band once, then reuse it in every equal cell.
+            // Per-cell clips keep actual size and custom scale inside their slots.
+            for (const QRectF &cell : cells) {
+                printing::drawImage(painter, prepared,
+                                    target.translated(cell.topLeft() - cells.first().topLeft()),
+                                    cell, settings.colourMode);
+            }
             painter.restore();
             if (index == 0) {
                 ++result.submittedPages;
@@ -2428,7 +2438,14 @@ void MainWindow::showPrintDialog(TabPage *tab, const std::shared_ptr<PrintReques
         delete native.data();
         if (!accepted || !owner || !page || !page->isUsable())
             return;
+        const auto pageLayoutSettings = settings;
         settings = {};
+        // The system dialog selects the printer and paper. Repetition and page
+        // orientation remain application-rendered choices that it cannot replace.
+        settings.layoutMode = pageLayoutSettings.layoutMode;
+        settings.rows = pageLayoutSettings.rows;
+        settings.columns = pageLayoutSettings.columns;
+        settings.pageOrientation = pageLayoutSettings.pageOrientation;
         settings.colourMode = printer->colorMode() == QPrinter::GrayScale
             ? mervin::printing::ColourMode::Grayscale : mervin::printing::ColourMode::Colour;
         pages.clear();

@@ -756,8 +756,46 @@ Button: starts printing.</extracomment>
         <translation>t.d. 1-3, 5, 8-10</translation>
     </message>
     <message>
+        <source>Page layout</source>
+        <extracomment>Group for arranging a source PDF page on the physical printed sheet.</extracomment>
+        <translation>Sideoppsett</translation>
+    </message>
+    <message>
+        <source>One per sheet</source>
+        <extracomment>Print layout option. Each selected PDF page appears once on its own sheet.</extracomment>
+        <translation>Éi per ark</translation>
+    </message>
+    <message>
+        <source>Repeat page</source>
+        <extracomment>Print layout option. Repeat each selected PDF page in a grid on its own sheet, rather than arranging different source pages together.</extracomment>
+        <translation>Gjenta side</translation>
+    </message>
+    <message>
+        <source>Rows</source>
+        <translation>Rader</translation>
+    </message>
+    <message>
+        <source>Columns</source>
+        <translation>Kolonnar</translation>
+    </message>
+    <message>
+        <source>As shown</source>
+        <extracomment>Repeated-page orientation option. Keep the page&apos;s current viewer rotation.</extracomment>
+        <translation>Som vist</translation>
+    </message>
+    <message>
+        <source>Page orientation:</source>
+        <extracomment>Orientation of each repeated source page, independent of the physical paper orientation.</extracomment>
+        <translation>Sideretning:</translation>
+    </message>
+    <message>
         <source>Options</source>
         <translation>Val</translation>
+    </message>
+    <message>
+        <source>Copies of the complete print job.</source>
+        <extracomment>Tooltip for the Copies control, distinct from repetitions within one sheet.</extracomment>
+        <translation>Kopiar av heile utskriftsjobben.</translation>
     </message>
     <message>
         <source>Copies:</source>
@@ -861,6 +899,21 @@ Button: starts printing.</extracomment>
     <message>
         <source>Next preview page</source>
         <translation>Neste førehandsviste side</translation>
+    </message>
+    <message>
+        <source>Copies per sheet: %1</source>
+        <extracomment>%1 is rows times columns, for example 8. Each source page is repeated this many times on its own sheet. The Copies control separately repeats the whole job.</extracomment>
+        <translation>Kopiar per ark: %1</translation>
+    </message>
+    <message>
+        <source>Fit to cell</source>
+        <extracomment>Scale option. Fit each source page inside one cell of the repeat grid.</extracomment>
+        <translation>Tilpass til celle</translation>
+    </message>
+    <message>
+        <source>Dashed guides are not printed</source>
+        <extracomment>Preview-only dashed boundaries show grid cells and the printable area.</extracomment>
+        <translation>Stipla hjelpelinjer vert ikkje skrivne ut</translation>
     </message>
     <message>
         <source>Dashed line shows the printable area</source>

@@ -753,8 +753,46 @@ Button: starts printing.</extracomment>
         <translation>例如 1-3, 5, 8-10</translation>
     </message>
     <message>
+        <source>Page layout</source>
+        <extracomment>Group for arranging a source PDF page on the physical printed sheet.</extracomment>
+        <translation>页面布局</translation>
+    </message>
+    <message>
+        <source>One per sheet</source>
+        <extracomment>Print layout option. Each selected PDF page appears once on its own sheet.</extracomment>
+        <translation>每张纸一页</translation>
+    </message>
+    <message>
+        <source>Repeat page</source>
+        <extracomment>Print layout option. Repeat each selected PDF page in a grid on its own sheet, rather than arranging different source pages together.</extracomment>
+        <translation>重复页面</translation>
+    </message>
+    <message>
+        <source>Rows</source>
+        <translation>行数</translation>
+    </message>
+    <message>
+        <source>Columns</source>
+        <translation>列数</translation>
+    </message>
+    <message>
+        <source>As shown</source>
+        <extracomment>Repeated-page orientation option. Keep the page&apos;s current viewer rotation.</extracomment>
+        <translation>按当前显示方向</translation>
+    </message>
+    <message>
+        <source>Page orientation:</source>
+        <extracomment>Orientation of each repeated source page, independent of the physical paper orientation.</extracomment>
+        <translation>页面方向：</translation>
+    </message>
+    <message>
         <source>Options</source>
         <translation>选项</translation>
+    </message>
+    <message>
+        <source>Copies of the complete print job.</source>
+        <extracomment>Tooltip for the Copies control, distinct from repetitions within one sheet.</extracomment>
+        <translation>整个打印任务的份数。</translation>
     </message>
     <message>
         <source>Copies:</source>
@@ -858,6 +896,21 @@ Button: starts printing.</extracomment>
     <message>
         <source>Next preview page</source>
         <translation>下一预览页</translation>
+    </message>
+    <message>
+        <source>Copies per sheet: %1</source>
+        <extracomment>%1 is rows times columns, for example 8. Each source page is repeated this many times on its own sheet. The Copies control separately repeats the whole job.</extracomment>
+        <translation>每张纸的份数：%1</translation>
+    </message>
+    <message>
+        <source>Fit to cell</source>
+        <extracomment>Scale option. Fit each source page inside one cell of the repeat grid.</extracomment>
+        <translation>适合单元格</translation>
+    </message>
+    <message>
+        <source>Dashed guides are not printed</source>
+        <extracomment>Preview-only dashed boundaries show grid cells and the printable area.</extracomment>
+        <translation>虚线辅助线不会打印</translation>
     </message>
     <message>
         <source>Dashed line shows the printable area</source>
