@@ -1625,7 +1625,9 @@ void TstPrintOutput::stopDuringPrinterStart()
         bool held = false;
         bool released = false;
         bool timedOut = false;
+        bool printerClosed = false;
         bool copied = false;
+        QString copyError;
         int startIndex = -1;
         QList<printing::testing::Event> events;
     };
@@ -1641,8 +1643,12 @@ void TstPrintOutput::stopDuringPrinterStart()
             state->timedOut = !state->changed.wait_for(lock, std::chrono::seconds(20),
                                                       [&] { return state->released; });
         }
-        if (event.phase == Phase::PrinterClosed)
-            state->copied = QFile::copy(event.path, partial);
+        if (event.phase == Phase::PrinterClosed) {
+            QFile file(event.path);
+            state->copied = file.copy(partial);
+            state->copyError = file.errorString();
+            state->printerClosed = true;
+        }
         return success;
     });
     const auto release = [state] {
@@ -1660,7 +1666,6 @@ void TstPrintOutput::stopDuringPrinterStart()
     QVERIFY(testing::openAndWait(window, sourcePath_));
     auto *tab = window.findChild<TabPage *>();
     QVERIFY(tab);
-    const int tasks = background::running();
     PrintInteraction dialogs(window, output, {}, [](PrintDialog &dialog) {
         dialog.findChild<QComboBox *>("printQuality")->setCurrentIndex(2); // 600 dpi
         dialog.findChild<QRadioButton *>("printCustomPages")->setChecked(true);
@@ -1676,12 +1681,17 @@ void TstPrintOutput::stopDuringPrinterStart()
     tab->stopWaiting();
     QVERIFY(tab->isUsable());
     release();
-    QTRY_VERIFY_WITH_TIMEOUT(background::running() <= tasks, 10000);
+    // Unrelated tasks can finish while this printer is still closing.
+    const auto printerClosed = [state] {
+        std::lock_guard lock(state->mutex);
+        return state->printerClosed;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(printerClosed(), 10000);
     QVERIFY(!QFileInfo::exists(output));
     QVERIFY(dialogs.messages.isEmpty());
     std::lock_guard lock(state->mutex);
     QVERIFY(!state->timedOut);
-    QVERIFY(state->copied);
+    QVERIFY2(state->copied, qPrintable(state->copyError));
     QVERIFY(state->startIndex >= 0);
     int drawn = 0;
     int submitted = 0;
