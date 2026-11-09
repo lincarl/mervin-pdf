@@ -65,6 +65,9 @@ constexpr std::initializer_list<std::pair<PageSelection, const char *>> selectio
     {PageSelection::Range, "range"}, {PageSelection::Custom, "custom"}};
 constexpr std::initializer_list<std::pair<QPageLayout::Orientation, const char *>> orientationNames{
     {QPageLayout::Portrait, "portrait"}, {QPageLayout::Landscape, "landscape"}};
+constexpr std::initializer_list<std::pair<DuplexMode, const char *>> duplexNames{
+    {DuplexMode::None, "none"}, {DuplexMode::Auto, "auto"},
+    {DuplexMode::LongSide, "long-side"}, {DuplexMode::ShortSide, "short-side"}};
 
 } // namespace
 
@@ -84,7 +87,7 @@ QJsonObject Preferences::toJson() const
         {QStringLiteral("alignment"), enumName(settings.alignment, alignmentNames)},
         {QStringLiteral("colourMode"), enumName(settings.colourMode, colourNames)},
         {QStringLiteral("qualityDpi"), settings.qualityDpi},
-        {QStringLiteral("twoSided"), twoSided},
+        {QStringLiteral("duplex"), enumName(duplex, duplexNames)},
     };
     if (!paperPoints.isEmpty()) {
         object.insert(QStringLiteral("paper"), QJsonObject{
@@ -124,7 +127,10 @@ Preferences Preferences::fromJson(const QJsonObject &object)
     const int quality = readInteger(object.value(QStringLiteral("qualityDpi")), 300, 150, 600);
     if (quality == 150 || quality == 300 || quality == 600)
         preferences.settings.qualityDpi = quality;
-    preferences.twoSided = object.value(QStringLiteral("twoSided")).toBool(false);
+    const DuplexMode fallbackDuplex = object.value(QStringLiteral("twoSided")).toBool(false)
+        ? DuplexMode::LongSide : DuplexMode::None;
+    preferences.duplex = readEnum(object.value(QStringLiteral("duplex")), fallbackDuplex,
+                                  duplexNames);
 
     const QJsonObject paper = object.value(QStringLiteral("paper")).toObject();
     const double width = paper.value(QStringLiteral("widthPoints")).toDouble();

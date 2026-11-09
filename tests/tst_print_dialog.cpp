@@ -16,6 +16,8 @@
 #include <QPainter>
 #include <QPdfWriter>
 #include <QPrinter>
+#include <QPrintDialog>
+#include <QPrintEngine>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QSignalBlocker>
@@ -33,6 +35,39 @@ using namespace mervin;
 Q_DECLARE_METATYPE(PrintDialog::PaperCapabilities)
 
 namespace {
+
+// Uses Qt's real PDF geometry while recording the duplex property ignored by PDF output.
+class DuplexPrintEngine : public QPrintEngine
+{
+public:
+    explicit DuplexPrintEngine(QPrintEngine *base) : base_(base) {}
+    void setProperty(PrintEnginePropertyKey key, const QVariant &value) override
+    {
+        if (key == PPK_Duplex)
+            duplex_ = value;
+        else
+            base_->setProperty(key, value);
+    }
+    QVariant property(PrintEnginePropertyKey key) const override
+    {
+        return key == PPK_Duplex ? duplex_ : base_->property(key);
+    }
+    bool newPage() override { return base_->newPage(); }
+    bool abort() override { return base_->abort(); }
+    int metric(QPaintDevice::PaintDeviceMetric metric) const override { return base_->metric(metric); }
+    QPrinter::PrinterState printerState() const override { return base_->printerState(); }
+
+private:
+    QPrintEngine *base_;
+    QVariant duplex_ = int(QPrinter::DuplexNone);
+};
+
+// The caller owns both supplied engines and keeps them alive through printer destruction.
+class EnginePrinter : public QPrinter
+{
+public:
+    EnginePrinter(QPrintEngine *print, QPaintEngine *paint) { setEngines(print, paint); }
+};
 
 QColor centreColour(PrintPreviewWidget *preview)
 {
@@ -146,6 +181,9 @@ private slots:
     void nativePaperSwitchAndPdfFallback();
     void systemHandoffKeepsSelectedPrinterDefault_data();
     void systemHandoffKeepsSelectedPrinterDefault();
+    void systemHandoffRestoresPreferences_data();
+    void systemHandoffRestoresPreferences();
+    void restoredDuplexReachesPrinter();
     void customOrderValidationAndStaleResults();
     void sheetAlwaysFitsAfterResizeAndOrientation();
     void blackAndWhitePreviewConvertsOnce();
@@ -427,7 +465,7 @@ void TstPrintDialog::preferencesRestoreAllChoices()
     QCOMPARE(saved.settings.qualityDpi, 150);
     QCOMPARE(saved.settings.alignment, Alignment::TopLeft);
     QVERIFY(saved.printToFile);
-    QVERIFY(saved.twoSided);
+    QCOMPARE(saved.duplex, DuplexMode::LongSide);
 
     QPrinter restoredPrinter;
     configurePrinter(restoredPrinter);
@@ -837,6 +875,114 @@ void TstPrintDialog::systemHandoffKeepsSelectedPrinterDefault()
         : switches == 1 ? letter : QPageSize(QPageSize::A4);
     // Native drivers may give equivalent paper sizes different display names.
     QVERIFY(printer.pageLayout().pageSize().isEquivalentTo(expected));
+}
+
+void TstPrintDialog::systemHandoffRestoresPreferences_data()
+{
+    using mervin::printing::PageSelection;
+    QTest::addColumn<int>("selection");
+    QTest::addColumn<int>("expectedRange");
+    QTest::newRow("all") << int(PageSelection::All) << int(QPrinter::AllPages);
+    QTest::newRow("current") << int(PageSelection::Current) << int(QPrinter::CurrentPage);
+    QTest::newRow("range") << int(PageSelection::Range) << int(QPrinter::PageRange);
+}
+
+// Native printing starts from accepted choices even after live custom-preview edits.
+void TstPrintDialog::systemHandoffRestoresPreferences()
+{
+    using namespace mervin::printing;
+    QFETCH(int, selection);
+    QFETCH(int, expectedRange);
+    RenderEngine engine;
+    auto document = engine.openDocument(sourcePath_);
+    QVERIFY(document);
+    QPrinter printer;
+    configurePrinter(printer);
+    PrintDialog dialog(&printer, &engine, document.get(), 0, QPageLayout::Portrait, 2, "saved");
+    Preferences saved = dialog.preferences();
+    saved.paperKey = QPageSize(QPageSize::A5).key();
+    saved.paperPoints = QPageSize(QPageSize::A5).size(QPageSize::Point);
+    saved.orientation = QPageLayout::Landscape;
+    saved.copies = 3;
+    saved.settings.colourMode = ColourMode::Grayscale;
+    saved.pageSelection = static_cast<PageSelection>(selection);
+    saved.fromPage = 2;
+    saved.toPage = 3;
+    saved.duplex = DuplexMode::ShortSide;
+    dialog.restorePreferences(Preferences::fromJson(saved.toJson()));
+    QCOMPARE(dialog.preferences().duplex, DuplexMode::ShortSide);
+    auto *twoSided = dialog.findChild<QCheckBox *>("printTwoSided");
+    QVERIFY(twoSided);
+    QVERIFY(twoSided->isChecked());
+    twoSided->setChecked(false);
+    QCOMPARE(dialog.preferences().duplex, DuplexMode::None);
+    twoSided->setChecked(true);
+    QCOMPARE(dialog.preferences().duplex, DuplexMode::ShortSide);
+    dialog.findChild<QSpinBox *>("printCopies")->setValue(1);
+    dialog.findChild<QRadioButton *>("printPortrait")->setChecked(true);
+    auto *paper = dialog.findChild<QComboBox *>("printPaperSize");
+    paper->setCurrentIndex(paper->findData(QVariant::fromValue(QPageSize(QPageSize::A3))));
+    QTRY_COMPARE(printer.pageLayout().pageSize().id(), QPageSize::A3);
+    auto *system = dialog.findChild<QPushButton *>("printSystemDialog");
+    QVERIFY(system);
+    system->setEnabled(true);
+    system->click();
+    QVERIFY(dialog.useSystemDialog());
+    QCOMPARE(printer.pageLayout().pageSize().id(), QPageSize::A5);
+    QCOMPARE(printer.pageLayout().orientation(), QPageLayout::Landscape);
+    QCOMPARE(printer.copyCount(), 3);
+    QCOMPARE(printer.colorMode(), QPrinter::GrayScale);
+    QCOMPARE(printer.printRange(), static_cast<QPrinter::PrintRange>(expectedRange));
+    const bool range = saved.pageSelection == PageSelection::Range;
+    QCOMPARE(printer.fromPage(), range ? 2 : 1);
+    QCOMPARE(printer.toPage(), 3);
+    // Match the caller's native setup and confirm its bounds preserve saved endpoints.
+    QPrintDialog native(&printer);
+    native.setMinMax(1, document->pageCount());
+    native.setOption(QAbstractPrintDialog::PrintPageRange, true);
+    native.setOption(QAbstractPrintDialog::PrintCurrentPage, true);
+    QCOMPARE(printer.printRange(), static_cast<QPrinter::PrintRange>(expectedRange));
+    QCOMPARE(printer.fromPage(), range ? 2 : 1);
+    QCOMPARE(printer.toPage(), 3);
+}
+
+// Binding survives JSON, custom-dialog application and native handoff without a device.
+void TstPrintDialog::restoredDuplexReachesPrinter()
+{
+    using namespace mervin::printing;
+    RenderEngine engine;
+    auto document = engine.openDocument(sourcePath_);
+    QVERIFY(document);
+    QPrinter geometry;
+    configurePrinter(geometry);
+    DuplexPrintEngine properties(geometry.printEngine());
+    EnginePrinter printer(&properties, geometry.paintEngine());
+    PrintDialog dialog(&printer, &engine, document.get(), 0, QPageLayout::Portrait, 1, "duplex");
+    auto *printers = dialog.findChild<QComboBox *>("printPrinter");
+    QVERIFY(printers);
+    {
+        const QSignalBlocker blocker(printers);
+        printers->clear();
+        printers->addItem(QStringLiteral("Duplex test printer"), QStringLiteral("test-duplex"));
+    }
+    auto saved = dialog.preferences();
+    saved.printerName = QStringLiteral("test-duplex");
+    saved.printToFile = false;
+    const QList<std::pair<DuplexMode, QPrinter::DuplexMode>> modes{
+        {DuplexMode::ShortSide, QPrinter::DuplexShortSide},
+        {DuplexMode::Auto, QPrinter::DuplexAuto},
+        {DuplexMode::LongSide, QPrinter::DuplexLongSide},
+        {DuplexMode::None, QPrinter::DuplexNone}};
+    auto *system = dialog.findChild<QPushButton *>("printSystemDialog");
+    QVERIFY(system);
+    system->setEnabled(true);
+    for (const auto &[mode, nativeMode] : modes) {
+        saved.duplex = mode;
+        dialog.restorePreferences(Preferences::fromJson(saved.toJson()));
+        QCOMPARE(printer.duplex(), nativeMode);
+        system->click();
+        QCOMPARE(printer.duplex(), nativeMode);
+    }
 }
 
 void TstPrintDialog::customOrderValidationAndStaleResults()

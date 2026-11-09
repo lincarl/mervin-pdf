@@ -1765,7 +1765,7 @@ Corrupt or missing state files fall back to defaults instead of blocking startup
 Each recent entry may contain a `print` object with the choices accepted by the
 custom or native print dialog. Cancel does not replace them. The record keeps
 printer identity, paper dimensions and key, orientation, page selection, copies,
-scale mode and custom percentage, colour, quality, alignment and two-sided printing.
+scale mode and custom percentage, colour, quality, alignment and duplex binding mode.
 It never keeps an output filename or a calculated automatic scale. Reopening the
 document preserves these choices, and removing its history entry removes them.
 Restoration uses available printers and paper, clamps numeric page ranges to the
@@ -1773,6 +1773,11 @@ current document, and validates custom page selections without changing their or
 An invalid saved custom selection must be corrected before printing. Entries without
 print settings retain the current printer and document defaults. WindowManager saves
 changes through the existing background writer for `recent.json`.
+Saved choices also replace the defaults used when opening the native print dialog.
+The native dialog supports All, Current page and numeric ranges. A saved custom
+page-order expression still belongs to the custom dialog and opens as All in the
+native dialog. Two-sided printing retains the native automatic, long-edge or
+short-edge choice even though the custom dialog shows it as a checkbox.
 
 The directory can be on a network share, as with a roaming or redirected Windows
 profile or a home folder on NFS. After startup, settings, store and recovery file

@@ -9,6 +9,7 @@
 #include <QMarginsF>
 #include <QPageLayout>
 #include <QPageSize>
+#include <QPrinter>
 #include <QString>
 
 #include <functional>
@@ -18,7 +19,6 @@ class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPageSize;
-class QPrinter;
 class QPushButton;
 class QRadioButton;
 class QSpinBox;
@@ -91,6 +91,19 @@ private:
     QList<int> pages_;
     bool useSystemDialog_ = false;
     bool printerSelectionChanged_ = false;
+    // Saved choices replace constructor defaults for native handoff. Live custom
+    // edits leave this baseline intact, as they did before preference persistence.
+    struct NativeSettings
+    {
+        QPageLayout layout;
+        int copies = 1;
+        QPrinter::ColorMode colour = QPrinter::Color;
+        QPrinter::DuplexMode duplex = QPrinter::DuplexNone;
+        QPrinter::PrintRange range = QPrinter::AllPages;
+        int from = 1;
+        int to = 1;
+    } nativeSettings_;
+    mervin::printing::DuplexMode duplexMode_ = mervin::printing::DuplexMode::LongSide;
     PaperQuery paperQuery_;
     QHash<QString, PaperCapabilities> paperCapabilities_;
 

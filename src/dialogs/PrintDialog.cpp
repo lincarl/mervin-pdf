@@ -48,6 +48,19 @@ constexpr QPageSize::PageSizeId kCommonSizes[] = {
     QPageSize::A3, QPageSize::A4, QPageSize::A5, QPageSize::B4, QPageSize::B5,
     QPageSize::Letter, QPageSize::Legal, QPageSize::Tabloid, QPageSize::Executive,
 };
+
+// Converts saved semantic duplex choices without losing the native binding edge.
+QPrinter::DuplexMode nativeDuplex(mervin::printing::DuplexMode mode)
+{
+    using mervin::printing::DuplexMode;
+    switch (mode) {
+    case DuplexMode::None: return QPrinter::DuplexNone;
+    case DuplexMode::Auto: return QPrinter::DuplexAuto;
+    case DuplexMode::LongSide: return QPrinter::DuplexLongSide;
+    case DuplexMode::ShortSide: return QPrinter::DuplexShortSide;
+    }
+    return QPrinter::DuplexNone;
+}
 } // namespace
 
 QPageSize PrintDialog::PaperCapabilities::acceptedPaper(const QPageSize &paper) const
@@ -90,10 +103,13 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     //: Dialog title.
     setWindowTitle(tr("Print"));
     setObjectName(QStringLiteral("printDialog"));
-    const QPageLayout initialLayout = printer_->pageLayout();
-    const int initialCopies = printer_->copyCount();
-    const QPrinter::ColorMode initialColour = printer_->colorMode();
-    const QPrinter::DuplexMode initialDuplex = printer_->duplex();
+    nativeSettings_ = {printer_->pageLayout(), printer_->copyCount(), printer_->colorMode(),
+                       printer_->duplex(), QPrinter::AllPages, 1, qMax(1, pageCount_)};
+    nativeSettings_.layout.setOrientation(initialOrientation);
+    if (printer_->duplex() == QPrinter::DuplexAuto)
+        duplexMode_ = mervin::printing::DuplexMode::Auto;
+    else if (printer_->duplex() == QPrinter::DuplexShortSide)
+        duplexMode_ = mervin::printing::DuplexMode::ShortSide;
 
     auto *layout = new QVBoxLayout(this);
     auto *body = new QHBoxLayout;
@@ -401,22 +417,24 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     systemButton->setEnabled(!printers.isEmpty());
     systemButton->setAutoDefault(false);
     systemButton->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P));
-    connect(systemButton, &QPushButton::clicked, this,
-            [this, initialLayout, initialOrientation, initialCopies, initialColour, initialDuplex] {
-        // Live preview changes the supplied printer. Restore defaults before native handoff.
+    connect(systemButton, &QPushButton::clicked, this, [this] {
+        // Live preview changes the supplied printer. Restore the saved baseline
+        // before native handoff, or the constructor defaults for an unsaved file.
         printer_->setOutputFileName(QString());
         printer_->setOutputFormat(QPrinter::NativeFormat);
         printer_->setPrinterName(printerCombo_->currentData().toString());
-        printer_->setPageLayout(initialLayout);
+        printer_->setPageLayout(nativeSettings_.layout);
         if (printerSelectionChanged_) {
             const QPageSize defaultSize = selectedPrinterDefaultPageSize();
             if (defaultSize.isValid())
                 printer_->setPageSize(defaultSize);
         }
-        printer_->setPageOrientation(initialOrientation);
-        printer_->setCopyCount(initialCopies);
-        printer_->setColorMode(initialColour);
-        printer_->setDuplex(initialDuplex);
+        printer_->setPageOrientation(nativeSettings_.layout.orientation());
+        printer_->setCopyCount(nativeSettings_.copies);
+        printer_->setColorMode(nativeSettings_.colour);
+        printer_->setDuplex(nativeSettings_.duplex);
+        printer_->setFromTo(nativeSettings_.from, nativeSettings_.to);
+        printer_->setPrintRange(nativeSettings_.range);
         useSystemDialog_ = true;
         QDialog::accept();
     });
@@ -507,7 +525,8 @@ mervin::printing::Preferences PrintDialog::preferences() const
     saved.customPages = customEdit_->text();
     saved.copies = copiesSpin_->value();
     saved.settings = printSettings();
-    saved.twoSided = twoSidedCheck_->isChecked();
+    saved.duplex = twoSidedCheck_->isChecked() ? duplexMode_
+                                               : mervin::printing::DuplexMode::None;
     return saved;
 }
 
@@ -559,7 +578,9 @@ void PrintDialog::restorePreferences(const mervin::printing::Preferences &saved)
     (saved.orientation == QPageLayout::Landscape ? landscapeRadio_ : portraitRadio_)
         ->setChecked(true);
     copiesSpin_->setValue(saved.copies);
-    twoSidedCheck_->setChecked(saved.twoSided);
+    duplexMode_ = saved.duplex == mervin::printing::DuplexMode::None
+        ? mervin::printing::DuplexMode::LongSide : saved.duplex;
+    twoSidedCheck_->setChecked(saved.duplex != mervin::printing::DuplexMode::None);
 
     const auto select = [](QComboBox *combo, int value) {
         const int index = combo->findData(value);
@@ -593,6 +614,18 @@ void PrintDialog::restorePreferences(const mervin::printing::Preferences &saved)
     // Keep custom page order intact. A document that lost a selected page shows
     // the existing validation error instead of silently printing different pages.
     refreshPreview();
+    nativeSettings_.layout = printer_->pageLayout();
+    nativeSettings_.layout.setPageSize(paper);
+    nativeSettings_.layout.setOrientation(saved.orientation);
+    nativeSettings_.copies = copiesSpin_->value();
+    nativeSettings_.colour = printSettings().colourMode == ColourMode::Colour
+        ? QPrinter::Color : QPrinter::GrayScale;
+    nativeSettings_.duplex = nativeDuplex(saved.duplex);
+    nativeSettings_.range = saved.pageSelection == PageSelection::Range ? QPrinter::PageRange
+        : saved.pageSelection == PageSelection::Current ? QPrinter::CurrentPage : QPrinter::AllPages;
+    nativeSettings_.from = rangeRadio_->isChecked() ? fromSpin_->value() : 1;
+    nativeSettings_.to = rangeRadio_->isChecked() ? toSpin_->value() : qMax(1, pageCount_);
+    printerSelectionChanged_ = false;
 }
 
 QList<int> PrintDialog::resolvePages(QString *error) const
@@ -764,7 +797,7 @@ bool PrintDialog::applyPrinterSettings(QString *error)
     printer_->setCopyCount(copiesSpin_->value());
     printer_->setColorMode(printSettings().colourMode == ColourMode::Colour ? QPrinter::Color
                                                                           : QPrinter::GrayScale);
-    printer_->setDuplex(!toFile && twoSidedCheck_->isChecked() ? QPrinter::DuplexLongSide
+    printer_->setDuplex(!toFile && twoSidedCheck_->isChecked() ? nativeDuplex(duplexMode_)
                                                              : QPrinter::DuplexNone);
     return true;
 }

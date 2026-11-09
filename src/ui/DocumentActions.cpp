@@ -2419,8 +2419,8 @@ void MainWindow::showPrintDialog(TabPage *tab, const std::shared_ptr<PrintReques
     if (!accepted || !owner || !page || !page->isUsable())
         return;
     if (system) {
-        printer->setFromTo(1, request->pageCount);
         const QPointer<QPrintDialog> native(new QPrintDialog(printer.get(), this));
+        native->setMinMax(1, request->pageCount);
         native->setWindowTitle(tr("Print"));
         native->setOption(QAbstractPrintDialog::PrintPageRange, true);
         native->setOption(QAbstractPrintDialog::PrintCurrentPage, true);
@@ -2457,7 +2457,13 @@ void MainWindow::showPrintDialog(TabPage *tab, const std::shared_ptr<PrintReques
         preferences.paperPoints = printer->pageLayout().pageSize().size(QPageSize::Point);
         preferences.orientation = printer->pageLayout().orientation();
         preferences.copies = printer->copyCount();
-        preferences.twoSided = printer->duplex() != QPrinter::DuplexNone;
+        using mervin::printing::DuplexMode;
+        switch (printer->duplex()) {
+        case QPrinter::DuplexNone: preferences.duplex = DuplexMode::None; break;
+        case QPrinter::DuplexAuto: preferences.duplex = DuplexMode::Auto; break;
+        case QPrinter::DuplexLongSide: preferences.duplex = DuplexMode::LongSide; break;
+        case QPrinter::DuplexShortSide: preferences.duplex = DuplexMode::ShortSide; break;
+        }
         preferences.settings = settings;
         preferences.pageSelection = printer->printRange() == QPrinter::PageRange
             ? mervin::printing::PageSelection::Range

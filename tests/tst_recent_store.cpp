@@ -392,7 +392,7 @@ void TstRecentStore::printPreferencesRoundTripAndFileIsolation()
     first.settings.alignment = Alignment::CenteredHorizontally;
     first.settings.colourMode = ColourMode::BlackAndWhite;
     first.settings.qualityDpi = 600;
-    first.twoSided = true;
+    first.duplex = DuplexMode::ShortSide;
     Preferences second;
     second.settings.scaleMode = ScaleMode::Custom;
     second.settings.scalePercent = 125;
@@ -415,6 +415,7 @@ void TstRecentStore::printPreferencesRoundTripAndFileIsolation()
     QCOMPARE(saved.value(QStringLiteral("scalePercent")).toInt(), 67);
     QCOMPARE(saved.value(QStringLiteral("pageSelection")).toString(), QStringLiteral("custom"));
     QCOMPARE(saved.value(QStringLiteral("colourMode")).toString(), QStringLiteral("black-and-white"));
+    QCOMPARE(saved.value(QStringLiteral("duplex")).toString(), QStringLiteral("short-side"));
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString path = dir.filePath(QStringLiteral("recent.json"));
@@ -489,7 +490,7 @@ void TstRecentStore::printPreferencesRejectMalformedFields()
     expected.pageSelection = PageSelection::Range;
     expected.settings.scaleMode = ScaleMode::Custom;
     expected.settings.colourMode = ColourMode::Grayscale;
-    expected.twoSided = true;
+    expected.duplex = DuplexMode::LongSide;
     QVERIFY(*parsed == expected);
 
     const Preferences bounded = Preferences::fromJson(QJsonObject{
@@ -506,6 +507,15 @@ void TstRecentStore::printPreferencesRejectMalformedFields()
     QCOMPARE(bounded.fromPage, 9);
     QCOMPARE(bounded.toPage, 9);
     QCOMPARE(bounded.settings.scaleMode, ScaleMode::FitToPage);
+
+    for (const DuplexMode mode : {DuplexMode::None, DuplexMode::Auto,
+                                  DuplexMode::LongSide, DuplexMode::ShortSide}) {
+        Preferences duplex;
+        duplex.duplex = mode;
+        QCOMPARE(Preferences::fromJson(duplex.toJson()).duplex, mode);
+    }
+    QCOMPARE(Preferences::fromJson(QJsonObject{{QStringLiteral("duplex"), "invalid"}}).duplex,
+             DuplexMode::None);
 }
 
 QTEST_GUILESS_MAIN(TstRecentStore)

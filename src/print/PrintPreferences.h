@@ -10,6 +10,7 @@
 namespace mervin::printing {
 
 enum class PageSelection { All, Current, Range, Custom };
+enum class DuplexMode { None, Auto, LongSide, ShortSide };
 
 // Per-file dialog choices saved after Print, independent of automatic preview scale.
 struct Preferences
@@ -25,7 +26,7 @@ struct Preferences
     QString customPages;
     int copies = 1;
     Settings settings;
-    bool twoSided = false;
+    DuplexMode duplex = DuplexMode::None;
 
     bool operator==(const Preferences &) const = default;
 
