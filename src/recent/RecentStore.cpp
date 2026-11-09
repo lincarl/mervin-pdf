@@ -39,22 +39,19 @@ bool RecentStore::add(const QString &path, qint64 whenMs, int pageCount, const Q
         return false;
 
     const QString key = normalizePathKey(path);
-    bool wasFavorite = false;
-    int knownPages = 0;
+    RecentEntry e;
     for (int i = 0; i < entries_.size(); ++i) {
         if (normalizePathKey(entries_.at(i).path) == key) {
-            wasFavorite = entries_.at(i).favorite; // preserve the flag on re-open
-            knownPages = entries_.at(i).pageCount;
+            e = entries_.at(i); // keep per-file choices and favourites on reopen
             entries_.removeAt(i);
             break; // keys are unique, so at most one match
         }
     }
 
-    RecentEntry e;
     e.path = path;
     e.lastOpened = whenMs;
-    e.pageCount = pageCount > 0 ? pageCount : knownPages;
-    e.favorite = wasFavorite;
+    if (pageCount > 0)
+        e.pageCount = pageCount;
     e.mount = mount;
     entries_.prepend(e);
     trim();
@@ -73,6 +70,35 @@ bool RecentStore::setFavorite(const QString &path, bool favorite)
             e.favorite = favorite;
             return true;
         }
+    }
+    return false;
+}
+
+std::optional<printing::Preferences> RecentStore::printPreferences(const QString &path) const
+{
+    if (path.isEmpty())
+        return std::nullopt;
+    const QString key = normalizePathKey(path);
+    for (const RecentEntry &entry : entries_) {
+        if (normalizePathKey(entry.path) == key)
+            return entry.printPreferences;
+    }
+    return std::nullopt;
+}
+
+bool RecentStore::setPrintPreferences(const QString &path,
+                                      const printing::Preferences &preferences)
+{
+    if (path.isEmpty())
+        return false;
+    const QString key = normalizePathKey(path);
+    for (RecentEntry &entry : entries_) {
+        if (normalizePathKey(entry.path) != key)
+            continue;
+        if (entry.printPreferences == preferences)
+            return false;
+        entry.printPreferences = preferences;
+        return true;
     }
     return false;
 }
@@ -345,6 +371,9 @@ bool RecentStore::load(const QString &file)
         e.pageCount = o.value(QStringLiteral("n")).toInt(0);
         e.favorite = o.value(QStringLiteral("f")).toBool(false);
         e.mount = o.value(QStringLiteral("m")).toString();
+        const QJsonValue print = o.value(QStringLiteral("print"));
+        if (print.isObject())
+            e.printPreferences = printing::Preferences::fromJson(print.toObject());
         if (!e.path.isEmpty())
             entries_.append(e);
     }
@@ -374,6 +403,8 @@ QByteArray RecentStore::toJson() const
             o.insert(QStringLiteral("f"), true);
         if (!e.mount.isEmpty())
             o.insert(QStringLiteral("m"), e.mount);
+        if (e.printPreferences)
+            o.insert(QStringLiteral("print"), e.printPreferences->toJson());
         arr.append(o);
     }
     return QJsonDocument(arr).toJson(QJsonDocument::Compact);

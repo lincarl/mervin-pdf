@@ -1,7 +1,11 @@
 #pragma once
 
+#include "print/PrintPreferences.h"
+
 #include <QString>
 #include <QtGlobal>
+
+#include <optional>
 
 namespace mervin {
 
@@ -20,6 +24,8 @@ struct RecentEntry
     // An entry an older version wrote gets it from the first check that finds the
     // file there. Linux only, "" when not known. Persisted as "m".
     QString mount;
+    // Choices last accepted with Print. Absent entries retain current printer defaults.
+    std::optional<printing::Preferences> printPreferences;
 };
 
 } // namespace mervin

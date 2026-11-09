@@ -150,6 +150,8 @@ add_library(mervin_core STATIC
     src/print/PageRange.h
     src/print/PrintLayout.cpp
     src/print/PrintLayout.h
+    src/print/PrintPreferences.cpp
+    src/print/PrintPreferences.h
     src/net/UrlOpen.cpp
     src/net/UrlOpen.h
     src/net/UrlDownload.cpp

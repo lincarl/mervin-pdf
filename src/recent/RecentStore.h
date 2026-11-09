@@ -89,6 +89,11 @@ public:
     // was found and the flag actually changed.
     bool setFavorite(const QString &path, bool favorite);
 
+    // Returns the choices last accepted with Print, or no value for an unsaved file.
+    std::optional<printing::Preferences> printPreferences(const QString &path) const;
+    // Updates an existing entry without changing its open time or order. No-op if unchanged.
+    bool setPrintPreferences(const QString &path, const printing::Preferences &preferences);
+
     const QList<RecentEntry> &entries() const { return entries_; }
     int count() const { return static_cast<int>(entries_.size()); }
     void clear();

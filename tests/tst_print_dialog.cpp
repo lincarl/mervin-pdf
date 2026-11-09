@@ -18,6 +18,7 @@
 #include <QPrinter>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QSignalBlocker>
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QTemporaryDir>
@@ -135,6 +136,9 @@ private slots:
     void initTestCase();
     void defaultsAndLiveSettings();
     void automaticScaleFollowsPreviewGeometry();
+    void preferencesRestoreAllChoices();
+    void preferencesFallBackForUnavailablePrinterAndPaper();
+    void preferencesHandleChangedPageCounts();
     void printerChangesSelectDefaultPaper();
     void printerPaperAliasesReuseEntries();
     void nativePaperCapabilities_data();
@@ -364,6 +368,208 @@ void TstPrintDialog::automaticScaleFollowsPreviewGeometry()
                  fitPercent(rotatedPrinter.pageLayout(), pageSizes.first().transposed()));
     QVERIFY(rotatedPercent->value()
             != fitPercent(rotatedPrinter.pageLayout(), pageSizes.first()));
+}
+
+// Restores the controls and printer settings, including the custom value hidden by Fit.
+void TstPrintDialog::preferencesRestoreAllChoices()
+{
+    using namespace mervin::printing;
+    RenderEngine engine;
+    auto document = engine.openDocument(sourcePath_);
+    QVERIFY(document);
+    QPrinter printer;
+    configurePrinter(printer);
+    PrintDialog source(&printer, &engine, document.get(), 0, QPageLayout::Portrait, 1, "source");
+    const auto combo = [&source](const char *name, int value) {
+        auto *control = source.findChild<QComboBox *>(name);
+        QVERIFY(control);
+        const int index = control->findData(value);
+        QVERIFY(index >= 0);
+        control->setCurrentIndex(index);
+    };
+    auto *paper = source.findChild<QComboBox *>("printPaperSize");
+    auto *scale = source.findChild<QComboBox *>("printScale");
+    auto *percent = source.findChild<QSpinBox *>("printScalePercent");
+    auto *twoSided = source.findChild<QCheckBox *>("printTwoSided");
+    auto *confirm = source.findChild<QPushButton *>("printConfirm");
+    QVERIFY(paper && scale && percent && twoSided && confirm);
+    const QPageSize a3(QPageSize::A3);
+    const int a3Index = paper->findData(QVariant::fromValue(a3));
+    QVERIFY(a3Index >= 0);
+    paper->setCurrentIndex(a3Index);
+    source.findChild<QRadioButton *>("printLandscape")->setChecked(true);
+    source.findChild<QSpinBox *>("printCopies")->setValue(3);
+    source.findChild<QRadioButton *>("printPageRange")->setChecked(true);
+    source.findChild<QSpinBox *>("printFromPage")->setValue(2);
+    source.findChild<QSpinBox *>("printToPage")->setValue(3);
+    source.findChild<QLineEdit *>("printPages")->setText(QStringLiteral("3,1,3"));
+    combo("printColour", static_cast<int>(ColourMode::BlackAndWhite));
+    combo("printQuality", 150);
+    combo("printAlignment", static_cast<int>(Alignment::TopLeft));
+    scale->setCurrentIndex(scale->findData(static_cast<int>(ScaleMode::Custom)));
+    percent->setValue(67);
+    scale->setCurrentIndex(scale->findData(static_cast<int>(ScaleMode::FitToPage)));
+    twoSided->setChecked(true);
+    QVERIFY(!twoSided->isEnabled());
+    QTRY_VERIFY(confirm->isEnabled());
+    const Preferences saved = source.preferences();
+    QCOMPARE(saved.paperKey, a3.key());
+    QCOMPARE(saved.paperPoints, a3.size(QPageSize::Point));
+    QCOMPARE(saved.orientation, QPageLayout::Landscape);
+    QCOMPARE(saved.copies, 3);
+    QCOMPARE(saved.pageSelection, PageSelection::Range);
+    QCOMPARE(saved.fromPage, 2);
+    QCOMPARE(saved.toPage, 3);
+    QCOMPARE(saved.customPages, QStringLiteral("3,1,3"));
+    QCOMPARE(saved.settings.scaleMode, ScaleMode::FitToPage);
+    QCOMPARE(saved.settings.scalePercent, 67);
+    QCOMPARE(saved.settings.colourMode, ColourMode::BlackAndWhite);
+    QCOMPARE(saved.settings.qualityDpi, 150);
+    QCOMPARE(saved.settings.alignment, Alignment::TopLeft);
+    QVERIFY(saved.printToFile);
+    QVERIFY(saved.twoSided);
+
+    QPrinter restoredPrinter;
+    configurePrinter(restoredPrinter);
+    PrintDialog restored(&restoredPrinter, &engine, document.get(), 0,
+                         QPageLayout::Portrait, 2, "restored");
+    restored.restorePreferences(saved);
+    QVERIFY(restored.preferences() == saved);
+    QCOMPARE(restoredPrinter.outputFormat(), QPrinter::PdfFormat);
+    QCOMPARE(restoredPrinter.pageLayout().pageSize().id(), QPageSize::A3);
+    QCOMPARE(restoredPrinter.pageLayout().orientation(), QPageLayout::Landscape);
+    QCOMPARE(restoredPrinter.copyCount(), 3);
+    QCOMPARE(restoredPrinter.colorMode(), QPrinter::GrayScale);
+    auto *restoredPercent = restored.findChild<QSpinBox *>("printScalePercent");
+    auto *restoredScale = restored.findChild<QComboBox *>("printScale");
+    auto *restoredTwoSided = restored.findChild<QCheckBox *>("printTwoSided");
+    auto *pageLabel = restored.findChild<QLabel *>("printPageLabel");
+    QVERIFY(restoredPercent && restoredScale && restoredTwoSided && pageLabel);
+    QVERIFY(!restoredPercent->isEnabled());
+    QVERIFY(restoredPercent->value() != 67);
+    QVERIFY(restoredTwoSided->isChecked());
+    QVERIFY(!restoredTwoSided->isEnabled());
+    QCOMPARE(pageLabel->text(), QStringLiteral("Page 2 · 1 of 2 selected"));
+    restoredScale->setCurrentIndex(restoredScale->findData(static_cast<int>(ScaleMode::Custom)));
+    QVERIFY(restoredPercent->isEnabled());
+    QCOMPARE(restoredPercent->value(), 67);
+
+    Preferences selection = saved;
+    selection.pageSelection = PageSelection::Custom;
+    restored.restorePreferences(selection);
+    QCOMPARE(pageLabel->text(), QStringLiteral("Page 3 · 1 of 3 selected"));
+    restored.findChild<QPushButton *>("printNextPage")->click();
+    QCOMPARE(pageLabel->text(), QStringLiteral("Page 1 · 2 of 3 selected"));
+    selection.pageSelection = PageSelection::Current;
+    restored.restorePreferences(selection);
+    QCOMPARE(pageLabel->text(), QStringLiteral("Page 2 · 1 of 1 selected"));
+}
+
+// Saved device choices use available stock, retaining exact native keys when still supported.
+void TstPrintDialog::preferencesFallBackForUnavailablePrinterAndPaper()
+{
+    RenderEngine engine;
+    auto document = engine.openDocument(sourcePath_);
+    QVERIFY(document);
+    QPrinter printer;
+    configurePrinter(printer);
+    const QPageSize stock(QSizeF(510, 737), QPageSize::Point,
+                          QStringLiteral("Driver stock"), QPageSize::ExactMatch);
+    const QPageSize letter(QPageSize::Letter);
+    PrintDialog dialog(&printer, &engine, document.get(), 0, QPageLayout::Portrait, 1,
+        "fallback", nullptr, [stock, letter](const QString &) {
+            return PrintDialog::PaperCapabilities{{stock, letter}, false, {}, {}};
+        });
+    auto *printers = dialog.findChild<QComboBox *>("printPrinter");
+    auto *paper = dialog.findChild<QComboBox *>("printPaperSize");
+    auto *toFile = dialog.findChild<QCheckBox *>("printToFile");
+    auto *confirm = dialog.findChild<QPushButton *>("printConfirm");
+    QVERIFY(printers && paper && toFile && confirm);
+    {
+        const QSignalBlocker blocker(printers);
+        printers->clear();
+        printers->addItem(QStringLiteral("Available printer"), QStringLiteral("available"));
+        printers->setItemData(0, QVariant::fromValue(letter), Qt::UserRole + 1);
+    }
+    auto saved = dialog.preferences();
+    saved.printerName = QStringLiteral("missing-printer-for-restore-test");
+    saved.printToFile = false;
+    saved.paperKey = QPageSize(QPageSize::A3).key();
+    saved.paperPoints = QPageSize(QPageSize::A3).size(QPageSize::Point);
+    dialog.restorePreferences(saved);
+    QCOMPARE(printers->count(), 1);
+    QCOMPARE(printers->currentData().toString(), QStringLiteral("available"));
+    QVERIFY(!toFile->isChecked());
+    QCOMPARE(paper->currentData().value<QPageSize>(), letter);
+
+    printers->setItemData(0, QVariant::fromValue(QPageSize()), Qt::UserRole + 1);
+    dialog.restorePreferences(saved);
+    QCOMPARE(paper->currentData().value<QPageSize>(), stock);
+    saved.paperKey = stock.key();
+    saved.paperPoints = stock.size(QPageSize::Point);
+    dialog.restorePreferences(saved);
+    QCOMPARE(paper->currentData().value<QPageSize>(), stock);
+
+    {
+        const QSignalBlocker blocker(printers);
+        printers->clear();
+        printers->addItem(QStringLiteral("No printers available"));
+    }
+    dialog.restorePreferences(saved);
+    QVERIFY(toFile->isChecked());
+    QVERIFY(!printers->isEnabled());
+    QCOMPARE(printer.outputFormat(), QPrinter::PdfFormat);
+    QCOMPARE(printer.pageLayout().pageSize().size(QPageSize::Point), saved.paperPoints);
+    QVERIFY(confirm->isEnabled());
+}
+
+// Shorter documents clamp ordinary ranges but preserve invalid custom text for correction.
+void TstPrintDialog::preferencesHandleChangedPageCounts()
+{
+    using namespace mervin::printing;
+    RenderEngine engine;
+    auto document = engine.openDocument(sourcePath_);
+    QVERIFY(document);
+    QCOMPARE(document->pageCount(), 3);
+    QPrinter printer;
+    configurePrinter(printer);
+    PrintDialog dialog(&printer, &engine, document.get(), 0, QPageLayout::Portrait, 2, "shorter");
+    auto *from = dialog.findChild<QSpinBox *>("printFromPage");
+    auto *to = dialog.findChild<QSpinBox *>("printToPage");
+    auto *custom = dialog.findChild<QLineEdit *>("printPages");
+    auto *confirm = dialog.findChild<QPushButton *>("printConfirm");
+    auto *preview = dialog.findChild<PrintPreviewWidget *>();
+    auto *pageLabel = dialog.findChild<QLabel *>("printPageLabel");
+    QVERIFY(from && to && custom && confirm && preview && pageLabel);
+    Preferences saved = dialog.preferences();
+    saved.pageSelection = PageSelection::Range;
+    saved.fromPage = 9;
+    saved.toPage = 12;
+    dialog.restorePreferences(saved);
+    QCOMPARE(from->value(), 3);
+    QCOMPARE(to->value(), 3);
+    QVERIFY(from->isEnabled() && to->isEnabled());
+    QVERIFY(confirm->isEnabled());
+    QCOMPARE(pageLabel->text(), QStringLiteral("Page 3 · 1 of 1 selected"));
+    saved.fromPage = 2;
+    dialog.restorePreferences(saved);
+    QCOMPARE(from->value(), 2);
+    QCOMPARE(to->value(), 3);
+    QCOMPARE(pageLabel->text(), QStringLiteral("Page 2 · 1 of 2 selected"));
+
+    saved.pageSelection = PageSelection::Custom;
+    saved.customPages = QStringLiteral("3,8,1");
+    dialog.restorePreferences(saved);
+    QCOMPARE(custom->text(), saved.customPages);
+    QCOMPARE(dialog.preferences().pageSelection, PageSelection::Custom);
+    QVERIFY(!confirm->isEnabled());
+    QVERIFY(!preview->isReady());
+    QVERIFY(QMetaObject::invokeMethod(&dialog, "accept"));
+    QCOMPARE(dialog.result(), int(QDialog::Rejected));
+    saved.customPages = QStringLiteral("3,1,3");
+    dialog.restorePreferences(saved);
+    QVERIFY(confirm->isEnabled());
+    QCOMPARE(pageLabel->text(), QStringLiteral("Page 3 · 1 of 3 selected"));
 }
 
 void TstPrintDialog::printerChangesSelectDefaultPaper()

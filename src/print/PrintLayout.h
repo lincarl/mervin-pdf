@@ -24,6 +24,8 @@ struct Settings
     Alignment alignment = Alignment::Centered;
     ColourMode colourMode = ColourMode::Colour;
     int qualityDpi = 300;
+
+    bool operator==(const Settings &) const = default;
 };
 
 // pagePoints includes the PDF's existing margins. Page dimensions, printableRect,

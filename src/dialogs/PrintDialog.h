@@ -1,6 +1,7 @@
 #pragma once
 
 #include "print/PrintLayout.h"
+#include "print/PrintPreferences.h"
 
 #include <QDialog>
 #include <QHash>
@@ -59,6 +60,11 @@ public:
     // Valid after exec() == Accepted, when useSystemDialog() == false.
     QList<int> selectedPages() const { return pages_; } // 1-based, in print order
     mervin::printing::Settings printSettings() const;
+
+    // Captures dialog choices without the output filename or computed automatic scale.
+    mervin::printing::Preferences preferences() const;
+    // Restores saved choices against this document and the available printers.
+    void restorePreferences(const mervin::printing::Preferences &preferences);
 
     // The caller should open the native print dialog instead of using this selection.
     bool useSystemDialog() const { return useSystemDialog_; }

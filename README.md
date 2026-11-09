@@ -56,6 +56,9 @@ paper size, keeping the current size if the driver reports no default.
 Alignment defaults to centering on both axes, with vertical-only,
 horizontal-only, and top-left placement available within the printable area.
 Grayscale keeps shades of gray; Black and white converts them to pure black or white.
+Fit to page and Actual size show the applied percentage in a disabled field. Custom
+keeps the last percentage you entered. Choosing Print saves the dialog's settings
+for that document in its recent-file record. Cancel leaves the saved settings unchanged.
 
 ## Platforms
 

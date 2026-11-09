@@ -1,6 +1,7 @@
 #include "recent/RecentStore.h"
 
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QStringList>
 #include <QTemporaryDir>
@@ -34,6 +35,9 @@ private slots:
     void emptyPathIgnored();
     void jsonRoundTrip();
     void stableJsonAndMalformedFiles();
+    void printPreferencesRoundTripAndFileIsolation();
+    void printPreferencesSurviveReopenAndRemoval();
+    void printPreferencesRejectMalformedFields();
     void loadMissingFileLeavesEmpty();
 };
 
@@ -59,6 +63,7 @@ void TstRecentStore::stableJsonAndMalformedFiles()
     QCOMPARE(store.entries().at(1).pageCount, 0);
     QVERIFY(!store.entries().at(1).favorite);
     QVERIFY(store.entries().at(1).mount.isEmpty());
+    QVERIFY(!store.entries().at(1).printPreferences);
     QCOMPARE(QJsonDocument::fromJson(store.toJson()), QJsonDocument::fromJson(literal));
     for (const QByteArray invalid : {QByteArray("{}"), QByteArray("[broken")}) {
         QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
@@ -365,6 +370,142 @@ void TstRecentStore::loadMissingFileLeavesEmpty()
     s.add(QStringLiteral("C:/a.pdf"), 100);
     QVERIFY(!s.load(QStringLiteral("C:/no/such/file-mervin-test.json")));
     QCOMPARE(s.count(), 0); // load clears even on failure - a safe empty default
+}
+
+// Stores all selections per file while leaving recent ordering and open times untouched.
+void TstRecentStore::printPreferencesRoundTripAndFileIsolation()
+{
+    using namespace mervin::printing;
+    Preferences first;
+    first.printerName = QStringLiteral("Office printer");
+    first.printToFile = true;
+    first.paperKey = QStringLiteral("CustomStock");
+    first.paperPoints = QSizeF(510.25, 737.5);
+    first.orientation = QPageLayout::Landscape;
+    first.pageSelection = PageSelection::Custom;
+    first.fromPage = 2;
+    first.toPage = 8;
+    first.customPages = QStringLiteral("8,2-4,8");
+    first.copies = 3;
+    first.settings.scaleMode = ScaleMode::FitToPage;
+    first.settings.scalePercent = 67;
+    first.settings.alignment = Alignment::CenteredHorizontally;
+    first.settings.colourMode = ColourMode::BlackAndWhite;
+    first.settings.qualityDpi = 600;
+    first.twoSided = true;
+    Preferences second;
+    second.settings.scaleMode = ScaleMode::Custom;
+    second.settings.scalePercent = 125;
+    second.pageSelection = PageSelection::Current;
+
+    RecentStore store;
+    QVERIFY(store.add(QStringLiteral("/records/first.pdf"), 100, 8));
+    QVERIFY(store.add(QStringLiteral("/records/second.pdf"), 200, 5));
+    QVERIFY(store.setPrintPreferences(QStringLiteral("/records/./first.pdf"), first));
+    QVERIFY(store.setPrintPreferences(QStringLiteral("/records/second.pdf"), second));
+    QCOMPARE(store.entries().first().path, QStringLiteral("/records/second.pdf"));
+    QCOMPARE(store.entries().first().lastOpened, qint64(200));
+    QCOMPARE(store.entries().last().lastOpened, qint64(100));
+    QVERIFY(store.printPreferences(QStringLiteral("/records/first.pdf")) == first);
+    QVERIFY(store.printPreferences(QStringLiteral("/records/second.pdf")) == second);
+
+    const QJsonObject saved = QJsonDocument::fromJson(store.toJson()).array().last().toObject()
+                                 .value(QStringLiteral("print")).toObject();
+    QCOMPARE(saved.value(QStringLiteral("scaleMode")).toString(), QStringLiteral("fit"));
+    QCOMPARE(saved.value(QStringLiteral("scalePercent")).toInt(), 67);
+    QCOMPARE(saved.value(QStringLiteral("pageSelection")).toString(), QStringLiteral("custom"));
+    QCOMPARE(saved.value(QStringLiteral("colourMode")).toString(), QStringLiteral("black-and-white"));
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("recent.json"));
+    QVERIFY(store.save(path));
+    RecentStore loaded;
+    QVERIFY(loaded.load(path));
+    QVERIFY(loaded.printPreferences(QStringLiteral("/records/first.pdf")) == first);
+    QVERIFY(loaded.printPreferences(QStringLiteral("/records/second.pdf")) == second);
+}
+
+// Reopening retains accepted choices, while removal and unknown paths never recreate history.
+void TstRecentStore::printPreferencesSurviveReopenAndRemoval()
+{
+    mervin::printing::Preferences preferences;
+    preferences.settings.scalePercent = 50;
+    const QString path = QStringLiteral("/records/first.pdf");
+    RecentStore store;
+    QVERIFY(!store.printPreferences(path));
+    QVERIFY(!store.setPrintPreferences(path, preferences));
+    QVERIFY(!store.setPrintPreferences(QString(), preferences));
+    QVERIFY(!store.printPreferences(QString()));
+    QCOMPARE(store.count(), 0);
+    QVERIFY(store.add(path, 100, 12));
+    QVERIFY(store.setFavorite(path, true));
+    QVERIFY(store.setPrintPreferences(path, preferences));
+    const QByteArray unchanged = store.toJson();
+    QVERIFY(!store.setPrintPreferences(path, preferences));
+    QCOMPARE(store.toJson(), unchanged);
+    QVERIFY(store.add(QStringLiteral("/records/second.pdf"), 200));
+    QVERIFY(store.add(path, 300));
+    QVERIFY(store.printPreferences(path) == preferences);
+    QCOMPARE(store.entries().first().pageCount, 12);
+    QCOMPARE(store.entries().first().lastOpened, qint64(300));
+    QVERIFY(store.entries().first().favorite);
+    QVERIFY(store.remove(path));
+    QVERIFY(!store.printPreferences(path));
+    QVERIFY(!store.setPrintPreferences(path, preferences));
+    QCOMPARE(store.count(), 1);
+    QVERIFY(store.add(path, 400));
+    QVERIFY(!store.printPreferences(path));
+}
+
+// Invalid optional values cannot create excessive copies or replace valid unrelated choices.
+void TstRecentStore::printPreferencesRejectMalformedFields()
+{
+    using namespace mervin::printing;
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("recent.json"));
+    const QByteArray literal = R"([
+        {"p":"/old.pdf","t":1},
+        {"p":"/wrong-type.pdf","t":2,"print":42},
+        {"p":"/mixed.pdf","t":3,"print":{
+            "printerName":12,"printToFile":"true","orientation":"landscape",
+            "pageSelection":"range","fromPage":4.5,"toPage":-1,"customPages":false,
+            "copies":1000000,"scaleMode":"custom","scalePercent":401,
+            "alignment":"diagonal","colourMode":"grayscale","qualityDpi":301,
+            "twoSided":true,"paper":{"key":"huge","widthPoints":1e100,"heightPoints":842}
+        }}])";
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(literal), literal.size());
+    file.close();
+    RecentStore store;
+    QVERIFY(store.load(path));
+    QVERIFY(!store.printPreferences(QStringLiteral("/old.pdf")));
+    QVERIFY(!store.printPreferences(QStringLiteral("/wrong-type.pdf")));
+    const auto parsed = store.printPreferences(QStringLiteral("/mixed.pdf"));
+    QVERIFY(parsed);
+    Preferences expected;
+    expected.orientation = QPageLayout::Landscape;
+    expected.pageSelection = PageSelection::Range;
+    expected.settings.scaleMode = ScaleMode::Custom;
+    expected.settings.colourMode = ColourMode::Grayscale;
+    expected.twoSided = true;
+    QVERIFY(*parsed == expected);
+
+    const Preferences bounded = Preferences::fromJson(QJsonObject{
+        {QStringLiteral("printerName"), QString(4097, QLatin1Char('x'))},
+        {QStringLiteral("customPages"), QString(32768, QLatin1Char('1'))},
+        {QStringLiteral("copies"), 2.5},
+        {QStringLiteral("fromPage"), 9},
+        {QStringLiteral("toPage"), 3},
+        {QStringLiteral("scaleMode"), QStringLiteral("future-mode")},
+    });
+    QVERIFY(bounded.printerName.isEmpty());
+    QVERIFY(bounded.customPages.isEmpty());
+    QCOMPARE(bounded.copies, 1);
+    QCOMPARE(bounded.fromPage, 9);
+    QCOMPARE(bounded.toPage, 9);
+    QCOMPARE(bounded.settings.scaleMode, ScaleMode::FitToPage);
 }
 
 QTEST_GUILESS_MAIN(TstRecentStore)

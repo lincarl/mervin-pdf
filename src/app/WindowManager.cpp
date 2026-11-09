@@ -490,6 +490,18 @@ void WindowManager::saveViewStates(const QList<QPair<QString, ViewState>> &state
         writeStore(viewStateFile_, viewState_.toJson());
 }
 
+std::optional<printing::Preferences> WindowManager::printPreferences(const QString &path) const
+{
+    return recent_.printPreferences(path);
+}
+
+void WindowManager::savePrintPreferences(const QString &path,
+                                        const printing::Preferences &preferences)
+{
+    if (recent_.setPrintPreferences(path, preferences))
+        writeStore(recentFile_, recent_.toJson());
+}
+
 void WindowManager::removeRecent(const QString &canonicalPath)
 {
     if (canonicalPath.isEmpty())

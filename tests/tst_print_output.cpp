@@ -28,6 +28,8 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QLineEdit>
 #include <QLabel>
 #include <QMessageBox>
@@ -145,6 +147,39 @@ private:
     bool queued_ = false;
     bool saveQueued_ = false;
 };
+
+// Inspects the real restored controls, optionally edits them, then chooses Cancel.
+bool inspectPrintAndCancel(MainWindow &window,
+                           const std::function<void(PrintDialog &)> &inspect)
+{
+    bool finished = false;
+    bool cancelled = false;
+    QElapsedTimer elapsed;
+    elapsed.start();
+    QTimer driver;
+    QObject::connect(&driver, &QTimer::timeout, &window, [&] {
+        QWidget *modal = QApplication::activeModalWidget();
+        if (auto *dialog = qobject_cast<PrintDialog *>(modal)) {
+            driver.stop();
+            auto dismiss = qScopeGuard([dialog] { dialog->reject(); });
+            inspect(*dialog);
+            if (auto *cancel = dialog->findChild<QPushButton *>("printCancel")) {
+                cancel->click();
+                dismiss.dismiss();
+                cancelled = true;
+            }
+            finished = true;
+        } else if (qobject_cast<QMessageBox *>(modal) || elapsed.elapsed() > 20000) {
+            if (auto *dialog = qobject_cast<QDialog *>(modal))
+                dialog->reject();
+            finished = true;
+            driver.stop();
+        }
+    });
+    driver.start(10);
+    return QMetaObject::invokeMethod(&window, "printDocument")
+        && QTest::qWaitFor([&] { return finished; }, 21000) && cancelled;
+}
 
 // Writes explicit PDF objects with a complete cross-reference table.
 bool writePdfObjects(const QString &path, const QList<QByteArray> &objects)
@@ -454,6 +489,7 @@ private slots:
     void printDoesNotWaitForPageAccess();
     void selectedPagesReachOutput_data();
     void selectedPagesReachOutput();
+    void printPreferencesPersistOnlyAfterPrint();
     void activeFormTextAndAnnotationEditsReachOutput();
     void laterBandFailureStartsNoSheet();
     void stopDuringPrinterStart_data();
@@ -530,6 +566,166 @@ void TstPrintOutput::cleanup()
     QCoreApplication::processEvents();
     QVERIFY(Document::waitForCloses(10000));
     QVERIFY(appfiles::flush(10000));
+}
+
+// Accepted choices survive restart per document, while Cancel preserves the last Print.
+void TstPrintOutput::printPreferencesPersistOnlyAfterPrint()
+{
+    const QString previousProfile = ConfigPaths::overrideDir();
+    ConfigPaths::setOverrideDir(files_.filePath("print-preferences-profile"));
+    const auto restoreProfile = qScopeGuard([&] {
+        appfiles::flush(10000);
+        ConfigPaths::setOverrideDir(previousProfile);
+    });
+    Settings settings;
+    settings.autoUpdate = false;
+    settings.closeToTray = false;
+    QVERIFY(settings.save());
+    const QString recentPath = QDir(ConfigPaths::configDir()).filePath("recent.json");
+    const QString secondPath = files_.filePath("second-print-source.pdf");
+    QVERIFY(QFile::copy(sourcePath_, secondPath));
+
+    // Read the actual profile file rather than relying only on the manager's cache.
+    const auto storedChoices = [&](const QString &path) {
+        const QJsonArray entries = QJsonDocument::fromJson(bytes(recentPath)).array();
+        for (const QJsonValue &entry : entries) {
+            const QJsonObject object = entry.toObject();
+            if (normalizePathKey(object.value("p").toString()) == normalizePathKey(path))
+                return object.value("print").toObject();
+        }
+        return QJsonObject();
+    };
+    printing::Preferences firstAccepted;
+    printing::Preferences secondAccepted;
+    {
+        WindowManager manager;
+        MainWindow *first = manager.createWindow();
+        QVERIFY(testing::openAndWait(*first, sourcePath_));
+        QVERIFY(!manager.printPreferences(sourcePath_));
+        printing::Preferences defaults;
+        QVERIFY(inspectPrintAndCancel(*first, [&](PrintDialog &dialog) {
+            defaults = dialog.preferences();
+            auto *scale = dialog.findChild<QComboBox *>("printScale");
+            auto *percent = dialog.findChild<QSpinBox *>("printScalePercent");
+            QVERIFY(scale && percent);
+            scale->setCurrentIndex(scale->findData(static_cast<int>(printing::ScaleMode::Custom)));
+            percent->setValue(77);
+        }));
+        QVERIFY(!manager.printPreferences(sourcePath_));
+        QVERIFY(appfiles::flush(10000));
+        QVERIFY(storedChoices(sourcePath_).isEmpty());
+        QVERIFY(inspectPrintAndCancel(*first, [&](PrintDialog &dialog) {
+            QCOMPARE(dialog.preferences().toJson(), defaults.toJson());
+        }));
+
+        const QString firstOutput = files_.filePath("first-preferences-output.pdf");
+        {
+            PrintInteraction dialogs(*first, firstOutput,
+                [&](PrintDialog &dialog) { firstAccepted = dialog.preferences(); },
+                [&](PrintDialog &dialog) {
+                    auto *paper = dialog.findChild<QComboBox *>("printPaperSize");
+                    auto *landscape = dialog.findChild<QRadioButton *>("printLandscape");
+                    auto *customPages = dialog.findChild<QRadioButton *>("printCustomPages");
+                    auto *pages = dialog.findChild<QLineEdit *>("printPages");
+                    auto *copies = dialog.findChild<QSpinBox *>("printCopies");
+                    auto *scale = dialog.findChild<QComboBox *>("printScale");
+                    auto *percent = dialog.findChild<QSpinBox *>("printScalePercent");
+                    auto *align = dialog.findChild<QComboBox *>("printAlignment");
+                    auto *colour = dialog.findChild<QComboBox *>("printColour");
+                    auto *quality = dialog.findChild<QComboBox *>("printQuality");
+                    QVERIFY(paper && landscape && customPages && pages && copies && scale
+                            && percent && align && colour && quality);
+                    const int a5 = paper->findData(QVariant::fromValue(QPageSize(QPageSize::A5)));
+                    QVERIFY(a5 >= 0);
+                    paper->setCurrentIndex(a5);
+                    landscape->setChecked(true);
+                    pages->setText(QStringLiteral("1"));
+                    customPages->setChecked(true);
+                    copies->setValue(2);
+                    scale->setCurrentIndex(scale->findData(static_cast<int>(printing::ScaleMode::Custom)));
+                    percent->setValue(75);
+                    align->setCurrentIndex(align->findData(static_cast<int>(printing::Alignment::TopLeft)));
+                    colour->setCurrentIndex(colour->findData(static_cast<int>(printing::ColourMode::Grayscale)));
+                    quality->setCurrentIndex(quality->findData(150));
+                });
+            QVERIFY(QMetaObject::invokeMethod(first, "printDocument"));
+            auto *tab = first->findChild<TabPage *>();
+            QVERIFY(tab);
+            QTRY_VERIFY_WITH_TIMEOUT(!tab->isBusy(), 10000);
+            QVERIFY2(dialogs.messages.isEmpty(), qPrintable(dialogs.messages.join('\n')));
+            QVERIFY(dialogs.saved);
+        }
+        QVERIFY(QFileInfo::exists(firstOutput));
+        auto printed = manager.engine()->openDocument(firstOutput);
+        QVERIFY(printed && printed->pageCount() > 0);
+        QVERIFY(firstAccepted.printToFile);
+        QCOMPARE(firstAccepted.settings.scalePercent, 75);
+        QCOMPARE(firstAccepted.settings.scaleMode, printing::ScaleMode::Custom);
+        QCOMPARE(firstAccepted.pageSelection, printing::PageSelection::Custom);
+        QCOMPARE(firstAccepted.copies, 2);
+        QVERIFY(manager.printPreferences(sourcePath_) == firstAccepted);
+        QVERIFY(appfiles::flush(10000));
+        QCOMPARE(storedChoices(sourcePath_), firstAccepted.toJson());
+        QVERIFY(!bytes(recentPath).contains(firstOutput.toUtf8()));
+
+        QVERIFY(inspectPrintAndCancel(*first, [&](PrintDialog &dialog) {
+            QCOMPARE(dialog.preferences().toJson(), firstAccepted.toJson());
+            auto *percent = dialog.findChild<QSpinBox *>("printScalePercent");
+            QVERIFY(percent);
+            percent->setValue(125);
+        }));
+        QVERIFY(manager.printPreferences(sourcePath_) == firstAccepted);
+        QVERIFY(appfiles::flush(10000));
+        QCOMPARE(storedChoices(sourcePath_), firstAccepted.toJson());
+
+        MainWindow *second = manager.createWindow();
+        QVERIFY(testing::openAndWait(*second, secondPath));
+        QVERIFY(!manager.printPreferences(secondPath));
+        QVERIFY(inspectPrintAndCancel(*second, [&](PrintDialog &dialog) {
+            QCOMPARE(dialog.preferences().toJson(), defaults.toJson());
+        }));
+        const QString secondOutput = files_.filePath("second-preferences-output.pdf");
+        {
+            PrintInteraction dialogs(*second, secondOutput,
+                [&](PrintDialog &dialog) { secondAccepted = dialog.preferences(); },
+                [&](PrintDialog &dialog) {
+                    auto *scale = dialog.findChild<QComboBox *>("printScale");
+                    auto *quality = dialog.findChild<QComboBox *>("printQuality");
+                    auto *currentPage = dialog.findChild<QRadioButton *>("printCurrentPage");
+                    QVERIFY(scale && quality && currentPage);
+                    scale->setCurrentIndex(scale->findData(static_cast<int>(printing::ScaleMode::ActualSize)));
+                    quality->setCurrentIndex(quality->findData(150));
+                    currentPage->setChecked(true);
+                });
+            QVERIFY(QMetaObject::invokeMethod(second, "printDocument"));
+            auto *tab = second->findChild<TabPage *>();
+            QVERIFY(tab);
+            QTRY_VERIFY_WITH_TIMEOUT(!tab->isBusy(), 10000);
+            QVERIFY2(dialogs.messages.isEmpty(), qPrintable(dialogs.messages.join('\n')));
+            QVERIFY(dialogs.saved);
+        }
+        QVERIFY(QFileInfo::exists(secondOutput));
+        QVERIFY(secondAccepted != firstAccepted);
+        QVERIFY(appfiles::flush(10000));
+        QCOMPARE(storedChoices(sourcePath_), firstAccepted.toJson());
+        QCOMPARE(storedChoices(secondPath), secondAccepted.toJson());
+    }
+    QVERIFY(background::settle(10000));
+    QVERIFY(Document::waitForCloses(10000));
+    QVERIFY(appfiles::flush(10000));
+    {
+        WindowManager reloaded;
+        QVERIFY(reloaded.printPreferences(sourcePath_) == firstAccepted);
+        QVERIFY(reloaded.printPreferences(secondPath) == secondAccepted);
+        for (const QString &path : {sourcePath_, secondPath}) {
+            MainWindow *window = reloaded.createWindow();
+            QVERIFY(testing::openAndWait(*window, path));
+            QVERIFY(inspectPrintAndCancel(*window, [&](PrintDialog &dialog) {
+                const auto &expected = path == sourcePath_ ? firstAccepted : secondAccepted;
+                QCOMPARE(dialog.preferences().toJson(), expected.toJson());
+            }));
+        }
+    }
 }
 
 void TstPrintOutput::applicationPrintPlacement_data()

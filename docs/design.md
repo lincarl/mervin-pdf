@@ -1752,7 +1752,7 @@ The files are:
 | File or directory | Purpose |
 | --- | --- |
 | `config.toml` | settings and saved window state |
-| `recent.json` | recent paths, timestamps, page counts, and favourites |
+| `recent.json` | recent paths, timestamps, page counts, favourites, and per-file print settings |
 | `viewstate.json` | page, zoom, rotation, and scroll state per path |
 | `session.json` | currently open files, active document, and files kept while their drive is unavailable |
 | `recovery/` | edited document snapshots and metadata for unloaded tabs and in-place Save |
@@ -1761,6 +1761,18 @@ The files are:
 
 Paths are normalized before deduplication and lookup, with case folding on Windows.
 Corrupt or missing state files fall back to defaults instead of blocking startup.
+
+Each recent entry may contain a `print` object with the choices accepted by the
+custom or native print dialog. Cancel does not replace them. The record keeps
+printer identity, paper dimensions and key, orientation, page selection, copies,
+scale mode and custom percentage, colour, quality, alignment and two-sided printing.
+It never keeps an output filename or a calculated automatic scale. Reopening the
+document preserves these choices, and removing its history entry removes them.
+Restoration uses available printers and paper, clamps numeric page ranges to the
+current document, and validates custom page selections without changing their order.
+An invalid saved custom selection must be corrected before printing. Entries without
+print settings retain the current printer and document defaults. WindowManager saves
+changes through the existing background writer for `recent.json`.
 
 The directory can be on a network share, as with a roaming or redirected Windows
 profile or a home folder on NFS. After startup, settings, store and recovery file

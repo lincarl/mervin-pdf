@@ -34,6 +34,7 @@
 #include <QVBoxLayout>
 
 #include <limits>
+#include <vector>
 
 using mervin::printing::Alignment;
 using mervin::printing::ColourMode;
@@ -485,6 +486,113 @@ mervin::printing::Settings PrintDialog::printSettings() const
     settings.colourMode = static_cast<ColourMode>(colorCombo_->currentData().toInt());
     settings.qualityDpi = qualityCombo_->currentData().toInt();
     return settings;
+}
+
+mervin::printing::Preferences PrintDialog::preferences() const
+{
+    using mervin::printing::PageSelection;
+    mervin::printing::Preferences saved;
+    saved.printerName = printerCombo_->currentData().toString();
+    saved.printToFile = printToFile_->isChecked();
+    const QPageSize paper = paperSizeCombo_->currentData().value<QPageSize>();
+    saved.paperKey = paper.key();
+    saved.paperPoints = paper.size(QPageSize::Point);
+    saved.orientation = landscapeRadio_->isChecked() ? QPageLayout::Landscape
+                                                     : QPageLayout::Portrait;
+    saved.pageSelection = customRadio_->isChecked() ? PageSelection::Custom
+        : rangeRadio_->isChecked() ? PageSelection::Range
+        : currentPageRadio_->isChecked() ? PageSelection::Current : PageSelection::All;
+    saved.fromPage = fromSpin_->value();
+    saved.toPage = toSpin_->value();
+    saved.customPages = customEdit_->text();
+    saved.copies = copiesSpin_->value();
+    saved.settings = printSettings();
+    saved.twoSided = twoSidedCheck_->isChecked();
+    return saved;
+}
+
+void PrintDialog::restorePreferences(const mervin::printing::Preferences &saved)
+{
+    using mervin::printing::PageSelection;
+    // Apply a complete snapshot before refreshing. Intermediate selections must not
+    // reset printer paper, change range endpoints or overwrite the custom scale.
+    const QList<QObject *> controls{
+        printerCombo_, printToFile_, paperSizeCombo_, portraitRadio_, landscapeRadio_,
+        allPagesRadio_, currentPageRadio_, rangeRadio_, customRadio_, fromSpin_, toSpin_,
+        customEdit_, copiesSpin_, colorCombo_, qualityCombo_, scaleCombo_, scalePercentSpin_,
+        alignmentCombo_, twoSidedCheck_};
+    std::vector<QSignalBlocker> blockers;
+    blockers.reserve(controls.size());
+    for (QObject *control : controls)
+        blockers.emplace_back(control);
+
+    const int printerIndex = printerCombo_->findData(saved.printerName);
+    if (printerIndex >= 0 && printerIndex != printerCombo_->currentIndex()) {
+        printerSelectionChanged_ = true;
+        printerCombo_->setCurrentIndex(printerIndex);
+    }
+    const bool hasPrinter = !printerCombo_->currentData().toString().isEmpty();
+    printToFile_->setChecked(saved.printToFile || !hasPrinter);
+    printerCombo_->setEnabled(!printToFile_->isChecked());
+    twoSidedCheck_->setEnabled(!printToFile_->isChecked());
+
+    QPageSize paper(saved.paperPoints, QPageSize::Point, QString(), QPageSize::ExactMatch);
+    if (!printToFile_->isChecked()) {
+        const PaperCapabilities &capabilities = selectedPaperCapabilities();
+        for (const QPageSize &reported : capabilities.supported) {
+            if (reported.key() == saved.paperKey && reported.isEquivalentTo(paper)) {
+                paper = reported;
+                break;
+            }
+        }
+        paper = capabilities.acceptedPaper(paper);
+        // A saved printer or stock may no longer exist. Start with an available
+        // sheet rather than leaving a stale choice that makes printing impossible.
+        if (!paper.isValid())
+            paper = capabilities.acceptedPaper(selectedPrinterDefaultPageSize());
+        if (!paper.isValid() && !capabilities.supported.isEmpty())
+            paper = capabilities.supported.first();
+    }
+    if (!paper.isValid())
+        paper = printer_->pageLayout().pageSize();
+    refreshPaperSizes(paper);
+    (saved.orientation == QPageLayout::Landscape ? landscapeRadio_ : portraitRadio_)
+        ->setChecked(true);
+    copiesSpin_->setValue(saved.copies);
+    twoSidedCheck_->setChecked(saved.twoSided);
+
+    const auto select = [](QComboBox *combo, int value) {
+        const int index = combo->findData(value);
+        if (index >= 0)
+            combo->setCurrentIndex(index);
+    };
+    select(colorCombo_, static_cast<int>(saved.settings.colourMode));
+    select(qualityCombo_, saved.settings.qualityDpi);
+    select(alignmentCombo_, static_cast<int>(saved.settings.alignment));
+    select(scaleCombo_, static_cast<int>(saved.settings.scaleMode));
+    customScalePercent_ = qBound(10, saved.settings.scalePercent, 400);
+    scalePercentSpin_->setSpecialValueText(QString());
+    scalePercentSpin_->setRange(10, 400);
+    scalePercentSpin_->setValue(printSettings().scaleMode == ScaleMode::ActualSize
+                                   ? 100 : customScalePercent_);
+    scalePercentSpin_->setEnabled(printSettings().scaleMode == ScaleMode::Custom);
+
+    fromSpin_->setValue(saved.fromPage);
+    toSpin_->setValue(qMax(fromSpin_->value(), saved.toPage));
+    customEdit_->setText(saved.customPages);
+    QRadioButton *selection = allPagesRadio_;
+    switch (saved.pageSelection) {
+    case PageSelection::All: break;
+    case PageSelection::Current: selection = currentPageRadio_; break;
+    case PageSelection::Range: selection = rangeRadio_; break;
+    case PageSelection::Custom: selection = customRadio_; break;
+    }
+    selection->setChecked(true);
+    fromSpin_->setEnabled(rangeRadio_->isChecked());
+    toSpin_->setEnabled(rangeRadio_->isChecked());
+    // Keep custom page order intact. A document that lost a selected page shows
+    // the existing validation error instead of silently printing different pages.
+    refreshPreview();
 }
 
 QList<int> PrintDialog::resolvePages(QString *error) const

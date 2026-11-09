@@ -2401,13 +2401,19 @@ void MainWindow::showPrintDialog(TabPage *tab, const std::shared_ptr<PrintReques
     const QPointer<PrintDialog> dialog(new PrintDialog(
         printer.get(), engine_, document, request->rotation, request->orientation,
         request->currentPage + 1, request->baseName, this));
+    if (wm_) {
+        if (const auto saved = wm_->printPreferences(request->sourceKey))
+            dialog->restorePreferences(*saved);
+    }
     const bool accepted = dialog->exec() == QDialog::Accepted;
     QList<int> pages;
     mervin::printing::Settings settings;
+    mervin::printing::Preferences preferences;
     const bool system = dialog && dialog->useSystemDialog();
     if (dialog) {
         pages = dialog->selectedPages();
         settings = dialog->printSettings();
+        preferences = dialog->preferences();
     }
     delete dialog.data();
     if (!accepted || !owner || !page || !page->isUsable())
@@ -2442,9 +2448,28 @@ void MainWindow::showPrintDialog(TabPage *tab, const std::shared_ptr<PrintReques
                 pages.append(p);
             break;
         }
+        // The native dialog can change the destination, paper and page selection.
+        // Remember only accepted Print choices, including the settings it used.
+        preferences.printerName = printer->printerName();
+        preferences.printToFile = printer->outputFormat() == QPrinter::PdfFormat
+            || !printer->outputFileName().isEmpty();
+        preferences.paperKey = printer->pageLayout().pageSize().key();
+        preferences.paperPoints = printer->pageLayout().pageSize().size(QPageSize::Point);
+        preferences.orientation = printer->pageLayout().orientation();
+        preferences.copies = printer->copyCount();
+        preferences.twoSided = printer->duplex() != QPrinter::DuplexNone;
+        preferences.settings = settings;
+        preferences.pageSelection = printer->printRange() == QPrinter::PageRange
+            ? mervin::printing::PageSelection::Range
+            : printer->printRange() == QPrinter::CurrentPage
+                ? mervin::printing::PageSelection::Current : mervin::printing::PageSelection::All;
+        preferences.fromPage = printer->fromPage();
+        preferences.toPage = printer->toPage();
     }
     if (pages.isEmpty())
         return;
+    if (wm_)
+        wm_->savePrintPreferences(request->sourceKey, preferences);
     // Transfers the configured printer to the worker that owns output and teardown.
     struct Work {
         std::unique_ptr<QPrinter> printer;
