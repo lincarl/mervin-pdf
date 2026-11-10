@@ -71,6 +71,8 @@ public:
     bool useSystemDialog() const { return useSystemDialog_; }
 
 private:
+    void showEvent(QShowEvent *event) override;
+    void growToFitSettings();
     void accept() override;
     QList<int> resolvePages(QString *error) const;
     QPageSize selectedPrinterDefaultPageSize();

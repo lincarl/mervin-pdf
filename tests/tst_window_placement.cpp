@@ -5,6 +5,7 @@
 #include "render/RenderEngine.h"
 
 #include <QApplication>
+#include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -18,6 +19,7 @@
 #include <QScreen>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QSpinBox>
 #include <QTemporaryDir>
 #include <QVBoxLayout>
 #include <QtTest>
@@ -67,7 +69,7 @@ private slots:
     void dialogUsesParentsScreen()
     {
         const auto screens = QGuiApplication::screens();
-        QCOMPARE(screens.size(), 2);
+        QCOMPARE(screens.size(), 3);
         const QRect available = screens.at(1)->availableGeometry();
         QWidget parent;
         parent.resize(400, 300);
@@ -169,6 +171,102 @@ private slots:
             QRect(last->mapTo(scroll->viewport(), QPoint()), last->size())));
     }
 
+    // Print uses spare desktop height before scrolling, both on opening and when
+    // repeat controls appear. A short screen still bounds the complete frame.
+    void printGrowsBeforeScrolling_data()
+    {
+        QTest::addColumn<int>("screenIndex");
+        QTest::addColumn<int>("fontSize");
+        QTest::addColumn<bool>("restoreRepeat");
+        for (int screenIndex : {0, 1, 2}) {
+            for (int fontSize : {10, 15}) {
+                for (bool restoreRepeat : {false, true}) {
+                    const QByteArray name = QByteArray::number(screenIndex) + '-'
+                        + QByteArray::number(fontSize) + (restoreRepeat ? "-saved" : "-live");
+                    QTest::newRow(name.constData()) << screenIndex << fontSize << restoreRepeat;
+                }
+            }
+        }
+    }
+
+    void printGrowsBeforeScrolling()
+    {
+        QFETCH(int, screenIndex);
+        QFETCH(int, fontSize);
+        QFETCH(bool, restoreRepeat);
+        QApplication::setFont(QFont(QStringLiteral("Noto Sans"), fontSize));
+        mervin::Theme::applyApp();
+        QWidget parent;
+        parent.resize(500, 300);
+        QScreen *screen = QGuiApplication::screens().at(screenIndex);
+        const QRect available = screen->availableGeometry();
+        parent.move(available.right() - 520, available.bottom() - 320);
+        parent.show();
+        QTRY_COMPARE(parent.screen(), screen);
+        QPrinter printer;
+        printer.setOutputFormat(QPrinter::PdfFormat);
+        mervin::RenderEngine engine;
+        PrintDialog dialog(&printer, &engine, nullptr, 0, QPageLayout::Portrait, 1,
+                           QStringLiteral("example"), &parent);
+        if (restoreRepeat) {
+            auto saved = dialog.preferences();
+            saved.settings.layoutMode = mervin::printing::PageLayoutMode::Repeat;
+            dialog.restorePreferences(saved);
+        }
+        auto *scroll = dialog.findChild<QScrollArea *>(QStringLiteral("printSettingsScroll"));
+        auto *mode = dialog.findChild<QComboBox *>(QStringLiteral("printPageLayout"));
+        QVERIFY(scroll && mode);
+        dialog.show();
+        QTRY_COMPARE(dialog.screen(), screen);
+        QTRY_VERIFY(available.contains(dialog.frameGeometry()));
+        QTRY_VERIFY(scroll->verticalScrollBar()->maximum() == 0
+                    || dialog.frameGeometry().height() >= available.height() - 2);
+        if (!restoreRepeat) {
+            const int initialHeight = dialog.height();
+            mode->setCurrentIndex(mode->findData(int(mervin::printing::PageLayoutMode::Repeat)));
+            QTRY_VERIFY(scroll->verticalScrollBar()->maximum() == 0
+                        || dialog.frameGeometry().height() >= available.height() - 2);
+            QVERIFY(dialog.height() >= initialHeight);
+        }
+        QTest::qWait(50);
+        QVERIFY(available.contains(dialog.frameGeometry()));
+        QVERIFY(scroll->verticalScrollBar()->maximum() == 0
+                || dialog.frameGeometry().height() >= available.height() - 2);
+        // The tall screen has enough room for the default-font repeat controls.
+        if (screenIndex == 2 && fontSize == 10)
+            QCOMPARE(scroll->verticalScrollBar()->maximum(), 0);
+        for (const char *name : {"printSystemDialog", "printCancel", "printConfirm"}) {
+            auto *button = dialog.findChild<QPushButton *>(QLatin1String(name));
+            QVERIFY(button);
+            QVERIFY(available.contains(QRect(button->mapToGlobal(QPoint()), button->size())));
+        }
+        const QSize expanded = dialog.size();
+        mode->setCurrentIndex(mode->findData(int(mervin::printing::PageLayoutMode::Single)));
+        QTest::qWait(50);
+        QCOMPARE(dialog.size(), expanded);
+        mode->setCurrentIndex(mode->findData(int(mervin::printing::PageLayoutMode::Repeat)));
+        QTest::qWait(50);
+        // Automatic fitting must not impose a new minimum or undo manual resizing.
+        dialog.resize(dialog.width(), dialog.minimumHeight());
+        auto *rows = dialog.findChild<QSpinBox *>(QStringLiteral("printRows"));
+        QVERIFY(rows);
+        rows->setValue(6);
+        QTest::qWait(50);
+        QCOMPARE(dialog.height(), dialog.minimumHeight());
+        QVERIFY(scroll->verticalScrollBar()->maximum() > 0);
+        const QSize chosenSize = dialog.size();
+        dialog.showMinimized();
+        QTRY_VERIFY(dialog.isMinimized());
+        dialog.showNormal();
+        QTest::qWait(50);
+        QCOMPARE(dialog.size(), chosenSize);
+        auto *last = dialog.findChild<QWidget *>(QStringLiteral("printTwoSided"));
+        QVERIFY(last);
+        scroll->ensureWidgetVisible(last);
+        QTRY_VERIFY(scroll->viewport()->rect().contains(
+            QRect(last->mapTo(scroll->viewport(), QPoint()), last->size())));
+    }
+
     // Showing an ordinary window again must preserve a deliberate maximized state.
     void maximizedWindowKeepsItsState()
     {
@@ -179,7 +277,7 @@ private slots:
     }
 };
 
-// Two work areas with different sizes catch primary-screen assumptions. The
+// Work areas with different sizes catch primary-screen assumptions. The
 // desktop suite separately verifies real frames, taskbars and OS scaling.
 int main(int argc, char **argv)
 {
@@ -191,7 +289,8 @@ int main(int argc, char **argv)
     if (!file.open(QIODevice::WriteOnly)
         || file.write(R"({"screens": [
             {"name": "baseline", "x": 0, "y": 0, "width": 1536, "height": 826},
-            {"name": "compact", "x": -1024, "y": 0, "width": 1024, "height": 670}]})") < 0)
+            {"name": "compact", "x": -1024, "y": 0, "width": 1024, "height": 670},
+            {"name": "tall", "x": 4096, "y": 0, "width": 1536, "height": 1400}]})") < 0)
         return 1;
     file.close();
     qputenv("QT_QPA_PLATFORM", "offscreen:configfile=screens.json");
