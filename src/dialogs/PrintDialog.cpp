@@ -571,6 +571,32 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
     mervin::followLayoutMinimum(*this, QSize(800, 480));
 }
 
+// Wait for the native frame and settings viewport before measuring their height.
+void PrintDialog::showEvent(QShowEvent *event)
+{
+    QDialog::showEvent(event);
+    QTimer::singleShot(0, this, &PrintDialog::growToFitSettings);
+}
+
+// Use available desktop height before scrolling without raising the scrollable
+// minimum or shrinking a window the user has already enlarged.
+void PrintDialog::growToFitSettings()
+{
+    if (!isVisible() || isMaximized() || isFullScreen() || isMinimized() || !screen())
+        return;
+    layout()->activate();
+    QWidget *settings = settingsScroll_->widget();
+    settings->layout()->activate();
+    const int contentHeight = settings->hasHeightForWidth()
+        ? settings->heightForWidth(settings->width()) : settings->sizeHint().height();
+    const int requiredHeight = height() + contentHeight - settingsScroll_->viewport()->height();
+    const int frameHeight = frameGeometry().height() - height();
+    const int availableHeight = screen()->availableGeometry().height() - frameHeight;
+    const int preferredHeight = qMin(requiredHeight, availableHeight);
+    if (preferredHeight > height())
+        resize(width(), preferredHeight);
+}
+
 mervin::printing::Settings PrintDialog::printSettings() const
 {
     mervin::printing::Settings settings;
@@ -718,6 +744,7 @@ void PrintDialog::restorePreferences(const mervin::printing::Preferences &saved)
 void PrintDialog::updatePageLayoutControls()
 {
     const bool repeat = pageLayoutCombo_->currentData().toInt() == static_cast<int>(PageLayoutMode::Repeat);
+    const bool expanding = repeat && repeatOptions_->isHidden();
     repeatOptions_->setVisible(repeat);
     //: %1 is rows times columns, for example 8. Each source page is repeated this many
     //: times on its own sheet. The Copies control separately repeats the whole job.
@@ -737,6 +764,10 @@ void PrintDialog::updatePageLayoutControls()
     const int minimum = settingsScroll_->widget()->minimumSizeHint().width()
         + settingsScroll_->verticalScrollBar()->sizeHint().width();
     settingsScroll_->setFixedWidth(qMax(settingsScroll_->width(), minimum));
+    // Only adding controls requests more height. Row-count edits and ordinary
+    // preview updates must preserve a user's manually reduced window size.
+    if (expanding && isVisible())
+        QTimer::singleShot(0, this, &PrintDialog::growToFitSettings);
 }
 
 QList<int> PrintDialog::resolvePages(QString *error) const
