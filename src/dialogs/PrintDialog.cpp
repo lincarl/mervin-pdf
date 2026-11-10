@@ -26,6 +26,7 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QScreen>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -572,10 +573,12 @@ PrintDialog::PrintDialog(QPrinter *printer, mervin::RenderEngine *engine,
 }
 
 // Wait for the native frame and settings viewport before measuring their height.
+// Restoring a minimized window must preserve the user's chosen size.
 void PrintDialog::showEvent(QShowEvent *event)
 {
     QDialog::showEvent(event);
-    QTimer::singleShot(0, this, &PrintDialog::growToFitSettings);
+    if (!event->spontaneous())
+        QTimer::singleShot(0, this, &PrintDialog::growToFitSettings);
 }
 
 // Use available desktop height before scrolling without raising the scrollable

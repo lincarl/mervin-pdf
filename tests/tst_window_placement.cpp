@@ -254,6 +254,12 @@ private slots:
         QTest::qWait(50);
         QCOMPARE(dialog.height(), dialog.minimumHeight());
         QVERIFY(scroll->verticalScrollBar()->maximum() > 0);
+        const QSize chosenSize = dialog.size();
+        dialog.showMinimized();
+        QTRY_VERIFY(dialog.isMinimized());
+        dialog.showNormal();
+        QTest::qWait(50);
+        QCOMPARE(dialog.size(), chosenSize);
         auto *last = dialog.findChild<QWidget *>(QStringLiteral("printTwoSided"));
         QVERIFY(last);
         scroll->ensureWidgetVisible(last);
