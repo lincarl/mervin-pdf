@@ -1273,7 +1273,7 @@ QString Updater::closeRefusedText()
     //: dialog was open. A save chosen in the save prompt only starts once Settings
     //: closes, so the user closes Settings first. The download is kept. Settings
     //: is that window's title, and Check for Updates is its button in Settings >
-    //: Updates; use their translations.
+    //: Update; use their translations.
     return tr("Couldn't close Mervin to complete the update.\n\n"
               "Close Settings and other dialogs and wait for running operations to "
               "finish. Then choose Check for Updates again.");

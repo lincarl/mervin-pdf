@@ -1131,6 +1131,11 @@ Button: starts printing.</extracomment>
         <translation>Scursanidas da tastas</translation>
     </message>
     <message>
+        <source>Update</source>
+        <extracomment>Settings page title and the heading of the group on that page (noun, not a command): keeping Mervin up to date, with automatic updates and update checks.</extracomment>
+        <translation>Actualisaziun</translation>
+    </message>
+    <message>
         <source>About</source>
         <translation>Davart</translation>
     </message>
@@ -1230,10 +1235,6 @@ Button: starts printing.</extracomment>
         <translation>Conservar datotecas allontanadas en la glista</translation>
     </message>
     <message>
-        <source>Updates</source>
-        <translation>Actualisaziuns</translation>
-    </message>
-    <message>
         <source>Update automatically at start (every 30 days)</source>
         <extracomment>Settings checkbox. At startup, if 30 days have passed since the last completed check, download and install any new release automatically, then restart the app.</extracomment>
         <translation>Actualisar automaticamain a l&apos;avertura (mintga 30 dis)</translation>
@@ -1274,12 +1275,12 @@ Avra ils Parameters → Applicaziuns predefinidas dal sistem (u clicca cun la ta
     </message>
     <message>
         <source>Microsoft Store manages updates for this app.</source>
-        <extracomment>Settings &gt; Updates for a Microsoft Store installation. Microsoft Store handles update checks and installation; updates are not disabled.</extracomment>
+        <extracomment>Settings &gt; Update for a Microsoft Store installation. Microsoft Store handles update checks and installation; updates are not disabled.</extracomment>
         <translation>Microsoft Store administrescha las actualisaziuns da questa app.</translation>
     </message>
     <message>
         <source>Open Microsoft Store</source>
-        <extracomment>Button in Settings &gt; Updates for a Microsoft Store installation. Opens the Microsoft Store app&apos;s updates page; does not itself check for updates.</extracomment>
+        <extracomment>Button in Settings &gt; Update for a Microsoft Store installation. Opens the Microsoft Store app&apos;s updates page; does not itself check for updates.</extracomment>
         <translation>Avrir Microsoft Store</translation>
     </message>
     <message>
@@ -4393,7 +4394,7 @@ Mervin PDF %1 è la pli nova versiun.</translation>
         <source>Couldn&apos;t close Mervin to complete the update.
 
 Close Settings and other dialogs and wait for running operations to finish. Then choose Check for Updates again.</source>
-        <extracomment>Shown over the Settings window after Check for Updates downloaded an update, when Mervin could not close to install it or to restart into it, because an operation such as saving a file was still running or another dialog was open. A save chosen in the save prompt only starts once Settings closes, so the user closes Settings first. The download is kept. Settings is that window&apos;s title, and Check for Updates is its button in Settings &gt; Updates; use their translations.</extracomment>
+        <extracomment>Shown over the Settings window after Check for Updates downloaded an update, when Mervin could not close to install it or to restart into it, because an operation such as saving a file was still running or another dialog was open. A save chosen in the save prompt only starts once Settings closes, so the user closes Settings first. The download is kept. Settings is that window&apos;s title, and Check for Updates is its button in Settings &gt; Update; use their translations.</extracomment>
         <translation>Impussibel da serrar Mervin per terminar l&apos;actualisaziun.
 
 Serra ils Parameters ed ils auters dialogs e spetga fin che las operaziuns en curs èn terminadas. Lura tscherna anc ina giada «Tschertgar actualisaziuns».</translation>

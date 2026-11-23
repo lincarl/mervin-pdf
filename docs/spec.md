@@ -415,14 +415,14 @@ default-app action),
 Appearance (UI theme, accent colour, document theme), Viewing (default zoom,
 scrolling, spreads), Annotations (default colour, author name), OCR (default and
 installed languages), Measuring (snapping and the defaults new tabs start from),
-Forms, Keyboard shortcuts, Updates, and About (version and licences). The main menu opens
+Forms, Keyboard shortcuts, Update, and About (version and licences). The main menu opens
 Settings; Keyboard shortcuts and About are available in its page menu. OK applies
 the changes and closes Settings. Apply puts them into effect and keeps Settings
 open; it is available only while a change is pending. If the settings file can't
 be written, OK and Apply say why and keep Settings open, and nothing changes until
 a save works. Cancel discards changes made since the last Apply. Removing or adding
 OCR languages takes effect at once. Session
-restore and automatic updates are enabled by default. The Updates page shows the
+restore and automatic updates are enabled by default. The Update page shows the
 running version above the update controls. Copies that cannot update
 themselves (portable and development builds) show no automatic-update switch, only
 Check for Updates. General determines the initial window height, capped to the
@@ -499,9 +499,9 @@ Network access follows an explicit action or the automatic update setting:
 
 - opening or downloading an explicit web URL;
 - loading the OCR language catalog or downloading a chosen language model; or
-- checking for updates, manually from Settings > Updates or automatically on
+- checking for updates, manually from Settings > Update or automatically on
   startup when at least 30 days have passed since the last successful check (on by
-  default, off in Settings > Updates). A profile without a saved check date checks on its next start.
+  default, off in Settings > Update). A profile without a saved check date checks on its next start.
   Successful manual checks also reset the interval. Failed scheduled checks retry
   on the next start after network or download transfer errors, or when the update
   server's answer cannot be read, as when a network filter returns its own page.

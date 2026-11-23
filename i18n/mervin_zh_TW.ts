@@ -1128,6 +1128,11 @@ Button: starts printing.</extracomment>
         <translation>鍵盤快速鍵</translation>
     </message>
     <message>
+        <source>Update</source>
+        <extracomment>Settings page title and the heading of the group on that page (noun, not a command): keeping Mervin up to date, with automatic updates and update checks.</extracomment>
+        <translation>更新</translation>
+    </message>
+    <message>
         <source>About</source>
         <translation>關於</translation>
     </message>
@@ -1227,10 +1232,6 @@ Button: starts printing.</extracomment>
         <translation>在清單中保留已移除的檔案</translation>
     </message>
     <message>
-        <source>Updates</source>
-        <translation>更新</translation>
-    </message>
-    <message>
         <source>Update automatically at start (every 30 days)</source>
         <extracomment>Settings checkbox. At startup, if 30 days have passed since the last completed check, download and install any new release automatically, then restart the app.</extracomment>
         <translation>啟動時自動更新（每 30 天）</translation>
@@ -1271,12 +1272,12 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     </message>
     <message>
         <source>Microsoft Store manages updates for this app.</source>
-        <extracomment>Settings &gt; Updates for a Microsoft Store installation. Microsoft Store handles update checks and installation; updates are not disabled.</extracomment>
+        <extracomment>Settings &gt; Update for a Microsoft Store installation. Microsoft Store handles update checks and installation; updates are not disabled.</extracomment>
         <translation>Microsoft Store 負責管理此應用程式的更新。</translation>
     </message>
     <message>
         <source>Open Microsoft Store</source>
-        <extracomment>Button in Settings &gt; Updates for a Microsoft Store installation. Opens the Microsoft Store app&apos;s updates page; does not itself check for updates.</extracomment>
+        <extracomment>Button in Settings &gt; Update for a Microsoft Store installation. Opens the Microsoft Store app&apos;s updates page; does not itself check for updates.</extracomment>
         <translation>開啟 Microsoft Store</translation>
     </message>
     <message>
@@ -4387,7 +4388,7 @@ Mervin PDF %1 是最新版本。</translation>
         <source>Couldn&apos;t close Mervin to complete the update.
 
 Close Settings and other dialogs and wait for running operations to finish. Then choose Check for Updates again.</source>
-        <extracomment>Shown over the Settings window after Check for Updates downloaded an update, when Mervin could not close to install it or to restart into it, because an operation such as saving a file was still running or another dialog was open. A save chosen in the save prompt only starts once Settings closes, so the user closes Settings first. The download is kept. Settings is that window&apos;s title, and Check for Updates is its button in Settings &gt; Updates; use their translations.</extracomment>
+        <extracomment>Shown over the Settings window after Check for Updates downloaded an update, when Mervin could not close to install it or to restart into it, because an operation such as saving a file was still running or another dialog was open. A save chosen in the save prompt only starts once Settings closes, so the user closes Settings first. The download is kept. Settings is that window&apos;s title, and Check for Updates is its button in Settings &gt; Update; use their translations.</extracomment>
         <translation>無法關閉 Mervin 以完成更新。
 
 請關閉「設定」和其他對話方塊，並等候進行中的操作完成。然後再次選取「檢查更新」。</translation>
