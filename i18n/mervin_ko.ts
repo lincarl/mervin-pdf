@@ -1128,6 +1128,11 @@ Button: starts printing.</extracomment>
         <translation>키보드 단축키</translation>
     </message>
     <message>
+        <source>Update</source>
+        <extracomment>Settings page title and the heading of the group on that page (noun, not a command): keeping Mervin up to date, with automatic updates and update checks.</extracomment>
+        <translation>업데이트</translation>
+    </message>
+    <message>
         <source>About</source>
         <translation>소개</translation>
     </message>
@@ -1227,10 +1232,6 @@ Button: starts printing.</extracomment>
         <translation>제거된 파일을 목록에 유지</translation>
     </message>
     <message>
-        <source>Updates</source>
-        <translation>업데이트</translation>
-    </message>
-    <message>
         <source>Update automatically at start (every 30 days)</source>
         <extracomment>Settings checkbox. At startup, if 30 days have passed since the last completed check, download and install any new release automatically, then restart the app.</extracomment>
         <translation>시작 시 자동 업데이트(30일마다)</translation>
@@ -1271,12 +1272,12 @@ Open your system&apos;s Settings → Default Applications (or right-click a PDF 
     </message>
     <message>
         <source>Microsoft Store manages updates for this app.</source>
-        <extracomment>Settings &gt; Updates for a Microsoft Store installation. Microsoft Store handles update checks and installation; updates are not disabled.</extracomment>
+        <extracomment>Settings &gt; Update for a Microsoft Store installation. Microsoft Store handles update checks and installation; updates are not disabled.</extracomment>
         <translation>이 앱의 업데이트는 Microsoft Store에서 관리합니다.</translation>
     </message>
     <message>
         <source>Open Microsoft Store</source>
-        <extracomment>Button in Settings &gt; Updates for a Microsoft Store installation. Opens the Microsoft Store app&apos;s updates page; does not itself check for updates.</extracomment>
+        <extracomment>Button in Settings &gt; Update for a Microsoft Store installation. Opens the Microsoft Store app&apos;s updates page; does not itself check for updates.</extracomment>
         <translation>Microsoft Store 열기</translation>
     </message>
     <message>
@@ -4372,7 +4373,7 @@ Mervin PDF %1이(가) 최신 버전입니다.</translation>
         <source>Couldn&apos;t close Mervin to complete the update.
 
 Close Settings and other dialogs and wait for running operations to finish. Then choose Check for Updates again.</source>
-        <extracomment>Shown over the Settings window after Check for Updates downloaded an update, when Mervin could not close to install it or to restart into it, because an operation such as saving a file was still running or another dialog was open. A save chosen in the save prompt only starts once Settings closes, so the user closes Settings first. The download is kept. Settings is that window&apos;s title, and Check for Updates is its button in Settings &gt; Updates; use their translations.</extracomment>
+        <extracomment>Shown over the Settings window after Check for Updates downloaded an update, when Mervin could not close to install it or to restart into it, because an operation such as saving a file was still running or another dialog was open. A save chosen in the save prompt only starts once Settings closes, so the user closes Settings first. The download is kept. Settings is that window&apos;s title, and Check for Updates is its button in Settings &gt; Update; use their translations.</extracomment>
         <translation>업데이트를 완료하기 위해 Mervin을 닫지 못했습니다.
 
 설정과 다른 대화 상자를 닫고 실행 중인 작업이 끝날 때까지 기다리세요. 그런 다음 ‘업데이트 확인’을 다시 선택하세요.</translation>

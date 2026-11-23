@@ -74,7 +74,7 @@ public:
     // newer than this copy.
     void onStartup();
 
-    // Settings -> Updates -> Check for Updates checks now regardless of the last check or setting,
+    // Settings -> Update -> Check for Updates checks now regardless of the last check or setting,
     // downloads and installs available updates, and reports "up to date" and errors.
     // For MSIX copies it opens the Store's Downloads and updates page instead.
     void checkNow();

@@ -42,7 +42,7 @@ public:
     enum class Page { General, Appearance, Viewing, Annotations, Ocr, Measuring, Forms, Shortcuts, Updates, About };
     Q_ENUM(Page)
 
-    // What the Updates page shows. The dialog does not talk to the
+    // What the Update page shows. The dialog does not talk to the
     // Updater itself: it emits checkForUpdatesRequested and is told the result.
     struct UpdateInfo
     {

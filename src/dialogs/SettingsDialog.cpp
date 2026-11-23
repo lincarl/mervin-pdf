@@ -335,7 +335,9 @@ SettingsDialog::SettingsDialog(const mervin::Settings &current, const UpdateInfo
     nav_->setItemWidget(divider, dividerHolder);
 
     addPage(Page::Shortcuts, tr("Keyboard shortcuts"), buildShortcutsPage());
-    addPage(Page::Updates, tr("Updates"), buildUpdatesPage());
+    //: Settings page title and the heading of the group on that page (noun, not a
+    //: command): keeping Mervin up to date, with automatic updates and update checks.
+    addPage(Page::Updates, tr("Update"), buildUpdatesPage());
     addPage(Page::About, tr("About"), buildAboutPage());
     refreshNavIcons();
     // Wide enough for the longest page title in the UI language, with its icon
@@ -609,7 +611,7 @@ QWidget *SettingsDialog::buildUpdatesPage()
 
     // With this setting off Mervin never checks or installs on its own.
     // Check for Updates still downloads, installs and restarts when an update exists.
-    auto *updateBox = groupBox(tr("Updates"), page);
+    auto *updateBox = groupBox(tr("Update"), page);
     auto *updateLayout = new QVBoxLayout(updateBox);
     //: %1 is the version of the running Mervin PDF app, such as 1.64.10-rc1.
     auto *version = new QLabel(tr("Current version: %1").arg(kDisplayVersion), updateBox);
@@ -1243,7 +1245,7 @@ void SettingsDialog::refreshUpdateInfo()
     updateProviderHint_->setVisible(updates_.ready && !selfUpdating());
     if (updates_.ready && !selfUpdating()) {
         if (updates_.storeManaged) {
-            //: Settings > Updates for a Microsoft Store installation. Microsoft Store
+            //: Settings > Update for a Microsoft Store installation. Microsoft Store
             //: handles update checks and installation; updates are not disabled.
             updateProviderHint_->setText(tr("Microsoft Store manages updates for this app."));
         } else {
@@ -1254,7 +1256,7 @@ void SettingsDialog::refreshUpdateInfo()
     } else
         updateProviderHint_->clear();
     if (checkUpdatesButton_) {
-        //: Button in Settings > Updates for a Microsoft Store installation. Opens
+        //: Button in Settings > Update for a Microsoft Store installation. Opens
         //: the Microsoft Store app's updates page; does not itself check for updates.
         checkUpdatesButton_->setText(updates_.storeManaged ? tr("Open Microsoft Store")
                                                          : tr("Check for Updates"));
