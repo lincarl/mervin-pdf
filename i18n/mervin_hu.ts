@@ -1285,6 +1285,11 @@ Nyissa meg a rendszer Beállítások → Alapértelmezett alkalmazások menüpon
         <translation>Alkalmazás</translation>
     </message>
     <message>
+        <source>Current version: %1</source>
+        <extracomment>%1 is the version of the running Mervin PDF app, such as 1.64.10-rc1.</extracomment>
+        <translation>Jelenlegi verzió: %1</translation>
+    </message>
+    <message>
         <source>Choose accent colour</source>
         <translation>Válasszon kiemelő színt</translation>
     </message>

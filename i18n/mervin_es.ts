@@ -1288,6 +1288,11 @@ Abra la Configuración de su sistema → Aplicaciones predeterminadas (o haga cl
         <translation>Aplicación</translation>
     </message>
     <message>
+        <source>Current version: %1</source>
+        <extracomment>%1 is the version of the running Mervin PDF app, such as 1.64.10-rc1.</extracomment>
+        <translation>Versión actual: %1</translation>
+    </message>
+    <message>
         <source>Choose accent colour</source>
         <translation>Elija color de acento</translation>
     </message>

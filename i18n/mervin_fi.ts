@@ -1288,6 +1288,11 @@ Avaa järjestelmäsi Asetukset → Oletussovellukset (tai napsauta PDF-tiedostoa
         <translation>Sovellus</translation>
     </message>
     <message>
+        <source>Current version: %1</source>
+        <extracomment>%1 is the version of the running Mervin PDF app, such as 1.64.10-rc1.</extracomment>
+        <translation>Nykyinen versio: %1</translation>
+    </message>
+    <message>
         <source>Choose accent colour</source>
         <translation>Valitse korostusväri</translation>
     </message>

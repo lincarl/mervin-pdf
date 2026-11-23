@@ -1291,6 +1291,11 @@ Oscail Socruithe do chórais → Feidhmchláir Réamhshocraithe (nó deaschlice�
         <translation>Feidhmchlár</translation>
     </message>
     <message>
+        <source>Current version: %1</source>
+        <extracomment>%1 is the version of the running Mervin PDF app, such as 1.64.10-rc1.</extracomment>
+        <translation>Leagan reatha: %1</translation>
+    </message>
+    <message>
         <source>Choose accent colour</source>
         <translation>Roghnaigh dath accent</translation>
     </message>

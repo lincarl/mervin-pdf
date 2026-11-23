@@ -1288,6 +1288,11 @@ Avage oma süsteemi Seaded → Vaikerakendused (või paremklõpsake PDF-i → Av
         <translation>Rakendus</translation>
     </message>
     <message>
+        <source>Current version: %1</source>
+        <extracomment>%1 is the version of the running Mervin PDF app, such as 1.64.10-rc1.</extracomment>
+        <translation>Praegune versioon: %1</translation>
+    </message>
+    <message>
         <source>Choose accent colour</source>
         <translation>Valige aktsentvärv</translation>
     </message>

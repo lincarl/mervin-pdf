@@ -1285,6 +1285,11 @@ Buka Pengaturan sistem Anda → Aplikasi Default (atau klik kanan PDF → Buka D
         <translation>Aplikasi</translation>
     </message>
     <message>
+        <source>Current version: %1</source>
+        <extracomment>%1 is the version of the running Mervin PDF app, such as 1.64.10-rc1.</extracomment>
+        <translation>Versi saat ini: %1</translation>
+    </message>
+    <message>
         <source>Choose accent colour</source>
         <translation>Pilih warna aksen</translation>
     </message>
