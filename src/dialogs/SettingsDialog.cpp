@@ -57,6 +57,7 @@ using Page = SettingsDialog::Page;
 constexpr int kPageRole = Qt::UserRole;      // nav item -> Page
 constexpr int kStackRole = Qt::UserRole + 1; // nav item -> index in the page stack
 constexpr QRgb kDefaultCustomAccent = qRgb(0x62, 0xc9, 0xff);
+const QString kDisplayVersion = QStringLiteral("\u2066" MERVIN_VERSION_STRING "\u2069");
 
 void selectByData(QComboBox *combo, const QString &value)
 {
@@ -610,6 +611,10 @@ QWidget *SettingsDialog::buildUpdatesPage()
     // Check for Updates still downloads, installs and restarts when an update exists.
     auto *updateBox = groupBox(tr("Updates"), page);
     auto *updateLayout = new QVBoxLayout(updateBox);
+    //: %1 is the version of the running Mervin PDF app, such as 1.64.10-rc1.
+    auto *version = new QLabel(tr("Current version: %1").arg(kDisplayVersion), updateBox);
+    version->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    updateLayout->addWidget(version);
     //: Settings checkbox. At startup, if 30 days have passed since the last completed
     //: check, download and install any new release automatically, then restart the app.
     updatesCheck_ = new QCheckBox(tr("Update automatically at start (every 30 days)"), updateBox);
@@ -985,7 +990,7 @@ QWidget *SettingsDialog::buildAboutPage()
     auto *name = new QLabel(QStringLiteral(MERVIN_APP_NAME), page);
     name->setObjectName(QStringLiteral("aboutName"));
     //: %1 is the version number, such as 1.64.13.
-    auto *version = new QLabel(tr("Version %1").arg(QStringLiteral(MERVIN_VERSION_STRING)), page);
+    auto *version = new QLabel(tr("Version %1").arg(kDisplayVersion), page);
     version->setObjectName(QStringLiteral("aboutVersion"));
     version->setTextInteractionFlags(Qt::TextSelectableByMouse);
     names->addWidget(name);

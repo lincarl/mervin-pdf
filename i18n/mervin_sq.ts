@@ -1288,6 +1288,11 @@ Hapni Cilësimet e sistemit tuaj → Aplikacionet e parazgjedhura (ose kliko me 
         <translation>Aplikim</translation>
     </message>
     <message>
+        <source>Current version: %1</source>
+        <extracomment>%1 is the version of the running Mervin PDF app, such as 1.64.10-rc1.</extracomment>
+        <translation>Versioni aktual: %1</translation>
+    </message>
+    <message>
         <source>Choose accent colour</source>
         <translation>Zgjidhni ngjyrën e theksit</translation>
     </message>

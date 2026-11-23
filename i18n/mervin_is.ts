@@ -1288,6 +1288,11 @@ Opnaðu stillingar kerfisins þíns → Sjálfgefin forrit (eða hægrismelltu �
         <translation>Forrit</translation>
     </message>
     <message>
+        <source>Current version: %1</source>
+        <extracomment>%1 is the version of the running Mervin PDF app, such as 1.64.10-rc1.</extracomment>
+        <translation>Núverandi útgáfa: %1</translation>
+    </message>
+    <message>
         <source>Choose accent colour</source>
         <translation>Veldu hreim lit</translation>
     </message>

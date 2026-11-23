@@ -1288,6 +1288,11 @@ Opne Innstillingar → Standardprogram i systemet (eller høgreklikk på ei PDF-
         <translation>Program</translation>
     </message>
     <message>
+        <source>Current version: %1</source>
+        <extracomment>%1 is the version of the running Mervin PDF app, such as 1.64.10-rc1.</extracomment>
+        <translation>Gjeldande versjon: %1</translation>
+    </message>
+    <message>
         <source>Choose accent colour</source>
         <translation>Vel aksentfarge</translation>
     </message>

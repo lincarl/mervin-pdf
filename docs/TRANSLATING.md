@@ -166,6 +166,10 @@ are managed by Microsoft Store. Naming another update provider does not mean tha
 updates are disabled. A button that opens that provider must describe opening it,
 without implying that the app has checked for updates.
 
+When displaying a release number in translated text, wrap the value in a
+left-to-right isolate in code (U+2066 and U+2069). This keeps a suffix such as
+`-rc1` after the digits in Arabic. Translators keep the placeholder as written.
+
 In the downloaded-update prompt, Later means install at the next application
 start, not after a timed delay. When the explanation names Later or Now, use the
 same words as the translated buttons.

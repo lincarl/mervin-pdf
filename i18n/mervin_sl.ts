@@ -1294,6 +1294,11 @@ Odprite sistemske nastavitve → Privzete aplikacije (ali z desno miškino tipko
         <translation>Aplikacija</translation>
     </message>
     <message>
+        <source>Current version: %1</source>
+        <extracomment>%1 is the version of the running Mervin PDF app, such as 1.64.10-rc1.</extracomment>
+        <translation>Trenutna različica: %1</translation>
+    </message>
+    <message>
         <source>Choose accent colour</source>
         <translation>Izberite barvo poudarka</translation>
     </message>

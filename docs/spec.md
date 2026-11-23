@@ -422,7 +422,8 @@ open; it is available only while a change is pending. If the settings file can't
 be written, OK and Apply say why and keep Settings open, and nothing changes until
 a save works. Cancel discards changes made since the last Apply. Removing or adding
 OCR languages takes effect at once. Session
-restore and automatic updates are enabled by default. Copies that cannot update
+restore and automatic updates are enabled by default. The Updates page shows the
+running version above the update controls. Copies that cannot update
 themselves (portable and development builds) show no automatic-update switch, only
 Check for Updates. General determines the initial window height, capped to the
 available screen. Pages scroll on smaller screens. Scrolling over number fields

@@ -1288,6 +1288,11 @@ Sisteminizin Parametrlər → Defolt Proqramları açın (və ya PDF-i sağ klik
         <translation>Tətbiq</translation>
     </message>
     <message>
+        <source>Current version: %1</source>
+        <extracomment>%1 is the version of the running Mervin PDF app, such as 1.64.10-rc1.</extracomment>
+        <translation>Cari versiya: %1</translation>
+    </message>
+    <message>
         <source>Choose accent colour</source>
         <translation>Vurğu rəngini seçin</translation>
     </message>
